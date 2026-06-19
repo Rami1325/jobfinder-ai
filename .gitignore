@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Env / secrets
+.env
+*.env
+!.env.example
+
+# Database
+*.db
+*.sqlite3
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Output artifacts
+backend/output/
+*.docx.tmp
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local Claude Code config / personal skills (not part of the app)
+.claude/
