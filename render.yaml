@@ -1,0 +1,25 @@
+# Render Blueprint for the JobFinder FastAPI backend.
+# In the Render dashboard: New + -> Blueprint -> connect this repo. Render reads
+# this file and provisions the service. Set the secret env vars when prompted.
+services:
+  - type: web
+    name: jobfinder-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+      - key: MODEL_ID
+        value: gpt-5.5
+      - key: USE_STUB_LLM
+        value: "false"
+      # Set these in the Render dashboard (marked sync:false so they aren't
+      # committed). OPENAI_API_KEY = your key. CORS_ORIGINS = your Vercel URL
+      # (e.g. https://jobfinder.vercel.app) once the frontend is deployed.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false

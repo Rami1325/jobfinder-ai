@@ -19,6 +19,7 @@ venv/
 node_modules/
 dist/
 .vite/
+*.tsbuildinfo
 
 # Output artifacts
 backend/output/

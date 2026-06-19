@@ -8,8 +8,10 @@ import type {
   TailorResult,
 } from "../types";
 
-// All requests go through the Vite dev proxy at /api -> http://localhost:8000
-const api = axios.create({ baseURL: "/api" });
+// In dev, requests go through the Vite proxy at /api -> http://localhost:8000.
+// In production (Vercel), set VITE_API_BASE_URL to the deployed backend URL
+// (e.g. https://jobfinder-api.onrender.com) so the frontend calls it directly.
+const api = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || "/api" });
 
 export async function uploadResume(file: File): Promise<ResumeUploadResponse> {
   const form = new FormData();
