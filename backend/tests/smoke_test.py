@@ -102,5 +102,29 @@ check("linkedin headline non-empty", len(li.headline) > 0)
 fu = write_follow_up("Acme", "Software Engineer", "after applying", "strong Python fit")
 check("follow-up email has subject + body", len(fu.subject) > 0 and len(fu.body) > 0)
 
+# 13. Job-link fetch helpers (pure, offline): LinkedIn id parsing + login-wall guard
+from app.core.job_match import _linkedin_job_id, _looks_like_login_wall  # noqa: E402
+
+check(
+    "linkedin id parsed from /jobs/view/<id>",
+    _linkedin_job_id("https://www.linkedin.com/jobs/view/4406118990") == "4406118990",
+)
+check(
+    "linkedin id parsed from slug url",
+    _linkedin_job_id("https://www.linkedin.com/jobs/view/software-engineer-at-notion-4406118990") == "4406118990",
+)
+check(
+    "linkedin id parsed from currentJobId query",
+    _linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=4406118990&keywords=x") == "4406118990",
+)
+check(
+    "login-wall text is detected",
+    _looks_like_login_wall("Join or sign in to find your next job. Email or phone. Password."),
+)
+check(
+    "real jd text is not flagged as login wall",
+    not _looks_like_login_wall("We are hiring a Python engineer to build REST APIs and CI/CD pipelines."),
+)
+
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

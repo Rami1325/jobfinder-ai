@@ -88,20 +88,31 @@ def _extract_jobposting(html: str) -> str:
     return ""
 
 
-def fetch_job_text(url: str) -> str:
-    """Fetch a job posting URL and return readable text.
+# Phrases that mean "you got a sign-in / bot-block page, not the posting". These
+# are auth-wall specific and won't appear in a real job description, so seeing one
+# is a reliable signal that extraction failed and we should tell the user to paste.
+_LOGIN_WALL_MARKERS = (
+    "join or sign in to find your next job",
+    "new to linkedin? join now",
+    "sign in to view",
+    "sign in to see",
+    "you need to sign in",
+    "please log in",
+    "enable javascript",
+    "verify you are human",
+    "access to this page has been denied",
+    "unusual traffic from your",
+)
 
-    Tries schema.org JobPosting markup first (reliable for LinkedIn public job
-    pages + most ATS/career sites), then falls back to stripping the whole page.
 
-    Single-user local tool: we accept arbitrary URLs (no SSRF allowlist). If this
-    is ever exposed to multiple users, add an allowlist / block private ranges.
-    """
-    u = url.strip()
-    if not u.startswith(("http://", "https://")):
-        u = "https://" + u
+def _looks_like_login_wall(text: str) -> bool:
+    low = text.lower()
+    return any(m in low for m in _LOGIN_WALL_MARKERS)
+
+
+def _http_get(url: str) -> str:
     req = urllib.request.Request(
-        u,
+        url,
         headers={
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -110,6 +121,84 @@ def fetch_job_text(url: str) -> str:
             "Accept-Language": "en-US,en;q=0.9",
         },
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - intentional, see docstring
-        raw = resp.read(3_000_000).decode("utf-8", errors="ignore")
-    return _extract_jobposting(raw) or _html_to_text(raw)
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - see fetch_job_text docstring
+        return resp.read(3_000_000).decode("utf-8", errors="ignore")
+
+
+def _first_text(html: str, cls: str) -> str:
+    m = re.search(r'class="[^"]*' + re.escape(cls) + r'[^"]*"[^>]*>(.*?)<', html, re.S)
+    return _html.unescape(m.group(1).strip()) if m else ""
+
+
+def _linkedin_job_id(url: str) -> str:
+    """Pull the numeric posting id out of any LinkedIn job URL shape:
+    /jobs/view/<id>, /jobs/view/<slug>-<id>, ?currentJobId=<id>, or a guest api url."""
+    for pat in (
+        r"/jobs/view/(?:[^/?#]*?-)?(\d{6,})",
+        r"[?&]currentJobId=(\d{6,})",
+        r"/jobPosting/(\d{6,})",
+    ):
+        m = re.search(pat, url)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _extract_linkedin(url: str) -> str:
+    """LinkedIn serves an auth wall (the "Join or sign in" page) to logged-out
+    bots hitting /jobs/view/<id>, which is why a naive fetch returns login text.
+    Its public 'jobs-guest' endpoint returns the same posting without a login."""
+    jid = _linkedin_job_id(url)
+    if not jid:
+        return ""
+    guest = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{jid}"
+    try:
+        html = _http_get(guest)
+    except Exception:  # noqa: BLE001 - closed/region-locked posting; caller shows a paste hint
+        return ""
+    m = re.search(r"(?is)show-more-less-html__markup[^>]*>(.*?)</section>", html)
+    if not m:
+        return ""
+    body = re.sub(r"(?im)^\s*show (more|less)\s*$", "", _html_to_text(m.group(1))).strip()
+    if not body:
+        return ""
+    title = _first_text(html, "top-card-layout__title")
+    company = _first_text(html, "topcard__org-name-link")
+    header = " — ".join(x for x in [title, company] if x)
+    return (f"{header}\n\n{body}" if header else body).strip()
+
+
+def fetch_job_text(url: str) -> str:
+    """Fetch a job posting URL and return readable text.
+
+    LinkedIn gets a dedicated path (its public job pages auth-wall logged-out
+    fetches). Everything else tries schema.org JobPosting markup first (reliable
+    for most ATS/career sites: Greenhouse, Lever, Workable…), then falls back to
+    stripping the whole page. If all we can see is a sign-in / bot-block page, we
+    raise instead of returning that garbage so the user knows to paste the text.
+
+    Single-user local tool: we accept arbitrary URLs (no SSRF allowlist). If this
+    is ever exposed to multiple users, add an allowlist / block private ranges.
+    """
+    u = url.strip()
+    if not u.startswith(("http://", "https://")):
+        u = "https://" + u
+
+    if "linkedin.com" in u.lower():
+        text = _extract_linkedin(u)
+        if text and not _looks_like_login_wall(text):
+            return text
+        raise ValueError(
+            "LinkedIn didn't return the public description for this posting (it may be "
+            "closed, region-locked, or login-only). Open the job, copy the description, "
+            "and paste it here instead."
+        )
+
+    raw = _http_get(u)
+    text = _extract_jobposting(raw) or _html_to_text(raw)
+    if len(text.strip()) < 40 or _looks_like_login_wall(text):
+        raise ValueError(
+            "That page needs a login or blocked the fetch, so only its sign-in text came "
+            "back. Open the posting, copy the job description, and paste it here instead."
+        )
+    return text
