@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { MessageSquareText, Sparkles, Lightbulb, ClipboardCheck } from "lucide-react";
 import { analyzeJD, interviewAnswer, interviewFeedback, interviewQuestions } from "../api/client";
+import JDPaste from "../components/JDPaste";
 import ResumeGate from "../components/ResumeGate";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { Badge, Button, Card, CardTitle, Skeleton } from "../components/ui";
@@ -174,12 +175,9 @@ export default function InterviewPage() {
 
       <Card>
         <CardTitle>Target job description</CardTitle>
-        <textarea
-          value={jdText}
-          onChange={(e) => setJdText(e.target.value)}
-          placeholder="Paste the job description to prep for…"
-          className="mt-3 min-h-[160px] w-full resize-y rounded-xl border border-line bg-bg-soft p-4 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
-        />
+        <div className="mt-3">
+          <JDPaste value={jdText} onChange={setJdText} />
+        </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <Button loading={running} icon={<Sparkles size={16} />} disabled={jdText.trim().length < 30} onClick={generate}>
             Generate questions

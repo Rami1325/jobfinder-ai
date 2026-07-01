@@ -5,6 +5,8 @@ control; this only surfaces fit and gaps so they choose where to tailor.
 """
 from __future__ import annotations
 
+import html as _html
+import json
 import re
 import urllib.request
 
@@ -42,15 +44,55 @@ def _html_to_text(html: str) -> str:
     html = re.sub(r"(?is)<br\s*/?>", "\n", html)
     html = re.sub(r"(?is)</(p|div|li|h[1-6])>", "\n", html)
     text = re.sub(r"(?is)<[^>]+>", " ", html)
-    text = text.replace("&nbsp;", " ").replace("&amp;", "&")
-    text = re.sub(r"&[a-z]+;", " ", text)
+    text = _html.unescape(text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n\n", text)
     return text.strip()
 
 
+def _iter_jsonld(data):
+    """Yield every dict node in a parsed JSON-LD blob (handles lists + @graph)."""
+    if isinstance(data, list):
+        for item in data:
+            yield from _iter_jsonld(item)
+    elif isinstance(data, dict):
+        yield data
+        if "@graph" in data:
+            yield from _iter_jsonld(data["@graph"])
+
+
+def _extract_jobposting(html: str) -> str:
+    """Prefer schema.org JobPosting markup — how LinkedIn and most ATS/career pages
+    (Greenhouse, Lever, Workable…) expose the real description server-side."""
+    for m in re.finditer(
+        r'(?is)<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html
+    ):
+        try:
+            data = json.loads(m.group(1).strip())
+        except Exception:  # noqa: BLE001 - skip malformed blocks
+            continue
+        for node in _iter_jsonld(data):
+            types = node.get("@type")
+            types = types if isinstance(types, list) else [types]
+            if not any(str(t).lower() == "jobposting" for t in types):
+                continue
+            desc = node.get("description")
+            if not isinstance(desc, str) or not desc.strip():
+                continue
+            title = node.get("title") or ""
+            org = node.get("hiringOrganization")
+            company = org.get("name") if isinstance(org, dict) else ""
+            header = " — ".join(x for x in [str(title).strip(), str(company).strip()] if x)
+            body = _html_to_text(_html.unescape(desc))
+            return (f"{header}\n\n{body}" if header else body).strip()
+    return ""
+
+
 def fetch_job_text(url: str) -> str:
     """Fetch a job posting URL and return readable text.
+
+    Tries schema.org JobPosting markup first (reliable for LinkedIn public job
+    pages + most ATS/career sites), then falls back to stripping the whole page.
 
     Single-user local tool: we accept arbitrary URLs (no SSRF allowlist). If this
     is ever exposed to multiple users, add an allowlist / block private ranges.
@@ -58,7 +100,16 @@ def fetch_job_text(url: str) -> str:
     u = url.strip()
     if not u.startswith(("http://", "https://")):
         u = "https://" + u
-    req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0 (JobFinder)"})
+    req = urllib.request.Request(
+        u,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
     with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - intentional, see docstring
-        raw = resp.read(2_000_000).decode("utf-8", errors="ignore")
-    return _html_to_text(raw)
+        raw = resp.read(3_000_000).decode("utf-8", errors="ignore")
+    return _extract_jobposting(raw) or _html_to_text(raw)

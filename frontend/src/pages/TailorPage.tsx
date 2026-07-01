@@ -123,7 +123,7 @@ export default function TailorPage() {
             )}
           </div>
           <div className="mt-3">
-            <ResumeUpload onParsed={onParsed} />
+            <ResumeUpload onParsed={onParsed} savedLabel={resume ? masterLabel || undefined : undefined} />
           </div>
         </Card>
 

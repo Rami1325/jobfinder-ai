@@ -6,9 +6,11 @@ import { cn } from "../lib/cn";
 
 interface Props {
   onParsed: (resume: ResumeModel, ledger: FactsLedger) => void;
+  /** Label of an already-loaded saved résumé, shown until a new file is chosen. */
+  savedLabel?: string;
 }
 
-export default function ResumeUpload({ onParsed }: Props) {
+export default function ResumeUpload({ onParsed, savedLabel }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -52,7 +54,7 @@ export default function ResumeUpload({ onParsed }: Props) {
           "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
           drag
             ? "border-accent bg-accent/5"
-            : fileName
+            : fileName || savedLabel
               ? "border-mint/50 bg-mint/5"
               : "border-line hover:border-accent/50",
         )}
@@ -67,6 +69,12 @@ export default function ResumeUpload({ onParsed }: Props) {
             <FileCheck2 className="mb-2 text-mint" />
             <span className="text-sm text-ink">{fileName}</span>
             <span className="mt-1 text-xs text-ink-muted">Parsed — click to replace</span>
+          </>
+        ) : savedLabel ? (
+          <>
+            <FileCheck2 className="mb-2 text-mint" />
+            <span className="text-sm text-ink">Using {savedLabel}</span>
+            <span className="mt-1 text-xs text-ink-muted">Drop a new file to replace</span>
           </>
         ) : (
           <>
