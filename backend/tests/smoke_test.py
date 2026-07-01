@@ -13,9 +13,14 @@ from app.config import get_settings  # noqa: E402
 
 get_settings.cache_clear()  # ensure env override is picked up
 
+from app.core.ats_scan import scan_resume  # noqa: E402
 from app.core.cover_letter import generate_cover_letter  # noqa: E402
 from app.core.fabrication_guard import check_fabrication  # noqa: E402
+from app.core.follow_up import write_follow_up  # noqa: E402
+from app.core.interview import answer_feedback, generate_questions, model_answer  # noqa: E402
 from app.core.jd_analyzer import analyze_jd  # noqa: E402
+from app.core.job_match import match_jobs  # noqa: E402
+from app.core.linkedin import optimize_linkedin  # noqa: E402
 from app.core.tailor import tailor_resume  # noqa: E402
 from app.models import Experience, FactsLedger, ResumeModel  # noqa: E402
 from app.parsers.structurer import build_facts_ledger, structure_resume  # noqa: E402
@@ -72,6 +77,30 @@ check("pdf renders (%PDF header)", pdf_bytes[:4] == b"%PDF", f"{len(pdf_bytes)} 
 # 7. Cover letter
 letter = generate_cover_letter(result.tailored_resume, jd)
 check("cover letter non-empty", len(letter) > 20)
+
+# 8. Interview prep (each routes through the stub via its Task tag)
+questions = generate_questions(resume, jd)
+check("interview questions generated", len(questions.questions) > 0, str(len(questions.questions)))
+ans = model_answer(resume, jd, "Tell me about a challenging project.")
+check("interview model answer non-empty", len(ans.answer) > 10)
+fb = answer_feedback(resume, "Tell me about a challenging project.", "I built a service that scaled.")
+check("interview feedback scored", 0 <= fb.score <= 100, str(fb.score))
+
+# 9. Job match (reuses jd_analyzer + scorer, ranks by fit)
+jm = match_jobs(resume, ["We need a Python engineer with SQL and REST APIs at Acme."])
+check("job match ranked", len(jm.matches) == 1 and 0 <= jm.matches[0].overall <= 100, str(jm.matches))
+
+# 10. ATS scanner (deterministic checks + optional coverage)
+ats = scan_resume(resume, "Python, SQL, REST APIs required.")
+check("ats scan produced issues + score", len(ats.issues) > 0 and 0 <= ats.score <= 100, str(ats.score))
+
+# 11. LinkedIn optimizer
+li = optimize_linkedin(resume)
+check("linkedin headline non-empty", len(li.headline) > 0)
+
+# 12. Follow-up email
+fu = write_follow_up("Acme", "Software Engineer", "after applying", "strong Python fit")
+check("follow-up email has subject + body", len(fu.subject) > 0 and len(fu.body) > 0)
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)
