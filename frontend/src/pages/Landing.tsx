@@ -1,4 +1,21 @@
-// Full marketing landing page is built in Phase 1.
+import Hero from "../components/marketing/Hero";
+import HowItWorks from "../components/marketing/HowItWorks";
+import FeatureGrid from "../components/marketing/FeatureGrid";
+import WhyHonesty from "../components/marketing/WhyHonesty";
+import FAQ from "../components/marketing/FAQ";
+import FinalCTA from "../components/marketing/FinalCTA";
+import Footer from "../components/marketing/Footer";
+
 export default function Landing() {
-  return <div className="mx-auto max-w-6xl px-4 py-24 text-center text-ink-muted">Landing…</div>;
+  return (
+    <>
+      <Hero />
+      <HowItWorks />
+      <WhyHonesty />
+      <FeatureGrid />
+      <FAQ />
+      <FinalCTA />
+      <Footer />
+    </>
+  );
 }
