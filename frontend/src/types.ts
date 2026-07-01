@@ -131,3 +131,60 @@ export interface ApplicationDetail {
   notes: string;
   created_at: string;
 }
+
+// Interview prep
+export interface InterviewQuestion {
+  question: string;
+  category: string;
+  rationale: string;
+}
+export interface InterviewQuestionsResult {
+  questions: InterviewQuestion[];
+}
+export interface InterviewAnswerResult {
+  answer: string;
+  tips: string[];
+}
+export interface InterviewFeedbackResult {
+  score: number;
+  strengths: string[];
+  improvements: string[];
+  revised_answer: string;
+}
+
+// Job match
+export interface JobMatch {
+  title: string;
+  company: string;
+  overall: number;
+  keyword_coverage: number;
+  fit_score: number;
+  top_gaps: string[];
+  jd_text: string;
+}
+export interface JobMatchResult {
+  matches: JobMatch[];
+}
+
+// Tools
+export interface ATSIssue {
+  label: string;
+  severity: "good" | "warn" | "bad";
+  detail: string;
+}
+export interface ATSScanResult {
+  score: number;
+  keyword_coverage: number;
+  issues: ATSIssue[];
+  gaps: GapItem[];
+}
+export interface LinkedInResult {
+  headline: string;
+  about: string;
+  experience_bullets: string[];
+  skills: string[];
+}
+export interface FollowUpResult {
+  subject: string;
+  body: string;
+}

@@ -8,8 +8,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.ats_scan import scan_resume
 from app.core.cover_letter import generate_cover_letter
+from app.core.follow_up import write_follow_up
+from app.core.interview import answer_feedback, generate_questions, model_answer
 from app.core.jd_analyzer import analyze_jd
+from app.core.job_match import fetch_job_text, match_jobs
+from app.core.linkedin import optimize_linkedin
 from app.core.tailor import tailor_resume
 from app.db.database import get_db
 from app.db.models import Application, SavedResume
@@ -18,11 +23,27 @@ from app.models import (
     ApplicationDetail,
     ApplicationOut,
     ApplicationUpdate,
+    ATSScanRequest,
+    ATSScanResult,
     CoverLetterRequest,
     CoverLetterResponse,
     FactsLedger,
+    FollowUpRequest,
+    FollowUpResult,
+    InterviewAnswerRequest,
+    InterviewAnswerResult,
+    InterviewFeedbackRequest,
+    InterviewFeedbackResult,
+    InterviewQuestionsRequest,
+    InterviewQuestionsResult,
     JDAnalyzeRequest,
     JDModel,
+    JobFetchRequest,
+    JobFetchResponse,
+    JobMatchRequest,
+    JobMatchResult,
+    LinkedInRequest,
+    LinkedInResult,
     MasterResumeIn,
     MasterResumeOut,
     RenderRequest,
@@ -108,6 +129,87 @@ def render(body: RenderRequest):
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# --------------------------------------------------------------------------- #
+# Interview prep
+# --------------------------------------------------------------------------- #
+@router.post("/interview/questions", response_model=InterviewQuestionsResult)
+def interview_questions(body: InterviewQuestionsRequest) -> InterviewQuestionsResult:
+    try:
+        return generate_questions(body.resume, body.jd)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while generating interview questions: {e}")
+
+
+@router.post("/interview/answer", response_model=InterviewAnswerResult)
+def interview_answer(body: InterviewAnswerRequest) -> InterviewAnswerResult:
+    if not body.question.strip():
+        raise HTTPException(400, "Question is empty.")
+    try:
+        return model_answer(body.resume, body.jd, body.question)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while writing the model answer: {e}")
+
+
+@router.post("/interview/feedback", response_model=InterviewFeedbackResult)
+def interview_feedback(body: InterviewFeedbackRequest) -> InterviewFeedbackResult:
+    if not body.answer.strip():
+        raise HTTPException(400, "Answer is empty.")
+    try:
+        return answer_feedback(body.resume, body.question, body.answer)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while evaluating the answer: {e}")
+
+
+# --------------------------------------------------------------------------- #
+# Job discovery / matching
+# --------------------------------------------------------------------------- #
+@router.post("/jobs/match", response_model=JobMatchResult)
+def jobs_match(body: JobMatchRequest) -> JobMatchResult:
+    if not body.listings:
+        raise HTTPException(400, "Provide at least one job listing.")
+    try:
+        return match_jobs(body.resume, body.listings)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while matching jobs: {e}")
+
+
+@router.post("/jobs/fetch", response_model=JobFetchResponse)
+def jobs_fetch(body: JobFetchRequest) -> JobFetchResponse:
+    if not body.url.strip():
+        raise HTTPException(400, "URL is empty.")
+    try:
+        return JobFetchResponse(text=fetch_job_text(body.url))
+    except Exception as e:  # noqa: BLE001 - network/parse errors surface to the UI
+        raise HTTPException(400, f"Could not fetch that URL: {e}")
+
+
+# --------------------------------------------------------------------------- #
+# Standalone tools
+# --------------------------------------------------------------------------- #
+@router.post("/tools/ats-scan", response_model=ATSScanResult)
+def tools_ats_scan(body: ATSScanRequest) -> ATSScanResult:
+    try:
+        return scan_resume(body.resume, body.jd_text)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Error while scanning résumé: {e}")
+
+
+@router.post("/tools/linkedin", response_model=LinkedInResult)
+def tools_linkedin(body: LinkedInRequest) -> LinkedInResult:
+    try:
+        return optimize_linkedin(body.resume)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while optimizing LinkedIn profile: {e}")
+
+
+@router.post("/tools/follow-up", response_model=FollowUpResult)
+def tools_follow_up(body: FollowUpRequest) -> FollowUpResult:
+    try:
+        return write_follow_up(body.company, body.role, body.stage, body.context)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while writing the follow-up email: {e}")
 
 
 # --------------------------------------------------------------------------- #

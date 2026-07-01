@@ -207,3 +207,119 @@ class ApplicationDetail(BaseModel):
     status: str
     notes: str = ""
     created_at: str
+
+
+# --------------------------------------------------------------------------- #
+# Interview prep
+# --------------------------------------------------------------------------- #
+class InterviewQuestion(BaseModel):
+    question: str
+    category: str = ""  # behavioral | technical | role-specific | culture
+    rationale: str = ""
+
+
+class InterviewQuestionsRequest(BaseModel):
+    resume: ResumeModel
+    jd: JDModel
+
+
+class InterviewQuestionsResult(BaseModel):
+    questions: list[InterviewQuestion] = Field(default_factory=list)
+
+
+class InterviewAnswerRequest(BaseModel):
+    resume: ResumeModel
+    jd: JDModel
+    question: str
+
+
+class InterviewAnswerResult(BaseModel):
+    answer: str = ""
+    tips: list[str] = Field(default_factory=list)
+
+
+class InterviewFeedbackRequest(BaseModel):
+    resume: ResumeModel
+    question: str
+    answer: str
+
+
+class InterviewFeedbackResult(BaseModel):
+    score: float = 0.0
+    strengths: list[str] = Field(default_factory=list)
+    improvements: list[str] = Field(default_factory=list)
+    revised_answer: str = ""
+
+
+# --------------------------------------------------------------------------- #
+# Job discovery / matching
+# --------------------------------------------------------------------------- #
+class JobMatchRequest(BaseModel):
+    resume: ResumeModel
+    listings: list[str] = Field(default_factory=list)  # pasted JD texts
+
+
+class JobMatch(BaseModel):
+    title: str = ""
+    company: str = ""
+    overall: float = 0.0
+    keyword_coverage: float = 0.0
+    fit_score: float = 0.0
+    top_gaps: list[str] = Field(default_factory=list)
+    jd_text: str = ""
+
+
+class JobMatchResult(BaseModel):
+    matches: list[JobMatch] = Field(default_factory=list)
+
+
+class JobFetchRequest(BaseModel):
+    url: str
+
+
+class JobFetchResponse(BaseModel):
+    text: str = ""
+
+
+# --------------------------------------------------------------------------- #
+# Standalone tools
+# --------------------------------------------------------------------------- #
+class ATSScanRequest(BaseModel):
+    resume: ResumeModel
+    jd_text: str = ""
+
+
+class ATSIssue(BaseModel):
+    label: str
+    severity: str = "good"  # good | warn | bad
+    detail: str = ""
+
+
+class ATSScanResult(BaseModel):
+    score: float = 0.0
+    keyword_coverage: float = 0.0
+    issues: list[ATSIssue] = Field(default_factory=list)
+    gaps: list[GapItem] = Field(default_factory=list)
+
+
+class LinkedInRequest(BaseModel):
+    resume: ResumeModel
+
+
+class LinkedInResult(BaseModel):
+    headline: str = ""
+    about: str = ""
+    experience_bullets: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+
+
+class FollowUpRequest(BaseModel):
+    company: str = ""
+    role: str = ""
+    stage: str = "after applying"
+    context: str = ""
+
+
+class FollowUpResult(BaseModel):
+    subject: str = ""
+    body: str = ""

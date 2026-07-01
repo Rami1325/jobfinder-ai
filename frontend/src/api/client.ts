@@ -2,8 +2,15 @@ import axios from "axios";
 import type {
   ApplicationDetail,
   ApplicationOut,
+  ATSScanResult,
   FactsLedger,
+  FollowUpResult,
+  InterviewAnswerResult,
+  InterviewFeedbackResult,
+  InterviewQuestionsResult,
   JDModel,
+  JobMatchResult,
+  LinkedInResult,
   MasterResume,
   ResumeModel,
   ResumeUploadResponse,
@@ -53,6 +60,66 @@ export async function downloadResume(resume: ResumeModel, fmt: "docx" | "pdf"): 
   a.download = `resume.${fmt}`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export async function interviewQuestions(
+  resume: ResumeModel,
+  jd: JDModel,
+): Promise<InterviewQuestionsResult> {
+  const { data } = await api.post<InterviewQuestionsResult>("/interview/questions", { resume, jd });
+  return data;
+}
+
+export async function interviewAnswer(
+  resume: ResumeModel,
+  jd: JDModel,
+  question: string,
+): Promise<InterviewAnswerResult> {
+  const { data } = await api.post<InterviewAnswerResult>("/interview/answer", { resume, jd, question });
+  return data;
+}
+
+export async function interviewFeedback(
+  resume: ResumeModel,
+  question: string,
+  answer: string,
+): Promise<InterviewFeedbackResult> {
+  const { data } = await api.post<InterviewFeedbackResult>("/interview/feedback", {
+    resume,
+    question,
+    answer,
+  });
+  return data;
+}
+
+export async function matchJobs(resume: ResumeModel, listings: string[]): Promise<JobMatchResult> {
+  const { data } = await api.post<JobMatchResult>("/jobs/match", { resume, listings });
+  return data;
+}
+
+export async function fetchJob(url: string): Promise<string> {
+  const { data } = await api.post<{ text: string }>("/jobs/fetch", { url });
+  return data.text;
+}
+
+export async function atsScan(resume: ResumeModel, jdText = ""): Promise<ATSScanResult> {
+  const { data } = await api.post<ATSScanResult>("/tools/ats-scan", { resume, jd_text: jdText });
+  return data;
+}
+
+export async function linkedinOptimize(resume: ResumeModel): Promise<LinkedInResult> {
+  const { data } = await api.post<LinkedInResult>("/tools/linkedin", { resume });
+  return data;
+}
+
+export async function followUp(payload: {
+  company: string;
+  role: string;
+  stage: string;
+  context: string;
+}): Promise<FollowUpResult> {
+  const { data } = await api.post<FollowUpResult>("/tools/follow-up", payload);
+  return data;
 }
 
 export async function getMasterResume(): Promise<MasterResume | null> {

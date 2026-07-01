@@ -89,8 +89,85 @@ tailored to the job using ONLY facts present in the resume. Do not invent experi
 Avoid clichés and filler. Return plain text only (no markdown headers)."""
 
 
+INTERVIEW_QUESTIONS_SYSTEM = """Task: INTERVIEW_QUESTIONS.
+You are an experienced interviewer preparing a candidate for a specific role. \
+Given the candidate's resume and the target job, generate a focused set of likely \
+interview questions. Cover a mix of categories. Return JSON:
+{
+  "questions": [
+    {"question": "...", "category": "behavioral|technical|role-specific|culture",
+     "rationale": "why this is likely to be asked for THIS role/candidate"}
+  ]
+}
+Produce 8-10 high-signal questions. Ground them in the actual JD requirements and the \
+candidate's real background. Do not invent facts about the candidate."""
+
+INTERVIEW_ANSWER_SYSTEM = """Task: INTERVIEW_ANSWER.
+You coach a candidate on answering an interview question. Write a strong model answer \
+using ONLY facts present in the candidate's resume — never invent employers, metrics, or \
+experience. For behavioral questions use the STAR structure (Situation, Task, Action, Result). \
+Keep it natural and spoken, ~120-200 words. Return JSON:
+{"answer": "the model answer", "tips": ["1-3 short delivery tips"]}"""
+
+INTERVIEW_FEEDBACK_SYSTEM = """Task: INTERVIEW_FEEDBACK.
+You evaluate a candidate's practice answer to an interview question. Be specific and \
+constructive. Judge structure, specificity, relevance to the role, and evidence. Return JSON:
+{
+  "score": <0-100>,
+  "strengths": ["..."],
+  "improvements": ["..."],
+  "revised_answer": "a tightened version using only what the candidate said or has on their resume"
+}
+Do not fabricate accomplishments the candidate did not mention or list."""
+
+LINKEDIN_SYSTEM = """Task: LINKEDIN.
+You optimize a candidate's LinkedIn profile from their resume. Use ONLY real facts from \
+the resume — do not invent roles, metrics, or skills. Write in first person, keyword-rich \
+but natural. Return JSON:
+{
+  "headline": "under 220 chars, role + specialties",
+  "about": "3-5 short paragraphs, first person",
+  "experience_bullets": ["rewritten, impact-first bullets drawn from real experience"],
+  "skills": ["ordered list of the candidate's real, relevant skills"]
+}"""
+
+FOLLOW_UP_SYSTEM = """Task: FOLLOW_UP.
+You write a concise, specific follow-up email for a job application. No clichés, no filler, \
+no fabricated details. Reference the role and company and one genuine point of fit. \
+Keep it under 150 words. Return JSON: {"subject": "...", "body": "plain text email body"}"""
+
+
 def structure_resume_user(raw_text: str) -> str:
     return f"Resume text to structure:\n\n{raw_text}"
+
+
+def interview_questions_user(resume_json: str, jd_json: str) -> str:
+    return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nTARGET JOB (JSON):\n{jd_json}"
+
+
+def interview_answer_user(resume_json: str, jd_json: str, question: str) -> str:
+    return (
+        f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nTARGET JOB (JSON):\n{jd_json}\n\n"
+        f"QUESTION: {question}\n\nWrite the model answer."
+    )
+
+
+def interview_feedback_user(resume_json: str, question: str, answer: str) -> str:
+    return (
+        f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nQUESTION: {question}\n\n"
+        f"CANDIDATE'S ANSWER:\n{answer}\n\nEvaluate it."
+    )
+
+
+def linkedin_user(resume_json: str) -> str:
+    return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nProduce the optimized LinkedIn content."
+
+
+def follow_up_user(company: str, role: str, stage: str, extra: str) -> str:
+    return (
+        f"Company: {company}\nRole: {role}\nStage: {stage}\n"
+        f"Context / point of fit: {extra}\n\nWrite the follow-up email."
+    )
 
 
 def analyze_jd_user(jd_text: str) -> str:

@@ -96,6 +96,34 @@ class StubClient:
             return self._stub_tailor(user)
         if "FIT_SCORE" in head:
             return {"fit_score": 72.0, "rationale": "[stub] Reasonable overlap in core skills."}
+        if "INTERVIEW_QUESTIONS" in head:
+            return self._stub_interview_questions()
+        if "INTERVIEW_ANSWER" in head:
+            return {
+                "answer": "[stub] Situation: at my last role we faced X. Task: I owned Y. "
+                "Action: I did Z using my real skills. Result: measurable improvement.",
+                "tips": ["Lead with the result", "Keep it under 90 seconds"],
+            }
+        if "INTERVIEW_FEEDBACK" in head:
+            return {
+                "score": 74,
+                "strengths": ["[stub] Clear structure", "Relevant example"],
+                "improvements": ["Quantify the impact", "Tie it back to the role"],
+                "revised_answer": "[stub] A tightened version of your answer.",
+            }
+        if "LINKEDIN" in head:
+            return {
+                "headline": "[stub] Backend Engineer · Python · Distributed Systems",
+                "about": "[stub] First-person summary drawn from your real experience.",
+                "experience_bullets": ["[stub] Impact-first bullet from a real role."],
+                "skills": ["Python", "REST APIs", "SQL"],
+            }
+        if "FOLLOW_UP" in head:
+            return {
+                "subject": "[stub] Following up on the {role} role",
+                "body": "[stub] Hi, thanks for your time. I remain very interested in the role "
+                "and wanted to reiterate one relevant point of fit. Best regards.",
+            }
         return {}
 
     def complete_text(self, system: str, user: str) -> str:
@@ -134,6 +162,18 @@ class StubClient:
             "keywords": ["Python", "REST APIs", "SQL", "CI/CD", "Agile"],
             "responsibilities": ["Build features", "Review code"],
             "qualifications": ["3+ years experience"],
+        }
+
+    def _stub_interview_questions(self) -> dict[str, Any]:
+        return {
+            "questions": [
+                {"question": "Tell me about a challenging project you led.", "category": "behavioral",
+                 "rationale": "[stub] Gauges ownership and impact."},
+                {"question": "How would you design a scalable REST API?", "category": "technical",
+                 "rationale": "[stub] Core to the role."},
+                {"question": "Why are you interested in this role?", "category": "culture",
+                 "rationale": "[stub] Motivation fit."},
+            ]
         }
 
     def _stub_tailor(self, user: str) -> dict[str, Any]:
