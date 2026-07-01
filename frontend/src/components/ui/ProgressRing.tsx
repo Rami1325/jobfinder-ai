@@ -1,0 +1,60 @@
+import { motion } from "framer-motion";
+import { cn } from "../../lib/cn";
+
+interface ProgressRingProps {
+  value: number; // 0-100
+  size?: number;
+  stroke?: number;
+  label?: string;
+  sublabel?: string;
+  tone?: "accent" | "mint" | "gradient";
+}
+
+/** Animated circular score gauge. */
+export default function ProgressRing({
+  value,
+  size = 120,
+  stroke = 10,
+  label,
+  sublabel,
+  tone = "gradient",
+}: ProgressRingProps) {
+  const v = Math.max(0, Math.min(100, value));
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c - (v / 100) * c;
+  const strokeColor =
+    tone === "mint" ? "#2bd4a0" : tone === "accent" ? "#4f8cff" : "url(#ringGrad)";
+
+  return (
+    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <defs>
+          <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#4f8cff" />
+            <stop offset="100%" stopColor="#2bd4a0" />
+          </linearGradient>
+        </defs>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#26324a" strokeWidth={stroke} />
+        <motion.circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={c}
+          initial={{ strokeDashoffset: c }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-2xl font-bold tabular-nums text-ink">{Math.round(v)}</span>
+        {label && <span className={cn("text-[10px] uppercase tracking-wider text-ink-muted")}>{label}</span>}
+        {sublabel && <span className="mt-0.5 text-[10px] text-ink-faint">{sublabel}</span>}
+      </div>
+    </div>
+  );
+}
