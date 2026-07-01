@@ -1,28 +1,32 @@
+import { Check, Minus, X } from "lucide-react";
 import type { GapItem } from "../types";
+import { Badge, Card, CardTitle } from "./ui";
 
-interface Props {
-  gaps: GapItem[];
-}
+const order: Record<string, number> = { missing: 0, partial: 1, covered: 2 };
+const icon: Record<string, JSX.Element> = {
+  covered: <Check size={12} />,
+  partial: <Minus size={12} />,
+  missing: <X size={12} />,
+};
 
-export default function GapList({ gaps }: Props) {
+export default function GapList({ gaps }: { gaps: GapItem[] }) {
   if (!gaps.length) return null;
-  const order: Record<string, number> = { missing: 0, partial: 1, covered: 2 };
   const sorted = [...gaps].sort((a, b) => order[a.status] - order[b.status]);
   const missing = gaps.filter((g) => g.status === "missing").length;
 
   return (
-    <div className="panel">
-      <h2>Keyword gap analysis</h2>
-      <p className="muted" style={{ marginTop: 0 }}>
+    <Card>
+      <CardTitle>Keyword gap analysis</CardTitle>
+      <p className="mt-1 text-sm text-ink-muted">
         {missing} of {gaps.length} key terms still missing. Only add terms that reflect real experience.
       </p>
-      <div>
+      <div className="mt-3 flex flex-wrap gap-2">
         {sorted.map((g) => (
-          <span key={g.keyword} className={`tag ${g.status}`} title={g.suggestion}>
-            {g.status === "covered" ? "✓" : g.status === "partial" ? "≈" : "✗"} {g.keyword}
-          </span>
+          <Badge key={g.keyword} tone={g.status as "covered" | "partial" | "missing"} title={g.suggestion}>
+            {icon[g.status]} {g.keyword}
+          </Badge>
         ))}
       </div>
-    </div>
+    </Card>
   );
 }

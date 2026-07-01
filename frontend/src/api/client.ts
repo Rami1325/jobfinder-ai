@@ -2,7 +2,9 @@ import axios from "axios";
 import type {
   ApplicationDetail,
   ApplicationOut,
+  FactsLedger,
   JDModel,
+  MasterResume,
   ResumeModel,
   ResumeUploadResponse,
   TailorResult,
@@ -51,6 +53,20 @@ export async function downloadResume(resume: ResumeModel, fmt: "docx" | "pdf"): 
   a.download = `resume.${fmt}`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export async function getMasterResume(): Promise<MasterResume | null> {
+  const { data } = await api.get<MasterResume | null>("/profile/resume");
+  return data ?? null;
+}
+
+export async function saveMasterResume(payload: {
+  resume: ResumeModel;
+  ledger?: FactsLedger | null;
+  label?: string;
+}): Promise<MasterResume> {
+  const { data } = await api.put<MasterResume>("/profile/resume", payload);
+  return data;
 }
 
 export async function listApplications(): Promise<ApplicationOut[]> {

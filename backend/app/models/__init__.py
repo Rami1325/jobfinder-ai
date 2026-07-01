@@ -153,6 +153,22 @@ class ResumeUploadResponse(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Master résumé (persisted, reused across features)
+# --------------------------------------------------------------------------- #
+class MasterResumeIn(BaseModel):
+    resume: ResumeModel
+    ledger: Optional[FactsLedger] = None
+    label: str = "My résumé"
+
+
+class MasterResumeOut(BaseModel):
+    resume: ResumeModel
+    ledger: Optional[FactsLedger] = None
+    label: str = "My résumé"
+    updated_at: str = ""
+
+
+# --------------------------------------------------------------------------- #
 # Application tracker
 # --------------------------------------------------------------------------- #
 class ApplicationCreate(BaseModel):

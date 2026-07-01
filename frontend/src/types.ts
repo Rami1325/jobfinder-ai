@@ -102,6 +102,13 @@ export interface ResumeUploadResponse {
   ledger: FactsLedger;
 }
 
+export interface MasterResume {
+  resume: ResumeModel;
+  ledger: FactsLedger | null;
+  label: string;
+  updated_at: string;
+}
+
 export interface ApplicationOut {
   id: number;
   job_title: string;

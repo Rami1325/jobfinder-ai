@@ -12,7 +12,7 @@ from app.core.cover_letter import generate_cover_letter
 from app.core.jd_analyzer import analyze_jd
 from app.core.tailor import tailor_resume
 from app.db.database import get_db
-from app.db.models import Application
+from app.db.models import Application, SavedResume
 from app.models import (
     ApplicationCreate,
     ApplicationDetail,
@@ -20,8 +20,11 @@ from app.models import (
     ApplicationUpdate,
     CoverLetterRequest,
     CoverLetterResponse,
+    FactsLedger,
     JDAnalyzeRequest,
     JDModel,
+    MasterResumeIn,
+    MasterResumeOut,
     RenderRequest,
     ResumeModel,
     ResumeUploadResponse,
@@ -104,6 +107,57 @@ def render(body: RenderRequest):
         io.BytesIO(content),
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Master résumé (persisted, reused across Tailor / Interview / Job Match)
+# --------------------------------------------------------------------------- #
+def _master_row(db: Session) -> SavedResume | None:
+    return db.execute(
+        select(SavedResume).order_by(SavedResume.updated_at.desc())
+    ).scalars().first()
+
+
+@router.get("/profile/resume", response_model=MasterResumeOut | None)
+def get_master_resume(db: Session = Depends(get_db)) -> MasterResumeOut | None:
+    row = _master_row(db)
+    if not row or not row.resume_json:
+        return None
+    try:
+        resume = ResumeModel.model_validate_json(row.resume_json)
+    except Exception:  # noqa: BLE001 - tolerate legacy/corrupt rows
+        return None
+    ledger = None
+    if row.ledger_json:
+        try:
+            ledger = FactsLedger.model_validate_json(row.ledger_json)
+        except Exception:  # noqa: BLE001
+            ledger = None
+    return MasterResumeOut(
+        resume=resume,
+        ledger=ledger,
+        label=row.label,
+        updated_at=row.updated_at.isoformat() if row.updated_at else "",
+    )
+
+
+@router.put("/profile/resume", response_model=MasterResumeOut)
+def save_master_resume(body: MasterResumeIn, db: Session = Depends(get_db)) -> MasterResumeOut:
+    row = _master_row(db)
+    if row is None:
+        row = SavedResume()
+        db.add(row)
+    row.label = body.label
+    row.resume_json = body.resume.model_dump_json()
+    row.ledger_json = body.ledger.model_dump_json() if body.ledger else ""
+    db.commit()
+    db.refresh(row)
+    return MasterResumeOut(
+        resume=body.resume,
+        ledger=body.ledger,
+        label=row.label,
+        updated_at=row.updated_at.isoformat() if row.updated_at else "",
     )
 
 

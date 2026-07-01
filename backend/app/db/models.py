@@ -24,3 +24,23 @@ class Application(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+
+
+class SavedResume(Base):
+    """The user's persisted master résumé, reused across Tailor / Interview / Job Match.
+
+    Single-user today (the most-recently-updated row is treated as the master), but
+    carries a `label` so multiple named résumés — and a future `user_id` — slot in cleanly.
+    """
+
+    __tablename__ = "saved_resumes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    label: Mapped[str] = mapped_column(String(255), default="My résumé")
+    resume_json: Mapped[str] = mapped_column(Text, default="")
+    ledger_json: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
