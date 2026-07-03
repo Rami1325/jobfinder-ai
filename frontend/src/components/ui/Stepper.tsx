@@ -9,13 +9,13 @@ interface StepperProps {
 /** Horizontal progress stepper for the tailor flow. */
 export default function Stepper({ steps, current }: StepperProps) {
   return (
-    <ol className="flex items-center gap-2">
+    <ol className="flex items-center gap-1.5 sm:gap-2">
       {steps.map((label, i) => {
         const done = i < current;
         const active = i === current;
         return (
-          <li key={label} className="flex flex-1 items-center gap-2">
-            <div className="flex items-center gap-2">
+          <li key={label} className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
+            <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
               <span
                 className={cn(
                   "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
@@ -28,8 +28,12 @@ export default function Stepper({ steps, current }: StepperProps) {
               </span>
               <span
                 className={cn(
-                  "text-sm font-medium",
-                  active ? "text-ink" : done ? "text-ink-muted" : "text-ink-faint",
+                  active
+                    ? "truncate text-sm font-medium text-ink"
+                    : cn(
+                        "hidden text-sm font-medium sm:inline",
+                        done ? "text-ink-muted" : "text-ink-faint",
+                      ),
                 )}
               >
                 {label}

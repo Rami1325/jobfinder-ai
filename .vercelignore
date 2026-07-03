@@ -1,0 +1,10 @@
+# Keep the CLI upload small and free of secrets.
+backend/.venv
+backend/.env
+backend/tests
+frontend/node_modules
+frontend/dist
+**/__pycache__
+*.db
+render.yaml
+CLAUDE.md

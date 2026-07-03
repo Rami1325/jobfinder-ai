@@ -215,11 +215,11 @@ export default function TrackerPage() {
           </p>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-4 md:mx-0 md:grid md:snap-none md:overflow-visible md:px-0 md:pb-0 md:grid-cols-2 xl:grid-cols-5">
           {COLUMNS.map((col) => {
             const items = apps.filter((a) => (a.status || "saved") === col.key);
             return (
-              <div key={col.key} className="flex flex-col overflow-hidden rounded-2xl border border-line/60 bg-panel/40">
+              <div key={col.key} className="flex w-[82vw] max-w-[320px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl border border-line/60 bg-panel/40 md:w-auto md:max-w-none">
                 <div className={cn("h-[2px] w-full", col.bar)} aria-hidden />
                 <div className="flex items-center justify-between px-3 pb-1 pt-3">
                   <div className="flex items-center gap-2">
@@ -305,7 +305,7 @@ export default function TrackerPage() {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 title="Open job posting"
-                                className="rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-accent/50 hover:text-accent"
+                                className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-accent/50 hover:text-accent md:min-h-0 md:min-w-0"
                               >
                                 <ExternalLink size={15} />
                               </a>
@@ -313,14 +313,14 @@ export default function TrackerPage() {
                             <button
                               onClick={() => view(a.id)}
                               title="View"
-                              className="rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-accent/50 hover:text-ink"
+                              className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-accent/50 hover:text-ink md:min-h-0 md:min-w-0"
                             >
                               <Eye size={15} />
                             </button>
                             <button
                               onClick={() => remove(a.id)}
                               title="Delete"
-                              className="rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger"
+                              className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
                             >
                               <Trash2 size={15} />
                             </button>
@@ -405,7 +405,7 @@ export default function TrackerPage() {
                 <h3 className="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
                   Cover letter
                 </h3>
-                <div className="whitespace-pre-wrap rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink">
+                <div className="whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink">
                   {detail.cover_letter}
                 </div>
               </>

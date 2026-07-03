@@ -77,7 +77,7 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
       </div>
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       {text && (
-        <div className="mt-3 whitespace-pre-wrap rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink">
+        <div className="mt-3 whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink">
           {text}
         </div>
       )}

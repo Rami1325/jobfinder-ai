@@ -33,7 +33,7 @@ export default function ScoreCard({ before, after }: { before: Score; after: Sco
       <div className="mt-5 grid grid-cols-1 gap-8 sm:grid-cols-3 sm:gap-4">
         {rings.map((r) => (
           <div key={r.label} className="flex flex-col items-center gap-3">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-center gap-2">
               <div className="flex flex-col items-center gap-1 opacity-50">
                 <ProgressRing value={r.b} size={72} stroke={6} tone={r.tone} />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">

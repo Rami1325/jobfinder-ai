@@ -189,3 +189,8 @@ select {
 .resume-view ul { margin: 4px 0 0; padding-left: 18px; }
 .resume-view li { margin-bottom: 3px; }
 .resume-view p { margin: 0; }
+
+/* iOS Safari zooms the page when a focused control is <16px. */
+@media (max-width: 640px) {
+  input, textarea, select { font-size: 16px !important; }
+}

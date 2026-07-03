@@ -186,7 +186,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
         <button
           onClick={() => onDelete(hit.id)}
           title="Remove from history"
-          className="rounded-lg border border-line p-2 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger"
+          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
         >
           <Trash2 size={14} />
         </button>
@@ -369,7 +369,7 @@ export default function JobsPage() {
         </p>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {(
           [
             { key: "search", label: "Find on LinkedIn" },
@@ -380,7 +380,7 @@ export default function JobsPage() {
           <button
             key={t.key}
             onClick={() => setMode(t.key)}
-            className={`rounded-lg border px-4 py-2 text-sm font-semibold transition-colors ${
+            className={`whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition-colors sm:px-4 ${
               mode === t.key
                 ? "border-accent/60 bg-bg-soft text-ink"
                 : "border-line text-ink-muted hover:text-ink"

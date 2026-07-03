@@ -33,3 +33,6 @@ Thumbs.db
 
 # Local Claude Code config / personal skills (not part of the app)
 .claude/
+
+.vercel
+.env*
