@@ -1,13 +1,19 @@
 """Offline end-to-end smoke test using the stub LLM (no API key needed).
 
+DB checks run against a throwaway temp SQLite file (DATABASE_URL override below),
+so the repo's jobfinder.db is never touched.
+
 Run from the backend dir:
     .venv\\Scripts\\python.exe -m tests.smoke_test
 """
 from __future__ import annotations
 
 import os
+import tempfile
 
 os.environ["USE_STUB_LLM"] = "true"
+# Must be set before any app.* import — app.db.database builds the engine at import time.
+os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(tempfile.mkdtemp(), "smoke.db").replace("\\", "/")
 
 from app.config import get_settings  # noqa: E402
 
@@ -125,6 +131,122 @@ check(
     "real jd text is not flagged as login wall",
     not _looks_like_login_wall("We are hiring a Python engineer to build REST APIs and CI/CD pipelines."),
 )
+
+# 14. LinkedIn job search helpers (pure, offline): card parser + url builder + context
+from app.core.job_search import (  # noqa: E402
+    _build_search_url,
+    _fallback_context,
+    derive_search_context,
+    parse_search_results,
+)
+from app.models import JobMatch  # noqa: E402
+
+_SEARCH_FIXTURE = """<ul><li>
+  <a class="base-card__full-link" href="https://il.linkedin.com/jobs/view/backend-engineer-at-acme-4406118990?refId=abc&amp;trackingId=xyz">x</a>
+  <h3 class="base-search-card__title"> Backend Engineer </h3>
+  <h4 class="base-search-card__subtitle"><a class="hidden-nested-link">Acme Ltd</a></h4>
+  <span class="job-search-card__location">Tel Aviv, Israel</span>
+</li><li>
+  <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/9912345678">y</a>
+  <h3 class="base-search-card__title">Data Engineer</h3>
+  <h4 class="base-search-card__subtitle"><a>Beta Inc</a></h4>
+  <span class="job-search-card__location">Haifa, Israel</span>
+</li></ul>"""
+
+cards = parse_search_results(_SEARCH_FIXTURE)
+check("search parser found both cards", len(cards) == 2, str(len(cards)))
+check(
+    "search card fields extracted",
+    cards[0]["title"] == "Backend Engineer"
+    and cards[0]["company"] == "Acme Ltd"
+    and cards[0]["location"] == "Tel Aviv, Israel",
+    str(cards[0]) if cards else "",
+)
+check(
+    "search card url stripped of tracking query",
+    cards[0]["url"].endswith("backend-engineer-at-acme-4406118990"),
+    cards[0]["url"] if cards else "",
+)
+check("empty html parses to empty card list", parse_search_results("<html></html>") == [])
+check(
+    "duplicate job ids deduped",
+    len(parse_search_results(_SEARCH_FIXTURE + _SEARCH_FIXTURE)) == 2,
+)
+
+_u = _build_search_url("Backend Engineer", "Tel Aviv, Israel", "remote", 0)
+check(
+    "search url has keywords + location + f_WT",
+    "keywords=Backend+Engineer" in _u and "location=Tel+Aviv%2C+Israel" in _u and "f_WT=2" in _u,
+    _u,
+)
+check("work mode 'any' omits f_WT", "f_WT" not in _build_search_url("X", "Y", "any", 0))
+
+_fb = _fallback_context(resume)  # stub resume: Engineer at Acme Corp
+check("fallback context uses most recent title", _fb.job_title == "Engineer", _fb.job_title)
+_ctx = derive_search_context(resume)  # routes through the SEARCH_CONTEXT stub branch
+check("stub search context derived", _ctx.job_title != "", str(_ctx))
+check("JobMatch back-compat: url defaults empty", JobMatch().url == "")
+
+# 15. DB layer (temp SQLite): migration shim + job-search history + tracker fields
+from app.db.database import SessionLocal, engine, init_db  # noqa: E402
+from app.db.history import list_search_hits, record_search_hits  # noqa: E402
+from app.db.models import Application  # noqa: E402
+
+# Simulate a pre-existing DB whose applications table predates job_url/interviewed,
+# so init_db()'s ADD-COLUMN shim has real work to do (create_all won't touch it).
+with engine.connect() as _conn:
+    _conn.exec_driver_sql(
+        "CREATE TABLE applications ("
+        "id INTEGER PRIMARY KEY, job_title VARCHAR(255), company VARCHAR(255), "
+        "jd_text TEXT, tailored_resume_json TEXT, cover_letter TEXT, "
+        "overall_score FLOAT, status VARCHAR(50), notes TEXT, created_at DATETIME)"
+    )
+    _conn.commit()
+
+init_db()
+init_db()  # idempotent — create_all + shim must tolerate re-runs
+check("init_db runs twice without error", True)
+
+with engine.connect() as _conn:
+    _cols = {r[1] for r in _conn.exec_driver_sql("PRAGMA table_info(applications)").fetchall()}
+check(
+    "migration shim added job_url + interviewed",
+    {"job_url", "interviewed"} <= _cols,
+    str(sorted(_cols)),
+)
+
+_db = SessionLocal()
+record_search_hits(_db, [
+    JobMatch(title="Backend Engineer", company="Acme", overall=50.0, url="https://x/jobs/1"),
+    JobMatch(title="Data Engineer", company="Beta", overall=60.0, url="https://x/jobs/2"),
+])
+check("search history recorded 2 hits", len(list_search_hits(_db)) == 2, str(len(list_search_hits(_db))))
+
+record_search_hits(_db, [JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1")])
+_hits = list_search_hits(_db)
+_by_url = {h.url: h for h in _hits}
+check("re-record upserts by url (still 2 rows)", len(_hits) == 2, str(len(_hits)))
+check("re-record refreshed the score", _by_url["https://x/jobs/1"].overall == 75.0, str(_by_url["https://x/jobs/1"].overall))
+
+record_search_hits(_db, [JobMatch(title=f"Role {i}", url=f"https://bulk/{i}") for i in range(105)])
+_hits = list_search_hits(_db)
+_urls = {h.url for h in _hits}
+check("history capped at 100 rows", len(_hits) == 100, str(len(_hits)))
+check(
+    "earliest-inserted urls trimmed first",
+    "https://x/jobs/1" not in _urls and "https://bulk/0" not in _urls and "https://bulk/104" in _urls,
+)
+
+_app_row = Application(job_title="Backend Engineer", company="Acme", job_url="https://x/jobs/1", interviewed=True)
+_db.add(_app_row)
+_db.commit()
+_db.refresh(_app_row)
+_read = _db.get(Application, _app_row.id)
+check(
+    "application persists job_url + interviewed",
+    _read is not None and _read.job_url == "https://x/jobs/1" and _read.interviewed is True,
+)
+_db.close()
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

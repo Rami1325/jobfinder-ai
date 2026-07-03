@@ -44,6 +44,9 @@ compelling, credible fit to a human recruiter — without ever fabricating anyth
   re-emphasize, and re-word — never invent.
 - NEVER add or alter: employers, job titles, employment dates, schools, degrees,
   certifications, or any metric/number. Keep every factual anchor byte-for-byte truthful.
+- Numbers come ONLY from the original resume, never from the JD. Do not restate the
+  candidate's experience using the JD's phrasing of a number (if they wrote "about five
+  years", do not write the JD's "5+ years").
 - SKILLS ARE A CLOSED SET. The candidate's skill vocabulary is fixed to the skills,
   tools, technologies, and methods that ALREADY appear somewhere in the original resume
   (its skills list, summary, experience bullets, or projects). You MAY re-order these,
@@ -64,19 +67,58 @@ compelling, credible fit to a human recruiter — without ever fabricating anyth
   "Search Engine Optimization (SEO)", "Amazon Web Services (AWS)".
 - It penalizes keyword stuffing, so integrate terms naturally and only where earned.
 
+================ VOICE: IT MUST READ LIKE THE CANDIDATE WROTE IT ================
+After the ATS, a recruiter who reads hundreds of resumes will read this one — and they
+can smell AI-generated text instantly. The resume must sound like a competent
+professional typed it themselves. This outranks sounding "polished".
+- BANNED WORDS/PHRASES — a HARD constraint, same severity as the truthfulness rules,
+  not a style preference. Never output these, even (especially) when the original
+  resume uses them. This ban OVERRIDES the light-touch rule below: a banned word in an
+  original bullet is exactly the "real weakness" that justifies a rewrite — restate the
+  same fact with a plain verb. Banned: spearheaded, leveraged/leveraging, utilized/utilizing, honed,
+  passionate, results-driven, detail-oriented, dynamic, seamless(ly), cutting-edge,
+  meticulous(ly), proven track record, synergy, fast-paced environment, impactful,
+  delve, empowered, elevated, championed, orchestrated, harnessed, fostered a culture,
+  streamlined, actionable insights, best-in-class, world-class, "driving results".
+  (e.g. "Spearheaded the delivery of 12 projects" -> "Led 12 software projects end to
+  end"; "Orchestrated stakeholder alignment meetings" -> "Ran stakeholder alignment
+  meetings"; "Streamlined the intake process" -> "Reworked the intake process".)
+- Use the plain verbs a working professional actually says: built, ran, wrote, led,
+  fixed, cut, set up, managed, shipped, owned, automated, tracked. Plain and specific
+  beats impressive and vague — "cut the nightly run from 4h to 40min" is stronger than
+  any adjective.
+- VARY the bullet shapes. The biggest AI tell is every bullet poured into one mold
+  ("Verbed X by doing Y, resulting in Z%"). Real resumes mix it up: some bullets are
+  short and plain, some name the tool mid-sentence, some lead with context, only some
+  end on a number. Do NOT append an outcome clause ("resulting in...", "driving...",
+  "ensuring...", "enabling...") to a bullet that didn't have one, and never use that
+  construction in more than one bullet per role.
+- LIGHT TOUCH: where the candidate's own wording is already clear and concrete, keep it.
+  Rewrite a bullet only when it earns a JD keyword or fixes a real weakness. A resume
+  that is 60% the candidate's own words is more credible than a full rewrite.
+- Metrics stay exactly as written, undecorated — never "an impressive 12%", and don't
+  reshuffle sentences so every bullet ends on its number.
+- SUMMARY: write it the way the candidate would describe themselves to a colleague —
+  concrete nouns and real experience, not a brand slogan. No adjective stacks, no
+  "professional with a track record of X, Y, and Z", no third-person self-praise.
+  Use the standard implied first person of resumes: no "I", no "he/she" ("Builds
+  dashboards..." not "I build dashboards...").
+- Skip the decorative em-dash and the three-item rhetorical list; both read as AI when
+  they show up in every sentence.
+
 ================ TAILORING STRATEGY ================
 1. SUMMARY: Rewrite into 2-3 tight lines targeting THIS role. Lead with the candidate's
    real seniority + the target job title (if their background supports it) and the 3-5
-   highest-priority JD keywords they genuinely match.
+   highest-priority JD keywords they genuinely match — phrased per the VOICE rules.
 2. SKILLS: Re-order the candidate's EXISTING skills so the JD-relevant ones appear first,
    using the JD's exact wording. Merge duplicates; drop irrelevant noise. Every entry in
    the output skills list must trace back to the original resume — never add an unowned
    skill (or an unowned tool inside a rephrase) to close a gap.
 3. EXPERIENCE: Keep companies/titles/dates exactly. Reorder bullets within each role so the
-   most JD-relevant achievements come first. Rewrite bullets to: start with a strong action
-   verb, mirror the JD's language/keywords where truthful, and preserve every real metric
-   unchanged. Reorder whole roles by relevance ONLY if dates still read chronologically
-   sensibly; otherwise keep chronological order.
+   most JD-relevant achievements come first. Most bullets should open with a verb, but vary
+   the verbs and sentence shapes (see VOICE). Mirror the JD's language/keywords where
+   truthful, and preserve every real metric unchanged. Reorder whole roles by relevance
+   ONLY if dates still read chronologically sensibly; otherwise keep chronological order.
 4. KEYWORD COVERAGE: Maximize how many genuine JD must-have keywords appear, naturally, in
    the summary, skills, and bullets — without inventing experience.
 5. COMPLETENESS: Return the FULL resume. Preserve every original section and entry (contact,
@@ -88,7 +130,13 @@ compelling, credible fit to a human recruiter — without ever fabricating anyth
 Re-read your tailored_resume and verify:
   (a) EVERY skill/tool/technology you list also appears in the ORIGINAL resume;
   (b) all employers, titles, dates, and numbers are unchanged from the original;
-  (c) no section or entry was dropped.
+  (c) no section or entry was dropped;
+  (d) BANNED-WORD SCAN: go through the banned list ONE WORD AT A TIME (spearheaded,
+      leveraged, utilized, championed, orchestrated, streamlined, ...) and search your
+      output for each. Any hit — including one copied from the original resume — must be
+      rewritten with a plain verb before you return.
+  (e) no two bullets in a role share the same "did X, resulting in Y" mold, and
+      "resulting in" appears at most once in the whole resume.
 If any check fails, remove or correct the offending content before you output.
 
 ================ OUTPUT ================
@@ -155,6 +203,14 @@ You write a concise, specific follow-up email for a job application. No clichés
 no fabricated details. Reference the role and company and one genuine point of fit. \
 Keep it under 150 words. Return JSON: {"subject": "...", "body": "plain text email body"}"""
 
+SEARCH_CONTEXT_SYSTEM = """Task: SEARCH_CONTEXT.
+You derive a job-board search query from a candidate's resume. Pick the single job title \
+that best matches their most recent experience and overall skill set — a title a job board \
+would recognize, 1-4 words (e.g. "Backend Engineer", not a full sentence). Pick the location \
+to search: the city or country implied by their contact info or most recent role; prefer the \
+country if ambiguous. Return JSON: {"job_title": "...", "location": "..."}
+Use empty strings if truly unknown. Never invent a location the resume does not imply."""
+
 
 def structure_resume_user(raw_text: str) -> str:
     return f"Resume text to structure:\n\n{raw_text}"
@@ -180,6 +236,10 @@ def interview_feedback_user(resume_json: str, question: str, answer: str) -> str
 
 def linkedin_user(resume_json: str) -> str:
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nProduce the optimized LinkedIn content."
+
+
+def search_context_user(resume_json: str) -> str:
+    return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nDerive the search query."
 
 
 def follow_up_user(company: str, role: str, stage: str, extra: str) -> str:

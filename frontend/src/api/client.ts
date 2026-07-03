@@ -10,10 +10,13 @@ import type {
   InterviewQuestionsResult,
   JDModel,
   JobMatchResult,
+  JobSearchHistory,
+  JobSearchResult,
   LinkedInResult,
   MasterResume,
   ResumeModel,
   ResumeUploadResponse,
+  SearchContext,
   TailorResult,
 } from "../types";
 
@@ -52,12 +55,23 @@ export async function coverLetter(
   return data.cover_letter;
 }
 
-export async function downloadResume(resume: ResumeModel, fmt: "docx" | "pdf"): Promise<void> {
+/** "Rami Bar - AppsFlyer" from whatever parts exist; falls back to "resume". */
+export function resumeFilename(candidateName: string, company: string): string {
+  const clean = (s: string) => s.replace(/[<>:"/\\|?*]+/g, "").replace(/\s+/g, " ").trim();
+  const parts = [clean(candidateName), clean(company)].filter(Boolean);
+  return parts.join(" - ") || "resume";
+}
+
+export async function downloadResume(
+  resume: ResumeModel,
+  fmt: "docx" | "pdf",
+  filename?: string,
+): Promise<void> {
   const resp = await api.post("/render", { resume, fmt }, { responseType: "blob" });
   const url = URL.createObjectURL(resp.data as Blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `resume.${fmt}`;
+  a.download = `${filename || "resume"}.${fmt}`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -100,6 +114,35 @@ export async function matchJobs(resume: ResumeModel, listings: string[]): Promis
 export async function fetchJob(url: string): Promise<string> {
   const { data } = await api.post<{ text: string }>("/jobs/fetch", { url });
   return data.text;
+}
+
+export async function searchJobs(
+  resume: ResumeModel,
+  customize?: SearchContext | null,
+): Promise<JobSearchResult> {
+  const { data } = await api.post<JobSearchResult>("/jobs/search", {
+    resume,
+    customize: customize ?? null,
+  });
+  return data;
+}
+
+export async function searchContext(resume: ResumeModel): Promise<SearchContext> {
+  const { data } = await api.post<SearchContext>("/jobs/search-context", { resume });
+  return data;
+}
+
+export async function getJobHistory(): Promise<JobSearchHistory> {
+  const { data } = await api.get<JobSearchHistory>("/jobs/history");
+  return data;
+}
+
+export async function deleteJobHistoryItem(id: number): Promise<void> {
+  await api.delete(`/jobs/history/${id}`);
+}
+
+export async function clearJobHistory(): Promise<void> {
+  await api.delete("/jobs/history");
 }
 
 export async function atsScan(resume: ResumeModel, jdText = ""): Promise<ATSScanResult> {
@@ -153,6 +196,8 @@ export async function saveApplication(payload: {
   tailored_resume: ResumeModel;
   cover_letter: string;
   overall_score: number;
+  job_url?: string;
+  status?: string;
 }): Promise<ApplicationOut> {
   const { data } = await api.post<ApplicationOut>("/applications", payload);
   return data;
@@ -160,7 +205,7 @@ export async function saveApplication(payload: {
 
 export async function updateApplication(
   id: number,
-  patch: { status?: string; notes?: string },
+  patch: { status?: string; notes?: string; interviewed?: boolean },
 ): Promise<ApplicationOut> {
   const { data } = await api.patch<ApplicationOut>(`/applications/${id}`, patch);
   return data;

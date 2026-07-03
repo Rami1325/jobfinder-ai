@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -14,9 +15,11 @@ from app.core.follow_up import write_follow_up
 from app.core.interview import answer_feedback, generate_questions, model_answer
 from app.core.jd_analyzer import analyze_jd
 from app.core.job_match import fetch_job_text, match_jobs
+from app.core.job_search import derive_search_context, search_linkedin_jobs
 from app.core.linkedin import optimize_linkedin
 from app.core.tailor import tailor_resume
 from app.db.database import get_db
+from app.db.history import clear_search_hits, delete_search_hit, list_search_hits, record_search_hits
 from app.db.models import Application, SavedResume
 from app.models import (
     ApplicationCreate,
@@ -42,6 +45,10 @@ from app.models import (
     JobFetchResponse,
     JobMatchRequest,
     JobMatchResult,
+    JobSearchHistory,
+    JobSearchHitOut,
+    JobSearchRequest,
+    JobSearchResult,
     LinkedInRequest,
     LinkedInResult,
     MasterResumeIn,
@@ -49,6 +56,8 @@ from app.models import (
     RenderRequest,
     ResumeModel,
     ResumeUploadResponse,
+    SearchContext,
+    SearchContextRequest,
     TailorRequest,
     TailorResult,
 )
@@ -185,6 +194,69 @@ def jobs_fetch(body: JobFetchRequest) -> JobFetchResponse:
         raise HTTPException(400, f"Could not fetch that URL: {e}")
 
 
+@router.post("/jobs/search-context", response_model=SearchContext)
+def jobs_search_context(body: SearchContextRequest) -> SearchContext:
+    """Derive what/where to search from the résumé, so the UI can prefill the
+    'Customize search' fields before any scrape runs."""
+    try:
+        return derive_search_context(body.resume)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Error deriving search context: {e}")
+
+
+@router.post("/jobs/search", response_model=JobSearchResult)
+def jobs_search(body: JobSearchRequest, db: Session = Depends(get_db)) -> JobSearchResult:
+    try:
+        result = search_linkedin_jobs(body.resume, body.customize)
+    except ValueError as e:  # user-facing scrape/search problems
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Error while searching jobs: {e}")
+    try:  # history persistence is best-effort — never fail the search because of it
+        record_search_hits(db, result.matches)
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
+@router.get("/jobs/history", response_model=JobSearchHistory)
+def jobs_history(db: Session = Depends(get_db)) -> JobSearchHistory:
+    hits: list[JobSearchHitOut] = []
+    for row in list_search_hits(db):
+        try:
+            top_gaps = json.loads(row.top_gaps_json) if row.top_gaps_json else []
+        except Exception:  # noqa: BLE001 - tolerate legacy/corrupt rows
+            top_gaps = []
+        hits.append(
+            JobSearchHitOut(
+                id=row.id,
+                title=row.title,
+                company=row.company,
+                location=row.location,
+                url=row.url,
+                overall=row.overall,
+                keyword_coverage=row.keyword_coverage,
+                fit_score=row.fit_score,
+                top_gaps=top_gaps,
+                jd_text=row.jd_text,
+                searched_at=row.searched_at.isoformat() if row.searched_at else "",
+            )
+        )
+    return JobSearchHistory(hits=hits)
+
+
+@router.delete("/jobs/history/{hit_id}")
+def delete_jobs_history_item(hit_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
+    if not delete_search_hit(db, hit_id):
+        raise HTTPException(404, "History item not found.")
+    return {"deleted": True}
+
+
+@router.delete("/jobs/history")
+def clear_jobs_history(db: Session = Depends(get_db)) -> dict[str, int]:
+    return {"deleted": clear_search_hits(db)}
+
+
 # --------------------------------------------------------------------------- #
 # Standalone tools
 # --------------------------------------------------------------------------- #
@@ -274,6 +346,8 @@ def _to_out(app: Application) -> ApplicationOut:
         overall_score=app.overall_score,
         status=app.status,
         notes=app.notes,
+        job_url=app.job_url,
+        interviewed=app.interviewed,
         created_at=app.created_at.isoformat() if app.created_at else "",
     )
 
@@ -305,6 +379,8 @@ def get_application(app_id: int, db: Session = Depends(get_db)) -> ApplicationDe
         overall_score=app.overall_score,
         status=app.status,
         notes=app.notes,
+        job_url=app.job_url,
+        interviewed=app.interviewed,
         created_at=app.created_at.isoformat() if app.created_at else "",
     )
 
@@ -319,6 +395,7 @@ def create_application(body: ApplicationCreate, db: Session = Depends(get_db)) -
         cover_letter=body.cover_letter,
         overall_score=body.overall_score,
         status=body.status,
+        job_url=body.job_url,
     )
     db.add(app)
     db.commit()
@@ -335,6 +412,8 @@ def update_application(app_id: int, body: ApplicationUpdate, db: Session = Depen
         app.status = body.status
     if body.notes is not None:
         app.notes = body.notes
+    if body.interviewed is not None:
+        app.interviewed = body.interviewed
     db.commit()
     db.refresh(app)
     return _to_out(app)

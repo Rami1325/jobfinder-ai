@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Wand2, Download, Save, BadgeCheck } from "lucide-react";
+import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink } from "lucide-react";
 import {
   analyzeJD,
   downloadResume,
+  resumeFilename,
   getMasterResume,
   saveApplication,
   saveMasterResume,
   tailor,
+  updateApplication,
 } from "../api/client";
 import ChangeLog from "../components/ChangeLog";
 import CoverLetter from "../components/CoverLetter";
@@ -16,11 +18,16 @@ import GapList from "../components/GapList";
 import JDPaste from "../components/JDPaste";
 import ResumeUpload from "../components/ResumeUpload";
 import ScoreCard from "../components/ScoreCard";
-import { Button, Card, CardTitle, Skeleton, Stepper, useToast } from "../components/ui";
+import { Badge, Button, Card, CardTitle, Skeleton, Stepper, useToast } from "../components/ui";
 import type { FactsLedger, JDModel, ResumeModel, TailorResult } from "../types";
 
 export default function TailorPage() {
-  const loc = useLocation() as { state?: { jdText?: string } };
+  const loc = useLocation() as {
+    state?: { jdText?: string; jobUrl?: string; jobTitle?: string; company?: string };
+  };
+  const jobUrl = loc.state?.jobUrl;
+  const jobTitle = loc.state?.jobTitle;
+  const company = loc.state?.company;
   const [resume, setResume] = useState<ResumeModel | null>(null);
   const [, setLedger] = useState<FactsLedger | null>(null);
   const [masterLabel, setMasterLabel] = useState("");
@@ -30,6 +37,9 @@ export default function TailorPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [savedAppId, setSavedAppId] = useState<number | null>(null);
+  const [applyClicked, setApplyClicked] = useState(false);
+  const [applied, setApplied] = useState(false);
   const [coverLetterText, setCoverLetterText] = useState("");
   const toast = useToast();
 
@@ -87,16 +97,50 @@ export default function TailorPage() {
 
   async function save() {
     if (!result || !jd) return;
-    await saveApplication({
+    if (savedAppId !== null) {
+      // Already created (by Save or "Yes, applied") — never double-create.
+      setSaved(true);
+      toast("success", "Already in your tracker");
+      return;
+    }
+    const app = await saveApplication({
       job_title: jd.job_title,
       company: jd.company,
       jd_text: jdText,
       tailored_resume: result.tailored_resume,
       cover_letter: coverLetterText,
       overall_score: result.score_after.overall,
+      job_url: jobUrl || undefined,
     });
+    setSavedAppId(app.id);
     setSaved(true);
     toast("success", "Saved to tracker");
+  }
+
+  async function markApplied() {
+    try {
+      if (savedAppId !== null) {
+        await updateApplication(savedAppId, { status: "applied" });
+      } else {
+        const app = await saveApplication({
+          job_title: jd?.job_title || jobTitle || "",
+          company: jd?.company || company || "",
+          jd_text: jdText,
+          // Backend accepts a missing tailored_resume; axios drops undefined fields.
+          tailored_resume: result?.tailored_resume as ResumeModel,
+          cover_letter: coverLetterText,
+          overall_score: result?.score_after.overall ?? 0,
+          status: "applied",
+          job_url: jobUrl,
+        });
+        setSavedAppId(app.id);
+      }
+      setSaved(true);
+      setApplied(true);
+      toast("success", "Marked as applied — added to tracker");
+    } catch {
+      toast("error", "Could not update the tracker. Is the backend running?");
+    }
   }
 
   return (
@@ -111,6 +155,48 @@ export default function TailorPage() {
       <Card>
         <Stepper steps={["Résumé", "Job description", "Results"]} current={step} />
       </Card>
+
+      {jobUrl && (
+        <Card className="border-accent/40">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <Briefcase size={16} className="shrink-0 text-accent-soft" />
+            <p className="min-w-0 truncate text-sm font-semibold text-ink">
+              Target job: {jobTitle || "Job posting"}
+              {company ? ` · ${company}` : ""}
+            </p>
+            <a
+              href={jobUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setApplyClicked(true)}
+              className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
+            >
+              Open job posting <ExternalLink size={13} />
+            </a>
+            {applied && <Badge tone="mint">✓ Applied</Badge>}
+          </div>
+          <AnimatePresence initial={false}>
+            {applyClicked && !applied && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
+                  <span className="text-sm text-ink">Did you apply to this job?</span>
+                  <Button size="sm" onClick={markApplied}>
+                    Yes, applied
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setApplyClicked(false)}>
+                    Not yet
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </Card>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Card>
@@ -169,17 +255,43 @@ export default function TailorPage() {
             <Card>
               <CardTitle>Download tailored résumé</CardTitle>
               <div className="mt-3 flex flex-wrap items-center gap-3">
-                <Button icon={<Download size={16} />} onClick={() => downloadResume(result.tailored_resume, "docx")}>
+                <Button
+                  icon={<Download size={16} />}
+                  onClick={() =>
+                    downloadResume(
+                      result.tailored_resume,
+                      "docx",
+                      resumeFilename(result.tailored_resume.contact.name, jd?.company ?? ""),
+                    )
+                  }
+                >
                   Download .docx
                 </Button>
                 <Button
                   variant="secondary"
                   icon={<Download size={16} />}
-                  onClick={() => downloadResume(result.tailored_resume, "pdf")}
+                  onClick={() =>
+                    downloadResume(
+                      result.tailored_resume,
+                      "pdf",
+                      resumeFilename(result.tailored_resume.contact.name, jd?.company ?? ""),
+                    )
+                  }
                 >
                   Download .pdf
                 </Button>
                 <div className="flex-1" />
+                {jobUrl && (
+                  <a
+                    href={jobUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => setApplyClicked(true)}
+                    className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
+                  >
+                    <ExternalLink size={14} /> Open job posting
+                  </a>
+                )}
                 <Button variant="ghost" icon={<Save size={16} />} disabled={saved} onClick={save}>
                   {saved ? "✓ Saved to tracker" : "Save to tracker"}
                 </Button>

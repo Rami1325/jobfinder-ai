@@ -66,6 +66,7 @@ File upload → resume_parser (DOCX/PDF → raw text)
 Beyond the core pipeline, the backend also exposes standalone feature modules (each reuses the pipeline where possible and routes through the stub):
 - **Interview prep** (`app/core/interview.py`): questions, model answers (STAR, résumé-grounded), and feedback on a practice answer.
 - **Job match** (`app/core/job_match.py`): rank multiple pasted/URL-fetched listings by fit against the master résumé, reusing `jd_analyzer` + `scorer`.
+- **Job search** (`app/core/job_search.py`): scrape LinkedIn's public guest search endpoint for jobs matching the résumé (context auto-derived via the `SEARCH_CONTEXT` LLM task, user-overridable: title/location/work mode/limit), then fetch + score each posting like job match. The card parser is a pure function pinned by the smoke test — if LinkedIn changes its markup, fix `parse_search_results`.
 - **Tools**: `app/core/ats_scan.py` (deterministic format checks + optional keyword coverage), `app/core/linkedin.py`, `app/core/follow_up.py`.
 - **Master résumé** (`app/db/models.py::SavedResume`): persisted once, reused across Tailor / Interview / Job Match via `GET`/`PUT /profile/resume`.
 
@@ -76,7 +77,7 @@ Beyond the core pipeline, the backend also exposes standalone feature modules (e
 - `app/core/fabrication_guard.py` — builds a new ledger from the tailored resume, diffs against the original; flags anything that wasn't in the original. Tolerates containment matches to avoid false positives on light rephrasing.
 - `app/core/scorer.py` — keyword coverage is pure Python (deterministic, explainable); `fit_score` is the only part that calls the LLM. Both combined into `overall`.
 - `app/api/routes.py` — thin FastAPI handlers that wire the pipeline. No business logic here.
-- `app/db/` — SQLAlchemy + SQLite (`applications` tracker + `saved_resumes` master résumé). `init_db()` is called via the FastAPI lifespan hook.
+- `app/db/` — SQLAlchemy + SQLite (`applications` tracker + `saved_resumes` master résumé + `job_search_hits` search history). `init_db()` is called via the FastAPI lifespan hook and includes a lightweight SQLite ADD-COLUMN shim that adds any ORM columns missing from pre-existing tables. Job-search results are auto-persisted as history via `app/db/history.py` (deduped by URL, capped at the newest 100) and exposed at `GET`/`DELETE /jobs/history`.
 - `app/render/` — `docx_renderer.py` (python-docx) and `pdf_renderer.py` (reportlab). ATS-safe: single column, no tables/images/headers/footers.
 
 **Frontend layout:**

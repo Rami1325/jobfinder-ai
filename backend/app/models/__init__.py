@@ -179,11 +179,13 @@ class ApplicationCreate(BaseModel):
     cover_letter: str = ""
     overall_score: float = 0.0
     status: str = "saved"  # saved | applied | interview | offer | rejected
+    job_url: str = ""
 
 
 class ApplicationUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
+    interviewed: Optional[bool] = None
 
 
 class ApplicationOut(BaseModel):
@@ -193,6 +195,8 @@ class ApplicationOut(BaseModel):
     overall_score: float
     status: str
     notes: str = ""
+    job_url: str = ""
+    interviewed: bool = False
     created_at: str
 
 
@@ -206,6 +210,8 @@ class ApplicationDetail(BaseModel):
     overall_score: float
     status: str
     notes: str = ""
+    job_url: str = ""
+    interviewed: bool = False
     created_at: str
 
 
@@ -267,10 +273,56 @@ class JobMatch(BaseModel):
     fit_score: float = 0.0
     top_gaps: list[str] = Field(default_factory=list)
     jd_text: str = ""
+    url: str = ""  # set for scraped listings; empty for pasted ones
+    location: str = ""
 
 
 class JobMatchResult(BaseModel):
     matches: list[JobMatch] = Field(default_factory=list)
+
+
+class SearchContext(BaseModel):
+    """What/where to search on LinkedIn. Blank fields mean 'derive from résumé'."""
+
+    job_title: str = ""
+    location: str = ""
+    work_mode: str = "any"  # any | onsite | remote | hybrid
+    limit: int = 10  # jobs to fetch + score (1-25)
+
+
+class SearchContextRequest(BaseModel):
+    resume: ResumeModel
+
+
+class JobSearchRequest(BaseModel):
+    resume: ResumeModel
+    customize: Optional[SearchContext] = None  # None => fully automatic
+
+
+class JobSearchResult(BaseModel):
+    context: SearchContext = Field(default_factory=SearchContext)  # what was actually searched
+    matches: list[JobMatch] = Field(default_factory=list)
+    skipped: int = 0  # listings found but not fetchable/scorable
+
+
+class JobSearchHitOut(BaseModel):
+    """A persisted job-search history row (see app.db.models.JobSearchHit)."""
+
+    id: int
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    url: str = ""
+    overall: float = 0.0
+    keyword_coverage: float = 0.0
+    fit_score: float = 0.0
+    top_gaps: list[str] = Field(default_factory=list)
+    jd_text: str = ""
+    searched_at: str = ""
+
+
+class JobSearchHistory(BaseModel):
+    hits: list[JobSearchHitOut] = Field(default_factory=list)
 
 
 class JobFetchRequest(BaseModel):

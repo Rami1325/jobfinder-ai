@@ -116,6 +116,8 @@ export interface ApplicationOut {
   overall_score: number;
   status: string;
   notes: string;
+  job_url: string;
+  interviewed: boolean;
   created_at: string;
 }
 
@@ -129,6 +131,8 @@ export interface ApplicationDetail {
   overall_score: number;
   status: string;
   notes: string;
+  job_url: string;
+  interviewed: boolean;
   created_at: string;
 }
 
@@ -161,9 +165,38 @@ export interface JobMatch {
   fit_score: number;
   top_gaps: string[];
   jd_text: string;
+  url: string; // set for scraped listings; empty for pasted ones
+  location: string;
 }
 export interface JobMatchResult {
   matches: JobMatch[];
+}
+export interface SearchContext {
+  job_title: string;
+  location: string;
+  work_mode: string; // any | onsite | remote | hybrid
+  limit: number;
+}
+export interface JobSearchResult {
+  context: SearchContext;
+  matches: JobMatch[];
+  skipped: number;
+}
+export interface JobSearchHit {
+  id: number;
+  title: string;
+  company: string;
+  location: string;
+  url: string;
+  overall: number;
+  keyword_coverage: number;
+  fit_score: number;
+  top_gaps: string[];
+  jd_text: string;
+  searched_at: string;
+}
+export interface JobSearchHistory {
+  hits: JobSearchHit[];
 }
 
 // Tools

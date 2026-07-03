@@ -118,6 +118,8 @@ class StubClient:
                 "experience_bullets": ["[stub] Impact-first bullet from a real role."],
                 "skills": ["Python", "REST APIs", "SQL"],
             }
+        if "SEARCH_CONTEXT" in head:
+            return {"job_title": "Software Engineer", "location": "Israel"}
         if "FOLLOW_UP" in head:
             return {
                 "subject": "[stub] Following up on the {role} role",
