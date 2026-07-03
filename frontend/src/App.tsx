@@ -10,10 +10,13 @@ import ToolsPage from "./pages/ToolsPage";
 import AtsToolPage from "./pages/tools/AtsToolPage";
 import LinkedInToolPage from "./pages/tools/LinkedInToolPage";
 import FollowUpToolPage from "./pages/tools/FollowUpToolPage";
+import AccessGate from "./components/AccessGate";
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <AccessGate />
+      <Routes>
       <Route element={<MarketingLayout />}>
         <Route path="/" element={<Landing />} />
       </Route>
@@ -28,6 +31,7 @@ export default function App() {
         <Route path="/tracker" element={<TrackerPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }

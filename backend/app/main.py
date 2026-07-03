@@ -1,10 +1,12 @@
 """FastAPI application entrypoint."""
 from __future__ import annotations
 
+import hmac
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.routes import router
 from app.config import get_settings
@@ -27,6 +29,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Paths as seen locally and under the Vercel /api mount.
+_GATE_EXEMPT = {"/", "/health", "/api", "/api/health"}
+
+
+@app.middleware("http")
+async def access_gate(request: Request, call_next):
+    """When APP_ACCESS_CODE is set (the public deployment), require every API
+    call to present it in X-App-Key. Unset locally, so dev is unaffected."""
+    code = settings.app_access_code
+    if (
+        code
+        and request.method != "OPTIONS"
+        and request.url.path not in _GATE_EXEMPT
+        and not hmac.compare_digest(request.headers.get("x-app-key", ""), code)
+    ):
+        return JSONResponse({"detail": "Access code required."}, status_code=401)
+    return await call_next(request)
+
 
 app.include_router(router)
 

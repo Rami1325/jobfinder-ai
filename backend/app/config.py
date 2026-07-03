@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     openai_api_key: str = ""
+    app_access_code: str = ""  # non-empty => every API call must send X-App-Key
     model_id: str = "gpt-4o-mini"
     use_stub_llm: bool = False
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
