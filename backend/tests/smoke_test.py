@@ -146,6 +146,7 @@ _SEARCH_FIXTURE = """<ul><li>
   <h3 class="base-search-card__title"> Backend Engineer </h3>
   <h4 class="base-search-card__subtitle"><a class="hidden-nested-link">Acme Ltd</a></h4>
   <span class="job-search-card__location">Tel Aviv, Israel</span>
+  <time class="job-search-card__listdate" datetime="2026-06-25">1 week ago</time>
 </li><li>
   <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/9912345678">y</a>
   <h3 class="base-search-card__title">Data Engineer</h3>
@@ -179,13 +180,22 @@ check(
     "keywords=Backend+Engineer" in _u and "location=Tel+Aviv%2C+Israel" in _u and "f_WT=2" in _u,
     _u,
 )
+check("search url requests newest-first (sortBy=DD)", "sortBy=DD" in _u, _u)
+check(
+    "posted date parsed from card <time> (missing => empty)",
+    cards[0]["posted_at"] == "2026-06-25" and cards[1]["posted_at"] == "",
+    str([c["posted_at"] for c in cards]),
+)
 check("work mode 'any' omits f_WT", "f_WT" not in _build_search_url("X", "Y", "any", 0))
 
 _fb = _fallback_context(resume)  # stub resume: Engineer at Acme Corp
 check("fallback context uses most recent title", _fb.job_title == "Engineer", _fb.job_title)
 _ctx = derive_search_context(resume)  # routes through the SEARCH_CONTEXT stub branch
 check("stub search context derived", _ctx.job_title != "", str(_ctx))
-check("JobMatch back-compat: url defaults empty", JobMatch().url == "")
+check(
+    "JobMatch back-compat: url + posted_at default empty",
+    JobMatch().url == "" and JobMatch().posted_at == "",
+)
 
 # 15. DB layer (temp SQLite): migration shim + job-search history + tracker fields
 from app.db.database import SessionLocal, engine, init_db  # noqa: E402
@@ -217,9 +227,13 @@ check(
 
 _db = SessionLocal()
 record_search_hits(_db, [
-    JobMatch(title="Backend Engineer", company="Acme", overall=50.0, url="https://x/jobs/1"),
+    JobMatch(title="Backend Engineer", company="Acme", overall=50.0, url="https://x/jobs/1", posted_at="2026-06-25"),
     JobMatch(title="Data Engineer", company="Beta", overall=60.0, url="https://x/jobs/2"),
 ])
+check(
+    "history persists posted_at",
+    {h.url: h.posted_at for h in list_search_hits(_db)}.get("https://x/jobs/1") == "2026-06-25",
+)
 check("search history recorded 2 hits", len(list_search_hits(_db)) == 2, str(len(list_search_hits(_db))))
 
 record_search_hits(_db, [JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1")])
@@ -245,6 +259,25 @@ _read = _db.get(Application, _app_row.id)
 check(
     "application persists job_url + interviewed",
     _read is not None and _read.job_url == "https://x/jobs/1" and _read.interviewed is True,
+)
+
+# History <-> tracker status join: match by LinkedIn job id across URL shapes,
+# exact URL otherwise, empty for never-applied jobs.
+from app.db.history import application_statuses  # noqa: E402
+
+_db.add(Application(job_title="X", status="applied", job_url="https://www.linkedin.com/jobs/view/9912345678?tracking=1"))
+_db.add(Application(job_title="Y", status="offer", job_url="https://x/jobs/1"))
+_db.commit()
+_statuses = application_statuses(
+    _db,
+    ["https://il.linkedin.com/jobs/view/data-engineer-at-beta-9912345678", "https://x/jobs/1", "https://never/applied"],
+)
+check(
+    "app status joined by linkedin id + exact url",
+    _statuses.get("https://il.linkedin.com/jobs/view/data-engineer-at-beta-9912345678") == "applied"
+    and _statuses.get("https://x/jobs/1") == "offer"
+    and _statuses.get("https://never/applied") == "",
+    str(_statuses),
 )
 _db.close()
 

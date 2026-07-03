@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -19,12 +19,16 @@ import {
   getJobHistory,
   matchJobs,
   searchContext,
-  searchJobs,
 } from "../api/client";
 import ResumeGate from "../components/ResumeGate";
+import {
+  getJobSearchState,
+  startJobSearch,
+  subscribeJobSearch,
+} from "../state/jobSearchStore";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, useToast } from "../components/ui";
-import type { JobMatch, JobSearchHit, JobSearchResult, SearchContext } from "../types";
+import type { JobMatch, JobSearchHit, SearchContext } from "../types";
 
 const inputCls =
   "rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50";
@@ -35,6 +39,43 @@ const WORK_MODES = [
   { value: "onsite", label: "On-site" },
   { value: "hybrid", label: "Hybrid" },
 ];
+
+function postedAgo(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  if (days < 30) {
+    const w = Math.floor(days / 7);
+    return `${w} week${w > 1 ? "s" : ""} ago`;
+  }
+  const mo = Math.floor(days / 30);
+  return `${mo} month${mo > 1 ? "s" : ""} ago`;
+}
+
+// Tracker status shown on history rows (colors mirror the Tracker board).
+const APP_STATUS: Record<
+  string,
+  { label: string; tone: "neutral" | "mint" | "partial" | "danger"; cls?: string }
+> = {
+  saved: { label: "Saved", tone: "neutral" },
+  applied: { label: "Applied", tone: "mint" },
+  interview: { label: "Interview", tone: "partial" },
+  offer: { label: "Offer", tone: "mint", cls: "border-mint bg-mint font-bold text-bg shadow-glow-mint" },
+  rejected: { label: "Declined", tone: "danger" },
+};
+
+function AppStatusBadge({ status }: { status: string }) {
+  const s = APP_STATUS[status];
+  if (!s) return null;
+  return (
+    <Badge tone={s.tone} className={`shrink-0 ${s.cls ?? ""}`}>
+      {s.label}
+    </Badge>
+  );
+}
 
 function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
   const nav = useNavigate();
@@ -53,6 +94,7 @@ function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
         <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
           <span>ATS coverage {Math.round(m.keyword_coverage)}%</span>
           <span>Recruiter fit {Math.round(m.fit_score)}%</span>
+          {m.posted_at && <span title={m.posted_at}>Posted {postedAgo(m.posted_at)}</span>}
           {m.url && (
             <a
               href={m.url}
@@ -100,13 +142,17 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
       <ProgressRing value={hit.overall} size={64} stroke={6} label="Fit" />
       <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold text-ink">{hit.title || "Untitled role"}</p>
+        <div className="flex items-center gap-2">
+          <p className="truncate font-semibold text-ink">{hit.title || "Untitled role"}</p>
+          <AppStatusBadge status={hit.app_status} />
+        </div>
         <p className="text-sm text-ink-muted">
           {hit.company || "—"}
           {hit.location ? ` · ${hit.location}` : ""}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
           <span>Searched {hit.searched_at.slice(0, 10)}</span>
+          {hit.posted_at && <span title={hit.posted_at}>Posted {postedAgo(hit.posted_at)}</span>}
           {hit.url && (
             <a
               href={hit.url}
@@ -165,9 +211,14 @@ export default function JobsPage() {
   const [customOpen, setCustomOpen] = useState(false);
   const [ctx, setCtx] = useState<SearchContext | null>(null);
   const [prefilling, setPrefilling] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [searchResult, setSearchResult] = useState<JobSearchResult | null>(null);
-  const [searchError, setSearchError] = useState("");
+  // The search itself lives in a module-level store so it keeps running (and
+  // its result is still here) if the user navigates away mid-search.
+  const { searching, result: searchResult, error: searchError } = useSyncExternalStore(
+    subscribeJobSearch,
+    getJobSearchState,
+  );
+  const [resultSort, setResultSort] = useState<"fit" | "date">("fit");
+  const [historySort, setHistorySort] = useState<"searched" | "fit" | "date">("searched");
 
   // -- Paste / URL state --
   const [listings, setListings] = useState<string[]>([]);
@@ -230,22 +281,17 @@ export default function JobsPage() {
     }
   }
 
-  async function runSearch() {
-    if (!master?.resume) return;
-    setSearching(true);
-    setSearchError("");
-    setSearchResult(null);
-    try {
-      const r = await searchJobs(master.resume, customOpen ? ctx : null);
-      setSearchResult(r);
-      if (!ctx) setCtx(r.context); // so opening Customize later starts from what was searched
-      if (history !== null) loadHistory(); // backend saved the results — keep the History tab fresh
-    } catch (e: any) {
-      setSearchError(e?.response?.data?.detail || "Something went wrong.");
-    } finally {
-      setSearching(false);
-    }
+  function runSearch() {
+    if (!master?.resume || searching) return;
+    startJobSearch(master.resume, customOpen ? ctx : null);
   }
+
+  useEffect(() => {
+    if (!searchResult) return;
+    setCtx((p) => p ?? searchResult.context); // so opening Customize later starts from what was searched
+    if (history !== null) loadHistory(); // backend saved the results — keep the History tab fresh
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchResult]);
 
   function addDraft() {
     if (draft.trim().length < 20) return;
@@ -289,6 +335,27 @@ export default function JobsPage() {
   if (!master?.resume) return <ResumeGate feature="job matching" />;
 
   const searched = searchResult?.context;
+  // The backend returns matches ranked by fit; re-sort client-side on demand.
+  // "Best match" stays pinned to the top-fit job whatever the sort order.
+  const bestMatch =
+    searchResult && searchResult.matches.length > 0
+      ? searchResult.matches.reduce((a, b) => (b.overall > a.overall ? b : a))
+      : null;
+  const sortedMatches = searchResult
+    ? [...searchResult.matches].sort(
+        resultSort === "date"
+          ? (a, b) => (b.posted_at || "").localeCompare(a.posted_at || "")
+          : (a, b) => b.overall - a.overall,
+      )
+    : [];
+  const sortedHistory =
+    history && historySort !== "searched"
+      ? [...history].sort(
+          historySort === "fit"
+            ? (a, b) => b.overall - a.overall
+            : (a, b) => (b.posted_at || "").localeCompare(a.posted_at || ""),
+        )
+      : history;
 
   return (
     <div className="space-y-6">
@@ -445,22 +512,35 @@ export default function JobsPage() {
           <AnimatePresence>
             {searchResult && !searching && (
               <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-                {searched && (
-                  <p className="text-sm text-ink-muted">
-                    Searched <span className="font-semibold text-ink">{searched.job_title}</span>
-                    {searched.location && (
-                      <>
-                        {" "}in <span className="font-semibold text-ink">{searched.location}</span>
-                      </>
-                    )}
-                    {searched.work_mode !== "any" && ` · ${searched.work_mode}`} —{" "}
-                    {searchResult.matches.length} job
-                    {searchResult.matches.length === 1 ? "" : "s"} ranked
-                    {searchResult.skipped > 0 && `, ${searchResult.skipped} skipped`}
-                  </p>
-                )}
-                {searchResult.matches.map((m, i) => (
-                  <MatchCard key={m.url || i} m={m} best={i === 0} />
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  {searched && (
+                    <p className="text-sm text-ink-muted">
+                      Searched <span className="font-semibold text-ink">{searched.job_title}</span>
+                      {searched.location && (
+                        <>
+                          {" "}in <span className="font-semibold text-ink">{searched.location}</span>
+                        </>
+                      )}
+                      {searched.work_mode !== "any" && ` · ${searched.work_mode}`} —{" "}
+                      {searchResult.matches.length} job
+                      {searchResult.matches.length === 1 ? "" : "s"} ranked
+                      {searchResult.skipped > 0 && `, ${searchResult.skipped} skipped`}
+                    </p>
+                  )}
+                  <label className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
+                    Sort by
+                    <select
+                      value={resultSort}
+                      onChange={(e) => setResultSort(e.target.value as "fit" | "date")}
+                      className={inputCls}
+                    >
+                      <option value="fit">Best fit</option>
+                      <option value="date">Newest posted</option>
+                    </select>
+                  </label>
+                </div>
+                {sortedMatches.map((m, i) => (
+                  <MatchCard key={m.url || i} m={m} best={m === bestMatch} />
                 ))}
               </motion.div>
             )}
@@ -579,6 +659,18 @@ export default function JobsPage() {
                 <p className="text-sm text-ink-muted">
                   <span className="font-semibold text-ink">{history.length}</span> of 100 saved
                 </p>
+                <label className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
+                  Sort by
+                  <select
+                    value={historySort}
+                    onChange={(e) => setHistorySort(e.target.value as "searched" | "fit" | "date")}
+                    className={inputCls}
+                  >
+                    <option value="searched">Recently searched</option>
+                    <option value="fit">Best fit</option>
+                    <option value="date">Newest posted</option>
+                  </select>
+                </label>
                 {confirmClear ? (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-ink-muted">Delete all {history.length}?</span>
@@ -600,7 +692,7 @@ export default function JobsPage() {
                   </Button>
                 )}
               </div>
-              {history.map((hit) => (
+              {(sortedHistory ?? []).map((hit) => (
                 <HistoryRow key={hit.id} hit={hit} onDelete={deleteHit} />
               ))}
             </motion.div>

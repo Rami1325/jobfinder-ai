@@ -1,15 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink } from "lucide-react";
 import {
-  analyzeJD,
   downloadResume,
   resumeFilename,
   getMasterResume,
   saveApplication,
   saveMasterResume,
-  tailor,
   updateApplication,
 } from "../api/client";
 import ChangeLog from "../components/ChangeLog";
@@ -19,38 +17,53 @@ import JDPaste from "../components/JDPaste";
 import ResumeUpload from "../components/ResumeUpload";
 import ScoreCard from "../components/ScoreCard";
 import { Badge, Button, Card, CardTitle, Skeleton, Stepper, useToast } from "../components/ui";
-import type { FactsLedger, JDModel, ResumeModel, TailorResult } from "../types";
+import {
+  getTailorState,
+  setTailorState,
+  setTargetJob,
+  startTailor,
+  subscribeTailor,
+} from "../state/tailorStore";
+import type { FactsLedger, ResumeModel } from "../types";
 
 export default function TailorPage() {
   const loc = useLocation() as {
+    key: string;
     state?: { jdText?: string; jobUrl?: string; jobTitle?: string; company?: string };
   };
-  const jobUrl = loc.state?.jobUrl;
-  const jobTitle = loc.state?.jobTitle;
-  const company = loc.state?.company;
-  const [resume, setResume] = useState<ResumeModel | null>(null);
-  const [, setLedger] = useState<FactsLedger | null>(null);
-  const [masterLabel, setMasterLabel] = useState("");
-  const [jdText, setJdText] = useState(loc.state?.jdText ?? "");
-  const [jd, setJd] = useState<JDModel | null>(null);
-  const [result, setResult] = useState<TailorResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
-  const [savedAppId, setSavedAppId] = useState<number | null>(null);
-  const [applyClicked, setApplyClicked] = useState(false);
-  const [applied, setApplied] = useState(false);
-  const [coverLetterText, setCoverLetterText] = useState("");
+  // Consume a handed-over target job (Jobs page → "Tailor to this") before the
+  // first snapshot below, so the page never flashes the previous job's state.
+  useState(() => {
+    if (loc.state?.jdText || loc.state?.jobUrl) setTargetJob(loc.key, loc.state);
+  });
+  // Everything on this page lives in a module-level store so an in-flight
+  // tailor keeps running — and the results stay put — across tab switches.
+  const {
+    resume,
+    masterLabel,
+    jdText,
+    jd,
+    result,
+    loading,
+    error,
+    saved,
+    savedAppId,
+    applyClicked,
+    applied,
+    coverLetterText,
+    jobUrl,
+    jobTitle,
+    company,
+  } = useSyncExternalStore(subscribeTailor, getTailorState);
   const toast = useToast();
 
   useEffect(() => {
+    if (getTailorState().resume) return; // already loaded (or uploaded) this session
     (async () => {
       try {
         const m = await getMasterResume();
-        if (m?.resume) {
-          setResume(m.resume);
-          setLedger(m.ledger ?? null);
-          setMasterLabel(m.label);
+        if (m?.resume && !getTailorState().resume) {
+          setTailorState({ resume: m.resume, ledger: m.ledger ?? null, masterLabel: m.label });
         }
       } catch {
         /* no saved résumé yet */
@@ -62,36 +75,14 @@ export default function TailorPage() {
   const canRun = !!resume && jdText.trim().length > 30 && !loading;
 
   async function onParsed(r: ResumeModel, l: FactsLedger) {
-    setResume(r);
-    setLedger(l);
-    setResult(null);
-    setSaved(false);
+    setTailorState({ resume: r, ledger: l, result: null, saved: false });
     const label = r.contact.name ? `${r.contact.name}'s résumé` : "My résumé";
     try {
       const m = await saveMasterResume({ resume: r, ledger: l, label });
-      setMasterLabel(m.label);
+      setTailorState({ masterLabel: m.label });
       toast("success", "Saved as your master résumé");
     } catch {
       /* persistence is best-effort */
-    }
-  }
-
-  async function run() {
-    if (!resume) return;
-    setError("");
-    setLoading(true);
-    setResult(null);
-    setSaved(false);
-    setCoverLetterText("");
-    try {
-      const analyzed = await analyzeJD(jdText);
-      setJd(analyzed);
-      const r = await tailor(resume, analyzed);
-      setResult(r);
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || "Something went wrong. Is the backend running?");
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -99,7 +90,7 @@ export default function TailorPage() {
     if (!result || !jd) return;
     if (savedAppId !== null) {
       // Already created (by Save or "Yes, applied") — never double-create.
-      setSaved(true);
+      setTailorState({ saved: true });
       toast("success", "Already in your tracker");
       return;
     }
@@ -112,8 +103,7 @@ export default function TailorPage() {
       overall_score: result.score_after.overall,
       job_url: jobUrl || undefined,
     });
-    setSavedAppId(app.id);
-    setSaved(true);
+    setTailorState({ savedAppId: app.id, saved: true });
     toast("success", "Saved to tracker");
   }
 
@@ -121,6 +111,7 @@ export default function TailorPage() {
     try {
       if (savedAppId !== null) {
         await updateApplication(savedAppId, { status: "applied" });
+        setTailorState({ saved: true, applied: true });
       } else {
         const app = await saveApplication({
           job_title: jd?.job_title || jobTitle || "",
@@ -133,15 +124,36 @@ export default function TailorPage() {
           status: "applied",
           job_url: jobUrl,
         });
-        setSavedAppId(app.id);
+        setTailorState({ savedAppId: app.id, saved: true, applied: true });
       }
-      setSaved(true);
-      setApplied(true);
       toast("success", "Marked as applied — added to tracker");
     } catch {
       toast("error", "Could not update the tracker. Is the backend running?");
     }
   }
+
+  const appliedPrompt = (
+    <AnimatePresence initial={false}>
+      {applyClicked && !applied && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          className="overflow-hidden"
+        >
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
+            <span className="text-sm text-ink">Did you apply to this job?</span>
+            <Button size="sm" onClick={markApplied}>
+              Yes, applied
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setTailorState({ applyClicked: false })}>
+              Not yet
+            </Button>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
   return (
     <div className="space-y-6">
@@ -168,33 +180,14 @@ export default function TailorPage() {
               href={jobUrl}
               target="_blank"
               rel="noreferrer"
-              onClick={() => setApplyClicked(true)}
+              onClick={() => setTailorState({ applyClicked: true })}
               className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
             >
               Open job posting <ExternalLink size={13} />
             </a>
             {applied && <Badge tone="mint">✓ Applied</Badge>}
           </div>
-          <AnimatePresence initial={false}>
-            {applyClicked && !applied && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
-                  <span className="text-sm text-ink">Did you apply to this job?</span>
-                  <Button size="sm" onClick={markApplied}>
-                    Yes, applied
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setApplyClicked(false)}>
-                    Not yet
-                  </Button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {!result && appliedPrompt}
         </Card>
       )}
 
@@ -217,18 +210,23 @@ export default function TailorPage() {
           <CardTitle>2 · Target job description</CardTitle>
           <p className="mt-1 text-sm text-ink-muted">Paste the full posting from any job site.</p>
           <div className="mt-3">
-            <JDPaste value={jdText} onChange={setJdText} />
+            <JDPaste value={jdText} onChange={(v) => setTailorState({ jdText: v })} />
           </div>
         </Card>
       </div>
 
       <Card className="flex flex-wrap items-center gap-3">
-        <Button size="lg" loading={loading} icon={<Wand2 size={18} />} disabled={!canRun} onClick={run}>
+        <Button size="lg" loading={loading} icon={<Wand2 size={18} />} disabled={!canRun} onClick={startTailor}>
           {loading ? "Tailoring…" : "Tailor my résumé"}
         </Button>
         {!resume && <span className="text-sm text-ink-muted">Upload a résumé to begin.</span>}
         {resume && jdText.trim().length <= 30 && (
           <span className="text-sm text-ink-muted">Paste a job description.</span>
+        )}
+        {loading && (
+          <span className="text-sm text-ink-muted">
+            Keeps running if you switch tabs — come back anytime.
+          </span>
         )}
         {error && <span className="text-sm text-danger">{error}</span>}
       </Card>
@@ -286,16 +284,18 @@ export default function TailorPage() {
                     href={jobUrl}
                     target="_blank"
                     rel="noreferrer"
-                    onClick={() => setApplyClicked(true)}
+                    onClick={() => setTailorState({ applyClicked: true })}
                     className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
                   >
                     <ExternalLink size={14} /> Open job posting
                   </a>
                 )}
+                {applied && <Badge tone="mint">✓ Applied</Badge>}
                 <Button variant="ghost" icon={<Save size={16} />} disabled={saved} onClick={save}>
                   {saved ? "✓ Saved to tracker" : "Save to tracker"}
                 </Button>
               </div>
+              {appliedPrompt}
               <p className="mt-3 text-xs text-ink-muted">
                 Output is single-column, ATS-safe (no tables, columns, or images).
               </p>
@@ -304,10 +304,7 @@ export default function TailorPage() {
             <CoverLetter
               resume={result.tailored_resume}
               jd={jd}
-              onGenerated={(t) => {
-                setCoverLetterText(t);
-                setSaved(false);
-              }}
+              onGenerated={(t) => setTailorState({ coverLetterText: t, saved: false })}
             />
           </motion.div>
         )}

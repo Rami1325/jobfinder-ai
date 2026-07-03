@@ -47,6 +47,7 @@ class JobSearchHit(Base):
     fit_score: Mapped[float] = mapped_column(Float, default=0.0)
     top_gaps_json: Mapped[str] = mapped_column(Text, default="[]")
     jd_text: Mapped[str] = mapped_column(Text, default="")
+    posted_at: Mapped[str] = mapped_column(String(32), default="")  # ISO date; "" when unknown
     searched_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

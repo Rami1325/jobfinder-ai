@@ -167,6 +167,7 @@ export interface JobMatch {
   jd_text: string;
   url: string; // set for scraped listings; empty for pasted ones
   location: string;
+  posted_at: string; // ISO date from the LinkedIn search card; empty when unknown
 }
 export interface JobMatchResult {
   matches: JobMatch[];
@@ -193,7 +194,9 @@ export interface JobSearchHit {
   fit_score: number;
   top_gaps: string[];
   jd_text: string;
+  posted_at: string; // ISO date the job was posted; empty when unknown
   searched_at: string;
+  app_status: string; // tracker status if saved/applied: "", saved, applied, interview, offer, rejected
 }
 export interface JobSearchHistory {
   hits: JobSearchHit[];

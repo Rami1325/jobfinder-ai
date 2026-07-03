@@ -19,7 +19,13 @@ from app.core.job_search import derive_search_context, search_linkedin_jobs
 from app.core.linkedin import optimize_linkedin
 from app.core.tailor import tailor_resume
 from app.db.database import get_db
-from app.db.history import clear_search_hits, delete_search_hit, list_search_hits, record_search_hits
+from app.db.history import (
+    application_statuses,
+    clear_search_hits,
+    delete_search_hit,
+    list_search_hits,
+    record_search_hits,
+)
 from app.db.models import Application, SavedResume
 from app.models import (
     ApplicationCreate,
@@ -221,8 +227,10 @@ def jobs_search(body: JobSearchRequest, db: Session = Depends(get_db)) -> JobSea
 
 @router.get("/jobs/history", response_model=JobSearchHistory)
 def jobs_history(db: Session = Depends(get_db)) -> JobSearchHistory:
+    rows = list_search_hits(db)
+    statuses = application_statuses(db, [row.url for row in rows])
     hits: list[JobSearchHitOut] = []
-    for row in list_search_hits(db):
+    for row in rows:
         try:
             top_gaps = json.loads(row.top_gaps_json) if row.top_gaps_json else []
         except Exception:  # noqa: BLE001 - tolerate legacy/corrupt rows
@@ -239,7 +247,9 @@ def jobs_history(db: Session = Depends(get_db)) -> JobSearchHistory:
                 fit_score=row.fit_score,
                 top_gaps=top_gaps,
                 jd_text=row.jd_text,
+                posted_at=row.posted_at or "",
                 searched_at=row.searched_at.isoformat() if row.searched_at else "",
+                app_status=statuses.get(row.url, ""),
             )
         )
     return JobSearchHistory(hits=hits)

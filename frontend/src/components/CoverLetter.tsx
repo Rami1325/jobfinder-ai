@@ -8,12 +8,14 @@ interface Props {
   resume: ResumeModel;
   jd: JDModel;
   onGenerated?: (text: string) => void;
+  /** Restores a previously generated letter when the page is revisited. */
+  initialText?: string;
 }
 
 const TONES = ["professional", "enthusiastic", "concise", "warm"];
 
-export default function CoverLetter({ resume, jd, onGenerated }: Props) {
-  const [text, setText] = useState("");
+export default function CoverLetter({ resume, jd, onGenerated, initialText }: Props) {
+  const [text, setText] = useState(initialText ?? "");
   const [tone, setTone] = useState("professional");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

@@ -1,6 +1,8 @@
+import { useSyncExternalStore } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Sparkles, FileText, MessageSquareText, Briefcase, Wrench, KanbanSquare } from "lucide-react";
+import { Sparkles, FileText, MessageSquareText, Briefcase, Wrench, KanbanSquare, Loader2 } from "lucide-react";
 import { cn } from "../lib/cn";
+import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 
 const nav = [
   { to: "/app", label: "Tailor", icon: FileText },
@@ -11,6 +13,7 @@ const nav = [
 ];
 
 export default function AppLayout() {
+  const { searching } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
   return (
     <div className="min-h-screen bg-bg text-ink">
       <header className="sticky top-0 z-30 border-b border-line/70 bg-bg/80 backdrop-blur-xl">
@@ -37,6 +40,9 @@ export default function AppLayout() {
               >
                 <Icon size={15} />
                 <span className="hidden sm:inline">{label}</span>
+                {to === "/jobs" && searching && (
+                  <Loader2 size={13} className="animate-spin text-accent-soft" />
+                )}
               </NavLink>
             ))}
           </nav>

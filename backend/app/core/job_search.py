@@ -64,7 +64,10 @@ def derive_search_context(resume: ResumeModel) -> SearchContext:
 
 
 def _build_search_url(job_title: str, location: str, work_mode: str, start: int) -> str:
-    params = {"keywords": job_title, "location": location, "start": start}
+    # sortBy=DD = newest first. Without it the guest endpoint returns LinkedIn's
+    # relevance mix, which looks arbitrary; we rank by fit ourselves anyway, so
+    # spending the fetch budget on the freshest postings is strictly better.
+    params = {"keywords": job_title, "location": location, "start": start, "sortBy": "DD"}
     params = {k: v for k, v in params.items() if v or k == "start"}
     f_wt = _WORK_MODE_PARAM.get(work_mode)
     if f_wt:
@@ -84,6 +87,13 @@ def _card_text(card_html: str, cls: str) -> str:
     return re.sub(r"\s+", " ", _html.unescape(text)).strip()
 
 
+def _card_posted(card_html: str) -> str:
+    """ISO date from the card's <time datetime="..."> — LinkedIn's posted-on date
+    (class is job-search-card__listdate, or __listdate--new for fresh posts)."""
+    m = re.search(r'(?is)<time[^>]*\bdatetime="([^"]+)"', card_html)
+    return _html.unescape(m.group(1)).strip() if m else ""
+
+
 def _card_url(card_html: str) -> str:
     """The posting URL from the card's base-card__full-link anchor, tracking
     query stripped. Handles either attribute order (href/class)."""
@@ -99,7 +109,7 @@ def _card_url(card_html: str) -> str:
 
 def parse_search_results(html: str) -> list[dict[str, str]]:
     """Parse the guest search-results HTML (a flat <li> list of job cards) into
-    [{url, title, company, location}], deduped by posting id, order preserved.
+    [{url, title, company, location, posted_at}], deduped by posting id, order preserved.
     Pure function so the offline smoke test can pin the markup contract."""
     cards: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -118,6 +128,7 @@ def parse_search_results(html: str) -> list[dict[str, str]]:
                 "title": _card_text(card, "base-search-card__title"),
                 "company": _card_text(card, "base-search-card__subtitle"),
                 "location": _card_text(card, "job-search-card__location"),
+                "posted_at": _card_posted(card),
             }
         )
     return cards
@@ -222,6 +233,7 @@ def search_linkedin_jobs(
                 jd_text=jd_text,
                 url=card["url"],
                 location=card["location"],
+                posted_at=card.get("posted_at", ""),
             )
         )
 

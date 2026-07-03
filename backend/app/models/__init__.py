@@ -275,6 +275,7 @@ class JobMatch(BaseModel):
     jd_text: str = ""
     url: str = ""  # set for scraped listings; empty for pasted ones
     location: str = ""
+    posted_at: str = ""  # ISO date from the LinkedIn search card; empty when unknown
 
 
 class JobMatchResult(BaseModel):
@@ -318,7 +319,9 @@ class JobSearchHitOut(BaseModel):
     fit_score: float = 0.0
     top_gaps: list[str] = Field(default_factory=list)
     jd_text: str = ""
+    posted_at: str = ""  # ISO date the job was posted; empty when unknown
     searched_at: str = ""
+    app_status: str = ""  # tracker status if this job was saved/applied ("", saved, applied, interview, offer, rejected)
 
 
 class JobSearchHistory(BaseModel):

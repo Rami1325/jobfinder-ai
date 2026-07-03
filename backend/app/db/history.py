@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.db.models import JobSearchHit
+from app.core.job_match import _linkedin_job_id
+from app.db.models import Application, JobSearchHit
 from app.models import JobMatch
 
 MAX_HISTORY = 100  # newest rows kept; older ones are trimmed on every record
@@ -35,6 +36,7 @@ def record_search_hits(db: Session, matches: list[JobMatch]) -> None:
         row.fit_score = m.fit_score
         row.top_gaps_json = json.dumps(m.top_gaps)
         row.jd_text = m.jd_text
+        row.posted_at = m.posted_at
         row.searched_at = now
     db.flush()
     keep_ids = db.execute(
@@ -55,6 +57,27 @@ def list_search_hits(db: Session) -> list[JobSearchHit]:
             .limit(MAX_HISTORY)
         ).scalars().all()
     )
+
+
+def _url_key(url: str) -> str:
+    """Match applications to history rows by LinkedIn job id when possible —
+    the search card URL and the URL the tracker stored can differ in shape
+    (slug vs bare id, regional subdomain, tracking query) for the same posting."""
+    return _linkedin_job_id(url) or url.split("?")[0].rstrip("/")
+
+
+def application_statuses(db: Session, urls: list[str]) -> dict[str, str]:
+    """Map each history URL to its tracker status ('' when never saved/applied).
+    Newest application wins if the same job was saved twice."""
+    status_by_key: dict[str, str] = {}
+    rows = db.execute(
+        select(Application.job_url, Application.status)
+        .where(Application.job_url != "")
+        .order_by(Application.id)
+    ).all()
+    for job_url, status in rows:
+        status_by_key[_url_key(job_url)] = status or "saved"
+    return {u: status_by_key.get(_url_key(u), "") for u in urls if u}
 
 
 def delete_search_hit(db: Session, hit_id: int) -> bool:
