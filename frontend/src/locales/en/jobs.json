@@ -35,6 +35,12 @@
     "cta": "Find jobs for me",
     "searchingAuto": "Resume saved — we're finding jobs that fit it and scoring each one. This can take a minute or two.",
     "searchingManual": "Searching job listings and scoring each one against your resume — this can take a minute or two.",
+    "stages": {
+      "boards": "Searching job boards…",
+      "fetching": "Fetching job postings…",
+      "scoring": "Scoring each job against your resume…"
+    },
+    "elapsed": "{{time}} elapsed",
     "sourceErrors": "Some sources were unavailable: {{sources}}. Results below come from the sources that responded.",
     "dismiss": "Dismiss",
     "summary": "Searched <1>{{title}}</1>",
@@ -58,6 +64,7 @@
   "card": {
     "fit": "Fit",
     "best": "Best match",
+    "new": "New",
     "untitled": "Untitled role",
     "ats": "ATS coverage {{pct}}%",
     "recruiterFit": "Recruiter fit {{pct}}%",
@@ -104,6 +111,7 @@
   "history": {
     "emptyTitle": "No saved searches yet",
     "emptyBody": "Run a job search — every scraped job is saved here so you can apply later.",
+    "emptyCta": "Go to job search",
     "savedOf": "<0>{{count}}</0> of 100 saved",
     "searchedOn": "Searched {{date}}",
     "deleteAll": "Delete all {{count}}?",

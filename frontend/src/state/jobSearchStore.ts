@@ -8,9 +8,10 @@ export type JobSearchState = {
   searching: boolean;
   result: JobSearchResult | null;
   error: string;
+  startedAt: number | null; // Date.now() when the in-flight search began
 };
 
-let state: JobSearchState = { searching: false, result: null, error: "" };
+let state: JobSearchState = { searching: false, result: null, error: "", startedAt: null };
 const listeners = new Set<() => void>();
 
 function set(patch: Partial<JobSearchState>) {
@@ -31,7 +32,7 @@ let seq = 0; // a restarted search must not be overwritten by a stale response
 
 export function startJobSearch(resume: ResumeModel, customize: SearchContext | null): void {
   const id = ++seq;
-  set({ searching: true, error: "", result: null });
+  set({ searching: true, error: "", result: null, startedAt: Date.now() });
   searchJobs(resume, customize)
     .then((r) => {
       if (id === seq) set({ searching: false, result: r });

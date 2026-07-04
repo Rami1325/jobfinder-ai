@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
@@ -9,6 +9,7 @@ import {
   Briefcase,
   ExternalLink,
   Link2,
+  Loader2,
   Plus,
   Search,
   Trash2,
@@ -20,6 +21,7 @@ import {
   deleteJobHistoryItem,
   fetchJob,
   getJobHistory,
+  listApplications,
   matchJobs,
   searchContext,
 } from "../api/client";
@@ -32,7 +34,14 @@ import {
 import { useMasterResume } from "../hooks/useMasterResume";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, useToast } from "../components/ui";
-import type { FactsLedger, JobMatch, JobSearchHit, ResumeModel, SearchContext } from "../types";
+import type {
+  ApplicationOut,
+  FactsLedger,
+  JobMatch,
+  JobSearchHit,
+  ResumeModel,
+  SearchContext,
+} from "../types";
 
 const inputCls =
   "rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50";
@@ -77,6 +86,127 @@ function postedAgo(iso: string, t: TFunction<"jobs">): string {
   return t("posted.months", { count: Math.floor(days / 30) });
 }
 
+// Job-board hosts whose favicon is the board's logo, not the company's — those
+// cards use the lettered avatar instead (the source badge already names the
+// board). Real company logos need a company-domain field from the backend.
+const BOARD_HOST_RE =
+  /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|jooble\.org)$/;
+
+function companyDomain(url: string): string | null {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    return BOARD_HOST_RE.test(host) ? null : host;
+  } catch {
+    return null;
+  }
+}
+
+// Deterministic theme-token backgrounds for the lettered fallback avatar.
+const AVATAR_TONES = [
+  "bg-accent/15 text-accent-soft",
+  "bg-mint/15 text-mint",
+  "bg-warn/15 text-warn",
+  "bg-accent/10 text-ink-muted",
+] as const;
+
+function avatarTone(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_TONES[h % AVATAR_TONES.length];
+}
+
+/** Company favicon when the job URL points at a company domain; otherwise a
+ * lettered avatar on a background derived deterministically from the name. */
+function CompanyAvatar({ company, url }: { company: string; url?: string }) {
+  const [failed, setFailed] = useState(false);
+  const domain = url ? companyDomain(url) : null;
+  if (domain && !failed) {
+    return (
+      <img
+        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
+        alt=""
+        width={40}
+        height={40}
+        loading="lazy"
+        onError={() => setFailed(true)}
+        className="h-10 w-10 shrink-0 rounded-lg border border-line bg-panel-2 p-1.5"
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg text-base font-bold ${avatarTone(company || "?")}`}
+    >
+      {(company.trim().charAt(0) || "•").toUpperCase()}
+    </span>
+  );
+}
+
+/** Posted within the last 48 hours. */
+function isNewPosting(iso: string): boolean {
+  const ts = new Date(iso).getTime();
+  return !Number.isNaN(ts) && Date.now() - ts < 48 * 3_600_000;
+}
+
+function NewBadge({ postedAt }: { postedAt?: string }) {
+  const { t } = useTranslation("jobs");
+  if (!postedAt || !isNewPosting(postedAt)) return null;
+  return (
+    <Badge tone="mint" className="shrink-0">
+      {t("card.new")}
+    </Badge>
+  );
+}
+
+/** Tracker rows and job hits both store the raw job URL — normalize just enough
+ * (trailing slashes) to match them client-side. */
+function normalizeJobUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+// The whole search is one long backend call, so per-job progress isn't knowable
+// client-side (PLAN: true progress needs a streaming backend). Show an honest
+// stage indicator: the pipeline really does run boards → fetch → score, and
+// per-job scoring dominates, so advance the copy on elapsed time and stay on
+// "scoring" — plus a live elapsed clock.
+const SEARCH_STAGES = ["boards", "fetching", "scoring"] as const;
+
+function formatElapsed(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function SearchProgress({ auto, startedAt }: { auto: boolean; startedAt: number | null }) {
+  const { t } = useTranslation("jobs");
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const elapsed = Math.max(0, Math.floor((now - (startedAt ?? now)) / 1000));
+  const stage = SEARCH_STAGES[elapsed < 8 ? 0 : elapsed < 20 ? 1 : 2];
+  return (
+    <div className="space-y-3">
+      <Card className="flex items-center gap-3">
+        <Loader2 size={20} className="shrink-0 animate-spin text-accent-soft" />
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-ink">
+            {auto ? t("search.searchingAuto") : t("search.searchingManual")}
+          </p>
+          <p aria-live="polite" className="mt-0.5 text-xs text-ink-muted">
+            {t(`search.stages.${stage}`)} · {t("search.elapsed", { time: formatElapsed(elapsed) })}
+          </p>
+        </div>
+      </Card>
+      <Skeleton className="h-24 w-full" />
+      <Skeleton className="h-24 w-full" />
+      <Skeleton className="h-24 w-full" />
+    </div>
+  );
+}
+
 // Tracker status shown on history rows (colors mirror the Tracker board).
 const APP_STATUS: Record<
   string,
@@ -100,48 +230,55 @@ function AppStatusBadge({ status }: { status: string }) {
   );
 }
 
-function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
+function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStatus?: string }) {
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
   return (
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
       <ProgressRing value={m.overall} size={92} stroke={8} label={t("card.fit")} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          {best && <Badge tone="mint">{t("card.best")}</Badge>}
-          <p className="truncate font-semibold text-ink">{m.title || t("card.untitled")}</p>
-          {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
-        </div>
-        <p className="text-sm text-ink-muted">
-          {m.company || "—"}
-          {m.location ? ` · ${m.location}` : ""}
-        </p>
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-          <span>{t("card.ats", { pct: Math.round(m.keyword_coverage) })}</span>
-          <span>{t("card.recruiterFit", { pct: Math.round(m.fit_score) })}</span>
-          {m.posted_at && (
-            <span title={m.posted_at}>{t("card.posted", { when: postedAgo(m.posted_at, t) })}</span>
-          )}
-          {m.url && (
-            <a
-              href={m.url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-accent-soft hover:underline"
-            >
-              <ExternalLink size={12} /> {t("card.viewOn", { source: sourceLabel(m.source) || "LinkedIn" })}
-            </a>
-          )}
-        </div>
-        {m.top_gaps.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {m.top_gaps.map((g) => (
-              <Badge key={g} tone="missing">
-                {g}
-              </Badge>
-            ))}
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <CompanyAvatar company={m.company} url={m.url || undefined} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            {best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}
+            <p className="min-w-0 max-w-full truncate font-semibold text-ink">
+              {m.title || t("card.untitled")}
+            </p>
+            <NewBadge postedAt={m.posted_at} />
+            {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
+            {appStatus && <AppStatusBadge status={appStatus} />}
           </div>
-        )}
+          <p className="text-sm text-ink-muted">
+            {m.company || "—"}
+            {m.location ? ` · ${m.location}` : ""}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
+            <span>{t("card.ats", { pct: Math.round(m.keyword_coverage) })}</span>
+            <span>{t("card.recruiterFit", { pct: Math.round(m.fit_score) })}</span>
+            {m.posted_at && (
+              <span title={m.posted_at}>{t("card.posted", { when: postedAgo(m.posted_at, t) })}</span>
+            )}
+            {m.url && (
+              <a
+                href={m.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-accent-soft hover:underline"
+              >
+                <ExternalLink size={12} /> {t("card.viewOn", { source: sourceLabel(m.source) || "LinkedIn" })}
+              </a>
+            )}
+          </div>
+          {m.top_gaps.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {m.top_gaps.map((g) => (
+                <Badge key={g} tone="missing">
+                  {g}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <Button
         variant="secondary"
@@ -169,31 +306,37 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
   return (
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
       <ProgressRing value={hit.overall} size={64} stroke={6} label={t("card.fit")} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="truncate font-semibold text-ink">{hit.title || t("card.untitled")}</p>
-          {hit.source && <Badge className="shrink-0">{sourceLabel(hit.source)}</Badge>}
-          <AppStatusBadge status={hit.app_status} />
-        </div>
-        <p className="text-sm text-ink-muted">
-          {hit.company || "—"}
-          {hit.location ? ` · ${hit.location}` : ""}
-        </p>
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-          <span>{t("history.searchedOn", { date: hit.searched_at.slice(0, 10) })}</span>
-          {hit.posted_at && (
-            <span title={hit.posted_at}>{t("card.posted", { when: postedAgo(hit.posted_at, t) })}</span>
-          )}
-          {hit.url && (
-            <a
-              href={hit.url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-accent-soft hover:underline"
-            >
-              <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(hit.source) || "LinkedIn" })}
-            </a>
-          )}
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <CompanyAvatar company={hit.company} url={hit.url || undefined} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="min-w-0 max-w-full truncate font-semibold text-ink">
+              {hit.title || t("card.untitled")}
+            </p>
+            <NewBadge postedAt={hit.posted_at} />
+            {hit.source && <Badge className="shrink-0">{sourceLabel(hit.source)}</Badge>}
+            <AppStatusBadge status={hit.app_status} />
+          </div>
+          <p className="text-sm text-ink-muted">
+            {hit.company || "—"}
+            {hit.location ? ` · ${hit.location}` : ""}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
+            <span>{t("history.searchedOn", { date: hit.searched_at.slice(0, 10) })}</span>
+            {hit.posted_at && (
+              <span title={hit.posted_at}>{t("card.posted", { when: postedAgo(hit.posted_at, t) })}</span>
+            )}
+            {hit.url && (
+              <a
+                href={hit.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-accent-soft hover:underline"
+              >
+                <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(hit.source) || "LinkedIn" })}
+              </a>
+            )}
+          </div>
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -251,7 +394,7 @@ export default function JobsPage() {
   const [prefilling, setPrefilling] = useState(false);
   // The search itself lives in a module-level store so it keeps running (and
   // its result is still here) if the user navigates away mid-search.
-  const { searching, result: searchResult, error: searchError } = useSyncExternalStore(
+  const { searching, result: searchResult, error: searchError, startedAt } = useSyncExternalStore(
     subscribeJobSearch,
     getJobSearchState,
   );
@@ -266,6 +409,29 @@ export default function JobsPage() {
   const [matches, setMatches] = useState<JobMatch[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
+
+  // Tracker applications, so fresh result cards can show saved/applied state
+  // (history rows get it from the backend; search results match by URL here).
+  const [apps, setApps] = useState<ApplicationOut[]>([]);
+  useEffect(() => {
+    let alive = true;
+    // Best-effort: cards just omit the status badge if the tracker is unreachable.
+    listApplications()
+      .then((a) => {
+        if (alive) setApps(a);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [searchResult]); // refresh per search so newly tracked jobs show up
+
+  const appStatusByUrl = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of apps) if (a.job_url) map.set(normalizeJobUrl(a.job_url), a.status || "saved");
+    return map;
+  }, [apps]);
+  const statusFor = (url: string) => (url ? appStatusByUrl.get(normalizeJobUrl(url)) : undefined);
 
   async function loadHistory() {
     setHistoryLoading(true);
@@ -662,16 +828,7 @@ export default function JobsPage() {
             </div>
           </Card>
 
-          {searching && (
-            <div className="space-y-3">
-              <p className="text-sm text-ink-muted">
-                {autoSearched ? t("search.searchingAuto") : t("search.searchingManual")}
-              </p>
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-24 w-full" />
-            </div>
-          )}
+          {searching && <SearchProgress auto={autoSearched} startedAt={startedAt} />}
 
           <AnimatePresence>
             {searchResult && !searching && (
@@ -727,7 +884,7 @@ export default function JobsPage() {
                   </label>
                 </div>
                 {sortedMatches.map((m, i) => (
-                  <MatchCard key={m.url || i} m={m} best={m === bestMatch} />
+                  <MatchCard key={m.url || i} m={m} best={m === bestMatch} appStatus={statusFor(m.url)} />
                 ))}
               </motion.div>
             )}
@@ -805,7 +962,7 @@ export default function JobsPage() {
             {matches.length > 0 && !running && (
               <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
                 {matches.map((m, i) => (
-                  <MatchCard key={i} m={m} best={i === 0} />
+                  <MatchCard key={i} m={m} best={i === 0} appStatus={statusFor(m.url)} />
                 ))}
               </motion.div>
             )}
@@ -838,6 +995,15 @@ export default function JobsPage() {
               <p className="mt-1 text-sm text-ink-muted">
                 {t("history.emptyBody")}
               </p>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="mt-4"
+                icon={<Search size={14} />}
+                onClick={() => setMode("search")}
+              >
+                {t("history.emptyCta")}
+              </Button>
             </Card>
           )}
 

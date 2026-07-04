@@ -47,7 +47,8 @@
   "masterResume": {
     "chipFallback": "My resume",
     "replace": "Replace",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "savedToast": "Saved as your master resume"
   },
   "accessGate": {
     "title": "Access code",

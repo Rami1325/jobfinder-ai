@@ -26,16 +26,17 @@ export default function AppLayout() {
             <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent-gradient text-white shadow-glow">
               <Sparkles size={15} />
             </span>
-            <span className="text-[15px]">{t("appName")}</span>
+            {/* Wordmark hidden on the narrowest screens so 5 nav icons + toggles fit without overflow */}
+            <span className="hidden text-[15px] min-[420px]:inline">{t("appName")}</span>
           </NavLink>
-          <nav className="flex items-center gap-1">
+          <nav className="flex items-center gap-0.5 sm:gap-1">
             {nav.map(({ to, labelKey, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    "flex items-center gap-1.5 rounded-lg px-2 py-2 text-sm font-medium transition-colors sm:px-3",
                     isActive
                       ? "bg-panel-2 text-ink"
                       : "text-ink-muted hover:bg-panel-2/60 hover:text-ink",

@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { saveMasterResume } from "../api/client";
 import { useToast } from "../components/ui";
 import type { FactsLedger, MasterResume, ResumeModel } from "../types";
@@ -16,16 +17,17 @@ export function masterResumeLabel(resume: ResumeModel): string {
  */
 export function useSaveMasterResume() {
   const toast = useToast();
+  const { t } = useTranslation();
   return useCallback(
     async (resume: ResumeModel, ledger: FactsLedger): Promise<MasterResume | null> => {
       try {
         const m = await saveMasterResume({ resume, ledger, label: masterResumeLabel(resume) });
-        toast("success", "Saved as your master résumé");
+        toast("success", t("masterResume.savedToast"));
         return m;
       } catch {
         return null; // best-effort — the caller can still use the parsed résumé locally
       }
     },
-    [toast],
+    [toast, t],
   );
 }

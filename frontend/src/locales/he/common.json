@@ -47,7 +47,8 @@
   "masterResume": {
     "chipFallback": "קורות החיים שלי",
     "replace": "החלפה",
-    "cancel": "ביטול"
+    "cancel": "ביטול",
+    "savedToast": "נשמרו כקורות החיים הראשיים שלכם"
   },
   "accessGate": {
     "title": "קוד גישה",
