@@ -110,7 +110,7 @@ def _looks_like_login_wall(text: str) -> bool:
     return any(m in low for m in _LOGIN_WALL_MARKERS)
 
 
-def _http_get(url: str) -> str:
+def _http_get(url: str, timeout: float = 15) -> str:
     req = urllib.request.Request(
         url,
         headers={
@@ -121,7 +121,7 @@ def _http_get(url: str) -> str:
             "Accept-Language": "en-US,en;q=0.9",
         },
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - see fetch_job_text docstring
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - see fetch_job_text docstring
         return resp.read(3_000_000).decode("utf-8", errors="ignore")
 
 

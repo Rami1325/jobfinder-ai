@@ -205,8 +205,9 @@ from app.core.scorer import score_resume  # noqa: E402
 from app.models import SearchContext  # noqa: E402
 
 check(
-    "provider registry has linkedin + drushim",
-    {"linkedin", "drushim"} <= set(PROVIDERS) and set(DEFAULT_SOURCES) == set(PROVIDERS),
+    "provider registry has linkedin + drushim + comeet",
+    {"linkedin", "drushim", "comeet"} <= set(PROVIDERS)
+    and set(DEFAULT_SOURCES) == set(PROVIDERS),
     str(sorted(PROVIDERS)),
 )
 _rc = _resolve_context(resume, SearchContext(sources=["drushim", "bogus-board"]))
@@ -214,8 +215,9 @@ check("unknown sources filtered out", _rc.sources == ["drushim"], str(_rc.source
 _rc = _resolve_context(resume, SearchContext(sources=["bogus-board"]))
 check("all-unknown sources fall back to defaults", _rc.sources == list(DEFAULT_SOURCES), str(_rc.sources))
 check(
-    "SearchContext back-compat: sources default to all boards",
-    set(SearchContext().sources) == set(DEFAULT_SOURCES),
+    "SearchContext back-compat: empty sources resolve to every board",
+    SearchContext().sources == []
+    and _resolve_context(resume, None).sources == list(DEFAULT_SOURCES),
 )
 
 _rr = _interleave_and_dedupe(
@@ -284,6 +286,84 @@ _he_jd.keywords = ["Python", "ניסיון ב-Spark", "AWS", "עיבוד נתו�
 _he_score = score_resume(resume, _he_jd)
 check("hebrew jd scores without crashing", 0 <= _he_score.overall <= 100, str(_he_score.overall))
 check("hebrew keywords produce gap entries", len(_he_score.gaps) > 0)
+
+# 14e. Comeet provider: positions parser + filters + careers-page extraction,
+# pinned against a trimmed real API response (pure, offline)
+from app.core.providers.comeet import (  # noqa: E402
+    _keyword_matches,
+    _location_matches,
+    extract_company_data,
+    parse_careers_url,
+    parse_comeet_positions,
+)
+
+_COMEET_FIXTURE = _json.loads(
+    (Path(__file__).parent / "fixtures" / "comeet_positions.json").read_text(encoding="utf-8")
+)
+_cm = parse_comeet_positions(_COMEET_FIXTURE, company_name="Kaltura")
+check("comeet parser found all fixture positions", len(_cm) == 3, str(len(_cm)))
+check(
+    "comeet fields extracted",
+    _cm[0].title == "DevOps Engineer"
+    and _cm[0].company == "Kaltura"
+    and _cm[0].external_id == "1C.B6D"
+    and _cm[0].location == "Bnei Brak, Israel"
+    and _cm[0].source == "comeet",
+    f"{_cm[0].title} / {_cm[0].company} / {_cm[0].location}" if _cm else "",
+)
+check(
+    "comeet url is the hosted careers page",
+    _cm[0].url == "https://www.comeet.com/jobs/kaltura/E2.00D/devops-engineer/1C.B6D",
+    _cm[0].url if _cm else "",
+)
+check("comeet posted_at is the ISO time_updated", _cm[0].posted_at.startswith("2026-06-29"))
+check(
+    "comeet description inlines Description + Requirements (html stripped)",
+    all(h.description and "<p>" not in h.description for h in _cm),
+)
+_internal = _json.loads(_json.dumps(_COMEET_FIXTURE))
+_internal[0]["is_internal"] = True
+check("comeet internal positions skipped", len(parse_comeet_positions(_internal)) == 2)
+check("comeet duplicate uids deduped", len(parse_comeet_positions(_COMEET_FIXTURE * 2)) == 3)
+check("comeet empty response parses to empty list", parse_comeet_positions([]) == [])
+
+check(
+    "comeet keyword filter matches on title words",
+    _keyword_matches(_cm[0], "DevOps Engineer") and not _keyword_matches(_cm[0], "Underwater Welder"),
+)
+check(
+    "comeet location filter: 'Israel' keeps IL office, drops London",
+    _location_matches(_cm[0], "Israel") and not _location_matches(_cm[2], "Israel"),
+)
+check(
+    "comeet location filter: hebrew city alias matches english office",
+    _location_matches(_cm[0], "בני ברק"),
+)
+check(
+    "comeet location filter: wrong city filtered out",
+    not _location_matches(_cm[0], "Haifa"),
+)
+
+_careers_html = (
+    '<script>window.COMPANY_DATA = {"name": "Kaltura", "location": "Israel", '
+    '"company_uid": "E2.00D", "token": "2EDEA12ED017688C7147B1A555DA2ED"};</script>'
+)
+_cd = extract_company_data(_careers_html)
+check(
+    "comeet company data extracted from careers page html",
+    _cd == {"name": "Kaltura", "uid": "E2.00D", "token": "2EDEA12ED017688C7147B1A555DA2ED"},
+    str(_cd),
+)
+check("comeet company data tolerates missing markers", extract_company_data("<html></html>") == {"name": "", "uid": "", "token": ""})
+check(
+    "comeet careers url parsed to slug + uid",
+    parse_careers_url("https://www.comeet.com/jobs/kaltura/E2.00D?coref=1.10") == ("kaltura", "E2.00D"),
+)
+try:
+    parse_careers_url("https://example.com/jobs/nope")
+    check("comeet bad careers url rejected", False)
+except ValueError:
+    check("comeet bad careers url rejected", True)
 
 # 15. DB layer (temp SQLite): migration shim + job-search history + tracker fields
 from app.db.database import SessionLocal, engine, init_db  # noqa: E402
@@ -372,6 +452,42 @@ check(
     and _statuses.get("https://x/jobs/1") == "offer"
     and _statuses.get("https://never/applied") == "",
     str(_statuses),
+)
+
+# 16. Comeet company registry: auto-seed, token persistence, careers-URL upsert
+from app.core.providers.comeet_seed import SEED_COMPANIES  # noqa: E402
+from app.db.comeet import list_companies, save_tokens, upsert_company  # noqa: E402
+
+_companies = list_companies(_db)
+check(
+    "comeet registry auto-seeds israeli tech companies",
+    len(_companies) == len(SEED_COMPANIES) >= 25,
+    str(len(_companies)),
+)
+check(
+    "comeet registry seeds carry slug/uid/careers_url but no token yet",
+    all(c.slug and c.uid and c.careers_url and c.token == "" for c in _companies),
+)
+check("comeet registry seeding is idempotent", len(list_companies(_db)) == len(_companies))
+
+save_tokens(_db, {"kaltura": "TESTTOKEN123"})
+_by_slug = {c.slug: c for c in list_companies(_db)}
+check("comeet token persisted by slug", _by_slug["kaltura"].token == "TESTTOKEN123")
+
+_added = upsert_company(
+    _db, slug="acme", name="Acme", uid="AA.001", token="T1",
+    careers_url="https://www.comeet.com/jobs/acme/AA.001",
+)
+check("comeet add-company inserts a new row", _added.slug == "acme" and len(list_companies(_db)) == len(_companies) + 1)
+_re_added = upsert_company(
+    _db, slug="acme", name="Acme Corp", uid="AA.001", token="T2",
+    careers_url="https://www.comeet.com/jobs/acme/AA.001",
+)
+check(
+    "comeet re-adding a company refreshes instead of duplicating",
+    _re_added.token == "T2"
+    and _re_added.name == "Acme Corp"
+    and len(list_companies(_db)) == len(_companies) + 1,
 )
 _db.close()
 

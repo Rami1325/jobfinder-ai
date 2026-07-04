@@ -293,8 +293,8 @@ class SearchContext(BaseModel):
     # Which job boards to search. Validated against the provider registry in
     # job_search._resolve_context: unknown names are ignored, and an empty /
     # all-unknown list falls back to every registered provider — so old clients
-    # that never send `sources` keep working.
-    sources: list[str] = Field(default_factory=lambda: ["linkedin", "drushim"])
+    # that never send `sources` keep working, and new boards join automatically.
+    sources: list[str] = Field(default_factory=list)
 
 
 class SearchContextRequest(BaseModel):
@@ -342,6 +342,22 @@ class JobSearchHistory(BaseModel):
 
 class JobFetchRequest(BaseModel):
     url: str
+
+
+class ComeetCompanyOut(BaseModel):
+    """One company in the Comeet registry (token deliberately not exposed)."""
+
+    slug: str
+    name: str = ""
+    careers_url: str = ""
+
+
+class ComeetCompanyList(BaseModel):
+    companies: list[ComeetCompanyOut] = Field(default_factory=list)
+
+
+class AddComeetCompanyRequest(BaseModel):
+    url: str  # a public Comeet careers-page URL: https://www.comeet.com/jobs/<company>/<code>
 
 
 class JobFetchResponse(BaseModel):

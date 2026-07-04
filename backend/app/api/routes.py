@@ -17,7 +17,9 @@ from app.core.jd_analyzer import analyze_jd
 from app.core.job_match import fetch_job_text, match_jobs
 from app.core.job_search import derive_search_context, search_jobs
 from app.core.linkedin import optimize_linkedin
+from app.core.providers.comeet import register_company as register_comeet_company
 from app.core.tailor import tailor_resume
+from app.db.comeet import list_companies as list_comeet_companies
 from app.db.database import get_db
 from app.db.history import (
     application_statuses,
@@ -28,12 +30,15 @@ from app.db.history import (
 )
 from app.db.models import Application, SavedResume
 from app.models import (
+    AddComeetCompanyRequest,
     ApplicationCreate,
     ApplicationDetail,
     ApplicationOut,
     ApplicationUpdate,
     ATSScanRequest,
     ATSScanResult,
+    ComeetCompanyList,
+    ComeetCompanyOut,
     CoverLetterRequest,
     CoverLetterResponse,
     FactsLedger,
@@ -266,6 +271,32 @@ def delete_jobs_history_item(hit_id: int, db: Session = Depends(get_db)) -> dict
 @router.delete("/jobs/history")
 def clear_jobs_history(db: Session = Depends(get_db)) -> dict[str, int]:
     return {"deleted": clear_search_hits(db)}
+
+
+@router.get("/jobs/comeet/companies", response_model=ComeetCompanyList)
+def comeet_companies(db: Session = Depends(get_db)) -> ComeetCompanyList:
+    """The Comeet company registry the job search queries (seeded on first use)."""
+    return ComeetCompanyList(
+        companies=[
+            ComeetCompanyOut(slug=c.slug, name=c.name, careers_url=c.careers_url)
+            for c in list_comeet_companies(db)
+        ]
+    )
+
+
+@router.post("/jobs/comeet/companies", response_model=ComeetCompanyOut)
+def comeet_add_company(
+    body: AddComeetCompanyRequest, db: Session = Depends(get_db)
+) -> ComeetCompanyOut:
+    """Grow the registry: paste any public Comeet careers-page URL and its jobs
+    join every future search."""
+    try:
+        c = register_comeet_company(db, body.url)
+    except ValueError as e:  # bad URL / not a Comeet page — user-facing
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Error while adding that company: {e}")
+    return ComeetCompanyOut(slug=c.slug, name=c.name, careers_url=c.careers_url)
 
 
 # --------------------------------------------------------------------------- #

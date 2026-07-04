@@ -54,6 +54,29 @@ class JobSearchHit(Base):
     )
 
 
+class ComeetCompany(Base):
+    """A company whose Comeet careers board the job search queries.
+
+    Seeded with Israeli tech companies on first use (see
+    app/core/providers/comeet_seed.py); users add more via
+    POST /jobs/comeet/companies with any Comeet careers-page URL. `token` is
+    scraped from the careers page lazily and refreshed automatically when
+    Comeet rotates it (the API answers 401/403).
+    """
+
+    __tablename__ = "comeet_companies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    uid: Mapped[str] = mapped_column(String(16), default="")  # company_uid, e.g. "E2.00D"
+    token: Mapped[str] = mapped_column(String(64), default="")  # "" until first scrape
+    careers_url: Mapped[str] = mapped_column(String(500), default="")
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class SavedResume(Base):
     """The user's persisted master résumé, reused across Tailor / Interview / Job Match.
 
