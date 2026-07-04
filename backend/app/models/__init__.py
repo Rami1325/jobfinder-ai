@@ -42,6 +42,26 @@ class Project(BaseModel):
     bullets: list[str] = Field(default_factory=list)
 
 
+class MilitaryService(BaseModel):
+    """IDF/military service entry — standard on Israeli résumés.
+
+    unit/role/rank/dates are protected facts: the ledger records them and the
+    fabrication guard flags any tailored value not present in the original.
+    """
+
+    unit: str = ""
+    role: str = ""
+    rank: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    bullets: list[str] = Field(default_factory=list)
+
+
+class LanguageSkill(BaseModel):
+    language: str = ""
+    level: str = ""  # e.g. native / fluent / professional / basic — as written
+
+
 class ResumeModel(BaseModel):
     contact: Contact = Field(default_factory=Contact)
     summary: str = ""
@@ -50,6 +70,8 @@ class ResumeModel(BaseModel):
     education: list[Education] = Field(default_factory=list)
     projects: list[Project] = Field(default_factory=list)
     certifications: list[str] = Field(default_factory=list)
+    military_service: list[MilitaryService] = Field(default_factory=list)
+    languages: list[LanguageSkill] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -80,10 +102,13 @@ class FactsLedger(BaseModel):
     degrees: list[str] = Field(default_factory=list)
     certifications: list[str] = Field(default_factory=list)
     numbers: list[str] = Field(default_factory=list)
+    # Military unit / role / rank strings (dates go into `dates`). Protected:
+    # invented military claims are a serious credibility problem in Israel.
+    military: list[str] = Field(default_factory=list)
 
 
 class FabricationFlag(BaseModel):
-    category: str  # employer | title | date | credential | number
+    category: str  # employer | title | date | institution | degree | credential | number | military
     value: str
     detail: str = ""
 

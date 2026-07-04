@@ -46,4 +46,5 @@ def check_fabrication(tailored: ResumeModel, ledger: FactsLedger) -> list[Fabric
     scan(new.degrees, ledger.degrees, "degree")
     scan(new.certifications, ledger.certifications, "credential")
     scan(new.numbers, ledger.numbers, "number")
+    scan(new.military, ledger.military, "military")
     return flags

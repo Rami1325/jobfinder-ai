@@ -38,10 +38,18 @@ def build_facts_ledger(resume: ResumeModel) -> FactsLedger:
         _add(ledger.dates, edu.end_date)
     for cert in resume.certifications:
         _add(ledger.certifications, cert)
+    for ms in resume.military_service:
+        _add(ledger.military, ms.unit)
+        _add(ledger.military, ms.role)
+        _add(ledger.military, ms.rank)
+        _add(ledger.dates, ms.start_date)
+        _add(ledger.dates, ms.end_date)
+        for b in ms.bullets:
+            ledger.numbers.extend(_extract_numbers(b))
     ledger.numbers.extend(_extract_numbers(resume.summary))
 
     # De-duplicate while preserving order.
-    for field in ("employers", "titles", "dates", "institutions", "degrees", "certifications", "numbers"):
+    for field in ("employers", "titles", "dates", "institutions", "degrees", "certifications", "numbers", "military"):
         setattr(ledger, field, _dedupe(getattr(ledger, field)))
     return ledger
 

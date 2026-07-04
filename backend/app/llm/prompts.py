@@ -11,9 +11,16 @@ Return a JSON object with this exact shape:
   "experience": [{"company","title","location","start_date","end_date","bullets":["..."]}],
   "education": [{"institution","degree","field","start_date","end_date","details"}],
   "projects": [{"name","description","bullets":["..."]}],
-  "certifications": ["..."]
+  "certifications": ["..."],
+  "military_service": [{"unit","role","rank","start_date","end_date","bullets":["..."]}],
+  "languages": [{"language","level"}]
 }
-Use empty strings / empty arrays for anything missing. Preserve original wording of bullets."""
+Use empty strings / empty arrays for anything missing. Preserve original wording of bullets.
+military_service: extract army/military service (e.g. IDF / צה"ל) into its own section when
+present — do NOT fold it into experience. Capture unit, role, rank, and dates exactly as
+written; leave fields empty rather than guessing.
+languages: extract spoken/written languages with the proficiency level as written
+(e.g. Hebrew - native, English - fluent)."""
 
 ANALYZE_JD_SYSTEM = """Task: ANALYZE_JD.
 You analyze a job description and extract structured requirements. \
@@ -44,6 +51,10 @@ compelling, credible fit to a human recruiter — without ever fabricating anyth
   re-emphasize, and re-word — never invent.
 - NEVER add or alter: employers, job titles, employment dates, schools, degrees,
   certifications, or any metric/number. Keep every factual anchor byte-for-byte truthful.
+- MILITARY SERVICE IS UNTOUCHABLE. Never invent, alter, or embellish a military unit,
+  role, rank, or service date. If the original has no military_service section, the
+  output must not have one. You may only reorder/reword its bullets like any other
+  section — the unit/role/rank/date fields are copied verbatim.
 - Numbers come ONLY from the original resume, never from the JD. Do not restate the
   candidate's experience using the JD's phrasing of a number (if they wrote "about five
   years", do not write the JD's "5+ years").
@@ -122,14 +133,21 @@ professional typed it themselves. This outranks sounding "polished".
 4. KEYWORD COVERAGE: Maximize how many genuine JD must-have keywords appear, naturally, in
    the summary, skills, and bullets — without inventing experience.
 5. COMPLETENESS: Return the FULL resume. Preserve every original section and entry (contact,
-   summary, skills, experience, education, projects, certifications). Never drop a role,
-   degree, project, or certification, and copy contact details verbatim.
-6. Keep it concise and ATS-parse-safe (plain text, standard sections, no tables/columns).
+   summary, skills, experience, education, projects, certifications, military_service,
+   languages). Never drop a role, degree, project, certification, or language, and copy
+   contact details verbatim.
+6. ONE PAGE: resumes are expected to fit one page (an Israeli-market norm, and good practice
+   everywhere under ~10 years of experience). Prefer trimming: cut the weakest/least relevant
+   bullets first (keep 2-4 strong bullets per recent role, fewer for old ones), keep the
+   summary to 2-3 lines, and drop stale skills — but NEVER cut whole roles, degrees,
+   certifications, military service, or languages to save space.
+7. Keep it concise and ATS-parse-safe (plain text, standard sections, no tables/columns).
 
 ================ SELF-CHECK BEFORE RETURNING (do this silently) ================
 Re-read your tailored_resume and verify:
   (a) EVERY skill/tool/technology you list also appears in the ORIGINAL resume;
-  (b) all employers, titles, dates, and numbers are unchanged from the original;
+  (b) all employers, titles, dates, numbers, and military details are unchanged from the
+      original;
   (c) no section or entry was dropped;
   (d) BANNED-WORD SCAN: go through the banned list ONE WORD AT A TIME (spearheaded,
       leveraged, utilized, championed, orchestrated, streamlined, ...) and search your
@@ -143,7 +161,7 @@ If any check fails, remove or correct the offending content before you output.
 Return ONLY a JSON object with this exact shape (same ResumeModel schema as the input):
 {
   "tailored_resume": { ...full ResumeModel: contact, summary, skills, experience,
-                        education, projects, certifications... },
+                        education, projects, certifications, military_service, languages... },
   "changelog": [{"section": "...", "change": "...", "reason": "..."}],
   "covered_keywords": ["..."]
 }
@@ -232,6 +250,16 @@ _RESUME_HEBREW_NOTE = (
     "English, as the resume does). All other rules still apply."
 )
 
+# Israeli hiring culture: applications go by email/WhatsApp with a short note,
+# not a formal Western cover letter. Applied when the JD is Hebrew.
+_ISRAELI_COVER_NOTE = (
+    "\n\nNote: this job is in the Israeli market (Hebrew job description). Do NOT "
+    "write a formal cover letter. Write a short application EMAIL BODY of 3-5 "
+    "sentences: direct, warm, no salutation ceremony (a simple greeting line is "
+    "fine), state the role, the 1-2 strongest genuine points of fit, and a "
+    "one-line close. No postal-letter conventions, no repeating the resume."
+)
+
 
 def analyze_jd_system(language: str = "en") -> str:
     """ANALYZE_JD system prompt, with a Hebrew note appended when the JD is Hebrew."""
@@ -242,6 +270,14 @@ def with_resume_language(system: str, language: str) -> str:
     """Append the write-in-Hebrew note to a system prompt when the resume is Hebrew.
     Appending keeps the leading `Task: <TOKEN>.` tag intact for stub routing."""
     return system + (_RESUME_HEBREW_NOTE if language == "he" else "")
+
+
+def cover_letter_system(resume_lang: str, jd_lang: str) -> str:
+    """COVER_LETTER system prompt: Hebrew output when the resume is Hebrew, and
+    'Israeli mode' (short email body, not a letter) when the JD is Hebrew.
+    Notes are appended, never prepended."""
+    system = with_resume_language(COVER_LETTER_SYSTEM, resume_lang)
+    return system + (_ISRAELI_COVER_NOTE if jd_lang == "he" else "")
 
 
 def structure_resume_user(raw_text: str) -> str:

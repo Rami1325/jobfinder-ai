@@ -152,6 +152,20 @@ class StubClient:
             "education": [{"institution": "State University", "degree": "BSc", "field": "CS"}],
             "projects": [],
             "certifications": [],
+            "military_service": [
+                {
+                    "unit": "8200",
+                    "role": "Intelligence Analyst",
+                    "rank": "Sergeant",
+                    "start_date": "2015",
+                    "end_date": "2018",
+                    "bullets": ["Analyzed signals data."],
+                }
+            ],
+            "languages": [
+                {"language": "Hebrew", "level": "native"},
+                {"language": "English", "level": "fluent"},
+            ],
         }
 
     def _stub_jd(self, jd_text: str) -> dict[str, Any]:

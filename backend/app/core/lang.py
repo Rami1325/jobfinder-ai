@@ -35,4 +35,7 @@ def resume_language(resume: ResumeModel) -> str:
         parts.extend(proj.bullets)
     for edu in resume.education:
         parts.extend([edu.degree, edu.field, edu.details])
+    for ms in resume.military_service:
+        parts.append(ms.role)
+        parts.extend(ms.bullets)
     return detect_language(" ".join(parts))
