@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useTranslation } from "react-i18next";
 import { MessageSquareText, Sparkles, Lightbulb, ClipboardCheck } from "lucide-react";
 import { analyzeJD, interviewAnswer, interviewFeedback, interviewQuestions } from "../api/client";
 import JDPaste from "../components/JDPaste";
@@ -21,6 +22,7 @@ const catTone: Record<string, "accent" | "mint" | "partial" | "neutral"> = {
 };
 
 function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeModel; jd: JDModel }) {
+  const { t } = useTranslation("interview");
   const [answer, setAnswer] = useState("");
   const [tips, setTips] = useState<string[]>([]);
   const [loadingA, setLoadingA] = useState(false);
@@ -53,13 +55,17 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
     <Card>
       <div className="flex items-start justify-between gap-3">
         <p className="font-medium text-ink">{q.question}</p>
-        {q.category && <Badge tone={catTone[q.category] ?? "neutral"}>{q.category}</Badge>}
+        {q.category && (
+          <Badge tone={catTone[q.category] ?? "neutral"}>
+            {t(`categories.${q.category}`, { defaultValue: q.category })}
+          </Badge>
+        )}
       </div>
       {q.rationale && <p className="mt-1 text-xs text-ink-muted">{q.rationale}</p>}
 
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" loading={loadingA} icon={<Lightbulb size={14} />} onClick={getAnswer}>
-          {answer ? "Regenerate answer" : "Model answer"}
+          {answer ? t("regenerateAnswer") : t("modelAnswer")}
         </Button>
       </div>
 
@@ -68,8 +74,8 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
           {answer}
           {tips.length > 0 && (
             <ul className="mt-2 list-disc ps-5 text-xs text-ink-muted">
-              {tips.map((t, i) => (
-                <li key={i}>{t}</li>
+              {tips.map((tip, i) => (
+                <li key={i}>{tip}</li>
               ))}
             </ul>
           )}
@@ -77,11 +83,13 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
       )}
 
       <div className="mt-4">
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">Practice your answer</p>
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
+          {t("practice.label")}
+        </p>
         <textarea
           value={practice}
           onChange={(e) => setPractice(e.target.value)}
-          placeholder="Type your answer, then get feedback…"
+          placeholder={t("practice.placeholder")}
           className="min-h-[90px] w-full resize-y rounded-lg border border-line bg-bg-soft p-3 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
         />
         <Button
@@ -92,7 +100,7 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
           icon={<ClipboardCheck size={14} />}
           onClick={getFeedback}
         >
-          Get feedback
+          {t("practice.cta")}
         </Button>
       </div>
 
@@ -100,11 +108,11 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
         <div className="mt-3 space-y-2 rounded-lg border border-accent/30 bg-accent/5 p-3 text-sm">
           <div className="flex items-center gap-2">
             <span className="text-2xl font-bold tabular-nums text-ink">{Math.round(feedback.score)}</span>
-            <span className="text-xs text-ink-muted">/ 100</span>
+            <span className="text-xs text-ink-muted">{t("feedback.outOf")}</span>
           </div>
           {feedback.strengths.length > 0 && (
             <div>
-              <span className="text-xs font-semibold text-mint">Strengths</span>
+              <span className="text-xs font-semibold text-mint">{t("feedback.strengths")}</span>
               <ul className="list-disc ps-5 text-ink-muted">
                 {feedback.strengths.map((s, i) => (
                   <li key={i}>{s}</li>
@@ -114,7 +122,7 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
           )}
           {feedback.improvements.length > 0 && (
             <div>
-              <span className="text-xs font-semibold text-warn">Improve</span>
+              <span className="text-xs font-semibold text-warn">{t("feedback.improve")}</span>
               <ul className="list-disc ps-5 text-ink-muted">
                 {feedback.improvements.map((s, i) => (
                   <li key={i}>{s}</li>
@@ -124,7 +132,7 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
           )}
           {feedback.revised_answer && (
             <div>
-              <span className="text-xs font-semibold text-accent-soft">Revised</span>
+              <span className="text-xs font-semibold text-accent-soft">{t("feedback.revised")}</span>
               <p className="text-ink">{feedback.revised_answer}</p>
             </div>
           )}
@@ -135,6 +143,7 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
 }
 
 export default function InterviewPage() {
+  const { t } = useTranslation("interview");
   const { master, loading } = useMasterResume();
   const [jdText, setJdText] = useState("");
   const [jd, setJd] = useState<JDModel | null>(null);
@@ -153,34 +162,32 @@ export default function InterviewPage() {
       const r = await interviewQuestions(master.resume, analyzed);
       setQuestions(r.questions);
     } catch (e: any) {
-      setError(e?.response?.data?.detail || "Something went wrong.");
+      setError(e?.response?.data?.detail || t("genericError"));
     } finally {
       setRunning(false);
     }
   }
 
   if (loading) return <Skeleton className="h-48 w-full" />;
-  if (!master?.resume) return <ResumeGate feature="interview prep" />;
+  if (!master?.resume) return <ResumeGate feature={t("gateFeature")} />;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
-          <MessageSquareText className="text-accent-soft" /> Interview prep
+          <MessageSquareText className="text-accent-soft" /> {t("title")}
         </h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          Likely questions, model answers grounded in your real experience, and feedback on your practice.
-        </p>
+        <p className="mt-1 text-sm text-ink-muted">{t("sub")}</p>
       </div>
 
       <Card>
-        <CardTitle>Target job description</CardTitle>
+        <CardTitle>{t("jdTitle")}</CardTitle>
         <div className="mt-3">
           <JDPaste value={jdText} onChange={setJdText} />
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <Button loading={running} icon={<Sparkles size={16} />} disabled={jdText.trim().length < 30} onClick={generate}>
-            Generate questions
+            {t("generate")}
           </Button>
           {error && <span className="text-sm text-danger">{error}</span>}
         </div>

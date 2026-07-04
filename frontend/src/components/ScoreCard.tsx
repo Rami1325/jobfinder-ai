@@ -1,9 +1,11 @@
 import { ArrowRight, ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { Score } from "../types";
 import { Card, CardTitle, ProgressRing } from "./ui";
 import { cn } from "../lib/cn";
 
 function DeltaPill({ before, after }: { before: number; after: number }) {
+  const { t } = useTranslation("tailor");
   const d = Math.round((after - before) * 10) / 10;
   const up = d > 0;
   return (
@@ -16,20 +18,21 @@ function DeltaPill({ before, after }: { before: number; after: number }) {
       )}
     >
       {d === 0 ? <Minus size={12} /> : up ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-      {d === 0 ? "no change" : `${up ? "+" : "−"}${Math.abs(d)} pts`}
+      {d === 0 ? t("score.noChange") : t("score.delta", { sign: up ? "+" : "−", value: Math.abs(d) })}
     </span>
   );
 }
 
 export default function ScoreCard({ before, after }: { before: Score; after: Score }) {
+  const { t } = useTranslation("tailor");
   const rings = [
-    { label: "Overall", tone: "gradient" as const, b: before.overall, a: after.overall },
-    { label: "ATS", tone: "accent" as const, b: before.keyword_coverage, a: after.keyword_coverage },
-    { label: "Fit", tone: "mint" as const, b: before.fit_score, a: after.fit_score },
+    { label: t("score.overall"), tone: "gradient" as const, b: before.overall, a: after.overall },
+    { label: t("score.ats"), tone: "accent" as const, b: before.keyword_coverage, a: after.keyword_coverage },
+    { label: t("score.fit"), tone: "mint" as const, b: before.fit_score, a: after.fit_score },
   ];
   return (
     <Card>
-      <CardTitle>Match score — before vs. after</CardTitle>
+      <CardTitle>{t("score.title")}</CardTitle>
       <div className="mt-5 grid grid-cols-1 gap-8 sm:grid-cols-3 sm:gap-4">
         {rings.map((r) => (
           <div key={r.label} className="flex flex-col items-center gap-3">
@@ -37,14 +40,14 @@ export default function ScoreCard({ before, after }: { before: Score; after: Sco
               <div className="flex flex-col items-center gap-1 opacity-50">
                 <ProgressRing value={r.b} size={72} stroke={6} tone={r.tone} />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-                  Before
+                  {t("score.before")}
                 </span>
               </div>
-              <ArrowRight size={18} className="shrink-0 text-ink-faint" />
+              <ArrowRight size={18} className="shrink-0 text-ink-faint rtl:-scale-x-100" />
               <div className="flex flex-col items-center gap-1">
                 <ProgressRing value={r.a} size={112} tone={r.tone} />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink">
-                  After
+                  {t("score.after")}
                 </span>
               </div>
             </div>

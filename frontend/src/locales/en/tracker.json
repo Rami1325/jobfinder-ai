@@ -1,1 +1,45 @@
-{}
+{
+  "title": "Application tracker",
+  "sub_one": "{{count}} application · move them across stages as you go.",
+  "sub_other": "{{count}} applications · move them across stages as you go.",
+  "loadError": "Could not load applications. Is the backend running?",
+  "status": {
+    "saved": "Saved",
+    "applied": "Applied",
+    "interview": "Interview",
+    "offer": "Offer",
+    "rejected": "Declined"
+  },
+  "tiles": {
+    "total": "Total",
+    "applied": "Applied",
+    "interviews": "Interviews",
+    "offers": "Offers",
+    "declined": "Declined"
+  },
+  "interviewRate": "interview rate",
+  "empty": {
+    "title": "No applications yet",
+    "body": "Find matching roles with <1>Jobs search</1>, or tailor a résumé in <3>Tailor</3> and click “Save to tracker”."
+  },
+  "columnEmpty": "Nothing here yet",
+  "interviewedToggle": "Did you interview for this job?",
+  "interviewed": "Interviewed",
+  "toasts": {
+    "deleted": "Application deleted",
+    "interviewedError": "Could not update interview status"
+  },
+  "actions": {
+    "openJob": "Open job posting",
+    "view": "View",
+    "delete": "Delete"
+  },
+  "modal": {
+    "loading": "Loading…",
+    "resumeFallback": "Résumé",
+    "match": "Match {{pct}}%",
+    "jobPosting": "Job posting",
+    "noResume": "No saved résumé for this entry.",
+    "coverLetter": "Cover letter"
+  }
+}

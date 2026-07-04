@@ -1,1 +1,27 @@
-{}
+{
+  "title": "Interview prep",
+  "sub": "Likely questions, model answers grounded in your real experience, and feedback on your practice.",
+  "gateFeature": "interview prep",
+  "jdTitle": "Target job description",
+  "generate": "Generate questions",
+  "genericError": "Something went wrong.",
+  "categories": {
+    "behavioral": "Behavioral",
+    "technical": "Technical",
+    "role-specific": "Role-specific",
+    "culture": "Culture"
+  },
+  "modelAnswer": "Model answer",
+  "regenerateAnswer": "Regenerate answer",
+  "practice": {
+    "label": "Practice your answer",
+    "placeholder": "Type your answer, then get feedback…",
+    "cta": "Get feedback"
+  },
+  "feedback": {
+    "outOf": "/ 100",
+    "strengths": "Strengths",
+    "improve": "Improve",
+    "revised": "Revised"
+  }
+}

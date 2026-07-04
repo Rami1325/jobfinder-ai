@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Contact, Copy, Sparkles } from "lucide-react";
 import { linkedinOptimize } from "../../api/client";
 import ResumeGate from "../../components/ResumeGate";
@@ -8,6 +9,7 @@ import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../../compon
 import type { LinkedInResult } from "../../types";
 
 export default function LinkedInToolPage() {
+  const { t } = useTranslation("tools");
   const { master, loading } = useMasterResume();
   const [result, setResult] = useState<LinkedInResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -26,21 +28,21 @@ export default function LinkedInToolPage() {
 
   function copy(text: string) {
     navigator.clipboard.writeText(text);
-    toast("success", "Copied");
+    toast("success", t("linkedin.copied"));
   }
 
   if (loading) return <Skeleton className="h-48 w-full" />;
-  if (!master?.resume) return <ResumeGate feature="the LinkedIn optimizer" />;
+  if (!master?.resume) return <ResumeGate feature={t("linkedin.gateFeature")} />;
 
   return (
     <ToolShell
-      title="LinkedIn optimizer"
-      subtitle="A keyword-rich headline, About, and bullets — built only from your real résumé."
+      title={t("cards.linkedin.title")}
+      subtitle={t("linkedin.subtitle")}
       icon={<Contact className="text-accent-soft" />}
     >
       <Card>
         <Button loading={running} icon={<Sparkles size={16} />} onClick={run}>
-          {result ? "Regenerate" : "Optimize my profile"}
+          {result ? t("linkedin.regenerate") : t("linkedin.optimize")}
         </Button>
       </Card>
 
@@ -50,9 +52,9 @@ export default function LinkedInToolPage() {
         <div className="space-y-4">
           <Card>
             <div className="flex items-center justify-between">
-              <CardTitle>Headline</CardTitle>
+              <CardTitle>{t("linkedin.headline")}</CardTitle>
               <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={() => copy(result.headline)}>
-                Copy
+                {t("common:actions.copy")}
               </Button>
             </div>
             <p className="mt-2 text-sm text-ink">{result.headline}</p>
@@ -60,9 +62,9 @@ export default function LinkedInToolPage() {
 
           <Card>
             <div className="flex items-center justify-between">
-              <CardTitle>About</CardTitle>
+              <CardTitle>{t("linkedin.about")}</CardTitle>
               <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={() => copy(result.about)}>
-                Copy
+                {t("common:actions.copy")}
               </Button>
             </div>
             <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink">{result.about}</p>
@@ -71,9 +73,9 @@ export default function LinkedInToolPage() {
           {result.experience_bullets.length > 0 && (
             <Card>
               <div className="flex items-center justify-between">
-                <CardTitle>Experience bullets</CardTitle>
+                <CardTitle>{t("linkedin.bullets")}</CardTitle>
                 <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={() => copy(result.experience_bullets.join("\n"))}>
-                  Copy all
+                  {t("linkedin.copyAll")}
                 </Button>
               </div>
               <ul className="mt-2 list-disc space-y-1 ps-5 text-sm text-ink">
@@ -86,7 +88,7 @@ export default function LinkedInToolPage() {
 
           {result.skills.length > 0 && (
             <Card>
-              <CardTitle>Skills</CardTitle>
+              <CardTitle>{t("linkedin.skills")}</CardTitle>
               <div className="mt-3 flex flex-wrap gap-2">
                 {result.skills.map((s) => (
                   <Badge key={s} tone="accent">

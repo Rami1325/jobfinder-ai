@@ -1,4 +1,5 @@
 import { ShieldCheck, ShieldAlert } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ChangeLogEntry, FabricationFlag } from "../types";
 import { Card, CardTitle } from "./ui";
 import { cn } from "../lib/cn";
@@ -10,6 +11,7 @@ interface Props {
 
 /** The trust panel — the product's core differentiator, surfaced prominently. */
 export default function ChangeLog({ changelog, flags }: Props) {
+  const { t } = useTranslation("tailor");
   const clean = flags.length === 0;
   return (
     <Card glow={clean} className={clean ? "border-mint/40" : "border-danger/50"}>
@@ -23,11 +25,9 @@ export default function ChangeLog({ changelog, flags }: Props) {
           {clean ? <ShieldCheck size={22} /> : <ShieldAlert size={22} />}
         </span>
         <div>
-          <CardTitle>{clean ? "All claims verified" : "Fabrication check — review these"}</CardTitle>
+          <CardTitle>{clean ? t("changelog.cleanTitle") : t("changelog.flaggedTitle")}</CardTitle>
           <p className="mt-0.5 text-sm text-ink-muted">
-            {clean
-              ? "Every factual anchor matches your original résumé — nothing invented."
-              : `${flags.length} item${flags.length > 1 ? "s" : ""} may not be supported by your résumé.`}
+            {clean ? t("changelog.cleanBody") : t("changelog.flagged", { count: flags.length })}
           </p>
         </div>
       </div>
@@ -45,10 +45,10 @@ export default function ChangeLog({ changelog, flags }: Props) {
       )}
 
       <h3 className="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
-        Edits made
+        {t("changelog.editsMade")}
       </h3>
       {changelog.length === 0 ? (
-        <p className="text-sm text-ink-muted">No changes recorded.</p>
+        <p className="text-sm text-ink-muted">{t("changelog.noChanges")}</p>
       ) : (
         <div className="space-y-2">
           {changelog.map((c, i) => (
@@ -57,7 +57,9 @@ export default function ChangeLog({ changelog, flags }: Props) {
                 <span className="font-semibold capitalize text-accent-soft">{c.section}</span>
                 <span className="text-ink"> — {c.change}</span>
               </div>
-              {c.reason && <div className="mt-0.5 text-xs text-ink-muted">Why: {c.reason}</div>}
+              {c.reason && (
+                <div className="mt-0.5 text-xs text-ink-muted">{t("changelog.why", { reason: c.reason })}</div>
+              )}
             </div>
           ))}
         </div>

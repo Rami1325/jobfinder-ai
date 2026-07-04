@@ -1,13 +1,16 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Mail, Copy, Sparkles } from "lucide-react";
 import { followUp } from "../../api/client";
 import ToolShell from "../../components/ToolShell";
 import { Button, Card, CardTitle, Skeleton, useToast } from "../../components/ui";
 import type { FollowUpResult } from "../../types";
 
+// Stage ids are sent to the API as-is (English); labels are translated.
 const STAGES = ["after applying", "after an interview", "checking in", "after an offer"];
 
 export default function FollowUpToolPage() {
+  const { t } = useTranslation("tools");
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [stage, setStage] = useState(STAGES[0]);
@@ -32,37 +35,37 @@ export default function FollowUpToolPage() {
 
   return (
     <ToolShell
-      title="Follow-up email writer"
-      subtitle="A concise, specific follow-up for any stage — no clichés, no filler."
+      title={t("cards.followup.title")}
+      subtitle={t("followup.subtitle")}
       icon={<Mail className="text-accent-soft" />}
     >
       <Card>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-xs text-ink-muted">Company</label>
-            <input className={input} value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Acme Corp" />
+            <label className="mb-1 block text-xs text-ink-muted">{t("followup.company")}</label>
+            <input className={input} value={company} onChange={(e) => setCompany(e.target.value)} placeholder={t("followup.companyPlaceholder")} />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-ink-muted">Role</label>
-            <input className={input} value={role} onChange={(e) => setRole(e.target.value)} placeholder="Senior Backend Engineer" />
+            <label className="mb-1 block text-xs text-ink-muted">{t("followup.role")}</label>
+            <input className={input} value={role} onChange={(e) => setRole(e.target.value)} placeholder={t("followup.rolePlaceholder")} />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-ink-muted">Stage</label>
-            <select className={`${input} capitalize`} value={stage} onChange={(e) => setStage(e.target.value)}>
+            <label className="mb-1 block text-xs text-ink-muted">{t("followup.stage")}</label>
+            <select className={input} value={stage} onChange={(e) => setStage(e.target.value)}>
               {STAGES.map((s) => (
                 <option key={s} value={s}>
-                  {s}
+                  {t(`followup.stages.${s}`)}
                 </option>
               ))}
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs text-ink-muted">Point of fit (optional)</label>
-            <input className={input} value={context} onChange={(e) => setContext(e.target.value)} placeholder="Excited about their platform work" />
+            <label className="mb-1 block text-xs text-ink-muted">{t("followup.fit")}</label>
+            <input className={input} value={context} onChange={(e) => setContext(e.target.value)} placeholder={t("followup.fitPlaceholder")} />
           </div>
         </div>
         <Button className="mt-4" loading={running} icon={<Sparkles size={16} />} disabled={!company.trim() || !role.trim()} onClick={run}>
-          Write email
+          {t("followup.write")}
         </Button>
       </Card>
 
@@ -71,20 +74,20 @@ export default function FollowUpToolPage() {
       {result && !running && (
         <Card>
           <div className="flex items-center justify-between">
-            <CardTitle>Draft</CardTitle>
+            <CardTitle>{t("followup.draft")}</CardTitle>
             <Button
               size="sm"
               variant="ghost"
               icon={<Copy size={13} />}
               onClick={() => {
-                navigator.clipboard.writeText(`Subject: ${result.subject}\n\n${result.body}`);
-                toast("success", "Copied email");
+                navigator.clipboard.writeText(`${t("followup.subject", { subject: result.subject })}\n\n${result.body}`);
+                toast("success", t("followup.copied"));
               }}
             >
-              Copy
+              {t("common:actions.copy")}
             </Button>
           </div>
-          <p className="mt-2 text-sm font-semibold text-ink">Subject: {result.subject}</p>
+          <p className="mt-2 text-sm font-semibold text-ink">{t("followup.subject", { subject: result.subject })}</p>
           <div className="mt-2 whitespace-pre-wrap rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink">
             {result.body}
           </div>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { ScanLine, CheckCircle2, AlertTriangle, XCircle, Sparkles } from "lucide-react";
 import { atsScan } from "../../api/client";
 import ResumeGate from "../../components/ResumeGate";
@@ -14,6 +15,7 @@ const sev = {
 };
 
 export default function AtsToolPage() {
+  const { t } = useTranslation("tools");
   const { master, loading } = useMasterResume();
   const [jdText, setJdText] = useState("");
   const [result, setResult] = useState<ATSScanResult | null>(null);
@@ -31,24 +33,24 @@ export default function AtsToolPage() {
   }
 
   if (loading) return <Skeleton className="h-48 w-full" />;
-  if (!master?.resume) return <ResumeGate feature="the ATS scanner" />;
+  if (!master?.resume) return <ResumeGate feature={t("ats.gateFeature")} />;
 
   return (
     <ToolShell
-      title="ATS résumé scanner"
-      subtitle="Format + keyword checks on your saved résumé. Add a job description for coverage scoring."
+      title={t("cards.ats.title")}
+      subtitle={t("ats.subtitle")}
       icon={<ScanLine className="text-accent-soft" />}
     >
       <Card>
-        <CardTitle>Optional: target job description</CardTitle>
+        <CardTitle>{t("ats.jdTitle")}</CardTitle>
         <textarea
           value={jdText}
           onChange={(e) => setJdText(e.target.value)}
-          placeholder="Paste a JD to also score keyword coverage (optional)…"
+          placeholder={t("ats.jdPlaceholder")}
           className="mt-3 min-h-[120px] w-full resize-y rounded-xl border border-line bg-bg-soft p-3 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
         />
         <Button className="mt-3" loading={running} icon={<Sparkles size={16} />} onClick={run}>
-          Scan résumé
+          {t("ats.scan")}
         </Button>
       </Card>
 
@@ -56,11 +58,16 @@ export default function AtsToolPage() {
 
       {result && !running && (
         <Card className="flex flex-col gap-5 sm:flex-row sm:items-center">
-          <ProgressRing value={result.score} size={120} label="ATS score" />
+          <ProgressRing value={result.score} size={120} label={t("ats.scoreLabel")} />
           <div className="flex-1 space-y-2">
             {result.keyword_coverage > 0 && (
               <p className="text-sm text-ink-muted">
-                Keyword coverage vs. JD: <span className="font-semibold text-ink">{Math.round(result.keyword_coverage)}%</span>
+                <Trans
+                  t={t}
+                  i18nKey="ats.coverage"
+                  values={{ pct: Math.round(result.keyword_coverage) }}
+                  components={[<span key="0" />, <span key="1" className="font-semibold text-ink" />]}
+                />
               </p>
             )}
             {result.issues.map((iss, i) => (
@@ -78,7 +85,7 @@ export default function AtsToolPage() {
 
       {result && result.gaps.length > 0 && !running && (
         <Card>
-          <CardTitle>Missing keywords</CardTitle>
+          <CardTitle>{t("ats.missing")}</CardTitle>
           <div className="mt-3 flex flex-wrap gap-2">
             {result.gaps
               .filter((g) => g.status !== "covered")

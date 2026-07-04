@@ -1,1 +1,111 @@
-{}
+{
+  "title": "Tailor your résumé",
+  "sub": "Rewrite for a specific job — verified against your real experience.",
+  "breadcrumb": {
+    "back": "Back to jobs",
+    "thisJob": "this job",
+    "tailoringFor": "Tailoring for: <1>{{title}}</1>",
+    "tailoringForAt": "Tailoring for: <1>{{title}}</1> at <3>{{company}}</3>"
+  },
+  "steps": {
+    "resume": "Résumé",
+    "jd": "Job description",
+    "results": "Results"
+  },
+  "target": {
+    "label": "Target job: {{title}}",
+    "fallback": "Job posting",
+    "open": "Open job posting",
+    "appliedBadge": "✓ Applied"
+  },
+  "applyPrompt": {
+    "question": "Did you apply to this job?",
+    "yes": "Yes, applied",
+    "notYet": "Not yet"
+  },
+  "upload": {
+    "title": "1 · Your résumé"
+  },
+  "jd": {
+    "title": "2 · Target job description",
+    "hint": "Paste the full posting from any job site."
+  },
+  "run": {
+    "cta": "Tailor my résumé",
+    "loading": "Tailoring…",
+    "uploadFirst": "Upload a résumé to begin.",
+    "pasteJd": "Paste a job description.",
+    "keepsRunning": "Keeps running if you switch tabs — come back anytime."
+  },
+  "toasts": {
+    "alreadyInTracker": "Already in your tracker",
+    "savedToTracker": "Saved to tracker",
+    "markedApplied": "Marked as applied — added to tracker",
+    "trackerError": "Could not update the tracker. Is the backend running?"
+  },
+  "download": {
+    "title": "Download tailored résumé",
+    "docx": "Download .docx",
+    "pdf": "Download .pdf",
+    "atsNote": "Output is single-column, ATS-safe (no tables, columns, or images)."
+  },
+  "save": {
+    "cta": "Save to tracker",
+    "saved": "✓ Saved to tracker"
+  },
+  "jdPaste": {
+    "placeholder": "Paste the job description — or drop a job link (LinkedIn, Greenhouse, Lever…) and fetch it.",
+    "fetchCta": "Fetch description from link",
+    "detected": "Detected a job link",
+    "noText": "Couldn't read the description from that link (the site may require login or block bots). Paste the text instead.",
+    "fetchError": "Could not fetch that link."
+  },
+  "score": {
+    "title": "Match score — before vs. after",
+    "before": "Before",
+    "after": "After",
+    "overall": "Overall",
+    "ats": "ATS",
+    "fit": "Fit",
+    "noChange": "no change",
+    "delta": "{{sign}}{{value}} pts"
+  },
+  "gaps": {
+    "title": "Keyword gap analysis",
+    "summary": "{{missing}} of {{total}} key terms still missing. Only add terms that reflect real experience."
+  },
+  "changelog": {
+    "cleanTitle": "All claims verified",
+    "flaggedTitle": "Fabrication check — review these",
+    "cleanBody": "Every factual anchor matches your original résumé — nothing invented.",
+    "flagged_one": "{{count}} item may not be supported by your résumé.",
+    "flagged_other": "{{count}} items may not be supported by your résumé.",
+    "editsMade": "Edits made",
+    "noChanges": "No changes recorded.",
+    "why": "Why: {{reason}}"
+  },
+  "cover": {
+    "title": "Cover letter",
+    "generate": "Generate",
+    "regenerate": "Regenerate",
+    "moreSpecific": "More specific",
+    "shorter": "Shorter",
+    "copied": "Copied to clipboard",
+    "error": "Failed to generate cover letter.",
+    "tones": {
+      "professional": "Professional",
+      "enthusiastic": "Enthusiastic",
+      "concise": "Concise",
+      "warm": "Warm"
+    }
+  },
+  "sections": {
+    "fallbackName": "Résumé",
+    "summary": "Summary",
+    "skills": "Skills",
+    "experience": "Experience",
+    "projects": "Projects",
+    "education": "Education",
+    "certifications": "Certifications"
+  }
+}

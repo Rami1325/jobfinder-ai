@@ -1,4 +1,5 @@
 import { Check, Minus, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { GapItem } from "../types";
 import { Badge, Card, CardTitle } from "./ui";
 
@@ -10,15 +11,16 @@ const icon: Record<string, JSX.Element> = {
 };
 
 export default function GapList({ gaps }: { gaps: GapItem[] }) {
+  const { t } = useTranslation("tailor");
   if (!gaps.length) return null;
   const sorted = [...gaps].sort((a, b) => order[a.status] - order[b.status]);
   const missing = gaps.filter((g) => g.status === "missing").length;
 
   return (
     <Card>
-      <CardTitle>Keyword gap analysis</CardTitle>
+      <CardTitle>{t("gaps.title")}</CardTitle>
       <p className="mt-1 text-sm text-ink-muted">
-        {missing} of {gaps.length} key terms still missing. Only add terms that reflect real experience.
+        {t("gaps.summary", { missing, total: gaps.length })}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         {sorted.map((g) => (

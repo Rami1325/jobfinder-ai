@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ReactNode } from "react";
 
 export default function ToolShell({
@@ -13,11 +14,12 @@ export default function ToolShell({
   icon: ReactNode;
   children: ReactNode;
 }) {
+  const { t } = useTranslation("tools");
   return (
     <div className="space-y-6">
       <div>
         <Link to="/tools" className="mb-3 inline-flex items-center gap-1 text-xs text-ink-muted hover:text-ink">
-          <ArrowLeft size={13} /> All tools
+          <ArrowLeft size={13} className="rtl:-scale-x-100" /> {t("back")}
         </Link>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
           {icon} {title}

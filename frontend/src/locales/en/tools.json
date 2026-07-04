@@ -1,1 +1,61 @@
-{}
+{
+  "title": "Tools",
+  "sub": "Focused, single-purpose helpers for your search.",
+  "back": "All tools",
+  "cards": {
+    "ats": {
+      "title": "ATS résumé scanner",
+      "body": "Score formatting + keyword coverage and get concrete fixes before a bot rejects you."
+    },
+    "linkedin": {
+      "title": "LinkedIn optimizer",
+      "body": "A sharper headline, About, and bullets — drawn only from your real experience."
+    },
+    "followup": {
+      "title": "Follow-up email writer",
+      "body": "Concise, specific follow-up emails that don't read like a template."
+    }
+  },
+  "ats": {
+    "gateFeature": "the ATS scanner",
+    "subtitle": "Format + keyword checks on your saved résumé. Add a job description for coverage scoring.",
+    "jdTitle": "Optional: target job description",
+    "jdPlaceholder": "Paste a JD to also score keyword coverage (optional)…",
+    "scan": "Scan résumé",
+    "scoreLabel": "ATS score",
+    "coverage": "Keyword coverage vs. JD: <1>{{pct}}%</1>",
+    "missing": "Missing keywords"
+  },
+  "linkedin": {
+    "gateFeature": "the LinkedIn optimizer",
+    "subtitle": "A keyword-rich headline, About, and bullets — built only from your real résumé.",
+    "optimize": "Optimize my profile",
+    "regenerate": "Regenerate",
+    "copied": "Copied",
+    "headline": "Headline",
+    "about": "About",
+    "bullets": "Experience bullets",
+    "copyAll": "Copy all",
+    "skills": "Skills"
+  },
+  "followup": {
+    "subtitle": "A concise, specific follow-up for any stage — no clichés, no filler.",
+    "company": "Company",
+    "companyPlaceholder": "Acme Corp",
+    "role": "Role",
+    "rolePlaceholder": "Senior Backend Engineer",
+    "stage": "Stage",
+    "stages": {
+      "after applying": "After applying",
+      "after an interview": "After an interview",
+      "checking in": "Checking in",
+      "after an offer": "After an offer"
+    },
+    "fit": "Point of fit (optional)",
+    "fitPlaceholder": "Excited about their platform work",
+    "write": "Write email",
+    "draft": "Draft",
+    "copied": "Copied email",
+    "subject": "Subject: {{subject}}"
+  }
+}

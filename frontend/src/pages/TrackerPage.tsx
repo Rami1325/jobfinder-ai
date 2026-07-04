@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { Trans, useTranslation } from "react-i18next";
 import {
   Award,
   ClipboardList,
@@ -27,32 +28,26 @@ import { Badge, Button, Card, Modal, ProgressRing, Skeleton, useToast } from "..
 import { cn } from "../lib/cn";
 import type { ApplicationDetail, ApplicationOut } from "../types";
 
+// Column labels come from the "tracker" catalog via `status.<key>`.
 const COLUMNS: {
   key: string;
-  label: string;
   tone: "neutral" | "accent" | "partial" | "mint" | "danger";
   bar: string;
   dot: string;
 }[] = [
-  { key: "saved", label: "Saved", tone: "neutral", bar: "bg-ink-faint/40", dot: "bg-ink-faint" },
-  { key: "applied", label: "Applied", tone: "accent", bar: "bg-gradient-to-r from-accent to-accent/30", dot: "bg-accent" },
-  { key: "interview", label: "Interview", tone: "partial", bar: "bg-gradient-to-r from-warn to-warn/30", dot: "bg-warn" },
-  { key: "offer", label: "Offer", tone: "mint", bar: "bg-gradient-to-r from-mint to-mint/30", dot: "bg-mint" },
-  { key: "rejected", label: "Declined", tone: "danger", bar: "bg-gradient-to-r from-danger to-danger/30", dot: "bg-danger" },
+  { key: "saved", tone: "neutral", bar: "bg-ink-faint/40", dot: "bg-ink-faint" },
+  { key: "applied", tone: "accent", bar: "bg-gradient-to-r from-accent to-accent/30", dot: "bg-accent" },
+  { key: "interview", tone: "partial", bar: "bg-gradient-to-r from-warn to-warn/30", dot: "bg-warn" },
+  { key: "offer", tone: "mint", bar: "bg-gradient-to-r from-mint to-mint/30", dot: "bg-mint" },
+  { key: "rejected", tone: "danger", bar: "bg-gradient-to-r from-danger to-danger/30", dot: "bg-danger" },
 ];
 
-const STATUS_LABELS: Record<string, string> = {
-  saved: "saved",
-  applied: "applied",
-  interview: "interview",
-  offer: "offer",
-  rejected: "declined",
-};
 const STATUSES = COLUMNS.map((c) => c.key);
 /** Statuses that mean the application was actually submitted. */
 const SUBMITTED = new Set(["applied", "interview", "offer", "rejected"]);
 
 export default function TrackerPage() {
+  const { t } = useTranslation("tracker");
   const [apps, setApps] = useState<ApplicationOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -66,7 +61,7 @@ export default function TrackerPage() {
     try {
       setApps(await listApplications());
     } catch {
-      setError("Could not load applications. Is the backend running?");
+      setError(t("loadError"));
     } finally {
       setLoading(false);
     }
@@ -74,6 +69,7 @@ export default function TrackerPage() {
 
   useEffect(() => {
     refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const metrics = useMemo(() => {
@@ -100,14 +96,14 @@ export default function TrackerPage() {
       setApps((prev) => prev.map((x) => (x.id === a.id ? updated : x)));
     } catch {
       setApps((prev) => prev.map((x) => (x.id === a.id ? { ...x, interviewed: !next } : x)));
-      toast("error", "Could not update interview status");
+      toast("error", t("toasts.interviewedError"));
     }
   }
 
   async function remove(id: number) {
     await deleteApplication(id);
     setApps((prev) => prev.filter((a) => a.id !== id));
-    toast("info", "Application deleted");
+    toast("info", t("toasts.deleted"));
   }
 
   async function view(id: number) {
@@ -122,21 +118,19 @@ export default function TrackerPage() {
   }
 
   const tiles: { label: string; value: number; icon: typeof Layers; iconCls: string }[] = [
-    { label: "Total", value: metrics.total, icon: Layers, iconCls: "bg-accent/12 text-accent" },
-    { label: "Applied", value: metrics.applied, icon: Send, iconCls: "bg-accent/12 text-accent" },
-    { label: "Interviews", value: metrics.interviews, icon: MessagesSquare, iconCls: "bg-mint/12 text-mint" },
-    { label: "Offers", value: metrics.offers, icon: Award, iconCls: "bg-mint/12 text-mint" },
-    { label: "Declined", value: metrics.declined, icon: XCircle, iconCls: "bg-danger/12 text-danger" },
+    { label: t("tiles.total"), value: metrics.total, icon: Layers, iconCls: "bg-accent/12 text-accent" },
+    { label: t("tiles.applied"), value: metrics.applied, icon: Send, iconCls: "bg-accent/12 text-accent" },
+    { label: t("tiles.interviews"), value: metrics.interviews, icon: MessagesSquare, iconCls: "bg-mint/12 text-mint" },
+    { label: t("tiles.offers"), value: metrics.offers, icon: Award, iconCls: "bg-mint/12 text-mint" },
+    { label: t("tiles.declined"), value: metrics.declined, icon: XCircle, iconCls: "bg-danger/12 text-danger" },
   ];
 
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Application tracker</h1>
-          <p className="mt-1 text-sm text-ink-muted">
-            {apps.length} application{apps.length === 1 ? "" : "s"} · move them across stages as you go.
-          </p>
+          <h1 className="text-2xl font-bold text-ink">{t("title")}</h1>
+          <p className="mt-1 text-sm text-ink-muted">{t("sub", { count: apps.length })}</p>
         </div>
       </div>
 
@@ -155,21 +149,21 @@ export default function TrackerPage() {
             <div className="absolute inset-x-0 top-0 h-[2px] bg-accent-gradient" aria-hidden />
             <div className="flex flex-col gap-6 p-5 sm:p-6 lg:flex-row lg:items-center">
               <div className="grid flex-1 grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-5">
-                {tiles.map((t, i) => (
+                {tiles.map((tile, i) => (
                   <motion.div
-                    key={t.label}
+                    key={tile.label}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.06 * i, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
                     className="flex items-center gap-3"
                   >
-                    <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl", t.iconCls)}>
-                      <t.icon size={17} />
+                    <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl", tile.iconCls)}>
+                      <tile.icon size={17} />
                     </span>
                     <div className="min-w-0">
-                      <div className="text-2xl font-bold leading-none tabular-nums text-ink">{t.value}</div>
+                      <div className="text-2xl font-bold leading-none tabular-nums text-ink">{tile.value}</div>
                       <div className="mt-1 truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
-                        {t.label}
+                        {tile.label}
                       </div>
                     </div>
                   </motion.div>
@@ -181,7 +175,7 @@ export default function TrackerPage() {
                   size={104}
                   stroke={9}
                   tone="mint"
-                  sublabel="interview rate"
+                  sublabel={t("interviewRate")}
                 />
               </div>
             </div>
@@ -201,17 +195,18 @@ export default function TrackerPage() {
           <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/12 text-accent">
             <ClipboardList size={22} />
           </span>
-          <p className="mt-4 text-sm font-semibold text-ink">No applications yet</p>
+          <p className="mt-4 text-sm font-semibold text-ink">{t("empty.title")}</p>
           <p className="mx-auto mt-1 max-w-sm text-sm text-ink-muted">
-            Find matching roles with{" "}
-            <Link to="/jobs" className="font-medium text-accent hover:underline">
-              Jobs search
-            </Link>
-            , or tailor a résumé in{" "}
-            <Link to="/app" className="font-medium text-accent hover:underline">
-              Tailor
-            </Link>{" "}
-            and click “Save to tracker”.
+            <Trans
+              t={t}
+              i18nKey="empty.body"
+              components={[
+                <span key="0" />,
+                <Link key="1" to="/jobs" className="font-medium text-accent hover:underline" />,
+                <span key="2" />,
+                <Link key="3" to="/app" className="font-medium text-accent hover:underline" />,
+              ]}
+            />
           </p>
         </Card>
       ) : (
@@ -224,7 +219,7 @@ export default function TrackerPage() {
                 <div className="flex items-center justify-between px-3 pb-1 pt-3">
                   <div className="flex items-center gap-2">
                     <span className={cn("h-1.5 w-1.5 rounded-full", col.dot)} aria-hidden />
-                    <Badge tone={col.tone}>{col.label}</Badge>
+                    <Badge tone={col.tone}>{t(`status.${col.key}`)}</Badge>
                   </div>
                   <span className="rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-ink-muted">
                     {items.length}
@@ -233,7 +228,7 @@ export default function TrackerPage() {
                 <div className="flex flex-col gap-3 p-3">
                   {items.length === 0 && (
                     <p className="rounded-xl border border-dashed border-line/70 px-3 py-4 text-center text-xs text-ink-faint">
-                      Nothing here yet
+                      {t("columnEmpty")}
                     </p>
                   )}
                   <AnimatePresence initial={false}>
@@ -273,7 +268,7 @@ export default function TrackerPage() {
                             {submitted && (
                               <button
                                 onClick={() => toggleInterviewed(a)}
-                                title="Did you interview for this job?"
+                                title={t("interviewedToggle")}
                                 className={cn(
                                   "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
                                   a.interviewed
@@ -282,7 +277,7 @@ export default function TrackerPage() {
                                 )}
                               >
                                 <MessageSquare size={11} />
-                                Interviewed
+                                {t("interviewed")}
                               </button>
                             )}
                           </div>
@@ -291,11 +286,11 @@ export default function TrackerPage() {
                             <select
                               value={a.status}
                               onChange={(e) => changeStatus(a.id, e.target.value)}
-                              className="min-w-0 flex-1 cursor-pointer rounded-lg border border-line bg-bg-soft px-2 py-1.5 text-xs capitalize text-ink transition-colors hover:border-accent/40 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                              className="min-w-0 flex-1 cursor-pointer rounded-lg border border-line bg-bg-soft px-2 py-1.5 text-xs text-ink transition-colors hover:border-accent/40 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/30"
                             >
                               {STATUSES.map((s) => (
                                 <option key={s} value={s}>
-                                  {STATUS_LABELS[s] ?? s}
+                                  {t(`status.${s}`)}
                                 </option>
                               ))}
                             </select>
@@ -304,7 +299,7 @@ export default function TrackerPage() {
                                 href={a.job_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                title="Open job posting"
+                                title={t("actions.openJob")}
                                 className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-accent/50 hover:text-accent md:min-h-0 md:min-w-0"
                               >
                                 <ExternalLink size={15} />
@@ -312,14 +307,14 @@ export default function TrackerPage() {
                             )}
                             <button
                               onClick={() => view(a.id)}
-                              title="View"
+                              title={t("actions.view")}
                               className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-accent/50 hover:text-ink md:min-h-0 md:min-w-0"
                             >
                               <Eye size={15} />
                             </button>
                             <button
                               onClick={() => remove(a.id)}
-                              title="Delete"
+                              title={t("actions.delete")}
                               className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
                             >
                               <Trash2 size={15} />
@@ -339,16 +334,20 @@ export default function TrackerPage() {
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title={detail ? `${detail.job_title || "Résumé"}${detail.company ? " · " + detail.company : ""}` : "Loading…"}
+        title={
+          detail
+            ? `${detail.job_title || t("modal.resumeFallback")}${detail.company ? " · " + detail.company : ""}`
+            : t("modal.loading")
+        }
       >
         {detailLoading && <Skeleton className="h-64 w-full" />}
         {detail && (
           <>
             <div className="mb-4 flex flex-wrap items-center gap-3">
-              <Badge tone="accent">Match {Math.round(detail.overall_score)}%</Badge>
+              <Badge tone="accent">{t("modal.match", { pct: Math.round(detail.overall_score) })}</Badge>
               {detail.interviewed && (
                 <Badge tone="mint">
-                  <MessageSquare size={11} /> Interviewed
+                  <MessageSquare size={11} /> {t("interviewed")}
                 </Badge>
               )}
               {detail.job_url && (
@@ -356,10 +355,10 @@ export default function TrackerPage() {
                   href={detail.job_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title="Open job posting"
+                  title={t("actions.openJob")}
                   className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
                 >
-                  <ExternalLink size={13} /> Job posting
+                  <ExternalLink size={13} /> {t("modal.jobPosting")}
                 </a>
               )}
               <div className="flex-1" />
@@ -398,12 +397,12 @@ export default function TrackerPage() {
             {detail.tailored_resume ? (
               <ResumeView resume={detail.tailored_resume} />
             ) : (
-              <p className="text-sm text-ink-muted">No saved résumé for this entry.</p>
+              <p className="text-sm text-ink-muted">{t("modal.noResume")}</p>
             )}
             {detail.cover_letter && (
               <>
                 <h3 className="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
-                  Cover letter
+                  {t("modal.coverLetter")}
                 </h3>
                 <div className="whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink">
                   {detail.cover_letter}

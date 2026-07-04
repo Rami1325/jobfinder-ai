@@ -48,5 +48,14 @@
     "chipFallback": "My resume",
     "replace": "Replace",
     "cancel": "Cancel"
+  },
+  "accessGate": {
+    "title": "Access code",
+    "body": "This JobFinder instance is private. Enter the access code to continue — it's remembered on this device.",
+    "placeholder": "Access code",
+    "unlock": "Unlock"
+  },
+  "placeholder": {
+    "body": "This section is being built. Check back shortly."
   }
 }

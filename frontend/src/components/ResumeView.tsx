@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { ResumeModel } from "../types";
 
 interface Props {
@@ -5,24 +6,25 @@ interface Props {
 }
 
 export default function ResumeView({ resume }: Props) {
+  const { t } = useTranslation("tailor");
   const c = resume.contact;
   const contactBits = [c.email, c.phone, c.location, c.linkedin, c.website].filter(Boolean);
 
   return (
     <div className="resume-view">
-      <div className="rv-name">{c.name || "Résumé"}</div>
+      <div className="rv-name">{c.name || t("sections.fallbackName")}</div>
       {contactBits.length > 0 && <div className="rv-contact">{contactBits.join(" · ")}</div>}
 
       {resume.summary && (
         <section>
-          <h4>Summary</h4>
+          <h4>{t("sections.summary")}</h4>
           <p>{resume.summary}</p>
         </section>
       )}
 
       {resume.skills.length > 0 && (
         <section>
-          <h4>Skills</h4>
+          <h4>{t("sections.skills")}</h4>
           <div>
             {resume.skills.map((s) => (
               <span key={s} className="tag">{s}</span>
@@ -33,7 +35,7 @@ export default function ResumeView({ resume }: Props) {
 
       {resume.experience.length > 0 && (
         <section>
-          <h4>Experience</h4>
+          <h4>{t("sections.experience")}</h4>
           {resume.experience.map((e, i) => (
             <div key={i} className="rv-item">
               <div className="rv-item-head">
@@ -56,7 +58,7 @@ export default function ResumeView({ resume }: Props) {
 
       {resume.projects.length > 0 && (
         <section>
-          <h4>Projects</h4>
+          <h4>{t("sections.projects")}</h4>
           {resume.projects.map((p, i) => (
             <div key={i} className="rv-item">
               <strong>{p.name}</strong>
@@ -73,7 +75,7 @@ export default function ResumeView({ resume }: Props) {
 
       {resume.education.length > 0 && (
         <section>
-          <h4>Education</h4>
+          <h4>{t("sections.education")}</h4>
           {resume.education.map((e, i) => (
             <div key={i} className="rv-item">
               <strong>{[e.degree, e.field].filter(Boolean).join(", ") || e.institution}</strong>
@@ -91,7 +93,7 @@ export default function ResumeView({ resume }: Props) {
 
       {resume.certifications.length > 0 && (
         <section>
-          <h4>Certifications</h4>
+          <h4>{t("sections.certifications")}</h4>
           <ul>
             {resume.certifications.map((cert, i) => (
               <li key={i}>{cert}</li>
