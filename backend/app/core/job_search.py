@@ -91,7 +91,11 @@ def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) 
             queues.remove(queue)
         else:
             i += 1
-        key = hit.url.split("?")[0].rstrip("/")
+        # Don't strip query strings here: JobMaster's job key lives in the
+        # query (checknum.asp?key=N), so stripping collapsed every JobMaster
+        # hit into one. Boards with tracking queries (LinkedIn) already strip
+        # them in their own parsers, where board knowledge belongs.
+        key = hit.url.rstrip("/")
         if key in seen:
             continue
         seen.add(key)

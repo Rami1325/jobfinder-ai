@@ -211,8 +211,8 @@ from app.core.scorer import score_resume  # noqa: E402
 from app.models import SearchContext  # noqa: E402
 
 check(
-    "provider registry has linkedin + drushim + comeet",
-    {"linkedin", "drushim", "comeet"} <= set(PROVIDERS)
+    "provider registry has linkedin + drushim + comeet + jobmaster + jooble",
+    {"linkedin", "drushim", "comeet", "jobmaster", "jooble"} <= set(PROVIDERS)
     and set(DEFAULT_SOURCES) == set(PROVIDERS),
     str(sorted(PROVIDERS)),
 )
@@ -242,6 +242,20 @@ check(
     str([h.url for h in _rr]),
 )
 check("fan-out dedupes across sources by url", len(_rr) == 4, str([h.url for h in _rr]))
+_rr_q = _interleave_and_dedupe(
+    {
+        "jobmaster": [
+            JobHit(source="jobmaster", url="https://jm/checknum.asp?key=1"),
+            JobHit(source="jobmaster", url="https://jm/checknum.asp?key=2"),
+        ],
+    },
+    limit=10,
+)
+check(
+    "fan-out keeps urls that differ only by query (jobmaster keys)",
+    len(_rr_q) == 2,
+    str([h.url for h in _rr_q]),
+)
 
 # 14c. Drushim provider: response parser pinned against a trimmed real fixture
 import json as _json  # noqa: E402
@@ -421,6 +435,158 @@ try:
     check("comeet bad careers url rejected", False)
 except ValueError:
     check("comeet bad careers url rejected", True)
+
+# 14e2. JobMaster provider: card + detail parsers pinned against trimmed real
+# pages; Hebrew relative dates converted against a fixed clock (pure, offline)
+from datetime import datetime as _dt  # noqa: E402
+
+from app.core.providers.jobmaster import (  # noqa: E402
+    _location_matches as _jm_location_matches,
+    parse_hebrew_relative_date,
+    parse_jobmaster_detail,
+    parse_jobmaster_results,
+)
+
+_JM_HTML = (Path(__file__).parent / "fixtures" / "jobmaster_search.html").read_text(
+    encoding="utf-8"
+)
+_JM_NOW = _dt(2026, 7, 5, 12, 0)
+_jm = parse_jobmaster_results(_JM_HTML, now=_JM_NOW)
+check("jobmaster parser found all fixture cards", len(_jm) == 3, str(len(_jm)))
+check(
+    "jobmaster fields extracted",
+    _jm[1].title == "RT Embedded Engineer"
+    and _jm[1].company == "B-net ייעוץ והשמה"
+    and _jm[1].location == "הרצליה, תל אביב יפו"
+    and _jm[1].external_id == "9801062"
+    and _jm[1].source == "jobmaster",
+    f"{_jm[1].title} / {_jm[1].company} / {_jm[1].location}" if len(_jm) > 1 else "",
+)
+check(
+    "jobmaster url is the checknum detail page",
+    _jm[1].url == "https://www.jobmaster.co.il/jobs/checknum.asp?key=9801062",
+    _jm[1].url if len(_jm) > 1 else "",
+)
+check(
+    "jobmaster promoted (Mekudam) card kept with its key",
+    _jm[0].external_id == "9798924"
+    and _jm[0].raw["promoted"] is True
+    and "יאוסופט" in _jm[0].company,  # ByTitle span, not CompanyNameLink
+    f"{_jm[0].external_id} / {_jm[0].company}" if _jm else "",
+)
+check(
+    "jobmaster relative posted date converted to ISO (missing => empty)",
+    _jm[1].posted_at == "2026-07-04" and _jm[0].posted_at == "",
+    str([h.posted_at for h in _jm]),
+)
+check(
+    "jobmaster cards are scrape-style: empty description + snippet in raw",
+    all(h.description == "" for h in _jm)
+    and "C++ Embedded Linux" in _jm[1].raw["snippet"],
+)
+check(
+    "jobmaster language detected per card (hebrew + english mix)",
+    _jm[0].language == "he" and _jm[1].language == "en" and _jm[2].language == "he",
+    str([h.language for h in _jm]),
+)
+check("jobmaster duplicate keys deduped", len(parse_jobmaster_results(_JM_HTML * 2, now=_JM_NOW)) == 3)
+check("jobmaster empty html parses to empty card list", parse_jobmaster_results("", now=_JM_NOW) == [])
+
+check(
+    "jobmaster hebrew relative dates: hours keep the time component",
+    parse_hebrew_relative_date("לפני 8 שעות", _JM_NOW) == "2026-07-05T04:00",
+    parse_hebrew_relative_date("לפני 8 שעות", _JM_NOW),
+)
+check(
+    "jobmaster hebrew relative dates: days/weeks/yesterday/today",
+    parse_hebrew_relative_date("לפני 3 ימים", _JM_NOW) == "2026-07-02"
+    and parse_hebrew_relative_date("אתמול", _JM_NOW) == "2026-07-04"
+    and parse_hebrew_relative_date("היום", _JM_NOW) == "2026-07-05"
+    and parse_hebrew_relative_date("לפני שבועיים", _JM_NOW) == "2026-06-21",
+)
+check(
+    "jobmaster hebrew relative dates: dual forms + unrecognized => empty",
+    parse_hebrew_relative_date("לפני שעתיים", _JM_NOW) == "2026-07-05T10:00"
+    and parse_hebrew_relative_date("garbage", _JM_NOW) == "",
+)
+
+_JM_DETAIL = (Path(__file__).parent / "fixtures" / "jobmaster_detail.html").read_text(
+    encoding="utf-8"
+)
+_jm_text = parse_jobmaster_detail(_JM_DETAIL)
+check(
+    "jobmaster detail page inlines Description + Requirements (html stripped)",
+    "RT Embedded Engineer" in _jm_text and "Yocto" in _jm_text and "<br" not in _jm_text,
+    _jm_text[:80],
+)
+check("jobmaster detail without content divs parses to empty", parse_jobmaster_detail("<html></html>") == "")
+
+check(
+    "jobmaster location filter: city match + country token ignored + wrong city dropped",
+    _jm_location_matches(_jm[1], "תל אביב")
+    and _jm_location_matches(_jm[1], "Israel")
+    and not _jm_location_matches(_jm[1], "באר שבע")
+    and _jm_location_matches(JobHit(location=""), "חיפה"),  # no data => kept
+)
+
+# 14e3. Jooble provider: parser pinned against the official docs' example
+# response (live fixture pending an API key — see PLAN 2.5); missing-key path
+# must raise a user-facing ValueError so the fan-out isolates it (pure, offline)
+from app.config import get_settings as _get_settings  # noqa: E402
+from app.core.providers.jooble import JoobleProvider, parse_jooble_results  # noqa: E402
+
+_JOOBLE_FIXTURE = _json.loads(
+    (Path(__file__).parent / "fixtures" / "jooble_search.json").read_text(encoding="utf-8")
+)
+_jb = parse_jooble_results(_JOOBLE_FIXTURE)
+check("jooble parser found the docs-example job", len(_jb) == 1, str(len(_jb)))
+check(
+    "jooble fields extracted",
+    _jb[0].title == "Sales Manager"
+    and _jb[0].company == "ABC Corp"
+    and _jb[0].location == "Kyiv"
+    and _jb[0].external_id == "1234567890"
+    and _jb[0].source == "jooble",
+    f"{_jb[0].title} / {_jb[0].company}" if _jb else "",
+)
+check("jooble url is the posting link", _jb[0].url == "https://ua.jooble.org/jdp/12345")
+check(
+    "jooble updated trimmed to plain ISO seconds",
+    _jb[0].posted_at == "2023-09-15T12:55:35",
+    _jb[0].posted_at if _jb else "",
+)
+check(
+    "jooble snippets stay out of description (needs fetch) but land in raw",
+    _jb[0].description == ""
+    and _jb[0].raw["snippet_text"].startswith("This is a great opportunity"),
+)
+check(
+    "jooble duplicate ids deduped",
+    len(parse_jooble_results({"jobs": _JOOBLE_FIXTURE["jobs"] * 2})) == 1,
+)
+check("jooble empty response parses to empty list", parse_jooble_results({}) == [])
+_jb_he = _json.loads(_json.dumps(_JOOBLE_FIXTURE))
+_jb_he["jobs"][0]["title"] = "מנהל מכירות"
+check(
+    "jooble language detected (hebrew title => he, docs example => en)",
+    parse_jooble_results(_jb_he)[0].language == "he" and _jb[0].language == "en",
+)
+
+_jb_settings = _get_settings()
+_jb_saved_key = _jb_settings.jooble_api_key
+_jb_settings.jooble_api_key = ""
+try:
+    PROVIDERS["jooble"].search(SearchContext(job_title="Engineer"))
+    check("jooble missing api key raises a clear ValueError", False)
+except ValueError as _e:
+    check(
+        "jooble missing api key raises a clear ValueError",
+        "JOOBLE_API_KEY" in str(_e),
+        str(_e),
+    )
+finally:
+    _jb_settings.jooble_api_key = _jb_saved_key
+check("jooble provider registered in the fan-out", isinstance(PROVIDERS["jooble"], JoobleProvider))
 
 # 14f. Israeli résumé conventions (3.4) + Hebrew/RTL rendering (3.3)
 import io as _io  # noqa: E402

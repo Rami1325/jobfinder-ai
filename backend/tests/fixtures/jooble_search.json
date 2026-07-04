@@ -1,0 +1,18 @@
+{
+  "_comment": "Jooble REST API example response, verbatim from the official docs (help.jooble.org, REST API Documentation, checked 2026-07-05). NOT live data: Jooble requires a per-account API key, so live verification is pending a key (see PLAN 2.5). Field set: totalCount + jobs[{title, location, snippet, salary, source, type, link, company, updated, id}].",
+  "totalCount": 1,
+  "jobs": [
+    {
+      "title": "Sales Manager",
+      "location": "Kyiv",
+      "snippet": "This is a great opportunity to join our team...",
+      "salary": "17,600 UAH",
+      "source": "jooble",
+      "type": "Full-time",
+      "link": "https://ua.jooble.org/jdp/12345",
+      "company": "ABC Corp",
+      "updated": "2023-09-15T12:55:35.3870000",
+      "id": 1234567890
+    }
+  ]
+}

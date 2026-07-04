@@ -9,6 +9,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     app_access_code: str = ""  # non-empty => every API call must send X-App-Key
+    jooble_api_key: str = ""  # empty => the Jooble board reports "needs an API key"
     model_id: str = "gpt-4o-mini"
     use_stub_llm: bool = False
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
