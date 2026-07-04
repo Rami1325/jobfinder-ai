@@ -24,18 +24,18 @@ export default function ProgressRing({
   const c = 2 * Math.PI * r;
   const offset = c - (v / 100) * c;
   const strokeColor =
-    tone === "mint" ? "#2bd4a0" : tone === "accent" ? "#4f8cff" : "url(#ringGrad)";
+    tone === "mint" ? "rgb(var(--mint))" : tone === "accent" ? "rgb(var(--accent))" : "url(#ringGrad)";
 
   return (
     <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
         <defs>
           <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#4f8cff" />
-            <stop offset="100%" stopColor="#2bd4a0" />
+            <stop offset="0%" stopColor="rgb(var(--accent))" />
+            <stop offset="100%" stopColor="rgb(var(--mint))" />
           </linearGradient>
         </defs>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#26324a" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(var(--ring-track))" strokeWidth={stroke} />
         <motion.circle
           cx={size / 2}
           cy={size / 2}

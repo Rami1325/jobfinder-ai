@@ -1,33 +1,36 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        // Seeded from the original styles.css design tokens, extended for depth.
+        // Semantic tokens defined as RGB channel triplets in src/styles.css
+        // (:root = dark, :root.light = light). <alpha-value> keeps /opacity
+        // modifiers (e.g. bg-accent/20) working per theme.
         bg: {
-          DEFAULT: "#0f1420",
-          soft: "#0c1019",
-          elevated: "#131a28",
+          DEFAULT: "rgb(var(--bg) / <alpha-value>)",
+          soft: "rgb(var(--bg-soft) / <alpha-value>)",
+          elevated: "rgb(var(--bg-elevated) / <alpha-value>)",
         },
         panel: {
-          DEFAULT: "#18202f",
-          2: "#1f2a3d",
+          DEFAULT: "rgb(var(--panel) / <alpha-value>)",
+          2: "rgb(var(--panel-2) / <alpha-value>)",
         },
-        line: "#2b3850",
+        line: "rgb(var(--line) / <alpha-value>)",
         ink: {
-          DEFAULT: "#e6ecf5",
-          muted: "#9aa7bd",
-          faint: "#6b7891",
+          DEFAULT: "rgb(var(--ink) / <alpha-value>)",
+          muted: "rgb(var(--ink-muted) / <alpha-value>)",
+          faint: "rgb(var(--ink-faint) / <alpha-value>)",
         },
         accent: {
-          DEFAULT: "#4f8cff",
-          soft: "#6ea0ff",
-          deep: "#2f6bdc",
+          DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+          soft: "rgb(var(--accent-soft) / <alpha-value>)",
+          deep: "rgb(var(--accent-deep) / <alpha-value>)",
         },
-        mint: "#2bd4a0",
-        warn: "#ffc96b",
-        danger: "#ff6b6b",
+        mint: "rgb(var(--mint) / <alpha-value>)",
+        warn: "rgb(var(--warn) / <alpha-value>)",
+        danger: "rgb(var(--danger) / <alpha-value>)",
       },
       fontFamily: {
         sans: ['"Segoe UI"', "system-ui", "-apple-system", "sans-serif"],
@@ -36,17 +39,18 @@ export default {
         xl2: "14px",
       },
       boxShadow: {
-        glow: "0 0 0 1px rgba(79,140,255,.25), 0 8px 40px -8px rgba(79,140,255,.45)",
-        "glow-mint": "0 0 0 1px rgba(43,212,160,.25), 0 8px 40px -8px rgba(43,212,160,.4)",
-        panel: "0 20px 60px -20px rgba(0,0,0,.6)",
-        card: "0 1px 0 rgba(255,255,255,.03) inset, 0 12px 30px -18px rgba(0,0,0,.7)",
+        // Per-theme shadow strings live in styles.css (glows in dark,
+        // soft neutral shadows in light).
+        glow: "var(--shadow-glow)",
+        "glow-mint": "var(--shadow-glow-mint)",
+        panel: "var(--shadow-panel)",
+        card: "var(--shadow-card)",
       },
       backgroundImage: {
-        "grid-faint":
-          "linear-gradient(to right, rgba(79,140,255,.06) 1px, transparent 1px), linear-gradient(to bottom, rgba(79,140,255,.06) 1px, transparent 1px)",
-        "accent-gradient": "linear-gradient(135deg, #4f8cff 0%, #2bd4a0 100%)",
-        "hero-glow":
-          "radial-gradient(60% 50% at 50% 0%, rgba(79,140,255,.18) 0%, rgba(15,20,32,0) 70%)",
+        "grid-faint": "var(--grid-faint)",
+        "accent-gradient":
+          "linear-gradient(135deg, rgb(var(--accent)) 0%, rgb(var(--mint)) 100%)",
+        "hero-glow": "var(--hero-glow)",
       },
       keyframes: {
         "fade-up": {

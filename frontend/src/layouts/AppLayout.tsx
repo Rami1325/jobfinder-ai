@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { Sparkles, FileText, MessageSquareText, Briefcase, Wrench, KanbanSquare, Loader2 } from "lucide-react";
 import { cn } from "../lib/cn";
+import ThemeToggle from "../components/ThemeToggle";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 
 const nav = [
@@ -45,6 +46,7 @@ export default function AppLayout() {
                 )}
               </NavLink>
             ))}
+            <ThemeToggle className="ml-1" />
           </nav>
         </div>
       </header>
