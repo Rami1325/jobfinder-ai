@@ -24,6 +24,14 @@
     "workMode": "Work mode",
     "limit": "Jobs to rank (1–25)",
     "detecting": "Detecting from your resume…",
+    "presetsLabel": "Quick locations:",
+    "presets": {
+      "telAviv": "Tel Aviv",
+      "jerusalem": "Jerusalem",
+      "haifa": "Haifa",
+      "israel": "All of Israel"
+    },
+    "sourcesLabel": "Job boards",
     "cta": "Find jobs for me",
     "searchingAuto": "Resume saved — we're finding jobs that fit it and scoring each one. This can take a minute or two.",
     "searchingManual": "Searching job listings and scoring each one against your resume — this can take a minute or two.",

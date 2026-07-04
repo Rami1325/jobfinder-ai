@@ -39,6 +39,19 @@ const inputCls =
 
 const WORK_MODES = ["any", "remote", "onsite", "hybrid"] as const;
 
+// Selectable job boards (PROVIDERS registry ids). Empty/absent = all boards.
+const SOURCE_IDS = ["linkedin", "drushim", "comeet"] as const;
+
+// One-click Israeli locations (PLAN 2.3). English values work across all
+// boards: LinkedIn expects English; Drushim matches CityEnglish; Comeet
+// aliases Hebrew cities to English anyway.
+const LOCATION_PRESETS = [
+  { key: "telAviv", value: "Tel Aviv, Israel" },
+  { key: "jerusalem", value: "Jerusalem, Israel" },
+  { key: "haifa", value: "Haifa, Israel" },
+  { key: "israel", value: "Israel" },
+] as const;
+
 // Provider id → display name for source badges ("linkedin" → "LinkedIn").
 const SOURCE_LABELS: Record<string, string> = {
   linkedin: "LinkedIn",
@@ -311,6 +324,16 @@ export default function JobsPage() {
     startJobSearch(master.resume, customOpen ? ctx : null);
   }
 
+  // Sources selection lives on ctx.sources; empty/absent means "all boards".
+  const selectedSources: string[] = ctx?.sources?.length ? ctx.sources : [...SOURCE_IDS];
+  function toggleSource(id: string) {
+    setCtx((p) => {
+      const cur = p?.sources?.length ? p.sources : [...SOURCE_IDS];
+      const next = cur.includes(id) ? cur.filter((s) => s !== id) : [...cur, id];
+      return { ...(p as SearchContext), sources: next };
+    });
+  }
+
   useEffect(() => {
     if (!searchResult) return;
     setCtx((p) => p ?? searchResult.context); // so opening Customize later starts from what was searched
@@ -580,6 +603,46 @@ export default function JobsPage() {
                         className={inputCls}
                       />
                     </label>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+                    <span className="font-semibold">{t("search.presetsLabel")}</span>
+                    {LOCATION_PRESETS.map((p) => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        disabled={prefilling}
+                        onClick={() =>
+                          setCtx((prev) => ({ ...(prev as SearchContext), location: p.value }))
+                        }
+                        className={`rounded-full border px-2.5 py-1 transition-colors ${
+                          ctx?.location === p.value
+                            ? "border-accent/60 bg-accent/10 text-ink"
+                            : "border-line hover:text-ink"
+                        }`}
+                      >
+                        {t(`search.presets.${p.key}`)}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-ink">
+                    <span className="text-xs font-semibold text-ink-muted">{t("search.sourcesLabel")}</span>
+                    {SOURCE_IDS.map((id) => {
+                      const checked = selectedSources.includes(id);
+                      return (
+                        <label key={id} className="flex cursor-pointer items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={prefilling || (checked && selectedSources.length === 1)}
+                            onChange={() => toggleSource(id)}
+                            className="h-4 w-4 accent-accent"
+                          />
+                          {sourceLabel(id)}
+                        </label>
+                      );
+                    })}
                   </div>
                 </motion.div>
               )}
