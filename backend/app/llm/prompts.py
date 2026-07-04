@@ -212,6 +212,38 @@ country if ambiguous. Return JSON: {"job_title": "...", "location": "..."}
 Use empty strings if truly unknown. Never invent a location the resume does not imply."""
 
 
+# --------------------------------------------------------------------------- #
+# Language awareness (Hebrew support)
+#
+# These helpers APPEND a short note to a system prompt. They must never touch
+# the head of the prompt: the StubClient routes on the "Task: <TOKEN>." tag in
+# the first characters of the system prompt, so the tag has to stay first.
+# --------------------------------------------------------------------------- #
+_JD_HEBREW_NOTE = (
+    "\n\nNote: this job description is written in Hebrew. Extract every field "
+    "in its ORIGINAL language — keep Hebrew keywords/skills in Hebrew and "
+    "English technical terms (e.g. Python, AWS) in English exactly as they "
+    "appear in the text. Do NOT translate anything."
+)
+
+_RESUME_HEBREW_NOTE = (
+    "\n\nNote: the candidate's resume is written in Hebrew. Write ALL output "
+    "text in Hebrew (keeping English technical terms like Python or AWS in "
+    "English, as the resume does). All other rules still apply."
+)
+
+
+def analyze_jd_system(language: str = "en") -> str:
+    """ANALYZE_JD system prompt, with a Hebrew note appended when the JD is Hebrew."""
+    return ANALYZE_JD_SYSTEM + (_JD_HEBREW_NOTE if language == "he" else "")
+
+
+def with_resume_language(system: str, language: str) -> str:
+    """Append the write-in-Hebrew note to a system prompt when the resume is Hebrew.
+    Appending keeps the leading `Task: <TOKEN>.` tag intact for stub routing."""
+    return system + (_RESUME_HEBREW_NOTE if language == "he" else "")
+
+
 def structure_resume_user(raw_text: str) -> str:
     return f"Resume text to structure:\n\n{raw_text}"
 

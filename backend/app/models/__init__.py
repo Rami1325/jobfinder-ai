@@ -59,6 +59,9 @@ class JDModel(BaseModel):
     job_title: str = ""
     company: str = ""
     seniority: str = ""
+    # "he" | "en" — set deterministically by jd_analyzer (regex on the Hebrew
+    # Unicode block, never the LLM). Defaults "en" for back-compat.
+    language: str = "en"
     hard_skills: list[str] = Field(default_factory=list)
     soft_skills: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)

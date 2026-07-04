@@ -32,6 +32,7 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 from app.core.job_match import _html_to_text, _http_get
+from app.core.lang import detect_language
 from app.core.providers.base import JobHit
 from app.models import SearchContext
 
@@ -39,7 +40,6 @@ _API_URL = "https://www.comeet.co/careers-api/2.0/company/{uid}/positions"
 _TIMEOUT_S = 60  # the careers API is noticeably slower than the boards
 _MAX_WORKERS = 8  # registry-wide fan-out; keep the burst polite
 _CACHE_TTL_S = 15 * 60  # positions change slowly; don't re-hit every search
-_HEBREW_RE = re.compile("[\\u0590-\\u05FF]")  # Hebrew block, incl. final letters
 
 _CAREERS_URL_RE = re.compile(
     r"^https?://(?:www\.)?comeet\.com/jobs/([A-Za-z0-9_-]+)/([0-9A-Fa-f]{2}\.[0-9A-Fa-f]{3})"
@@ -139,7 +139,7 @@ def parse_comeet_positions(positions: list, company_name: str = "") -> list[JobH
                 description=description,  # inline — no detail fetch needed
                 url=url,
                 posted_at=str(pos.get("time_updated") or "").strip(),
-                language="he" if _HEBREW_RE.search(f"{title} {description}") else "en",
+                language=detect_language(f"{title} {description}"),
                 raw=pos,
             )
         )

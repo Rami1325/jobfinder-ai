@@ -12,7 +12,12 @@ from app.llm.client import get_llm_client
 from app.llm import prompts
 from app.models import GapItem, JDModel, ResumeModel, Score
 
-_WORD_RE = re.compile(r"[a-z0-9+#.]+")
+# Word characters for keyword tokenization. Not ASCII-only: the Hebrew block
+# (U+0590-U+05FF — letters incl. finals ך ם ן ף ץ, niqqud, geresh) is included
+# so Hebrew JDs/résumés tokenize correctly. Hebrew has no case, so the lower()
+# calls below are simply no-ops for it. Mixed phrases like "ניסיון ב-Spark"
+# split on the hyphen into Hebrew + English tokens, each matched independently.
+_WORD_RE = re.compile("[a-z0-9+#.\\u0590-\\u05FF]+")
 
 
 def _resume_text(resume: ResumeModel) -> str:

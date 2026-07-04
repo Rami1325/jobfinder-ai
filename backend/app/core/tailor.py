@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from app.core.fabrication_guard import check_fabrication
+from app.core.lang import resume_language
 from app.core.scorer import score_resume
 from app.llm.client import get_llm_client
 from app.llm import prompts
@@ -23,7 +24,8 @@ def tailor_resume(resume: ResumeModel, jd: JDModel, ledger: FactsLedger | None =
 
     client = get_llm_client()
     data = client.complete_json(
-        prompts.TAILOR_SYSTEM,
+        # Hebrew résumé => tailor in Hebrew (note appended AFTER the Task tag).
+        prompts.with_resume_language(prompts.TAILOR_SYSTEM, resume_language(resume)),
         prompts.tailor_user(resume.model_dump_json(), jd.model_dump_json()),
     )
 

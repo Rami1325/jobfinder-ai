@@ -1,6 +1,7 @@
 """Interview prep — questions, model answers, and feedback grounded in the résumé."""
 from __future__ import annotations
 
+from app.core.lang import resume_language
 from app.llm.client import get_llm_client
 from app.llm import prompts
 from app.models import (
@@ -26,7 +27,8 @@ def generate_questions(resume: ResumeModel, jd: JDModel) -> InterviewQuestionsRe
 def model_answer(resume: ResumeModel, jd: JDModel, question: str) -> InterviewAnswerResult:
     client = get_llm_client()
     data = client.complete_json(
-        prompts.INTERVIEW_ANSWER_SYSTEM,
+        # Hebrew résumé => answer in Hebrew (note appended AFTER the Task tag).
+        prompts.with_resume_language(prompts.INTERVIEW_ANSWER_SYSTEM, resume_language(resume)),
         prompts.interview_answer_user(resume.model_dump_json(), jd.model_dump_json(), question),
     )
     return InterviewAnswerResult(
@@ -38,7 +40,8 @@ def model_answer(resume: ResumeModel, jd: JDModel, question: str) -> InterviewAn
 def answer_feedback(resume: ResumeModel, question: str, answer: str) -> InterviewFeedbackResult:
     client = get_llm_client()
     data = client.complete_json(
-        prompts.INTERVIEW_FEEDBACK_SYSTEM,
+        # Feedback + revised answer follow the résumé's language too.
+        prompts.with_resume_language(prompts.INTERVIEW_FEEDBACK_SYSTEM, resume_language(resume)),
         prompts.interview_feedback_user(resume.model_dump_json(), question, answer),
     )
     score = float(data.get("score", 0) or 0)

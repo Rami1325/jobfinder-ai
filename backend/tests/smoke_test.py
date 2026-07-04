@@ -9,7 +9,13 @@ Run from the backend dir:
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
+
+# Hebrew shows up in check output (Israeli boards, Hebrew-pipeline checks);
+# Windows consoles default to cp1252 which can't print it. Never let printing
+# be the thing that fails the suite.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 os.environ["USE_STUB_LLM"] = "true"
 # Must be set before any app.* import — app.db.database builds the engine at import time.
@@ -278,14 +284,65 @@ _doubled = {"ResultList": _DRUSHIM_FIXTURE["ResultList"] * 2}
 check("drushim duplicate JobCodes deduped", len(parse_drushim_results(_doubled)) == 3)
 check("drushim empty response parses to empty list", parse_drushim_results({}) == [])
 
-# 14d. Hebrew safety: a Hebrew JD must flow through analyze_jd + scorer without
-# crashing (scoring *quality* on Hebrew is a later phase; this pins no-crash).
+# 14d. Hebrew pipeline support: deterministic language detection, language-aware
+# prompts (Task-tag routing intact), Hebrew keyword scoring that actually matches.
+from app.core.lang import detect_language, resume_language  # noqa: E402
+from app.llm import prompts as _prompts  # noqa: E402
+from app.models import Contact, Experience  # noqa: E402
+
 _he_text = _dr[0].description
 _he_jd = analyze_jd(_he_text)  # stub routes on the Task tag regardless of JD language
+check("hebrew jd language detected deterministically", _he_jd.language == "he", _he_jd.language)
+check("english jd language stays en", analyze_jd("We need a Python engineer.").language == "en")
+check(
+    "detect_language handles final letters + mixed text",
+    detect_language("מהנדס תוכנה ותיק") == "he" and detect_language("Senior C++ dev") == "en",
+)
+
 _he_jd.keywords = ["Python", "ניסיון ב-Spark", "AWS", "עיבוד נתונים"]
 _he_score = score_resume(resume, _he_jd)
 check("hebrew jd scores without crashing", 0 <= _he_score.overall <= 100, str(_he_score.overall))
 check("hebrew keywords produce gap entries", len(_he_score.gaps) > 0)
+
+# Hebrew keyword coverage must MATCH, not just not-crash: a Hebrew résumé
+# containing a Hebrew JD keyword scores it covered; an absent one is missing.
+_he_resume = ResumeModel(
+    contact=Contact(name="דנה לוי", email="dana@example.com"),
+    summary="מהנדסת נתונים עם ניסיון בעיבוד נתונים בענן.",
+    skills=["Python", "עיבוד נתונים", "SQL"],
+    experience=[Experience(company="חברת דוגמה", title="מהנדסת נתונים",
+                           bullets=["בניית צינורות נתונים ב-Python"])],
+)
+_he_statuses = {
+    g.keyword: g.status
+    for g in score_resume(_he_resume, _he_jd).gaps
+}
+check(
+    "hebrew keyword present in hebrew resume => covered",
+    _he_statuses.get("עיבוד נתונים") == "covered" and _he_statuses.get("Python") == "covered",
+    str(_he_statuses),
+)
+check(
+    "hebrew keyword absent from resume => missing",
+    _he_statuses.get("ניסיון ב-Spark") == "partial"  # "ניסיון" appears, Spark doesn't
+    or _he_statuses.get("ניסיון ב-Spark") == "missing",
+    str(_he_statuses.get("ניסיון ב-Spark")),
+)
+check("hebrew resume language detected", resume_language(_he_resume) == "he")
+check("english resume language detected", resume_language(resume) == "en")
+
+# Language notes are APPENDED — the Task tag must stay first for stub routing.
+_tailored_sys = _prompts.with_resume_language(_prompts.TAILOR_SYSTEM, "he")
+check(
+    "language note keeps Task tag first",
+    _tailored_sys.startswith(_prompts.TAILOR_SYSTEM[:40]) and "Hebrew" in _tailored_sys,
+)
+check(
+    "english resume leaves prompts untouched",
+    _prompts.with_resume_language(_prompts.TAILOR_SYSTEM, "en") == _prompts.TAILOR_SYSTEM,
+)
+_he_tailored = tailor_resume(_he_resume, _he_jd, ledger=None)  # stub roundtrip stays routed
+check("hebrew resume tailors via stub without crashing", _he_tailored.tailored_resume is not None)
 
 # 14e. Comeet provider: positions parser + filters + careers-page extraction,
 # pinned against a trimmed real API response (pure, offline)
@@ -415,6 +472,18 @@ _hits = list_search_hits(_db)
 _by_url = {h.url: h for h in _hits}
 check("re-record upserts by url (still 2 rows)", len(_hits) == 2, str(len(_hits)))
 check("re-record refreshed the score", _by_url["https://x/jobs/1"].overall == 75.0, str(_by_url["https://x/jobs/1"].overall))
+
+# Hebrew must survive the DB round-trip byte-identical (UTF-8 through SQLite).
+_he_title = "מהנדס/ת נתונים — תל אביב"
+_he_jd_text = "דרישות: ניסיון ב-Python ו-SQL, עבודה בענן (AWS)."
+record_search_hits(_db, [JobMatch(title=_he_title, company="חברת דוגמה", overall=70.0,
+                                  url="https://x/jobs/he-1", jd_text=_he_jd_text, source="drushim")])
+_he_row = {h.url: h for h in list_search_hits(_db)}["https://x/jobs/he-1"]
+check(
+    "hebrew survives db round-trip byte-identical",
+    _he_row.title == _he_title and _he_row.company == "חברת דוגמה" and _he_row.jd_text == _he_jd_text,
+    _he_row.title,
+)
 
 record_search_hits(_db, [JobMatch(title=f"Role {i}", url=f"https://bulk/{i}") for i in range(105)])
 _hits = list_search_hits(_db)

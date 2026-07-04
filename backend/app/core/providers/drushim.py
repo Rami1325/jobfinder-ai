@@ -18,11 +18,11 @@ Drushim changes its response shape, fix it here and keep the fixture green.
 from __future__ import annotations
 
 import json
-import re
 import time
 import urllib.parse
 
 from app.core.job_match import _html_to_text, _http_get
+from app.core.lang import detect_language
 from app.core.providers.base import JobHit
 from app.models import SearchContext
 
@@ -30,16 +30,13 @@ _BASE_URL = "https://www.drushim.co.il"
 _SEARCH_URL = f"{_BASE_URL}/api/jobs/search"
 _MAX_PAGES = 2  # politeness cap — never hammer more than two pages per search
 _PAGE_DELAY_S = 0.5
-_HEBREW_RE = re.compile("[\\u0590-\\u05FF]")  # Hebrew block, incl. final letters
 
 # Country-level tokens carry no signal on an Israel-only board: every posting
 # would fail a substring match against them, so they're ignored by the filter.
 _COUNTRY_TOKENS = {"israel", "ישראל"}
 
-
-def _detect_language(text: str) -> str:
-    """"he" if the text contains any Hebrew letters, else "en"."""
-    return "he" if _HEBREW_RE.search(text) else "en"
+# Kept as a local alias: shared deterministic detection lives in app.core.lang.
+_detect_language = detect_language
 
 
 def _build_search_url(searchterm: str, page: int) -> str:
