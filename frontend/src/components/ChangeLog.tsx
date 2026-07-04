@@ -14,7 +14,7 @@ export default function ChangeLog({ changelog, flags }: Props) {
   const { t } = useTranslation("tailor");
   const clean = flags.length === 0;
   return (
-    <Card glow={clean} className={clean ? "border-mint/40" : "border-danger/50"}>
+    <Card id="trust-panel" glow={clean} className={clean ? "scroll-mt-20 border-mint/40" : "scroll-mt-20 border-danger/50"}>
       <div className="flex items-center gap-3">
         <span
           className={cn(

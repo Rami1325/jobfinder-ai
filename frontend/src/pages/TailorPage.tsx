@@ -12,7 +12,7 @@ import {
 } from "../api/client";
 import ChangeLog from "../components/ChangeLog";
 import CoverLetter from "../components/CoverLetter";
-import GapList from "../components/GapList";
+import MatchReport from "../components/MatchReport";
 import JDPaste from "../components/JDPaste";
 import ResumeUpload from "../components/ResumeUpload";
 import ScoreCard from "../components/ScoreCard";
@@ -263,8 +263,8 @@ export default function TailorPage() {
             transition={{ duration: 0.4 }}
             className="space-y-6"
           >
-            <ScoreCard before={result.score_before} after={result.score_after} />
-            <GapList gaps={result.score_after.gaps} />
+            <ScoreCard before={result.score_before} after={result.score_after} flags={result.fabrication_flags} />
+            <MatchReport gaps={result.score_after.gaps} jdText={jdText} resume={result.tailored_resume} />
             <ChangeLog changelog={result.changelog} flags={result.fabrication_flags} />
 
             <Card>

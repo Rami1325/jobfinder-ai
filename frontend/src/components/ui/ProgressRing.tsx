@@ -1,4 +1,5 @@
-import { motion } from "framer-motion";
+import { useEffect } from "react";
+import { animate, motion, useMotionValue, useTransform } from "framer-motion";
 import { cn } from "../../lib/cn";
 
 interface ProgressRingProps {
@@ -20,6 +21,13 @@ export default function ProgressRing({
   tone = "gradient",
 }: ProgressRingProps) {
   const v = Math.max(0, Math.min(100, value));
+  // Count the center number up in sync with the ring sweep.
+  const mv = useMotionValue(0);
+  const rounded = useTransform(mv, (x) => Math.round(x));
+  useEffect(() => {
+    const controls = animate(mv, v, { duration: 1.1, ease: [0.22, 1, 0.36, 1] });
+    return () => controls.stop();
+  }, [mv, v]);
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const offset = c - (v / 100) * c;
@@ -51,7 +59,7 @@ export default function ProgressRing({
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-2xl font-bold tabular-nums text-ink">{Math.round(v)}</span>
+        <motion.span className="text-2xl font-bold tabular-nums text-ink">{rounded}</motion.span>
         {label && <span className={cn("text-[10px] uppercase tracking-wider text-ink-muted")}>{label}</span>}
         {sublabel && <span className="mt-0.5 text-[10px] text-ink-faint">{sublabel}</span>}
       </div>

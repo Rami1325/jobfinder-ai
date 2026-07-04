@@ -68,11 +68,28 @@
     "ats": "ATS",
     "fit": "התאמה",
     "noChange": "ללא שינוי",
-    "delta": "{{sign}}{{value}} נק׳"
+    "delta": "{{sign}}{{value}} נק׳",
+    "guard": "עובדות שהומצאו",
+    "guardClean": "אומת — שום דבר לא הומצא",
+    "guardFlags_one": "טענה אחת לבדיקה",
+    "guardFlags_two": "{{count}} טענות לבדיקה",
+    "guardFlags_other": "{{count}} טענות לבדיקה",
+    "guardDetail": "בדיקת הפברוק המלאה למטה"
   },
-  "gaps": {
-    "title": "ניתוח פערי מילות מפתח",
-    "summary": "{{missing}} מתוך {{total}} מונחי מפתח עדיין חסרים. הוסיפו רק מונחים שמשקפים ניסיון אמיתי."
+  "report": {
+    "title": "דו״ח התאמת מילות מפתח",
+    "summary": "{{missing}} מתוך {{total}} מונחי מפתח עדיין חסרים. הוסיפו רק מונחים שמשקפים ניסיון אמיתי.",
+    "clickHint": "לחצו על מילת מפתח כדי לראות איפה תיאור המשרה מזכיר אותה. הספירה היא אזכורים מילה-במילה: תיאור המשרה × קורות החיים המותאמים.",
+    "matched": "קיימות ({{count}})",
+    "partial": "חלקיות ({{count}})",
+    "missing": "חסרות ({{count}})",
+    "counts": "משרה {{jd}} · אתם {{resume}}",
+    "inJd": "״{{keyword}}״ בתיאור המשרה",
+    "mentions_one": "אזכור אחד",
+    "mentions_two": "{{count}} אזכורים",
+    "mentions_other": "{{count}} אזכורים",
+    "notInJdText": "לא נמצאה מילה-במילה במודעה — הניתוח הסיק אותה.",
+    "close": "סגירה"
   },
   "changelog": {
     "cleanTitle": "כל הטענות אומתו",
@@ -107,6 +124,8 @@
     "experience": "ניסיון",
     "projects": "פרויקטים",
     "education": "השכלה",
-    "certifications": "הסמכות"
+    "certifications": "הסמכות",
+    "militaryService": "שירות צבאי",
+    "languages": "שפות"
   }
 }

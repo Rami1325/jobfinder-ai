@@ -68,11 +68,26 @@
     "ats": "ATS",
     "fit": "Fit",
     "noChange": "no change",
-    "delta": "{{sign}}{{value}} pts"
+    "delta": "{{sign}}{{value}} pts",
+    "guard": "Facts invented",
+    "guardClean": "Verified — nothing invented",
+    "guardFlags_one": "{{count}} claim to review",
+    "guardFlags_other": "{{count}} claims to review",
+    "guardDetail": "See the full fabrication check below"
   },
-  "gaps": {
-    "title": "Keyword gap analysis",
-    "summary": "{{missing}} of {{total}} key terms still missing. Only add terms that reflect real experience."
+  "report": {
+    "title": "Keyword match report",
+    "summary": "{{missing}} of {{total}} key terms still missing. Only add terms that reflect real experience.",
+    "clickHint": "Click any keyword to see where the job description mentions it. Counts are verbatim mentions: job description × your tailored résumé.",
+    "matched": "Matched ({{count}})",
+    "partial": "Partial ({{count}})",
+    "missing": "Missing ({{count}})",
+    "counts": "JD {{jd}} · you {{resume}}",
+    "inJd": "“{{keyword}}” in the job description",
+    "mentions_one": "{{count}} mention",
+    "mentions_other": "{{count}} mentions",
+    "notInJdText": "Not found word-for-word in the posting — the analysis inferred it.",
+    "close": "Close"
   },
   "changelog": {
     "cleanTitle": "All claims verified",
@@ -106,6 +121,8 @@
     "experience": "Experience",
     "projects": "Projects",
     "education": "Education",
-    "certifications": "Certifications"
+    "certifications": "Certifications",
+    "militaryService": "Military Service",
+    "languages": "Languages"
   }
 }
