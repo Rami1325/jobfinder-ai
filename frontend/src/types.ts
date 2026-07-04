@@ -31,6 +31,21 @@ export interface Project {
   bullets: string[];
 }
 
+// Israeli-résumé sections (optional: older saved résumés predate them).
+export interface MilitaryService {
+  unit: string;
+  role: string;
+  rank: string;
+  start_date: string;
+  end_date: string;
+  bullets: string[];
+}
+
+export interface LanguageSkill {
+  language: string;
+  level: string;
+}
+
 export interface ResumeModel {
   contact: Contact;
   summary: string;
@@ -39,6 +54,8 @@ export interface ResumeModel {
   education: Education[];
   projects: Project[];
   certifications: string[];
+  military_service?: MilitaryService[];
+  languages?: LanguageSkill[];
 }
 
 export interface JDModel {
@@ -60,6 +77,7 @@ export interface FactsLedger {
   degrees: string[];
   certifications: string[];
   numbers: string[];
+  military?: string[];
 }
 
 export interface GapItem {

@@ -422,6 +422,114 @@ try:
 except ValueError:
     check("comeet bad careers url rejected", True)
 
+# 14f. Israeli résumé conventions (3.4) + Hebrew/RTL rendering (3.3)
+import io as _io  # noqa: E402
+import zipfile as _zipfile  # noqa: E402
+
+import pdfplumber as _pdfplumber  # noqa: E402
+from bidi.algorithm import get_display as _get_display  # noqa: E402
+
+from app.models import LanguageSkill, MilitaryService  # noqa: E402
+
+
+def _docx_xml(b: bytes) -> str:
+    with _zipfile.ZipFile(_io.BytesIO(b)) as z:
+        return z.read("word/document.xml").decode("utf-8")
+
+
+def _pdf_text(b: bytes) -> str:
+    with _pdfplumber.open(_io.BytesIO(b)) as pdf:
+        return "\n".join(p.extract_text() or "" for p in pdf.pages)
+
+
+# Structuring extracts the new sections (stub returns them; real prompt asks for them).
+check(
+    "structure_resume returns military_service + languages",
+    len(resume.military_service) == 1
+    and resume.military_service[0].unit == "8200"
+    and len(resume.languages) == 2,
+    f"{len(resume.military_service)} military / {len(resume.languages)} languages",
+)
+check("STRUCTURE prompt asks for military_service + languages",
+      "military_service" in _prompts.STRUCTURE_RESUME_SYSTEM and '"languages"' in _prompts.STRUCTURE_RESUME_SYSTEM)
+check("STRUCTURE prompt Task tag still first", _prompts.STRUCTURE_RESUME_SYSTEM.startswith("Task: STRUCTURE_RESUME."))
+
+# Military unit/role/rank/dates are protected facts in the ledger...
+_ml = build_facts_ledger(resume)
+check(
+    "ledger captures military unit/role/rank",
+    {"8200", "Intelligence Analyst", "Sergeant"} <= set(_ml.military),
+    str(_ml.military),
+)
+check("ledger captures military dates", {"2015", "2018"} <= set(_ml.dates), str(_ml.dates))
+
+# ...and the guard flags invented military claims.
+_fake_mil = result.tailored_resume.model_copy(deep=True)
+_fake_mil.military_service.append(MilitaryService(unit="Sayeret Matkal", role="Team Commander", rank="Colonel"))
+_mil_flags = [f.value for f in check_fabrication(_fake_mil, _ml) if f.category == "military"]
+check(
+    "guard flags fabricated military unit/role/rank",
+    {"Sayeret Matkal", "Team Commander", "Colonel"} <= set(_mil_flags),
+    str(_mil_flags),
+)
+check(
+    "honest military service raises no flags",
+    [f for f in check_fabrication(result.tailored_resume, _ml) if f.category == "military"] == [],
+)
+
+# Tailor prompt: one-page guidance + military untouchable, Task tag intact.
+check("TAILOR prompt protects military service", "MILITARY SERVICE IS UNTOUCHABLE" in _prompts.TAILOR_SYSTEM)
+check("TAILOR prompt has one-page guidance", "ONE PAGE" in _prompts.TAILOR_SYSTEM)
+check("TAILOR prompt Task tag still first", _prompts.TAILOR_SYSTEM.startswith("Task: TAILOR."))
+
+# Cover letter "Israeli mode": Hebrew JD => 3-5 sentence email body, not a letter.
+_il_cover = _prompts.cover_letter_system("he", "he")
+check("israeli cover mode asks for an email body", "EMAIL BODY" in _il_cover and "3-5" in _il_cover)
+check("israeli cover mode keeps hebrew-output note", "Hebrew" in _il_cover)
+check("english cover letter prompt unchanged", _prompts.cover_letter_system("en", "en") == _prompts.COVER_LETTER_SYSTEM)
+
+# English rendering: new sections render, and NO RTL properties (pins the
+# English path unchanged — bidi/rtl must never leak into English output).
+_en_docx = render_docx(result.tailored_resume)
+_en_xml = _docx_xml(_en_docx)
+check("english docx renders military + languages sections",
+      "MILITARY SERVICE" in _en_xml and "LANGUAGES" in _en_xml)
+check("english docx has no RTL properties", "w:bidi" not in _en_xml and "w:rtl" not in _en_xml)
+_en_pdf_text = _pdf_text(render_pdf(result.tailored_resume))
+check("english pdf renders military + languages sections",
+      "MILITARY SERVICE" in _en_pdf_text and "Hebrew" in _en_pdf_text and "8200" in _en_pdf_text)
+
+# Hebrew/RTL rendering (3.3): full Hebrew resume incl. military + languages.
+_he_full = _he_resume.model_copy(deep=True)
+_he_full.military_service = [MilitaryService(
+    unit="8200", role="מנתחת מודיעין", rank="סמלת",
+    start_date="2015", end_date="2018", bullets=["ניתוח נתונים ב-Python"],
+)]
+_he_full.languages = [LanguageSkill(language="עברית", level="שפת אם"),
+                      LanguageSkill(language="English", level="fluent")]
+
+_he_docx = render_docx(_he_full)
+check("hebrew docx renders (zip/PK header)", _he_docx[:2] == b"PK", f"{len(_he_docx)} bytes")
+_he_xml = _docx_xml(_he_docx)
+check("hebrew docx paragraphs carry w:bidi", "<w:bidi" in _he_xml)
+check("hebrew docx runs carry w:rtl", "<w:rtl" in _he_xml)
+check("hebrew docx uses hebrew section headings",
+      "שירות צבאי" in _he_xml and "שפות" in _he_xml and "ניסיון תעסוקתי" in _he_xml)
+
+_he_pdf = render_pdf(_he_full)
+check("hebrew pdf renders (%PDF header)", _he_pdf[:4] == b"%PDF", f"{len(_he_pdf)} bytes")
+_he_pdf_text = _pdf_text(_he_pdf)
+# Extraction reads glyphs left-to-right, so correctly-rendered Hebrew comes out
+# in VISUAL order (= get_display of the logical text). Logical order in the
+# extract would mean the PDF displays reversed.
+check(
+    "hebrew pdf headings laid out in visual order (bidi applied)",
+    _get_display("שפות", base_dir="R") in _he_pdf_text
+    and _get_display("שירות צבאי", base_dir="R") in _he_pdf_text,
+)
+check("hebrew pdf keeps latin terms intact (mixed bidi)", "Python" in _he_pdf_text and "English" in _he_pdf_text)
+check("hebrew pdf embeds a hebrew-capable font", b"NotoSansHebrew" in _he_pdf)
+
 # 15. DB layer (temp SQLite): migration shim + job-search history + tracker fields
 from app.db.database import SessionLocal, engine, init_db  # noqa: E402
 from app.db.history import list_search_hits, record_search_hits  # noqa: E402

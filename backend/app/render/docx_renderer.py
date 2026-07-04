@@ -2,6 +2,10 @@
 
 ATS rules honored: single column, standard headings, no tables/text-boxes/images,
 no headers/footers, standard fonts, simple bullets, contact info in the body.
+
+Hebrew resumes (detected via resume_language) get RTL paragraph direction
+(w:bidi) + RTL runs (w:rtl) and Hebrew section headings; English resumes take
+exactly the same code path as before — no RTL properties are written.
 """
 from __future__ import annotations
 
@@ -9,15 +13,57 @@ import io
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
+from app.core.lang import resume_language
 from app.models import ResumeModel
 
 _FONT = "Calibri"
 _DARK = RGBColor(0x22, 0x22, 0x22)
 
+# Standard section names, English and Hebrew (standard names matter for ATS).
+_LABELS = {
+    "en": {
+        "summary": "Summary",
+        "skills": "Skills",
+        "experience": "Experience",
+        "projects": "Projects",
+        "education": "Education",
+        "military": "Military Service",
+        "certifications": "Certifications",
+        "languages": "Languages",
+    },
+    "he": {
+        "summary": "תקציר",
+        "skills": "כישורים",
+        "experience": "ניסיון תעסוקתי",
+        "projects": "פרויקטים",
+        "education": "השכלה",
+        "military": "שירות צבאי",
+        "certifications": "הסמכות",
+        "languages": "שפות",
+    },
+}
+
+
+def _set_rtl(paragraph) -> None:
+    """Mark one paragraph as right-to-left: w:bidi on the paragraph (direction +
+    right alignment, since 'start' = right in a bidi paragraph) and w:rtl on
+    every run (tells Word the runs hold RTL text)."""
+    p_pr = paragraph._p.get_or_add_pPr()
+    if p_pr.find(qn("w:bidi")) is None:
+        p_pr.append(paragraph._p.makeelement(qn("w:bidi"), {}))
+    for run in paragraph.runs:
+        r_pr = run._r.get_or_add_rPr()
+        if r_pr.find(qn("w:rtl")) is None:
+            r_pr.append(run._r.makeelement(qn("w:rtl"), {}))
+
 
 def render_docx(resume: ResumeModel) -> bytes:
+    lang = resume_language(resume)
+    labels = _LABELS["he" if lang == "he" else "en"]
+
     doc = Document()
 
     style = doc.styles["Normal"]
@@ -44,15 +90,15 @@ def render_docx(resume: ResumeModel) -> bytes:
         cp.add_run(" | ".join(contact_bits)).font.size = Pt(9.5)
 
     if resume.summary:
-        _heading(doc, "Summary")
+        _heading(doc, labels["summary"])
         doc.add_paragraph(resume.summary)
 
     if resume.skills:
-        _heading(doc, "Skills")
+        _heading(doc, labels["skills"])
         doc.add_paragraph(", ".join(resume.skills))
 
     if resume.experience:
-        _heading(doc, "Experience")
+        _heading(doc, labels["experience"])
         for exp in resume.experience:
             p = doc.add_paragraph()
             left = " — ".join(b for b in [exp.title, exp.company] if b)
@@ -67,7 +113,7 @@ def render_docx(resume: ResumeModel) -> bytes:
                 bp.paragraph_format.space_after = Pt(2)
 
     if resume.projects:
-        _heading(doc, "Projects")
+        _heading(doc, labels["projects"])
         for proj in resume.projects:
             p = doc.add_paragraph()
             p.add_run(proj.name).bold = True
@@ -77,7 +123,7 @@ def render_docx(resume: ResumeModel) -> bytes:
                 doc.add_paragraph(bullet, style="List Bullet")
 
     if resume.education:
-        _heading(doc, "Education")
+        _heading(doc, labels["education"])
         for edu in resume.education:
             p = doc.add_paragraph()
             line = ", ".join(b for b in [edu.degree, edu.field] if b)
@@ -90,10 +136,35 @@ def render_docx(resume: ResumeModel) -> bytes:
             if edu.details:
                 doc.add_paragraph(edu.details)
 
+    if resume.military_service:
+        _heading(doc, labels["military"])
+        for ms in resume.military_service:
+            p = doc.add_paragraph()
+            left = " — ".join(b for b in [ms.role, ms.unit] if b)
+            p.add_run(left or labels["military"]).bold = True
+            dates = " – ".join(b for b in [ms.start_date, ms.end_date] if b)
+            meta = " | ".join(b for b in [ms.rank, dates] if b)
+            if meta:
+                p.add_run(f"   ({meta})").italic = True
+            for bullet in ms.bullets:
+                bp = doc.add_paragraph(bullet, style="List Bullet")
+                bp.paragraph_format.space_after = Pt(2)
+
     if resume.certifications:
-        _heading(doc, "Certifications")
+        _heading(doc, labels["certifications"])
         for cert in resume.certifications:
             doc.add_paragraph(cert, style="List Bullet")
+
+    if resume.languages:
+        _heading(doc, labels["languages"])
+        bits = [" – ".join(b for b in [ls.language, ls.level] if b) for ls in resume.languages]
+        doc.add_paragraph(" | ".join(b for b in bits if b))
+
+    if lang == "he":
+        # One sweep over every paragraph written above (incl. bullets) so no
+        # text path can miss the RTL properties.
+        for paragraph in doc.paragraphs:
+            _set_rtl(paragraph)
 
     buf = io.BytesIO()
     doc.save(buf)

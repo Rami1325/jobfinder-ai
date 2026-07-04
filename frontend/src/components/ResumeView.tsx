@@ -91,6 +91,30 @@ export default function ResumeView({ resume }: Props) {
         </section>
       )}
 
+      {(resume.military_service ?? []).length > 0 && (
+        <section>
+          {/* defaultValue fallbacks: catalog keys pending (locale files owned by the frontend pass) */}
+          <h4>{t("sections.militaryService", "Military Service")}</h4>
+          {(resume.military_service ?? []).map((m, i) => (
+            <div key={i} className="rv-item">
+              <div className="rv-item-head">
+                <strong>{[m.role, m.unit].filter(Boolean).join(" — ")}</strong>
+                <span className="muted">
+                  {[m.rank, [m.start_date, m.end_date].filter(Boolean).join(" – ")]
+                    .filter(Boolean)
+                    .join(" | ")}
+                </span>
+              </div>
+              <ul>
+                {m.bullets.map((b, j) => (
+                  <li key={j}>{b}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </section>
+      )}
+
       {resume.certifications.length > 0 && (
         <section>
           <h4>{t("sections.certifications")}</h4>
@@ -99,6 +123,19 @@ export default function ResumeView({ resume }: Props) {
               <li key={i}>{cert}</li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {(resume.languages ?? []).length > 0 && (
+        <section>
+          <h4>{t("sections.languages", "Languages")}</h4>
+          <div>
+            {(resume.languages ?? []).map((l, i) => (
+              <span key={i} className="tag">
+                {[l.language, l.level].filter(Boolean).join(" – ")}
+              </span>
+            ))}
+          </div>
         </section>
       )}
     </div>
