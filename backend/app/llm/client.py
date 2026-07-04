@@ -193,10 +193,22 @@ class StubClient:
         }
 
     def _stub_tailor(self, user: str) -> dict[str, Any]:
+        # Apply realistic, guard-clean edits (no new numbers/employers/titles/
+        # dates) so the per-bullet accept/reject diff is demoable offline.
+        resume = self._stub_structured_resume(user)
+        resume["summary"] = "Software engineer building Python services and REST APIs."
+        resume["skills"] = ["Python", "REST APIs", "SQL", "Project Management"]
+        resume["experience"][0]["bullets"] = [
+            "Built things with Python and REST APIs.",
+            "Improved processes by 20%.",
+            "Wrote SQL reports for internal teams.",
+        ]
         return {
-            "tailored_resume": self._stub_structured_resume(user),
+            "tailored_resume": resume,
             "changelog": [
-                {"section": "summary", "change": "Rewrote to emphasize Python & APIs", "reason": "Match JD keywords"}
+                {"section": "summary", "change": "Rewrote to target the role", "reason": "Lead with Python & REST APIs"},
+                {"section": "skills", "change": "Surfaced REST APIs and SQL first", "reason": "Match JD keywords"},
+                {"section": "experience", "change": "Reworded bullets toward JD keywords", "reason": "ATS coverage"},
             ],
             "covered_keywords": ["Python", "REST APIs", "SQL"],
         }

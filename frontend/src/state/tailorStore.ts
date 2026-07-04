@@ -12,6 +12,11 @@ export type TailorState = {
   jdText: string;
   jd: JDModel | null;
   result: TailorResult | null;
+  // Snapshot of the résumé the current `result` was tailored FROM — the diff
+  // baseline. `resume` can be replaced by a later upload; this cannot.
+  tailoredFrom: ResumeModel | null;
+  // Edit ids (lib/resumeDiff) the user rejected; everything else is accepted.
+  rejectedEdits: string[];
   loading: boolean;
   error: string;
   saved: boolean;
@@ -32,6 +37,8 @@ let state: TailorState = {
   jdText: "",
   jd: null,
   result: null,
+  tailoredFrom: null,
+  rejectedEdits: [],
   loading: false,
   error: "",
   saved: false,
@@ -75,6 +82,8 @@ export function setTargetJob(
     company: target.company,
     jd: null,
     result: null,
+    tailoredFrom: null,
+    rejectedEdits: [],
     error: "",
     saved: false,
     savedAppId: null,
@@ -90,7 +99,15 @@ export function startTailor(): void {
   const { resume, jdText } = state;
   if (!resume || state.loading) return;
   const id = ++seq;
-  setTailorState({ loading: true, error: "", result: null, saved: false, coverLetterText: "" });
+  setTailorState({
+    loading: true,
+    error: "",
+    result: null,
+    tailoredFrom: resume,
+    rejectedEdits: [],
+    saved: false,
+    coverLetterText: "",
+  });
   (async () => {
     const analyzed = await analyzeJD(jdText);
     if (id !== seq) return;

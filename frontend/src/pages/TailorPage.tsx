@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
@@ -17,6 +17,7 @@ import JDPaste from "../components/JDPaste";
 import ResumeUpload from "../components/ResumeUpload";
 import ScoreCard from "../components/ScoreCard";
 import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
+import { applyEditDecisions, diffResumes } from "../lib/resumeDiff";
 import { Badge, Button, Card, CardTitle, Skeleton, Stepper, useToast } from "../components/ui";
 import {
   getTailorState,
@@ -46,6 +47,8 @@ export default function TailorPage() {
     jdText,
     jd,
     result,
+    tailoredFrom,
+    rejectedEdits,
     loading,
     error,
     saved,
@@ -77,8 +80,22 @@ export default function TailorPage() {
   const step = !resume ? 0 : !result ? 1 : 2;
   const canRun = !!resume && jdText.trim().length > 30 && !loading;
 
+  // Per-bullet accept/reject: diff the tailored résumé against the one it was
+  // tailored from, and build the effective résumé the user actually ships.
+  const original = tailoredFrom ?? resume;
+  const edits = useMemo(
+    () => (result && original ? diffResumes(original, result.tailored_resume) : []),
+    [original, result],
+  );
+  const rejectedSet = useMemo(() => new Set(rejectedEdits), [rejectedEdits]);
+  const effectiveResume = useMemo(() => {
+    if (!result) return null;
+    if (!original || rejectedSet.size === 0) return result.tailored_resume;
+    return applyEditDecisions(original, result.tailored_resume, rejectedSet);
+  }, [original, result, rejectedSet]);
+
   async function onParsed(r: ResumeModel, l: FactsLedger) {
-    setTailorState({ resume: r, ledger: l, result: null, saved: false });
+    setTailorState({ resume: r, ledger: l, result: null, tailoredFrom: null, rejectedEdits: [], saved: false });
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
     if (m) setTailorState({ masterLabel: m.label });
   }
@@ -95,7 +112,7 @@ export default function TailorPage() {
       job_title: jd.job_title,
       company: jd.company,
       jd_text: jdText,
-      tailored_resume: result.tailored_resume,
+      tailored_resume: effectiveResume ?? result.tailored_resume,
       cover_letter: coverLetterText,
       overall_score: result.score_after.overall,
       job_url: jobUrl || undefined,
@@ -115,7 +132,7 @@ export default function TailorPage() {
           company: jd?.company || company || "",
           jd_text: jdText,
           // Backend accepts a missing tailored_resume; axios drops undefined fields.
-          tailored_resume: result?.tailored_resume as ResumeModel,
+          tailored_resume: effectiveResume as ResumeModel,
           cover_letter: coverLetterText,
           overall_score: result?.score_after.overall ?? 0,
           status: "applied",
@@ -256,7 +273,7 @@ export default function TailorPage() {
       )}
 
       <AnimatePresence>
-        {result && jd && !loading && (
+        {result && jd && effectiveResume && !loading && (
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -264,8 +281,15 @@ export default function TailorPage() {
             className="space-y-6"
           >
             <ScoreCard before={result.score_before} after={result.score_after} flags={result.fabrication_flags} />
-            <MatchReport gaps={result.score_after.gaps} jdText={jdText} resume={result.tailored_resume} />
-            <ChangeLog changelog={result.changelog} flags={result.fabrication_flags} />
+            <MatchReport gaps={result.score_after.gaps} jdText={jdText} resume={effectiveResume} />
+            <ChangeLog
+              edits={edits}
+              changelog={result.changelog}
+              flags={result.fabrication_flags}
+              jdKeywords={result.score_after.gaps.map((g) => g.keyword)}
+              rejected={rejectedSet}
+              onSetRejected={(ids) => setTailorState({ rejectedEdits: ids })}
+            />
 
             <Card>
               <CardTitle>{t("download.title")}</CardTitle>
@@ -274,9 +298,9 @@ export default function TailorPage() {
                   icon={<Download size={16} />}
                   onClick={() =>
                     downloadResume(
-                      result.tailored_resume,
+                      effectiveResume,
                       "docx",
-                      resumeFilename(result.tailored_resume.contact.name, jd?.company ?? ""),
+                      resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
                     )
                   }
                 >
@@ -287,9 +311,9 @@ export default function TailorPage() {
                   icon={<Download size={16} />}
                   onClick={() =>
                     downloadResume(
-                      result.tailored_resume,
+                      effectiveResume,
                       "pdf",
-                      resumeFilename(result.tailored_resume.contact.name, jd?.company ?? ""),
+                      resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
                     )
                   }
                 >
@@ -317,7 +341,7 @@ export default function TailorPage() {
             </Card>
 
             <CoverLetter
-              resume={result.tailored_resume}
+              resume={effectiveResume}
               jd={jd}
               onGenerated={(letter) => setTailorState({ coverLetterText: letter, saved: false })}
             />

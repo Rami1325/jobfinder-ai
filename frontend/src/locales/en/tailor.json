@@ -99,6 +99,31 @@
     "noChanges": "No changes recorded.",
     "why": "Why: {{reason}}"
   },
+  "review": {
+    "title": "AI edits — accept or reject each",
+    "accepted": "{{accepted}} of {{total}} accepted",
+    "note": "Rejected edits keep your original wording and are left out of downloads, tracker saves, and the keyword report. The score rings above still show the fully-AI version.",
+    "acceptAll": "Accept all",
+    "rejectAll": "Reject all",
+    "accept": "Accept",
+    "reject": "Reject",
+    "kind": {
+      "edited": "Edited",
+      "added": "Added",
+      "removed": "Removed"
+    },
+    "serves": "Serves:",
+    "guardOk": "Verified",
+    "guardFlagged": "Flagged: {{category}}",
+    "rejectedNote": {
+      "edited": "Original wording kept",
+      "added": "Won't be included",
+      "removed": "Will stay in your résumé"
+    },
+    "aiNotes": "The AI's own change notes",
+    "flagResolved": "Resolved — edit rejected",
+    "resolvedBody": "All flagged claims resolved — you rejected every flagged edit."
+  },
   "cover": {
     "title": "Cover letter",
     "generate": "Generate",
