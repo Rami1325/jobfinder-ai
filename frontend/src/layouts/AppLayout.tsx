@@ -1,19 +1,22 @@
 import { useSyncExternalStore } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { Sparkles, FileText, MessageSquareText, Briefcase, Wrench, KanbanSquare, Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
+import LanguageSwitch from "../components/LanguageSwitch";
 import ThemeToggle from "../components/ThemeToggle";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 
 const nav = [
-  { to: "/jobs", label: "Jobs", icon: Briefcase },
-  { to: "/app", label: "Tailor", icon: FileText },
-  { to: "/interview", label: "Interview", icon: MessageSquareText },
-  { to: "/tools", label: "Tools", icon: Wrench },
-  { to: "/tracker", label: "Tracker", icon: KanbanSquare },
-];
+  { to: "/jobs", labelKey: "nav.jobs", icon: Briefcase },
+  { to: "/app", labelKey: "nav.tailor", icon: FileText },
+  { to: "/interview", labelKey: "nav.interview", icon: MessageSquareText },
+  { to: "/tools", labelKey: "nav.tools", icon: Wrench },
+  { to: "/tracker", labelKey: "nav.tracker", icon: KanbanSquare },
+] as const;
 
 export default function AppLayout() {
+  const { t } = useTranslation();
   const { searching } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
   return (
     <div className="min-h-screen bg-bg text-ink">
@@ -23,10 +26,10 @@ export default function AppLayout() {
             <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent-gradient text-white shadow-glow">
               <Sparkles size={15} />
             </span>
-            <span className="text-[15px]">JobFinder</span>
+            <span className="text-[15px]">{t("appName")}</span>
           </NavLink>
           <nav className="flex items-center gap-1">
-            {nav.map(({ to, label, icon: Icon }) => (
+            {nav.map(({ to, labelKey, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -40,13 +43,14 @@ export default function AppLayout() {
                 }
               >
                 <Icon size={15} />
-                <span className="hidden sm:inline">{label}</span>
+                <span className="hidden sm:inline">{t(labelKey)}</span>
                 {to === "/jobs" && searching && (
                   <Loader2 size={13} className="animate-spin text-accent-soft" />
                 )}
               </NavLink>
             ))}
-            <ThemeToggle className="ml-1" />
+            <LanguageSwitch className="ms-1" />
+            <ThemeToggle className="ms-1" />
           </nav>
         </div>
       </header>

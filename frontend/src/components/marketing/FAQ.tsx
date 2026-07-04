@@ -1,26 +1,10 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import Reveal from "./Reveal";
 
-const faqs = [
-  {
-    q: "Does JobFinder make things up on my resume?",
-    a: "No — and that's the whole point. A code-enforced Fabrication Guard diffs every tailored claim against a ledger built from your original resume. Anything it can't trace back to your real experience is flagged, not shipped.",
-  },
-  {
-    q: "Will the output pass ATS screening?",
-    a: "Yes. Both the DOCX and PDF exporters enforce ATS-safe rules: single column, standard section names, no tables, text boxes, images, headers, or footers — just clean, parseable text.",
-  },
-  {
-    q: "Do I need an account or a subscription?",
-    a: "No accounts, no billing. It's a personal tool. It even runs fully offline with a built-in stub, so you can try the entire pipeline without an API key.",
-  },
-  {
-    q: "How is this different from auto-apply tools?",
-    a: "Auto-apply tools optimize for volume and often submit generic, fabricated applications that get flagged. JobFinder optimizes for quality and truth: you stay in control of what's sent, and every claim is defensible.",
-  },
-];
+const FAQ_KEYS = ["1", "2", "3", "4"] as const;
 
 function Item({ q, a }: { q: string; a: string }) {
   const [open, setOpen] = useState(false);
@@ -28,7 +12,7 @@ function Item({ q, a }: { q: string; a: string }) {
     <div className="rounded-xl border border-line bg-panel/60">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-start"
       >
         <span className="font-medium text-ink">{q}</span>
         <ChevronDown
@@ -54,15 +38,16 @@ function Item({ q, a }: { q: string; a: string }) {
 }
 
 export default function FAQ() {
+  const { t } = useTranslation("marketing");
   return (
     <section id="faq" className="mx-auto max-w-3xl px-4 py-20">
       <Reveal className="mb-10 text-center">
-        <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent-soft">FAQ</p>
-        <h2 className="mt-3 text-3xl font-bold tracking-tight text-ink sm:text-4xl">Straight answers</h2>
+        <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent-soft">{t("faq.kicker")}</p>
+        <h2 className="mt-3 text-3xl font-bold tracking-tight text-ink sm:text-4xl">{t("faq.title")}</h2>
       </Reveal>
       <div className="space-y-3">
-        {faqs.map((f) => (
-          <Item key={f.q} {...f} />
+        {FAQ_KEYS.map((k) => (
+          <Item key={k} q={t(`faq.q${k}`)} a={t(`faq.a${k}`)} />
         ))}
       </div>
     </section>

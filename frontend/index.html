@@ -23,6 +23,18 @@
         document.documentElement.classList.add(theme);
         var meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.setAttribute("content", theme === "light" ? "#f6f4ef" : "#0f1420");
+
+        // Same no-flash treatment for language direction: Hebrew is RTL and a
+        // LTR->RTL relayout after hydration is jarring. src/i18n.ts keeps these
+        // attributes (and the "lang" localStorage key) in sync at runtime.
+        var lang = null;
+        try {
+          lang = localStorage.getItem("lang");
+        } catch (e) {}
+        if (!lang) lang = (navigator.language || "en").split("-")[0];
+        lang = lang.indexOf("he") === 0 ? "he" : "en";
+        document.documentElement.lang = lang;
+        document.documentElement.dir = lang === "he" ? "rtl" : "ltr";
       })();
     </script>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

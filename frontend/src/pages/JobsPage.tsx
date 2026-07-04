@@ -1,6 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { Trans, useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   ArrowRight,
   BadgeCheck,
@@ -35,12 +37,7 @@ import type { FactsLedger, JobMatch, JobSearchHit, ResumeModel, SearchContext } 
 const inputCls =
   "rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50";
 
-const WORK_MODES = [
-  { value: "any", label: "Any" },
-  { value: "remote", label: "Remote" },
-  { value: "onsite", label: "On-site" },
-  { value: "hybrid", label: "Hybrid" },
-];
+const WORK_MODES = ["any", "remote", "onsite", "hybrid"] as const;
 
 // Provider id → display name for source badges ("linkedin" → "LinkedIn").
 const SOURCE_LABELS: Record<string, string> = {
@@ -56,52 +53,50 @@ function sourceLabel(source?: string): string {
   return SOURCE_LABELS[source.toLowerCase()] ?? source.charAt(0).toUpperCase() + source.slice(1);
 }
 
-function postedAgo(iso: string): string {
+function postedAgo(iso: string, t: TFunction<"jobs">): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  if (days < 7) return `${days} days ago`;
-  if (days < 30) {
-    const w = Math.floor(days / 7);
-    return `${w} week${w > 1 ? "s" : ""} ago`;
-  }
-  const mo = Math.floor(days / 30);
-  return `${mo} month${mo > 1 ? "s" : ""} ago`;
+  if (days <= 0) return t("posted.today");
+  if (days === 1) return t("posted.yesterday");
+  if (days < 7) return t("posted.days", { count: days });
+  if (days < 30) return t("posted.weeks", { count: Math.floor(days / 7) });
+  return t("posted.months", { count: Math.floor(days / 30) });
 }
 
 // Tracker status shown on history rows (colors mirror the Tracker board).
 const APP_STATUS: Record<
   string,
-  { label: string; tone: "neutral" | "mint" | "partial" | "danger"; cls?: string }
+  { tone: "neutral" | "mint" | "partial" | "danger"; cls?: string }
 > = {
-  saved: { label: "Saved", tone: "neutral" },
-  applied: { label: "Applied", tone: "mint" },
-  interview: { label: "Interview", tone: "partial" },
-  offer: { label: "Offer", tone: "mint", cls: "border-mint bg-mint font-bold text-bg shadow-glow-mint" },
-  rejected: { label: "Declined", tone: "danger" },
+  saved: { tone: "neutral" },
+  applied: { tone: "mint" },
+  interview: { tone: "partial" },
+  offer: { tone: "mint", cls: "border-mint bg-mint font-bold text-bg shadow-glow-mint" },
+  rejected: { tone: "danger" },
 };
 
 function AppStatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation("jobs");
   const s = APP_STATUS[status];
   if (!s) return null;
   return (
     <Badge tone={s.tone} className={`shrink-0 ${s.cls ?? ""}`}>
-      {s.label}
+      {t(`status.${status}`)}
     </Badge>
   );
 }
 
 function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
   const nav = useNavigate();
+  const { t } = useTranslation("jobs");
   return (
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
-      <ProgressRing value={m.overall} size={92} stroke={8} label="Fit" />
+      <ProgressRing value={m.overall} size={92} stroke={8} label={t("card.fit")} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          {best && <Badge tone="mint">Best match</Badge>}
-          <p className="truncate font-semibold text-ink">{m.title || "Untitled role"}</p>
+          {best && <Badge tone="mint">{t("card.best")}</Badge>}
+          <p className="truncate font-semibold text-ink">{m.title || t("card.untitled")}</p>
           {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
         </div>
         <p className="text-sm text-ink-muted">
@@ -109,9 +104,11 @@ function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
           {m.location ? ` · ${m.location}` : ""}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-          <span>ATS coverage {Math.round(m.keyword_coverage)}%</span>
-          <span>Recruiter fit {Math.round(m.fit_score)}%</span>
-          {m.posted_at && <span title={m.posted_at}>Posted {postedAgo(m.posted_at)}</span>}
+          <span>{t("card.ats", { pct: Math.round(m.keyword_coverage) })}</span>
+          <span>{t("card.recruiterFit", { pct: Math.round(m.fit_score) })}</span>
+          {m.posted_at && (
+            <span title={m.posted_at}>{t("card.posted", { when: postedAgo(m.posted_at, t) })}</span>
+          )}
           {m.url && (
             <a
               href={m.url}
@@ -119,7 +116,7 @@ function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-accent-soft hover:underline"
             >
-              <ExternalLink size={12} /> View on {sourceLabel(m.source) || "LinkedIn"}
+              <ExternalLink size={12} /> {t("card.viewOn", { source: sourceLabel(m.source) || "LinkedIn" })}
             </a>
           )}
         </div>
@@ -135,7 +132,7 @@ function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
       </div>
       <Button
         variant="secondary"
-        icon={<ArrowRight size={15} />}
+        icon={<ArrowRight size={15} className="rtl:-scale-x-100" />}
         onClick={() =>
           nav("/app", {
             state: {
@@ -147,7 +144,7 @@ function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
           })
         }
       >
-        Tailor to this
+        {t("card.tailorToThis")}
       </Button>
     </Card>
   );
@@ -155,12 +152,13 @@ function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
 
 function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: number) => void }) {
   const nav = useNavigate();
+  const { t } = useTranslation("jobs");
   return (
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
-      <ProgressRing value={hit.overall} size={64} stroke={6} label="Fit" />
+      <ProgressRing value={hit.overall} size={64} stroke={6} label={t("card.fit")} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate font-semibold text-ink">{hit.title || "Untitled role"}</p>
+          <p className="truncate font-semibold text-ink">{hit.title || t("card.untitled")}</p>
           {hit.source && <Badge className="shrink-0">{sourceLabel(hit.source)}</Badge>}
           <AppStatusBadge status={hit.app_status} />
         </div>
@@ -169,8 +167,10 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
           {hit.location ? ` · ${hit.location}` : ""}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-          <span>Searched {hit.searched_at.slice(0, 10)}</span>
-          {hit.posted_at && <span title={hit.posted_at}>Posted {postedAgo(hit.posted_at)}</span>}
+          <span>{t("history.searchedOn", { date: hit.searched_at.slice(0, 10) })}</span>
+          {hit.posted_at && (
+            <span title={hit.posted_at}>{t("card.posted", { when: postedAgo(hit.posted_at, t) })}</span>
+          )}
           {hit.url && (
             <a
               href={hit.url}
@@ -178,7 +178,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-accent-soft hover:underline"
             >
-              <ExternalLink size={12} /> Open on {sourceLabel(hit.source) || "LinkedIn"}
+              <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(hit.source) || "LinkedIn" })}
             </a>
           )}
         </div>
@@ -187,7 +187,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
         <Button
           variant="secondary"
           size="sm"
-          icon={<ArrowRight size={14} />}
+          icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
           onClick={() =>
             nav("/app", {
               state: {
@@ -199,11 +199,11 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
             })
           }
         >
-          Tailor
+          {t("card.tailor")}
         </Button>
         <button
           onClick={() => onDelete(hit.id)}
-          title="Remove from history"
+          title={t("card.removeFromHistory")}
           className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
         >
           <Trash2 size={14} />
@@ -214,6 +214,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
 }
 
 export default function JobsPage() {
+  const { t } = useTranslation("jobs");
   const { master, loading, setMaster } = useMasterResume();
   const persistMaster = useSaveMasterResume();
   const [mode, setMode] = useState<"search" | "manual" | "history">("search");
@@ -260,7 +261,7 @@ export default function JobsPage() {
       const h = await getJobHistory();
       setHistory(h.hits);
     } catch (e: any) {
-      setHistoryError(e?.response?.data?.detail || "Could not load your search history.");
+      setHistoryError(e?.response?.data?.detail || t("history.loadError"));
     } finally {
       setHistoryLoading(false);
     }
@@ -276,7 +277,7 @@ export default function JobsPage() {
       await deleteJobHistoryItem(id);
       setHistory((p) => (p ? p.filter((h) => h.id !== id) : p));
     } catch {
-      toast("error", "Could not delete that entry.");
+      toast("error", t("history.deleteError"));
     }
   }
 
@@ -286,9 +287,9 @@ export default function JobsPage() {
       await clearJobHistory();
       setHistory([]);
       setConfirmClear(false);
-      toast("success", "History cleared");
+      toast("success", t("history.cleared"));
     } catch {
-      toast("error", "Could not clear history.");
+      toast("error", t("history.clearError"));
     } finally {
       setClearing(false);
     }
@@ -348,12 +349,12 @@ export default function JobsPage() {
     setError("");
     try {
       const text = await fetchJob(url);
-      if (text.trim().length < 20) throw new Error("No readable text found at that URL.");
+      if (text.trim().length < 20) throw new Error(t("manual.noText"));
       setListings((p) => [...p, text]);
       setUrl("");
-      toast("success", "Fetched job posting");
+      toast("success", t("manual.fetched"));
     } catch (e: any) {
-      setError(e?.response?.data?.detail || e?.message || "Could not fetch that URL.");
+      setError(e?.response?.data?.detail || e?.message || t("manual.fetchError"));
     } finally {
       setFetching(false);
     }
@@ -368,7 +369,7 @@ export default function JobsPage() {
       const r = await matchJobs(master.resume, listings);
       setMatches(r.matches);
     } catch (e: any) {
-      setError(e?.response?.data?.detail || "Something went wrong.");
+      setError(e?.response?.data?.detail || t("manual.genericError"));
     } finally {
       setRunning(false);
     }
@@ -389,14 +390,12 @@ export default function JobsPage() {
             <Briefcase />
           </div>
           <h1 className="text-2xl font-bold text-ink">
-            Upload your résumé — we'll find jobs that fit
+            {t("gate.title")}
           </h1>
           <p className="mx-auto mt-2 max-w-md text-sm text-ink-muted">
-            We read your résumé, work out what role and location suit you, and search job
-            listings for the best matches — automatically. It's saved as your master résumé
-            for tailoring and interview prep too.
+            {t("gate.body")}
           </p>
-          <div className="mt-6 text-left">
+          <div className="mt-6 text-start">
             <ResumeUpload onParsed={onResumeUploaded} />
           </div>
         </Card>
@@ -431,22 +430,21 @@ export default function JobsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
-          <Briefcase className="text-accent-soft" /> Jobs
+          <Briefcase className="text-accent-soft" /> {t("title")}
         </h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Find jobs that fit your master résumé — or add listings yourself — and rank them
-          best to worst.
+          {t("sub")}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-mint/40 bg-mint/10 px-3 py-1 text-xs font-medium text-mint">
             <BadgeCheck size={13} className="shrink-0" />
-            <span className="truncate">{master.label || "My résumé"}</span>
+            <span className="truncate">{master.label || t("common:masterResume.chipFallback")}</span>
           </span>
           <button
             onClick={() => setShowReplace((v) => !v)}
             className="text-xs font-semibold text-accent-soft hover:underline"
           >
-            {showReplace ? "Cancel" : "Replace"}
+            {showReplace ? t("common:actions.cancel") : t("common:actions.replace")}
           </button>
         </div>
       </div>
@@ -460,10 +458,9 @@ export default function JobsPage() {
             className="overflow-hidden"
           >
             <Card>
-              <CardTitle>Replace master résumé</CardTitle>
+              <CardTitle>{t("replaceTitle")}</CardTitle>
               <p className="mt-1 text-xs text-ink-muted">
-                Uploading a new file overwrites your saved master résumé everywhere — Tailor,
-                Interview, and Tools use it too.
+                {t("replaceBody")}
               </p>
               <div className="mt-3">
                 <ResumeUpload onParsed={onResumeUploaded} />
@@ -476,21 +473,24 @@ export default function JobsPage() {
       <div className="flex flex-wrap gap-2">
         {(
           [
-            { key: "search", label: "Find on LinkedIn" },
-            { key: "manual", label: "Paste / URL" },
-            { key: "history", label: history ? `History (${history.length})` : "History" },
+            { key: "search", label: t("tabs.search") },
+            { key: "manual", label: t("tabs.manual") },
+            {
+              key: "history",
+              label: history ? t("tabs.historyCount", { count: history.length }) : t("tabs.history"),
+            },
           ] as const
-        ).map((t) => (
+        ).map((tab) => (
           <button
-            key={t.key}
-            onClick={() => setMode(t.key)}
+            key={tab.key}
+            onClick={() => setMode(tab.key)}
             className={`whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition-colors sm:px-4 ${
-              mode === t.key
+              mode === tab.key
                 ? "border-accent/60 bg-bg-soft text-ink"
                 : "border-line text-ink-muted hover:text-ink"
             }`}
           >
-            {t.label}
+            {tab.label}
           </button>
         ))}
       </div>
@@ -498,11 +498,9 @@ export default function JobsPage() {
       {mode === "search" && (
         <>
           <Card>
-            <CardTitle>Find jobs on LinkedIn</CardTitle>
+            <CardTitle>{t("search.cardTitle")}</CardTitle>
             <p className="mt-1 text-sm text-ink-muted">
-              We read your résumé, work out what role and location to search for, scan LinkedIn's
-              public job listings, and rank every match by fit. Fully automatic — or customize
-              the search below.
+              {t("search.cardBody")}
             </p>
 
             <label className="mt-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-ink">
@@ -512,7 +510,7 @@ export default function JobsPage() {
                 onChange={(e) => toggleCustomize(e.target.checked)}
                 className="h-4 w-4 accent-accent"
               />
-              Customize search
+              {t("search.customize")}
             </label>
 
             <AnimatePresence initial={false}>
@@ -525,31 +523,31 @@ export default function JobsPage() {
                 >
                   <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
-                      Job title
+                      {t("search.jobTitle")}
                       <input
                         value={ctx?.job_title ?? ""}
                         disabled={prefilling}
                         onChange={(e) =>
                           setCtx((p) => ({ ...(p as SearchContext), job_title: e.target.value }))
                         }
-                        placeholder={prefilling ? "Detecting from your résumé…" : "e.g. Backend Engineer"}
+                        placeholder={prefilling ? t("search.detecting") : t("search.jobTitlePlaceholder")}
                         className={inputCls}
                       />
                     </label>
                     <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
-                      Location
+                      {t("search.location")}
                       <input
                         value={ctx?.location ?? ""}
                         disabled={prefilling}
                         onChange={(e) =>
                           setCtx((p) => ({ ...(p as SearchContext), location: e.target.value }))
                         }
-                        placeholder={prefilling ? "Detecting from your résumé…" : "e.g. Tel Aviv, Israel"}
+                        placeholder={prefilling ? t("search.detecting") : t("search.locationPlaceholder")}
                         className={inputCls}
                       />
                     </label>
                     <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
-                      Work mode
+                      {t("search.workMode")}
                       <select
                         value={ctx?.work_mode ?? "any"}
                         disabled={prefilling}
@@ -559,14 +557,14 @@ export default function JobsPage() {
                         className={inputCls}
                       >
                         {WORK_MODES.map((w) => (
-                          <option key={w.value} value={w.value}>
-                            {w.label}
+                          <option key={w} value={w}>
+                            {t(`workModes.${w}`)}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
-                      Jobs to rank (1–25)
+                      {t("search.limit")}
                       <input
                         type="number"
                         min={1}
@@ -595,7 +593,7 @@ export default function JobsPage() {
                 disabled={prefilling}
                 onClick={runSearch}
               >
-                Find jobs for me
+                {t("search.cta")}
               </Button>
               {searchError && <span className="text-sm text-danger">{searchError}</span>}
             </div>
@@ -604,9 +602,7 @@ export default function JobsPage() {
           {searching && (
             <div className="space-y-3">
               <p className="text-sm text-ink-muted">
-                {autoSearched
-                  ? "Résumé saved — we're finding jobs that fit it and scoring each one. This can take a minute or two."
-                  : "Searching job listings and scoring each one against your résumé — this can take a minute or two."}
+                {autoSearched ? t("search.searchingAuto") : t("search.searchingManual")}
               </p>
               <Skeleton className="h-24 w-full" />
               <Skeleton className="h-24 w-full" />
@@ -622,13 +618,13 @@ export default function JobsPage() {
                   !sourceErrorsDismissed && (
                     <div className="flex items-start justify-between gap-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
                       <span className="min-w-0">
-                        Some sources were unavailable:{" "}
-                        {Object.keys(searchResult.source_errors).map(sourceLabel).join(", ")}.
-                        Results below come from the sources that responded.
+                        {t("search.sourceErrors", {
+                          sources: Object.keys(searchResult.source_errors).map(sourceLabel).join(", "),
+                        })}
                       </span>
                       <button
                         onClick={() => setSourceErrorsDismissed(true)}
-                        title="Dismiss"
+                        title={t("search.dismiss")}
                         className="shrink-0 rounded p-0.5 transition-opacity hover:opacity-70"
                       >
                         <X size={14} />
@@ -638,27 +634,32 @@ export default function JobsPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   {searched && (
                     <p className="text-sm text-ink-muted">
-                      Searched <span className="font-semibold text-ink">{searched.job_title}</span>
-                      {searched.location && (
-                        <>
-                          {" "}in <span className="font-semibold text-ink">{searched.location}</span>
-                        </>
-                      )}
-                      {searched.work_mode !== "any" && ` · ${searched.work_mode}`} —{" "}
-                      {searchResult.matches.length} job
-                      {searchResult.matches.length === 1 ? "" : "s"} ranked
-                      {searchResult.skipped > 0 && `, ${searchResult.skipped} skipped`}
+                      <Trans
+                        t={t}
+                        i18nKey={searched.location ? "search.summaryLoc" : "search.summary"}
+                        values={{ title: searched.job_title, location: searched.location }}
+                        components={[
+                          <span key="0" />,
+                          <span key="1" className="font-semibold text-ink" />,
+                          <span key="2" />,
+                          <span key="3" className="font-semibold text-ink" />,
+                        ]}
+                      />
+                      {searched.work_mode !== "any" && ` · ${t(`workModes.${searched.work_mode}`)}`}
+                      {" — "}
+                      {t("search.ranked", { count: searchResult.matches.length })}
+                      {searchResult.skipped > 0 && t("search.skipped", { count: searchResult.skipped })}
                     </p>
                   )}
                   <label className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
-                    Sort by
+                    {t("sort.label")}
                     <select
                       value={resultSort}
                       onChange={(e) => setResultSort(e.target.value as "fit" | "date")}
                       className={inputCls}
                     >
-                      <option value="fit">Best fit</option>
-                      <option value="date">Newest posted</option>
+                      <option value="fit">{t("sort.fit")}</option>
+                      <option value="date">{t("sort.date")}</option>
                     </select>
                   </label>
                 </div>
@@ -675,37 +676,38 @@ export default function JobsPage() {
         <>
           <div className="grid gap-5 lg:grid-cols-2">
             <Card>
-              <CardTitle>Paste a listing</CardTitle>
+              <CardTitle>{t("manual.pasteTitle")}</CardTitle>
               <textarea
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="Paste a job description…"
+                placeholder={t("manual.pastePlaceholder")}
                 className="mt-3 min-h-[140px] w-full resize-y rounded-xl border border-line bg-bg-soft p-3 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
               />
               <Button size="sm" className="mt-2" variant="secondary" icon={<Plus size={14} />} disabled={draft.trim().length < 20} onClick={addDraft}>
-                Add listing
+                {t("manual.addListing")}
               </Button>
             </Card>
 
             <Card>
-              <CardTitle>Add by URL</CardTitle>
-              <p className="mt-1 text-xs text-ink-muted">We fetch the page and extract the text.</p>
+              <CardTitle>{t("manual.urlTitle")}</CardTitle>
+              <p className="mt-1 text-xs text-ink-muted">{t("manual.urlHint")}</p>
               <div className="mt-3 flex gap-2">
                 <input
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="https://…/job-posting"
+                  dir="ltr"
                   className={`flex-1 ${inputCls}`}
                 />
                 <Button size="sm" variant="secondary" loading={fetching} icon={<Link2 size={14} />} onClick={addUrl}>
-                  Fetch
+                  {t("manual.fetch")}
                 </Button>
               </div>
 
               {listings.length > 0 && (
                 <div className="mt-4">
                   <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
-                    {listings.length} listing{listings.length > 1 ? "s" : ""} queued
+                    {t("manual.queued", { count: listings.length })}
                   </p>
                   <div className="space-y-1.5">
                     {listings.map((l, i) => (
@@ -724,7 +726,7 @@ export default function JobsPage() {
 
           <Card className="flex flex-wrap items-center gap-3">
             <Button size="lg" loading={running} icon={<Trophy size={18} />} disabled={listings.length === 0} onClick={rank}>
-              Rank {listings.length > 0 ? listings.length : ""} job{listings.length === 1 ? "" : "s"} by fit
+              {t("manual.rank", { count: listings.length })}
             </Button>
             {error && <span className="text-sm text-danger">{error}</span>}
           </Card>
@@ -762,16 +764,16 @@ export default function JobsPage() {
             <Card className="flex flex-wrap items-center gap-3">
               <span className="text-sm text-danger">{historyError}</span>
               <Button size="sm" variant="secondary" onClick={loadHistory}>
-                Retry
+                {t("history.retry")}
               </Button>
             </Card>
           )}
 
           {!historyLoading && !historyError && history && history.length === 0 && (
             <Card>
-              <CardTitle>No saved searches yet</CardTitle>
+              <CardTitle>{t("history.emptyTitle")}</CardTitle>
               <p className="mt-1 text-sm text-ink-muted">
-                Run a job search — every scraped job is saved here so you can apply later.
+                {t("history.emptyBody")}
               </p>
             </Card>
           )}
@@ -780,28 +782,33 @@ export default function JobsPage() {
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-ink-muted">
-                  <span className="font-semibold text-ink">{history.length}</span> of 100 saved
+                  <Trans
+                    t={t}
+                    i18nKey="history.savedOf"
+                    values={{ count: history.length }}
+                    components={[<span key="0" className="font-semibold text-ink" />]}
+                  />
                 </p>
                 <label className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
-                  Sort by
+                  {t("sort.label")}
                   <select
                     value={historySort}
                     onChange={(e) => setHistorySort(e.target.value as "searched" | "fit" | "date")}
                     className={inputCls}
                   >
-                    <option value="searched">Recently searched</option>
-                    <option value="fit">Best fit</option>
-                    <option value="date">Newest posted</option>
+                    <option value="searched">{t("sort.searched")}</option>
+                    <option value="fit">{t("sort.fit")}</option>
+                    <option value="date">{t("sort.date")}</option>
                   </select>
                 </label>
                 {confirmClear ? (
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-ink-muted">Delete all {history.length}?</span>
+                    <span className="text-sm text-ink-muted">{t("history.deleteAll", { count: history.length })}</span>
                     <Button size="sm" variant="danger" loading={clearing} onClick={clearAll}>
-                      Yes, clear all
+                      {t("history.confirmClear")}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => setConfirmClear(false)}>
-                      Cancel
+                      {t("common:actions.cancel")}
                     </Button>
                   </div>
                 ) : (
@@ -811,7 +818,7 @@ export default function JobsPage() {
                     icon={<Trash2 size={14} />}
                     onClick={() => setConfirmClear(true)}
                   >
-                    Clear all
+                    {t("history.clearAll")}
                   </Button>
                 )}
               </div>

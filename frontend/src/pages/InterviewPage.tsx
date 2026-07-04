@@ -67,7 +67,7 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
         <div className="mt-3 rounded-lg border border-line bg-bg-soft p-3 text-sm leading-relaxed text-ink">
           {answer}
           {tips.length > 0 && (
-            <ul className="mt-2 list-disc pl-5 text-xs text-ink-muted">
+            <ul className="mt-2 list-disc ps-5 text-xs text-ink-muted">
               {tips.map((t, i) => (
                 <li key={i}>{t}</li>
               ))}
@@ -105,7 +105,7 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
           {feedback.strengths.length > 0 && (
             <div>
               <span className="text-xs font-semibold text-mint">Strengths</span>
-              <ul className="list-disc pl-5 text-ink-muted">
+              <ul className="list-disc ps-5 text-ink-muted">
                 {feedback.strengths.map((s, i) => (
                   <li key={i}>{s}</li>
                 ))}
@@ -115,7 +115,7 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
           {feedback.improvements.length > 0 && (
             <div>
               <span className="text-xs font-semibold text-warn">Improve</span>
-              <ul className="list-disc pl-5 text-ink-muted">
+              <ul className="list-disc ps-5 text-ink-muted">
                 {feedback.improvements.map((s, i) => (
                   <li key={i}>{s}</li>
                 ))}

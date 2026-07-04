@@ -76,7 +76,7 @@ export default function LinkedInToolPage() {
                   Copy all
                 </Button>
               </div>
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink">
+              <ul className="mt-2 list-disc space-y-1 ps-5 text-sm text-ink">
                 {result.experience_bullets.map((b, i) => (
                   <li key={i}>{b}</li>
                 ))}

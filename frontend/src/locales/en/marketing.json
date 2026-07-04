@@ -1,0 +1,74 @@
+{
+  "hero": {
+    "badge": "Anti-fabrication AI · ATS-safe output",
+    "title1": "Tailored resumes",
+    "title2": "recruiters",
+    "titleHighlight": "actually trust.",
+    "sub": "JobFinder rewrites your resume for every job to beat the ATS — while a code-enforced guard makes sure every claim traces back to your real experience.",
+    "subEmphasis": "No fabrication. No AI slop.",
+    "ctaPrimary": "Find jobs for me",
+    "ctaSecondary": "See how it works",
+    "bulletNoLogin": "No login required",
+    "bulletOffline": "Runs fully offline",
+    "bulletAts": "ATS-safe DOCX & PDF",
+    "mock": {
+      "matchScore": "Match score",
+      "verified": "Verified",
+      "before": "Before",
+      "after": "After",
+      "emphasized": "Emphasized <1>Kubernetes</1> — already in your experience",
+      "blocked": "<1>\"Led team of 12\"</1> — blocked, not in your resume"
+    }
+  },
+  "features": {
+    "kicker": "The toolkit",
+    "title": "Everything for the search — honestly built",
+    "tailoring": { "title": "Resume tailoring", "body": "Rewrite for each job, with before/after match scores and a full changelog of every edit." },
+    "interview": { "title": "Interview prep", "body": "Role-specific questions and STAR model answers grounded in your real experience." },
+    "jobs": { "title": "Job match", "body": "Paste or link multiple roles and rank them by fit against your master resume." },
+    "ats": { "title": "ATS scanner", "body": "Check formatting and keyword coverage before a bot ever rejects you." },
+    "linkedin": { "title": "LinkedIn optimizer", "body": "A sharper headline, About, and experience — from facts you already have." },
+    "followUp": { "title": "Follow-up writer", "body": "Concise, specific follow-up emails that don't read like a template." }
+  },
+  "how": {
+    "kicker": "How it works",
+    "title": "Three steps. Zero fabrication.",
+    "sub": "The same pipeline that runs under the hood — nothing hidden, nothing made up.",
+    "step": "Step {{n}}",
+    "upload": { "title": "Upload & structure", "body": "Drop in your resume (DOCX/PDF). We parse it into structured data and build an immutable Facts Ledger of everything you've actually done." },
+    "analyze": { "title": "Analyze & tailor", "body": "Paste the job description. JobFinder scores keyword coverage and recruiter fit, then rewrites your resume to emphasize what matters — never inventing." },
+    "verify": { "title": "Verify & export", "body": "The Fabrication Guard diffs every tailored claim against your ledger. Anything invented gets flagged. Export ATS-safe DOCX or PDF." }
+  },
+  "why": {
+    "kicker": "Why honesty wins",
+    "title": "Most AI resume tools get you caught",
+    "sub": "A resume that impresses the bot but collapses in the interview isn't an advantage. JobFinder optimizes the truth.",
+    "slopTitle": "Typical \"AI apply\" tools",
+    "slop1": "Invents metrics and titles you never had",
+    "slop2": "Reads as templated — recruiters flag it",
+    "slop3": "Same buzzwords on every application",
+    "slop4": "You find out it lied in the interview",
+    "usTitle": "JobFinder",
+    "us1": "Every claim traced to your real resume",
+    "us2": "Code-enforced guard blocks fabrication",
+    "us3": "Tailored per job, keyword-accurate",
+    "us4": "You can defend every line you send"
+  },
+  "faq": {
+    "kicker": "FAQ",
+    "title": "Straight answers",
+    "q1": "Does JobFinder make things up on my resume?",
+    "a1": "No — and that's the whole point. A code-enforced Fabrication Guard diffs every tailored claim against a ledger built from your original resume. Anything it can't trace back to your real experience is flagged, not shipped.",
+    "q2": "Will the output pass ATS screening?",
+    "a2": "Yes. Both the DOCX and PDF exporters enforce ATS-safe rules: single column, standard section names, no tables, text boxes, images, headers, or footers — just clean, parseable text.",
+    "q3": "Do I need an account or a subscription?",
+    "a3": "No accounts, no billing. It's a personal tool. It even runs fully offline with a built-in stub, so you can try the entire pipeline without an API key.",
+    "q4": "How is this different from auto-apply tools?",
+    "a4": "Auto-apply tools optimize for volume and often submit generic, fabricated applications that get flagged. JobFinder optimizes for quality and truth: you stay in control of what's sent, and every claim is defensible."
+  },
+  "finalCta": {
+    "title": "Optimize the truth. Land the interview.",
+    "sub": "Upload your resume, paste a job, and get a tailored, verified version in under a minute.",
+    "cta": "Find jobs for me"
+  }
+}

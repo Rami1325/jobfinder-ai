@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { UploadCloud, FileCheck2, Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { uploadResume } from "../api/client";
 import type { FactsLedger, ResumeModel } from "../types";
 import { cn } from "../lib/cn";
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function ResumeUpload({ onParsed, savedLabel }: Props) {
+  const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,7 +27,7 @@ export default function ResumeUpload({ onParsed, savedLabel }: Props) {
       const res = await uploadResume(file);
       onParsed(res.resume, res.ledger);
     } catch (e: any) {
-      setError(e?.response?.data?.detail || "Failed to parse resume.");
+      setError(e?.response?.data?.detail || t("resumeUpload.error"));
       setFileName("");
     } finally {
       setLoading(false);
@@ -62,24 +64,24 @@ export default function ResumeUpload({ onParsed, savedLabel }: Props) {
         {loading ? (
           <>
             <Loader2 className="mb-2 animate-spin text-accent" />
-            <span className="text-sm text-ink-muted">Parsing résumé…</span>
+            <span className="text-sm text-ink-muted">{t("resumeUpload.parsing")}</span>
           </>
         ) : fileName ? (
           <>
             <FileCheck2 className="mb-2 text-mint" />
             <span className="text-sm text-ink">{fileName}</span>
-            <span className="mt-1 text-xs text-ink-muted">Parsed — click to replace</span>
+            <span className="mt-1 text-xs text-ink-muted">{t("resumeUpload.parsedReplace")}</span>
           </>
         ) : savedLabel ? (
           <>
             <FileCheck2 className="mb-2 text-mint" />
-            <span className="text-sm text-ink">Using {savedLabel}</span>
-            <span className="mt-1 text-xs text-ink-muted">Drop a new file to replace</span>
+            <span className="text-sm text-ink">{t("resumeUpload.using", { label: savedLabel })}</span>
+            <span className="mt-1 text-xs text-ink-muted">{t("resumeUpload.dropReplace")}</span>
           </>
         ) : (
           <>
             <UploadCloud className="mb-2 text-ink-muted" />
-            <span className="text-sm text-ink">Drop your résumé, or click to choose</span>
+            <span className="text-sm text-ink">{t("resumeUpload.drop")}</span>
             <span className="mt-1 text-xs text-ink-faint">.docx · .pdf · .txt</span>
           </>
         )}

@@ -175,7 +175,7 @@ export default function TrackerPage() {
                   </motion.div>
                 ))}
               </div>
-              <div className="flex items-center justify-center border-line lg:border-l lg:pl-6">
+              <div className="flex items-center justify-center border-line lg:border-s lg:ps-6">
                 <ProgressRing
                   value={metrics.interviewRate}
                   size={104}

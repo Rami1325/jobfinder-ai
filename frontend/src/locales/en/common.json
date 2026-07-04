@@ -1,0 +1,52 @@
+{
+  "appName": "JobFinder",
+  "nav": {
+    "jobs": "Jobs",
+    "tailor": "Tailor",
+    "interview": "Interview",
+    "tools": "Tools",
+    "tracker": "Tracker"
+  },
+  "header": {
+    "how": "How it works",
+    "features": "Features",
+    "faq": "FAQ",
+    "openApp": "Open app"
+  },
+  "footer": {
+    "tagline": "· Honest AI resume tailoring",
+    "app": "App",
+    "how": "How it works",
+    "faq": "FAQ"
+  },
+  "actions": {
+    "cancel": "Cancel",
+    "replace": "Replace",
+    "delete": "Delete",
+    "copy": "Copy",
+    "copied": "Copied",
+    "close": "Close",
+    "back": "Back",
+    "save": "Save",
+    "download": "Download",
+    "retry": "Try again"
+  },
+  "resumeUpload": {
+    "drop": "Drop your resume, or click to choose",
+    "parsing": "Parsing resume…",
+    "parsedReplace": "Parsed — click to replace",
+    "using": "Using {{label}}",
+    "dropReplace": "Drop a new file to replace",
+    "error": "Failed to parse resume."
+  },
+  "resumeGate": {
+    "title": "No resume saved yet",
+    "body": "Upload your resume on the Jobs page first — it becomes your master resume, which {{feature}} uses.",
+    "cta": "Go to Jobs"
+  },
+  "masterResume": {
+    "chipFallback": "My resume",
+    "replace": "Replace",
+    "cancel": "Cancel"
+  }
+}

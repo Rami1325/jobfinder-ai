@@ -1,23 +1,25 @@
 import { Link } from "react-router-dom";
 import { FileText, MessageSquareText, Briefcase, ScanLine, Contact, Mail, ArrowUpRight } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import Reveal from "./Reveal";
 
 const features = [
-  { to: "/app", icon: FileText, title: "Resume tailoring", body: "Rewrite for each job, with before/after match scores and a full changelog of every edit." },
-  { to: "/interview", icon: MessageSquareText, title: "Interview prep", body: "Role-specific questions and STAR model answers grounded in your real experience." },
-  { to: "/jobs", icon: Briefcase, title: "Job match", body: "Paste or link multiple roles and rank them by fit against your master resume." },
-  { to: "/tools/ats", icon: ScanLine, title: "ATS scanner", body: "Check formatting and keyword coverage before a bot ever rejects you." },
-  { to: "/tools/linkedin", icon: Contact, title: "LinkedIn optimizer", body: "A sharper headline, About, and experience — from facts you already have." },
-  { to: "/tools/follow-up", icon: Mail, title: "Follow-up writer", body: "Concise, specific follow-up emails that don't read like a template." },
-];
+  { to: "/app", icon: FileText, key: "tailoring" },
+  { to: "/interview", icon: MessageSquareText, key: "interview" },
+  { to: "/jobs", icon: Briefcase, key: "jobs" },
+  { to: "/tools/ats", icon: ScanLine, key: "ats" },
+  { to: "/tools/linkedin", icon: Contact, key: "linkedin" },
+  { to: "/tools/follow-up", icon: Mail, key: "followUp" },
+] as const;
 
 export default function FeatureGrid() {
+  const { t } = useTranslation("marketing");
   return (
     <section id="features" className="relative mx-auto max-w-6xl px-4 py-20">
       <Reveal className="mx-auto max-w-2xl text-center">
-        <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent-soft">The toolkit</p>
+        <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent-soft">{t("features.kicker")}</p>
         <h2 className="mt-3 text-3xl font-bold tracking-tight text-ink sm:text-4xl">
-          Everything for the search — honestly built
+          {t("features.title")}
         </h2>
       </Reveal>
 
@@ -32,10 +34,10 @@ export default function FeatureGrid() {
                 <span className="grid h-10 w-10 place-items-center rounded-xl border border-line bg-panel-2 text-accent-soft group-hover:border-accent/40">
                   <f.icon size={18} />
                 </span>
-                <ArrowUpRight size={18} className="text-ink-faint transition-colors group-hover:text-accent-soft" />
+                <ArrowUpRight size={18} className="text-ink-faint transition-colors group-hover:text-accent-soft rtl:-scale-x-100" />
               </div>
-              <h3 className="text-lg font-semibold text-ink">{f.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-ink-muted">{f.body}</p>
+              <h3 className="text-lg font-semibold text-ink">{t(`features.${f.key}.title`)}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t(`features.${f.key}.body`)}</p>
             </Link>
           </Reveal>
         ))}

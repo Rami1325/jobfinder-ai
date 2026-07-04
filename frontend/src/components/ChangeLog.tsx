@@ -52,7 +52,7 @@ export default function ChangeLog({ changelog, flags }: Props) {
       ) : (
         <div className="space-y-2">
           {changelog.map((c, i) => (
-            <div key={i} className="rounded-lg border-l-2 border-accent bg-panel-2/60 px-3 py-2">
+            <div key={i} className="rounded-lg border-s-2 border-accent bg-panel-2/60 px-3 py-2">
               <div className="text-sm">
                 <span className="font-semibold capitalize text-accent-soft">{c.section}</span>
                 <span className="text-ink"> — {c.change}</span>

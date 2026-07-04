@@ -1,0 +1,110 @@
+{
+  "title": "Jobs",
+  "sub": "Find jobs that fit your master resume — or add listings yourself — and rank them best to worst.",
+  "gate": {
+    "title": "Upload your resume — we'll find jobs that fit",
+    "body": "We read your resume, work out what role and location suit you, and search job listings for the best matches — automatically. It's saved as your master resume for tailoring and interview prep too."
+  },
+  "replaceTitle": "Replace master resume",
+  "replaceBody": "Uploading a new file overwrites your saved master resume everywhere — Tailor, Interview, and Tools use it too.",
+  "tabs": {
+    "search": "Job search",
+    "manual": "Paste / URL",
+    "history": "History",
+    "historyCount": "History ({{count}})"
+  },
+  "search": {
+    "cardTitle": "Find jobs that fit you",
+    "cardBody": "We read your resume, work out what role and location to search for, scan LinkedIn, Drushim and Comeet listings, and rank every match by fit. Fully automatic — or customize the search below.",
+    "customize": "Customize search",
+    "jobTitle": "Job title",
+    "jobTitlePlaceholder": "e.g. Backend Engineer",
+    "location": "Location",
+    "locationPlaceholder": "e.g. Tel Aviv, Israel",
+    "workMode": "Work mode",
+    "limit": "Jobs to rank (1–25)",
+    "detecting": "Detecting from your resume…",
+    "cta": "Find jobs for me",
+    "searchingAuto": "Resume saved — we're finding jobs that fit it and scoring each one. This can take a minute or two.",
+    "searchingManual": "Searching job listings and scoring each one against your resume — this can take a minute or two.",
+    "sourceErrors": "Some sources were unavailable: {{sources}}. Results below come from the sources that responded.",
+    "dismiss": "Dismiss",
+    "summary": "Searched <1>{{title}}</1>",
+    "summaryLoc": "Searched <1>{{title}}</1> in <3>{{location}}</3>",
+    "ranked_one": "{{count}} job ranked",
+    "ranked_other": "{{count}} jobs ranked",
+    "skipped": ", {{count}} skipped"
+  },
+  "workModes": {
+    "any": "Any",
+    "remote": "Remote",
+    "onsite": "On-site",
+    "hybrid": "Hybrid"
+  },
+  "sort": {
+    "label": "Sort by",
+    "fit": "Best fit",
+    "date": "Newest posted",
+    "searched": "Recently searched"
+  },
+  "card": {
+    "fit": "Fit",
+    "best": "Best match",
+    "untitled": "Untitled role",
+    "ats": "ATS coverage {{pct}}%",
+    "recruiterFit": "Recruiter fit {{pct}}%",
+    "posted": "Posted {{when}}",
+    "viewOn": "View on {{source}}",
+    "openOn": "Open on {{source}}",
+    "tailorToThis": "Tailor to this",
+    "tailor": "Tailor",
+    "removeFromHistory": "Remove from history"
+  },
+  "posted": {
+    "today": "today",
+    "yesterday": "yesterday",
+    "days_one": "{{count}} day ago",
+    "days_other": "{{count}} days ago",
+    "weeks_one": "{{count}} week ago",
+    "weeks_other": "{{count}} weeks ago",
+    "months_one": "{{count}} month ago",
+    "months_other": "{{count}} months ago"
+  },
+  "status": {
+    "saved": "Saved",
+    "applied": "Applied",
+    "interview": "Interview",
+    "offer": "Offer",
+    "rejected": "Declined"
+  },
+  "manual": {
+    "pasteTitle": "Paste a listing",
+    "pastePlaceholder": "Paste a job description…",
+    "addListing": "Add listing",
+    "urlTitle": "Add by URL",
+    "urlHint": "We fetch the page and extract the text.",
+    "fetch": "Fetch",
+    "queued_one": "{{count}} listing queued",
+    "queued_other": "{{count}} listings queued",
+    "rank_one": "Rank {{count}} job by fit",
+    "rank_other": "Rank {{count}} jobs by fit",
+    "fetched": "Fetched job posting",
+    "noText": "No readable text found at that URL.",
+    "fetchError": "Could not fetch that URL.",
+    "genericError": "Something went wrong."
+  },
+  "history": {
+    "emptyTitle": "No saved searches yet",
+    "emptyBody": "Run a job search — every scraped job is saved here so you can apply later.",
+    "savedOf": "<0>{{count}}</0> of 100 saved",
+    "searchedOn": "Searched {{date}}",
+    "deleteAll": "Delete all {{count}}?",
+    "clearAll": "Clear all",
+    "confirmClear": "Yes, clear all",
+    "cleared": "History cleared",
+    "clearError": "Could not clear history.",
+    "deleteError": "Could not delete that entry.",
+    "loadError": "Could not load your search history.",
+    "retry": "Retry"
+  }
+}
