@@ -5,9 +5,9 @@ import { cn } from "../lib/cn";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 
 const nav = [
+  { to: "/jobs", label: "Jobs", icon: Briefcase },
   { to: "/app", label: "Tailor", icon: FileText },
   { to: "/interview", label: "Interview", icon: MessageSquareText },
-  { to: "/jobs", label: "Job Match", icon: Briefcase },
   { to: "/tools", label: "Tools", icon: Wrench },
   { to: "/tracker", label: "Tracker", icon: KanbanSquare },
 ];

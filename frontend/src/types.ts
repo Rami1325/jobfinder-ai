@@ -168,6 +168,7 @@ export interface JobMatch {
   url: string; // set for scraped listings; empty for pasted ones
   location: string;
   posted_at: string; // ISO date from the LinkedIn search card; empty when unknown
+  source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
 }
 export interface JobMatchResult {
   matches: JobMatch[];
@@ -177,11 +178,13 @@ export interface SearchContext {
   location: string;
   work_mode: string; // any | onsite | remote | hybrid
   limit: number;
+  sources?: string[]; // provider ids to search ("linkedin", "drushim", …); absent on older backends
 }
 export interface JobSearchResult {
   context: SearchContext;
   matches: JobMatch[];
   skipped: number;
+  source_errors?: Record<string, string>; // provider id → error when a source failed; absent on older backends
 }
 export interface JobSearchHit {
   id: number;
@@ -195,6 +198,7 @@ export interface JobSearchHit {
   top_gaps: string[];
   jd_text: string;
   posted_at: string; // ISO date the job was posted; empty when unknown
+  source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
   searched_at: string;
   app_status: string; // tracker status if saved/applied: "", saved, applied, interview, offer, rejected
 }

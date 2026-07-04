@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
+  BadgeCheck,
   Briefcase,
   ExternalLink,
   Link2,
@@ -20,15 +21,16 @@ import {
   matchJobs,
   searchContext,
 } from "../api/client";
-import ResumeGate from "../components/ResumeGate";
+import ResumeUpload from "../components/ResumeUpload";
 import {
   getJobSearchState,
   startJobSearch,
   subscribeJobSearch,
 } from "../state/jobSearchStore";
 import { useMasterResume } from "../hooks/useMasterResume";
+import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, useToast } from "../components/ui";
-import type { JobMatch, JobSearchHit, SearchContext } from "../types";
+import type { FactsLedger, JobMatch, JobSearchHit, ResumeModel, SearchContext } from "../types";
 
 const inputCls =
   "rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50";
@@ -39,6 +41,20 @@ const WORK_MODES = [
   { value: "onsite", label: "On-site" },
   { value: "hybrid", label: "Hybrid" },
 ];
+
+// Provider id → display name for source badges ("linkedin" → "LinkedIn").
+const SOURCE_LABELS: Record<string, string> = {
+  linkedin: "LinkedIn",
+  drushim: "Drushim",
+  comeet: "Comeet",
+  jobmaster: "JobMaster",
+  jooble: "Jooble",
+};
+
+function sourceLabel(source?: string): string {
+  if (!source) return "";
+  return SOURCE_LABELS[source.toLowerCase()] ?? source.charAt(0).toUpperCase() + source.slice(1);
+}
 
 function postedAgo(iso: string): string {
   const d = new Date(iso);
@@ -86,6 +102,7 @@ function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
         <div className="flex items-center gap-2">
           {best && <Badge tone="mint">Best match</Badge>}
           <p className="truncate font-semibold text-ink">{m.title || "Untitled role"}</p>
+          {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
         </div>
         <p className="text-sm text-ink-muted">
           {m.company || "—"}
@@ -102,7 +119,7 @@ function MatchCard({ m, best }: { m: JobMatch; best: boolean }) {
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-accent-soft hover:underline"
             >
-              <ExternalLink size={12} /> View on LinkedIn
+              <ExternalLink size={12} /> View on {sourceLabel(m.source) || "LinkedIn"}
             </a>
           )}
         </div>
@@ -144,6 +161,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="truncate font-semibold text-ink">{hit.title || "Untitled role"}</p>
+          {hit.source && <Badge className="shrink-0">{sourceLabel(hit.source)}</Badge>}
           <AppStatusBadge status={hit.app_status} />
         </div>
         <p className="text-sm text-ink-muted">
@@ -160,7 +178,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-accent-soft hover:underline"
             >
-              <ExternalLink size={12} /> Open on LinkedIn
+              <ExternalLink size={12} /> Open on {sourceLabel(hit.source) || "LinkedIn"}
             </a>
           )}
         </div>
@@ -196,9 +214,15 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
 }
 
 export default function JobsPage() {
-  const { master, loading } = useMasterResume();
+  const { master, loading, setMaster } = useMasterResume();
+  const persistMaster = useSaveMasterResume();
   const [mode, setMode] = useState<"search" | "manual" | "history">("search");
   const toast = useToast();
+
+  // -- Résumé upload state (Jobs is the front door: upload lives here too) --
+  const [showReplace, setShowReplace] = useState(false);
+  const [autoSearched, setAutoSearched] = useState(false); // first upload kicks off a search automatically
+  const [sourceErrorsDismissed, setSourceErrorsDismissed] = useState(false);
 
   // -- History state --
   const [history, setHistory] = useState<JobSearchHit[] | null>(null);
@@ -289,9 +313,28 @@ export default function JobsPage() {
   useEffect(() => {
     if (!searchResult) return;
     setCtx((p) => p ?? searchResult.context); // so opening Customize later starts from what was searched
+    setSourceErrorsDismissed(false); // a fresh result gets a fresh warning
     if (history !== null) loadHistory(); // backend saved the results — keep the History tab fresh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchResult]);
+
+  /** Save an uploaded résumé as the master (shared logic with TailorPage) and
+   * update this page in place — no reload needed. The first-ever upload also
+   * auto-starts a job search so jobs appear without another click. */
+  async function onResumeUploaded(r: ResumeModel, l: FactsLedger) {
+    const firstUpload = !master?.resume;
+    const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
+    setMaster(
+      m ?? { resume: r, ledger: l, label: masterResumeLabel(r), updated_at: new Date().toISOString() },
+    );
+    setShowReplace(false);
+    setCtx(null); // search context derives from the résumé — drop stale prefill
+    if (firstUpload && !searching) {
+      setAutoSearched(true);
+      setMode("search");
+      startJobSearch(r, null); // magic moment: upload → jobs appear
+    }
+  }
 
   function addDraft() {
     if (draft.trim().length < 20) return;
@@ -332,7 +375,34 @@ export default function JobsPage() {
   }
 
   if (loading) return <Skeleton className="h-48 w-full" />;
-  if (!master?.resume) return <ResumeGate feature="job matching" />;
+
+  if (!master?.resume) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="mx-auto max-w-2xl"
+      >
+        <Card className="px-5 py-10 text-center sm:px-10">
+          <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xl bg-accent/10 text-accent-soft">
+            <Briefcase />
+          </div>
+          <h1 className="text-2xl font-bold text-ink">
+            Upload your résumé — we'll find jobs that fit
+          </h1>
+          <p className="mx-auto mt-2 max-w-md text-sm text-ink-muted">
+            We read your résumé, work out what role and location suit you, and search job
+            listings for the best matches — automatically. It's saved as your master résumé
+            for tailoring and interview prep too.
+          </p>
+          <div className="mt-6 text-left">
+            <ResumeUpload onParsed={onResumeUploaded} />
+          </div>
+        </Card>
+      </motion.div>
+    );
+  }
 
   const searched = searchResult?.context;
   // The backend returns matches ranked by fit; re-sort client-side on demand.
@@ -361,13 +431,47 @@ export default function JobsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
-          <Briefcase className="text-accent-soft" /> Job match
+          <Briefcase className="text-accent-soft" /> Jobs
         </h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Find LinkedIn jobs that fit your master résumé — or add listings yourself — and rank
-          them best to worst.
+          Find jobs that fit your master résumé — or add listings yourself — and rank them
+          best to worst.
         </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-mint/40 bg-mint/10 px-3 py-1 text-xs font-medium text-mint">
+            <BadgeCheck size={13} className="shrink-0" />
+            <span className="truncate">{master.label || "My résumé"}</span>
+          </span>
+          <button
+            onClick={() => setShowReplace((v) => !v)}
+            className="text-xs font-semibold text-accent-soft hover:underline"
+          >
+            {showReplace ? "Cancel" : "Replace"}
+          </button>
+        </div>
       </div>
+
+      <AnimatePresence initial={false}>
+        {showReplace && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <Card>
+              <CardTitle>Replace master résumé</CardTitle>
+              <p className="mt-1 text-xs text-ink-muted">
+                Uploading a new file overwrites your saved master résumé everywhere — Tailor,
+                Interview, and Tools use it too.
+              </p>
+              <div className="mt-3">
+                <ResumeUpload onParsed={onResumeUploaded} />
+              </div>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex flex-wrap gap-2">
         {(
@@ -500,8 +604,9 @@ export default function JobsPage() {
           {searching && (
             <div className="space-y-3">
               <p className="text-sm text-ink-muted">
-                Searching LinkedIn and scoring each job against your résumé — this can take a
-                minute or two.
+                {autoSearched
+                  ? "Résumé saved — we're finding jobs that fit it and scoring each one. This can take a minute or two."
+                  : "Searching job listings and scoring each one against your résumé — this can take a minute or two."}
               </p>
               <Skeleton className="h-24 w-full" />
               <Skeleton className="h-24 w-full" />
@@ -512,6 +617,24 @@ export default function JobsPage() {
           <AnimatePresence>
             {searchResult && !searching && (
               <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+                {searchResult.source_errors &&
+                  Object.keys(searchResult.source_errors).length > 0 &&
+                  !sourceErrorsDismissed && (
+                    <div className="flex items-start justify-between gap-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
+                      <span className="min-w-0">
+                        Some sources were unavailable:{" "}
+                        {Object.keys(searchResult.source_errors).map(sourceLabel).join(", ")}.
+                        Results below come from the sources that responded.
+                      </span>
+                      <button
+                        onClick={() => setSourceErrorsDismissed(true)}
+                        title="Dismiss"
+                        className="shrink-0 rounded p-0.5 transition-opacity hover:opacity-70"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   {searched && (
                     <p className="text-sm text-ink-muted">

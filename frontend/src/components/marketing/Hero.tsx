@@ -52,9 +52,9 @@ export default function Hero() {
             transition={{ duration: 0.6, delay: 0.19 }}
             className="mt-8 flex flex-wrap items-center gap-3"
           >
-            <Link to="/app">
+            <Link to="/jobs">
               <Button size="lg" icon={<ArrowRight size={18} />}>
-                Tailor my resume
+                Find jobs for me
               </Button>
             </Link>
             <a href="#how">

@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { getMasterResume } from "../api/client";
 import type { MasterResume } from "../types";
 
-/** Loads the persisted master résumé once. Shared by Interview / Jobs / Tools. */
+/** Loads the persisted master résumé once. Shared by Interview / Jobs / Tools.
+ * `setMaster` lets a page swap in a freshly uploaded résumé without a reload. */
 export function useMasterResume() {
   const [master, setMaster] = useState<MasterResume | null>(null);
   const [loading, setLoading] = useState(true);
@@ -17,5 +18,5 @@ export function useMasterResume() {
       }
     })();
   }, []);
-  return { master, loading };
+  return { master, loading, setMaster };
 }

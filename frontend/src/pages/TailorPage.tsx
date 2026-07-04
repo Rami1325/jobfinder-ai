@@ -1,13 +1,12 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink } from "lucide-react";
+import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft } from "lucide-react";
 import {
   downloadResume,
   resumeFilename,
   getMasterResume,
   saveApplication,
-  saveMasterResume,
   updateApplication,
 } from "../api/client";
 import ChangeLog from "../components/ChangeLog";
@@ -16,6 +15,7 @@ import GapList from "../components/GapList";
 import JDPaste from "../components/JDPaste";
 import ResumeUpload from "../components/ResumeUpload";
 import ScoreCard from "../components/ScoreCard";
+import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { Badge, Button, Card, CardTitle, Skeleton, Stepper, useToast } from "../components/ui";
 import {
   getTailorState,
@@ -56,6 +56,7 @@ export default function TailorPage() {
     company,
   } = useSyncExternalStore(subscribeTailor, getTailorState);
   const toast = useToast();
+  const persistMaster = useSaveMasterResume();
 
   useEffect(() => {
     if (getTailorState().resume) return; // already loaded (or uploaded) this session
@@ -76,14 +77,8 @@ export default function TailorPage() {
 
   async function onParsed(r: ResumeModel, l: FactsLedger) {
     setTailorState({ resume: r, ledger: l, result: null, saved: false });
-    const label = r.contact.name ? `${r.contact.name}'s résumé` : "My résumé";
-    try {
-      const m = await saveMasterResume({ resume: r, ledger: l, label });
-      setTailorState({ masterLabel: m.label });
-      toast("success", "Saved as your master résumé");
-    } catch {
-      /* persistence is best-effort */
-    }
+    const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
+    if (m) setTailorState({ masterLabel: m.label });
   }
 
   async function save() {
@@ -158,6 +153,25 @@ export default function TailorPage() {
   return (
     <div className="space-y-6">
       <div>
+        {(jobTitle || company) && (
+          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            <Link
+              to="/jobs"
+              className="inline-flex items-center gap-1 text-accent-soft hover:underline"
+            >
+              <ArrowLeft size={14} /> Back to jobs
+            </Link>
+            <span className="text-ink-faint">·</span>
+            <span className="min-w-0 truncate text-ink-muted">
+              Tailoring for: <span className="font-medium text-ink">{jobTitle || "this job"}</span>
+              {company && (
+                <>
+                  {" "}at <span className="font-medium text-ink">{company}</span>
+                </>
+              )}
+            </span>
+          </div>
+        )}
         <h1 className="text-2xl font-bold text-ink">Tailor your résumé</h1>
         <p className="mt-1 text-sm text-ink-muted">
           Rewrite for a specific job — verified against your real experience.

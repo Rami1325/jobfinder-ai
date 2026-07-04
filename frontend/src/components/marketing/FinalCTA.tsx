@@ -16,9 +16,9 @@ export default function FinalCTA() {
             Upload your resume, paste a job, and get a tailored, verified version in under a minute.
           </p>
           <div className="relative mt-8 flex justify-center">
-            <Link to="/app">
+            <Link to="/jobs">
               <Button size="lg" icon={<ArrowRight size={18} />}>
-                Tailor my resume
+                Find jobs for me
               </Button>
             </Link>
           </div>

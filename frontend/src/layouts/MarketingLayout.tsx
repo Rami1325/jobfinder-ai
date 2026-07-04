@@ -17,7 +17,7 @@ export default function MarketingLayout() {
             <a href="#how" className="hidden text-sm text-ink-muted hover:text-ink sm:inline">How it works</a>
             <a href="#features" className="hidden text-sm text-ink-muted hover:text-ink sm:inline">Features</a>
             <a href="#faq" className="hidden text-sm text-ink-muted hover:text-ink sm:inline">FAQ</a>
-            <Link to="/app">
+            <Link to="/jobs">
               <Button size="sm">Open app</Button>
             </Link>
           </div>

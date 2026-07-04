@@ -13,7 +13,7 @@ export default function Footer() {
           <span className="text-ink-faint">· Honest AI resume tailoring</span>
         </div>
         <div className="flex items-center gap-5">
-          <Link to="/app" className="hover:text-ink">App</Link>
+          <Link to="/jobs" className="hover:text-ink">App</Link>
           <a href="#how" className="hover:text-ink">How it works</a>
           <a href="#faq" className="hover:text-ink">FAQ</a>
         </div>
