@@ -29,7 +29,7 @@ class Application(Base):
 
 
 class JobSearchHit(Base):
-    """A job surfaced by the LinkedIn search, persisted as browsable history.
+    """A job surfaced by the job search, persisted as browsable history.
 
     Deduped by URL (re-searching refreshes the row) and capped at the newest 100
     by `app.db.history.record_search_hits`.
@@ -48,6 +48,7 @@ class JobSearchHit(Base):
     top_gaps_json: Mapped[str] = mapped_column(Text, default="[]")
     jd_text: Mapped[str] = mapped_column(Text, default="")
     posted_at: Mapped[str] = mapped_column(String(32), default="")  # ISO date; "" when unknown
+    source: Mapped[str] = mapped_column(String(32), default="linkedin")  # job board (PROVIDERS key)
     searched_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

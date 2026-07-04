@@ -1,37 +1,32 @@
-"""Search LinkedIn's public guest job listings and rank them by résumé fit.
+"""Multi-source job search: fan out to job-board providers, rank by résumé fit.
 
 Search context (what title, where) is derived from the résumé automatically via
 the SEARCH_CONTEXT LLM task, with a deterministic fallback; the user can override
-any field. Listing pages come from the same unauthenticated 'jobs-guest' surface
-that `job_match._extract_linkedin` already uses for single postings, so the same
-caveats apply: markup can change and heavy use can get temporarily blocked —
-hence the fetch throttle, the two-page cap, and the login-wall detection.
+any field, including which boards to search (`SearchContext.sources`, validated
+against the provider registry). Each board lives in `app.core.providers`; one
+broken/blocked board degrades the search (reported via `source_errors`) instead
+of sinking it — the search only fails when every selected board fails.
 """
 from __future__ import annotations
 
-import html as _html
-import re
 import time
-import urllib.error
-import urllib.parse
 
 from app.core.jd_analyzer import analyze_jd
-from app.core.job_match import (
-    _extract_linkedin,
-    _http_get,
-    _linkedin_job_id,
-    _looks_like_login_wall,
+
+# Re-exported for the smoke test and any older callers: the LinkedIn card parser
+# and URL builder are pure functions pinned by tests/smoke_test.py.
+from app.core.providers import DEFAULT_SOURCES, PROVIDERS, JobHit
+from app.core.providers.linkedin import (  # noqa: F401 - re-exports
+    _build_search_url,
+    parse_search_results,
 )
 from app.core.scorer import score_resume
 from app.llm import prompts
 from app.llm.client import get_llm_client
 from app.models import JobMatch, JobSearchResult, ResumeModel, SearchContext
 
-_SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-_WORK_MODE_PARAM = {"onsite": "1", "remote": "2", "hybrid": "3"}  # LinkedIn f_WT values
-_PAGE_SIZE = 25  # listings per guest search page
 MAX_JOBS = 25
-FETCH_DELAY_S = 0.5  # pause between per-job fetches to stay under the radar
+FETCH_DELAY_S = 0.5  # pause between per-job network fetches to stay under the radar
 
 
 def _fallback_context(resume: ResumeModel) -> SearchContext:
@@ -63,77 +58,6 @@ def derive_search_context(resume: ResumeModel) -> SearchContext:
     )
 
 
-def _build_search_url(job_title: str, location: str, work_mode: str, start: int) -> str:
-    # sortBy=DD = newest first. Without it the guest endpoint returns LinkedIn's
-    # relevance mix, which looks arbitrary; we rank by fit ourselves anyway, so
-    # spending the fetch budget on the freshest postings is strictly better.
-    params = {"keywords": job_title, "location": location, "start": start, "sortBy": "DD"}
-    params = {k: v for k, v in params.items() if v or k == "start"}
-    f_wt = _WORK_MODE_PARAM.get(work_mode)
-    if f_wt:
-        params["f_WT"] = f_wt
-    return f"{_SEARCH_URL}?{urllib.parse.urlencode(params)}"
-
-
-def _card_text(card_html: str, cls: str) -> str:
-    """Inner text of the first element whose class contains `cls`, tags stripped
-    (the company subtitle nests an <a>, so we can't stop at the first '<')."""
-    m = re.search(
-        r'(?is)<(\w+)[^>]*class="[^"]*' + re.escape(cls) + r'[^"]*"[^>]*>(.*?)</\1>', card_html
-    )
-    if not m:
-        return ""
-    text = re.sub(r"(?is)<[^>]+>", " ", m.group(2))
-    return re.sub(r"\s+", " ", _html.unescape(text)).strip()
-
-
-def _card_posted(card_html: str) -> str:
-    """ISO date from the card's <time datetime="..."> — LinkedIn's posted-on date
-    (class is job-search-card__listdate, or __listdate--new for fresh posts)."""
-    m = re.search(r'(?is)<time[^>]*\bdatetime="([^"]+)"', card_html)
-    return _html.unescape(m.group(1)).strip() if m else ""
-
-
-def _card_url(card_html: str) -> str:
-    """The posting URL from the card's base-card__full-link anchor, tracking
-    query stripped. Handles either attribute order (href/class)."""
-    for a in re.finditer(r"(?is)<a\s[^>]*>", card_html):
-        tag = a.group(0)
-        if not re.search(r'class="[^"]*base-card__full-link[^"]*"', tag):
-            continue
-        href = re.search(r'href="([^"]+)"', tag)
-        if href:
-            return _html.unescape(href.group(1)).split("?")[0]
-    return ""
-
-
-def parse_search_results(html: str) -> list[dict[str, str]]:
-    """Parse the guest search-results HTML (a flat <li> list of job cards) into
-    [{url, title, company, location, posted_at}], deduped by posting id, order preserved.
-    Pure function so the offline smoke test can pin the markup contract."""
-    cards: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for m in re.finditer(r"(?is)<li[^>]*>(.*?)</li>", html):
-        card = m.group(1)
-        url = _card_url(card)
-        if not url:
-            continue
-        key = _linkedin_job_id(url) or url
-        if key in seen:
-            continue
-        seen.add(key)
-        cards.append(
-            {
-                "url": url,
-                "title": _card_text(card, "base-search-card__title"),
-                "company": _card_text(card, "base-search-card__subtitle"),
-                "location": _card_text(card, "job-search-card__location"),
-                "posted_at": _card_posted(card),
-            }
-        )
-    return cards
-
-
 def _resolve_context(resume: ResumeModel, customize: SearchContext | None) -> SearchContext:
     ctx = derive_search_context(resume)
     if customize is not None:
@@ -141,59 +65,41 @@ def _resolve_context(resume: ResumeModel, customize: SearchContext | None) -> Se
             ctx.job_title = customize.job_title.strip()
         if customize.location.strip():
             ctx.location = customize.location.strip()
-        if customize.work_mode in _WORK_MODE_PARAM or customize.work_mode == "any":
+        if customize.work_mode in ("any", "onsite", "remote", "hybrid"):
             ctx.work_mode = customize.work_mode
         ctx.limit = customize.limit
+        ctx.sources = customize.sources
+    # Unknown board names are ignored; an empty (or all-unknown) selection falls
+    # back to every registered provider so old clients keep working unchanged.
+    ctx.sources = [s for s in ctx.sources if s in PROVIDERS] or list(DEFAULT_SOURCES)
     ctx.limit = max(1, min(MAX_JOBS, ctx.limit))
     return ctx
 
 
-def _fetch_cards(ctx: SearchContext) -> list[dict[str, str]]:
-    cards: list[dict[str, str]] = []
-    last_html = ""
-    for page, start in enumerate((0, _PAGE_SIZE)):
-        try:
-            last_html = _http_get(
-                _build_search_url(ctx.job_title, ctx.location, ctx.work_mode, start)
-            )
-        except urllib.error.HTTPError as e:
-            if e.code == 429:
-                raise ValueError(
-                    "LinkedIn is rate-limiting job searches right now. "
-                    "Wait a minute and try again."
-                ) from e
-            if page == 0:
-                raise ValueError(
-                    "Couldn't reach LinkedIn's job search (it may have blocked the request). "
-                    "Try again in a minute."
-                ) from e
-            break
-        except Exception as e:  # noqa: BLE001 - network trouble; page 2 is optional
-            if page == 0:
-                raise ValueError(
-                    "Couldn't reach LinkedIn's job search. Check your connection and try again."
-                ) from e
-            break
-        page_cards = parse_search_results(last_html)
-        if not page_cards:
-            break
-        cards.extend(page_cards)
-        if len(cards) >= ctx.limit:
-            break
-    if not cards:
-        if last_html and _looks_like_login_wall(last_html):
-            raise ValueError(
-                "LinkedIn blocked the search request (bot check). Wait a few minutes "
-                "and try again."
-            )
-        raise ValueError(
-            f"No LinkedIn jobs found for '{ctx.job_title}' in '{ctx.location or 'anywhere'}'. "
-            "Check 'Customize search' and adjust the title or location."
-        )
-    return cards
+def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) -> list[JobHit]:
+    """Round-robin merge across sources (so one board can't crowd out the
+    others), deduped by URL, capped at `limit`. Source order follows the
+    context's `sources` order; within a source the board's own order is kept."""
+    merged: list[JobHit] = []
+    seen: set[str] = set()
+    queues = [list(hits) for hits in hits_by_source.values() if hits]
+    i = 0
+    while queues and len(merged) < limit:
+        queue = queues[i % len(queues)]
+        hit = queue.pop(0)
+        if not queue:
+            queues.remove(queue)
+        else:
+            i += 1
+        key = hit.url.split("?")[0].rstrip("/")
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(hit)
+    return merged
 
 
-def search_linkedin_jobs(
+def search_jobs(
     resume: ResumeModel, customize: SearchContext | None = None
 ) -> JobSearchResult:
     ctx = _resolve_context(resume, customize)
@@ -203,18 +109,34 @@ def search_linkedin_jobs(
             "Check 'Customize search' and enter one."
         )
 
-    cards = _fetch_cards(ctx)
+    hits_by_source: dict[str, list[JobHit]] = {}
+    source_errors: dict[str, str] = {}
+    for name in ctx.sources:
+        try:
+            hits_by_source[name] = PROVIDERS[name].search(ctx)
+        except ValueError as e:  # board-level, user-facing message
+            source_errors[name] = str(e)
+        except Exception:  # noqa: BLE001 - a buggy provider must not sink the rest
+            source_errors[name] = f"Searching {name} failed unexpectedly. Try again shortly."
+    if not hits_by_source:
+        raise ValueError(
+            "All job boards failed: "
+            + " · ".join(f"{name}: {msg}" for name, msg in source_errors.items())
+        )
+
+    hits = _interleave_and_dedupe(hits_by_source, ctx.limit)
 
     matches: list[JobMatch] = []
     skipped = 0
-    for i, card in enumerate(cards[: ctx.limit]):
-        if i:
-            time.sleep(FETCH_DELAY_S)
-        try:
-            jd_text = _extract_linkedin(card["url"])
-        except Exception:  # noqa: BLE001 - one bad posting shouldn't sink the search
-            jd_text = ""
-        if not jd_text or _looks_like_login_wall(jd_text):
+    network_fetches = 0
+    for hit in hits:
+        jd_text = hit.description
+        if not jd_text:  # scrape-style board — fetch the posting, politely throttled
+            if network_fetches:
+                time.sleep(FETCH_DELAY_S)
+            network_fetches += 1
+            jd_text = PROVIDERS[hit.source].fetch_description(hit)
+        if not jd_text:
             skipped += 1
             continue
         jd = analyze_jd(jd_text)
@@ -222,25 +144,32 @@ def search_linkedin_jobs(
         top_gaps = [g.keyword for g in score.gaps if g.status != "covered"][:6]
         matches.append(
             JobMatch(
-                # The scraped card is authoritative for title/company; the LLM's
-                # JD extraction only fills in when the card lacks them.
-                title=card["title"] or jd.job_title,
-                company=card["company"] or jd.company,
+                # The board's own card/record is authoritative for title/company;
+                # the LLM's JD extraction only fills in when the board lacks them.
+                title=hit.title or jd.job_title,
+                company=hit.company or jd.company,
                 overall=score.overall,
                 keyword_coverage=score.keyword_coverage,
                 fit_score=score.fit_score,
                 top_gaps=top_gaps,
                 jd_text=jd_text,
-                url=card["url"],
-                location=card["location"],
-                posted_at=card.get("posted_at", ""),
+                url=hit.url,
+                location=hit.location,
+                posted_at=hit.posted_at,
+                source=hit.source,
             )
         )
 
     if not matches:
         raise ValueError(
-            "Found jobs but couldn't fetch any of their descriptions (LinkedIn may be "
+            "Found jobs but couldn't fetch any of their descriptions (the boards may be "
             "throttling). Try again shortly or lower the result count."
         )
     matches.sort(key=lambda m: m.overall, reverse=True)
-    return JobSearchResult(context=ctx, matches=matches, skipped=skipped)
+    return JobSearchResult(
+        context=ctx, matches=matches, skipped=skipped, source_errors=source_errors
+    )
+
+
+# Backwards-compatible alias from the LinkedIn-only era.
+search_linkedin_jobs = search_jobs

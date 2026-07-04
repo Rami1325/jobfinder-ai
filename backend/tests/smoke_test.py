@@ -196,6 +196,94 @@ check(
     "JobMatch back-compat: url + posted_at default empty",
     JobMatch().url == "" and JobMatch().posted_at == "",
 )
+check("JobMatch back-compat: source defaults to linkedin", JobMatch().source == "linkedin")
+
+# 14b. Provider registry + multi-source context resolution (pure, offline)
+from app.core.job_search import _interleave_and_dedupe, _resolve_context  # noqa: E402
+from app.core.providers import DEFAULT_SOURCES, PROVIDERS, JobHit  # noqa: E402
+from app.core.scorer import score_resume  # noqa: E402
+from app.models import SearchContext  # noqa: E402
+
+check(
+    "provider registry has linkedin + drushim",
+    {"linkedin", "drushim"} <= set(PROVIDERS) and set(DEFAULT_SOURCES) == set(PROVIDERS),
+    str(sorted(PROVIDERS)),
+)
+_rc = _resolve_context(resume, SearchContext(sources=["drushim", "bogus-board"]))
+check("unknown sources filtered out", _rc.sources == ["drushim"], str(_rc.sources))
+_rc = _resolve_context(resume, SearchContext(sources=["bogus-board"]))
+check("all-unknown sources fall back to defaults", _rc.sources == list(DEFAULT_SOURCES), str(_rc.sources))
+check(
+    "SearchContext back-compat: sources default to all boards",
+    set(SearchContext().sources) == set(DEFAULT_SOURCES),
+)
+
+_rr = _interleave_and_dedupe(
+    {
+        "linkedin": [JobHit(source="linkedin", url=f"https://li/{i}") for i in range(3)],
+        "drushim": [
+            JobHit(source="drushim", url="https://dr/0"),
+            JobHit(source="drushim", url="https://li/0/"),  # same job, trailing slash
+        ],
+    },
+    limit=10,
+)
+check(
+    "fan-out interleaves sources round-robin",
+    [h.url for h in _rr[:2]] == ["https://li/0", "https://dr/0"],
+    str([h.url for h in _rr]),
+)
+check("fan-out dedupes across sources by url", len(_rr) == 4, str([h.url for h in _rr]))
+
+# 14c. Drushim provider: response parser pinned against a trimmed real fixture
+import json as _json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from app.core.providers.drushim import parse_drushim_results  # noqa: E402
+
+_DRUSHIM_FIXTURE = _json.loads(
+    (Path(__file__).parent / "fixtures" / "drushim_search.json").read_text(encoding="utf-8")
+)
+_dr = parse_drushim_results(_DRUSHIM_FIXTURE)
+check("drushim parser found all fixture jobs", len(_dr) == 3, str(len(_dr)))
+check(
+    "drushim fields extracted",
+    _dr[0].title == "Data engineer"
+    and _dr[0].company == "Mertens – Malam Team"
+    and _dr[0].location == "לוד"
+    and _dr[0].external_id == "37542502"
+    and _dr[0].source == "drushim",
+    f"{_dr[0].title} / {_dr[0].company}" if _dr else "",
+)
+check(
+    "drushim url built from JobInfo.Link",
+    _dr[0].url == "https://www.drushim.co.il/job/37542502/57157f6c/",
+    _dr[0].url if _dr else "",
+)
+check("drushim posted_at is the ISO JobInfo.Date", _dr[0].posted_at.startswith("2026-06-28"))
+check(
+    "drushim description inlines Description + Requirements (html stripped)",
+    "Data Engineer" in _dr[0].description
+    and "ניסיון" in _dr[0].description
+    and "<br" not in _dr[0].description,
+)
+check("drushim hebrew language detected", all(h.language == "he" for h in _dr))
+check("drushim inline description means no detail fetch", all(h.description for h in _dr))
+_expired = _json.loads(_json.dumps(_DRUSHIM_FIXTURE))
+_expired["ResultList"][0]["JobInfo"]["IsExpired"] = True
+check("drushim expired postings skipped", len(parse_drushim_results(_expired)) == 2)
+_doubled = {"ResultList": _DRUSHIM_FIXTURE["ResultList"] * 2}
+check("drushim duplicate JobCodes deduped", len(parse_drushim_results(_doubled)) == 3)
+check("drushim empty response parses to empty list", parse_drushim_results({}) == [])
+
+# 14d. Hebrew safety: a Hebrew JD must flow through analyze_jd + scorer without
+# crashing (scoring *quality* on Hebrew is a later phase; this pins no-crash).
+_he_text = _dr[0].description
+_he_jd = analyze_jd(_he_text)  # stub routes on the Task tag regardless of JD language
+_he_jd.keywords = ["Python", "ניסיון ב-Spark", "AWS", "עיבוד נתונים"]
+_he_score = score_resume(resume, _he_jd)
+check("hebrew jd scores without crashing", 0 <= _he_score.overall <= 100, str(_he_score.overall))
+check("hebrew keywords produce gap entries", len(_he_score.gaps) > 0)
 
 # 15. DB layer (temp SQLite): migration shim + job-search history + tracker fields
 from app.db.database import SessionLocal, engine, init_db  # noqa: E402
@@ -228,11 +316,17 @@ check(
 _db = SessionLocal()
 record_search_hits(_db, [
     JobMatch(title="Backend Engineer", company="Acme", overall=50.0, url="https://x/jobs/1", posted_at="2026-06-25"),
-    JobMatch(title="Data Engineer", company="Beta", overall=60.0, url="https://x/jobs/2"),
+    JobMatch(title="Data Engineer", company="Beta", overall=60.0, url="https://x/jobs/2", source="drushim"),
 ])
 check(
     "history persists posted_at",
     {h.url: h.posted_at for h in list_search_hits(_db)}.get("https://x/jobs/1") == "2026-06-25",
+)
+check(
+    "history persists source (default + drushim)",
+    {h.url: h.source for h in list_search_hits(_db)}
+    == {"https://x/jobs/1": "linkedin", "https://x/jobs/2": "drushim"},
+    str({h.url: h.source for h in list_search_hits(_db)}),
 )
 check("search history recorded 2 hits", len(list_search_hits(_db)) == 2, str(len(list_search_hits(_db))))
 

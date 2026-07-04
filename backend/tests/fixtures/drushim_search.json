@@ -1,0 +1,97 @@
+{
+  "TotalSearchResultCount": 170,
+  "TotalPagesNumber": 16,
+  "NextPageNumber": 2,
+  "ResultList": [
+    {
+      "Code": 37542502,
+      "Company": {
+        "CompanyDisplayName": "Mertens – Malam Team",
+        "NameInHebrew": "Mertens – Malam Team",
+        "Code": 2376295
+      },
+      "JobContent": {
+        "Name": "Data engineer",
+        "JobCode": 37542502,
+        "FullName": "Data engineer - 36801",
+        "Requirements": "ניסיון של לפחות 3 שנים כ-Data Engineer<br/>ניסיון של לפחות 3 שנים בפיתוח ב-Python ובשפות Object-Oriented Programming (OOP)<br/>ניסיון מעשי בעבודה עם Spark לעיבוד כמויות גדולות של נתונים<br/>ניסיון מעשי של שנתיים לפחות ב- AWS<br/>הבנה מעמיקה בתכנון, פיתוח ואופטימיזציה של פתרונות Data מורכבים<br/>תואר במדעי המחשב, הנדסה, מתמטיקה או סטטיסטיקה",
+        "Description": "חברת Mertens Malam Team מגייסת Data Engineer לארגון מוביל בשפלה<br/>במסגרת התפקיד השתלבות בצוות מקצועי ובפרויקטים חדשניים בתחום ה-AI, תוך אחריות על קליטה, עיבוד וניתוח של כמויות גדולות של נתונים בשיתוף פעולה הדוק עם צוותי Data Science.<br/>עבודה עם Python, Spark, AWS וטכנולוגיות Data מתקדמות.<br/>התפקיד כולל עיצוב, פיתוח ואופטימיזציה של תהליכי Data מורכבים בסביבות Cloud ו-On Prem.",
+        "Addresses": [
+          {
+            "CityId": 430,
+            "City": "לוד",
+            "CityEnglish": "\tLod\t"
+          }
+        ]
+      },
+      "JobInfo": {
+        "Link": "/job/37542502/57157f6c/",
+        "JobCode": 37542502,
+        "Hash": "57157F6C",
+        "Date": "2026-06-28T09:11:08.12",
+        "JumpDateString": "לפני 8 שעות",
+        "IsExpired": false
+      }
+    },
+    {
+      "Code": 37375074,
+      "Company": {
+        "CompanyDisplayName": "דאטה וויי - Dataway",
+        "NameInHebrew": "דאטה וויי - Dataway",
+        "Code": 4165449
+      },
+      "JobContent": {
+        "Name": "למוסד בטחוני דרוש/ה מהנדס/ת תוכנה Linux",
+        "JobCode": 37375074,
+        "FullName": "למוסד בטחוני דרוש/ה מהנדס/ת תוכנה Linux - JB-1280",
+        "Requirements": "תואר ראשון בהנדסת חשמל ואלקטרוניקה / מדעי המחשב (B.Sc)<br/>ניסיון בפיתוח מערכות Real-Time / Embedded Real-Time בשפות C / C++ / Python<br/>ניסיון בפיתוח בסביבות Linux / LinuxRT / Windows - חובה<br/>ניסיון בעבודה בתקן POSIX - יתרון<br/>ניסיון בעבודה עם Makefile<br/>ניסיון בפיתוח Kernel Drivers ו-User Space Drivers ב-Linux<br/>ניסיון בעבודה מול חומרה, כולל יכולת קריאת שרטוטים חשמליים ועבודה עם צב״ד<b",
+        "Description": "למוסד בטחוני דרוש/ה מהנדס/ת תוכנה Linux / LinuxRT (Real-Time)<br/>תיאור המשרה:<br/>התפקיד כולל פיתוח והתאמה של תוכנה בסביבת Linux ו-LinuxRT עבור מעבדה היברידית ומערכות לוויין.<br/>האחריות כוללת פיתוח והפעלה של דרייברים (Kernel / User Space) עבור כרטיסי חומרה, פיתוח ממשקים ואינטגרציה מול סימולטור, ופיתוח אפליקציות זמן אמת.<br/>כמו כן, התפקיד כולל פיתוח תוכנה למעבדה ללוויין פרוס, ואחריות על אינטגרצי",
+        "Addresses": [
+          {
+            "CityId": 488,
+            "City": "יהוד",
+            "CityEnglish": "\tYehud\t"
+          }
+        ]
+      },
+      "JobInfo": {
+        "Link": "/job/37375074/c4cb3b3d/",
+        "JobCode": 37375074,
+        "Hash": "C4CB3B3D",
+        "Date": "2026-06-15T11:08:25.897",
+        "JumpDateString": "לפני 4 שעות",
+        "IsExpired": false
+      }
+    },
+    {
+      "Code": 37545656,
+      "Company": {
+        "CompanyDisplayName": "קבוצת תדהר",
+        "NameInHebrew": "קבוצת תדהר",
+        "Code": 3149310
+      },
+      "JobContent": {
+        "Name": "מנהל/ת BIM",
+        "JobCode": 37545656,
+        "FullName": "מנהל/ת BIM - 1937",
+        "Requirements": "מה אנחנו מחפשים?<br/>השכלה כאדריכל/ית / מהנדס/ת – חובה<br/>ניסיון בניהול BIM עם הבנה מעמיקה של תהליכי תכנון וביצוע בענף הבנייה<br/>ניסיון בעבודה עם כלי BIM לניהול ובקרה (Bexel \\ Solibri \\ Navisworks) – יתרון משמעותי<br/>ניסיון בפיתוח, אוטומציה ועבודה עם דאטה (Python \\ SQL \\ Power Automate) - יתרון משמעותי<br/>תקשורת בין-אישית מצוינת ויכולת גבוהה בניהול ממשקים והובלת תהליכים<br/>אוריינטציה טכנולוגי",
+        "Description": "הובלת ניהול המידע בפרויקטים יזמיים-קבלניים תוך הבטחת עמידה ביעדי תוכנית העבודה<br/>פיתוח פתרונות אוטומציה וכלים מבוססי נתונים לייעול העבודה השוטפת ולשיפור אופני הבקרה<br/>עבודה מול מנהלי תכנון, יועצים ובעלי עניין לקידום והטמעת תהליכים דיגיטליים<br/>ליווי, הכשרה והדרכת צוותים ביישום מתודולגיית BIM ושיפור יכולות העבודה<br/>השתתפות ביוזמות חדשנות, פיתוח וטרנספורמציה דיגיטלית",
+        "Addresses": [
+          {
+            "CityId": 484,
+            "City": "רעננה",
+            "CityEnglish": "\tRaanana\t"
+          }
+        ]
+      },
+      "JobInfo": {
+        "Link": "/job/37545656/7a6ed0c2/",
+        "JobCode": 37545656,
+        "Hash": "7A6ED0C2",
+        "Date": "2026-06-28T10:47:32.14",
+        "JumpDateString": "לפני 6 שעות",
+        "IsExpired": false
+      }
+    }
+  ]
+}

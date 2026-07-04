@@ -275,7 +275,8 @@ class JobMatch(BaseModel):
     jd_text: str = ""
     url: str = ""  # set for scraped listings; empty for pasted ones
     location: str = ""
-    posted_at: str = ""  # ISO date from the LinkedIn search card; empty when unknown
+    posted_at: str = ""  # ISO date(-time) from the source; empty when unknown
+    source: str = "linkedin"  # which job board this came from (see PROVIDERS registry)
 
 
 class JobMatchResult(BaseModel):
@@ -283,12 +284,17 @@ class JobMatchResult(BaseModel):
 
 
 class SearchContext(BaseModel):
-    """What/where to search on LinkedIn. Blank fields mean 'derive from résumé'."""
+    """What/where to search. Blank fields mean 'derive from résumé'."""
 
     job_title: str = ""
     location: str = ""
-    work_mode: str = "any"  # any | onsite | remote | hybrid
-    limit: int = 10  # jobs to fetch + score (1-25)
+    work_mode: str = "any"  # any | onsite | remote | hybrid (LinkedIn-only filter)
+    limit: int = 10  # jobs to fetch + score (1-25), shared across all sources
+    # Which job boards to search. Validated against the provider registry in
+    # job_search._resolve_context: unknown names are ignored, and an empty /
+    # all-unknown list falls back to every registered provider — so old clients
+    # that never send `sources` keep working.
+    sources: list[str] = Field(default_factory=lambda: ["linkedin", "drushim"])
 
 
 class SearchContextRequest(BaseModel):
@@ -304,6 +310,11 @@ class JobSearchResult(BaseModel):
     context: SearchContext = Field(default_factory=SearchContext)  # what was actually searched
     matches: list[JobMatch] = Field(default_factory=list)
     skipped: int = 0  # listings found but not fetchable/scorable
+    # Provider name -> user-facing error for boards that failed while others
+    # succeeded (e.g. {"drushim": "Couldn't reach Drushim's job search..."}).
+    # Empty when every selected source worked. If ALL sources fail the search
+    # raises instead, so a 200 always carries at least one match.
+    source_errors: dict[str, str] = Field(default_factory=dict)
 
 
 class JobSearchHitOut(BaseModel):
@@ -320,6 +331,7 @@ class JobSearchHitOut(BaseModel):
     top_gaps: list[str] = Field(default_factory=list)
     jd_text: str = ""
     posted_at: str = ""  # ISO date the job was posted; empty when unknown
+    source: str = "linkedin"  # which job board surfaced this hit
     searched_at: str = ""
     app_status: str = ""  # tracker status if this job was saved/applied ("", saved, applied, interview, offer, rejected)
 

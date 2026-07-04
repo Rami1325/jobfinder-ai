@@ -15,7 +15,7 @@ from app.core.follow_up import write_follow_up
 from app.core.interview import answer_feedback, generate_questions, model_answer
 from app.core.jd_analyzer import analyze_jd
 from app.core.job_match import fetch_job_text, match_jobs
-from app.core.job_search import derive_search_context, search_linkedin_jobs
+from app.core.job_search import derive_search_context, search_jobs
 from app.core.linkedin import optimize_linkedin
 from app.core.tailor import tailor_resume
 from app.db.database import get_db
@@ -213,7 +213,7 @@ def jobs_search_context(body: SearchContextRequest) -> SearchContext:
 @router.post("/jobs/search", response_model=JobSearchResult)
 def jobs_search(body: JobSearchRequest, db: Session = Depends(get_db)) -> JobSearchResult:
     try:
-        result = search_linkedin_jobs(body.resume, body.customize)
+        result = search_jobs(body.resume, body.customize)
     except ValueError as e:  # user-facing scrape/search problems
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
@@ -248,6 +248,7 @@ def jobs_history(db: Session = Depends(get_db)) -> JobSearchHistory:
                 top_gaps=top_gaps,
                 jd_text=row.jd_text,
                 posted_at=row.posted_at or "",
+                source=row.source or "linkedin",
                 searched_at=row.searched_at.isoformat() if row.searched_at else "",
                 app_status=statuses.get(row.url, ""),
             )

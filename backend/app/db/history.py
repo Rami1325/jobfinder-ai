@@ -1,4 +1,4 @@
-"""Persistence helpers for the LinkedIn job-search history (job_search_hits)."""
+"""Persistence helpers for the job-search history (job_search_hits)."""
 from __future__ import annotations
 
 import json
@@ -37,6 +37,7 @@ def record_search_hits(db: Session, matches: list[JobMatch]) -> None:
         row.top_gaps_json = json.dumps(m.top_gaps)
         row.jd_text = m.jd_text
         row.posted_at = m.posted_at
+        row.source = m.source
         row.searched_at = now
     db.flush()
     keep_ids = db.execute(
