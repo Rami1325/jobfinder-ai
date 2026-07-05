@@ -223,7 +223,7 @@ export async function saveApplication(payload: {
 
 export async function updateApplication(
   id: number,
-  patch: { status?: string; notes?: string; interviewed?: boolean },
+  patch: { status?: string; notes?: string; interviewed?: boolean; excitement?: number },
 ): Promise<ApplicationOut> {
   const { data } = await api.patch<ApplicationOut>(`/applications/${id}`, patch);
   return data;

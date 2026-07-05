@@ -719,8 +719,8 @@ check("init_db runs twice without error", True)
 with engine.connect() as _conn:
     _cols = {r[1] for r in _conn.exec_driver_sql("PRAGMA table_info(applications)").fetchall()}
 check(
-    "migration shim added job_url + interviewed",
-    {"job_url", "interviewed"} <= _cols,
+    "migration shim added job_url + interviewed + excitement",
+    {"job_url", "interviewed", "excitement"} <= _cols,
     str(sorted(_cols)),
 )
 
@@ -768,14 +768,16 @@ check(
     "https://x/jobs/1" not in _urls and "https://bulk/0" not in _urls and "https://bulk/104" in _urls,
 )
 
-_app_row = Application(job_title="Backend Engineer", company="Acme", job_url="https://x/jobs/1", interviewed=True)
+_app_row = Application(
+    job_title="Backend Engineer", company="Acme", job_url="https://x/jobs/1", interviewed=True, excitement=4
+)
 _db.add(_app_row)
 _db.commit()
 _db.refresh(_app_row)
 _read = _db.get(Application, _app_row.id)
 check(
-    "application persists job_url + interviewed",
-    _read is not None and _read.job_url == "https://x/jobs/1" and _read.interviewed is True,
+    "application persists job_url + interviewed + excitement",
+    _read is not None and _read.job_url == "https://x/jobs/1" and _read.interviewed is True and _read.excitement == 4,
 )
 
 # History <-> tracker status join: match by LinkedIn job id across URL shapes,

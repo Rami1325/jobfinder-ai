@@ -136,6 +136,7 @@ export interface ApplicationOut {
   notes: string;
   job_url: string;
   interviewed: boolean;
+  excitement: number; // 0 = unrated, 1-5 stars
   created_at: string;
 }
 
@@ -151,6 +152,7 @@ export interface ApplicationDetail {
   notes: string;
   job_url: string;
   interviewed: boolean;
+  excitement: number;
   created_at: string;
 }
 

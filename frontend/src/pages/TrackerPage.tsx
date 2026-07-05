@@ -12,6 +12,8 @@ import {
   MessageSquare,
   MessagesSquare,
   Send,
+  Star,
+  StickyNote,
   Trash2,
   XCircle,
 } from "lucide-react";
@@ -45,6 +47,32 @@ const COLUMNS: {
 const STATUSES = COLUMNS.map((c) => c.key);
 /** Statuses that mean the application was actually submitted. */
 const SUBMITTED = new Set(["applied", "interview", "offer", "rejected"]);
+/** Statuses that mean the company answered (any outcome). */
+const RESPONDED = new Set(["interview", "offer", "rejected"]);
+
+/** 1-5 excitement stars (Teal pattern). Clicking the current rating clears it. */
+function Stars({ value, onRate }: { value: number; onRate: (n: number) => void }) {
+  const { t } = useTranslation("tracker");
+  return (
+    <div className="flex items-center" title={t("excitement.title")}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          aria-label={t("excitement.set", { count: n })}
+          aria-pressed={n <= value}
+          onClick={() => onRate(n === value ? 0 : n)}
+          className={cn(
+            "rounded p-0.5 transition-colors",
+            n <= value ? "text-warn" : "text-ink-faint/60 hover:text-warn/70",
+          )}
+        >
+          <Star size={13} fill={n <= value ? "currentColor" : "none"} />
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function TrackerPage() {
   const { t } = useTranslation("tracker");
@@ -54,6 +82,8 @@ export default function TrackerPage() {
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [notesSaving, setNotesSaving] = useState(false);
   const toast = useToast();
 
   async function refresh() {
@@ -78,8 +108,14 @@ export default function TrackerPage() {
     const interviews = apps.filter((a) => a.interviewed).length;
     const offers = apps.filter((a) => a.status === "offer").length;
     const declined = apps.filter((a) => a.status === "rejected").length;
+    // A "response" = the company answered at all: moved to interview/offer/
+    // rejected, or the interviewed flag was set while still in "applied".
+    const responses = apps.filter(
+      (a) => SUBMITTED.has(a.status || "saved") && (RESPONDED.has(a.status) || a.interviewed),
+    ).length;
     const interviewRate = applied > 0 ? (interviews / applied) * 100 : 0;
-    return { total, applied, interviews, offers, declined, interviewRate };
+    const responseRate = applied > 0 ? (responses / applied) * 100 : 0;
+    return { total, applied, interviews, offers, declined, interviewRate, responseRate };
   }, [apps]);
 
   async function changeStatus(id: number, status: string) {
@@ -100,6 +136,18 @@ export default function TrackerPage() {
     }
   }
 
+  async function rate(a: ApplicationOut, n: number) {
+    // Optimistic — a star tap should feel instant.
+    setApps((prev) => prev.map((x) => (x.id === a.id ? { ...x, excitement: n } : x)));
+    try {
+      const updated = await updateApplication(a.id, { excitement: n });
+      setApps((prev) => prev.map((x) => (x.id === a.id ? updated : x)));
+    } catch {
+      setApps((prev) => prev.map((x) => (x.id === a.id ? { ...x, excitement: a.excitement } : x)));
+      toast("error", t("toasts.excitementError"));
+    }
+  }
+
   async function remove(id: number) {
     await deleteApplication(id);
     setApps((prev) => prev.filter((a) => a.id !== id));
@@ -110,10 +158,28 @@ export default function TrackerPage() {
     setOpen(true);
     setDetailLoading(true);
     setDetail(null);
+    setNotesDraft("");
     try {
-      setDetail(await getApplication(id));
+      const d = await getApplication(id);
+      setDetail(d);
+      setNotesDraft(d.notes);
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  async function saveNotes() {
+    if (!detail) return;
+    setNotesSaving(true);
+    try {
+      const updated = await updateApplication(detail.id, { notes: notesDraft });
+      setDetail((d) => (d ? { ...d, notes: updated.notes } : d));
+      setApps((prev) => prev.map((x) => (x.id === detail.id ? updated : x)));
+      toast("success", t("notes.saved"));
+    } catch {
+      toast("error", t("notes.error"));
+    } finally {
+      setNotesSaving(false);
     }
   }
 
@@ -169,7 +235,14 @@ export default function TrackerPage() {
                   </motion.div>
                 ))}
               </div>
-              <div className="flex items-center justify-center border-line lg:border-s lg:ps-6">
+              <div className="flex items-center justify-center gap-6 border-line lg:border-s lg:ps-6">
+                <ProgressRing
+                  value={metrics.responseRate}
+                  size={104}
+                  stroke={9}
+                  tone="accent"
+                  sublabel={t("responseRate")}
+                />
                 <ProgressRing
                   value={metrics.interviewRate}
                   size={104}
@@ -261,6 +334,20 @@ export default function TrackerPage() {
                             >
                               {Math.round(a.overall_score)}%
                             </span>
+                          </div>
+
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <Stars value={a.excitement || 0} onRate={(n) => rate(a, n)} />
+                            {a.notes && (
+                              <button
+                                onClick={() => view(a.id)}
+                                title={t("notes.indicator")}
+                                className="inline-flex items-center gap-1 rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors hover:border-accent/40 hover:text-ink"
+                              >
+                                <StickyNote size={11} />
+                                {t("notes.chip")}
+                              </button>
+                            )}
                           </div>
 
                           <div className="mt-2 flex items-center justify-between gap-2">
@@ -394,6 +481,22 @@ export default function TrackerPage() {
                 </>
               )}
             </div>
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
+              {t("notes.label")}
+            </h3>
+            <textarea
+              value={notesDraft}
+              onChange={(e) => setNotesDraft(e.target.value)}
+              placeholder={t("notes.placeholder")}
+              rows={3}
+              className="w-full resize-y rounded-xl border border-line bg-bg-soft p-3 text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
+            />
+            <div className="mb-5 mt-2 flex justify-end">
+              <Button size="sm" variant="secondary" loading={notesSaving} disabled={notesDraft === detail.notes} onClick={saveNotes}>
+                {t("notes.save")}
+              </Button>
+            </div>
+
             {detail.tailored_resume ? (
               <ResumeView resume={detail.tailored_resume} />
             ) : (

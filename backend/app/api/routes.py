@@ -390,6 +390,7 @@ def _to_out(app: Application) -> ApplicationOut:
         notes=app.notes,
         job_url=app.job_url,
         interviewed=app.interviewed,
+        excitement=app.excitement or 0,
         created_at=app.created_at.isoformat() if app.created_at else "",
     )
 
@@ -423,6 +424,7 @@ def get_application(app_id: int, db: Session = Depends(get_db)) -> ApplicationDe
         notes=app.notes,
         job_url=app.job_url,
         interviewed=app.interviewed,
+        excitement=app.excitement or 0,
         created_at=app.created_at.isoformat() if app.created_at else "",
     )
 
@@ -456,6 +458,8 @@ def update_application(app_id: int, body: ApplicationUpdate, db: Session = Depen
         app.notes = body.notes
     if body.interviewed is not None:
         app.interviewed = body.interviewed
+    if body.excitement is not None:
+        app.excitement = body.excitement
     db.commit()
     db.refresh(app)
     return _to_out(app)

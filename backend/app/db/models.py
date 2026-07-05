@@ -23,6 +23,7 @@ class Application(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     job_url: Mapped[str] = mapped_column(String(1000), default="")
     interviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    excitement: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unrated, 1-5 stars
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

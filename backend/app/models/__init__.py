@@ -214,6 +214,7 @@ class ApplicationUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
     interviewed: Optional[bool] = None
+    excitement: Optional[int] = Field(default=None, ge=0, le=5)  # 0 clears the rating
 
 
 class ApplicationOut(BaseModel):
@@ -225,6 +226,7 @@ class ApplicationOut(BaseModel):
     notes: str = ""
     job_url: str = ""
     interviewed: bool = False
+    excitement: int = 0  # 0 = unrated, 1-5 stars
     created_at: str
 
 
@@ -240,6 +242,7 @@ class ApplicationDetail(BaseModel):
     notes: str = ""
     job_url: str = ""
     interviewed: bool = False
+    excitement: int = 0
     created_at: str
 
 
