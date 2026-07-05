@@ -33,8 +33,21 @@ from app.models import JobMatch, JobSearchResult, ResumeModel, SearchContext
 ProgressFn = Callable[[dict], None]
 
 MAX_JOBS = 25
+MAX_TITLES = 5  # keywords searched separately per board; capped to keep total board queries sane
 MAX_AGE_DAYS_CAP = 365
 FETCH_DELAY_S = 0.5  # pause between per-job network fetches to stay under the radar
+
+
+def _clean_titles(titles: list[str]) -> list[str]:
+    """Strip, drop blanks, dedupe case-insensitively (order kept), cap at MAX_TITLES."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in titles:
+        title = raw.strip()
+        if title and title.lower() not in seen:
+            seen.add(title.lower())
+            out.append(title)
+    return out[:MAX_TITLES]
 
 
 def _fallback_context(resume: ResumeModel) -> SearchContext:
@@ -69,7 +82,10 @@ def derive_search_context(resume: ResumeModel) -> SearchContext:
 def _resolve_context(resume: ResumeModel, customize: SearchContext | None) -> SearchContext:
     ctx = derive_search_context(resume)
     if customize is not None:
-        if customize.job_title.strip():
+        titles = _clean_titles(customize.job_titles)
+        if titles:
+            ctx.job_titles = titles
+        elif customize.job_title.strip():
             ctx.job_title = customize.job_title.strip()
         if customize.location.strip():
             ctx.location = customize.location.strip()
@@ -83,6 +99,11 @@ def _resolve_context(resume: ResumeModel, customize: SearchContext | None) -> Se
     ctx.sources = [s for s in ctx.sources if s in PROVIDERS] or list(DEFAULT_SOURCES)
     ctx.limit = max(1, min(MAX_JOBS, ctx.limit))
     ctx.max_age_days = max(0, min(MAX_AGE_DAYS_CAP, ctx.max_age_days))
+    # job_titles is the canonical keyword list from here on; job_title mirrors
+    # its first entry so history rows, alerts, and old clients stay coherent.
+    ctx.job_titles = _clean_titles(ctx.job_titles) or ([ctx.job_title] if ctx.job_title else [])
+    if ctx.job_titles:
+        ctx.job_title = ctx.job_titles[0]
     return ctx
 
 
@@ -160,16 +181,30 @@ def search_jobs(
     source_empty: dict[str, str] = {}
     for board_i, name in enumerate(ctx.sources):
         notify({"stage": "boards", "source": name, "index": board_i + 1, "total": len(ctx.sources)})
-        try:
-            hits_by_source[name] = freshest_first(
-                PROVIDERS[name].search(ctx), ctx.max_age_days
-            )
-        except NoResultsError as e:  # board worked, query just matched nothing there
-            source_empty[name] = str(e)
-        except ValueError as e:  # board-level failure, user-facing message
-            source_errors[name] = str(e)
-        except Exception:  # noqa: BLE001 - a buggy provider must not sink the rest
-            source_errors[name] = f"Searching {name} failed unexpectedly. Try again shortly."
+        # Each keyword is a separate board query; a keyword that fails or matches
+        # nothing must not hide the other keywords' hits, so only a board where
+        # EVERY keyword came up empty/broken lands in source_empty/source_errors.
+        board_hits: list[JobHit] = []
+        board_errors: list[str] = []
+        board_empty: list[str] = []
+        for title_i, title in enumerate(ctx.job_titles):
+            if title_i:
+                time.sleep(FETCH_DELAY_S)  # polite gap between queries to the same board
+            title_ctx = ctx.model_copy(update={"job_title": title})
+            try:
+                board_hits.extend(PROVIDERS[name].search(title_ctx))
+            except NoResultsError as e:  # board worked, this keyword just matched nothing
+                board_empty.append(str(e))
+            except ValueError as e:  # board-level failure, user-facing message
+                board_errors.append(str(e))
+            except Exception:  # noqa: BLE001 - a buggy provider must not sink the rest
+                board_errors.append(f"Searching {name} failed unexpectedly. Try again shortly.")
+        if board_hits:
+            hits_by_source[name] = freshest_first(board_hits, ctx.max_age_days)
+        elif board_errors:
+            source_errors[name] = board_errors[0]
+        elif board_empty:
+            source_empty[name] = board_empty[0]
     if not hits_by_source:
         if source_errors:
             raise ValueError(
@@ -180,9 +215,10 @@ def search_jobs(
                 )
             )
         where = f" in '{ctx.location}'" if ctx.location.strip() else ""
+        what = "', '".join(ctx.job_titles)
         raise NoResultsError(
-            f"No jobs found on any board for '{ctx.job_title}'{where}. "
-            "Check 'Customize search' and adjust the title, location, or 'Posted within'."
+            f"No jobs found on any board for '{what}'{where}. "
+            "Check 'Customize search' and adjust the keywords, location, or 'Posted within'."
         )
 
     hits = _interleave_and_dedupe(hits_by_source, ctx.limit)

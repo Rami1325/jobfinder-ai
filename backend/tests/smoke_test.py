@@ -342,6 +342,27 @@ check(
     _resolve_context(resume, SearchContext(max_age_days=7)).max_age_days == 7
     and _resolve_context(resume, SearchContext(max_age_days=-3)).max_age_days == 0,
 )
+_rc = _resolve_context(
+    resume,
+    SearchContext(job_titles=["AI Engineer", " ai engineer ", "", "AI Automations"]),
+)
+check(
+    "multi-keyword: titles stripped, deduped (case-insensitive), job_title mirrors first",
+    _rc.job_titles == ["AI Engineer", "AI Automations"] and _rc.job_title == "AI Engineer",
+    str(_rc.job_titles),
+)
+_rc = _resolve_context(resume, SearchContext(job_title="Solo Title"))
+check(
+    "multi-keyword back-compat: single job_title fills job_titles",
+    _rc.job_titles == ["Solo Title"] and _rc.job_title == "Solo Title",
+    str(_rc.job_titles),
+)
+_rc = _resolve_context(resume, None)
+check(
+    "multi-keyword back-compat: derived context gets a one-entry job_titles list",
+    _rc.job_titles == [_rc.job_title] and _rc.job_title != "",
+    str(_rc.job_titles),
+)
 
 from datetime import datetime as _dtc  # noqa: E402
 

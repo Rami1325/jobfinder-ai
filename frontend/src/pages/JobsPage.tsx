@@ -703,6 +703,15 @@ export default function JobsPage() {
   // limit 0 means the customize box was emptied — block searching until it's 1–25.
   const limitInvalid = customOpen && (ctx?.limit ?? 10) < 1;
 
+  // Multi-keyword search: the UI edits ctx.job_titles (one input per keyword);
+  // job_title mirrors the first entry so older backends and the results
+  // summary stay coherent. Backend dedupes/strips and caps at 5.
+  const MAX_KEYWORDS = 5;
+  const keywords: string[] = ctx?.job_titles?.length ? ctx.job_titles : [ctx?.job_title ?? ""];
+  function setKeywords(next: string[]) {
+    setCtx((p) => ({ ...(p as SearchContext), job_titles: next, job_title: next[0] ?? "" }));
+  }
+
   function runSearch() {
     if (!master?.resume || searching || limitInvalid) return;
     startJobSearch(master.resume, customOpen ? ctx : onboardingCtx());
@@ -817,6 +826,9 @@ export default function JobsPage() {
   }
 
   const searched = searchResult?.context;
+  const searchedTitle = searched
+    ? (searched.job_titles?.length ? searched.job_titles : [searched.job_title]).join(", ")
+    : "";
   // The backend returns matches ranked by fit; re-sort client-side on demand.
   // "Best match" stays pinned to the top-fit job whatever the sort order.
   const bestMatch =
@@ -943,18 +955,49 @@ export default function JobsPage() {
                   className="overflow-hidden"
                 >
                   <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
+                    <div className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
                       {t("search.jobTitle")}
-                      <input
-                        value={ctx?.job_title ?? ""}
-                        disabled={prefilling}
-                        onChange={(e) =>
-                          setCtx((p) => ({ ...(p as SearchContext), job_title: e.target.value }))
-                        }
-                        placeholder={prefilling ? t("search.detecting") : t("search.jobTitlePlaceholder")}
-                        className={inputCls}
-                      />
-                    </label>
+                      {keywords.map((kw, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <input
+                            value={kw}
+                            disabled={prefilling}
+                            onChange={(e) =>
+                              setKeywords(keywords.map((k, j) => (j === i ? e.target.value : k)))
+                            }
+                            placeholder={
+                              prefilling
+                                ? t("search.detecting")
+                                : i === 0
+                                  ? t("search.jobTitlePlaceholder")
+                                  : t("search.keywordPlaceholder")
+                            }
+                            className={`${inputCls} min-w-0 flex-1`}
+                          />
+                          {keywords.length > 1 && (
+                            <button
+                              type="button"
+                              disabled={prefilling}
+                              onClick={() => setKeywords(keywords.filter((_, j) => j !== i))}
+                              title={t("search.removeKeyword")}
+                              className="shrink-0 rounded p-1 text-ink-muted transition-colors hover:text-danger"
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {keywords.length < MAX_KEYWORDS && (
+                        <button
+                          type="button"
+                          disabled={prefilling}
+                          onClick={() => setKeywords([...keywords, ""])}
+                          className="w-fit text-xs font-semibold text-accent-soft hover:underline disabled:opacity-50"
+                        >
+                          + {t("search.addKeyword")}
+                        </button>
+                      )}
+                    </div>
                     <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
                       {t("search.location")}
                       <input
@@ -1131,7 +1174,7 @@ export default function JobsPage() {
                       <Trans
                         t={t}
                         i18nKey={searched.location ? "search.summaryLoc" : "search.summary"}
-                        values={{ title: searched.job_title, location: searched.location }}
+                        values={{ title: searchedTitle, location: searched.location }}
                         components={[
                           <span key="0" />,
                           <span key="1" className="font-semibold text-ink" />,

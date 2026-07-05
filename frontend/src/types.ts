@@ -199,6 +199,7 @@ export interface JobMatchResult {
 }
 export interface SearchContext {
   job_title: string;
+  job_titles?: string[]; // multi-keyword search: each searched separately; job_title mirrors the first
   location: string;
   work_mode: string; // any | onsite | remote | hybrid
   limit: number;

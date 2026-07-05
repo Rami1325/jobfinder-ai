@@ -420,6 +420,10 @@ class SearchContext(BaseModel):
     """What/where to search. Blank fields mean 'derive from résumé'."""
 
     job_title: str = ""
+    # Extra search keywords: when non-empty this is the canonical list of
+    # titles/keywords (each queried separately per board, results merged) and
+    # job_title mirrors the first entry so old clients keep working.
+    job_titles: list[str] = Field(default_factory=list)
     location: str = ""
     work_mode: str = "any"  # any | onsite | remote | hybrid (LinkedIn-only filter)
     limit: int = 10  # jobs to fetch + score (1-25), shared across all sources
