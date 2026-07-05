@@ -1,9 +1,14 @@
 """Extract raw text from an uploaded resume (DOCX or PDF).
 
 Also handles LinkedIn's profile export ("Profile.pdf" via More → Save to PDF):
-`clean_linkedin_profile_text` strips the per-page footers and UI labels the
-export sprinkles through the text, so the structurer sees clean content. It's
-a no-op for anything that isn't a LinkedIn export (pure, smoke-pinned).
+the export is two-column (narrow sidebar with Contact/Top Skills/Languages,
+wide main column with Summary/Experience/Education), and naive line-based PDF
+extraction interleaves the columns mid-line — sidebar skills bleed into the
+summary. When a LinkedIn export is detected, the page is re-extracted per
+column (measured from a real export: sidebar ends ~x=185/612, main starts
+~x=220, so the split ratio hits the gutter's center), and
+`clean_linkedin_profile_text` strips the per-page footers and UI labels.
+Both steps are no-ops for anything that isn't a LinkedIn export.
 """
 from __future__ import annotations
 
@@ -38,7 +43,14 @@ def extract_text(filename: str, data: bytes) -> str:
     if name.endswith(".docx"):
         return _extract_docx(data)
     if name.endswith(".pdf"):
-        return clean_linkedin_profile_text(_extract_pdf(data))
+        text = _extract_pdf(data)
+        if is_linkedin_profile_export(text):
+            columns = _extract_pdf_linkedin_columns(data)
+            # Guard against layout drift: the re-extraction must carry (almost)
+            # all the same text, or we keep the naive interleaved version.
+            if len(columns) >= 0.8 * len(text):
+                text = columns
+        return clean_linkedin_profile_text(text)
     if name.endswith(".txt"):
         return data.decode("utf-8", errors="ignore")
     raise ValueError("Unsupported file type. Upload a .docx, .pdf, or .txt resume.")
@@ -71,3 +83,30 @@ def _extract_pdf(data: bytes) -> str:
             if text.strip():
                 parts.append(text)
     return "\n".join(parts)
+
+
+# LinkedIn export pages are 612pt wide; the sidebar ends ~x=185 and the main
+# column starts ~x=220, so 0.34 (~x=208) lands inside the gutter.
+_LI_COLUMN_SPLIT_RATIO = 0.34
+
+
+def _extract_pdf_linkedin_columns(data: bytes) -> str:
+    """Re-extract a LinkedIn profile export column by column: all sidebar text
+    (Contact, Top Skills, Languages, Certifications) first, then the main
+    column (name, Summary, Experience, Education) — so neither stream bleeds
+    into the other. Pages without sidebar text (page 2+) contribute only to
+    the main stream."""
+    import pdfplumber
+
+    sidebar: list[str] = []
+    main: list[str] = []
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        for page in pdf.pages:
+            split_x = page.width * _LI_COLUMN_SPLIT_RATIO
+            left = page.crop((0, 0, split_x, page.height)).extract_text() or ""
+            right = page.crop((split_x, 0, page.width, page.height)).extract_text() or ""
+            if left.strip():
+                sidebar.append(left)
+            if right.strip():
+                main.append(right)
+    return "\n".join(sidebar + main)

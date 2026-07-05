@@ -88,6 +88,37 @@ check(
     and _li_prompts.STRUCTURE_RESUME_SYSTEM.startswith("Task: STRUCTURE_RESUME."),
 )
 
+# 1c. LinkedIn export column split: a synthetic two-column PDF (sidebar at
+# x=30, main at x=250 — the real export's geometry) must extract as two clean
+# streams, not interleaved lines. Layout ratios measured from a real export.
+import io as _li_io  # noqa: E402
+from reportlab.lib.pagesizes import letter as _li_letter  # noqa: E402
+from reportlab.pdfgen import canvas as _li_canvas  # noqa: E402
+
+from app.parsers.resume_parser import extract_text as _li_extract_text  # noqa: E402
+
+_li_buf = _li_io.BytesIO()
+_li_c = _li_canvas.Canvas(_li_buf, pagesize=_li_letter)  # 612x792, like the export
+_li_c.drawString(30, 700, "Top Skills")       # sidebar…
+_li_c.drawString(30, 685, "Python")
+_li_c.drawString(30, 650, "www.linkedin.com/in/janedoe")
+_li_c.drawString(250, 700, "Jane Doe")        # …main column at the same heights
+_li_c.drawString(250, 685, "Data Engineer at Acme")
+_li_c.drawString(250, 50, "Page 1 of 1")
+_li_c.save()
+_li_pdf_text = _li_extract_text("Profile.pdf", _li_buf.getvalue())
+_li_lines = [ln.strip() for ln in _li_pdf_text.splitlines()]
+check(
+    "linkedin pdf columns split — sidebar and main not interleaved",
+    "Top Skills" in _li_lines and "Jane Doe" in _li_lines,  # naive would give "Top Skills Jane Doe"
+    str(_li_lines),
+)
+check(
+    "linkedin pdf sidebar stream precedes main stream, footer stripped",
+    _li_pdf_text.index("Top Skills") < _li_pdf_text.index("Jane Doe")
+    and "Page 1 of 1" not in _li_pdf_text,
+)
+
 # 2. Facts ledger
 ledger = build_facts_ledger(resume)
 check("ledger captured employers", "Acme Corp" in ledger.employers, str(ledger.employers))
