@@ -116,13 +116,19 @@ class TailorKit(Base):
     serverless invocation), reviewed in the 8.2 kits queue. `result_json` is a
     full TailorResult; `flag_count` > 0 means the fabrication guard flagged
     the tailor and the kit must never be auto-approvable.
+
+    Review (PLAN 8.2): approving a "done" kit creates a tracker Application
+    ("ready to send") and links it via `application_id`; rejecting records
+    `reject_reason` so thresholds can be tuned from real review decisions.
     """
 
     __tablename__ = "tailor_kits"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
-    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued | running | done | failed
+    status: Mapped[str] = mapped_column(
+        String(16), default="queued"
+    )  # queued | running | done | failed | approved | rejected
     job_title: Mapped[str] = mapped_column(String(255), default="")
     company: Mapped[str] = mapped_column(String(255), default="")
     location: Mapped[str] = mapped_column(String(255), default="")
@@ -142,6 +148,9 @@ class TailorKit(Base):
     score_after: Mapped[float] = mapped_column(Float, default=0.0)
     flag_count: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str] = mapped_column(Text, default="")
+    # Review outcome (PLAN 8.2). Nullable/default-empty for the ADD-COLUMN shim.
+    reject_reason: Mapped[str] = mapped_column(Text, default="")
+    application_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

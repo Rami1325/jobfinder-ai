@@ -274,6 +274,26 @@ export async function deleteKit(id: number): Promise<void> {
   await api.delete(`/kits/${id}`);
 }
 
+/** Approve a reviewed kit into the tracker (PLAN 8.2). `resume` is the
+ * effective résumé after per-bullet accept/reject; null keeps the kit's full
+ * tailored résumé. */
+export async function approveKit(
+  id: number,
+  resume: ResumeModel | null,
+  coverLetter: string,
+): Promise<KitOut> {
+  const { data } = await api.post<KitOut>(`/kits/${id}/approve`, {
+    resume,
+    cover_letter: coverLetter,
+  });
+  return data;
+}
+
+export async function rejectKit(id: number, reason: string): Promise<KitOut> {
+  const { data } = await api.post<KitOut>(`/kits/${id}/reject`, { reason });
+  return data;
+}
+
 export async function getJobAlert(): Promise<AlertSettings> {
   const { data } = await api.get<AlertSettings>("/jobs/alerts");
   return data;

@@ -266,7 +266,7 @@ export interface KitJobIn {
 }
 export interface KitOut {
   id: number;
-  status: "queued" | "running" | "done" | "failed";
+  status: "queued" | "running" | "done" | "failed" | "approved" | "rejected";
   job_title: string;
   company: string;
   location: string;
@@ -280,10 +280,13 @@ export interface KitOut {
   flag_count: number; // > 0 ⇒ fabrication flags; never auto-approvable
   base_language: string; // which master résumé slot was tailored ("en" | "he")
   error: string;
+  reject_reason: string; // set when the reviewer rejected the kit
+  application_id: number | null; // tracker row created on approve
   created_at: string;
   processed_at: string;
 }
 export interface KitDetail extends KitOut {
+  jd_text: string;
   jd: JDModel | null;
   base_resume: ResumeModel | null; // the master the tailor ran on (diff baseline)
   result: TailorResult | null;

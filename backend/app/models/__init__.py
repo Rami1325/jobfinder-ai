@@ -266,7 +266,7 @@ class KitBatchRequest(BaseModel):
 
 class KitOut(BaseModel):
     id: int
-    status: str = "queued"  # queued | running | done | failed
+    status: str = "queued"  # queued | running | done | failed | approved | rejected
     job_title: str = ""
     company: str = ""
     location: str = ""
@@ -275,20 +275,25 @@ class KitOut(BaseModel):
     logo_url: str = ""
     posted_at: str = ""
     search_overall: float = 0.0
-    # Tailor outcome (meaningful only when status == "done"):
+    # Tailor outcome (meaningful only once processed):
     score_before: float = 0.0  # overall before tailoring
     score_after: float = 0.0
     flag_count: int = 0  # fabrication flags; > 0 => never auto-approvable
     base_language: str = ""  # which master résumé slot was tailored ("en"|"he")
     error: str = ""
+    # Review outcome (PLAN 8.2):
+    reject_reason: str = ""
+    application_id: Optional[int] = None  # tracker row created on approve
     created_at: str = ""
     processed_at: str = ""
 
 
 class KitDetail(KitOut):
-    """Full kit for the 8.2 review UI: the analyzed JD, the master résumé the
-    tailor ran on (the diff baseline), and the complete TailorResult."""
+    """Full kit for the 8.2 review UI: the raw JD text (match-report keyword
+    counting), the analyzed JD, the master résumé the tailor ran on (the diff
+    baseline), and the complete TailorResult."""
 
+    jd_text: str = ""
     jd: Optional[JDModel] = None
     base_resume: Optional[ResumeModel] = None
     result: Optional[TailorResult] = None
@@ -306,6 +311,22 @@ class KitBatchResult(BaseModel):
 class KitProcessResult(BaseModel):
     kit: Optional[KitOut] = None  # None => queue was empty
     remaining: int = 0  # kits still queued after this one
+
+
+class KitApproveRequest(BaseModel):
+    """Approve a reviewed kit (PLAN 8.2) into the tracker as ready-to-send.
+
+    `resume` is the effective résumé after the reviewer's per-bullet
+    accept/reject decisions (client-computed, same as the Tailor page's diff);
+    omitted => the kit's full tailored résumé. `cover_letter` is whatever the
+    reviewer generated/edited; optional."""
+
+    resume: Optional[ResumeModel] = None
+    cover_letter: str = ""
+
+
+class KitRejectRequest(BaseModel):
+    reason: str = ""  # why the kit wasn't good enough — feeds threshold tuning
 
 
 # --------------------------------------------------------------------------- #

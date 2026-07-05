@@ -1868,6 +1868,63 @@ with TestClient(_fastapi_app) as _tc:
         _tc.delete(f"/kits/{_p1['kit']['id']}", headers=_KIM_H).json() == {"deleted": True},
     )
 
+    # Review (PLAN 8.2): approve lands in the tracker as ready-to-send with the
+    # reviewer's effective résumé; reject records why. Kim's kit 2 is "done".
+    _kit2 = _p2["kit"]
+    check(
+        "approving someone else's kit 404s",
+        _tc.post(f"/kits/{_kit2['id']}/approve", json={}, headers=_ADMIN_H).status_code == 404,
+    )
+    _effective = resume.model_dump()
+    _effective["summary"] = "Reviewed effective summary"
+    _apr = _tc.post(
+        f"/kits/{_kit2['id']}/approve",
+        json={"resume": _effective, "cover_letter": "Dear KitCo"},
+        headers=_KIM_H,
+    )
+    check(
+        "approve: kit → approved, tracker application linked",
+        _apr.status_code == 200
+        and _apr.json()["status"] == "approved"
+        and _apr.json()["application_id"],
+        _apr.text[:200],
+    )
+    _kit_app = _tc.get(f"/applications/{_apr.json()['application_id']}", headers=_KIM_H).json()
+    check(
+        "approved application: ready-to-send with effective résumé + cover letter",
+        _kit_app["status"] == "saved"
+        and _kit_app["company"] == "KitCo"
+        and _kit_app["cover_letter"] == "Dear KitCo"
+        and _kit_app["tailored_resume"]["summary"] == "Reviewed effective summary"
+        and _kit_app["job_url"] == _kit2["url"],
+        str(_kit_app)[:200],
+    )
+    check(
+        "approved kit can't be re-approved or rejected (400)",
+        _tc.post(f"/kits/{_kit2['id']}/approve", json={}, headers=_KIM_H).status_code == 400
+        and _tc.post(f"/kits/{_kit2['id']}/reject", json={"reason": "x"}, headers=_KIM_H).status_code == 400,
+    )
+
+    # Reject flow on a fresh admin kit (admins are cap-exempt).
+    _tc.post("/kits/batch", json={"jobs": [_kit_job(20)]}, headers=_ADMIN_H)
+    _admin_kit = _tc.post("/kits/process-next", headers=_ADMIN_H).json()["kit"]
+    _rej = _tc.post(
+        f"/kits/{_admin_kit['id']}/reject",
+        json={"reason": "wrong seniority"},
+        headers=_ADMIN_H,
+    )
+    check(
+        "reject records the reason (feeds threshold tuning)",
+        _rej.status_code == 200
+        and _rej.json()["status"] == "rejected"
+        and _rej.json()["reject_reason"] == "wrong seniority",
+        _rej.text[:150],
+    )
+    check(
+        "rejected kit can't be approved",
+        _tc.post(f"/kits/{_admin_kit['id']}/approve", json={}, headers=_ADMIN_H).status_code == 400,
+    )
+
     # No master résumé → the kit fails with a clear error, the loop keeps 200ing.
     _noam = _tc.post("/admin/users", json={"name": "Noam"}, headers=_ADMIN_H).json()
     _NOAM_H = {"X-App-Key": _noam["invite_code"]}
@@ -1888,6 +1945,12 @@ with TestClient(_fastapi_app) as _tc:
         _rb.status_code == 200 and len(_rb.json()["queued"]) == 1
         and _rb.json()["queued"][0]["status"] == "queued",
         _rb.text[:150],
+    )
+    check(
+        "unprocessed (queued) kit can't be reviewed",
+        _tc.post(
+            f"/kits/{_rb.json()['queued'][0]['id']}/reject", json={}, headers=_NOAM_H
+        ).status_code == 400,
     )
 
 # Function level: a tailor that invents facts marks the kit flagged (never

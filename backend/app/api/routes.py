@@ -91,11 +91,14 @@ from app.models import (
     JobSearchHitOut,
     JobSearchRequest,
     JobSearchResult,
+    KitApproveRequest,
     KitBatchRequest,
     KitBatchResult,
     KitDetail,
     KitList,
+    KitOut,
     KitProcessResult,
+    KitRejectRequest,
     LinkedInRequest,
     LinkedInResult,
     MasterResumeIn,
@@ -501,14 +504,52 @@ def kits_list(
     return KitList(kits=[kits_core.kit_out(r) for r in kits_core.list_kits(db, user.id)])
 
 
+def _owned_kit(db: Session, kit_id: int, user: User) -> TailorKit:
+    row = db.get(TailorKit, kit_id)
+    if not row or row.user_id != user.id:
+        raise HTTPException(404, "Kit not found.")
+    return row
+
+
 @router.get("/kits/{kit_id}", response_model=KitDetail)
 def kits_get(
     kit_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> KitDetail:
-    row = db.get(TailorKit, kit_id)
-    if not row or row.user_id != user.id:
-        raise HTTPException(404, "Kit not found.")
-    return kits_core.kit_detail(row)
+    return kits_core.kit_detail(_owned_kit(db, kit_id, user))
+
+
+@router.post("/kits/{kit_id}/approve", response_model=KitOut)
+def kits_approve(
+    kit_id: int,
+    body: KitApproveRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> KitOut:
+    """Approve a reviewed kit (PLAN 8.2): lands in the tracker as a "saved"
+    (ready-to-send) application carrying the reviewer's effective résumé and
+    cover letter; the kit links to it via application_id."""
+    row = _owned_kit(db, kit_id, user)
+    try:
+        row = kits_core.approve_kit(db, user, row, resume=body.resume, cover_letter=body.cover_letter)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return kits_core.kit_out(row)
+
+
+@router.post("/kits/{kit_id}/reject", response_model=KitOut)
+def kits_reject(
+    kit_id: int,
+    body: KitRejectRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> KitOut:
+    """Reject a reviewed kit, recording why — the reasons feed threshold tuning."""
+    row = _owned_kit(db, kit_id, user)
+    try:
+        row = kits_core.reject_kit(db, row, body.reason)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return kits_core.kit_out(row)
 
 
 @router.delete("/kits/{kit_id}")

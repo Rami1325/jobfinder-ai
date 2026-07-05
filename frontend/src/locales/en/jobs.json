@@ -48,8 +48,10 @@
     "status": {
       "queued": "Queued",
       "running": "Tailoring…",
-      "done": "Ready",
-      "failed": "Failed"
+      "done": "Ready to review",
+      "failed": "Failed",
+      "approved": "Approved",
+      "rejected": "Rejected"
     },
     "guardClean": "0 facts invented",
     "guardFlags_one": "{{count}} flag to review",
@@ -59,10 +61,34 @@
     "processQueue_one": "Process {{count}} queued kit",
     "processQueue_other": "Process {{count}} queued kits",
     "processing": "Tailoring kits in the background…",
+    "review": "Review",
+    "rejectedBecause": "Rejected: {{reason}}",
     "delete": "Delete kit",
     "deleteError": "Could not delete that kit.",
     "retry": "Retry",
-    "reviewSoon": "Review & approve is coming next — kits already show scores and guard status."
+    "reviewSoon": "Review each kit, then approve it into your tracker or reject it with a reason."
+  },
+  "kitReview": {
+    "back": "Back to kits",
+    "loadError": "Could not load this kit.",
+    "notReady": "This kit isn't tailored yet — process the queue on the Jobs page first.",
+    "failed": "This kit failed: {{error}}",
+    "approve": "Approve → tracker",
+    "approvedToast": "Approved — saved to your tracker, ready to send",
+    "approvedBanner": "Approved — this kit is in your tracker as ready to send.",
+    "viewInTracker": "View in tracker",
+    "reject": "Reject",
+    "rejectTitle": "Why reject this kit?",
+    "rejectPlaceholder": "Optional — e.g. wrong seniority, bad location, weak match… (helps tune the fit threshold)",
+    "confirmReject": "Reject kit",
+    "rejectedToast": "Kit rejected",
+    "rejectedBanner": "You rejected this kit.",
+    "unresolvedFlags_one": "{{count}} unresolved guard flag — reject the flagged edit below, or review it carefully before approving.",
+    "unresolvedFlags_other": "{{count}} unresolved guard flags — reject the flagged edits below, or review them carefully before approving.",
+    "downloadNote": "Approve, downloads, keyword counts, and the cover letter all use your accept/reject decisions below.",
+    "approveError": "Could not approve this kit.",
+    "rejectError": "Could not reject this kit.",
+    "downloadError": "Could not download the file."
   },
   "search": {
     "cardTitle": "Find jobs that fit you",

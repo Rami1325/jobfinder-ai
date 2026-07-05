@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -608,17 +608,23 @@ const KIT_STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" |
   running: "partial",
   done: "mint",
   failed: "danger",
+  approved: "mint",
+  rejected: "neutral",
 };
 
 function KitRow({ kit, onDelete }: { kit: KitOut; onDelete: (id: number) => void }) {
   const { t } = useTranslation("jobs");
+  const nav = useNavigate();
+  // Kits keep their tailor outcome through review: approved/rejected rows
+  // still show scores and guard status, not just fresh "done" ones.
+  const processed = kit.status === "done" || kit.status === "approved" || kit.status === "rejected";
   return (
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
       <ProgressRing
-        value={kit.status === "done" ? kit.score_after : kit.search_overall}
+        value={processed ? kit.score_after : kit.search_overall}
         size={64}
         stroke={6}
-        label={kit.status === "done" ? t("kits.after") : t("card.fit")}
+        label={processed ? t("kits.after") : t("card.fit")}
       />
       <div className="flex min-w-0 flex-1 items-start gap-3">
         <CompanyAvatar company={kit.company} url={kit.url || undefined} logoUrl={kit.logo_url} />
@@ -631,7 +637,7 @@ function KitRow({ kit, onDelete }: { kit: KitOut; onDelete: (id: number) => void
               {t(`kits.status.${kit.status}`)}
             </Badge>
             {kit.source && <Badge className="shrink-0">{sourceLabel(kit.source)}</Badge>}
-            {kit.status === "done" &&
+            {processed &&
               (kit.flag_count > 0 ? (
                 <Badge tone="danger" className="inline-flex shrink-0 items-center gap-1">
                   <ShieldAlert size={11} /> {t("kits.guardFlags", { count: kit.flag_count })}
@@ -647,7 +653,7 @@ function KitRow({ kit, onDelete }: { kit: KitOut; onDelete: (id: number) => void
             {kit.location ? ` · ${kit.location}` : ""}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-            {kit.status === "done" && (
+            {processed && (
               <span className="font-semibold text-ink">
                 {t("kits.score", {
                   before: Math.round(kit.score_before),
@@ -672,9 +678,24 @@ function KitRow({ kit, onDelete }: { kit: KitOut; onDelete: (id: number) => void
               {kit.error}
             </p>
           )}
+          {kit.status === "rejected" && kit.reject_reason && (
+            <p dir="auto" className="mt-1 text-xs text-ink-faint">
+              {t("kits.rejectedBecause", { reason: kit.reject_reason })}
+            </p>
+          )}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        {processed && (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
+            onClick={() => nav(`/kits/${kit.id}`)}
+          >
+            {t("kits.review")}
+          </Button>
+        )}
         <button
           onClick={() => onDelete(kit.id)}
           title={t("kits.delete")}
@@ -805,7 +826,11 @@ export default function JobsPage() {
   const { t } = useTranslation("jobs");
   const { master, masters, loading, setMaster } = useMasterResume();
   const persistMaster = useSaveMasterResume();
-  const [mode, setMode] = useState<"search" | "manual" | "history" | "kits">("search");
+  // "Back to kits" from the review page lands on the Kits tab directly.
+  const loc = useLocation() as { state?: { tab?: string } };
+  const [mode, setMode] = useState<"search" | "manual" | "history" | "kits">(
+    loc.state?.tab === "kits" ? "kits" : "search",
+  );
   const toast = useToast();
 
   // -- Batch auto-tailor kits (PLAN 8.1) --

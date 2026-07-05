@@ -7,6 +7,7 @@ import TailorPage from "./pages/TailorPage";
 import TrackerPage from "./pages/TrackerPage";
 import InterviewPage from "./pages/InterviewPage";
 import JobsPage from "./pages/JobsPage";
+import KitReviewPage from "./pages/KitReviewPage";
 import ToolsPage from "./pages/ToolsPage";
 import AtsToolPage from "./pages/tools/AtsToolPage";
 import LinkedInToolPage from "./pages/tools/LinkedInToolPage";
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/app" element={<TailorPage />} />
         <Route path="/interview" element={<InterviewPage />} />
         <Route path="/jobs" element={<JobsPage />} />
+        <Route path="/kits/:id" element={<KitReviewPage />} />
         <Route path="/tools" element={<ToolsPage />} />
         <Route path="/tools/ats" element={<AtsToolPage />} />
         <Route path="/tools/linkedin" element={<LinkedInToolPage />} />

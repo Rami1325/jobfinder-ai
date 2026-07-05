@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.core.jd_analyzer import analyze_jd
 from app.core.lang import detect_language
 from app.core.tailor import tailor_resume
-from app.db.models import SavedResume, TailorKit, User
+from app.db.models import Application, SavedResume, TailorKit, User
 from app.models import (
     FactsLedger,
     JDModel,
@@ -64,6 +64,8 @@ def kit_out(row: TailorKit) -> KitOut:
         flag_count=row.flag_count or 0,
         base_language=row.base_language or "",
         error=row.error or "",
+        reject_reason=row.reject_reason or "",
+        application_id=row.application_id,
         created_at=row.created_at.isoformat() if row.created_at else "",
         processed_at=row.processed_at.isoformat() if row.processed_at else "",
     )
@@ -80,6 +82,7 @@ def kit_detail(row: TailorKit) -> KitDetail:
 
     return KitDetail(
         **kit_out(row).model_dump(),
+        jd_text=row.jd_text or "",
         jd=_parse(JDModel, row.jd_json),
         base_resume=_parse(ResumeModel, row.base_resume_json),
         result=_parse(TailorResult, row.result_json),
@@ -173,6 +176,8 @@ def enqueue_kits(
         row.score_after = 0.0
         row.flag_count = 0
         row.error = ""
+        row.reject_reason = ""
+        row.application_id = None
         row.started_at = None
         row.processed_at = None
         queued.append(row)
@@ -272,3 +277,59 @@ def process_next_kit(
     db.commit()
     db.refresh(row)
     return row, queued_count(db, user.id)
+
+
+def approve_kit(
+    db: Session,
+    user: User,
+    row: TailorKit,
+    resume: ResumeModel | None = None,
+    cover_letter: str = "",
+) -> TailorKit:
+    """Approve a reviewed kit (PLAN 8.2): create a tracker Application carrying
+    the final artifacts — the reviewer's effective résumé (after per-bullet
+    accept/reject; falls back to the kit's full tailored résumé) and cover
+    letter — as "saved" = ready to send, and link it back to the kit.
+
+    Only a "done" kit can be approved; this is the HUMAN approval step, so
+    guard-flagged kits are allowed through here (the reviewer saw the flags —
+    "never auto-approvable" gates the 8.4 auto-submit path, not this one).
+    Raises ValueError for state problems — the route maps it to a 400."""
+    if row.status != "done":
+        raise ValueError("Only a processed kit can be approved.")
+    if resume is None:
+        try:
+            result = TailorResult.model_validate_json(row.result_json)
+        except Exception:  # noqa: BLE001 - corrupt/legacy kit row
+            raise ValueError("This kit has no tailored résumé to approve.")
+        resume = result.tailored_resume
+    app = Application(
+        user_id=user.id,
+        job_title=row.job_title,
+        company=row.company,
+        jd_text=row.jd_text,
+        tailored_resume_json=resume.model_dump_json(),
+        cover_letter=cover_letter,
+        overall_score=row.score_after or 0.0,
+        status="saved",
+        job_url=row.url,
+    )
+    db.add(app)
+    db.flush()  # need app.id for the back-link
+    row.status = "approved"
+    row.application_id = app.id
+    row.reject_reason = ""
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def reject_kit(db: Session, row: TailorKit, reason: str = "") -> TailorKit:
+    """Reject a reviewed kit, recording why (feeds threshold tuning)."""
+    if row.status != "done":
+        raise ValueError("Only a processed kit can be rejected.")
+    row.status = "rejected"
+    row.reject_reason = reason.strip()
+    db.commit()
+    db.refresh(row)
+    return row
