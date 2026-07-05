@@ -191,6 +191,7 @@ export interface JobMatch {
   location: string;
   posted_at: string; // ISO date from the LinkedIn search card; empty when unknown
   source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
+  logo_url?: string; // company logo from the board; empty/absent when it has none
 }
 export interface JobMatchResult {
   matches: JobMatch[];
@@ -237,6 +238,7 @@ export interface JobSearchHit {
   jd_text: string;
   posted_at: string; // ISO date the job was posted; empty when unknown
   source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
+  logo_url?: string; // company logo from the board; empty/absent when it has none
   searched_at: string;
   app_status: string; // tracker status if saved/applied: "", saved, applied, interview, offer, rejected
 }

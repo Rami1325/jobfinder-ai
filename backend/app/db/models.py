@@ -50,6 +50,7 @@ class JobSearchHit(Base):
     jd_text: Mapped[str] = mapped_column(Text, default="")
     posted_at: Mapped[str] = mapped_column(String(32), default="")  # ISO date; "" when unknown
     source: Mapped[str] = mapped_column(String(32), default="linkedin")  # job board (PROVIDERS key)
+    logo_url: Mapped[str] = mapped_column(String(1000), default="")  # company logo; "" when none
     searched_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

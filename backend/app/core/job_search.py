@@ -161,6 +161,7 @@ def search_jobs(
                 location=hit.location,
                 posted_at=hit.posted_at,
                 source=hit.source,
+                logo_url=hit.logo_url,
             )
         )
 

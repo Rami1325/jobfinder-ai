@@ -62,6 +62,14 @@ def _card_posted(card_html: str) -> str:
     return _html.unescape(m.group(1)).strip() if m else ""
 
 
+def _card_logo(card_html: str) -> str:
+    """Company logo URL from the card's lazy-loaded <img>. LinkedIn puts the
+    real media.licdn.com URL in data-delayed-url (src holds a ghost/placeholder),
+    so that attribute is the only one worth reading."""
+    m = re.search(r'(?is)<img[^>]*\bdata-delayed-url="([^"]+)"', card_html)
+    return _html.unescape(m.group(1)).strip() if m else ""
+
+
 def _card_url(card_html: str) -> str:
     """The posting URL from the card's base-card__full-link anchor, tracking
     query stripped. Handles either attribute order (href/class)."""
@@ -77,7 +85,7 @@ def _card_url(card_html: str) -> str:
 
 def parse_search_results(html: str) -> list[dict[str, str]]:
     """Parse the guest search-results HTML (a flat <li> list of job cards) into
-    [{url, title, company, location, posted_at}], deduped by posting id, order preserved.
+    [{url, title, company, location, posted_at, logo}], deduped by posting id, order preserved.
     Pure function so the offline smoke test can pin the markup contract."""
     cards: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -97,6 +105,7 @@ def parse_search_results(html: str) -> list[dict[str, str]]:
                 "company": _card_text(card, "base-search-card__subtitle"),
                 "location": _card_text(card, "job-search-card__location"),
                 "posted_at": _card_posted(card),
+                "logo": _card_logo(card),
             }
         )
     return cards
@@ -164,6 +173,7 @@ class LinkedInProvider:
                 description="",  # cards carry no body — fetched per-hit
                 url=card["url"],
                 posted_at=card.get("posted_at", ""),
+                logo_url=card.get("logo", ""),
                 language="en",  # guest surface serves English-normalized cards
                 raw=dict(card),
             )

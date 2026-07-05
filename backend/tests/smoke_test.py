@@ -223,6 +223,7 @@ from app.models import JobMatch  # noqa: E402
 
 _SEARCH_FIXTURE = """<ul><li>
   <a class="base-card__full-link" href="https://il.linkedin.com/jobs/view/backend-engineer-at-acme-4406118990?refId=abc&amp;trackingId=xyz">x</a>
+  <img class="artdeco-entity-image artdeco-entity-image--square-4" data-delayed-url="https://media.licdn.com/dms/image/v2/AAA/company-logo_100_100/0?e=1&amp;v=beta" data-ghost-url="https://static.licdn.com/ghost.png" alt="">
   <h3 class="base-search-card__title"> Backend Engineer </h3>
   <h4 class="base-search-card__subtitle"><a class="hidden-nested-link">Acme Ltd</a></h4>
   <span class="job-search-card__location">Tel Aviv, Israel</span>
@@ -247,6 +248,12 @@ check(
     "search card url stripped of tracking query",
     cards[0]["url"].endswith("backend-engineer-at-acme-4406118990"),
     cards[0]["url"] if cards else "",
+)
+check(
+    "search card logo from lazy-loaded img (missing => empty)",
+    cards[0]["logo"] == "https://media.licdn.com/dms/image/v2/AAA/company-logo_100_100/0?e=1&v=beta"
+    and cards[1]["logo"] == "",
+    str([c["logo"] for c in cards]),
 )
 check("empty html parses to empty card list", parse_search_results("<html></html>") == [])
 check(
@@ -277,6 +284,7 @@ check(
     JobMatch().url == "" and JobMatch().posted_at == "",
 )
 check("JobMatch back-compat: source defaults to linkedin", JobMatch().source == "linkedin")
+check("JobMatch back-compat: logo_url defaults empty", JobMatch().logo_url == "")
 
 # 14b. Provider registry + multi-source context resolution (pure, offline)
 from app.core.job_search import _interleave_and_dedupe, _resolve_context  # noqa: E402
@@ -363,6 +371,12 @@ check(
     "Data Engineer" in _dr[0].description
     and "ניסיון" in _dr[0].description
     and "<br" not in _dr[0].description,
+)
+check(
+    "drushim company logo extracted; directory-stub links (trailing /) dropped",
+    _dr[0].logo_url == "https://webapi.drushim.co.il/logos/2376295/page/638846445007377955.png"
+    and _dr[1].logo_url == "",
+    str([h.logo_url for h in _dr]),
 )
 check("drushim hebrew language detected", all(h.language == "he" for h in _dr))
 check("drushim inline description means no detail fetch", all(h.description for h in _dr))
@@ -463,6 +477,13 @@ check(
     _cm[0].url if _cm else "",
 )
 check("comeet posted_at is the ISO time_updated", _cm[0].posted_at.startswith("2026-06-29"))
+_pictured = _json.loads(_json.dumps(_COMEET_FIXTURE))
+_pictured[0]["picture_url"] = "https://static.comeet.co/logos/kaltura.png"
+check(
+    "comeet picture_url maps to logo_url (null => empty)",
+    _cm[0].logo_url == ""
+    and parse_comeet_positions(_pictured)[0].logo_url == "https://static.comeet.co/logos/kaltura.png",
+)
 check(
     "comeet description inlines Description + Requirements (html stripped)",
     all(h.description and "<p>" not in h.description for h in _cm),
@@ -818,11 +839,18 @@ check("migration shim added language to saved_resumes", "language" in _sr_cols, 
 _db = SessionLocal()
 record_search_hits(_db, [
     JobMatch(title="Backend Engineer", company="Acme", overall=50.0, url="https://x/jobs/1", posted_at="2026-06-25"),
-    JobMatch(title="Data Engineer", company="Beta", overall=60.0, url="https://x/jobs/2", source="drushim"),
+    JobMatch(title="Data Engineer", company="Beta", overall=60.0, url="https://x/jobs/2", source="drushim",
+             logo_url="https://webapi.drushim.co.il/logos/1/page/logo.png"),
 ])
 check(
     "history persists posted_at",
     {h.url: h.posted_at for h in list_search_hits(_db)}.get("https://x/jobs/1") == "2026-06-25",
+)
+check(
+    "history persists logo_url (default empty)",
+    {h.url: h.logo_url for h in list_search_hits(_db)}
+    == {"https://x/jobs/1": "", "https://x/jobs/2": "https://webapi.drushim.co.il/logos/1/page/logo.png"},
+    str({h.url: h.logo_url for h in list_search_hits(_db)}),
 )
 check(
     "history persists source (default + drushim)",

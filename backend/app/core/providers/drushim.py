@@ -75,6 +75,12 @@ def parse_drushim_results(data: dict) -> list[JobHit]:
             company.get("NameInHebrew") or company.get("CompanyDisplayName") or ""
         ).strip()
 
+        # Companies without an uploaded logo still get a CompanyLogoLink, but it's
+        # a directory stub ending in "/" (no filename) — treat those as no logo.
+        logo_url = str(company.get("CompanyLogoLink") or "").strip()
+        if logo_url.endswith("/"):
+            logo_url = ""
+
         cities: list[str] = []
         for addr in content.get("Addresses") or []:
             city = str((addr or {}).get("City") or "").strip()
@@ -95,6 +101,7 @@ def parse_drushim_results(data: dict) -> list[JobHit]:
                 description=full_text,  # inline — no detail fetch needed
                 url=url,
                 posted_at=str(info.get("Date") or "").strip(),
+                logo_url=logo_url,
                 language=_detect_language(f"{title} {full_text}"),
                 raw=job,
             )

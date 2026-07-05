@@ -266,6 +266,7 @@ def jobs_history(db: Session = Depends(get_db)) -> JobSearchHistory:
                 jd_text=row.jd_text,
                 posted_at=row.posted_at or "",
                 source=row.source or "linkedin",
+                logo_url=row.logo_url or "",
                 searched_at=row.searched_at.isoformat() if row.searched_at else "",
                 app_status=statuses.get(row.url, ""),
             )

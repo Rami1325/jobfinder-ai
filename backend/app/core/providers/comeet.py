@@ -139,6 +139,7 @@ def parse_comeet_positions(positions: list, company_name: str = "") -> list[JobH
                 description=description,  # inline — no detail fetch needed
                 url=url,
                 posted_at=str(pos.get("time_updated") or "").strip(),
+                logo_url=str(pos.get("picture_url") or "").strip(),
                 language=detect_language(f"{title} {description}"),
                 raw=pos,
             )

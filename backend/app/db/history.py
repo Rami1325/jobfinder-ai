@@ -38,6 +38,7 @@ def record_search_hits(db: Session, matches: list[JobMatch]) -> None:
         row.jd_text = m.jd_text
         row.posted_at = m.posted_at
         row.source = m.source
+        row.logo_url = m.logo_url
         row.searched_at = now
     db.flush()
     keep_ids = db.execute(

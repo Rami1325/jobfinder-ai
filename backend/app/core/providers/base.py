@@ -34,6 +34,7 @@ class JobHit:
     description: str = ""  # full posting text; "" means "needs fetch_description"
     url: str = ""  # public posting URL (also the cross-source dedupe key)
     posted_at: str = ""  # ISO date(-time) string, or "" when unknown
+    logo_url: str = ""  # company logo image URL, "" when the board has none
     language: str = "en"  # "he" | "en" — best-effort detection by the provider
     raw: dict = field(default_factory=dict)  # provider-native payload for debugging
 

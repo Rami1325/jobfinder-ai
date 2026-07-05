@@ -99,8 +99,8 @@ function postedAgo(iso: string, t: TFunction<"jobs">): string {
 }
 
 // Job-board hosts whose favicon is the board's logo, not the company's — those
-// cards use the lettered avatar instead (the source badge already names the
-// board). Real company logos need a company-domain field from the backend.
+// cards fall back to the lettered avatar unless the backend supplied a real
+// company logo_url (LinkedIn/Drushim/Comeet boards carry one when available).
 const BOARD_HOST_RE =
   /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|jooble\.org)$/;
 
@@ -127,21 +127,31 @@ function avatarTone(name: string): string {
   return AVATAR_TONES[h % AVATAR_TONES.length];
 }
 
-/** Company favicon when the job URL points at a company domain; otherwise a
- * lettered avatar on a background derived deterministically from the name. */
-function CompanyAvatar({ company, url }: { company: string; url?: string }) {
-  const [failed, setFailed] = useState(false);
+/** Company logo when the job board provided one, else the company favicon when
+ * the job URL points at a company domain, else a lettered avatar on a
+ * background derived deterministically from the name. */
+function CompanyAvatar({ company, url, logoUrl }: { company: string; url?: string; logoUrl?: string }) {
+  const [failed, setFailed] = useState<string[]>([]);
   const domain = url ? companyDomain(url) : null;
-  if (domain && !failed) {
+  const candidates = [
+    logoUrl || null,
+    domain
+      ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`
+      : null,
+  ].filter((s): s is string => !!s && !failed.includes(s));
+  const src = candidates[0];
+  if (src) {
     return (
       <img
-        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
+        src={src}
         alt=""
         width={40}
         height={40}
         loading="lazy"
-        onError={() => setFailed(true)}
-        className="h-10 w-10 shrink-0 rounded-lg border border-line bg-panel-2 p-1.5"
+        onError={() => setFailed((f) => [...f, src])}
+        className={`h-10 w-10 shrink-0 rounded-lg border border-line bg-panel-2 object-contain ${
+          src === logoUrl ? "p-1" : "p-1.5"
+        }`}
       />
     );
   }
@@ -267,7 +277,7 @@ function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStat
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
       <ProgressRing value={m.overall} size={92} stroke={8} label={t("card.fit")} />
       <div className="flex min-w-0 flex-1 items-start gap-3">
-        <CompanyAvatar company={m.company} url={m.url || undefined} />
+        <CompanyAvatar company={m.company} url={m.url || undefined} logoUrl={m.logo_url} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}
@@ -338,7 +348,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
       <ProgressRing value={hit.overall} size={64} stroke={6} label={t("card.fit")} />
       <div className="flex min-w-0 flex-1 items-start gap-3">
-        <CompanyAvatar company={hit.company} url={hit.url || undefined} />
+        <CompanyAvatar company={hit.company} url={hit.url || undefined} logoUrl={hit.logo_url} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <p className="min-w-0 max-w-full truncate font-semibold text-ink">

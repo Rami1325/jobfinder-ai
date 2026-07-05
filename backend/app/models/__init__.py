@@ -345,6 +345,7 @@ class JobMatch(BaseModel):
     location: str = ""
     posted_at: str = ""  # ISO date(-time) from the source; empty when unknown
     source: str = "linkedin"  # which job board this came from (see PROVIDERS registry)
+    logo_url: str = ""  # company logo from the board; empty when it has none
 
 
 class JobMatchResult(BaseModel):
@@ -400,6 +401,7 @@ class JobSearchHitOut(BaseModel):
     jd_text: str = ""
     posted_at: str = ""  # ISO date the job was posted; empty when unknown
     source: str = "linkedin"  # which job board surfaced this hit
+    logo_url: str = ""  # company logo from the board; empty when it has none
     searched_at: str = ""
     app_status: str = ""  # tracker status if this job was saved/applied ("", saved, applied, interview, offer, rejected)
 
