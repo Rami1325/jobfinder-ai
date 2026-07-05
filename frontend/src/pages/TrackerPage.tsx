@@ -4,10 +4,12 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import {
   Award,
+  BarChart3,
   ClipboardList,
   Download,
   ExternalLink,
   Eye,
+  KanbanSquare,
   Layers,
   MessageSquare,
   MessagesSquare,
@@ -26,6 +28,7 @@ import {
   updateApplication,
 } from "../api/client";
 import ResumeView from "../components/ResumeView";
+import TrackerAnalytics from "../components/TrackerAnalytics";
 import { Badge, Button, Card, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
 import type { ApplicationDetail, ApplicationOut } from "../types";
@@ -84,6 +87,7 @@ export default function TrackerPage() {
   const [open, setOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
+  const [tab, setTab] = useState<"board" | "analytics">("board");
   const toast = useToast();
 
   async function refresh() {
@@ -193,10 +197,34 @@ export default function TrackerPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-ink">{t("title")}</h1>
           <p className="mt-1 text-sm text-ink-muted">{t("sub", { count: apps.length })}</p>
+        </div>
+        {/* Board / Analytics switch (PLAN 6: search analytics dashboard) */}
+        <div className="inline-flex rounded-lg border border-line bg-panel-2 p-0.5" role="tablist">
+          {(
+            [
+              { key: "board", icon: <KanbanSquare size={14} /> },
+              { key: "analytics", icon: <BarChart3 size={14} /> },
+            ] as const
+          ).map((v) => (
+            <button
+              key={v.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === v.key}
+              onClick={() => setTab(v.key)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+                tab === v.key ? "bg-accent text-white" : "text-ink-muted hover:text-ink",
+              )}
+            >
+              {v.icon}
+              {t(`view.${v.key}`)}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -256,8 +284,10 @@ export default function TrackerPage() {
         </motion.div>
       )}
 
-      {/* ── Board ──────────────────────────────────────────────────────── */}
-      {loading ? (
+      {/* ── Board / Analytics ──────────────────────────────────────────── */}
+      {!loading && tab === "analytics" ? (
+        <TrackerAnalytics apps={apps} />
+      ) : loading ? (
         <div className="grid gap-4 md:grid-cols-3">
           <Skeleton className="h-40" />
           <Skeleton className="h-40" />

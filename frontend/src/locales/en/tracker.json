@@ -57,5 +57,37 @@
     "jobPosting": "Job posting",
     "noResume": "No saved résumé for this entry.",
     "coverLetter": "Cover letter"
+  },
+  "view": {
+    "board": "Board",
+    "analytics": "Analytics"
+  },
+  "analytics": {
+    "weekly": {
+      "title": "Applications per week",
+      "hint": "Added to the tracker over the last 8 weeks — the highlighted part was actually submitted.",
+      "submitted": "Submitted",
+      "savedOnly": "Saved only",
+      "empty": "No applications yet — the chart fills up as you add them."
+    },
+    "funnel": {
+      "title": "Pipeline funnel",
+      "hint": "Of everything you submitted: how many turned into a response, an interview, an offer.",
+      "submitted": "Submitted",
+      "responses": "Responses",
+      "interviews": "Interviews",
+      "offers": "Offers",
+      "ofSubmitted": "{{pct}}% of submitted",
+      "empty": "Submit your first application to see the funnel."
+    },
+    "score": {
+      "title": "Match score vs. outcome",
+      "hint": "Average match score of the applications behind each outcome — is tailoring paying off?",
+      "avg": "avg {{score}}%",
+      "count_one": "{{count}} application",
+      "count_other": "{{count}} applications",
+      "noResponse": "No response yet",
+      "empty": "Needs a few applications with a match score."
+    }
   }
 }
