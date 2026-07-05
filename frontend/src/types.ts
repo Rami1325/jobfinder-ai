@@ -251,6 +251,52 @@ export interface JobSearchHistory {
   hits: JobSearchHit[];
 }
 
+/** Batch auto-tailor kits (PLAN 8.1): high-fit search results queued for a
+ * background tailor run, drained one per request via /kits/process-next. */
+export interface KitJobIn {
+  title: string;
+  company: string;
+  location: string;
+  url: string;
+  source: string;
+  logo_url: string;
+  posted_at: string;
+  jd_text: string;
+  overall: number; // the search's fit score — why this job qualified
+}
+export interface KitOut {
+  id: number;
+  status: "queued" | "running" | "done" | "failed";
+  job_title: string;
+  company: string;
+  location: string;
+  url: string;
+  source: string;
+  logo_url: string;
+  posted_at: string;
+  search_overall: number;
+  score_before: number; // meaningful only when status === "done"
+  score_after: number;
+  flag_count: number; // > 0 ⇒ fabrication flags; never auto-approvable
+  base_language: string; // which master résumé slot was tailored ("en" | "he")
+  error: string;
+  created_at: string;
+  processed_at: string;
+}
+export interface KitDetail extends KitOut {
+  jd: JDModel | null;
+  base_resume: ResumeModel | null; // the master the tailor ran on (diff baseline)
+  result: TailorResult | null;
+}
+export interface KitBatchResult {
+  queued: KitOut[];
+  skipped_existing: number;
+}
+export interface KitProcessResult {
+  kit: KitOut | null; // null ⇒ queue was empty
+  remaining: number;
+}
+
 /** Free public CV-vs-JD scan (no signup, deterministic only). */
 export interface FreeScanCheck {
   id: "email" | "phone" | "length" | "numbers";

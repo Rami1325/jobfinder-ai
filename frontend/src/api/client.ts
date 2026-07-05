@@ -16,6 +16,11 @@ import type {
   JobMatchResult,
   JobSearchHistory,
   JobSearchResult,
+  KitBatchResult,
+  KitDetail,
+  KitJobIn,
+  KitOut,
+  KitProcessResult,
   LinkedInResult,
   MasterResume,
   ResumeModel,
@@ -240,6 +245,33 @@ export async function searchJobsStream(
 export async function searchContext(resume: ResumeModel): Promise<SearchContext> {
   const { data } = await api.post<SearchContext>("/jobs/search-context", { resume });
   return data;
+}
+
+// Batch auto-tailor kits (PLAN 8.1): enqueue high-fit jobs, then drain the
+// queue one tailor per request — each processNextKit call is a single
+// pipeline run, so the client loop is what keeps a serverless backend busy.
+export async function createKitBatch(jobs: KitJobIn[]): Promise<KitBatchResult> {
+  const { data } = await api.post<KitBatchResult>("/kits/batch", { jobs });
+  return data;
+}
+
+export async function processNextKit(): Promise<KitProcessResult> {
+  const { data } = await api.post<KitProcessResult>("/kits/process-next");
+  return data;
+}
+
+export async function listKits(): Promise<KitOut[]> {
+  const { data } = await api.get<{ kits: KitOut[] }>("/kits");
+  return data.kits;
+}
+
+export async function getKit(id: number): Promise<KitDetail> {
+  const { data } = await api.get<KitDetail>(`/kits/${id}`);
+  return data;
+}
+
+export async function deleteKit(id: number): Promise<void> {
+  await api.delete(`/kits/${id}`);
 }
 
 export async function getJobAlert(): Promise<AlertSettings> {

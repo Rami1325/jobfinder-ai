@@ -1755,5 +1755,176 @@ finally:
     for _k in _fakes:
         _PROV.pop(_k, None)
 
+# 22. Batch auto-tailor kits (PLAN 8.1): enqueue high-fit jobs, drain the
+# queue one tailor per request (the serverless-safe loop), guard flags mark
+# kits never-auto-approvable, caps charged upfront, per-user isolation.
+from datetime import datetime as _dt, timedelta as _td  # noqa: E402
+
+from sqlalchemy import select as _ksel  # noqa: E402
+
+from app.core.kits import enqueue_kits as _enqueue_kits, process_next_kit as _process_next  # noqa: E402
+from app.db.models import TailorKit as _TKit, User as _KUser  # noqa: E402
+from app.models import FabricationFlag as _KFlag, KitJobIn as _KitJob, TailorResult as _KTR  # noqa: E402
+
+_KIT_JD = "Python developer. Python and SQL required. Docker an advantage."
+
+
+def _kit_job(i: int, overall: float = 85.0) -> dict:
+    return {
+        "title": f"Backend Dev {i}",
+        "company": "KitCo",
+        "location": "Tel Aviv",
+        "url": f"https://kit.test/job-{i}",
+        "source": "linkedin",
+        "jd_text": _KIT_JD,
+        "overall": overall,
+    }
+
+
+with TestClient(_fastapi_app) as _tc:
+    _kim = _tc.post("/admin/users", json={"name": "Kim"}, headers=_ADMIN_H).json()
+    _KIM_H = {"X-App-Key": _kim["invite_code"]}
+    _tc.put(
+        "/profile/resume",
+        json={"resume": resume.model_dump(), "label": "Kim CV"},
+        headers=_KIM_H,
+    )
+
+    # Enqueue 2 (== DAILY_TAILOR_CAP), then dedupe, then the cap says no more.
+    _b1 = _tc.post("/kits/batch", json={"jobs": [_kit_job(1), _kit_job(2)]}, headers=_KIM_H)
+    check(
+        "kit batch queues jobs and charges the tailor cap upfront",
+        _b1.status_code == 200
+        and len(_b1.json()["queued"]) == 2
+        and _b1.json()["skipped_existing"] == 0
+        and all(k["status"] == "queued" for k in _b1.json()["queued"]),
+        _b1.text[:200],
+    )
+    _b2 = _tc.post("/kits/batch", json={"jobs": [_kit_job(1), _kit_job(2)]}, headers=_KIM_H)
+    check(
+        "re-batching the same URLs skips them (and charges nothing)",
+        _b2.status_code == 200
+        and _b2.json()["queued"] == []
+        and _b2.json()["skipped_existing"] == 2,
+        _b2.text[:200],
+    )
+    _b3 = _tc.post("/kits/batch", json={"jobs": [_kit_job(3)]}, headers=_KIM_H)
+    check(
+        "over-cap batch → 429 daily_limit and queues nothing",
+        _b3.status_code == 429
+        and _b3.json()["detail"] == {"code": "daily_limit", "action": "tailor", "cap": 2}
+        and len(_tc.get("/kits", headers=_KIM_H).json()["kits"]) == 2,
+        _b3.text[:150],
+    )
+    check(
+        "kit batch rejects jobs without URL/JD",
+        _tc.post(
+            "/kits/batch",
+            json={"jobs": [{"title": "no jd", "url": "https://kit.test/x"}]},
+            headers=_KIM_H,
+        ).status_code == 400,
+    )
+
+    # Drain the queue: one stub tailor pipeline run per request.
+    _p1 = _tc.post("/kits/process-next", headers=_KIM_H).json()
+    _p2 = _tc.post("/kits/process-next", headers=_KIM_H).json()
+    _p3 = _tc.post("/kits/process-next", headers=_KIM_H).json()
+    check(
+        "process-next drains the queue one kit per call",
+        _p1["kit"] is not None and _p1["remaining"] == 1
+        and _p2["kit"] is not None and _p2["remaining"] == 0
+        and _p3["kit"] is None and _p3["remaining"] == 0,
+        f"{_p1.get('remaining')}/{_p2.get('remaining')}/{_p3.get('remaining')}",
+    )
+    check(
+        "processed kit: done, guard-clean, tailored against the en master",
+        _p1["kit"]["status"] == "done"
+        and _p1["kit"]["flag_count"] == 0
+        and _p1["kit"]["base_language"] == "en"
+        and _p1["kit"]["error"] == "",
+        str(_p1["kit"])[:200],
+    )
+    _kd = _tc.get(f"/kits/{_p1['kit']['id']}", headers=_KIM_H).json()
+    check(
+        "kit detail carries the full review payload (jd, base résumé, TailorResult)",
+        _kd["jd"] is not None
+        and _kd["base_resume"] is not None
+        and _kd["result"] is not None
+        and _kd["result"]["tailored_resume"]["contact"] is not None
+        and _kd["base_resume"] == resume.model_dump(),
+        str(_kd)[:200],
+    )
+
+    # Isolation: the admin sees none of Kim's kits and can't fetch/delete them.
+    _admin_kits = _tc.get("/kits", headers=_ADMIN_H).json()["kits"]
+    check(
+        "kits are per-user: admin sees none of Kim's",
+        all(not k["url"].startswith("https://kit.test/") for k in _admin_kits)
+        and _tc.get(f"/kits/{_p1['kit']['id']}", headers=_ADMIN_H).status_code == 404
+        and _tc.delete(f"/kits/{_p1['kit']['id']}", headers=_ADMIN_H).status_code == 404,
+    )
+    check(
+        "owner deletes their kit",
+        _tc.delete(f"/kits/{_p1['kit']['id']}", headers=_KIM_H).json() == {"deleted": True},
+    )
+
+    # No master résumé → the kit fails with a clear error, the loop keeps 200ing.
+    _noam = _tc.post("/admin/users", json={"name": "Noam"}, headers=_ADMIN_H).json()
+    _NOAM_H = {"X-App-Key": _noam["invite_code"]}
+    _tc.post("/kits/batch", json={"jobs": [_kit_job(9)]}, headers=_NOAM_H)
+    _np = _tc.post("/kits/process-next", headers=_NOAM_H).json()
+    check(
+        "kit without a master résumé fails softly (status=failed, loop continues)",
+        _np["kit"] is not None
+        and _np["kit"]["status"] == "failed"
+        and "master résumé" in _np["kit"]["error"]
+        and _np["remaining"] == 0,
+        str(_np)[:200],
+    )
+    # Re-batching a failed kit requeues it (still 1 kit, back to queued).
+    _rb = _tc.post("/kits/batch", json={"jobs": [_kit_job(9)]}, headers=_NOAM_H)
+    check(
+        "re-batching a failed kit requeues it instead of skipping",
+        _rb.status_code == 200 and len(_rb.json()["queued"]) == 1
+        and _rb.json()["queued"][0]["status"] == "queued",
+        _rb.text[:150],
+    )
+
+# Function level: a tailor that invents facts marks the kit flagged (never
+# auto-approvable), and a crashed "running" kit is requeued after the timeout.
+_dbk = SessionLocal()
+_kim_row = _dbk.execute(_ksel(_KUser).where(_KUser.name == "Kim")).scalars().first()
+_flag_rows, _ = _enqueue_kits(
+    _dbk, _kim_row, [_KitJob(title="Flagged", url="https://kit.test/flagged", jd_text=_KIT_JD)]
+)
+
+
+def _flagging_tailor(resume, jd, ledger=None):  # noqa: ANN001 - matches tailor_resume's shape
+    return _KTR(
+        tailored_resume=resume,
+        fabrication_flags=[_KFlag(category="employer", value="FakeCo", detail="invented")],
+    )
+
+
+_flag_kit, _ = _process_next(_dbk, _kim_row, tailor_fn=_flagging_tailor)
+check(
+    "guard-flagged tailor marks the kit (flag_count > 0 ⇒ never auto-approvable)",
+    _flag_kit is not None and _flag_kit.status == "done" and _flag_kit.flag_count == 1,
+    f"{_flag_kit.status if _flag_kit else None}/{_flag_kit.flag_count if _flag_kit else None}",
+)
+
+# Simulate a serverless invocation that died mid-run: stuck "running" past the
+# timeout is requeued and picked up by the next process-next call.
+_flag_kit.status = "running"
+_flag_kit.started_at = _dt.utcnow() - _td(minutes=30)
+_dbk.commit()
+_stuck_kit, _ = _process_next(_dbk, _kim_row, tailor_fn=_flagging_tailor)
+check(
+    "stuck running kit is requeued and reprocessed after the timeout",
+    _stuck_kit is not None and _stuck_kit.id == _flag_kit.id and _stuck_kit.status == "done",
+    f"{_stuck_kit.id if _stuck_kit else None} vs {_flag_kit.id}",
+)
+_dbk.close()
+
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

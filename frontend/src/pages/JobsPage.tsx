@@ -14,8 +14,11 @@ import {
   MessageCircle,
   Plus,
   Search,
+  ShieldAlert,
+  ShieldCheck,
   Trash2,
   Trophy,
+  Wand2,
   X,
 } from "lucide-react";
 import {
@@ -37,6 +40,14 @@ import {
   startJobSearch,
   subscribeJobSearch,
 } from "../state/jobSearchStore";
+import {
+  getKitsState,
+  loadKits,
+  removeKit,
+  resumeKitQueue,
+  startKitBatch,
+  subscribeKits,
+} from "../state/kitsStore";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { resumeLanguage } from "../lib/lang";
@@ -49,6 +60,8 @@ import type {
   FactsLedger,
   JobMatch,
   JobSearchHit,
+  KitJobIn,
+  KitOut,
   ResumeModel,
   SearchContext,
 } from "../types";
@@ -459,6 +472,221 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
   );
 }
 
+// Batch auto-tailor (PLAN 8.1): jobs at/above the fit threshold become queued
+// "application kits" — the backend tailors them one process-next call at a
+// time while the user keeps browsing.
+const KIT_MAX_BATCH = 10; // mirrors the backend's MAX_BATCH
+const KIT_DEFAULT_THRESHOLD = 75;
+const KIT_THRESHOLDS = [60, 65, 70, 75, 80, 85, 90] as const;
+
+function kitJobFromMatch(m: JobMatch): KitJobIn {
+  return {
+    title: m.title,
+    company: m.company,
+    location: m.location,
+    url: m.url,
+    source: m.source ?? "linkedin",
+    logo_url: m.logo_url ?? "",
+    posted_at: m.posted_at,
+    jd_text: m.jd_text,
+    overall: m.overall,
+  };
+}
+
+function BatchTailorCard({
+  matches,
+  onViewKits,
+}: {
+  matches: JobMatch[];
+  onViewKits: () => void;
+}) {
+  const { t } = useTranslation("jobs");
+  const toast = useToast();
+  const { batching, total, done, lastKit, lastBatch, error } = useSyncExternalStore(
+    subscribeKits,
+    getKitsState,
+  );
+  const [threshold, setThreshold] = useState<number>(KIT_DEFAULT_THRESHOLD);
+  const eligible = matches
+    .filter((m) => m.url && m.jd_text && m.overall >= threshold)
+    .sort((a, b) => b.overall - a.overall)
+    .slice(0, KIT_MAX_BATCH);
+
+  async function run() {
+    const summary = await startKitBatch(eligible.map(kitJobFromMatch));
+    if (!summary) return; // superseded, or the store error renders below
+    if (summary.done === 0 && summary.skipped > 0) {
+      toast("info", t("batch.allSkipped"));
+      return;
+    }
+    const parts = [t("batch.doneToast", { count: summary.done - summary.failed })];
+    if (summary.flagged > 0) parts.push(t("batch.doneFlagged", { count: summary.flagged }));
+    if (summary.failed > 0) parts.push(t("batch.doneFailed", { count: summary.failed }));
+    toast(summary.failed > 0 ? "info" : "success", parts.join(" · "));
+  }
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2">
+            <Wand2 size={16} className="text-accent-soft" /> {t("batch.title")}
+          </CardTitle>
+          <p className="mt-1 text-xs text-ink-muted">{t("batch.body")}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
+            {t("batch.threshold")}
+            <select
+              value={threshold}
+              disabled={batching}
+              onChange={(e) => setThreshold(Number(e.target.value))}
+              className={inputCls}
+            >
+              {KIT_THRESHOLDS.map((v) => (
+                <option key={v} value={v}>
+                  {v}%
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button
+            variant="secondary"
+            loading={batching}
+            disabled={eligible.length === 0}
+            icon={<Wand2 size={15} />}
+            onClick={run}
+          >
+            {t("batch.cta", { count: eligible.length })}
+          </Button>
+        </div>
+      </div>
+      {!batching && eligible.length === 0 && (
+        <p className="mt-2 text-xs text-ink-muted">{t("batch.none", { threshold })}</p>
+      )}
+      {!batching && eligible.length >= KIT_MAX_BATCH && (
+        <p className="mt-2 text-xs text-ink-faint">{t("batch.capNote", { max: KIT_MAX_BATCH })}</p>
+      )}
+      {batching && (
+        <div className="mt-3">
+          <p aria-live="polite" className="truncate text-xs text-ink-muted">
+            {t("batch.progress", { done, total })}
+            {lastKit &&
+              ` · ${t("batch.lastDone", {
+                job: [lastKit.job_title, lastKit.company].filter(Boolean).join(" · "),
+              })}`}
+          </p>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-line">
+            <div
+              className="h-full rounded-full bg-accent transition-all duration-500"
+              style={{ width: total > 0 ? `${Math.round((done / total) * 100)}%` : "10%" }}
+            />
+          </div>
+        </div>
+      )}
+      {!batching && error && <p className="mt-2 text-sm text-danger">{error}</p>}
+      {!batching && !error && lastBatch && lastBatch.done > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
+          <span>
+            {[
+              t("batch.doneToast", { count: lastBatch.done - lastBatch.failed }),
+              ...(lastBatch.flagged > 0 ? [t("batch.doneFlagged", { count: lastBatch.flagged })] : []),
+              ...(lastBatch.failed > 0 ? [t("batch.doneFailed", { count: lastBatch.failed })] : []),
+            ].join(" · ")}
+          </span>
+          <button onClick={onViewKits} className="font-semibold text-accent-soft hover:underline">
+            {t("batch.viewKits")}
+          </button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const KIT_STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" | "danger"> = {
+  queued: "neutral",
+  running: "partial",
+  done: "mint",
+  failed: "danger",
+};
+
+function KitRow({ kit, onDelete }: { kit: KitOut; onDelete: (id: number) => void }) {
+  const { t } = useTranslation("jobs");
+  return (
+    <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
+      <ProgressRing
+        value={kit.status === "done" ? kit.score_after : kit.search_overall}
+        size={64}
+        stroke={6}
+        label={kit.status === "done" ? t("kits.after") : t("card.fit")}
+      />
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <CompanyAvatar company={kit.company} url={kit.url || undefined} logoUrl={kit.logo_url} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="min-w-0 max-w-full truncate font-semibold text-ink">
+              {kit.job_title || t("card.untitled")}
+            </p>
+            <Badge tone={KIT_STATUS_TONE[kit.status]} className="shrink-0">
+              {t(`kits.status.${kit.status}`)}
+            </Badge>
+            {kit.source && <Badge className="shrink-0">{sourceLabel(kit.source)}</Badge>}
+            {kit.status === "done" &&
+              (kit.flag_count > 0 ? (
+                <Badge tone="danger" className="inline-flex shrink-0 items-center gap-1">
+                  <ShieldAlert size={11} /> {t("kits.guardFlags", { count: kit.flag_count })}
+                </Badge>
+              ) : (
+                <Badge tone="mint" className="inline-flex shrink-0 items-center gap-1">
+                  <ShieldCheck size={11} /> {t("kits.guardClean")}
+                </Badge>
+              ))}
+          </div>
+          <p className="text-sm text-ink-muted">
+            {kit.company || "—"}
+            {kit.location ? ` · ${kit.location}` : ""}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
+            {kit.status === "done" && (
+              <span className="font-semibold text-ink">
+                {t("kits.score", {
+                  before: Math.round(kit.score_before),
+                  after: Math.round(kit.score_after),
+                })}
+              </span>
+            )}
+            <span>{t("kits.searchFit", { pct: Math.round(kit.search_overall) })}</span>
+            {kit.url && (
+              <a
+                href={kit.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-accent-soft hover:underline"
+              >
+                <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(kit.source) || "LinkedIn" })}
+              </a>
+            )}
+          </div>
+          {kit.status === "failed" && kit.error && (
+            <p dir="auto" className="mt-1 text-xs text-danger">
+              {kit.error}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          onClick={() => onDelete(kit.id)}
+          title={t("kits.delete")}
+          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+    </Card>
+  );
+}
+
 /** Email-alert settings: daily saved-search re-run that emails unseen jobs.
  * The schedule itself is a server cron; this card is the toggle + "Run now". */
 function AlertsCard({ getContext }: { getContext: () => SearchContext | null }) {
@@ -577,8 +805,24 @@ export default function JobsPage() {
   const { t } = useTranslation("jobs");
   const { master, masters, loading, setMaster } = useMasterResume();
   const persistMaster = useSaveMasterResume();
-  const [mode, setMode] = useState<"search" | "manual" | "history">("search");
+  const [mode, setMode] = useState<"search" | "manual" | "history" | "kits">("search");
   const toast = useToast();
+
+  // -- Batch auto-tailor kits (PLAN 8.1) --
+  const {
+    batching,
+    kits,
+    kitsLoading,
+    kitsError,
+  } = useSyncExternalStore(subscribeKits, getKitsState);
+  useEffect(() => {
+    if (mode === "kits") loadKits();
+  }, [mode]);
+  const queuedKits = kits?.filter((k) => k.status === "queued").length ?? 0;
+
+  async function deleteKitRow(id: number) {
+    if (!(await removeKit(id))) toast("error", t("kits.deleteError"));
+  }
 
   // -- Résumé upload state (Jobs is the front door: upload lives here too) --
   const [showReplace, setShowReplace] = useState(false);
@@ -912,6 +1156,10 @@ export default function JobsPage() {
               key: "history",
               label: history ? t("tabs.historyCount", { count: history.length }) : t("tabs.history"),
             },
+            {
+              key: "kits",
+              label: kits?.length ? t("tabs.kitsCount", { count: kits.length }) : t("tabs.kits"),
+            },
           ] as const
         ).map((tab) => (
           <button
@@ -1200,6 +1448,9 @@ export default function JobsPage() {
                     </select>
                   </label>
                 </div>
+                {sortedMatches.length > 0 && (
+                  <BatchTailorCard matches={searchResult.matches} onViewKits={() => setMode("kits")} />
+                )}
                 {sortedMatches.map((m, i) => (
                   <MatchCard key={m.url || i} m={m} best={m === bestMatch} appStatus={statusFor(m.url)} />
                 ))}
@@ -1372,6 +1623,75 @@ export default function JobsPage() {
               </div>
               {(sortedHistory ?? []).map((hit) => (
                 <HistoryRow key={hit.id} hit={hit} onDelete={deleteHit} />
+              ))}
+            </motion.div>
+          )}
+        </>
+      )}
+
+      {mode === "kits" && (
+        <>
+          <Card>
+            <CardTitle className="flex items-center gap-2">
+              <Wand2 size={16} className="text-accent-soft" /> {t("kits.title")}
+            </CardTitle>
+            <p className="mt-1 text-sm text-ink-muted">{t("kits.body")}</p>
+            {queuedKits > 0 && !batching && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="mt-3"
+                icon={<Wand2 size={14} />}
+                onClick={() => resumeKitQueue()}
+              >
+                {t("kits.processQueue", { count: queuedKits })}
+              </Button>
+            )}
+            {batching && (
+              <p className="mt-3 flex items-center gap-2 text-sm text-ink-muted">
+                <Loader2 size={15} className="animate-spin text-accent-soft" />
+                {t("kits.processing")}
+              </p>
+            )}
+          </Card>
+
+          {kitsLoading && kits === null && (
+            <div className="space-y-3">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          )}
+
+          {!kitsLoading && kitsError && (
+            <Card className="flex flex-wrap items-center gap-3">
+              <span className="text-sm text-danger">{kitsError}</span>
+              <Button size="sm" variant="secondary" onClick={() => loadKits(true)}>
+                {t("kits.retry")}
+              </Button>
+            </Card>
+          )}
+
+          {!kitsLoading && !kitsError && kits && kits.length === 0 && (
+            <Card>
+              <CardTitle>{t("kits.emptyTitle")}</CardTitle>
+              <p className="mt-1 text-sm text-ink-muted">{t("kits.emptyBody")}</p>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="mt-4"
+                icon={<Search size={14} />}
+                onClick={() => setMode("search")}
+              >
+                {t("kits.emptyCta")}
+              </Button>
+            </Card>
+          )}
+
+          {kits && kits.length > 0 && (
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+              <p className="text-xs text-ink-faint">{t("kits.reviewSoon")}</p>
+              {kits.map((kit) => (
+                <KitRow key={kit.id} kit={kit} onDelete={deleteKitRow} />
               ))}
             </motion.div>
           )}

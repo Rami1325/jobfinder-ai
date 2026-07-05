@@ -25,6 +25,7 @@ from app.core.interview import answer_feedback, generate_questions, model_answer
 from app.core.jd_analyzer import analyze_jd
 from app.core.job_match import fetch_job_text, match_jobs
 from app.core.job_search import derive_search_context, search_jobs
+from app.core import kits as kits_core
 from app.core.lang import resume_language
 from app.core.linkedin import optimize_linkedin
 from app.core.providers.comeet import register_company as register_comeet_company
@@ -40,7 +41,16 @@ from app.db.history import (
     list_search_hits,
     record_search_hits,
 )
-from app.db.models import Application, Feedback, JobAlert, JobSearchHit, SavedResume, UsageLog, User
+from app.db.models import (
+    Application,
+    Feedback,
+    JobAlert,
+    JobSearchHit,
+    SavedResume,
+    TailorKit,
+    UsageLog,
+    User,
+)
 from app.models import (
     AddComeetCompanyRequest,
     AlertCronResult,
@@ -81,6 +91,11 @@ from app.models import (
     JobSearchHitOut,
     JobSearchRequest,
     JobSearchResult,
+    KitBatchRequest,
+    KitBatchResult,
+    KitDetail,
+    KitList,
+    KitProcessResult,
     LinkedInRequest,
     LinkedInResult,
     MasterResumeIn,
@@ -438,6 +453,76 @@ def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertCron
     return AlertCronResult(users=len(results), results=results)
 
 
+# --------------------------------------------------------------------------- #
+# Batch auto-tailor kits (PLAN 8.1): enqueue high-fit search results, then the
+# client loops POST /kits/process-next — one tailor pipeline run per request,
+# so each invocation fits the serverless time budget without queue infra.
+# --------------------------------------------------------------------------- #
+@router.post("/kits/batch", response_model=KitBatchResult)
+def kits_batch(
+    body: KitBatchRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> KitBatchResult:
+    """Queue tailor kits for the given jobs (deduped by URL; failed kits are
+    requeued). What will actually run is charged against the daily tailor cap
+    upfront, before any kit is written — fail-fast beats dying mid-batch."""
+    try:
+        queued_rows, skipped = kits_core.enqueue_kits(
+            db,
+            user,
+            body.jobs,
+            charge=lambda n: check_and_count(
+                db, user, "tailor", get_settings().daily_tailor_cap, count=n
+            ),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return KitBatchResult(
+        queued=[kits_core.kit_out(r) for r in queued_rows], skipped_existing=skipped
+    )
+
+
+@router.post("/kits/process-next", response_model=KitProcessResult)
+def kits_process_next(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> KitProcessResult:
+    """Run the tailor pipeline on the oldest queued kit (already charged to the
+    cap at batch time). Pipeline failures land on the kit as status=failed —
+    the response is always 200 so the client's loop keeps draining the queue."""
+    row, remaining = kits_core.process_next_kit(db, user)
+    return KitProcessResult(kit=kits_core.kit_out(row) if row else None, remaining=remaining)
+
+
+@router.get("/kits", response_model=KitList)
+def kits_list(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> KitList:
+    return KitList(kits=[kits_core.kit_out(r) for r in kits_core.list_kits(db, user.id)])
+
+
+@router.get("/kits/{kit_id}", response_model=KitDetail)
+def kits_get(
+    kit_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> KitDetail:
+    row = db.get(TailorKit, kit_id)
+    if not row or row.user_id != user.id:
+        raise HTTPException(404, "Kit not found.")
+    return kits_core.kit_detail(row)
+
+
+@router.delete("/kits/{kit_id}")
+def kits_delete(
+    kit_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> dict[str, bool]:
+    row = db.get(TailorKit, kit_id)
+    if not row or row.user_id != user.id:
+        raise HTTPException(404, "Kit not found.")
+    db.delete(row)
+    db.commit()
+    return {"deleted": True}
+
+
 @router.get("/jobs/comeet/companies", response_model=ComeetCompanyList)
 def comeet_companies(db: Session = Depends(get_db)) -> ComeetCompanyList:
     """The Comeet company registry the job search queries (seeded on first use)."""
@@ -784,6 +869,7 @@ def delete_my_data(
         alerts=_wipe(JobAlert),
         usage=_wipe(UsageLog),
         feedback=_wipe(Feedback),
+        kits=_wipe(TailorKit),
     )
     db.commit()
     return result

@@ -108,6 +108,47 @@ class JobSearchHit(Base):
     )
 
 
+class TailorKit(Base):
+    """A batch auto-tailor job → one reviewable "application kit" (PLAN 8.1).
+
+    Enqueued from high-fit search results, processed one per request by
+    POST /kits/process-next (client-driven sequential loop — each run fits a
+    serverless invocation), reviewed in the 8.2 kits queue. `result_json` is a
+    full TailorResult; `flag_count` > 0 means the fabrication guard flagged
+    the tailor and the kit must never be auto-approvable.
+    """
+
+    __tablename__ = "tailor_kits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued | running | done | failed
+    job_title: Mapped[str] = mapped_column(String(255), default="")
+    company: Mapped[str] = mapped_column(String(255), default="")
+    location: Mapped[str] = mapped_column(String(255), default="")
+    url: Mapped[str] = mapped_column(String(1000), default="", index=True)
+    source: Mapped[str] = mapped_column(String(32), default="linkedin")
+    logo_url: Mapped[str] = mapped_column(String(1000), default="")
+    posted_at: Mapped[str] = mapped_column(String(32), default="")
+    jd_text: Mapped[str] = mapped_column(Text, default="")
+    search_overall: Mapped[float] = mapped_column(Float, default=0.0)  # fit at enqueue time
+    base_resume_json: Mapped[str] = mapped_column(Text, default="")  # master the tailor ran on
+    base_language: Mapped[str] = mapped_column(String(8), default="")  # which master slot was used
+    jd_json: Mapped[str] = mapped_column(Text, default="")  # analyzed JDModel
+    result_json: Mapped[str] = mapped_column(Text, default="")  # TailorResult
+    # Denormalized from result_json so the kit list renders without parsing
+    # every TailorResult; meaningful only when status == done.
+    score_before: Mapped[float] = mapped_column(Float, default=0.0)
+    score_after: Mapped[float] = mapped_column(Float, default=0.0)
+    flag_count: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
 class ComeetCompany(Base):
     """A company whose Comeet careers board the job search queries.
 

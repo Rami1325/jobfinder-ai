@@ -241,6 +241,74 @@ class AlertCronResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Batch auto-tailor kits (PLAN 8.1): high-fit search results → queued tailor
+# runs → reviewable application kits (PLAN 8.2 consumes KitDetail).
+# --------------------------------------------------------------------------- #
+class KitJobIn(BaseModel):
+    """One high-fit job the client selected for batch tailoring — the shape
+    mirrors JobMatch, carried by the client because that's where the fresh
+    search results (incl. full jd_text) live."""
+
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    url: str = ""
+    source: str = "linkedin"
+    logo_url: str = ""
+    posted_at: str = ""
+    jd_text: str = ""
+    overall: float = 0.0  # the search's fit score — why this job qualified
+
+
+class KitBatchRequest(BaseModel):
+    jobs: list[KitJobIn] = Field(default_factory=list)
+
+
+class KitOut(BaseModel):
+    id: int
+    status: str = "queued"  # queued | running | done | failed
+    job_title: str = ""
+    company: str = ""
+    location: str = ""
+    url: str = ""
+    source: str = "linkedin"
+    logo_url: str = ""
+    posted_at: str = ""
+    search_overall: float = 0.0
+    # Tailor outcome (meaningful only when status == "done"):
+    score_before: float = 0.0  # overall before tailoring
+    score_after: float = 0.0
+    flag_count: int = 0  # fabrication flags; > 0 => never auto-approvable
+    base_language: str = ""  # which master résumé slot was tailored ("en"|"he")
+    error: str = ""
+    created_at: str = ""
+    processed_at: str = ""
+
+
+class KitDetail(KitOut):
+    """Full kit for the 8.2 review UI: the analyzed JD, the master résumé the
+    tailor ran on (the diff baseline), and the complete TailorResult."""
+
+    jd: Optional[JDModel] = None
+    base_resume: Optional[ResumeModel] = None
+    result: Optional[TailorResult] = None
+
+
+class KitList(BaseModel):
+    kits: list[KitOut] = Field(default_factory=list)
+
+
+class KitBatchResult(BaseModel):
+    queued: list[KitOut] = Field(default_factory=list)  # created + requeued this call
+    skipped_existing: int = 0  # already queued/running/done for the same URL
+
+
+class KitProcessResult(BaseModel):
+    kit: Optional[KitOut] = None  # None => queue was empty
+    remaining: int = 0  # kits still queued after this one
+
+
+# --------------------------------------------------------------------------- #
 # Friends beta (PLAN 7): users, feedback, delete-my-data
 # --------------------------------------------------------------------------- #
 class UserCreate(BaseModel):
@@ -294,6 +362,7 @@ class DeleteMyDataResult(BaseModel):
     alerts: int = 0
     usage: int = 0
     feedback: int = 0
+    kits: int = 0
 
 
 # --------------------------------------------------------------------------- #
