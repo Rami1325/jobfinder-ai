@@ -17,7 +17,7 @@ from app.core.jd_analyzer import analyze_jd
 
 # Re-exported for the smoke test and any older callers: the LinkedIn card parser
 # and URL builder are pure functions pinned by tests/smoke_test.py.
-from app.core.providers import DEFAULT_SOURCES, PROVIDERS, JobHit
+from app.core.providers import DEFAULT_SOURCES, PROVIDERS, JobHit, NoResultsError
 from app.core.providers.linkedin import (  # noqa: F401 - re-exports
     _build_search_url,
     parse_search_results,
@@ -157,25 +157,37 @@ def search_jobs(
 
     hits_by_source: dict[str, list[JobHit]] = {}
     source_errors: dict[str, str] = {}
+    source_empty: dict[str, str] = {}
     for board_i, name in enumerate(ctx.sources):
         notify({"stage": "boards", "source": name, "index": board_i + 1, "total": len(ctx.sources)})
         try:
             hits_by_source[name] = freshest_first(
                 PROVIDERS[name].search(ctx), ctx.max_age_days
             )
-        except ValueError as e:  # board-level, user-facing message
+        except NoResultsError as e:  # board worked, query just matched nothing there
+            source_empty[name] = str(e)
+        except ValueError as e:  # board-level failure, user-facing message
             source_errors[name] = str(e)
         except Exception:  # noqa: BLE001 - a buggy provider must not sink the rest
             source_errors[name] = f"Searching {name} failed unexpectedly. Try again shortly."
     if not hits_by_source:
-        raise ValueError(
-            "All job boards failed: "
-            + " · ".join(f"{name}: {msg}" for name, msg in source_errors.items())
+        if source_errors:
+            raise ValueError(
+                "All job boards failed: "
+                + " · ".join(
+                    f"{name}: {msg}"
+                    for name, msg in {**source_errors, **source_empty}.items()
+                )
+            )
+        where = f" in '{ctx.location}'" if ctx.location.strip() else ""
+        raise NoResultsError(
+            f"No jobs found on any board for '{ctx.job_title}'{where}. "
+            "Check 'Customize search' and adjust the title, location, or 'Posted within'."
         )
 
     hits = _interleave_and_dedupe(hits_by_source, ctx.limit)
     if not hits:  # every board answered, but only with postings older than the cutoff
-        raise ValueError(
+        raise NoResultsError(
             f"Found jobs, but none posted in the last {ctx.max_age_days} days. "
             "Loosen 'Posted within' under 'Customize search' and try again."
         )
@@ -232,7 +244,11 @@ def search_jobs(
         )
     matches.sort(key=lambda m: m.overall, reverse=True)
     return JobSearchResult(
-        context=ctx, matches=matches, skipped=skipped, source_errors=source_errors
+        context=ctx,
+        matches=matches,
+        skipped=skipped,
+        source_errors=source_errors,
+        source_empty=source_empty,
     )
 
 

@@ -22,6 +22,16 @@ from typing import Protocol, runtime_checkable
 from app.models import SearchContext
 
 
+class NoResultsError(ValueError):
+    """The board answered fine but had zero jobs matching the query.
+
+    Distinct from a plain ValueError (blocked/unreachable/misconfigured) so the
+    fan-out can report "nothing matched on X" separately from "X is down" —
+    lumping them together made every empty query look like an outage in the UI.
+    Still a ValueError, so anything catching board failures keeps working.
+    """
+
+
 @dataclass
 class JobHit:
     """One job listing as returned by a provider's search, before scoring."""
@@ -47,7 +57,8 @@ class JobProvider(Protocol):
 
     def search(self, ctx: SearchContext) -> list[JobHit]:
         """Return hits for the context. Raise ValueError with a user-facing
-        message on board-level failures (blocked, unreachable, zero results)."""
+        message on board-level failures (blocked, unreachable, misconfigured);
+        raise NoResultsError when the board worked but nothing matched."""
         ...
 
     def fetch_description(self, hit: JobHit) -> str:

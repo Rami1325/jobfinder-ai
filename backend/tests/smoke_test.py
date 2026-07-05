@@ -1661,5 +1661,78 @@ try:
 finally:
     _routes_mod.search_jobs = _orig_search_jobs
 
+# 21. Fan-out failure classification: a board that answered fine with zero
+# matches (NoResultsError) must land in source_empty, NOT source_errors — the
+# "Some sources were unavailable" banner was showing empty queries as outages
+# when every board was actually up.
+from app.core.job_search import search_jobs as _fan_search  # noqa: E402
+from app.core.providers import PROVIDERS as _PROV  # noqa: E402
+from app.core.providers.base import JobHit as _FanHit, NoResultsError as _NoRes  # noqa: E402
+
+
+class _FakeBoard:
+    def __init__(self, name: str, mode: str):
+        self.name = name
+        self._mode = mode
+
+    def search(self, ctx):  # noqa: ANN001
+        if self._mode == "ok":
+            return [
+                _FanHit(
+                    source=self.name, title="Py Dev", company="OkCo",
+                    description="Python and SQL work", url="https://fake.ok/1",
+                )
+            ]
+        if self._mode == "empty":
+            raise _NoRes(f"No {self.name} jobs found for '{ctx.job_title}'.")
+        if self._mode == "down":
+            raise ValueError(f"Couldn't reach {self.name}.")
+        raise RuntimeError("boom")
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+_fakes = {
+    name: _FakeBoard(name, mode)
+    for name, mode in (
+        ("fake_ok", "ok"), ("fake_empty", "empty"), ("fake_down", "down"), ("fake_buggy", "buggy"),
+    )
+}
+_PROV.update(_fakes)
+try:
+    _fan = _fan_search(resume, _AlertCtx(job_title="Python", sources=list(_fakes), max_age_days=0))
+    check(
+        "fan-out: empty boards land in source_empty, failed boards in source_errors",
+        [m.url for m in _fan.matches] == ["https://fake.ok/1"]
+        and list(_fan.source_empty) == ["fake_empty"]
+        and "No fake_empty jobs" in _fan.source_empty["fake_empty"]
+        and set(_fan.source_errors) == {"fake_down", "fake_buggy"},
+        f"empty={_fan.source_empty} errors={_fan.source_errors}",
+    )
+    try:
+        _fan_search(resume, _AlertCtx(job_title="Python", sources=["fake_empty"], max_age_days=0))
+        check("all-empty search raises NoResultsError", False, "did not raise")
+    except _NoRes as e:
+        check(
+            "all-empty search raises NoResultsError, not 'all boards failed'",
+            "No jobs found on any board" in str(e),
+            str(e),
+        )
+    try:
+        _fan_search(resume, _AlertCtx(job_title="Python", sources=["fake_empty", "fake_down"], max_age_days=0))
+        check("no hits + a real failure still raises 'all boards failed'", False, "did not raise")
+    except _NoRes as e:
+        check("no hits + a real failure still raises 'all boards failed'", False, f"NoResultsError: {e}")
+    except ValueError as e:
+        check(
+            "no hits + a real failure still raises 'all boards failed'",
+            "All job boards failed" in str(e) and "fake_down" in str(e),
+            str(e),
+        )
+finally:
+    for _k in _fakes:
+        _PROV.pop(_k, None)
+
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

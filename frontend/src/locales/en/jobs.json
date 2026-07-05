@@ -50,6 +50,7 @@
     },
     "elapsed": "{{time}} elapsed",
     "sourceErrors": "Some sources were unavailable: {{sources}}. Results below come from the sources that responded.",
+    "sourceEmpty": "Nothing matched this search on {{sources}} — results come from the other boards. Try adjusting the title or location under \"Customize search\".",
     "dismiss": "Dismiss",
     "summary": "Searched <1>{{title}}</1>",
     "summaryLoc": "Searched <1>{{title}}</1> in <3>{{location}}</3>",

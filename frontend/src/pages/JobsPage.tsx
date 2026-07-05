@@ -1095,11 +1095,20 @@ export default function JobsPage() {
                   Object.keys(searchResult.source_errors).length > 0 &&
                   !sourceErrorsDismissed && (
                     <div className="flex items-start justify-between gap-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
-                      <span className="min-w-0">
-                        {t("search.sourceErrors", {
-                          sources: Object.keys(searchResult.source_errors).map(sourceLabel).join(", "),
-                        })}
-                      </span>
+                      <div className="min-w-0">
+                        <p>
+                          {t("search.sourceErrors", {
+                            sources: Object.keys(searchResult.source_errors).map(sourceLabel).join(", "),
+                          })}
+                        </p>
+                        <ul className="mt-1 space-y-0.5 text-xs opacity-90">
+                          {Object.entries(searchResult.source_errors).map(([s, msg]) => (
+                            <li key={s} dir="auto">
+                              {sourceLabel(s)}: {msg}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
                       <button
                         onClick={() => setSourceErrorsDismissed(true)}
                         title={t("search.dismiss")}
@@ -1109,6 +1118,13 @@ export default function JobsPage() {
                       </button>
                     </div>
                   )}
+                {searchResult.source_empty && Object.keys(searchResult.source_empty).length > 0 && (
+                  <p className="text-xs text-ink-muted">
+                    {t("search.sourceEmpty", {
+                      sources: Object.keys(searchResult.source_empty).map(sourceLabel).join(", "),
+                    })}
+                  </p>
+                )}
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   {searched && (
                     <p className="text-sm text-ink-muted">

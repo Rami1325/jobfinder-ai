@@ -34,7 +34,7 @@ from datetime import datetime, timedelta
 
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
-from app.core.providers.base import JobHit
+from app.core.providers.base import JobHit, NoResultsError
 from app.models import SearchContext
 
 _BASE_URL = "https://www.jobmaster.co.il"
@@ -237,7 +237,7 @@ class JobMasterProvider:
                 break
         if not hits:
             where = f" in '{ctx.location}'" if ctx.location.strip() else ""
-            raise ValueError(
+            raise NoResultsError(
                 f"No JobMaster jobs found for '{ctx.job_title}'{where}. "
                 "Check 'Customize search' and adjust the title or location."
             )

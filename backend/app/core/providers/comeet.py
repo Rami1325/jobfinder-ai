@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
-from app.core.providers.base import JobHit
+from app.core.providers.base import JobHit, NoResultsError
 from app.models import SearchContext
 
 _API_URL = "https://www.comeet.co/careers-api/2.0/company/{uid}/positions"
@@ -299,7 +299,7 @@ class ComeetProvider:
             hits = [h for h in hits if _location_matches(h, ctx.location)]
         if not hits:
             where = f" in '{ctx.location}'" if ctx.location.strip() else ""
-            raise ValueError(
+            raise NoResultsError(
                 f"No open positions matching '{ctx.job_title}'{where} at the "
                 f"{len(companies)} Comeet companies in your registry."
             )

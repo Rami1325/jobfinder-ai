@@ -225,7 +225,8 @@ export interface JobSearchResult {
   context: SearchContext;
   matches: JobMatch[];
   skipped: number;
-  source_errors?: Record<string, string>; // provider id → error when a source failed; absent on older backends
+  source_errors?: Record<string, string>; // provider id → error when a source actually failed; absent on older backends
+  source_empty?: Record<string, string>; // provider id → note when a source worked but matched nothing; absent on older backends
 }
 export interface JobSearchHit {
   id: number;

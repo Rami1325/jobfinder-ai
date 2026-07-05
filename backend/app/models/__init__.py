@@ -447,11 +447,13 @@ class JobSearchResult(BaseModel):
     context: SearchContext = Field(default_factory=SearchContext)  # what was actually searched
     matches: list[JobMatch] = Field(default_factory=list)
     skipped: int = 0  # listings found but not fetchable/scorable
-    # Provider name -> user-facing error for boards that failed while others
-    # succeeded (e.g. {"drushim": "Couldn't reach Drushim's job search..."}).
-    # Empty when every selected source worked. If ALL sources fail the search
-    # raises instead, so a 200 always carries at least one match.
+    # Provider name -> user-facing error for boards that FAILED (blocked,
+    # unreachable, misconfigured) while others succeeded. Boards that answered
+    # fine but had zero matching jobs land in `source_empty` instead — the UI
+    # must not present an empty query as an outage. If ALL sources fail the
+    # search raises instead, so a 200 always carries at least one match.
     source_errors: dict[str, str] = Field(default_factory=dict)
+    source_empty: dict[str, str] = Field(default_factory=dict)
 
 
 class JobSearchHitOut(BaseModel):

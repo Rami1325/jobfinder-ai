@@ -23,7 +23,7 @@ from app.core.job_match import (
     _linkedin_job_id,
     _looks_like_login_wall,
 )
-from app.core.providers.base import JobHit
+from app.core.providers.base import JobHit, NoResultsError
 from app.models import SearchContext
 
 _SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
@@ -158,7 +158,7 @@ def _fetch_cards(ctx: SearchContext) -> list[dict[str, str]]:
                 "and try again."
             )
         freshness = f" posted in the last {ctx.max_age_days} days" if ctx.max_age_days else ""
-        raise ValueError(
+        raise NoResultsError(
             f"No LinkedIn jobs found for '{ctx.job_title}' in "
             f"'{ctx.location or 'anywhere'}'{freshness}. "
             "Check 'Customize search' and adjust the title, location, or 'Posted within'."

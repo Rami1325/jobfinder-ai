@@ -36,7 +36,7 @@ import urllib.request
 from app.config import get_settings
 from app.core.job_match import _html_to_text
 from app.core.lang import detect_language
-from app.core.providers.base import JobHit, fetch_description_via_url
+from app.core.providers.base import JobHit, NoResultsError, fetch_description_via_url
 from app.models import SearchContext
 
 _API_URL = "https://il.jooble.org/api/{key}"
@@ -157,7 +157,7 @@ class JoobleProvider:
                 break
         if not hits:
             where = f" in '{ctx.location}'" if ctx.location.strip() else ""
-            raise ValueError(
+            raise NoResultsError(
                 f"No Jooble jobs found for '{ctx.job_title}'{where}. "
                 "Check 'Customize search' and adjust the title or location."
             )

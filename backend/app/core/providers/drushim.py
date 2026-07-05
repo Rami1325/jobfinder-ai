@@ -23,7 +23,7 @@ import urllib.parse
 
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
-from app.core.providers.base import JobHit
+from app.core.providers.base import JobHit, NoResultsError
 from app.models import SearchContext
 
 _BASE_URL = "https://www.drushim.co.il"
@@ -176,7 +176,7 @@ class DrushimProvider:
             page = next_page
         if not hits:
             where = f" in '{ctx.location}'" if ctx.location.strip() else ""
-            raise ValueError(
+            raise NoResultsError(
                 f"No Drushim jobs found for '{ctx.job_title}'{where}. "
                 "Check 'Customize search' and adjust the title or location."
             )
