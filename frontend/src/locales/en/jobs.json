@@ -6,7 +6,11 @@
     "body": "We read your resume, work out what role and location suit you, and search job listings for the best matches — automatically. It's saved as your master resume for tailoring and interview prep too."
   },
   "replaceTitle": "Replace master resume",
-  "replaceBody": "Uploading a new file overwrites your saved master resume everywhere — Tailor, Interview, and Tools use it too.",
+  "replaceBody": "Hebrew and English resumes are saved separately — uploading a file updates the master in its own language and leaves the other untouched. Tailor, Interview, and Tools use them too.",
+  "langTag": {
+    "en": "English",
+    "he": "Hebrew"
+  },
   "tabs": {
     "search": "Job search",
     "manual": "Paste / URL",
@@ -15,7 +19,7 @@
   },
   "search": {
     "cardTitle": "Find jobs that fit you",
-    "cardBody": "We read your resume, work out what role and location to search for, scan LinkedIn and Israeli job boards (Drushim, Comeet, JobMaster, Jooble), and rank every match by fit. Fully automatic — or customize the search below.",
+    "cardBody": "We read your resume, work out what role and location to search for, scan LinkedIn and Israeli job boards (Drushim, Comeet, JobMaster), and rank every match by fit. Fully automatic — or customize the search below.",
     "customize": "Customize search",
     "jobTitle": "Job title",
     "jobTitlePlaceholder": "e.g. Backend Engineer",

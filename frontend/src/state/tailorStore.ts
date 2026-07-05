@@ -2,7 +2,8 @@
 // route changes: TailorPage unmounts when the user navigates away, but the
 // request promise and everything on screen (résumé, JD, results, tracker
 // state) live here, not in component state, and are intact when they return.
-import { analyzeJD, tailor } from "../api/client";
+import { analyzeJD, getMasterResume, tailor } from "../api/client";
+import { resumeLanguage } from "../lib/lang";
 import type { FactsLedger, JDModel, ResumeModel, TailorResult } from "../types";
 
 export type TailorState = {
@@ -24,6 +25,9 @@ export type TailorState = {
   applyClicked: boolean;
   applied: boolean;
   coverLetterText: string;
+  // Set when the JD's language differed from the loaded résumé and a saved
+  // master in the JD's language was swapped in ("he" | "en"); null otherwise.
+  langSwitched: "he" | "en" | null;
   // Target job carried over from the Jobs page ("Tailor to this").
   jobUrl?: string;
   jobTitle?: string;
@@ -46,6 +50,7 @@ let state: TailorState = {
   applyClicked: false,
   applied: false,
   coverLetterText: "",
+  langSwitched: null,
 };
 
 const listeners = new Set<() => void>();
@@ -90,6 +95,7 @@ export function setTargetJob(
     applyClicked: false,
     applied: false,
     coverLetterText: "",
+    langSwitched: null,
   });
 }
 
@@ -107,12 +113,35 @@ export function startTailor(): void {
     rejectedEdits: [],
     saved: false,
     coverLetterText: "",
+    langSwitched: null,
   });
   (async () => {
     const analyzed = await analyzeJD(jdText);
     if (id !== seq) return;
     setTailorState({ jd: analyzed });
-    const r = await tailor(resume, analyzed);
+    // Paired he/en masters: a Hebrew JD is tailored from the Hebrew résumé (and
+    // vice versa) when one is saved — otherwise stick with what's loaded.
+    let useResume = resume;
+    const jdLang = analyzed.language === "he" ? "he" : "en";
+    if (jdLang !== resumeLanguage(resume)) {
+      try {
+        const paired = await getMasterResume(jdLang);
+        if (id !== seq) return;
+        if (paired?.resume) {
+          useResume = paired.resume;
+          setTailorState({
+            resume: paired.resume,
+            ledger: paired.ledger ?? null,
+            masterLabel: paired.label,
+            tailoredFrom: paired.resume,
+            langSwitched: jdLang,
+          });
+        }
+      } catch {
+        /* older backend or no paired master — keep the loaded résumé */
+      }
+    }
+    const r = await tailor(useResume, analyzed);
     if (id === seq) setTailorState({ loading: false, result: r });
   })().catch((e: any) => {
     if (id === seq)

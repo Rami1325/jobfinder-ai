@@ -183,9 +183,18 @@ export async function followUp(payload: {
   return data;
 }
 
-export async function getMasterResume(): Promise<MasterResume | null> {
-  const { data } = await api.get<MasterResume | null>("/profile/resume");
+/** Most recently updated master, or the `lang` one ("en"/"he") when asked. */
+export async function getMasterResume(lang?: "en" | "he"): Promise<MasterResume | null> {
+  const { data } = await api.get<MasterResume | null>("/profile/resume", {
+    params: lang ? { lang } : undefined,
+  });
   return data ?? null;
+}
+
+/** Every saved master (at most one per language), newest first. */
+export async function listMasterResumes(): Promise<MasterResume[]> {
+  const { data } = await api.get<{ resumes: MasterResume[] }>("/profile/resumes");
+  return data.resumes ?? [];
 }
 
 export async function saveMasterResume(payload: {

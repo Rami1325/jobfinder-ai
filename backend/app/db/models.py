@@ -79,16 +79,20 @@ class ComeetCompany(Base):
 
 
 class SavedResume(Base):
-    """The user's persisted master résumé, reused across Tailor / Interview / Job Match.
+    """The user's persisted master résumés, reused across Tailor / Interview / Job Match.
 
-    Single-user today (the most-recently-updated row is treated as the master), but
-    carries a `label` so multiple named résumés — and a future `user_id` — slot in cleanly.
+    One row per language ("en"/"he") so a paired Hebrew/English master can coexist —
+    saving a résumé upserts the row matching its detected language, and tailoring
+    picks the master matching the JD's language. Single-user today (the
+    most-recently-updated row is the default master), but carries a `label` so
+    multiple named résumés — and a future `user_id` — slot in cleanly.
     """
 
     __tablename__ = "saved_resumes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     label: Mapped[str] = mapped_column(String(255), default="My résumé")
+    language: Mapped[str] = mapped_column(String(8), default="en")  # "en" | "he"
     resume_json: Mapped[str] = mapped_column(Text, default="")
     ledger_json: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(

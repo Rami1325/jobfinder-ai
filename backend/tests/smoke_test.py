@@ -211,8 +211,9 @@ from app.core.scorer import score_resume  # noqa: E402
 from app.models import SearchContext  # noqa: E402
 
 check(
-    "provider registry has linkedin + drushim + comeet + jobmaster + jooble",
-    {"linkedin", "drushim", "comeet", "jobmaster", "jooble"} <= set(PROVIDERS)
+    "provider registry has linkedin + drushim + comeet + jobmaster (jooble retired)",
+    {"linkedin", "drushim", "comeet", "jobmaster"} <= set(PROVIDERS)
+    and "jooble" not in PROVIDERS  # Jooble dropped Israel — retired 2026-07-05
     and set(DEFAULT_SOURCES) == set(PROVIDERS),
     str(sorted(PROVIDERS)),
 )
@@ -529,9 +530,11 @@ check(
     and _jm_location_matches(JobHit(location=""), "חיפה"),  # no data => kept
 )
 
-# 14e3. Jooble provider: parser pinned against the official docs' example
-# response (live fixture pending an API key — see PLAN 2.5); missing-key path
-# must raise a user-facing ValueError so the fan-out isolates it (pure, offline)
+# 14e3. Jooble provider: RETIRED from the fan-out 2026-07-05 — Jooble
+# discontinued its Israeli index (il.jooble.org dead, global API is US-only).
+# The module stays parser-tested so re-registering is a one-line change if
+# Jooble ever brings Israel back; the parser stays pinned against the official
+# docs' example response.
 from app.config import get_settings as _get_settings  # noqa: E402
 from app.core.providers.jooble import JoobleProvider, parse_jooble_results  # noqa: E402
 
@@ -576,7 +579,7 @@ _jb_settings = _get_settings()
 _jb_saved_key = _jb_settings.jooble_api_key
 _jb_settings.jooble_api_key = ""
 try:
-    PROVIDERS["jooble"].search(SearchContext(job_title="Engineer"))
+    JoobleProvider().search(SearchContext(job_title="Engineer"))
     check("jooble missing api key raises a clear ValueError", False)
 except ValueError as _e:
     check(
@@ -586,7 +589,7 @@ except ValueError as _e:
     )
 finally:
     _jb_settings.jooble_api_key = _jb_saved_key
-check("jooble provider registered in the fan-out", isinstance(PROVIDERS["jooble"], JoobleProvider))
+check("jooble retired from the fan-out (israel index discontinued)", "jooble" not in PROVIDERS)
 
 # 14f. Israeli résumé conventions (3.4) + Hebrew/RTL rendering (3.3)
 import io as _io  # noqa: E402
@@ -703,12 +706,24 @@ from app.db.models import Application  # noqa: E402
 
 # Simulate a pre-existing DB whose applications table predates job_url/interviewed,
 # so init_db()'s ADD-COLUMN shim has real work to do (create_all won't touch it).
+# saved_resumes likewise predates `language` — and holds a HEBREW résumé the shim
+# will mis-stamp "en", so the lazy healing in routes has real work to do too.
 with engine.connect() as _conn:
     _conn.exec_driver_sql(
         "CREATE TABLE applications ("
         "id INTEGER PRIMARY KEY, job_title VARCHAR(255), company VARCHAR(255), "
         "jd_text TEXT, tailored_resume_json TEXT, cover_letter TEXT, "
         "overall_score FLOAT, status VARCHAR(50), notes TEXT, created_at DATETIME)"
+    )
+    _conn.exec_driver_sql(
+        "CREATE TABLE saved_resumes ("
+        "id INTEGER PRIMARY KEY, label VARCHAR(255), resume_json TEXT, "
+        "ledger_json TEXT, updated_at DATETIME)"
+    )
+    _conn.exec_driver_sql(
+        "INSERT INTO saved_resumes (label, resume_json, ledger_json, updated_at) "
+        "VALUES (?, ?, '', '2026-01-01 00:00:00')",
+        ("Legacy hebrew master", _he_resume.model_dump_json()),
     )
     _conn.commit()
 
@@ -718,11 +733,13 @@ check("init_db runs twice without error", True)
 
 with engine.connect() as _conn:
     _cols = {r[1] for r in _conn.exec_driver_sql("PRAGMA table_info(applications)").fetchall()}
+    _sr_cols = {r[1] for r in _conn.exec_driver_sql("PRAGMA table_info(saved_resumes)").fetchall()}
 check(
     "migration shim added job_url + interviewed + excitement",
     {"job_url", "interviewed", "excitement"} <= _cols,
     str(sorted(_cols)),
 )
+check("migration shim added language to saved_resumes", "language" in _sr_cols, str(sorted(_sr_cols)))
 
 _db = SessionLocal()
 record_search_hits(_db, [
@@ -798,6 +815,54 @@ check(
     and _statuses.get("https://never/applied") == "",
     str(_statuses),
 )
+
+# 15b. Paired he/en master résumés: one row per detected language, upsert not
+# duplicate, legacy rows healed to their real language on first read (PLAN 3.4)
+from app.api.routes import get_master_resume, list_master_resumes, save_master_resume  # noqa: E402
+from app.models import MasterResumeIn  # noqa: E402
+
+# The legacy row created above (pre-`language` table, Hebrew content) was
+# stamped "en" by the shim — the first read must heal it to "he".
+_legacy = get_master_resume(lang="he", db=_db)
+check(
+    "legacy master healed to its real language on read",
+    _legacy is not None and _legacy.language == "he" and _legacy.label == "Legacy hebrew master",
+)
+
+_saved_en = save_master_resume(MasterResumeIn(resume=resume, label="EN master"), db=_db)
+check("saving an english master lands in the en slot", _saved_en.language == "en")
+_saved_he = save_master_resume(MasterResumeIn(resume=_he_resume, label="HE master"), db=_db)
+_pair = list_master_resumes(db=_db).resumes
+check(
+    "hebrew master upserts the healed he slot — paired, not duplicated",
+    _saved_he.language == "he" and len(_pair) == 2 and {m.language for m in _pair} == {"en", "he"},
+    str([(m.language, m.label) for m in _pair]),
+)
+save_master_resume(MasterResumeIn(resume=resume, label="EN master v2"), db=_db)
+_pair = list_master_resumes(db=_db).resumes
+check(
+    "re-saving english updates in place (still one row per language)",
+    len(_pair) == 2 and any(m.label == "EN master v2" for m in _pair),
+    str([(m.language, m.label) for m in _pair]),
+)
+_he_master = get_master_resume(lang="he", db=_db)
+_en_master = get_master_resume(lang="en", db=_db)
+check(
+    "get by lang returns the matching master",
+    _he_master is not None and _he_master.label == "HE master"
+    and _en_master is not None and _en_master.label == "EN master v2",
+)
+check(
+    "hebrew master round-trips its resume intact",
+    _he_master is not None and _he_master.resume.contact.name == _he_resume.contact.name,
+)
+_default_master = get_master_resume(db=_db)
+check(
+    "default master (no lang) is the most recently updated",
+    _default_master is not None and _default_master.label == "EN master v2",
+    _default_master.label if _default_master else "None",
+)
+check("get by lang misses cleanly", get_master_resume(lang="fr", db=_db) is None)
 
 # 16. Comeet company registry: auto-seed, token persistence, careers-URL upsert
 from app.core.providers.comeet_seed import SEED_COMPANIES  # noqa: E402

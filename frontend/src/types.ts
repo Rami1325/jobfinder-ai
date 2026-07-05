@@ -67,6 +67,7 @@ export interface JDModel {
   keywords: string[];
   responsibilities: string[];
   qualifications: string[];
+  language?: string; // "en" | "he" — detected server-side; absent on older backends
 }
 
 export interface FactsLedger {
@@ -124,6 +125,7 @@ export interface MasterResume {
   resume: ResumeModel;
   ledger: FactsLedger | null;
   label: string;
+  language?: string; // "en" | "he" — one saved master per language; absent on older backends
   updated_at: string;
 }
 

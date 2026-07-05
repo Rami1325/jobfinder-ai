@@ -56,6 +56,7 @@ export default function TailorPage() {
     applyClicked,
     applied,
     coverLetterText,
+    langSwitched,
     jobUrl,
     jobTitle,
     company,
@@ -95,7 +96,7 @@ export default function TailorPage() {
   }, [original, result, rejectedSet]);
 
   async function onParsed(r: ResumeModel, l: FactsLedger) {
-    setTailorState({ resume: r, ledger: l, result: null, tailoredFrom: null, rejectedEdits: [], saved: false });
+    setTailorState({ resume: r, ledger: l, result: null, tailoredFrom: null, rejectedEdits: [], saved: false, langSwitched: null });
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
     if (m) setTailorState({ masterLabel: m.label });
   }
@@ -280,6 +281,14 @@ export default function TailorPage() {
             transition={{ duration: 0.4 }}
             className="space-y-6"
           >
+            {langSwitched && (
+              <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-ink">
+                <BadgeCheck size={15} className="shrink-0 text-accent-soft" />
+                <span className="min-w-0">
+                  {t(`langSwitch.${langSwitched}`, { label: masterLabel || t("langSwitch.fallbackLabel") })}
+                </span>
+              </div>
+            )}
             <ScoreCard before={result.score_before} after={result.score_after} flags={result.fabrication_flags} />
             <MatchReport gaps={result.score_after.gaps} jdText={jdText} resume={effectiveResume} />
             <ChangeLog

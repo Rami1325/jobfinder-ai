@@ -2,11 +2,17 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { saveMasterResume } from "../api/client";
 import { useToast } from "../components/ui";
+import { resumeLanguage } from "../lib/lang";
 import type { FactsLedger, MasterResume, ResumeModel } from "../types";
 
-/** Human-readable label for a saved master résumé, derived from the contact name. */
+/** Human-readable label for a saved master résumé, derived from the contact
+ * name, in the résumé's own language (labels are stored, not translated). */
 export function masterResumeLabel(resume: ResumeModel): string {
-  return resume.contact.name ? `${resume.contact.name}'s résumé` : "My résumé";
+  const name = resume.contact.name;
+  if (resumeLanguage(resume) === "he") {
+    return name ? `קורות החיים של ${name}` : "קורות החיים שלי";
+  }
+  return name ? `${name}'s résumé` : "My résumé";
 }
 
 /**

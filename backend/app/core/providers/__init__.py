@@ -10,9 +10,12 @@ from app.core.providers.base import JobHit, JobProvider, fetch_description_via_u
 from app.core.providers.comeet import ComeetProvider
 from app.core.providers.drushim import DrushimProvider
 from app.core.providers.jobmaster import JobMasterProvider
-from app.core.providers.jooble import JoobleProvider
 from app.core.providers.linkedin import LinkedInProvider
 
+# Jooble is deliberately NOT registered: Jooble discontinued its Israeli index
+# (il.jooble.org dead at the network level, global API is US-only, verified
+# live 2026-07-05). The provider lives on in providers/jooble.py, parser tests
+# and all — re-add it here if Jooble ever brings Israel back.
 PROVIDERS: dict[str, JobProvider] = {
     provider.name: provider
     for provider in (
@@ -20,7 +23,6 @@ PROVIDERS: dict[str, JobProvider] = {
         DrushimProvider(),
         ComeetProvider(),
         JobMasterProvider(),
-        JoobleProvider(),
     )
 }
 

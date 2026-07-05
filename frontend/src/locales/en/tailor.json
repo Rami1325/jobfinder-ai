@@ -37,6 +37,11 @@
     "pasteJd": "Paste a job description.",
     "keepsRunning": "Keeps running if you switch tabs — come back anytime."
   },
+  "langSwitch": {
+    "he": "This job is in Hebrew, so we tailored from your saved Hebrew résumé ({{label}}).",
+    "en": "This job is in English, so we tailored from your saved English résumé ({{label}}).",
+    "fallbackLabel": "master résumé"
+  },
   "toasts": {
     "alreadyInTracker": "Already in your tracker",
     "savedToTracker": "Saved to tracker",

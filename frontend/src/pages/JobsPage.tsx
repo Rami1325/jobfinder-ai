@@ -32,6 +32,7 @@ import {
   subscribeJobSearch,
 } from "../state/jobSearchStore";
 import { useMasterResume } from "../hooks/useMasterResume";
+import { resumeLanguage } from "../lib/lang";
 import { onboardingRole } from "../lib/onboarding";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, useToast } from "../components/ui";
@@ -52,7 +53,8 @@ const WORK_MODES = ["any", "remote", "onsite", "hybrid"] as const;
 // Selectable job boards (PROVIDERS registry ids). Empty/absent = all boards.
 // Keep in sync with the backend registry: a board missing here disappears
 // from any customized search the moment the user unchecks one box.
-const SOURCE_IDS = ["linkedin", "drushim", "comeet", "jobmaster", "jooble"] as const;
+// (Jooble retired 2026-07-05 — they discontinued their Israeli index.)
+const SOURCE_IDS = ["linkedin", "drushim", "comeet", "jobmaster"] as const;
 
 // One-click Israeli locations (PLAN 2.3). English values work across all
 // boards: LinkedIn expects English; Drushim matches CityEnglish; Comeet
@@ -65,6 +67,7 @@ const LOCATION_PRESETS = [
 ] as const;
 
 // Provider id → display name for source badges ("linkedin" → "LinkedIn").
+// "jooble" stays for history rows saved before the board was retired.
 const SOURCE_LABELS: Record<string, string> = {
   linkedin: "LinkedIn",
   drushim: "Drushim",
@@ -374,7 +377,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
 
 export default function JobsPage() {
   const { t } = useTranslation("jobs");
-  const { master, loading, setMaster } = useMasterResume();
+  const { master, masters, loading, setMaster } = useMasterResume();
   const persistMaster = useSaveMasterResume();
   const [mode, setMode] = useState<"search" | "manual" | "history">("search");
   const toast = useToast();
@@ -526,7 +529,13 @@ export default function JobsPage() {
     const firstUpload = !master?.resume;
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
     setMaster(
-      m ?? { resume: r, ledger: l, label: masterResumeLabel(r), updated_at: new Date().toISOString() },
+      m ?? {
+        resume: r,
+        ledger: l,
+        label: masterResumeLabel(r),
+        language: resumeLanguage(r),
+        updated_at: new Date().toISOString(),
+      },
     );
     setShowReplace(false);
     setCtx(null); // search context derives from the résumé — drop stale prefill
@@ -636,10 +645,18 @@ export default function JobsPage() {
           {t("sub")}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-mint/40 bg-mint/10 px-3 py-1 text-xs font-medium text-mint">
-            <BadgeCheck size={13} className="shrink-0" />
-            <span className="truncate">{master.label || t("common:masterResume.chipFallback")}</span>
-          </span>
+          {masters.map((m) => (
+            <span
+              key={m.language ?? "en"}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-mint/40 bg-mint/10 px-3 py-1 text-xs font-medium text-mint"
+            >
+              <BadgeCheck size={13} className="shrink-0" />
+              <span className="truncate">{m.label || t("common:masterResume.chipFallback")}</span>
+              {masters.length > 1 && (
+                <span className="shrink-0 text-mint/80">· {t(`langTag.${m.language === "he" ? "he" : "en"}`)}</span>
+              )}
+            </span>
+          ))}
           <button
             onClick={() => setShowReplace((v) => !v)}
             className="text-xs font-semibold text-accent-soft hover:underline"

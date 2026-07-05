@@ -1,6 +1,14 @@
 """Jooble provider (official affiliate REST API — free per-account key,
 https://jooble.org/api/about).
 
+**RETIRED from the fan-out 2026-07-05** (not registered in
+`app/core/providers/__init__.py`): Jooble discontinued its Israeli index —
+`il.jooble.org` is dead at the network level (both ports time out), the
+global `jooble.org` API turned out to be a US-only index (every Israeli
+location returns 0 jobs), and Israel is gone from their own contact form's
+country list. A working API key (500-request limit) sits in `.env` as
+`JOOBLE_API_KEY`; re-register the provider if Jooble ever brings Israel back.
+
 `POST https://il.jooble.org/api/{key}` with `{"keywords", "location", "page"}`
 returns `{"totalCount", "jobs": [{title, location, snippet, salary, source,
 type, link, company, updated, id}]}` (shape per the official docs). The API
@@ -16,8 +24,7 @@ falling back to the snippet when the underlying page won't give up its text.
 Politeness: it's an official API, but we still cap at two pages per search.
 
 `parse_jooble_results` is a pure function pinned by the offline smoke test
-against the official docs' example response (tests/fixtures/jooble_search.json
-— live fixture pending an API key; see PLAN 2.5).
+against the official docs' example response (tests/fixtures/jooble_search.json).
 """
 from __future__ import annotations
 

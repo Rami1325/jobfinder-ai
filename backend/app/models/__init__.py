@@ -193,7 +193,14 @@ class MasterResumeOut(BaseModel):
     resume: ResumeModel
     ledger: Optional[FactsLedger] = None
     label: str = "My résumé"
+    language: str = "en"  # detected server-side from the résumé text ("en" | "he")
     updated_at: str = ""
+
+
+class MasterResumeList(BaseModel):
+    """All saved masters (at most one per language), most recently updated first."""
+
+    resumes: list[MasterResumeOut] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

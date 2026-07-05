@@ -16,6 +16,7 @@ from app.core.interview import answer_feedback, generate_questions, model_answer
 from app.core.jd_analyzer import analyze_jd
 from app.core.job_match import fetch_job_text, match_jobs
 from app.core.job_search import derive_search_context, search_jobs
+from app.core.lang import resume_language
 from app.core.linkedin import optimize_linkedin
 from app.core.providers.comeet import register_company as register_comeet_company
 from app.core.tailor import tailor_resume
@@ -63,6 +64,7 @@ from app.models import (
     LinkedInRequest,
     LinkedInResult,
     MasterResumeIn,
+    MasterResumeList,
     MasterResumeOut,
     RenderRequest,
     ResumeModel,
@@ -327,18 +329,12 @@ def tools_follow_up(body: FollowUpRequest) -> FollowUpResult:
 
 
 # --------------------------------------------------------------------------- #
-# Master résumé (persisted, reused across Tailor / Interview / Job Match)
+# Master résumés (persisted, reused across Tailor / Interview / Job Match).
+# Paired he/en: one row per language, keyed by the résumé's detected language —
+# never client-supplied, so the pairing can't drift from the actual content.
 # --------------------------------------------------------------------------- #
-def _master_row(db: Session) -> SavedResume | None:
-    return db.execute(
-        select(SavedResume).order_by(SavedResume.updated_at.desc())
-    ).scalars().first()
-
-
-@router.get("/profile/resume", response_model=MasterResumeOut | None)
-def get_master_resume(db: Session = Depends(get_db)) -> MasterResumeOut | None:
-    row = _master_row(db)
-    if not row or not row.resume_json:
+def _row_to_master(row: SavedResume) -> MasterResumeOut | None:
+    if not row.resume_json:
         return None
     try:
         resume = ResumeModel.model_validate_json(row.resume_json)
@@ -354,15 +350,61 @@ def get_master_resume(db: Session = Depends(get_db)) -> MasterResumeOut | None:
         resume=resume,
         ledger=ledger,
         label=row.label,
+        language=row.language or "en",
         updated_at=row.updated_at.isoformat() if row.updated_at else "",
+    )
+
+
+def _master_rows(db: Session) -> list[SavedResume]:
+    """All saved-résumé rows, newest first, with legacy `language` values healed.
+
+    The ADD-COLUMN shim stamps pre-pairing rows "en"; a Hebrew master saved
+    before the column existed would shadow the real English slot, so recompute
+    the language from the stored résumé whenever they disagree.
+    """
+    rows = db.execute(
+        select(SavedResume).order_by(SavedResume.updated_at.desc())
+    ).scalars().all()
+    healed = False
+    for row in rows:
+        try:
+            actual = resume_language(ResumeModel.model_validate_json(row.resume_json))
+        except Exception:  # noqa: BLE001 - corrupt row; leave its language alone
+            continue
+        if (row.language or "en") != actual:
+            row.language = actual
+            healed = True
+    if healed:
+        db.commit()
+    return rows
+
+
+@router.get("/profile/resume", response_model=MasterResumeOut | None)
+def get_master_resume(lang: str | None = None, db: Session = Depends(get_db)) -> MasterResumeOut | None:
+    """The master résumé — most recently updated, or the `lang` one when asked."""
+    for row in _master_rows(db):
+        if lang and (row.language or "en") != lang:
+            continue
+        master = _row_to_master(row)
+        if master:
+            return master
+    return None
+
+
+@router.get("/profile/resumes", response_model=MasterResumeList)
+def list_master_resumes(db: Session = Depends(get_db)) -> MasterResumeList:
+    """Every saved master (at most one per language), newest first."""
+    return MasterResumeList(
+        resumes=[m for row in _master_rows(db) if (m := _row_to_master(row))]
     )
 
 
 @router.put("/profile/resume", response_model=MasterResumeOut)
 def save_master_resume(body: MasterResumeIn, db: Session = Depends(get_db)) -> MasterResumeOut:
-    row = _master_row(db)
+    language = resume_language(body.resume)
+    row = next((r for r in _master_rows(db) if (r.language or "en") == language), None)
     if row is None:
-        row = SavedResume()
+        row = SavedResume(language=language)
         db.add(row)
     row.label = body.label
     row.resume_json = body.resume.model_dump_json()
@@ -373,6 +415,7 @@ def save_master_resume(body: MasterResumeIn, db: Session = Depends(get_db)) -> M
         resume=body.resume,
         ledger=body.ledger,
         label=row.label,
+        language=row.language,
         updated_at=row.updated_at.isoformat() if row.updated_at else "",
     )
 
