@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { MessageSquarePlus } from "lucide-react";
+import { MessageSquarePlus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { sendFeedback } from "../api/client";
+import { deleteMyData, sendFeedback } from "../api/client";
 import { Button, Modal, useToast } from "./ui";
 
 /** Floating friends-beta feedback pill, mounted once in AppLayout. Sits at the
@@ -12,6 +12,24 @@ export default function FeedbackButton() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  // Privacy wipe (PLAN 7.5): two-step confirm so a stray click can't erase data.
+  const [confirmWipe, setConfirmWipe] = useState(false);
+  const [wiping, setWiping] = useState(false);
+
+  async function wipe() {
+    if (wiping) return;
+    setWiping(true);
+    try {
+      await deleteMyData();
+      toast("success", t("privacy.wiped"));
+      // Every client store (master résumé, kits, search results) is now stale —
+      // a clean reload is the honest reset.
+      setTimeout(() => window.location.assign("/jobs"), 800);
+    } catch {
+      toast("error", t("privacy.wipeError"));
+      setWiping(false);
+    }
+  }
 
   async function submit() {
     const trimmed = text.trim();
@@ -49,6 +67,31 @@ export default function FeedbackButton() {
           <Button onClick={submit} loading={sending} disabled={!text.trim()}>
             {t("feedback.send")}
           </Button>
+        </div>
+        <div className="mt-6 border-t border-line pt-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
+            {t("privacy.title")}
+          </p>
+          {!confirmWipe ? (
+            <button
+              onClick={() => setConfirmWipe(true)}
+              className="mt-2 inline-flex items-center gap-1.5 text-xs text-ink-muted transition-colors hover:text-danger"
+            >
+              <Trash2 size={13} /> {t("privacy.wipeCta")}
+            </button>
+          ) : (
+            <div className="mt-2 space-y-2">
+              <p className="text-xs text-danger">{t("privacy.wipeConfirmBody")}</p>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="danger" onClick={wipe} loading={wiping}>
+                  {t("privacy.wipeConfirm")}
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => setConfirmWipe(false)} disabled={wiping}>
+                  {t("privacy.wipeCancel")}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
     </>

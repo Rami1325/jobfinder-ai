@@ -14,6 +14,7 @@ from app.core.providers.base import (
 )
 from app.core.providers.comeet import ComeetProvider
 from app.core.providers.drushim import DrushimProvider
+from app.core.providers.greenhouse import GreenhouseProvider
 from app.core.providers.jobmaster import JobMasterProvider
 from app.core.providers.linkedin import LinkedInProvider
 
@@ -21,6 +22,8 @@ from app.core.providers.linkedin import LinkedInProvider
 # (il.jooble.org dead at the network level, global API is US-only, verified
 # live 2026-07-05). The provider lives on in providers/jooble.py, parser tests
 # and all — re-add it here if Jooble ever brings Israel back.
+# Lever has no provider at all: 60+ Israeli-company slugs probed against a
+# verified-working api.lever.co (2026-07-06) found ZERO Israeli tenants.
 PROVIDERS: dict[str, JobProvider] = {
     provider.name: provider
     for provider in (
@@ -28,6 +31,7 @@ PROVIDERS: dict[str, JobProvider] = {
         DrushimProvider(),
         ComeetProvider(),
         JobMasterProvider(),
+        GreenhouseProvider(),
     )
 }
 

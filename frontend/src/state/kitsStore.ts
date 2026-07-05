@@ -2,7 +2,7 @@
 // survives route changes: the client drives the queue — POST /kits/batch, then
 // POST /kits/process-next in a loop, one tailor pipeline run per request (the
 // serverless-safe pattern) — and that loop must not die when JobsPage unmounts.
-import { createKitBatch, deleteKit, listKits, processNextKit } from "../api/client";
+import { createKitBatch, deleteKit, listKits, processNextKit, submitKit } from "../api/client";
 import { apiErrorMessage } from "../lib/apiError";
 import type { KitJobIn, KitOut } from "../types";
 
@@ -137,4 +137,12 @@ export async function removeKit(id: number): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** True auto-submit (PLAN 8.4) — really sends the application. Throws on
+ * refusal/failure so the caller can toast the backend's guardrail message. */
+export async function sendKitApplication(id: number): Promise<KitOut> {
+  const updated = await submitKit(id);
+  set({ kits: state.kits?.map((k) => (k.id === id ? updated : k)) ?? null });
+  return updated;
 }

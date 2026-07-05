@@ -42,6 +42,7 @@
   },
   "reviewHint": { "message": "This job already has a tailored kit waiting for your review." },
   "linkReviewKit": { "message": "Review kit" },
+  "dupHint": { "message": "This job is already in your tracker — saving again creates a duplicate." },
 
   "successSaved": { "message": "Saved! The job was added to your application tracker." },
   "linkOpenTracker": { "message": "Open tracker" },

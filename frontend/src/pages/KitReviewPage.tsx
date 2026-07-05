@@ -34,6 +34,7 @@ const STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" | "da
   failed: "danger",
   approved: "mint",
   rejected: "neutral",
+  submitted: "mint",
 };
 
 /** Review one application kit (PLAN 8.2): the per-bullet accept/reject diff,
@@ -286,6 +287,19 @@ export default function KitReviewPage() {
       {kit.status === "approved" && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-mint/40 bg-mint/10 px-3 py-2 text-sm text-mint">
           <span>{t("kitReview.approvedBanner")}</span>
+          <Link to="/tracker" className="font-semibold underline">
+            {t("kitReview.viewInTracker")}
+          </Link>
+        </div>
+      )}
+      {kit.status === "submitted" && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-mint/40 bg-mint/10 px-3 py-2 text-sm text-mint">
+          <span>{t("kitReview.submittedBanner")}</span>
+          {kit.submit_note && (
+            <a href={kit.submit_note} target="_blank" rel="noreferrer" className="font-semibold underline">
+              {t("kits.questionnaireLink")}
+            </a>
+          )}
           <Link to="/tracker" className="font-semibold underline">
             {t("kitReview.viewInTracker")}
           </Link>

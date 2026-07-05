@@ -475,6 +475,30 @@ function urlKeyLoose(u) {
   }
 }
 
+// Duplicate-clip detection (PLAN 9.4): warn — without blocking — when the
+// current job's URL is already a tracker application.
+async function checkDuplicate(settings, currentUrl) {
+  if (!settings.apiUrl || !currentUrl) return;
+  var apps = [];
+  try {
+    var res = await fetch(settings.apiUrl + "/applications", { headers: apiHeaders(settings) });
+    if (!res.ok) return; // unconfigured / old backend — hint stays hidden
+    apps = (await res.json()) || [];
+  } catch (e) {
+    return;
+  }
+  var exact = urlKey(currentUrl);
+  var loose = urlKeyLoose(currentUrl);
+  var dup = apps.find(function (a) {
+    var u = a && a.job_url;
+    return u && (urlKey(u) === exact || (loose && urlKeyLoose(u) === loose));
+  });
+  if (!dup) return;
+  if (settings.appUrl) $("dupLink").href = settings.appUrl + "/tracker";
+  else $("dupLink").hidden = true;
+  $("dupHint").hidden = false;
+}
+
 function kitLabel(kit) {
   var label = [kit.job_title, kit.company].filter(Boolean).join(" — ") || kit.url;
   return label.length > 64 ? label.slice(0, 63) + "…" : label;
@@ -665,10 +689,15 @@ async function init() {
   activeTab = tab || null;
   var extracted = null;
 
-  // Assisted apply: load approved kits in the background while extracting.
+  // Assisted apply + duplicate detection: both load in the background while
+  // the extractor runs; neither blocks clipping.
   getSettings().then(function (settings) {
-    return loadKits(settings, (tab && tab.url) || "");
-  }).catch(function () { /* section stays hidden */ });
+    var url = (tab && tab.url) || "";
+    return Promise.all([
+      loadKits(settings, url),
+      checkDuplicate(settings, url),
+    ]);
+  }).catch(function () { /* hints stay hidden */ });
 
   if (tab && tab.id != null && /^https?:/i.test(tab.url || "")) {
     try {

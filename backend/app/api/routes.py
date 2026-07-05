@@ -16,6 +16,7 @@ from app.api.deps import admin_user, current_user
 from app.config import get_settings
 
 from app.core import alerts as alerts_core
+from app.core import auto_submit
 from app.core.ats_scan import scan_resume
 from app.core.cover_letter import generate_cover_letter
 from app.core.mailer import smtp_configured
@@ -29,10 +30,13 @@ from app.core import kits as kits_core
 from app.core.lang import resume_language
 from app.core.linkedin import optimize_linkedin
 from app.core.providers.comeet import register_company as register_comeet_company
+from app.core.providers.greenhouse import register_company as register_greenhouse_company
+from app.core.providers.greenhouse_seed import board_url as greenhouse_board_url
 from app.core.tailor import tailor_resume
 from app.core.usage import check_and_count
 from app.db.comeet import list_companies as list_comeet_companies
 from app.db.database import get_db
+from app.db.greenhouse import list_companies as list_greenhouse_companies
 from app.db.users import mint_user
 from app.db.history import (
     application_statuses,
@@ -53,6 +57,7 @@ from app.db.models import (
 )
 from app.models import (
     AddComeetCompanyRequest,
+    AddGreenhouseCompanyRequest,
     AlertCronResult,
     AlertRunResult,
     AlertSettingsIn,
@@ -75,6 +80,8 @@ from app.models import (
     FollowUpRequest,
     FollowUpResult,
     FreeScanResult,
+    GreenhouseCompanyList,
+    GreenhouseCompanyOut,
     InterviewAnswerRequest,
     InterviewAnswerResult,
     InterviewFeedbackRequest,
@@ -552,6 +559,28 @@ def kits_reject(
     return kits_core.kit_out(row)
 
 
+@router.post("/kits/{kit_id}/submit", response_model=KitOut)
+def kits_submit(
+    kit_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> KitOut:
+    """True auto-submit (PLAN 8.4): send an approved, guard-clean Comeet kit's
+    application through Comeet's public apply API. Every guardrail lives in
+    `auto_submit.submit_kit`; the daily cap is charged only when a real send
+    is about to happen."""
+    row = _owned_kit(db, kit_id, user)
+    settings = get_settings()
+    try:
+        row = auto_submit.submit_kit(
+            db,
+            user,
+            row,
+            charge=lambda: check_and_count(db, user, "submit", settings.daily_submit_cap),
+        )
+    except ValueError as e:  # refused by a guardrail / declined upstream
+        raise HTTPException(400, str(e))
+    return kits_core.kit_out(row)
+
+
 @router.delete("/kits/{kit_id}")
 def kits_delete(
     kit_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
@@ -588,6 +617,32 @@ def comeet_add_company(
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while adding that company: {e}")
     return ComeetCompanyOut(slug=c.slug, name=c.name, careers_url=c.careers_url)
+
+
+@router.get("/jobs/greenhouse/companies", response_model=GreenhouseCompanyList)
+def greenhouse_companies(db: Session = Depends(get_db)) -> GreenhouseCompanyList:
+    """The Greenhouse company registry the job search queries (seeded on first use)."""
+    return GreenhouseCompanyList(
+        companies=[
+            GreenhouseCompanyOut(slug=c.slug, name=c.name, board_url=greenhouse_board_url(c.slug))
+            for c in list_greenhouse_companies(db)
+        ]
+    )
+
+
+@router.post("/jobs/greenhouse/companies", response_model=GreenhouseCompanyOut)
+def greenhouse_add_company(
+    body: AddGreenhouseCompanyRequest, db: Session = Depends(get_db)
+) -> GreenhouseCompanyOut:
+    """Grow the registry: paste a Greenhouse board slug or careers URL and its
+    jobs join every future search."""
+    try:
+        c = register_greenhouse_company(db, body.board)
+    except ValueError as e:  # bad slug / no such board — user-facing
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Error while adding that company: {e}")
+    return GreenhouseCompanyOut(slug=c.slug, name=c.name, board_url=greenhouse_board_url(c.slug))
 
 
 # --------------------------------------------------------------------------- #

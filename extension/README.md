@@ -78,7 +78,7 @@ Live-verified 2026-07-05 against a real logged-in LinkedIn posting (new shell: t
 - **Company name on some Israeli boards** falls back to empty — board markup rarely labels it consistently; edit it in the popup.
 - **Test connection checks reachability only**, not the access code (`/health` is unauthenticated by design).
 - **Comeet `COMPANY_DATA`** (the JS global on Comeet careers sites) is not readable from the isolated content-script world; extraction there is DOM-selector best effort.
-- **No duplicate detection**: clipping the same job twice creates two tracker rows (the backend dedupes only job-search history, not manual saves).
+- **Duplicate detection is a warning, not a block**: when the tab's URL matches an existing tracker application the popup shows "already in your tracker" with a tracker link, but saving again is still allowed (some people track one posting per stage).
 
 ## Follow-ups (post-v1)
 
@@ -86,4 +86,4 @@ Live-verified 2026-07-05 against a real logged-in LinkedIn posting (new shell: t
 - ~~JSON-LD `JobPosting` parsing~~ — done 2026-07-05 (generic path + gap-filler on all boards).
 - ~~Optional **autofill** of application forms~~ — done 2026-07-06 (v0.2 assisted apply, PLAN 8.3).
 - **Firefox port** (MV3 with `browser.*` polyfill; storage.sync + scripting APIs are compatible).
-- Per-board **apply-form selector refresh cadence**; duplicate-clip detection.
+- Per-board **apply-form selector refresh cadence**. ~~Duplicate-clip detection~~ — done 2026-07-06 (URL-matched warning + tracker link).

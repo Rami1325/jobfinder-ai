@@ -34,6 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
 from app.core.providers.base import JobHit, NoResultsError
+from app.core.providers.geo import HE_CITY_ALIASES, ISRAEL_TOKENS
 from app.models import SearchContext
 
 _API_URL = "https://www.comeet.co/careers-api/2.0/company/{uid}/positions"
@@ -51,24 +52,9 @@ _TOKEN_RE = re.compile(r'"token"\s*:\s*"([0-9A-Fa-f]{16,64})"')
 
 # Comeet location data is English; searches from Israeli users are often
 # Hebrew. Alias the common city names so "תל אביב" finds "Tel Aviv" offices.
-_HE_CITY_ALIASES = {
-    "תל אביב": "tel aviv",
-    "תל אביב-יפו": "tel aviv",
-    "ירושלים": "jerusalem",
-    "חיפה": "haifa",
-    "הרצליה": "herzliya",
-    "רמת גן": "ramat gan",
-    "בני ברק": "bnei brak",
-    "באר שבע": "beer sheva",
-    "פתח תקווה": "petah tikva",
-    "נתניה": "netanya",
-    "רעננה": "raanana",
-    "כפר סבא": "kfar saba",
-    "רחובות": "rehovot",
-    "יקנעם": "yokneam",
-    "לוד": "lod",
-}
-_ISRAEL_TOKENS = {"israel", "ישראל"}
+# Shared with the Greenhouse provider via providers/geo.py.
+_HE_CITY_ALIASES = HE_CITY_ALIASES
+_ISRAEL_TOKENS = ISRAEL_TOKENS
 
 # uid -> (fetched_at, raw positions list). In-process cache so a burst of
 # searches doesn't re-hit ~30 company APIs each time.

@@ -294,6 +294,14 @@ export async function rejectKit(id: number, reason: string): Promise<KitOut> {
   return data;
 }
 
+/** True auto-submit (PLAN 8.4): send an approved, guard-clean Comeet kit's
+ * application through Comeet's public apply API. The backend enforces every
+ * guardrail; this really applies to the job. */
+export async function submitKit(id: number): Promise<KitOut> {
+  const { data } = await api.post<KitOut>(`/kits/${id}/submit`);
+  return data;
+}
+
 export async function getJobAlert(): Promise<AlertSettings> {
   const { data } = await api.get<AlertSettings>("/jobs/alerts");
   return data;
@@ -348,6 +356,14 @@ export async function linkedinOptimize(resume: ResumeModel): Promise<LinkedInRes
 /** Friends-beta feedback — `page` is the pathname the user was on. */
 export async function sendFeedback(page: string, text: string): Promise<FeedbackOut> {
   const { data } = await api.post<FeedbackOut>("/feedback", { page, text });
+  return data;
+}
+
+/** Privacy wipe (PLAN 7.5): deletes everything the current user stored —
+ * résumés, applications, history, alerts, usage, feedback, kits. The invite
+ * code keeps working. Returns per-table deleted-row counts. */
+export async function deleteMyData(): Promise<Record<string, number>> {
+  const { data } = await api.delete<Record<string, number>>("/profile/data");
   return data;
 }
 

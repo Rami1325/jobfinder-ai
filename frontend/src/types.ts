@@ -266,7 +266,7 @@ export interface KitJobIn {
 }
 export interface KitOut {
   id: number;
-  status: "queued" | "running" | "done" | "failed" | "approved" | "rejected";
+  status: "queued" | "running" | "done" | "failed" | "approved" | "rejected" | "submitted";
   job_title: string;
   company: string;
   location: string;
@@ -282,6 +282,8 @@ export interface KitOut {
   error: string;
   reject_reason: string; // set when the reviewer rejected the kit
   application_id: number | null; // tracker row created on approve
+  submit_note: string; // auto-submit (PLAN 8.4): follow-up questionnaire URL, if any
+  submitted_at: string;
   created_at: string;
   processed_at: string;
 }

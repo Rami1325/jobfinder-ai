@@ -67,6 +67,15 @@
     "sent": "Thanks — feedback sent!",
     "error": "Couldn't send feedback. Please try again."
   },
+  "privacy": {
+    "title": "Privacy",
+    "wipeCta": "Delete all my data",
+    "wipeConfirmBody": "This permanently deletes your resumes, applications, search history, alerts, and kits from the server. Your access code keeps working. This can't be undone.",
+    "wipeConfirm": "Yes, delete everything",
+    "wipeCancel": "Keep my data",
+    "wiped": "All your data was deleted.",
+    "wipeError": "Couldn't delete your data. Please try again."
+  },
   "dailyLimit": {
     "search": "Daily limit reached — you've used all {{cap}} searches for today. Try again tomorrow.",
     "tailor": "Daily limit reached — you've used all {{cap}} tailorings for today. Try again tomorrow."

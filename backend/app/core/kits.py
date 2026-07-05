@@ -66,6 +66,8 @@ def kit_out(row: TailorKit) -> KitOut:
         error=row.error or "",
         reject_reason=row.reject_reason or "",
         application_id=row.application_id,
+        submit_note=row.submit_note or "",
+        submitted_at=row.submitted_at.isoformat() if row.submitted_at else "",
         created_at=row.created_at.isoformat() if row.created_at else "",
         processed_at=row.processed_at.isoformat() if row.processed_at else "",
     )

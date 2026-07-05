@@ -266,7 +266,7 @@ class KitBatchRequest(BaseModel):
 
 class KitOut(BaseModel):
     id: int
-    status: str = "queued"  # queued | running | done | failed | approved | rejected
+    status: str = "queued"  # queued | running | done | failed | approved | rejected | submitted
     job_title: str = ""
     company: str = ""
     location: str = ""
@@ -284,6 +284,9 @@ class KitOut(BaseModel):
     # Review outcome (PLAN 8.2):
     reject_reason: str = ""
     application_id: Optional[int] = None  # tracker row created on approve
+    # Auto-submit outcome (PLAN 8.4):
+    submit_note: str = ""  # the company's follow-up questionnaire URL, if any
+    submitted_at: str = ""
     created_at: str = ""
     processed_at: str = ""
 
@@ -593,6 +596,22 @@ class ComeetCompanyList(BaseModel):
 
 class AddComeetCompanyRequest(BaseModel):
     url: str  # a public Comeet careers-page URL: https://www.comeet.com/jobs/<company>/<code>
+
+
+class GreenhouseCompanyOut(BaseModel):
+    """One company in the Greenhouse registry (PLAN 9.3)."""
+
+    slug: str
+    name: str = ""
+    board_url: str = ""
+
+
+class GreenhouseCompanyList(BaseModel):
+    companies: list[GreenhouseCompanyOut] = Field(default_factory=list)
+
+
+class AddGreenhouseCompanyRequest(BaseModel):
+    board: str  # a board slug ("wizinc") or careers URL (job-boards.greenhouse.io/<slug>)
 
 
 class JobFetchResponse(BaseModel):

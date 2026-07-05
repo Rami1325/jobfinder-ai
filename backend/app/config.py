@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     daily_search_cap: int = 20
     daily_tailor_cap: int = 30
+    # Auto-submit (PLAN 8.4): real applications sent per user per day.
+    daily_submit_cap: int = 10
     jooble_api_key: str = ""  # empty => the Jooble board reports "needs an API key"
     model_id: str = "gpt-4o-mini"
     use_stub_llm: bool = False

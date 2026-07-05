@@ -120,6 +120,11 @@ class TailorKit(Base):
     Review (PLAN 8.2): approving a "done" kit creates a tracker Application
     ("ready to send") and links it via `application_id`; rejecting records
     `reject_reason` so thresholds can be tuned from real review decisions.
+
+    Auto-submit (PLAN 8.4): an approved, guard-clean Comeet kit can be sent
+    through Comeet's public apply API — status becomes "submitted",
+    `submitted_at` stamps it, and `submit_note` keeps the company's follow-up
+    questionnaire URL when one is returned.
     """
 
     __tablename__ = "tailor_kits"
@@ -128,7 +133,7 @@ class TailorKit(Base):
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
     status: Mapped[str] = mapped_column(
         String(16), default="queued"
-    )  # queued | running | done | failed | approved | rejected
+    )  # queued | running | done | failed | approved | rejected | submitted
     job_title: Mapped[str] = mapped_column(String(255), default="")
     company: Mapped[str] = mapped_column(String(255), default="")
     location: Mapped[str] = mapped_column(String(255), default="")
@@ -151,6 +156,9 @@ class TailorKit(Base):
     # Review outcome (PLAN 8.2). Nullable/default-empty for the ADD-COLUMN shim.
     reject_reason: Mapped[str] = mapped_column(Text, default="")
     application_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Auto-submit outcome (PLAN 8.4). Nullable/default-empty for the shim.
+    submit_note: Mapped[str] = mapped_column(Text, default="")
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -176,6 +184,26 @@ class ComeetCompany(Base):
     uid: Mapped[str] = mapped_column(String(16), default="")  # company_uid, e.g. "E2.00D"
     token: Mapped[str] = mapped_column(String(64), default="")  # "" until first scrape
     careers_url: Mapped[str] = mapped_column(String(500), default="")
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class GreenhouseCompany(Base):
+    """A company whose public Greenhouse job board the job search queries.
+
+    Same registry pattern as `ComeetCompany`, but simpler: the boards API
+    (`boards-api.greenhouse.io/v1/boards/<slug>/jobs`) needs no token at all.
+    Seeded with live-verified Israeli tech companies on first use (see
+    app/core/providers/greenhouse_seed.py); users add more via
+    POST /jobs/greenhouse/companies with a board slug or careers URL.
+    """
+
+    __tablename__ = "greenhouse_companies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
     added_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

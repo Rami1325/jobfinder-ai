@@ -27,6 +27,9 @@ os.environ["APP_ACCESS_CODE"] = "smoke-gate-code"
 # Tiny tailor cap so section 19 can hit the daily limit offline via the stub
 # LLM; admins are exempt, so only the minted friend user feels it.
 os.environ["DAILY_TAILOR_CAP"] = "2"
+# Submit cap of 1 so section 22b can prove the auto-submit daily limit with a
+# single real (mocked-transport) send.
+os.environ["DAILY_SUBMIT_CAP"] = "1"
 # Keep the suite hermetic: real SMTP creds in .env would make the alert-run
 # checks send actual email and fail the "unconfigured" expectations. Env vars
 # outrank .env in pydantic-settings, so blanking them here wins.
@@ -318,8 +321,8 @@ from app.core.scorer import score_resume  # noqa: E402
 from app.models import SearchContext  # noqa: E402
 
 check(
-    "provider registry has linkedin + drushim + comeet + jobmaster (jooble retired)",
-    {"linkedin", "drushim", "comeet", "jobmaster"} <= set(PROVIDERS)
+    "provider registry has linkedin + drushim + comeet + jobmaster + greenhouse (jooble retired)",
+    {"linkedin", "drushim", "comeet", "jobmaster", "greenhouse"} <= set(PROVIDERS)
     and "jooble" not in PROVIDERS  # Jooble dropped Israel — retired 2026-07-05
     and set(DEFAULT_SOURCES) == set(PROVIDERS),
     str(sorted(PROVIDERS)),
@@ -761,6 +764,73 @@ except ValueError as _e:
 finally:
     _jb_settings.jooble_api_key = _jb_saved_key
 check("jooble retired from the fan-out (israel index discontinued)", "jooble" not in PROVIDERS)
+
+# 14e4. Greenhouse provider (PLAN 9.3): jobs parser + board-ref parser + filters,
+# pinned against a trimmed real boards-API response (pure, offline). Lever was
+# probed the same day (60+ Israeli-company slugs, API verified working via
+# known-good tenants) and found ZERO Israeli tenants — so there is no Lever
+# provider, by evidence rather than omission.
+from app.core.providers.greenhouse import (  # noqa: E402
+    _keyword_matches as _gh_kw,
+    _location_matches as _gh_loc,
+    parse_board_ref,
+    parse_greenhouse_jobs,
+)
+
+_GH_FIXTURE = _json.loads(
+    (Path(__file__).parent / "fixtures" / "greenhouse_jobs.json").read_text(encoding="utf-8")
+)
+_gh = parse_greenhouse_jobs(_GH_FIXTURE, company_name="Fallback Co")
+check("greenhouse parser dedupes by job id (fixture has a duplicate)", len(_gh) == 3, str(len(_gh)))
+check(
+    "greenhouse fields extracted (title stripped, company from payload, location)",
+    _gh[0].title == "Data Scientist"
+    and _gh[0].company == "Melio"
+    and _gh[0].location == "Tel Aviv"
+    and _gh[0].source == "greenhouse"
+    and _gh[0].external_id == "7748138003"
+    and _gh[0].url.startswith("https://job-boards.greenhouse.io/melio/jobs/"),
+    f"{_gh[0].title} / {_gh[0].company} / {_gh[0].location}" if _gh else "",
+)
+check(
+    "greenhouse content is unescaped then tag-stripped (inline description)",
+    _gh[0].description.startswith("As a Data Scientist at Melio")
+    and "&lt;" not in _gh[0].description
+    and "<p>" not in _gh[0].description,
+    _gh[0].description[:80] if _gh else "",
+)
+check(
+    "greenhouse posted_at from updated_at, language detected en",
+    _gh[0].posted_at.startswith("2026-") and _gh[0].language == "en",
+    _gh[0].posted_at if _gh else "",
+)
+check("greenhouse empty payload parses to empty list", parse_greenhouse_jobs({}) == [])
+check(
+    "greenhouse board-ref parser: slug, board URLs, and API URLs all resolve",
+    parse_board_ref("WizInc") == "wizinc"
+    and parse_board_ref("https://job-boards.greenhouse.io/melio/jobs/123") == "melio"
+    and parse_board_ref("https://boards.greenhouse.io/jfrog") == "jfrog"
+    and parse_board_ref("https://boards-api.greenhouse.io/v1/boards/via/jobs") == "via",
+)
+try:
+    parse_board_ref("https://example.com/not-greenhouse")
+    check("greenhouse board-ref parser rejects non-greenhouse urls", False)
+except ValueError:
+    check("greenhouse board-ref parser rejects non-greenhouse urls", True)
+check(
+    "greenhouse keyword filter matches title/departments/description, all-tokens",
+    _gh_kw(_gh[0], "data scientist")
+    and _gh_kw(_gh[0], "Engineering")  # departments
+    and not _gh_kw(_gh[0], "customer success manager"),
+)
+check(
+    "greenhouse location filter: hebrew alias + country token + miss",
+    _gh_loc(_gh[0], "תל אביב")
+    and _gh_loc(_gh[0], "Israel")  # via offices[].location
+    and not _gh_loc(_gh[0], "New York")
+    and _gh_loc(_gh[2], "New York"),
+)
+check("greenhouse registered in the fan-out", "greenhouse" in PROVIDERS and "greenhouse" in DEFAULT_SOURCES)
 
 # 14f. Israeli résumé conventions (3.4) + Hebrew/RTL rendering (3.3)
 import io as _io  # noqa: E402
@@ -1208,6 +1278,30 @@ check(
     _re_added.token == "T2"
     and _re_added.name == "Acme Corp"
     and len(list_companies(_db)) == len(_companies) + 1,
+)
+_db.close()
+
+# 16b. Greenhouse company registry (PLAN 9.3): auto-seed on first list, upsert
+# refreshes instead of duplicating. Same pattern as Comeet, no tokens at all.
+from app.core.providers.greenhouse_seed import SEED_COMPANIES as _GH_SEED  # noqa: E402
+from app.db.greenhouse import (  # noqa: E402
+    list_companies as gh_list_companies,
+    upsert_company as gh_upsert_company,
+)
+
+_db = SessionLocal()
+_gh_companies = gh_list_companies(_db)
+check(
+    "greenhouse registry auto-seeds live-verified israeli companies",
+    len(_gh_companies) == len(_GH_SEED) >= 15,
+    str(len(_gh_companies)),
+)
+check("greenhouse registry seeding is idempotent", len(gh_list_companies(_db)) == len(_gh_companies))
+gh_upsert_company(_db, slug="acme-gh", name="Acme")
+_gh_re = gh_upsert_company(_db, slug="acme-gh", name="Acme Corp")
+check(
+    "greenhouse re-adding a company refreshes instead of duplicating",
+    _gh_re.name == "Acme Corp" and len(gh_list_companies(_db)) == len(_gh_companies) + 1,
 )
 _db.close()
 
@@ -1988,6 +2082,185 @@ check(
     f"{_stuck_kit.id if _stuck_kit else None} vs {_flag_kit.id}",
 )
 _dbk.close()
+
+# 22b. True auto-submit (PLAN 8.4): Comeet-only channel. Pure helpers pinned,
+# then the whole submit path through the HTTP stack with the transport mocked —
+# guardrails, cap, audit trail, and the exact multipart the wire would carry.
+# Nothing leaves the box.
+from app.core import auto_submit as _asub  # noqa: E402
+
+_ref = _asub.parse_comeet_position_url(
+    "https://www.comeet.com/jobs/kaltura/E2.00D/senior-dev/C5.D69?utm=x"
+)
+check(
+    "comeet position url parsed (slug, company uid, position uid)",
+    _ref == ("kaltura", "E2.00D", "C5.D69"),
+    str(_ref),
+)
+try:
+    _asub.parse_comeet_position_url("https://www.linkedin.com/jobs/view/123")
+    check("non-comeet url rejected by the position parser", False)
+except ValueError:
+    check("non-comeet url rejected by the position parser", True)
+check(
+    "candidate name splitting (single names repeat, comeet wants both)",
+    _asub.split_name("Ada Lovelace King") == ("Ada", "Lovelace King")
+    and _asub.split_name("Madonna") == ("Madonna", "Madonna")
+    and _asub.split_name("") == ("", ""),
+)
+_mp_body, _mp_ct = _asub.build_multipart(
+    {"first_name": "דנה", "email": "d@x.com", "empty": ""},
+    "cv", "resume.pdf", b"%PDF-fake", boundary="BBB",
+)
+check(
+    "multipart builder: utf-8 fields, empties skipped, pdf file part, closed boundary",
+    b'name="first_name"' in _mp_body
+    and "דנה".encode("utf-8") in _mp_body
+    and b'name="empty"' not in _mp_body
+    and b'name="cv"; filename="resume.pdf"' in _mp_body
+    and b"Content-Type: application/pdf" in _mp_body
+    and _mp_body.endswith(b"--BBB--\r\n")
+    and _mp_ct == "multipart/form-data; boundary=BBB",
+)
+
+_sent_apps: list[tuple[str, bytes, str]] = []
+
+
+def _fake_apply_post(url: str, body: bytes, content_type: str) -> str:
+    _sent_apps.append((url, body, content_type))
+    return _json.dumps({"post_submit_questionnaires": "https://apply.example/q/1"})
+
+
+_real_post, _real_token = _asub._default_post, _asub._resolve_token
+_asub._default_post = _fake_apply_post
+_asub._resolve_token = lambda db, ref: "TOK123"
+try:
+    with TestClient(_fastapi_app) as _tc:
+        _sub = _tc.post("/admin/users", json={"name": "Sub"}, headers=_ADMIN_H).json()
+        _SUB_H = {"X-App-Key": _sub["invite_code"]}
+        _tc.put(
+            "/profile/resume",
+            json={"resume": resume.model_dump(), "label": "Sub CV"},
+            headers=_SUB_H,
+        )
+
+        def _comeet_job(i: int) -> dict:
+            return {
+                "title": f"Backend Dev {i}",
+                "company": f"SubCo{i}",
+                "location": "Tel Aviv",
+                "url": f"https://www.comeet.com/jobs/subco{i}/A{i}.00{i}/backend-dev/B{i}.0{i}0",
+                "source": "comeet",
+                "jd_text": _KIT_JD,
+                "overall": 90.0,
+            }
+
+        _tc.post("/kits/batch", json={"jobs": [_comeet_job(1), _comeet_job(2)]}, headers=_SUB_H)
+        _sk1 = _tc.post("/kits/process-next", headers=_SUB_H).json()["kit"]
+        _sk2 = _tc.post("/kits/process-next", headers=_SUB_H).json()["kit"]
+
+        _r = _tc.post(f"/kits/{_sk1['id']}/submit", headers=_SUB_H)
+        check(
+            "submit refuses a kit that was never approved in review",
+            _r.status_code == 400 and "approved" in _r.json()["detail"],
+            _r.text[:150],
+        )
+        _r = _tc.post(f"/kits/{_kit2['id']}/submit", headers=_KIM_H)
+        check(
+            "submit refuses non-comeet kits (linkedin is never automated)",
+            _r.status_code == 400 and "Comeet" in _r.json()["detail"],
+            _r.text[:150],
+        )
+
+        _tc.post(f"/kits/{_sk1['id']}/approve", json={"cover_letter": "Cover A"}, headers=_SUB_H)
+        _tc.post(f"/kits/{_sk2['id']}/approve", json={"cover_letter": "Cover B"}, headers=_SUB_H)
+
+        _r = _tc.post(f"/kits/{_sk1['id']}/submit", headers=_SUB_H)
+        check(
+            "approved guard-clean comeet kit submits: status + timestamps + questionnaire",
+            _r.status_code == 200
+            and _r.json()["status"] == "submitted"
+            and _r.json()["submitted_at"] != ""
+            and _r.json()["submit_note"] == "https://apply.example/q/1",
+            _r.text[:200],
+        )
+        _url, _body, _ct = _sent_apps[-1]
+        check(
+            "the wire call hits the position's apply endpoint with the page token",
+            _url == "https://www.comeet.co/careers-api/1.0/company/A1.001/positions/B1.010/apply?token=TOK123",
+            _url,
+        )
+        check(
+            "the multipart carries candidate fields, the cover letter, and a real PDF",
+            b'name="first_name"' in _body
+            and b"Sample" in _body
+            and b"sample@example.com" in _body
+            and b"Cover A" in _body
+            and b"%PDF" in _body
+            and _ct.startswith("multipart/form-data"),
+            _ct,
+        )
+        _sub_app = _tc.get(f"/applications/{_r.json()['application_id']}", headers=_SUB_H).json()
+        check(
+            "audit trail: tracker application flips to applied with an auto-apply note",
+            _sub_app["status"] == "applied"
+            and "[auto-apply" in _sub_app["notes"]
+            and "https://apply.example/q/1" in _sub_app["notes"],
+            str(_sub_app.get("notes"))[:200],
+        )
+        _r = _tc.post(f"/kits/{_sk1['id']}/submit", headers=_SUB_H)
+        check(
+            "a submitted kit can't be sent twice",
+            _r.status_code == 400 and "already" in _r.json()["detail"].lower(),
+            _r.text[:150],
+        )
+        _r = _tc.post(f"/kits/{_sk2['id']}/submit", headers=_SUB_H)
+        check(
+            "daily submit cap: the second real send of the day 429s (cap=1)",
+            _r.status_code == 429
+            and _r.json()["detail"] == {"code": "daily_limit", "action": "submit", "cap": 1},
+            _r.text[:150],
+        )
+        check(
+            "refused submits never reached the network (exactly one real send)",
+            len(_sent_apps) == 1,
+            str(len(_sent_apps)),
+        )
+
+    # Function-level guardrails that the HTTP flow above can't reach: flagged
+    # kits and the per-company dedupe both refuse BEFORE any network call.
+    _dbs = SessionLocal()
+    _sub_row = _dbs.execute(_ksel(_KUser).where(_KUser.name == "Sub")).scalars().first()
+    _flagged = _TKit(
+        user_id=_sub_row.id, status="approved", source="comeet", flag_count=1,
+        company="FlagCo", url="https://www.comeet.com/jobs/flagco/AA.001/dev/BB.002",
+    )
+    _same_co = _TKit(
+        user_id=_sub_row.id, status="approved", source="comeet", flag_count=0,
+        company="subco1",  # case-insensitive match against the submitted SubCo1
+        url="https://www.comeet.com/jobs/subco1/A1.001/other-role/C9.00C",
+    )
+    _dbs.add_all([_flagged, _same_co])
+    _dbs.commit()
+    try:
+        _asub.submit_kit(_dbs, _sub_row, _flagged)
+        check("flagged kits are never auto-submitted, even after approval", False)
+    except ValueError as _e:
+        check("flagged kits are never auto-submitted, even after approval", "flag" in str(_e).lower(), str(_e))
+    try:
+        _asub.submit_kit(_dbs, _sub_row, _same_co)
+        check("per-company dedupe: one auto-application per company", False)
+    except ValueError as _e:
+        check("per-company dedupe: one auto-application per company", "already auto-applied" in str(_e), str(_e))
+    check(
+        "guardrail refusals left no extra network sends",
+        len(_sent_apps) == 1,
+        str(len(_sent_apps)),
+    )
+    _dbs.close()
+finally:
+    _asub._default_post = _real_post
+    _asub._resolve_token = _real_token
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

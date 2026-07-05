@@ -14,6 +14,7 @@ import {
   MessageCircle,
   Plus,
   Search,
+  Send,
   ShieldAlert,
   ShieldCheck,
   Trash2,
@@ -45,6 +46,7 @@ import {
   loadKits,
   removeKit,
   resumeKitQueue,
+  sendKitApplication,
   startKitBatch,
   subscribeKits,
 } from "../state/kitsStore";
@@ -53,7 +55,7 @@ import { apiErrorMessage } from "../lib/apiError";
 import { resumeLanguage } from "../lib/lang";
 import { onboardingRole } from "../lib/onboarding";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
-import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, useToast } from "../components/ui";
+import { Badge, Button, Card, CardTitle, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
 import type {
   AlertSettings,
   ApplicationOut,
@@ -79,7 +81,7 @@ const MAX_AGE_OPTIONS = [1, 3, 7, 14, 30, 0] as const;
 // Keep in sync with the backend registry: a board missing here disappears
 // from any customized search the moment the user unchecks one box.
 // (Jooble retired 2026-07-05 — they discontinued their Israeli index.)
-const SOURCE_IDS = ["linkedin", "drushim", "comeet", "jobmaster"] as const;
+const SOURCE_IDS = ["linkedin", "drushim", "comeet", "jobmaster", "greenhouse"] as const;
 
 // One-click Israeli locations (PLAN 2.3). English values work across all
 // boards: LinkedIn expects English; Drushim matches CityEnglish; Comeet
@@ -98,6 +100,7 @@ const SOURCE_LABELS: Record<string, string> = {
   drushim: "Drushim",
   comeet: "Comeet",
   jobmaster: "JobMaster",
+  greenhouse: "Greenhouse",
   jooble: "Jooble",
 };
 
@@ -121,7 +124,7 @@ function postedAgo(iso: string, t: TFunction<"jobs">): string {
 // cards fall back to the lettered avatar unless the backend supplied a real
 // company logo_url (LinkedIn/Drushim/Comeet boards carry one when available).
 const BOARD_HOST_RE =
-  /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|jooble\.org)$/;
+  /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|greenhouse\.io|jooble\.org)$/;
 
 function companyDomain(url: string): string | null {
   try {
@@ -610,14 +613,30 @@ const KIT_STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" |
   failed: "danger",
   approved: "mint",
   rejected: "neutral",
+  submitted: "mint",
 };
 
-function KitRow({ kit, onDelete }: { kit: KitOut; onDelete: (id: number) => void }) {
-  const { t } = useTranslation("jobs");
+function KitRow({
+  kit,
+  onDelete,
+  onSend,
+}: {
+  kit: KitOut;
+  onDelete: (id: number) => void;
+  onSend: (kit: KitOut) => void;
+}) {
+  const { t, i18n } = useTranslation("jobs");
   const nav = useNavigate();
-  // Kits keep their tailor outcome through review: approved/rejected rows
-  // still show scores and guard status, not just fresh "done" ones.
-  const processed = kit.status === "done" || kit.status === "approved" || kit.status === "rejected";
+  // Kits keep their tailor outcome through review: approved/rejected/submitted
+  // rows still show scores and guard status, not just fresh "done" ones.
+  const processed =
+    kit.status === "done" ||
+    kit.status === "approved" ||
+    kit.status === "rejected" ||
+    kit.status === "submitted";
+  // True auto-submit (PLAN 8.4): only approved, guard-clean Comeet kits — the
+  // backend re-enforces all of this; the button just doesn't offer dead ends.
+  const canSend = kit.status === "approved" && kit.source === "comeet" && kit.flag_count === 0;
   return (
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
       <ProgressRing
@@ -683,9 +702,40 @@ function KitRow({ kit, onDelete }: { kit: KitOut; onDelete: (id: number) => void
               {t("kits.rejectedBecause", { reason: kit.reject_reason })}
             </p>
           )}
+          {kit.status === "submitted" && (
+            <p className="mt-1 text-xs text-ink-faint">
+              {kit.submitted_at &&
+                t("kits.submittedOn", {
+                  date: new Date(kit.submitted_at).toLocaleDateString(i18n.language),
+                })}
+              {kit.submit_note && (
+                <>
+                  {" · "}
+                  {t("kits.questionnaireNote")}{" "}
+                  <a
+                    href={kit.submit_note}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-accent-soft hover:underline"
+                  >
+                    {t("kits.questionnaireLink")}
+                  </a>
+                </>
+              )}
+            </p>
+          )}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        {canSend && (
+          <Button
+            size="sm"
+            icon={<Send size={14} className="rtl:-scale-x-100" />}
+            onClick={() => onSend(kit)}
+          >
+            {t("kits.submit")}
+          </Button>
+        )}
         {processed && (
           <Button
             variant="secondary"
@@ -847,6 +897,23 @@ export default function JobsPage() {
 
   async function deleteKitRow(id: number) {
     if (!(await removeKit(id))) toast("error", t("kits.deleteError"));
+  }
+
+  // -- True auto-submit (PLAN 8.4): per-kit confirm, then a real application --
+  const [sendTarget, setSendTarget] = useState<KitOut | null>(null);
+  const [sendingKit, setSendingKit] = useState(false);
+  async function confirmSendKit() {
+    if (!sendTarget || sendingKit) return;
+    setSendingKit(true);
+    try {
+      const updated = await sendKitApplication(sendTarget.id);
+      toast("success", t("kits.submittedToast", { company: updated.company || updated.job_title }));
+      setSendTarget(null);
+    } catch (e: unknown) {
+      toast("error", apiErrorMessage(e, t("kits.submitError")));
+    } finally {
+      setSendingKit(false);
+    }
   }
 
   // -- Résumé upload state (Jobs is the front door: upload lives here too) --
@@ -1716,12 +1783,42 @@ export default function JobsPage() {
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
               <p className="text-xs text-ink-faint">{t("kits.reviewSoon")}</p>
               {kits.map((kit) => (
-                <KitRow key={kit.id} kit={kit} onDelete={deleteKitRow} />
+                <KitRow key={kit.id} kit={kit} onDelete={deleteKitRow} onSend={setSendTarget} />
               ))}
             </motion.div>
           )}
         </>
       )}
+
+      {/* True auto-submit confirm (PLAN 8.4) — this sends a REAL application. */}
+      <Modal
+        open={sendTarget !== null}
+        onClose={() => !sendingKit && setSendTarget(null)}
+        title={t("kits.submitTitle")}
+        maxWidth="max-w-lg"
+      >
+        {sendTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-muted">
+              {t("kits.submitBody", { company: sendTarget.company || sendTarget.job_title })}
+            </p>
+            <p className="text-xs text-ink-faint">{t("kits.submitNote")}</p>
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setSendTarget(null)} disabled={sendingKit}>
+                {t("search.dismiss")}
+              </Button>
+              <Button
+                size="sm"
+                icon={sendingKit ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} className="rtl:-scale-x-100" />}
+                onClick={confirmSendKit}
+                disabled={sendingKit}
+              >
+                {t("kits.confirmSubmit")}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
