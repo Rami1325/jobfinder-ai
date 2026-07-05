@@ -6,6 +6,7 @@ import type {
   ApplicationOut,
   ATSScanResult,
   FactsLedger,
+  FeedbackOut,
   FollowUpResult,
   FreeScanResult,
   InterviewAnswerResult,
@@ -206,6 +207,12 @@ export async function atsScan(resume: ResumeModel, jdText = ""): Promise<ATSScan
 
 export async function linkedinOptimize(resume: ResumeModel): Promise<LinkedInResult> {
   const { data } = await api.post<LinkedInResult>("/tools/linkedin", { resume });
+  return data;
+}
+
+/** Friends-beta feedback — `page` is the pathname the user was on. */
+export async function sendFeedback(page: string, text: string): Promise<FeedbackOut> {
+  const { data } = await api.post<FeedbackOut>("/feedback", { page, text });
   return data;
 }
 

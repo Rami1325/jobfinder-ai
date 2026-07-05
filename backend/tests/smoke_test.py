@@ -24,10 +24,13 @@ os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(tempfile.mkdtemp(), "sm
 # section 17 can prove /public/scan is exempt while everything else 401s.
 # Harmless elsewhere: only requests through the ASGI middleware see the gate.
 os.environ["APP_ACCESS_CODE"] = "smoke-gate-code"
+# Tiny tailor cap so section 19 can hit the daily limit offline via the stub
+# LLM; admins are exempt, so only the minted friend user feels it.
+os.environ["DAILY_TAILOR_CAP"] = "2"
 # Keep the suite hermetic: real SMTP creds in .env would make the alert-run
 # checks send actual email and fail the "unconfigured" expectations. Env vars
 # outrank .env in pydantic-settings, so blanking them here wins.
-for _smtp_var in ("ALERT_SMTP_HOST", "ALERT_SMTP_USER", "ALERT_SMTP_PASSWORD", "ALERT_EMAIL_FROM"):
+for _smtp_var in ("ALERT_SMTP_HOST", "ALERT_SMTP_USER", "ALERT_SMTP_PASSWORD", "ALERT_EMAIL_FROM", "CRON_SECRET"):
     os.environ[_smtp_var] = ""
 
 from app.config import get_settings  # noqa: E402
@@ -274,6 +277,16 @@ check(
     str([c["posted_at"] for c in cards]),
 )
 check("work mode 'any' omits f_WT", "f_WT" not in _build_search_url("X", "Y", "any", 0))
+_u_fresh = _build_search_url("X", "Y", "any", 0, max_age_days=30)
+check(
+    "max_age_days becomes LinkedIn's f_TPR seconds filter",
+    "f_TPR=r2592000" in _u_fresh,
+    _u_fresh,
+)
+check(
+    "max_age_days 0 omits f_TPR (any age)",
+    "f_TPR" not in _build_search_url("X", "Y", "any", 0, max_age_days=0),
+)
 
 _fb = _fallback_context(resume)  # stub resume: Engineer at Acme Corp
 check("fallback context uses most recent title", _fb.job_title == "Engineer", _fb.job_title)
@@ -287,7 +300,11 @@ check("JobMatch back-compat: source defaults to linkedin", JobMatch().source == 
 check("JobMatch back-compat: logo_url defaults empty", JobMatch().logo_url == "")
 
 # 14b. Provider registry + multi-source context resolution (pure, offline)
-from app.core.job_search import _interleave_and_dedupe, _resolve_context  # noqa: E402
+from app.core.job_search import (  # noqa: E402
+    _interleave_and_dedupe,
+    _resolve_context,
+    freshest_first,
+)
 from app.core.providers import DEFAULT_SOURCES, PROVIDERS, JobHit  # noqa: E402
 from app.core.scorer import score_resume  # noqa: E402
 from app.models import SearchContext  # noqa: E402
@@ -307,6 +324,36 @@ check(
     "SearchContext back-compat: empty sources resolve to every board",
     SearchContext().sources == []
     and _resolve_context(resume, None).sources == list(DEFAULT_SOURCES),
+)
+check(
+    "SearchContext defaults to a 30-day freshness window",
+    SearchContext().max_age_days == 30 and _resolve_context(resume, None).max_age_days == 30,
+)
+check(
+    "customized max_age_days is honored and clamped at 0",
+    _resolve_context(resume, SearchContext(max_age_days=7)).max_age_days == 7
+    and _resolve_context(resume, SearchContext(max_age_days=-3)).max_age_days == 0,
+)
+
+from datetime import datetime as _dtc  # noqa: E402
+
+_now = _dtc.fromisoformat("2026-07-05T12:00")
+_fresh_hits = [
+    JobHit(url="https://x/old", posted_at="2026-05-01"),  # 65 days old — dropped
+    JobHit(url="https://x/undated", posted_at=""),  # unknown — kept, sorts last
+    JobHit(url="https://x/week", posted_at="2026-06-28"),
+    JobHit(url="https://x/today", posted_at="2026-07-05T09:30"),
+]
+_ff = freshest_first(_fresh_hits, 30, now=_now)
+check(
+    "freshest_first drops stale hits, sorts newest-first, keeps undated last",
+    [h.url for h in _ff]
+    == ["https://x/today", "https://x/week", "https://x/undated"],
+    str([(h.url, h.posted_at) for h in _ff]),
+)
+check(
+    "freshest_first with max_age_days=0 keeps everything (still newest-first)",
+    len(freshest_first(_fresh_hits, 0, now=_now)) == 4,
 )
 
 _rr = _interleave_and_dedupe(
@@ -826,6 +873,24 @@ init_db()
 init_db()  # idempotent — create_all + shim must tolerate re-runs
 check("init_db runs twice without error", True)
 
+# PLAN 7: init_db created the admin user (invite code = APP_ACCESS_CODE) and
+# backfilled the pre-multi-user rows above to it. All direct-DB checks below
+# act as the admin.
+from app.db.users import ensure_admin  # noqa: E402
+
+_boot_db = SessionLocal()
+_admin_user = ensure_admin(_boot_db)
+_admin_id = _admin_user.id
+check(
+    "admin user auto-created with APP_ACCESS_CODE as invite code",
+    _admin_user.is_admin is True and _admin_user.invite_code == "smoke-gate-code",
+)
+_legacy_sr_uid = _boot_db.execute(
+    __import__("sqlalchemy").text("SELECT user_id FROM saved_resumes")
+).scalar()
+check("legacy rows backfilled to the admin user", _legacy_sr_uid == _admin_id, str(_legacy_sr_uid))
+_boot_db.close()
+
 with engine.connect() as _conn:
     _cols = {r[1] for r in _conn.exec_driver_sql("PRAGMA table_info(applications)").fetchall()}
     _sr_cols = {r[1] for r in _conn.exec_driver_sql("PRAGMA table_info(saved_resumes)").fetchall()}
@@ -837,31 +902,32 @@ check(
 check("migration shim added language to saved_resumes", "language" in _sr_cols, str(sorted(_sr_cols)))
 
 _db = SessionLocal()
+_admin_user = ensure_admin(_db)  # session-bound instance for direct route calls
 record_search_hits(_db, [
     JobMatch(title="Backend Engineer", company="Acme", overall=50.0, url="https://x/jobs/1", posted_at="2026-06-25"),
     JobMatch(title="Data Engineer", company="Beta", overall=60.0, url="https://x/jobs/2", source="drushim",
              logo_url="https://webapi.drushim.co.il/logos/1/page/logo.png"),
-])
+], _admin_id)
 check(
     "history persists posted_at",
-    {h.url: h.posted_at for h in list_search_hits(_db)}.get("https://x/jobs/1") == "2026-06-25",
+    {h.url: h.posted_at for h in list_search_hits(_db, _admin_id)}.get("https://x/jobs/1") == "2026-06-25",
 )
 check(
     "history persists logo_url (default empty)",
-    {h.url: h.logo_url for h in list_search_hits(_db)}
+    {h.url: h.logo_url for h in list_search_hits(_db, _admin_id)}
     == {"https://x/jobs/1": "", "https://x/jobs/2": "https://webapi.drushim.co.il/logos/1/page/logo.png"},
-    str({h.url: h.logo_url for h in list_search_hits(_db)}),
+    str({h.url: h.logo_url for h in list_search_hits(_db, _admin_id)}),
 )
 check(
     "history persists source (default + drushim)",
-    {h.url: h.source for h in list_search_hits(_db)}
+    {h.url: h.source for h in list_search_hits(_db, _admin_id)}
     == {"https://x/jobs/1": "linkedin", "https://x/jobs/2": "drushim"},
-    str({h.url: h.source for h in list_search_hits(_db)}),
+    str({h.url: h.source for h in list_search_hits(_db, _admin_id)}),
 )
-check("search history recorded 2 hits", len(list_search_hits(_db)) == 2, str(len(list_search_hits(_db))))
+check("search history recorded 2 hits", len(list_search_hits(_db, _admin_id)) == 2, str(len(list_search_hits(_db, _admin_id))))
 
-record_search_hits(_db, [JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1")])
-_hits = list_search_hits(_db)
+record_search_hits(_db, [JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1")], _admin_id)
+_hits = list_search_hits(_db, _admin_id)
 _by_url = {h.url: h for h in _hits}
 check("re-record upserts by url (still 2 rows)", len(_hits) == 2, str(len(_hits)))
 check("re-record refreshed the score", _by_url["https://x/jobs/1"].overall == 75.0, str(_by_url["https://x/jobs/1"].overall))
@@ -870,16 +936,16 @@ check("re-record refreshed the score", _by_url["https://x/jobs/1"].overall == 75
 _he_title = "מהנדס/ת נתונים — תל אביב"
 _he_jd_text = "דרישות: ניסיון ב-Python ו-SQL, עבודה בענן (AWS)."
 record_search_hits(_db, [JobMatch(title=_he_title, company="חברת דוגמה", overall=70.0,
-                                  url="https://x/jobs/he-1", jd_text=_he_jd_text, source="drushim")])
-_he_row = {h.url: h for h in list_search_hits(_db)}["https://x/jobs/he-1"]
+                                  url="https://x/jobs/he-1", jd_text=_he_jd_text, source="drushim")], _admin_id)
+_he_row = {h.url: h for h in list_search_hits(_db, _admin_id)}["https://x/jobs/he-1"]
 check(
     "hebrew survives db round-trip byte-identical",
     _he_row.title == _he_title and _he_row.company == "חברת דוגמה" and _he_row.jd_text == _he_jd_text,
     _he_row.title,
 )
 
-record_search_hits(_db, [JobMatch(title=f"Role {i}", url=f"https://bulk/{i}") for i in range(105)])
-_hits = list_search_hits(_db)
+record_search_hits(_db, [JobMatch(title=f"Role {i}", url=f"https://bulk/{i}") for i in range(105)], _admin_id)
+_hits = list_search_hits(_db, _admin_id)
 _urls = {h.url for h in _hits}
 check("history capped at 100 rows", len(_hits) == 100, str(len(_hits)))
 check(
@@ -888,6 +954,7 @@ check(
 )
 
 _app_row = Application(
+    user_id=_admin_id,
     job_title="Backend Engineer", company="Acme", job_url="https://x/jobs/1", interviewed=True, excitement=4
 )
 _db.add(_app_row)
@@ -903,12 +970,13 @@ check(
 # exact URL otherwise, empty for never-applied jobs.
 from app.db.history import application_statuses  # noqa: E402
 
-_db.add(Application(job_title="X", status="applied", job_url="https://www.linkedin.com/jobs/view/9912345678?tracking=1"))
-_db.add(Application(job_title="Y", status="offer", job_url="https://x/jobs/1"))
+_db.add(Application(user_id=_admin_id, job_title="X", status="applied", job_url="https://www.linkedin.com/jobs/view/9912345678?tracking=1"))
+_db.add(Application(user_id=_admin_id, job_title="Y", status="offer", job_url="https://x/jobs/1"))
 _db.commit()
 _statuses = application_statuses(
     _db,
     ["https://il.linkedin.com/jobs/view/data-engineer-at-beta-9912345678", "https://x/jobs/1", "https://never/applied"],
+    _admin_id,
 )
 check(
     "app status joined by linkedin id + exact url",
@@ -925,30 +993,30 @@ from app.models import MasterResumeIn  # noqa: E402
 
 # The legacy row created above (pre-`language` table, Hebrew content) was
 # stamped "en" by the shim — the first read must heal it to "he".
-_legacy = get_master_resume(lang="he", db=_db)
+_legacy = get_master_resume(lang="he", db=_db, user=_admin_user)
 check(
     "legacy master healed to its real language on read",
     _legacy is not None and _legacy.language == "he" and _legacy.label == "Legacy hebrew master",
 )
 
-_saved_en = save_master_resume(MasterResumeIn(resume=resume, label="EN master"), db=_db)
+_saved_en = save_master_resume(MasterResumeIn(resume=resume, label="EN master"), db=_db, user=_admin_user)
 check("saving an english master lands in the en slot", _saved_en.language == "en")
-_saved_he = save_master_resume(MasterResumeIn(resume=_he_resume, label="HE master"), db=_db)
-_pair = list_master_resumes(db=_db).resumes
+_saved_he = save_master_resume(MasterResumeIn(resume=_he_resume, label="HE master"), db=_db, user=_admin_user)
+_pair = list_master_resumes(db=_db, user=_admin_user).resumes
 check(
     "hebrew master upserts the healed he slot — paired, not duplicated",
     _saved_he.language == "he" and len(_pair) == 2 and {m.language for m in _pair} == {"en", "he"},
     str([(m.language, m.label) for m in _pair]),
 )
-save_master_resume(MasterResumeIn(resume=resume, label="EN master v2"), db=_db)
-_pair = list_master_resumes(db=_db).resumes
+save_master_resume(MasterResumeIn(resume=resume, label="EN master v2"), db=_db, user=_admin_user)
+_pair = list_master_resumes(db=_db, user=_admin_user).resumes
 check(
     "re-saving english updates in place (still one row per language)",
     len(_pair) == 2 and any(m.label == "EN master v2" for m in _pair),
     str([(m.language, m.label) for m in _pair]),
 )
-_he_master = get_master_resume(lang="he", db=_db)
-_en_master = get_master_resume(lang="en", db=_db)
+_he_master = get_master_resume(lang="he", db=_db, user=_admin_user)
+_en_master = get_master_resume(lang="en", db=_db, user=_admin_user)
 check(
     "get by lang returns the matching master",
     _he_master is not None and _he_master.label == "HE master"
@@ -958,13 +1026,13 @@ check(
     "hebrew master round-trips its resume intact",
     _he_master is not None and _he_master.resume.contact.name == _he_resume.contact.name,
 )
-_default_master = get_master_resume(db=_db)
+_default_master = get_master_resume(db=_db, user=_admin_user)
 check(
     "default master (no lang) is the most recently updated",
     _default_master is not None and _default_master.label == "EN master v2",
     _default_master.label if _default_master else "None",
 )
-check("get by lang misses cleanly", get_master_resume(lang="fr", db=_db) is None)
+check("get by lang misses cleanly", get_master_resume(lang="fr", db=_db, user=_admin_user) is None)
 
 # 15c. Job alerts (PLAN 6): settings row, history diffing, email body, and the
 # full run loop with a canned search function (no network, no LLM, no SMTP)
@@ -978,10 +1046,10 @@ from app.core.alerts import (  # noqa: E402
 )
 from app.models import JobSearchResult, SearchContext as _AlertCtx  # noqa: E402
 
-_al = get_alert(_db)
+_al = get_alert(_db, _admin_id)
 check("alert settings row auto-creates (disabled, no email)", _al.enabled is False and _al.email == "")
-update_alert(_db, enabled=True, email="me@example.com", context=_AlertCtx(job_title="Backend Engineer", location="Tel Aviv"))
-_al = get_alert(_db)
+update_alert(_db, _admin_id, enabled=True, email="me@example.com", context=_AlertCtx(job_title="Backend Engineer", location="Tel Aviv"))
+_al = get_alert(_db, _admin_id)
 check(
     "alert settings persist (single row)",
     _al.enabled is True and _al.email == "me@example.com" and "Backend Engineer" in _al.context_json,
@@ -989,12 +1057,12 @@ check(
 
 # Put a known URL (back) in history — the 105-row cap test above trimmed it —
 # so the diff has one seen and one unseen job to split.
-record_search_hits(_db, [JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1")])
+record_search_hits(_db, [JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1")], _admin_id)
 _alert_matches = [
     JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1"),
     JobMatch(title="Platform Engineer", company="Nova", overall=82.0, url="https://alerts/new-1", source="drushim"),
 ]
-_new = split_new_matches(_db, _alert_matches)
+_new = split_new_matches(_db, _alert_matches, _admin_id)
 check("alert diff finds only never-seen urls", [m.url for m in _new] == ["https://alerts/new-1"], str([m.url for m in _new]))
 
 _subj, _body = build_alert_email(_new, _AlertCtx(job_title="Backend Engineer", location="Tel Aviv"))
@@ -1050,31 +1118,31 @@ def _canned_search(resume, ctx):  # noqa: ANN001 - matches search_jobs' shape
     )
 
 
-_run = run_alert(_db, search_fn=_canned_search)
+_run = run_alert(_db, _admin_id, search_fn=_canned_search)
 check(
     "alert run: 2 found, 1 new, not emailed (smtp unconfigured), no error",
     _run.ran is True and _run.total == 2 and _run.new_count == 1
     and _run.emailed is False and _run.error == "",
     str(_run),
 )
-_al = get_alert(_db)
+_al = get_alert(_db, _admin_id)
 check("alert run bookkeeping persisted", _al.last_new_count == 1 and _al.last_run_at is not None and _al.last_error == "")
-_run2 = run_alert(_db, search_fn=_canned_search)
+_run2 = run_alert(_db, _admin_id, search_fn=_canned_search)
 check("alert re-run: nothing new (hits now in history)", _run2.new_count == 0, str(_run2))
-update_alert(_db, enabled=False, email="me@example.com", context=None)
-check("alert run respects the toggle", run_alert(_db, search_fn=_canned_search).ran is False)
-check("alert run with force ignores the toggle", run_alert(_db, force=True, search_fn=_canned_search).ran is True)
+update_alert(_db, _admin_id, enabled=False, email="me@example.com", context=None)
+check("alert run respects the toggle", run_alert(_db, _admin_id, search_fn=_canned_search).ran is False)
+check("alert run with force ignores the toggle", run_alert(_db, _admin_id, force=True, search_fn=_canned_search).ran is True)
 
 
 def _broken_search(resume, ctx):  # noqa: ANN001
     raise ValueError("boards are down")
 
 
-_run_err = run_alert(_db, force=True, search_fn=_broken_search)
+_run_err = run_alert(_db, _admin_id, force=True, search_fn=_broken_search)
 check(
     "alert run reports search failure instead of raising",
     _run_err.ran is True and "boards are down" in _run_err.error
-    and "boards are down" in get_alert(_db).last_error,
+    and "boards are down" in get_alert(_db, _admin_id).last_error,
 )
 
 # 16. Comeet company registry: auto-seed, token persistence, careers-URL upsert
@@ -1300,6 +1368,191 @@ for _tpl in TEMPLATES:
         and _get_display(_he_full.contact.name, base_dir="R") in _tpl_he_pdf_txt
         and "Python" in _tpl_he_pdf_txt,
     )
+
+# 19. Friends beta (PLAN 7): invite-code auth, per-user isolation, admin
+# mint/revoke, daily caps, feedback, delete-my-data — all through the HTTP
+# stack (gate middleware included), then per-user alerts at the function level.
+_ADMIN_H = {"X-App-Key": "smoke-gate-code"}
+with TestClient(_fastapi_app) as _tc:
+    # Gate → user resolution
+    check(
+        "admin invite code (APP_ACCESS_CODE) still opens the gate",
+        _tc.get("/applications", headers=_ADMIN_H).status_code == 200,
+    )
+    check(
+        "unknown invite code 401s",
+        _tc.get("/applications", headers={"X-App-Key": "not-a-code"}).status_code == 401,
+    )
+
+    # Cron endpoint with nothing enabled: 0 users, no network touched.
+    _cron = _tc.get("/jobs/alerts/cron")
+    check(
+        "cron endpoint iterates enabled alerts (none yet)",
+        _cron.status_code == 200 and _cron.json() == {"users": 0, "results": []},
+        _cron.text[:100],
+    )
+
+    # Mint a friend
+    _mint = _tc.post(
+        "/admin/users", json={"name": "Noa", "email": "noa@example.com"}, headers=_ADMIN_H
+    )
+    check(
+        "admin mints a friend invite code",
+        _mint.status_code == 200 and len(_mint.json()["invite_code"]) >= 8,
+        _mint.text[:120],
+    )
+    _friend_id = _mint.json()["id"]
+    _FRIEND_H = {"X-App-Key": _mint.json()["invite_code"]}
+    _admin_row_id = next(
+        u["id"] for u in _tc.get("/admin/users", headers=_ADMIN_H).json()["users"] if u["is_admin"]
+    )
+    check("friend code opens the gate", _tc.get("/applications", headers=_FRIEND_H).status_code == 200)
+    check(
+        "friend can't reach admin endpoints (403)",
+        _tc.get("/admin/users", headers=_FRIEND_H).status_code == 403
+        and _tc.post("/admin/users", json={"name": "Eve"}, headers=_FRIEND_H).status_code == 403,
+    )
+
+    # Isolation: admin has masters/applications/history from section 15;
+    # the friend must see none of it.
+    check("friend sees no master résumé", _tc.get("/profile/resume", headers=_FRIEND_H).json() is None)
+    check("friend tracker is empty", _tc.get("/applications", headers=_FRIEND_H).json() == [])
+    check("friend history is empty", _tc.get("/jobs/history", headers=_FRIEND_H).json()["hits"] == [])
+    _admin_apps = _tc.get("/applications", headers=_ADMIN_H).json()
+    check("admin still sees own tracker rows", len(_admin_apps) >= 3, str(len(_admin_apps)))
+
+    # Friend writes their own data; the admin's view is unchanged.
+    _resume_json = resume.model_dump()
+    check(
+        "friend saves their own master résumé",
+        _tc.put(
+            "/profile/resume", json={"resume": _resume_json, "label": "Noa CV"}, headers=_FRIEND_H
+        ).status_code == 200,
+    )
+    check(
+        "friend saves their own application",
+        _tc.post(
+            "/applications", json={"job_title": "QA", "company": "FriendCo"}, headers=_FRIEND_H
+        ).status_code == 200,
+    )
+    check(
+        "cross-user isolation: admin can't see the friend's rows",
+        all(a["company"] != "FriendCo" for a in _tc.get("/applications", headers=_ADMIN_H).json())
+        and all(
+            m["label"] != "Noa CV"
+            for m in _tc.get("/profile/resumes", headers=_ADMIN_H).json()["resumes"]
+        ),
+    )
+    check(
+        "friend can't read the admin's application by id (404)",
+        _tc.get(f"/applications/{_admin_apps[0]['id']}", headers=_FRIEND_H).status_code == 404,
+    )
+
+    # Daily caps (DAILY_TAILOR_CAP=2 at the top of this file; stub LLM = offline).
+    _tailor_body = {"resume": _resume_json, "jd": {"job_title": "Backend Engineer"}}
+    _t1 = _tc.post("/tailor", json=_tailor_body, headers=_FRIEND_H)
+    _t2 = _tc.post("/tailor", json=_tailor_body, headers=_FRIEND_H)
+    _t3 = _tc.post("/tailor", json=_tailor_body, headers=_FRIEND_H)
+    check("friend can tailor up to the daily cap", _t1.status_code == 200 and _t2.status_code == 200)
+    check(
+        "over the cap → 429 with structured daily_limit detail",
+        _t3.status_code == 429
+        and _t3.json()["detail"] == {"code": "daily_limit", "action": "tailor", "cap": 2},
+        _t3.text[:120],
+    )
+    check(
+        "admin is exempt from daily caps",
+        all(
+            _tc.post("/tailor", json=_tailor_body, headers=_ADMIN_H).status_code == 200
+            for _ in range(3)
+        ),
+    )
+
+    # Feedback (PLAN 7.0)
+    check(
+        "feedback rejects empty text",
+        _tc.post("/feedback", json={"page": "/jobs", "text": "  "}, headers=_FRIEND_H).status_code == 400,
+    )
+    check(
+        "friend sends feedback (hebrew-safe)",
+        _tc.post(
+            "/feedback", json={"page": "/jobs", "text": "האתר מעולה אבל החיפוש איטי"}, headers=_FRIEND_H
+        ).status_code == 200,
+    )
+    _fb = _tc.get("/admin/feedback", headers=_ADMIN_H)
+    check(
+        "admin reads feedback with the sender's name",
+        _fb.status_code == 200
+        and any(
+            f["text"] == "האתר מעולה אבל החיפוש איטי" and f["user_name"] == "Noa" and f["page"] == "/jobs"
+            for f in _fb.json()["feedback"]
+        ),
+        _fb.text[:150],
+    )
+    check("feedback list is admin-only", _tc.get("/admin/feedback", headers=_FRIEND_H).status_code == 403)
+
+    # Delete-my-data (PLAN 7.5): friend leaves cleanly, admin data untouched.
+    _del = _tc.request("DELETE", "/profile/data", headers=_FRIEND_H)
+    check(
+        "delete-my-data wipes the friend's rows (résumé, app, usage, feedback)",
+        _del.status_code == 200
+        and _del.json()["resumes"] == 1
+        and _del.json()["applications"] == 1
+        and _del.json()["usage"] == 1
+        and _del.json()["feedback"] == 1,
+        _del.text[:200],
+    )
+    check(
+        "after wipe: friend empty, admin intact",
+        _tc.get("/profile/resume", headers=_FRIEND_H).json() is None
+        and _tc.get("/applications", headers=_FRIEND_H).json() == []
+        and len(_tc.get("/applications", headers=_ADMIN_H).json()) >= 3,
+    )
+
+    # Revoke (deactivate): the code stops working; admins can't be deactivated.
+    check(
+        "admin account can't be deactivated",
+        _tc.patch(
+            f"/admin/users/{_admin_row_id}", json={"is_active": False}, headers=_ADMIN_H
+        ).status_code == 400,
+    )
+    check(
+        "deactivating the friend revokes their code",
+        _tc.patch(
+            f"/admin/users/{_friend_id}", json={"is_active": False}, headers=_ADMIN_H
+        ).status_code == 200
+        and _tc.get("/applications", headers=_FRIEND_H).status_code == 401,
+    )
+
+# 19b. Per-user alerts (PLAN 7.3): the cron loop runs every enabled user's
+# alert against their OWN master résumé and history.
+from app.core.alerts import run_all_alerts  # noqa: E402
+from app.db.models import SavedResume as _SR  # noqa: E402
+from app.db.users import mint_user  # noqa: E402
+
+_db3 = SessionLocal()
+_dana = mint_user(_db3, "Dana")
+_db3.add(_SR(user_id=_dana.id, language="en", resume_json=resume.model_dump_json()))
+_db3.commit()
+update_alert(_db3, _admin_id, enabled=True, email="admin@example.com",
+             context=_AlertCtx(job_title="Backend Engineer"))
+update_alert(_db3, _dana.id, enabled=True, email="dana@example.com",
+             context=_AlertCtx(job_title="Backend Engineer"))
+_cron_results = run_all_alerts(_db3, search_fn=_canned_search)
+check("cron loop runs every enabled user's alert", len(_cron_results) == 2, str(len(_cron_results)))
+check(
+    "per-user diff: admin saw these urls before, dana never did",
+    _cron_results[0].new_count == 0 and _cron_results[1].new_count == 2,
+    str([(r.new_count, r.error) for r in _cron_results]),
+)
+check(
+    "dana's run recorded into dana's own history",
+    len(list_search_hits(_db3, _dana.id)) == 2
+    and all(h.user_id == _dana.id for h in list_search_hits(_db3, _dana.id)),
+)
+update_alert(_db3, _admin_id, enabled=False, email="admin@example.com", context=None)
+update_alert(_db3, _dana.id, enabled=False, email="dana@example.com", context=None)
+_db3.close()
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

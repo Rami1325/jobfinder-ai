@@ -9,10 +9,60 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.database import Base
 
 
+class User(Base):
+    """A beta user (PLAN 7). No signup UI: the admin mints per-friend invite
+    codes and each `X-App-Key` header resolves to one of these rows. The
+    `APP_ACCESS_CODE` env var stays the admin's own code (synced on startup),
+    so the pre-multi-user deployment keeps working unchanged.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    email: Mapped[str] = mapped_column(String(320), default="")
+    invite_code: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class Feedback(Base):
+    """In-app tester feedback (PLAN 7.0) — the whole point of the friends beta."""
+
+    __tablename__ = "feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
+    page: Mapped[str] = mapped_column(String(255), default="")
+    text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class UsageLog(Base):
+    """Per-user per-day action counters (PLAN 7.4) backing the daily cost caps.
+    One row per (user, action, day); day is a UTC YYYY-MM-DD string."""
+
+    __tablename__ = "usage_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
+    action: Mapped[str] = mapped_column(String(32), default="")  # search | tailor
+    day: Mapped[str] = mapped_column(String(10), default="")
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Application(Base):
     __tablename__ = "applications"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Nullable for the ADD-COLUMN shim on pre-multi-user DBs; init_db backfills
+    # NULLs to the admin user, and every code path sets it explicitly.
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
     job_title: Mapped[str] = mapped_column(String(255), default="")
     company: Mapped[str] = mapped_column(String(255), default="")
     jd_text: Mapped[str] = mapped_column(Text, default="")
@@ -39,6 +89,7 @@ class JobSearchHit(Base):
     __tablename__ = "job_search_hits"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
     title: Mapped[str] = mapped_column(String(255), default="")
     company: Mapped[str] = mapped_column(String(255), default="")
     location: Mapped[str] = mapped_column(String(255), default="")
@@ -80,14 +131,16 @@ class ComeetCompany(Base):
 
 
 class JobAlert(Base):
-    """Job-alert settings (single row): re-run the saved search on a schedule
-    and email newly seen hits. The schedule itself lives in Vercel cron (or a
-    manual "Run now"); this row holds the toggle, recipient, optional search
-    context override, and the last run's outcome for the UI."""
+    """Job-alert settings (one row per user): re-run the saved search on a
+    schedule and email newly seen hits. The schedule itself lives in Vercel
+    cron (or a manual "Run now"); the daily cron iterates every enabled row.
+    This row holds the toggle, recipient, optional search context override,
+    and the last run's outcome for the UI."""
 
     __tablename__ = "job_alerts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     email: Mapped[str] = mapped_column(String(320), default="")
     context_json: Mapped[str] = mapped_column(Text, default="")  # SearchContext; "" = derive from résumé
@@ -99,16 +152,16 @@ class JobAlert(Base):
 class SavedResume(Base):
     """The user's persisted master résumés, reused across Tailor / Interview / Job Match.
 
-    One row per language ("en"/"he") so a paired Hebrew/English master can coexist —
+    One row per (user, language) so a paired Hebrew/English master can coexist —
     saving a résumé upserts the row matching its detected language, and tailoring
-    picks the master matching the JD's language. Single-user today (the
-    most-recently-updated row is the default master), but carries a `label` so
-    multiple named résumés — and a future `user_id` — slot in cleanly.
+    picks the master matching the JD's language. The user's most-recently-updated
+    row is their default master; `label` leaves room for multiple named résumés.
     """
 
     __tablename__ = "saved_resumes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
     label: Mapped[str] = mapped_column(String(255), default="My résumé")
     language: Mapped[str] = mapped_column(String(8), default="en")  # "en" | "he"
     resume_json: Mapped[str] = mapped_column(Text, default="")

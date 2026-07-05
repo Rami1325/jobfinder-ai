@@ -202,6 +202,7 @@ export interface SearchContext {
   work_mode: string; // any | onsite | remote | hybrid
   limit: number;
   sources?: string[]; // provider ids to search ("linkedin", "drushim", …); absent on older backends
+  max_age_days?: number; // only postings at most this old, 0 = any age; backend defaults to 30
 }
 export interface AlertSettings {
   enabled: boolean;
@@ -281,4 +282,12 @@ export interface LinkedInResult {
 export interface FollowUpResult {
   subject: string;
   body: string;
+}
+
+/** Friends-beta feedback (POST /feedback). */
+export interface FeedbackOut {
+  id: number;
+  page: string;
+  text: string;
+  created_at: string;
 }

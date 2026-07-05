@@ -3,6 +3,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { Sparkles, FileText, MessageSquareText, Briefcase, Wrench, KanbanSquare, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
+import FeedbackButton from "../components/FeedbackButton";
 import LanguageSwitch from "../components/LanguageSwitch";
 import OnboardingModal from "../components/OnboardingModal";
 import ThemeToggle from "../components/ThemeToggle";
@@ -61,6 +62,7 @@ export default function AppLayout() {
       <main className="mx-auto max-w-6xl px-4 py-8">
         <Outlet />
       </main>
+      <FeedbackButton />
       <OnboardingModal open={onboardOpen} onClose={() => setOnboardOpen(false)} />
     </div>
   );

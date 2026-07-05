@@ -2,6 +2,7 @@
 // survives route changes: JobsPage unmounts when the user navigates away, but
 // the request promise and its outcome live here, not in component state.
 import { searchJobs } from "../api/client";
+import { apiErrorMessage } from "../lib/apiError";
 import type { JobSearchResult, ResumeModel, SearchContext } from "../types";
 
 export type JobSearchState = {
@@ -37,11 +38,11 @@ export function startJobSearch(resume: ResumeModel, customize: SearchContext | n
     .then((r) => {
       if (id === seq) set({ searching: false, result: r });
     })
-    .catch((e: any) => {
+    .catch((e: unknown) => {
       if (id === seq)
         set({
           searching: false,
-          error: e?.response?.data?.detail || "Something went wrong.",
+          error: apiErrorMessage(e, "Something went wrong."),
         });
     });
 }

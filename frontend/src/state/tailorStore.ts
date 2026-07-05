@@ -3,6 +3,7 @@
 // request promise and everything on screen (résumé, JD, results, tracker
 // state) live here, not in component state, and are intact when they return.
 import { analyzeJD, getMasterResume, tailor } from "../api/client";
+import { apiErrorMessage } from "../lib/apiError";
 import { resumeLanguage } from "../lib/lang";
 import type { FactsLedger, JDModel, ResumeModel, TailorResult } from "../types";
 
@@ -143,11 +144,11 @@ export function startTailor(): void {
     }
     const r = await tailor(useResume, analyzed);
     if (id === seq) setTailorState({ loading: false, result: r });
-  })().catch((e: any) => {
+  })().catch((e: unknown) => {
     if (id === seq)
       setTailorState({
         loading: false,
-        error: e?.response?.data?.detail || "Something went wrong. Is the backend running?",
+        error: apiErrorMessage(e, "Something went wrong. Is the backend running?"),
       });
   });
 }

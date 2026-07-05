@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { fetchJob } from "../api/client";
+import { apiErrorMessage } from "../lib/apiError";
 import { Button } from "./ui";
 
 interface Props {
@@ -30,7 +31,7 @@ export default function JDPaste({ value, onChange }: Props) {
       }
       onChange(text);
     } catch (e: any) {
-      setError(e?.response?.data?.detail || e?.message || t("jdPaste.fetchError"));
+      setError(apiErrorMessage(e, e?.message || t("jdPaste.fetchError")));
     } finally {
       setLoading(false);
     }

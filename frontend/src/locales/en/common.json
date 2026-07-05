@@ -59,6 +59,18 @@
     "cancel": "Cancel",
     "savedToast": "Saved as your master resume"
   },
+  "feedback": {
+    "button": "Feedback",
+    "title": "Send feedback",
+    "placeholder": "What's working? What's broken? What's missing?",
+    "send": "Send",
+    "sent": "Thanks — feedback sent!",
+    "error": "Couldn't send feedback. Please try again."
+  },
+  "dailyLimit": {
+    "search": "Daily limit reached — you've used all {{cap}} searches for today. Try again tomorrow.",
+    "tailor": "Daily limit reached — you've used all {{cap}} tailorings for today. Try again tomorrow."
+  },
   "accessGate": {
     "title": "Access code",
     "body": "This JobFinder instance is private. Enter the access code to continue — it's remembered on this device.",

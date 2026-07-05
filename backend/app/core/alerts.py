@@ -1,14 +1,17 @@
 """Job alerts: re-run the saved search, diff against history, email new hits.
 
 The schedule lives outside (Vercel cron hits GET /jobs/alerts/cron daily; the
-UI has a manual "Run now"). "New" means the job's URL wasn't in
+UI has a manual "Run now"). "New" means the job's URL wasn't in the user's
 `job_search_hits` before this run — the same table the History tab shows, so
 an alert never emails a job the user has already seen in the app. History is
-capped at 100 rows, so a very old posting can resurface as "new"; acceptable.
+capped at 100 rows per user, so a very old posting can resurface as "new";
+acceptable.
 
-`run_alert` takes the search function as a parameter so the offline smoke
-test can exercise the whole flow (diffing, recording, settings bookkeeping)
-with a canned search result — no network, no LLM.
+Per-user since PLAN 7.3: one settings row per user, and the daily cron
+iterates every enabled row (`run_all_alerts`). `run_alert` takes the search
+function as a parameter so the offline smoke test can exercise the whole flow
+(diffing, recording, settings bookkeeping) with a canned search result — no
+network, no LLM.
 """
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ from app.config import get_settings
 from app.core import mailer
 from app.core.job_search import search_jobs
 from app.db.history import record_search_hits
-from app.db.models import JobAlert, JobSearchHit, SavedResume
+from app.db.models import JobAlert, JobSearchHit, SavedResume, User
 from app.models import (
     AlertRunResult,
     JobMatch,
@@ -33,11 +36,13 @@ from app.models import (
 )
 
 
-def get_alert(db: Session) -> JobAlert:
-    """The single settings row, created on first access."""
-    row = db.execute(select(JobAlert).order_by(JobAlert.id)).scalars().first()
+def get_alert(db: Session, user_id: int) -> JobAlert:
+    """The user's settings row, created on first access."""
+    row = db.execute(
+        select(JobAlert).where(JobAlert.user_id == user_id).order_by(JobAlert.id)
+    ).scalars().first()
     if row is None:
-        row = JobAlert()
+        row = JobAlert(user_id=user_id)
         db.add(row)
         db.commit()
         db.refresh(row)
@@ -45,9 +50,9 @@ def get_alert(db: Session) -> JobAlert:
 
 
 def update_alert(
-    db: Session, *, enabled: bool, email: str, context: SearchContext | None
+    db: Session, user_id: int, *, enabled: bool, email: str, context: SearchContext | None
 ) -> JobAlert:
-    row = get_alert(db)
+    row = get_alert(db, user_id)
     row.enabled = enabled
     row.email = email.strip()
     row.context_json = context.model_dump_json() if context else ""
@@ -65,13 +70,17 @@ def alert_context(row: JobAlert) -> SearchContext | None:
         return None
 
 
-def split_new_matches(db: Session, matches: list[JobMatch]) -> list[JobMatch]:
-    """Matches whose URL isn't in the search history yet (call BEFORE recording)."""
+def split_new_matches(db: Session, matches: list[JobMatch], user_id: int) -> list[JobMatch]:
+    """Matches whose URL isn't in the user's search history yet (call BEFORE recording)."""
     urls = [m.url for m in matches if m.url]
     if not urls:
         return []
     seen = set(
-        db.execute(select(JobSearchHit.url).where(JobSearchHit.url.in_(urls))).scalars().all()
+        db.execute(
+            select(JobSearchHit.url).where(
+                JobSearchHit.url.in_(urls), JobSearchHit.user_id == user_id
+            )
+        ).scalars().all()
     )
     return [m for m in matches if m.url and m.url not in seen]
 
@@ -254,9 +263,11 @@ def build_alert_email_html(new: list[JobMatch], ctx: SearchContext, app_url: str
 </html>"""
 
 
-def _master_resume(db: Session) -> ResumeModel | None:
+def _master_resume(db: Session, user_id: int) -> ResumeModel | None:
     for row in db.execute(
-        select(SavedResume).order_by(SavedResume.updated_at.desc())
+        select(SavedResume)
+        .where(SavedResume.user_id == user_id)
+        .order_by(SavedResume.updated_at.desc())
     ).scalars():
         try:
             return ResumeModel.model_validate_json(row.resume_json)
@@ -267,17 +278,19 @@ def _master_resume(db: Session) -> ResumeModel | None:
 
 def run_alert(
     db: Session,
+    user_id: int,
     *,
     force: bool = False,
     search_fn: Callable[[ResumeModel, SearchContext | None], JobSearchResult] = search_jobs,
 ) -> AlertRunResult:
-    """Execute one alert run. `force=True` runs even when the toggle is off
-    (the UI's "Run now"). Never raises: failures land in `last_error` and the
-    returned result so the cron caller always gets a 200 with the outcome."""
-    row = get_alert(db)
+    """Execute one alert run for one user. `force=True` runs even when the
+    toggle is off (the UI's "Run now"). Never raises: failures land in
+    `last_error` and the returned result so the cron caller always gets a 200
+    with the outcome."""
+    row = get_alert(db, user_id)
     if not row.enabled and not force:
         return AlertRunResult(ran=False, error="Alerts are disabled.")
-    resume = _master_resume(db)
+    resume = _master_resume(db, user_id)
     if resume is None:
         row.last_error = "No master résumé saved yet."
         db.commit()
@@ -285,8 +298,8 @@ def run_alert(
 
     try:
         result = search_fn(resume, alert_context(row))
-        new = split_new_matches(db, result.matches)
-        record_search_hits(db, result.matches)
+        new = split_new_matches(db, result.matches, user_id)
+        record_search_hits(db, result.matches, user_id)
     except Exception as e:  # noqa: BLE001 - report, don't crash the cron
         row.last_run_at = datetime.now(timezone.utc)
         row.last_error = str(e)[:500]
@@ -315,3 +328,20 @@ def run_alert(
         emailed=emailed,
         error=email_error,
     )
+
+
+def run_all_alerts(
+    db: Session,
+    *,
+    search_fn: Callable[[ResumeModel, SearchContext | None], JobSearchResult] = search_jobs,
+) -> list[AlertRunResult]:
+    """One cron tick (PLAN 7.3): run the alert of every active user whose
+    toggle is on. Per-user failures are isolated inside run_alert, so one
+    broken alert never blocks the rest."""
+    user_ids = db.execute(
+        select(JobAlert.user_id)
+        .join(User, User.id == JobAlert.user_id)
+        .where(JobAlert.enabled.is_(True), User.is_active.is_(True))
+        .order_by(JobAlert.user_id)
+    ).scalars().all()
+    return [run_alert(db, uid, search_fn=search_fn) for uid in user_ids if uid is not None]

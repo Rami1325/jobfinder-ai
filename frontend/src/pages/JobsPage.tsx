@@ -37,6 +37,7 @@ import {
   subscribeJobSearch,
 } from "../state/jobSearchStore";
 import { useMasterResume } from "../hooks/useMasterResume";
+import { apiErrorMessage } from "../lib/apiError";
 import { resumeLanguage } from "../lib/lang";
 import { onboardingRole } from "../lib/onboarding";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
@@ -55,6 +56,10 @@ const inputCls =
   "rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50";
 
 const WORK_MODES = ["any", "remote", "onsite", "hybrid"] as const;
+
+// "Posted within" choices in days; 0 = any age. Backend default is 30, so a
+// ctx without max_age_days (older saved contexts) behaves like "Month".
+const MAX_AGE_OPTIONS = [1, 3, 7, 14, 30, 0] as const;
 
 // Selectable job boards (PROVIDERS registry ids). Empty/absent = all boards.
 // Keep in sync with the backend registry: a board missing here disappears
@@ -446,7 +451,7 @@ function AlertsCard({ getContext }: { getContext: () => SearchContext | null }) 
       setEnabled(s.enabled);
       toast("success", t("alerts.saved"));
     } catch (e: any) {
-      toast("error", e?.response?.data?.detail || t("alerts.saveError"));
+      toast("error", apiErrorMessage(e, t("alerts.saveError")));
     } finally {
       setSaving(false);
     }
@@ -467,7 +472,7 @@ function AlertsCard({ getContext }: { getContext: () => SearchContext | null }) 
       }
       setSettings(await getJobAlert());
     } catch (e: any) {
-      toast("error", e?.response?.data?.detail || t("alerts.runError", { error: "" }));
+      toast("error", apiErrorMessage(e, t("alerts.runError", { error: "" })));
     } finally {
       setRunning(false);
     }
@@ -596,7 +601,7 @@ export default function JobsPage() {
       const h = await getJobHistory();
       setHistory(h.hits);
     } catch (e: any) {
-      setHistoryError(e?.response?.data?.detail || t("history.loadError"));
+      setHistoryError(apiErrorMessage(e, t("history.loadError")));
     } finally {
       setHistoryLoading(false);
     }
@@ -713,7 +718,7 @@ export default function JobsPage() {
       setUrl("");
       toast("success", t("manual.fetched"));
     } catch (e: any) {
-      setError(e?.response?.data?.detail || e?.message || t("manual.fetchError"));
+      setError(apiErrorMessage(e, e?.message || t("manual.fetchError")));
     } finally {
       setFetching(false);
     }
@@ -728,7 +733,7 @@ export default function JobsPage() {
       const r = await matchJobs(master.resume, listings);
       setMatches(r.matches);
     } catch (e: any) {
-      setError(e?.response?.data?.detail || t("manual.genericError"));
+      setError(apiErrorMessage(e, t("manual.genericError")));
     } finally {
       setRunning(false);
     }
@@ -926,6 +931,26 @@ export default function JobsPage() {
                         {WORK_MODES.map((w) => (
                           <option key={w} value={w}>
                             {t(`workModes.${w}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
+                      {t("search.postedWithin")}
+                      <select
+                        value={ctx?.max_age_days ?? 30}
+                        disabled={prefilling}
+                        onChange={(e) =>
+                          setCtx((p) => ({
+                            ...(p as SearchContext),
+                            max_age_days: Number(e.target.value),
+                          }))
+                        }
+                        className={inputCls}
+                      >
+                        {MAX_AGE_OPTIONS.map((d) => (
+                          <option key={d} value={d}>
+                            {t(`postedWithin.${d === 0 ? "any" : `d${d}`}`)}
                           </option>
                         ))}
                       </select>

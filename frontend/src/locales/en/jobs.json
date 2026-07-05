@@ -26,6 +26,7 @@
     "location": "Location",
     "locationPlaceholder": "e.g. Tel Aviv, Israel",
     "workMode": "Work mode",
+    "postedWithin": "Posted within",
     "limit": "Jobs to rank (1–25)",
     "detecting": "Detecting from your resume…",
     "presetsLabel": "Quick locations:",
@@ -58,6 +59,14 @@
     "remote": "Remote",
     "onsite": "On-site",
     "hybrid": "Hybrid"
+  },
+  "postedWithin": {
+    "d1": "24 hours",
+    "d3": "3 days",
+    "d7": "Last week",
+    "d14": "2 weeks",
+    "d30": "Last month",
+    "any": "Any time"
   },
   "sort": {
     "label": "Sort by",

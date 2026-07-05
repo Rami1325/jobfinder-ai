@@ -7,9 +7,10 @@ import json
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.api.deps import admin_user, current_user
 from app.config import get_settings
 
 from app.core import alerts as alerts_core
@@ -26,8 +27,10 @@ from app.core.lang import resume_language
 from app.core.linkedin import optimize_linkedin
 from app.core.providers.comeet import register_company as register_comeet_company
 from app.core.tailor import tailor_resume
+from app.core.usage import check_and_count
 from app.db.comeet import list_companies as list_comeet_companies
 from app.db.database import get_db
+from app.db.users import mint_user
 from app.db.history import (
     application_statuses,
     clear_search_hits,
@@ -35,9 +38,10 @@ from app.db.history import (
     list_search_hits,
     record_search_hits,
 )
-from app.db.models import Application, SavedResume
+from app.db.models import Application, Feedback, JobAlert, JobSearchHit, SavedResume, UsageLog, User
 from app.models import (
     AddComeetCompanyRequest,
+    AlertCronResult,
     AlertRunResult,
     AlertSettingsIn,
     AlertSettingsOut,
@@ -51,7 +55,11 @@ from app.models import (
     ComeetCompanyOut,
     CoverLetterRequest,
     CoverLetterResponse,
+    DeleteMyDataResult,
     FactsLedger,
+    FeedbackIn,
+    FeedbackList,
+    FeedbackOut,
     FollowUpRequest,
     FollowUpResult,
     FreeScanResult,
@@ -83,6 +91,10 @@ from app.models import (
     SearchContextRequest,
     TailorRequest,
     TailorResult,
+    UserCreate,
+    UserList,
+    UserOut,
+    UserUpdate,
 )
 from app.parsers.resume_parser import extract_text
 from app.parsers.structurer import build_facts_ledger, structure_resume
@@ -127,7 +139,12 @@ def jd_analyze(body: JDAnalyzeRequest) -> JDModel:
 
 
 @router.post("/tailor", response_model=TailorResult)
-def tailor(body: TailorRequest) -> TailorResult:
+def tailor(
+    body: TailorRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> TailorResult:
+    check_and_count(db, user, "tailor", get_settings().daily_tailor_cap)
     try:
         return tailor_resume(body.resume, body.jd)
     except Exception as e:  # noqa: BLE001
@@ -228,7 +245,12 @@ def jobs_search_context(body: SearchContextRequest) -> SearchContext:
 
 
 @router.post("/jobs/search", response_model=JobSearchResult)
-def jobs_search(body: JobSearchRequest, db: Session = Depends(get_db)) -> JobSearchResult:
+def jobs_search(
+    body: JobSearchRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> JobSearchResult:
+    check_and_count(db, user, "search", get_settings().daily_search_cap)
     try:
         result = search_jobs(body.resume, body.customize)
     except ValueError as e:  # user-facing scrape/search problems
@@ -236,16 +258,18 @@ def jobs_search(body: JobSearchRequest, db: Session = Depends(get_db)) -> JobSea
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while searching jobs: {e}")
     try:  # history persistence is best-effort — never fail the search because of it
-        record_search_hits(db, result.matches)
+        record_search_hits(db, result.matches, user.id)
     except Exception:  # noqa: BLE001
         pass
     return result
 
 
 @router.get("/jobs/history", response_model=JobSearchHistory)
-def jobs_history(db: Session = Depends(get_db)) -> JobSearchHistory:
-    rows = list_search_hits(db)
-    statuses = application_statuses(db, [row.url for row in rows])
+def jobs_history(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> JobSearchHistory:
+    rows = list_search_hits(db, user.id)
+    statuses = application_statuses(db, [row.url for row in rows], user.id)
     hits: list[JobSearchHitOut] = []
     for row in rows:
         try:
@@ -275,15 +299,19 @@ def jobs_history(db: Session = Depends(get_db)) -> JobSearchHistory:
 
 
 @router.delete("/jobs/history/{hit_id}")
-def delete_jobs_history_item(hit_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
-    if not delete_search_hit(db, hit_id):
+def delete_jobs_history_item(
+    hit_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> dict[str, bool]:
+    if not delete_search_hit(db, hit_id, user.id):
         raise HTTPException(404, "History item not found.")
     return {"deleted": True}
 
 
 @router.delete("/jobs/history")
-def clear_jobs_history(db: Session = Depends(get_db)) -> dict[str, int]:
-    return {"deleted": clear_search_hits(db)}
+def clear_jobs_history(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> dict[str, int]:
+    return {"deleted": clear_search_hits(db, user.id)}
 
 
 # --------------------------------------------------------------------------- #
@@ -302,34 +330,46 @@ def _alert_out(row, db: Session) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert
 
 
 @router.get("/jobs/alerts", response_model=AlertSettingsOut)
-def get_job_alert(db: Session = Depends(get_db)) -> AlertSettingsOut:
-    return _alert_out(alerts_core.get_alert(db), db)
+def get_job_alert(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> AlertSettingsOut:
+    return _alert_out(alerts_core.get_alert(db, user.id), db)
 
 
 @router.put("/jobs/alerts", response_model=AlertSettingsOut)
-def update_job_alert(body: AlertSettingsIn, db: Session = Depends(get_db)) -> AlertSettingsOut:
+def update_job_alert(
+    body: AlertSettingsIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> AlertSettingsOut:
     if body.enabled and not body.email.strip():
         raise HTTPException(400, "Add an email address to enable alerts.")
-    row = alerts_core.update_alert(db, enabled=body.enabled, email=body.email, context=body.context)
+    row = alerts_core.update_alert(
+        db, user.id, enabled=body.enabled, email=body.email, context=body.context
+    )
     return _alert_out(row, db)
 
 
 @router.post("/jobs/alerts/run", response_model=AlertRunResult)
-def run_job_alert(db: Session = Depends(get_db)) -> AlertRunResult:
+def run_job_alert(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> AlertRunResult:
     """Manual 'Run now' from the UI — runs even when the toggle is off."""
-    return alerts_core.run_alert(db, force=True)
+    return alerts_core.run_alert(db, user.id, force=True)
 
 
-@router.get("/jobs/alerts/cron", response_model=AlertRunResult)
-def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertRunResult:
+@router.get("/jobs/alerts/cron", response_model=AlertCronResult)
+def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertCronResult:
     """Vercel cron entrypoint (exempt from the X-App-Key gate — see main.py).
-    When CRON_SECRET is set, Vercel sends it as a Bearer token; require it."""
+    When CRON_SECRET is set, Vercel sends it as a Bearer token; require it.
+    Runs every active user's enabled alert (PLAN 7.3)."""
     secret = get_settings().cron_secret
     if secret:
         auth = request.headers.get("authorization", "")
         if not hmac.compare_digest(auth, f"Bearer {secret}"):
             raise HTTPException(401, "Bad cron secret.")
-    return alerts_core.run_alert(db)
+    results = alerts_core.run_all_alerts(db)
+    return AlertCronResult(users=len(results), results=results)
 
 
 @router.get("/jobs/comeet/companies", response_model=ComeetCompanyList)
@@ -441,15 +481,17 @@ def _row_to_master(row: SavedResume) -> MasterResumeOut | None:
     )
 
 
-def _master_rows(db: Session) -> list[SavedResume]:
-    """All saved-résumé rows, newest first, with legacy `language` values healed.
+def _master_rows(db: Session, user_id: int) -> list[SavedResume]:
+    """The user's saved-résumé rows, newest first, with legacy `language` healed.
 
     The ADD-COLUMN shim stamps pre-pairing rows "en"; a Hebrew master saved
     before the column existed would shadow the real English slot, so recompute
     the language from the stored résumé whenever they disagree.
     """
     rows = db.execute(
-        select(SavedResume).order_by(SavedResume.updated_at.desc())
+        select(SavedResume)
+        .where(SavedResume.user_id == user_id)
+        .order_by(SavedResume.updated_at.desc())
     ).scalars().all()
     healed = False
     for row in rows:
@@ -466,9 +508,13 @@ def _master_rows(db: Session) -> list[SavedResume]:
 
 
 @router.get("/profile/resume", response_model=MasterResumeOut | None)
-def get_master_resume(lang: str | None = None, db: Session = Depends(get_db)) -> MasterResumeOut | None:
+def get_master_resume(
+    lang: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> MasterResumeOut | None:
     """The master résumé — most recently updated, or the `lang` one when asked."""
-    for row in _master_rows(db):
+    for row in _master_rows(db, user.id):
         if lang and (row.language or "en") != lang:
             continue
         master = _row_to_master(row)
@@ -478,19 +524,27 @@ def get_master_resume(lang: str | None = None, db: Session = Depends(get_db)) ->
 
 
 @router.get("/profile/resumes", response_model=MasterResumeList)
-def list_master_resumes(db: Session = Depends(get_db)) -> MasterResumeList:
+def list_master_resumes(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> MasterResumeList:
     """Every saved master (at most one per language), newest first."""
     return MasterResumeList(
-        resumes=[m for row in _master_rows(db) if (m := _row_to_master(row))]
+        resumes=[m for row in _master_rows(db, user.id) if (m := _row_to_master(row))]
     )
 
 
 @router.put("/profile/resume", response_model=MasterResumeOut)
-def save_master_resume(body: MasterResumeIn, db: Session = Depends(get_db)) -> MasterResumeOut:
+def save_master_resume(
+    body: MasterResumeIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> MasterResumeOut:
     language = resume_language(body.resume)
-    row = next((r for r in _master_rows(db) if (r.language or "en") == language), None)
+    row = next(
+        (r for r in _master_rows(db, user.id) if (r.language or "en") == language), None
+    )
     if row is None:
-        row = SavedResume(language=language)
+        row = SavedResume(language=language, user_id=user.id)
         db.add(row)
     row.label = body.label
     row.resume_json = body.resume.model_dump_json()
@@ -524,17 +578,30 @@ def _to_out(app: Application) -> ApplicationOut:
     )
 
 
+def _owned_application(db: Session, app_id: int, user: User) -> Application:
+    app = db.get(Application, app_id)
+    if not app or app.user_id != user.id:
+        raise HTTPException(404, "Application not found.")
+    return app
+
+
 @router.get("/applications", response_model=list[ApplicationOut])
-def list_applications(db: Session = Depends(get_db)) -> list[ApplicationOut]:
-    rows = db.execute(select(Application).order_by(Application.created_at.desc())).scalars().all()
+def list_applications(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> list[ApplicationOut]:
+    rows = db.execute(
+        select(Application)
+        .where(Application.user_id == user.id)
+        .order_by(Application.created_at.desc())
+    ).scalars().all()
     return [_to_out(r) for r in rows]
 
 
 @router.get("/applications/{app_id}", response_model=ApplicationDetail)
-def get_application(app_id: int, db: Session = Depends(get_db)) -> ApplicationDetail:
-    app = db.get(Application, app_id)
-    if not app:
-        raise HTTPException(404, "Application not found.")
+def get_application(
+    app_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> ApplicationDetail:
+    app = _owned_application(db, app_id, user)
     resume = None
     if app.tailored_resume_json:
         try:
@@ -559,8 +626,13 @@ def get_application(app_id: int, db: Session = Depends(get_db)) -> ApplicationDe
 
 
 @router.post("/applications", response_model=ApplicationOut)
-def create_application(body: ApplicationCreate, db: Session = Depends(get_db)) -> ApplicationOut:
+def create_application(
+    body: ApplicationCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ApplicationOut:
     app = Application(
+        user_id=user.id,
         job_title=body.job_title,
         company=body.company,
         jd_text=body.jd_text,
@@ -577,10 +649,13 @@ def create_application(body: ApplicationCreate, db: Session = Depends(get_db)) -
 
 
 @router.patch("/applications/{app_id}", response_model=ApplicationOut)
-def update_application(app_id: int, body: ApplicationUpdate, db: Session = Depends(get_db)) -> ApplicationOut:
-    app = db.get(Application, app_id)
-    if not app:
-        raise HTTPException(404, "Application not found.")
+def update_application(
+    app_id: int,
+    body: ApplicationUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ApplicationOut:
+    app = _owned_application(db, app_id, user)
     if body.status is not None:
         app.status = body.status
     if body.notes is not None:
@@ -595,10 +670,134 @@ def update_application(app_id: int, body: ApplicationUpdate, db: Session = Depen
 
 
 @router.delete("/applications/{app_id}")
-def delete_application(app_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
-    app = db.get(Application, app_id)
-    if not app:
-        raise HTTPException(404, "Application not found.")
+def delete_application(
+    app_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> dict[str, bool]:
+    app = _owned_application(db, app_id, user)
     db.delete(app)
     db.commit()
     return {"deleted": True}
+
+
+# --------------------------------------------------------------------------- #
+# Friends beta (PLAN 7): feedback, delete-my-data, admin user management
+# --------------------------------------------------------------------------- #
+@router.post("/feedback", response_model=FeedbackOut)
+def send_feedback(
+    body: FeedbackIn, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> FeedbackOut:
+    if not body.text.strip():
+        raise HTTPException(400, "Feedback text is empty.")
+    row = Feedback(user_id=user.id, page=body.page.strip()[:255], text=body.text.strip())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return FeedbackOut(
+        id=row.id,
+        user_name=user.name,
+        page=row.page,
+        text=row.text,
+        created_at=row.created_at.isoformat() if row.created_at else "",
+    )
+
+
+@router.delete("/profile/data", response_model=DeleteMyDataResult)
+def delete_my_data(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> DeleteMyDataResult:
+    """Wipe everything the current user stored (PLAN 7.5) — résumés are PII
+    and testers must be able to leave cleanly. The user row itself stays so
+    the invite code keeps working."""
+    def _wipe(model) -> int:  # noqa: ANN001
+        return db.execute(delete(model).where(model.user_id == user.id)).rowcount or 0
+
+    result = DeleteMyDataResult(
+        resumes=_wipe(SavedResume),
+        applications=_wipe(Application),
+        history=_wipe(JobSearchHit),
+        alerts=_wipe(JobAlert),
+        usage=_wipe(UsageLog),
+        feedback=_wipe(Feedback),
+    )
+    db.commit()
+    return result
+
+
+def _user_out(u: User) -> UserOut:
+    return UserOut(
+        id=u.id,
+        name=u.name,
+        email=u.email,
+        invite_code=u.invite_code,
+        is_admin=u.is_admin,
+        is_active=u.is_active,
+        created_at=u.created_at.isoformat() if u.created_at else "",
+    )
+
+
+@router.post("/admin/users", response_model=UserOut)
+def admin_create_user(
+    body: UserCreate, db: Session = Depends(get_db), _admin: User = Depends(admin_user)
+) -> UserOut:
+    """Mint a friend's invite code. Share the returned invite_code with them —
+    it's what they enter in the app's access gate (and the extension options)."""
+    if not body.name.strip():
+        raise HTTPException(400, "Give the user a name.")
+    return _user_out(mint_user(db, body.name, body.email))
+
+
+@router.get("/admin/users", response_model=UserList)
+def admin_list_users(
+    db: Session = Depends(get_db), _admin: User = Depends(admin_user)
+) -> UserList:
+    rows = db.execute(select(User).order_by(User.id)).scalars().all()
+    return UserList(users=[_user_out(u) for u in rows])
+
+
+@router.patch("/admin/users/{user_id}", response_model=UserOut)
+def admin_update_user(
+    user_id: int,
+    body: UserUpdate,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(admin_user),
+) -> UserOut:
+    """Deactivate (revoke) / reactivate / rename a user. Admin accounts can't
+    be deactivated — that would lock the owner out."""
+    u = db.get(User, user_id)
+    if not u:
+        raise HTTPException(404, "User not found.")
+    if body.is_active is not None:
+        if u.is_admin and not body.is_active:
+            raise HTTPException(400, "Can't deactivate an admin account.")
+        u.is_active = body.is_active
+    if body.name is not None:
+        u.name = body.name.strip()
+    if body.email is not None:
+        u.email = body.email.strip()
+    db.commit()
+    db.refresh(u)
+    return _user_out(u)
+
+
+@router.get("/admin/feedback", response_model=FeedbackList)
+def admin_list_feedback(
+    db: Session = Depends(get_db), _admin: User = Depends(admin_user)
+) -> FeedbackList:
+    """All tester feedback, newest first, with the sender's name attached."""
+    rows = db.execute(
+        select(Feedback, User.name)
+        .join(User, User.id == Feedback.user_id, isouter=True)
+        .order_by(Feedback.id.desc())
+    ).all()
+    return FeedbackList(
+        feedback=[
+            FeedbackOut(
+                id=f.id,
+                user_name=name or "",
+                page=f.page,
+                text=f.text,
+                created_at=f.created_at.isoformat() if f.created_at else "",
+            )
+            for f, name in rows
+        ]
+    )

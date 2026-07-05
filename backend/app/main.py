@@ -1,7 +1,6 @@
 """FastAPI application entrypoint."""
 from __future__ import annotations
 
-import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -22,6 +21,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="JobFinder API", version="0.1.0", lifespan=lifespan)
 
 settings = get_settings()
+
+# Error tracking (PLAN 7.0): opt-in via SENTRY_DSN. Résumé/JD text travels in
+# request bodies, so bodies are never captured and PII stays off.
+if settings.sentry_dsn:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        send_default_pii=False,
+        max_request_body_size="never",
+        traces_sample_rate=0.0,
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -44,15 +55,25 @@ _GATE_EXEMPT = {
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
     """When APP_ACCESS_CODE is set (the public deployment), require every API
-    call to present it in X-App-Key. Unset locally, so dev is unaffected."""
-    code = settings.app_access_code
+    call to present a valid invite code in X-App-Key (PLAN 7.1: each code maps
+    to a user; the admin's code IS the access code). Unset locally, so dev is
+    unaffected and routes fall back to the admin user."""
     if (
-        code
+        settings.app_access_code
         and request.method != "OPTIONS"
         and request.url.path not in _GATE_EXEMPT
-        and not hmac.compare_digest(request.headers.get("x-app-key", ""), code)
     ):
-        return JSONResponse({"detail": "Access code required."}, status_code=401)
+        from app.db.database import SessionLocal
+        from app.db.users import resolve_user
+
+        db = SessionLocal()
+        try:
+            user = resolve_user(db, request.headers.get("x-app-key", ""))
+        finally:
+            db.close()
+        if user is None:
+            return JSONResponse({"detail": "Access code required."}, status_code=401)
+        request.state.user_id = user.id
     return await call_next(request)
 
 

@@ -92,3 +92,13 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_missing_columns()
+
+    # Multi-user backfill (PLAN 7): make sure the admin user exists (its invite
+    # code mirrors APP_ACCESS_CODE) and stamp pre-multi-user rows as the admin's.
+    from app.db.users import backfill_user_ids
+
+    db = SessionLocal()
+    try:
+        backfill_user_ids(db)
+    finally:
+        db.close()

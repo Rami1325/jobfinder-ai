@@ -233,6 +233,69 @@ class AlertRunResult(BaseModel):
     error: str = ""
 
 
+class AlertCronResult(BaseModel):
+    """One cron tick across all users (PLAN 7.3)."""
+
+    users: int = 0  # enabled alerts found
+    results: list[AlertRunResult] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Friends beta (PLAN 7): users, feedback, delete-my-data
+# --------------------------------------------------------------------------- #
+class UserCreate(BaseModel):
+    name: str
+    email: str = ""
+
+
+class UserUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+
+class UserOut(BaseModel):
+    id: int
+    name: str = ""
+    email: str = ""
+    invite_code: str = ""  # admin-only responses; this is what a friend types in
+    is_admin: bool = False
+    is_active: bool = True
+    created_at: str = ""
+
+
+class UserList(BaseModel):
+    users: list[UserOut] = Field(default_factory=list)
+
+
+class FeedbackIn(BaseModel):
+    page: str = ""
+    text: str
+
+
+class FeedbackOut(BaseModel):
+    id: int
+    user_name: str = ""
+    page: str = ""
+    text: str = ""
+    created_at: str = ""
+
+
+class FeedbackList(BaseModel):
+    feedback: list[FeedbackOut] = Field(default_factory=list)
+
+
+class DeleteMyDataResult(BaseModel):
+    """Row counts wiped by DELETE /profile/data (PLAN 7.5)."""
+
+    resumes: int = 0
+    applications: int = 0
+    history: int = 0
+    alerts: int = 0
+    usage: int = 0
+    feedback: int = 0
+
+
 # --------------------------------------------------------------------------- #
 # Application tracker
 # --------------------------------------------------------------------------- #
@@ -364,6 +427,10 @@ class SearchContext(BaseModel):
     # all-unknown list falls back to every registered provider — so old clients
     # that never send `sources` keep working, and new boards join automatically.
     sources: list[str] = Field(default_factory=list)
+    # Only surface postings at most this many days old (0 = any age). LinkedIn
+    # applies it server-side (f_TPR); every board is also filtered in the
+    # fan-out against JobHit.posted_at, keeping hits with no known date.
+    max_age_days: int = 30
 
 
 class SearchContextRequest(BaseModel):

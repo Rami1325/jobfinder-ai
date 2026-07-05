@@ -6,6 +6,7 @@ import { analyzeJD, interviewAnswer, interviewFeedback, interviewQuestions } fro
 import JDPaste from "../components/JDPaste";
 import ResumeGate from "../components/ResumeGate";
 import { useMasterResume } from "../hooks/useMasterResume";
+import { apiErrorMessage } from "../lib/apiError";
 import { Badge, Button, Card, CardTitle, Skeleton } from "../components/ui";
 import type {
   InterviewFeedbackResult,
@@ -162,7 +163,7 @@ export default function InterviewPage() {
       const r = await interviewQuestions(master.resume, analyzed);
       setQuestions(r.questions);
     } catch (e: any) {
-      setError(e?.response?.data?.detail || t("genericError"));
+      setError(apiErrorMessage(e, t("genericError")));
     } finally {
       setRunning(false);
     }

@@ -8,7 +8,17 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     openai_api_key: str = ""
-    app_access_code: str = ""  # non-empty => every API call must send X-App-Key
+    # Non-empty => every API call must send X-App-Key. Since the friends beta
+    # (PLAN 7) the header is a per-user invite code; this value stays the
+    # ADMIN user's code (synced into the users table on startup).
+    app_access_code: str = ""
+
+    # Friends beta (PLAN 7): error tracking + per-user daily cost caps.
+    # Caps guard the OpenAI key while friends test; <= 0 disables a cap and
+    # admins are always exempt.
+    sentry_dsn: str = ""
+    daily_search_cap: int = 20
+    daily_tailor_cap: int = 30
     jooble_api_key: str = ""  # empty => the Jooble board reports "needs an API key"
     model_id: str = "gpt-4o-mini"
     use_stub_llm: bool = False

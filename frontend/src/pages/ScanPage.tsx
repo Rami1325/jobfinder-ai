@@ -18,6 +18,7 @@ import { freeScan } from "../api/client";
 import type { FreeScanResult } from "../types";
 import { Button, Card, CardTitle, ProgressRing, SectionLabel } from "../components/ui";
 import Footer from "../components/marketing/Footer";
+import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
 
 const chipTone: Record<string, string> = {
@@ -60,7 +61,7 @@ export default function ScanPage() {
       setError(
         e?.response?.status === 429
           ? t("rateLimited")
-          : e?.response?.data?.detail || t("error"),
+          : apiErrorMessage(e, t("error")),
       );
     } finally {
       setLoading(false);

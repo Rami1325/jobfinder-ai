@@ -31,7 +31,9 @@ _WORK_MODE_PARAM = {"onsite": "1", "remote": "2", "hybrid": "3"}  # LinkedIn f_W
 _PAGE_SIZE = 25  # listings per guest search page
 
 
-def _build_search_url(job_title: str, location: str, work_mode: str, start: int) -> str:
+def _build_search_url(
+    job_title: str, location: str, work_mode: str, start: int, max_age_days: int = 0
+) -> str:
     # sortBy=DD = newest first. Without it the guest endpoint returns LinkedIn's
     # relevance mix, which looks arbitrary; we rank by fit ourselves anyway, so
     # spending the fetch budget on the freshest postings is strictly better.
@@ -40,6 +42,10 @@ def _build_search_url(job_title: str, location: str, work_mode: str, start: int)
     f_wt = _WORK_MODE_PARAM.get(work_mode)
     if f_wt:
         params["f_WT"] = f_wt
+    if max_age_days > 0:
+        # f_TPR = time-posted filter, "r<seconds>" — restricts server-side so
+        # both fetched pages hold only postings inside the freshness window.
+        params["f_TPR"] = f"r{max_age_days * 86400}"
     return f"{_SEARCH_URL}?{urllib.parse.urlencode(params)}"
 
 
@@ -117,7 +123,9 @@ def _fetch_cards(ctx: SearchContext) -> list[dict[str, str]]:
     for page, start in enumerate((0, _PAGE_SIZE)):
         try:
             last_html = _http_get(
-                _build_search_url(ctx.job_title, ctx.location, ctx.work_mode, start)
+                _build_search_url(
+                    ctx.job_title, ctx.location, ctx.work_mode, start, ctx.max_age_days
+                )
             )
         except urllib.error.HTTPError as e:
             if e.code == 429:
@@ -149,9 +157,11 @@ def _fetch_cards(ctx: SearchContext) -> list[dict[str, str]]:
                 "LinkedIn blocked the search request (bot check). Wait a few minutes "
                 "and try again."
             )
+        freshness = f" posted in the last {ctx.max_age_days} days" if ctx.max_age_days else ""
         raise ValueError(
-            f"No LinkedIn jobs found for '{ctx.job_title}' in '{ctx.location or 'anywhere'}'. "
-            "Check 'Customize search' and adjust the title or location."
+            f"No LinkedIn jobs found for '{ctx.job_title}' in "
+            f"'{ctx.location or 'anywhere'}'{freshness}. "
+            "Check 'Customize search' and adjust the title, location, or 'Posted within'."
         )
     return cards
 
