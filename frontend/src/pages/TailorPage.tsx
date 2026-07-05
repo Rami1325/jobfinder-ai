@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft } from "lucide-react";
 import {
   downloadResume,
   resumeFilename,
+  getApplication,
   getMasterResume,
   RESUME_TEMPLATES,
   type ResumeTemplate,
@@ -67,6 +68,33 @@ export default function TailorPage() {
   // Download-card template choice (visual only — every option is ATS-safe).
   const [template, setTemplate] = useState<ResumeTemplate>("classic");
   const persistMaster = useSaveMasterResume();
+
+  // Deep handoff from the Chrome extension ("Save & tailor"): ?tailor_app=<id>
+  // loads that tracker application's JD into the target-job slot. The param is
+  // stripped immediately so reloads don't re-apply it over in-progress work.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const raw = searchParams.get("tailor_app");
+    if (!raw) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("tailor_app");
+    setSearchParams(next, { replace: true });
+    const id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) return;
+    (async () => {
+      try {
+        const d = await getApplication(id);
+        setTargetJob(`tailor-app-${id}-${Date.now()}`, {
+          jdText: d.jd_text,
+          jobUrl: d.job_url,
+          jobTitle: d.job_title,
+          company: d.company,
+        });
+      } catch {
+        toast("error", t("toasts.handoffFailed"));
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (getTailorState().resume) return; // already loaded (or uploaded) this session

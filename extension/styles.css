@@ -105,6 +105,7 @@ label {
 input[type="text"],
 input[type="url"],
 input[type="password"],
+select,
 textarea {
   width: 100%;
   background: var(--surface);
@@ -215,6 +216,37 @@ a.button-link {
   padding: 8px 16px;
 }
 a.button-link:hover { background: var(--accent-hover); }
+
+/* Assisted apply (autofill from an approved application kit) */
+.apply-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-block-end: 12px;
+}
+.apply-section[hidden] { display: none; }
+.apply-title {
+  font-weight: 700;
+  font-size: 13px;
+  margin-block-end: 2px;
+}
+.apply-section .hint { margin-block-end: 8px; }
+.apply-row { margin-block-start: 8px; justify-content: space-between; }
+.fmt-group { display: flex; gap: 12px; }
+.fmt-opt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.fmt-opt input { accent-color: var(--accent); }
+.apply-status { margin-block: 10px 0; }
 
 .inline-msg {
   font-size: 12px;

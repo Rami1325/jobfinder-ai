@@ -221,6 +221,200 @@ function extractJob() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Autofill — injected into the page (PLAN 8.3 assisted apply).        */
+/* MUST be fully self-contained; receives a JSON-serializable payload: */
+/* { contact:{name,email,phone,location,linkedin,website},             */
+/*   coverLetter, file:{name,mime,b64}|null }.                         */
+/* Fills the apply form only — NEVER clicks submit.                    */
+/* ------------------------------------------------------------------ */
+function fillApplicationForm(payload) {
+  try {
+    var contact = (payload && payload.contact) || {};
+    var summary = { fields: 0, file: false, cover: false };
+
+    var nameParts = String(contact.name || "").trim().split(/\s+/).filter(Boolean);
+    var firstName = nameParts[0] || "";
+    var lastName = nameParts.slice(1).join(" ");
+
+    /* Scope the sweep to where the apply form actually lives, so we never
+       touch stray page inputs (job-search boxes, newsletter forms):
+       open dialogs with fields (LinkedIn Easy Apply) → forms containing a
+       file input (Greenhouse, Comeet, JobMaster) → whole page as last resort. */
+    var scopes = [];
+    document.querySelectorAll('[role="dialog"], dialog').forEach(function (el) {
+      if (el.querySelector("input, textarea, select")) scopes.push(el);
+    });
+    if (!scopes.length) {
+      document.querySelectorAll("form").forEach(function (f) {
+        if (f.querySelector('input[type="file"]')) scopes.push(f);
+      });
+    }
+    if (!scopes.length) scopes = [document];
+
+    var candidates = [];
+    scopes.forEach(function (scope) {
+      scope.querySelectorAll("input, textarea, select").forEach(function (el) {
+        if (candidates.indexOf(el) === -1) candidates.push(el);
+      });
+    });
+
+    var labelText = function (el) {
+      var parts = [];
+      if (el.id) {
+        try {
+          var sel = 'label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]';
+          var lab = document.querySelector(sel);
+          if (lab) parts.push(lab.innerText || "");
+        } catch (e) { /* unescapable id */ }
+      }
+      var wrap = el.closest ? el.closest("label") : null;
+      if (wrap) parts.push(wrap.innerText || "");
+      parts.push(el.getAttribute("aria-label") || "");
+      parts.push(el.getAttribute("placeholder") || "");
+      parts.push(el.getAttribute("name") || "");
+      parts.push(el.id || "");
+      parts.push(el.getAttribute("autocomplete") || "");
+      return parts.join(" ").toLowerCase();
+    };
+
+    // React-controlled inputs (LinkedIn, Greenhouse) ignore plain .value
+    // writes — go through the native setter, then fire input+change.
+    var setNativeValue = function (el, value) {
+      var proto = el.tagName === "TEXTAREA"
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      var desc = Object.getOwnPropertyDescriptor(proto, "value");
+      if (desc && desc.set) desc.set.call(el, value);
+      else el.value = value;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+
+    // Invisible text fields are honeypots or collapsed steps — filling them
+    // can flag the application as a bot. File inputs are exempt (they hide
+    // behind custom "Attach" buttons by design).
+    var visible = function (el) {
+      return !!(el.offsetParent || el.offsetWidth || el.offsetHeight);
+    };
+
+    var SKIP_TYPES = {
+      hidden: 1, submit: 1, button: 1, reset: 1, image: 1,
+      checkbox: 1, radio: 1, password: 1, search: 1,
+    };
+
+    var fullNameOk = function (s) {
+      if (!/name|שם/.test(s)) return false;
+      if (/first|last|family|given|middle|sur|user|company|nick|school|field|file|country|city/.test(s)) return false;
+      if (/שם פרטי|שם משפחה|שם החברה|שם משתמש/.test(s)) return false;
+      return true;
+    };
+
+    // First match wins per element; each key fills at most once. First/last
+    // name are checked before full name so "First name" never gets the full
+    // string. Hebrew labels cover the Israeli boards.
+    var rules = [
+      { key: "email", value: contact.email, test: function (s, ty) { return ty === "email" || /e-?mail|אימייל|דוא/.test(s); } },
+      { key: "phone", value: contact.phone, test: function (s, ty) { return ty === "tel" || /phone|mobile|טלפון|נייד/.test(s); } },
+      { key: "firstName", value: firstName, test: function (s) { return /first[ _-]?name|given[ _-]?name|שם פרטי/.test(s); } },
+      { key: "lastName", value: lastName, test: function (s) { return /last[ _-]?name|family[ _-]?name|surname|שם משפחה/.test(s); } },
+      { key: "linkedin", value: contact.linkedin, test: function (s) { return /linked[ _-]?in/.test(s); } },
+      { key: "website", value: contact.website, test: function (s) { return /website|portfolio|homepage|אתר אישי/.test(s); } },
+      { key: "location", value: contact.location, test: function (s) { return /city|location|עיר|מיקום|יישוב/.test(s); } },
+      { key: "fullName", value: contact.name, test: function (s) { return fullNameOk(s); } },
+    ];
+    var done = {};
+    var coverRe = /cover[ _-]?letter|motivation letter|מכתב מקדים|מכתב פנייה/;
+    var emailRe = /e-?mail|אימייל|דוא/;
+
+    candidates.forEach(function (el) {
+      try {
+        if (el.disabled || el.readOnly) return;
+        var tag = el.tagName;
+        if (tag === "INPUT") {
+          var ty = (el.getAttribute("type") || "text").toLowerCase();
+          if (ty === "file" || SKIP_TYPES[ty]) return;
+          if (!visible(el)) return;
+          if (String(el.value || "").trim()) return; // never overwrite user input
+          var s = labelText(el);
+          for (var i = 0; i < rules.length; i++) {
+            var r = rules[i];
+            if (done[r.key] || !r.value) continue;
+            if (r.test(s, ty)) {
+              setNativeValue(el, r.value);
+              done[r.key] = true;
+              summary.fields++;
+              break;
+            }
+          }
+        } else if (tag === "TEXTAREA") {
+          if (!visible(el) || String(el.value || "").trim()) return;
+          if (!payload.coverLetter || summary.cover) return;
+          if (coverRe.test(labelText(el))) {
+            setNativeValue(el, payload.coverLetter);
+            summary.cover = true;
+          }
+        } else if (tag === "SELECT") {
+          // Only email dropdowns (LinkedIn offers verified addresses): pick
+          // the option matching the résumé email, otherwise leave untouched.
+          if (!visible(el) || done.email || !contact.email) return;
+          if (!emailRe.test(labelText(el))) return;
+          var target = contact.email.toLowerCase();
+          for (var j = 0; j < el.options.length; j++) {
+            var o = el.options[j];
+            if ((o.value || "").toLowerCase() === target ||
+                (o.text || "").toLowerCase().indexOf(target) !== -1) {
+              var desc = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value");
+              if (desc && desc.set) desc.set.call(el, o.value);
+              else el.value = o.value;
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+              done.email = true;
+              summary.fields++;
+              break;
+            }
+          }
+        }
+      } catch (e) { /* one bad element must not stop the sweep */ }
+    });
+
+    // Résumé file: the input labeled resume/CV, else the only file input
+    // that isn't explicitly for a cover-letter upload.
+    if (payload && payload.file && payload.file.b64) {
+      var fileInputs = candidates.filter(function (el) {
+        return el.tagName === "INPUT" &&
+          (el.getAttribute("type") || "").toLowerCase() === "file";
+      });
+      var resumeRe = /resume|\bcv\b|קורות[ _-]?חיים|קו"ח/;
+      var fileTarget = null;
+      for (var k = 0; k < fileInputs.length; k++) {
+        if (resumeRe.test(labelText(fileInputs[k]))) { fileTarget = fileInputs[k]; break; }
+      }
+      if (!fileTarget) {
+        var plain = fileInputs.filter(function (el) { return !/cover/.test(labelText(el)); });
+        if (plain.length === 1) fileTarget = plain[0];
+        else if (fileInputs.length === 1) fileTarget = fileInputs[0];
+      }
+      if (fileTarget && !(fileTarget.files && fileTarget.files.length)) {
+        try {
+          var bin = atob(payload.file.b64);
+          var bytes = new Uint8Array(bin.length);
+          for (var b = 0; b < bin.length; b++) bytes[b] = bin.charCodeAt(b);
+          var file = new File([bytes], payload.file.name, { type: payload.file.mime });
+          var dt = new DataTransfer();
+          dt.items.add(file);
+          fileTarget.files = dt.files;
+          fileTarget.dispatchEvent(new Event("change", { bubbles: true }));
+          summary.file = true;
+        } catch (e) { /* site blocks programmatic files — user attaches manually */ }
+      }
+    }
+
+    return summary;
+  } catch (err) {
+    return { fields: 0, file: false, cover: false };
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* UI helpers                                                          */
 /* ------------------------------------------------------------------ */
 function showStatus(kind, messageKey, subs, withOptionsLink) {
@@ -231,6 +425,13 @@ function showStatus(kind, messageKey, subs, withOptionsLink) {
   $("statusOptionsLink").hidden = !withOptionsLink;
 }
 
+function showApplyStatus(kind, text) {
+  var box = $("applyStatus");
+  box.hidden = false;
+  box.className = "status apply-status" + (kind ? " " + kind : "");
+  $("applyStatusText").textContent = text;
+}
+
 function hideStatus() {
   $("status").hidden = true;
 }
@@ -239,6 +440,204 @@ function setSaving(saving) {
   var btn = $("saveBtn");
   btn.disabled = saving;
   btn.textContent = saving ? t("btnSaving") : t("btnSave");
+  $("saveTailorBtn").disabled = saving;
+}
+
+/* ------------------------------------------------------------------ */
+/* Assisted apply (PLAN 8.3): autofill from an approved kit            */
+/* ------------------------------------------------------------------ */
+var activeTab = null;      // the tab the popup opened on
+var approvedKits = [];     // GET /kits, status === "approved"
+
+function apiHeaders(settings, json) {
+  var h = json ? { "Content-Type": "application/json" } : {};
+  if (settings.accessCode) h["X-App-Key"] = settings.accessCode;
+  return h;
+}
+
+// host+path+query (JobMaster's job key lives in the query string).
+function urlKey(u) {
+  try {
+    var p = new URL(u);
+    return (p.host + p.pathname).toLowerCase().replace(/\/+$/, "") + (p.search || "");
+  } catch (e) {
+    return String(u || "").toLowerCase().replace(/\/+$/, "");
+  }
+}
+
+// host+path only — apply pages often add tracking params to the posting URL.
+function urlKeyLoose(u) {
+  try {
+    var p = new URL(u);
+    return (p.host + p.pathname).toLowerCase().replace(/\/+$/, "");
+  } catch (e) {
+    return "";
+  }
+}
+
+function kitLabel(kit) {
+  var label = [kit.job_title, kit.company].filter(Boolean).join(" — ") || kit.url;
+  return label.length > 64 ? label.slice(0, 63) + "…" : label;
+}
+
+async function loadKits(settings, currentUrl) {
+  if (!settings.apiUrl) return;
+  var kits = [];
+  try {
+    var res = await fetch(settings.apiUrl + "/kits", { headers: apiHeaders(settings) });
+    if (!res.ok) return; // not configured / old backend — section stays hidden
+    kits = (await res.json()).kits || [];
+  } catch (e) {
+    return;
+  }
+
+  var exact = urlKey(currentUrl);
+  var loose = urlKeyLoose(currentUrl);
+  var matches = function (kit) {
+    return urlKey(kit.url) === exact || (loose && urlKeyLoose(kit.url) === loose);
+  };
+
+  // A processed-but-unreviewed kit for this very job: point at the review page.
+  var pending = kits.find(function (k) { return k.status === "done" && matches(k); });
+  if (pending && settings.appUrl) {
+    $("reviewLink").href = settings.appUrl + "/kits/" + pending.id;
+    $("reviewHint").hidden = false;
+  }
+
+  approvedKits = kits.filter(function (k) {
+    return k.status === "approved" && k.application_id;
+  });
+  if (!approvedKits.length) return;
+
+  var select = $("kitSelect");
+  select.innerHTML = "";
+  var matched = null;
+  approvedKits.forEach(function (kit) {
+    var opt = document.createElement("option");
+    opt.value = String(kit.id);
+    opt.textContent = kitLabel(kit);
+    select.appendChild(opt);
+    if (!matched && matches(kit)) matched = kit;
+  });
+  if (matched) select.value = String(matched.id);
+
+  $("autofillBtn").addEventListener("click", onAutofill);
+  $("applySection").hidden = false;
+}
+
+function bufToBase64(buf) {
+  var bytes = new Uint8Array(buf);
+  var chunks = [];
+  for (var i = 0; i < bytes.length; i += 0x8000) {
+    chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)));
+  }
+  return btoa(chunks.join(""));
+}
+
+// Mirrors the app's resumeFilename(): "Rami Bar - AppsFlyer", or "resume".
+function resumeFileBase(candidateName, company) {
+  var clean = function (s) {
+    return String(s || "").replace(/[<>:"/\\|?*]+/g, "").replace(/\s+/g, " ").trim();
+  };
+  var parts = [clean(candidateName), clean(company)].filter(Boolean);
+  return parts.join(" - ") || "resume";
+}
+
+async function onAutofill() {
+  var kit = null;
+  var kitId = Number($("kitSelect").value);
+  for (var i = 0; i < approvedKits.length; i++) {
+    if (approvedKits[i].id === kitId) kit = approvedKits[i];
+  }
+  if (!kit || !activeTab || activeTab.id == null) return;
+
+  var settings = await getSettings();
+  var btn = $("autofillBtn");
+  btn.disabled = true;
+  btn.textContent = t("btnAutofilling");
+  showApplyStatus("", t("autofillPreparing"));
+
+  try {
+    // 1. The approved application carries the reviewer's effective résumé +
+    //    cover letter (what Approve wrote to the tracker).
+    var appRes = await fetch(settings.apiUrl + "/applications/" + kit.application_id, {
+      headers: apiHeaders(settings),
+    });
+    if (!appRes.ok) {
+      showApplyStatus(
+        "error",
+        t(appRes.status === 401 ? "errUnauthorized" : "errKitFetch", [String(appRes.status)])
+      );
+      return;
+    }
+    var detail = await appRes.json();
+    var resume = detail.tailored_resume;
+    var payload = {
+      contact: (resume && resume.contact) || {},
+      coverLetter: detail.cover_letter || "",
+      file: null,
+    };
+
+    // 2. Render the résumé file in the chosen format.
+    var fmt = document.querySelector('input[name="fmt"]:checked').value;
+    if (resume) {
+      var rRes = await fetch(settings.apiUrl + "/render", {
+        method: "POST",
+        headers: apiHeaders(settings, true),
+        body: JSON.stringify({ resume: resume, fmt: fmt, template: "classic" }),
+      });
+      if (rRes.ok) {
+        payload.file = {
+          name: resumeFileBase(payload.contact.name, kit.company) + "." + fmt,
+          mime: fmt === "pdf"
+            ? "application/pdf"
+            : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          b64: bufToBase64(await rRes.arrayBuffer()),
+        };
+      }
+    }
+
+    // 3. Fill every frame we can reach (Greenhouse forms often live in an
+    //    iframe; cross-origin frames need their own host permission, so fall
+    //    back to the top frame if the allFrames injection is refused).
+    var results;
+    try {
+      results = await chrome.scripting.executeScript({
+        target: { tabId: activeTab.id, allFrames: true },
+        func: fillApplicationForm,
+        args: [payload],
+      });
+    } catch (e) {
+      results = await chrome.scripting.executeScript({
+        target: { tabId: activeTab.id },
+        func: fillApplicationForm,
+        args: [payload],
+      });
+    }
+
+    var total = { fields: 0, file: false, cover: false };
+    (results || []).forEach(function (r) {
+      var s = r && r.result;
+      if (!s) return;
+      total.fields += s.fields || 0;
+      total.file = total.file || !!s.file;
+      total.cover = total.cover || !!s.cover;
+    });
+
+    if (!total.fields && !total.file && !total.cover) {
+      showApplyStatus("warn", t("autofillNoForm"));
+    } else {
+      var parts = [t("autofillFilled", [String(total.fields)])];
+      if (total.file) parts.push(t("autofillFileAttached"));
+      if (total.cover) parts.push(t("autofillCoverAdded"));
+      showApplyStatus("ok", parts.join(" · ") + " " + t("autofillReviewNote"));
+    }
+  } catch (err) {
+    showApplyStatus("error", t("errNetwork"));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t("btnAutofill");
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -255,12 +654,21 @@ async function init() {
     chrome.runtime.openOptionsPage();
   });
   $("clipForm").addEventListener("submit", onSave);
+  $("saveTailorBtn").addEventListener("click", function () {
+    saveClip(true);
+  });
 
   showStatus("", "statusReading");
 
   var tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   var tab = tabs && tabs[0];
+  activeTab = tab || null;
   var extracted = null;
+
+  // Assisted apply: load approved kits in the background while extracting.
+  getSettings().then(function (settings) {
+    return loadKits(settings, (tab && tab.url) || "");
+  }).catch(function () { /* section stays hidden */ });
 
   if (tab && tab.id != null && /^https?:/i.test(tab.url || "")) {
     try {
@@ -300,6 +708,10 @@ async function init() {
 /* ------------------------------------------------------------------ */
 async function onSave(e) {
   e.preventDefault();
+  saveClip(false);
+}
+
+async function saveClip(openTailor) {
   hideStatus();
 
   var settings = await getSettings();
@@ -318,17 +730,23 @@ async function onSave(e) {
 
   setSaving(true);
   try {
-    var headers = { "Content-Type": "application/json" };
-    if (settings.accessCode) headers["X-App-Key"] = settings.accessCode;
-
     var res = await fetch(settings.apiUrl + "/applications", {
       method: "POST",
-      headers: headers,
+      headers: apiHeaders(settings, true),
       body: JSON.stringify(body),
     });
 
     if (res.ok) {
+      if (openTailor && settings.appUrl) {
+        // Deep Tailor handoff: the app's Tailor page loads this application's
+        // JD via ?tailor_app=<id>. Opening the tab closes the popup.
+        var saved = await res.json();
+        chrome.tabs.create({ url: settings.appUrl + "/app?tailor_app=" + saved.id });
+        return;
+      }
       $("clipForm").hidden = true;
+      $("applySection").hidden = true;
+      $("reviewHint").hidden = true;
       $("openTracker").href = settings.appUrl
         ? settings.appUrl + "/tracker"
         : "#";

@@ -1,15 +1,27 @@
 # JobFinder Job Clipper (Chrome extension)
 
-Clips the job posting on the current page into your JobFinder **application tracker** with one click, then hands off to the web app. Built for LinkedIn and the Israeli boards (Drushim, JobMaster, AllJobs, Comeet careers pages), with a generic fallback for everything else. Hebrew UI included (the extension follows Chrome's UI language); all fields are `dir="auto"`, so RTL postings display correctly.
-
-**v1 scope: clip-to-tracker only.** No autofill, no in-page overlay, no tailoring from the popup.
+Clips the job posting on the current page into your JobFinder **application tracker** with one click, hands off to the web app, and — since v0.2 — **autofills application forms from your approved application kits** (PLAN 8.3 assisted apply). Built for LinkedIn and the Israeli boards (Drushim, JobMaster, AllJobs, Comeet careers pages), with a generic fallback for everything else. Hebrew UI included (the extension follows Chrome's UI language); all fields are `dir="auto"`, so RTL postings display correctly.
 
 ## What it does
+
+**Clip (v1):**
 
 1. Open a job posting, click the extension icon.
 2. The popup extracts **job title / company / description / URL** from the page (site-specific selectors, generic fallback) and shows them in editable fields.
 3. **Save to tracker** POSTs the job to your JobFinder backend (`POST /applications`, status `saved`, authenticated with the `X-App-Key` header).
 4. On success you get an **Open tracker** link straight into `{App URL}/tracker`.
+5. **Save & tailor** does the same save, then opens `{App URL}/app?tailor_app=<id>` — the Tailor page loads the clipped JD (title, company, link, description) ready to run.
+
+**Assisted apply (v0.2, PLAN 8.3):**
+
+1. When you have **approved application kits** (Jobs → Kits → Review → Approve), the popup shows an *Assisted apply* section: a kit picker (pre-selected when a kit's URL matches the current page) and a résumé format choice (PDF/DOCX).
+2. **Autofill this page** fetches the approved kit's final artifacts — the reviewer's effective résumé and cover letter (`GET /applications/{id}`) — renders the résumé file (`POST /render`), and fills the apply form on the page:
+   - **Contact fields** by label/attribute heuristics, English + Hebrew (first/last/full name incl. שם פרטי/שם משפחה, email, phone, LinkedIn, website, city). React-controlled inputs (LinkedIn, Greenhouse) are set via the native value setter + `input`/`change` events.
+   - **Résumé file** attached to the file input labeled resume/CV/קורות חיים (or the only non-cover-letter file input) via `DataTransfer`.
+   - **Cover letter** pasted into a textarea explicitly labeled as one.
+3. **It never clicks submit.** You review the form and send it yourself — ToS-safe everywhere, including LinkedIn.
+
+Safety rails built into the filler: it only touches fields inside an open dialog or a form that has a file upload (so page search boxes are never filled), skips invisible fields (honeypots), never overwrites anything you already typed, and fills each field kind at most once. If the popup finds a **processed-but-unreviewed** kit for the current job, it links you to its review page instead.
 
 ## Install (load unpacked)
 
@@ -54,6 +66,12 @@ Everything is editable in the popup before saving, so a weak extraction is a pas
 
 Live-verified 2026-07-05 against a real logged-in LinkedIn posting (new shell: title/company/full 3.3k-char description) and a real Drushim posting (Hebrew title, company, clean description + requirements), plus a real `POST /applications` round-trip against the production API.
 
+## Assisted-apply notes
+
+- **Cross-origin iframes**: some company sites embed their ATS form in an iframe from another domain (e.g. `boards.greenhouse.io`). `activeTab` only grants the top-level origin, so those frames can't be filled — open the form's own page (the iframe's URL / the board-hosted apply link) and autofill there. The popup attempts `allFrames` injection first and falls back to the top frame.
+- **Custom upload widgets**: boards that build their uploader without a real `<input type="file">` (drag-drop canvases, JS pickers) won't take the file — the summary line tells you what was and wasn't filled, attach manually there.
+- **LinkedIn Easy Apply** email is a dropdown of your verified addresses; it is selected only when one of them matches the kit résumé's email, otherwise it's left as-is.
+
 ## Known compromises (v1)
 
 - **Selector fragility**: job boards change markup without notice. The extractor never throws (it falls back to JSON-LD, then page title + full page text), but per-board selectors will need occasional maintenance.
@@ -64,7 +82,8 @@ Live-verified 2026-07-05 against a real logged-in LinkedIn posting (new shell: t
 
 ## Follow-ups (post-v1)
 
-- Deep **Tailor handoff**: "Save & tailor" that opens `/app` with the clipped JD pre-filled.
+- ~~Deep **Tailor handoff**: "Save & tailor" that opens `/app` with the clipped JD pre-filled.~~ — done 2026-07-06 (v0.2).
 - ~~JSON-LD `JobPosting` parsing~~ — done 2026-07-05 (generic path + gap-filler on all boards).
+- ~~Optional **autofill** of application forms~~ — done 2026-07-06 (v0.2 assisted apply, PLAN 8.3).
 - **Firefox port** (MV3 with `browser.*` polyfill; storage.sync + scripting APIs are compatible).
-- Optional **autofill** of application forms — explicitly out of scope for v1.
+- Per-board **apply-form selector refresh cadence**; duplicate-clip detection.

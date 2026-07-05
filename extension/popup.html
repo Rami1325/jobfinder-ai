@@ -20,6 +20,28 @@
       <a id="statusOptionsLink" data-i18n="linkOpenOptions" hidden>Open settings</a>
     </div>
 
+    <section id="applySection" class="apply-section" hidden>
+      <div class="apply-title" data-i18n="applySectionTitle">Assisted apply</div>
+      <p class="hint" data-i18n="applyHint">Fills this page's application form from your approved kit — contact details, tailored résumé file, cover letter. You review everything and click Send yourself.</p>
+      <div class="field">
+        <label for="kitSelect" data-i18n="applyKitLabel">Application kit</label>
+        <select id="kitSelect"></select>
+      </div>
+      <div class="row apply-row">
+        <div class="fmt-group" role="radiogroup" data-i18n-title="applyFormatLabel">
+          <label class="fmt-opt"><input type="radio" name="fmt" value="pdf" checked /> PDF</label>
+          <label class="fmt-opt"><input type="radio" name="fmt" value="docx" /> DOCX</label>
+        </div>
+        <button type="button" id="autofillBtn" class="primary" data-i18n="btnAutofill">Autofill this page</button>
+      </div>
+      <div id="applyStatus" class="status apply-status" hidden><span id="applyStatusText"></span></div>
+    </section>
+
+    <div id="reviewHint" class="status warn" hidden>
+      <span data-i18n="reviewHint">This job already has a tailored kit waiting for your review.</span>
+      <a id="reviewLink" target="_blank" rel="noopener" data-i18n="linkReviewKit">Review kit</a>
+    </div>
+
     <form id="clipForm" hidden>
       <div class="field">
         <label for="jobTitle" data-i18n="fieldJobTitle">Job title</label>
@@ -39,6 +61,7 @@
       </div>
       <div class="row">
         <button type="submit" id="saveBtn" class="primary" data-i18n="btnSave">Save to tracker</button>
+        <button type="button" id="saveTailorBtn" class="secondary" data-i18n="btnSaveTailor">Save &amp; tailor</button>
       </div>
     </form>
 

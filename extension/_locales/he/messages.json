@@ -15,6 +15,33 @@
 
   "btnSave": { "message": "שמירה למעקב" },
   "btnSaving": { "message": "שומר…" },
+  "btnSaveTailor": { "message": "שמירה והתאמה" },
+
+  "applySectionTitle": { "message": "הגשה בסיוע" },
+  "applyHint": { "message": "ממלא את טופס המועמדות בעמוד מתוך הערכה שאישרתם — פרטי קשר, קובץ קורות החיים המותאמים ומכתב מקדים. אתם עוברים על הכול ולוחצים שליחה בעצמכם." },
+  "applyKitLabel": { "message": "ערכת מועמדות" },
+  "applyFormatLabel": { "message": "פורמט קובץ קורות החיים" },
+  "btnAutofill": { "message": "מילוי אוטומטי של העמוד" },
+  "btnAutofilling": { "message": "ממלא…" },
+  "autofillPreparing": { "message": "מכין את הערכה…" },
+  "autofillFilled": {
+    "message": "מולאו $COUNT$ שדות",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "autofillFileAttached": { "message": "קורות החיים צורפו" },
+  "autofillCoverAdded": { "message": "המכתב המקדים נוסף" },
+  "autofillReviewNote": { "message": "עברו על הטופס ושלחו אותו בעצמכם." },
+  "autofillNoForm": { "message": "לא נמצא טופס מועמדות בעמוד. קודם פתחו את טופס ההגשה (לחצו על כפתור ההגשה במשרה) ונסו שוב." },
+  "errKitFetch": {
+    "message": "לא הצלחנו לטעון את הערכה (שגיאה $STATUS$).",
+    "placeholders": {
+      "status": { "content": "$1" }
+    }
+  },
+  "reviewHint": { "message": "למשרה הזו כבר יש ערכה מותאמת שממתינה לבדיקה שלכם." },
+  "linkReviewKit": { "message": "לבדיקת הערכה" },
 
   "successSaved": { "message": "נשמר! המשרה נוספה למעקב המועמדויות שלך." },
   "linkOpenTracker": { "message": "פתיחת לוח המעקב" },

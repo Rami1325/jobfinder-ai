@@ -15,6 +15,33 @@
 
   "btnSave": { "message": "Save to tracker" },
   "btnSaving": { "message": "Saving…" },
+  "btnSaveTailor": { "message": "Save & tailor" },
+
+  "applySectionTitle": { "message": "Assisted apply" },
+  "applyHint": { "message": "Fills this page's application form from your approved kit — contact details, tailored résumé file, cover letter. You review everything and click Send yourself." },
+  "applyKitLabel": { "message": "Application kit" },
+  "applyFormatLabel": { "message": "Résumé file format" },
+  "btnAutofill": { "message": "Autofill this page" },
+  "btnAutofilling": { "message": "Filling…" },
+  "autofillPreparing": { "message": "Preparing your kit…" },
+  "autofillFilled": {
+    "message": "Filled $COUNT$ fields",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "autofillFileAttached": { "message": "résumé attached" },
+  "autofillCoverAdded": { "message": "cover letter added" },
+  "autofillReviewNote": { "message": "Check the form, then submit it yourself." },
+  "autofillNoForm": { "message": "No application form found on this page. Open the apply form (click the job's Apply button) first, then try again." },
+  "errKitFetch": {
+    "message": "Couldn't load the kit (error $STATUS$).",
+    "placeholders": {
+      "status": { "content": "$1" }
+    }
+  },
+  "reviewHint": { "message": "This job already has a tailored kit waiting for your review." },
+  "linkReviewKit": { "message": "Review kit" },
 
   "successSaved": { "message": "Saved! The job was added to your application tracker." },
   "linkOpenTracker": { "message": "Open tracker" },

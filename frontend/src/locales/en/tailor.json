@@ -46,7 +46,8 @@
     "alreadyInTracker": "Already in your tracker",
     "savedToTracker": "Saved to tracker",
     "markedApplied": "Marked as applied — added to tracker",
-    "trackerError": "Could not update the tracker. Is the backend running?"
+    "trackerError": "Could not update the tracker. Is the backend running?",
+    "handoffFailed": "Couldn't load the saved job — it may have been deleted."
   },
   "download": {
     "title": "Download tailored résumé",
