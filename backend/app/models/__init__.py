@@ -173,6 +173,9 @@ class CoverLetterResponse(BaseModel):
 class RenderRequest(BaseModel):
     resume: ResumeModel
     fmt: str = "docx"  # docx | pdf
+    # Visual template (see app/render/templates.py). Unknown names fall back
+    # to the default, so old clients keep today's output.
+    template: str = "classic"  # classic | modern | compact
 
 
 class ResumeUploadResponse(BaseModel):

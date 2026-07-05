@@ -7,6 +7,8 @@ import {
   downloadResume,
   resumeFilename,
   getMasterResume,
+  RESUME_TEMPLATES,
+  type ResumeTemplate,
   saveApplication,
   updateApplication,
 } from "../api/client";
@@ -62,6 +64,8 @@ export default function TailorPage() {
     company,
   } = useSyncExternalStore(subscribeTailor, getTailorState);
   const toast = useToast();
+  // Download-card template choice (visual only — every option is ATS-safe).
+  const [template, setTemplate] = useState<ResumeTemplate>("classic");
   const persistMaster = useSaveMasterResume();
 
   useEffect(() => {
@@ -302,6 +306,31 @@ export default function TailorPage() {
 
             <Card>
               <CardTitle>{t("download.title")}</CardTitle>
+              {/* Template picker (PLAN 6): every option is ATS-safe by
+                  construction — the registry only varies fonts/colors/spacing. */}
+              <div className="mt-3 flex flex-wrap gap-2" role="radiogroup" aria-label={t("download.templateLabel")}>
+                {RESUME_TEMPLATES.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="radio"
+                    aria-checked={template === id}
+                    onClick={() => setTemplate(id)}
+                    className={
+                      template === id
+                        ? "rounded-xl border border-accent/60 bg-accent/10 px-3 py-2 text-start transition-colors"
+                        : "rounded-xl border border-line bg-panel-2 px-3 py-2 text-start transition-colors hover:border-accent/40"
+                    }
+                  >
+                    <span className="block text-sm font-semibold text-ink">
+                      {t(`download.templates.${id}.name`)}
+                    </span>
+                    <span className="block text-xs text-ink-muted">
+                      {t(`download.templates.${id}.desc`)}
+                    </span>
+                  </button>
+                ))}
+              </div>
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <Button
                   icon={<Download size={16} />}
@@ -310,6 +339,7 @@ export default function TailorPage() {
                       effectiveResume,
                       "docx",
                       resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
+                      template,
                     )
                   }
                 >
@@ -323,6 +353,7 @@ export default function TailorPage() {
                       effectiveResume,
                       "pdf",
                       resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
+                      template,
                     )
                   }
                 >

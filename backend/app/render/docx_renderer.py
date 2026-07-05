@@ -18,8 +18,8 @@ from docx.shared import Pt, RGBColor
 
 from app.core.lang import resume_language
 from app.models import ResumeModel
+from app.render.templates import DEFAULT_TEMPLATE, TemplateSpec, get_template
 
-_FONT = "Calibri"
 _DARK = RGBColor(0x22, 0x22, 0x22)
 
 # Standard section names, English and Hebrew (standard names matter for ATS).
@@ -60,45 +60,50 @@ def _set_rtl(paragraph) -> None:
             r_pr.append(run._r.makeelement(qn("w:rtl"), {}))
 
 
-def render_docx(resume: ResumeModel) -> bytes:
+def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
+    spec = get_template(template)
     lang = resume_language(resume)
     labels = _LABELS["he" if lang == "he" else "en"]
 
     doc = Document()
 
     style = doc.styles["Normal"]
-    style.font.name = _FONT
-    style.font.size = Pt(10.5)
+    style.font.name = spec.docx_font
+    style.font.size = Pt(spec.body_size)
     style.font.color.rgb = _DARK
 
     for section in doc.sections:
-        section.top_margin = section.bottom_margin = Pt(40)
-        section.left_margin = section.right_margin = Pt(54)
+        section.top_margin = section.bottom_margin = Pt(spec.margin_tb_pt)
+        section.left_margin = section.right_margin = Pt(spec.margin_lr_pt)
 
     c = resume.contact
     name = c.name or "Name"
     name_p = doc.add_paragraph()
-    name_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    if spec.name_centered:
+        name_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # else: no explicit alignment — the paragraph sits at the text start,
+    # which the RTL sweep below turns into the right edge for Hebrew.
     run = name_p.add_run(name)
     run.bold = True
-    run.font.size = Pt(20)
+    run.font.size = Pt(spec.name_size)
 
     contact_bits = [b for b in [c.email, c.phone, c.location, c.linkedin, c.website] if b]
     if contact_bits:
         cp = doc.add_paragraph()
-        cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        if spec.name_centered:
+            cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
         cp.add_run(" | ".join(contact_bits)).font.size = Pt(9.5)
 
     if resume.summary:
-        _heading(doc, labels["summary"])
+        _heading(doc, spec, labels["summary"])
         doc.add_paragraph(resume.summary)
 
     if resume.skills:
-        _heading(doc, labels["skills"])
+        _heading(doc, spec, labels["skills"])
         doc.add_paragraph(", ".join(resume.skills))
 
     if resume.experience:
-        _heading(doc, labels["experience"])
+        _heading(doc, spec, labels["experience"])
         for exp in resume.experience:
             p = doc.add_paragraph()
             left = " — ".join(b for b in [exp.title, exp.company] if b)
@@ -110,10 +115,10 @@ def render_docx(resume: ResumeModel) -> bytes:
                 p.add_run(f"   ({meta})").italic = True
             for bullet in exp.bullets:
                 bp = doc.add_paragraph(bullet, style="List Bullet")
-                bp.paragraph_format.space_after = Pt(2)
+                bp.paragraph_format.space_after = Pt(0 if spec.tight else 2)
 
     if resume.projects:
-        _heading(doc, labels["projects"])
+        _heading(doc, spec, labels["projects"])
         for proj in resume.projects:
             p = doc.add_paragraph()
             p.add_run(proj.name).bold = True
@@ -123,7 +128,7 @@ def render_docx(resume: ResumeModel) -> bytes:
                 doc.add_paragraph(bullet, style="List Bullet")
 
     if resume.education:
-        _heading(doc, labels["education"])
+        _heading(doc, spec, labels["education"])
         for edu in resume.education:
             p = doc.add_paragraph()
             line = ", ".join(b for b in [edu.degree, edu.field] if b)
@@ -137,7 +142,7 @@ def render_docx(resume: ResumeModel) -> bytes:
                 doc.add_paragraph(edu.details)
 
     if resume.military_service:
-        _heading(doc, labels["military"])
+        _heading(doc, spec, labels["military"])
         for ms in resume.military_service:
             p = doc.add_paragraph()
             left = " — ".join(b for b in [ms.role, ms.unit] if b)
@@ -148,15 +153,15 @@ def render_docx(resume: ResumeModel) -> bytes:
                 p.add_run(f"   ({meta})").italic = True
             for bullet in ms.bullets:
                 bp = doc.add_paragraph(bullet, style="List Bullet")
-                bp.paragraph_format.space_after = Pt(2)
+                bp.paragraph_format.space_after = Pt(0 if spec.tight else 2)
 
     if resume.certifications:
-        _heading(doc, labels["certifications"])
+        _heading(doc, spec, labels["certifications"])
         for cert in resume.certifications:
             doc.add_paragraph(cert, style="List Bullet")
 
     if resume.languages:
-        _heading(doc, labels["languages"])
+        _heading(doc, spec, labels["languages"])
         bits = [" – ".join(b for b in [ls.language, ls.level] if b) for ls in resume.languages]
         doc.add_paragraph(" | ".join(b for b in bits if b))
 
@@ -171,11 +176,11 @@ def render_docx(resume: ResumeModel) -> bytes:
     return buf.getvalue()
 
 
-def _heading(doc: Document, text: str) -> None:
+def _heading(doc: Document, spec: TemplateSpec, text: str) -> None:
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(10)
-    p.paragraph_format.space_after = Pt(2)
+    p.paragraph_format.space_before = Pt(6 if spec.tight else 10)
+    p.paragraph_format.space_after = Pt(1 if spec.tight else 2)
     run = p.add_run(text.upper())
     run.bold = True
-    run.font.size = Pt(11.5)
-    run.font.color.rgb = RGBColor(0x1A, 0x3C, 0x6E)
+    run.font.size = Pt(spec.heading_size)
+    run.font.color.rgb = RGBColor.from_string(spec.accent)

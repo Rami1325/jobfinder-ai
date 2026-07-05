@@ -83,12 +83,17 @@ export function resumeFilename(candidateName: string, company: string): string {
   return parts.join(" - ") || "resume";
 }
 
+/** Visual templates the backend renderers support (see app/render/templates.py). */
+export const RESUME_TEMPLATES = ["classic", "modern", "compact"] as const;
+export type ResumeTemplate = (typeof RESUME_TEMPLATES)[number];
+
 export async function downloadResume(
   resume: ResumeModel,
   fmt: "docx" | "pdf",
   filename?: string,
+  template: ResumeTemplate = "classic",
 ): Promise<void> {
-  const resp = await api.post("/render", { resume, fmt }, { responseType: "blob" });
+  const resp = await api.post("/render", { resume, fmt, template }, { responseType: "blob" });
   const url = URL.createObjectURL(resp.data as Blob);
   const a = document.createElement("a");
   a.href = url;

@@ -1202,5 +1202,76 @@ with TestClient(_fastapi_app) as _tc:
     _gated = _tc.post("/jd/analyze", json={"jd_text": "Python developer"})
     check("gated routes still 401 without the access code", _gated.status_code == 401, str(_gated.status_code))
 
+# 18. Résumé templates (PLAN 6): every template × format × language renders,
+# stays ATS-safe (no tables/text-boxes/images/headers/footers in the DOCX
+# XML), and the content survives re-extraction — which is what an ATS
+# actually does. This is the executable proof behind "every template passes
+# our own ATS scan".
+from app.render.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template  # noqa: E402
+
+check(
+    "template registry: 3 templates, default present",
+    len(TEMPLATES) == 3 and DEFAULT_TEMPLATE in TEMPLATES,
+    str(list(TEMPLATES)),
+)
+check(
+    "unknown/empty template names fall back to the default (old clients unaffected)",
+    get_template("no-such-template").id == DEFAULT_TEMPLATE and get_template(None).id == DEFAULT_TEMPLATE,
+)
+
+_ATS_FORBIDDEN = ("<w:tbl", "<w:pict", "graphicData", "headerReference", "footerReference", "txbxContent")
+for _tpl in TEMPLATES:
+    # English DOCX: ATS-safe XML + facts survive our own extractor.
+    _tpl_docx = render_docx(resume, template=_tpl)
+    _tpl_xml = _docx_xml(_tpl_docx)
+    check(
+        f"docx[{_tpl}] en: renders, single column, no tables/images/headers",
+        _tpl_docx[:2] == b"PK" and not any(tok in _tpl_xml for tok in _ATS_FORBIDDEN),
+    )
+    _tpl_txt = _li_extract_text("resume.docx", _tpl_docx)
+    check(
+        f"docx[{_tpl}] en: name/company/bullet/skill survive extraction",
+        resume.contact.name in _tpl_txt
+        and resume.experience[0].company in _tpl_txt
+        and resume.experience[0].bullets[0] in _tpl_txt
+        and resume.skills[0] in _tpl_txt,
+    )
+
+    # English PDF: real selectable text.
+    _tpl_pdf = render_pdf(resume, template=_tpl)
+    _tpl_pdf_txt = _pdf_text(_tpl_pdf)
+    check(
+        f"pdf[{_tpl}] en: renders and text extracts",
+        _tpl_pdf[:4] == b"%PDF"
+        and resume.contact.name in _tpl_pdf_txt
+        and resume.experience[0].company in _tpl_pdf_txt
+        and resume.skills[0] in _tpl_pdf_txt,
+    )
+
+    # Hebrew DOCX: RTL props + Hebrew headings + text intact in every template.
+    _tpl_he_docx = render_docx(_he_full, template=_tpl)
+    _tpl_he_xml = _docx_xml(_tpl_he_docx)
+    check(
+        f"docx[{_tpl}] he: RTL props + hebrew headings + ATS-safe",
+        "<w:bidi" in _tpl_he_xml
+        and "<w:rtl" in _tpl_he_xml
+        and "שירות צבאי" in _tpl_he_xml
+        and not any(tok in _tpl_he_xml for tok in _ATS_FORBIDDEN),
+    )
+    check(
+        f"docx[{_tpl}] he: hebrew content survives extraction",
+        _he_full.contact.name in _li_extract_text("resume.docx", _tpl_he_docx),
+    )
+
+    # Hebrew PDF: bidi-correct (extraction reads VISUAL order), Latin intact.
+    _tpl_he_pdf = render_pdf(_he_full, template=_tpl)
+    _tpl_he_pdf_txt = _pdf_text(_tpl_he_pdf)
+    check(
+        f"pdf[{_tpl}] he: renders, visual-order hebrew + latin intact",
+        _tpl_he_pdf[:4] == b"%PDF"
+        and _get_display(_he_full.contact.name, base_dir="R") in _tpl_he_pdf_txt
+        and "Python" in _tpl_he_pdf_txt,
+    )
+
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

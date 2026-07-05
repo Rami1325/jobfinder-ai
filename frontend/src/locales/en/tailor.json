@@ -52,7 +52,22 @@
     "title": "Download tailored résumé",
     "docx": "Download .docx",
     "pdf": "Download .pdf",
-    "atsNote": "Output is single-column, ATS-safe (no tables, columns, or images)."
+    "atsNote": "Output is single-column, ATS-safe (no tables, columns, or images).",
+    "templateLabel": "Template",
+    "templates": {
+      "classic": {
+        "name": "Classic",
+        "desc": "Navy headings, centered name — the safe default"
+      },
+      "modern": {
+        "name": "Modern",
+        "desc": "Teal accent, name at the start, roomier spacing"
+      },
+      "compact": {
+        "name": "Compact",
+        "desc": "Tight one-pager — the Israeli convention"
+      }
+    }
   },
   "save": {
     "cta": "Save to tracker",

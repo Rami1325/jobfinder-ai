@@ -147,11 +147,11 @@ def cover_letter(body: CoverLetterRequest) -> CoverLetterResponse:
 def render(body: RenderRequest):
     fmt = body.fmt.lower()
     if fmt == "pdf":
-        content = render_pdf(body.resume)
+        content = render_pdf(body.resume, template=body.template)
         media = "application/pdf"
         filename = "resume.pdf"
     elif fmt == "docx":
-        content = render_docx(body.resume)
+        content = render_docx(body.resume, template=body.template)
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         filename = "resume.docx"
     else:

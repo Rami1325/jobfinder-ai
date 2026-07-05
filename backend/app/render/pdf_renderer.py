@@ -15,7 +15,7 @@ from pathlib import Path
 
 from bidi.algorithm import get_display
 from reportlab.lib.colors import HexColor
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
@@ -26,8 +26,8 @@ from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTempl
 
 from app.core.lang import resume_language
 from app.models import ResumeModel
+from app.render.templates import DEFAULT_TEMPLATE, TemplateSpec, get_template
 
-_ACCENT = HexColor("#1A3C6E")
 _DARK = HexColor("#222222")
 
 _FONTS_DIR = Path(__file__).parent / "fonts"
@@ -87,27 +87,34 @@ def _rtl_markup(text: str, font_name: str, font_size: float, max_width: float) -
     return "<br/>".join(_esc(_visual(line)) for line in lines)
 
 
-def _styles():
+def _styles(spec: TemplateSpec):
     base = getSampleStyleSheet()
+    accent = HexColor(f"#{spec.accent}")
+    name_align = TA_CENTER if spec.name_centered else TA_LEFT
+    leading = spec.body_size + (2.5 if spec.tight else 3.5)
     return {
-        "name": ParagraphStyle("Name", parent=base["Title"], fontSize=20, alignment=TA_CENTER, textColor=_DARK, spaceAfter=2),
-        "contact": ParagraphStyle("Contact", parent=base["Normal"], fontSize=9, alignment=TA_CENTER, textColor=_DARK, spaceAfter=8),
-        "heading": ParagraphStyle("Heading", parent=base["Heading2"], fontSize=11.5, textColor=_ACCENT, spaceBefore=10, spaceAfter=3),
-        "body": ParagraphStyle("Body", parent=base["Normal"], fontSize=10.5, textColor=_DARK, leading=14),
-        "item": ParagraphStyle("ItemHead", parent=base["Normal"], fontSize=10.5, textColor=_DARK, leading=14, spaceBefore=4),
+        "name": ParagraphStyle("Name", parent=base["Title"], fontSize=spec.name_size, alignment=name_align, textColor=_DARK, spaceAfter=2),
+        "contact": ParagraphStyle("Contact", parent=base["Normal"], fontSize=9, alignment=name_align, textColor=_DARK, spaceAfter=8),
+        "heading": ParagraphStyle("Heading", parent=base["Heading2"], fontSize=spec.heading_size, textColor=accent, spaceBefore=6 if spec.tight else 10, spaceAfter=2 if spec.tight else 3),
+        "body": ParagraphStyle("Body", parent=base["Normal"], fontSize=spec.body_size, textColor=_DARK, leading=leading),
+        "item": ParagraphStyle("ItemHead", parent=base["Normal"], fontSize=spec.body_size, textColor=_DARK, leading=leading, spaceBefore=2 if spec.tight else 4),
     }
 
 
-def _he_styles():
+def _he_styles(spec: TemplateSpec):
     """RTL twins of _styles: Hebrew font + right alignment. Text is pre-wrapped
-    and bidi-reordered per line by _rtl_markup, so no wordWrap tricks here."""
+    and bidi-reordered per line by _rtl_markup, so no wordWrap tricks here.
+    A non-centered name sits at the text start — the right edge, in RTL."""
     base = getSampleStyleSheet()
+    accent = HexColor(f"#{spec.accent}")
+    name_align = TA_CENTER if spec.name_centered else TA_RIGHT
+    leading = spec.body_size + (2.5 if spec.tight else 3.5)
     return {
-        "name": ParagraphStyle("NameHe", parent=base["Title"], fontSize=20, alignment=TA_CENTER, textColor=_DARK, spaceAfter=2, fontName=_HE_FONT),
-        "contact": ParagraphStyle("ContactHe", parent=base["Normal"], fontSize=9, alignment=TA_CENTER, textColor=_DARK, spaceAfter=8, fontName=_HE_FONT),
-        "heading": ParagraphStyle("HeadingHe", parent=base["Heading2"], fontSize=11.5, textColor=_ACCENT, spaceBefore=10, spaceAfter=3, alignment=TA_RIGHT, fontName=_HE_FONT_BOLD),
-        "body": ParagraphStyle("BodyHe", parent=base["Normal"], fontSize=10.5, textColor=_DARK, leading=14, alignment=TA_RIGHT, fontName=_HE_FONT),
-        "item": ParagraphStyle("ItemHeadHe", parent=base["Normal"], fontSize=10.5, textColor=_DARK, leading=14, spaceBefore=4, alignment=TA_RIGHT, fontName=_HE_FONT_BOLD),
+        "name": ParagraphStyle("NameHe", parent=base["Title"], fontSize=spec.name_size, alignment=name_align, textColor=_DARK, spaceAfter=2, fontName=_HE_FONT),
+        "contact": ParagraphStyle("ContactHe", parent=base["Normal"], fontSize=9, alignment=name_align, textColor=_DARK, spaceAfter=8, fontName=_HE_FONT),
+        "heading": ParagraphStyle("HeadingHe", parent=base["Heading2"], fontSize=spec.heading_size, textColor=accent, spaceBefore=6 if spec.tight else 10, spaceAfter=2 if spec.tight else 3, alignment=TA_RIGHT, fontName=_HE_FONT_BOLD),
+        "body": ParagraphStyle("BodyHe", parent=base["Normal"], fontSize=spec.body_size, textColor=_DARK, leading=leading, alignment=TA_RIGHT, fontName=_HE_FONT),
+        "item": ParagraphStyle("ItemHeadHe", parent=base["Normal"], fontSize=spec.body_size, textColor=_DARK, leading=leading, spaceBefore=2 if spec.tight else 4, alignment=TA_RIGHT, fontName=_HE_FONT_BOLD),
     }
 
 
@@ -115,18 +122,19 @@ def _esc(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def render_pdf(resume: ResumeModel) -> bytes:
+def render_pdf(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
+    spec = get_template(template)
     if resume_language(resume) == "he":
-        return _render_pdf_hebrew(resume)
+        return _render_pdf_hebrew(resume, spec)
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=LETTER,
-        topMargin=0.55 * inch, bottomMargin=0.55 * inch,
-        leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+        topMargin=spec.margin_tb_pt, bottomMargin=spec.margin_tb_pt,
+        leftMargin=spec.margin_lr_pt, rightMargin=spec.margin_lr_pt,
         title=resume.contact.name or "Resume",
     )
-    s = _styles()
+    s = _styles(spec)
     flow = []
 
     c = resume.contact
@@ -209,7 +217,7 @@ def render_pdf(resume: ResumeModel) -> bytes:
     return buf.getvalue()
 
 
-def _render_pdf_hebrew(resume: ResumeModel) -> bytes:
+def _render_pdf_hebrew(resume: ResumeModel, spec: TemplateSpec) -> bytes:
     """Hebrew build path: embedded Hebrew font, every line bidi-reordered
     logical->visual, right-aligned RTL paragraphs. Still ATS-safe: single
     column, no tables/images, real selectable text."""
@@ -217,11 +225,11 @@ def _render_pdf_hebrew(resume: ResumeModel) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=LETTER,
-        topMargin=0.55 * inch, bottomMargin=0.55 * inch,
-        leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+        topMargin=spec.margin_tb_pt, bottomMargin=spec.margin_tb_pt,
+        leftMargin=spec.margin_lr_pt, rightMargin=spec.margin_lr_pt,
         title=resume.contact.name or "Resume",
     )
-    s = _he_styles()
+    s = _he_styles(spec)
     flow = []
     # Frame width available to paragraphs; wrap slightly inside it so our
     # measured lines can never trigger a second, direction-blind re-wrap.
