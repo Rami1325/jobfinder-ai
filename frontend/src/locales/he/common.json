@@ -37,7 +37,14 @@
     "parsedReplace": "עובד — לחצו להחלפה",
     "using": "בשימוש: {{label}}",
     "dropReplace": "גררו קובץ חדש להחלפה",
-    "error": "לא הצלחנו לעבד את קורות החיים."
+    "error": "לא הצלחנו לעבד את קורות החיים.",
+    "linkedin": {
+      "toggle": "אין קורות חיים? ייבאו את פרופיל ה-LinkedIn שלכם",
+      "step1": "פתחו את פרופיל ה-LinkedIn שלכם:",
+      "step1Link": "linkedin.com/in/me",
+      "step2": "לחצו על \"More\" ← \"Save to PDF\".",
+      "step3": "גררו לכאן את קובץ Profile.pdf שהורד — הוא יהפוך לקורות החיים הראשיים שלכם."
+    }
   },
   "resumeGate": {
     "title": "אין עדיין קורות חיים שמורים",

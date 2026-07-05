@@ -20,7 +20,12 @@ military_service: extract army/military service (e.g. IDF / צה"ל) into its ow
 present — do NOT fold it into experience. Capture unit, role, rank, and dates exactly as
 written; leave fields empty rather than guessing.
 languages: extract spoken/written languages with the proficiency level as written
-(e.g. Hebrew - native, English - fluent)."""
+(e.g. Hebrew - native, English - fluent).
+The text may be a LinkedIn profile export ("Profile.pdf"): treat "Top Skills" as skills
+and "Summary"/"About" as the summary; the headline under the name is a tagline, not a job
+title — take titles from the Experience entries; sidebar text (Contact, Honors-Awards,
+Certifications) may be interleaved mid-line with main content — reassemble each fact into
+its proper section, still without inventing anything."""
 
 ANALYZE_JD_SYSTEM = """Task: ANALYZE_JD.
 You analyze a job description and extract structured requirements. \

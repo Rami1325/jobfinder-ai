@@ -54,6 +54,40 @@ resume = structure_resume("John Doe\nEngineer at Acme Corp 2020-Present\n- Built
 check("structure_resume returns ResumeModel", isinstance(resume, ResumeModel))
 check("resume has experience", len(resume.experience) > 0)
 
+# 1b. LinkedIn profile import (PLAN 6): the "Save to PDF" export cleaner is a
+# pure no-op for regular resumes and strips footers/labels from exports.
+from app.llm import prompts as _li_prompts  # noqa: E402
+from app.parsers.resume_parser import clean_linkedin_profile_text, is_linkedin_profile_export  # noqa: E402
+
+_LI_EXPORT_TEXT = (
+    "Contact\nwww.linkedin.com/in/dana-levi (LinkedIn)\nTop Skills\nPython\nSQL\n"
+    "Dana Levi\nData Engineer at Example Corp\nTel Aviv, Israel\n"
+    "Page 1 of 2\n"
+    "Experience\nExample Corp\nData Engineer\nJanuary 2021 - Present\n"
+    "Page 2 of 2"
+)
+check("linkedin export detected", is_linkedin_profile_export(_LI_EXPORT_TEXT))
+_li_cleaned = clean_linkedin_profile_text(_LI_EXPORT_TEXT)
+check(
+    "linkedin export cleaned: footers + url label gone, content intact",
+    "Page 1 of 2" not in _li_cleaned
+    and "(LinkedIn)" not in _li_cleaned
+    and "Data Engineer" in _li_cleaned
+    and "www.linkedin.com/in/dana-levi" in _li_cleaned,
+    _li_cleaned[:80],
+)
+_NOT_EXPORT = "Jane Roe\nEngineer\nSee my profile: linkedin.com/in/janeroe"
+check(
+    "non-export text passes through unchanged (even with a linkedin url)",
+    clean_linkedin_profile_text(_NOT_EXPORT) == _NOT_EXPORT
+    and not is_linkedin_profile_export(_NOT_EXPORT),
+)
+check(
+    "STRUCTURE prompt knows about linkedin exports (Task tag still first)",
+    "LinkedIn profile export" in _li_prompts.STRUCTURE_RESUME_SYSTEM
+    and _li_prompts.STRUCTURE_RESUME_SYSTEM.startswith("Task: STRUCTURE_RESUME."),
+)
+
 # 2. Facts ledger
 ledger = build_facts_ledger(resume)
 check("ledger captured employers", "Acme Corp" in ledger.employers, str(ledger.employers))

@@ -37,7 +37,14 @@
     "parsedReplace": "Parsed — click to replace",
     "using": "Using {{label}}",
     "dropReplace": "Drop a new file to replace",
-    "error": "Failed to parse resume."
+    "error": "Failed to parse resume.",
+    "linkedin": {
+      "toggle": "No resume? Import your LinkedIn profile",
+      "step1": "Open your LinkedIn profile:",
+      "step1Link": "linkedin.com/in/me",
+      "step2": "Click \"More\" → \"Save to PDF\".",
+      "step3": "Drop the downloaded Profile.pdf here — it becomes your master resume."
+    }
   },
   "resumeGate": {
     "title": "No resume saved yet",

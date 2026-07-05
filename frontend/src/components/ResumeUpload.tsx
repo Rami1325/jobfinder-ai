@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { UploadCloud, FileCheck2, Loader2 } from "lucide-react";
+import { UploadCloud, FileCheck2, Loader2, Import, ChevronDown, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { uploadResume } from "../api/client";
 import type { FactsLedger, ResumeModel } from "../types";
@@ -18,6 +18,7 @@ export default function ResumeUpload({ onParsed, savedLabel }: Props) {
   const [loading, setLoading] = useState(false);
   const [drag, setDrag] = useState(false);
   const [error, setError] = useState("");
+  const [liOpen, setLiOpen] = useState(false);
 
   async function handleFile(file: File) {
     setError("");
@@ -97,6 +98,35 @@ export default function ResumeUpload({ onParsed, savedLabel }: Props) {
         }}
       />
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+
+      {/* LinkedIn profile import: the export is just a PDF, so it rides the
+          same upload path — this is the no-résumé cold-start escape hatch. */}
+      <button
+        type="button"
+        onClick={() => setLiOpen((v) => !v)}
+        className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-accent-soft hover:underline"
+      >
+        <Import size={13} />
+        {t("resumeUpload.linkedin.toggle")}
+        <ChevronDown size={13} className={cn("transition-transform", liOpen && "rotate-180")} />
+      </button>
+      {liOpen && (
+        <ol className="mt-2 list-decimal space-y-1 ps-5 text-xs text-ink-muted">
+          <li>
+            {t("resumeUpload.linkedin.step1")}{" "}
+            <a
+              href="https://www.linkedin.com/in/me"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-0.5 text-accent-soft hover:underline"
+            >
+              {t("resumeUpload.linkedin.step1Link")} <ExternalLink size={11} />
+            </a>
+          </li>
+          <li>{t("resumeUpload.linkedin.step2")}</li>
+          <li>{t("resumeUpload.linkedin.step3")}</li>
+        </ol>
+      )}
     </div>
   );
 }
