@@ -77,7 +77,24 @@
     "openOn": "Open on {{source}}",
     "tailorToThis": "Tailor to this",
     "tailor": "Tailor",
-    "removeFromHistory": "Remove from history"
+    "removeFromHistory": "Remove from history",
+    "share": "Share",
+    "shareWhatsApp": "Share via WhatsApp"
+  },
+  "alerts": {
+    "title": "Email alerts",
+    "body": "Once a day we re-run your job search and email you only the jobs you haven't seen yet.",
+    "enable": "Email me new jobs",
+    "emailPlaceholder": "you@email.com",
+    "needEmail": "Add an email address first.",
+    "saved": "Alert settings saved",
+    "saveError": "Could not save alert settings.",
+    "runNow": "Run now",
+    "runResult": "Found {{total}} jobs, {{count}} new",
+    "runEmailed": " — emailed to {{email}}",
+    "runError": "Alert run failed: {{error}}",
+    "lastRun": "Last run {{date}} — {{count}} new jobs",
+    "noSmtp": "Email sending isn't set up on the server yet (ALERT_SMTP_* in backend/.env) — runs will refresh your history but can't email."
   },
   "posted": {
     "today": "today",

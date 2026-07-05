@@ -30,8 +30,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Paths as seen locally and under the Vercel /api mount.
-_GATE_EXEMPT = {"/", "/health", "/api", "/api/health"}
+# Paths as seen locally and under the Vercel /api mount. The alerts cron is
+# called by Vercel's scheduler (no X-App-Key); it enforces its own Bearer
+# CRON_SECRET check in the handler.
+_GATE_EXEMPT = {"/", "/health", "/api", "/api/health", "/jobs/alerts/cron", "/api/jobs/alerts/cron"}
 
 
 @app.middleware("http")

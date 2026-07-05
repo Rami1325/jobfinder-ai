@@ -78,6 +78,23 @@ class ComeetCompany(Base):
     )
 
 
+class JobAlert(Base):
+    """Job-alert settings (single row): re-run the saved search on a schedule
+    and email newly seen hits. The schedule itself lives in Vercel cron (or a
+    manual "Run now"); this row holds the toggle, recipient, optional search
+    context override, and the last run's outcome for the UI."""
+
+    __tablename__ = "job_alerts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    email: Mapped[str] = mapped_column(String(320), default="")
+    context_json: Mapped[str] = mapped_column(Text, default="")  # SearchContext; "" = derive from résumé
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    last_new_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+
+
 class SavedResume(Base):
     """The user's persisted master résumés, reused across Tailor / Interview / Job Match.
 

@@ -1,5 +1,7 @@
 import axios from "axios";
 import type {
+  AlertRunResult,
+  AlertSettings,
   ApplicationDetail,
   ApplicationOut,
   ATSScanResult,
@@ -147,6 +149,25 @@ export async function searchJobs(
 
 export async function searchContext(resume: ResumeModel): Promise<SearchContext> {
   const { data } = await api.post<SearchContext>("/jobs/search-context", { resume });
+  return data;
+}
+
+export async function getJobAlert(): Promise<AlertSettings> {
+  const { data } = await api.get<AlertSettings>("/jobs/alerts");
+  return data;
+}
+
+export async function updateJobAlert(payload: {
+  enabled: boolean;
+  email: string;
+  context?: SearchContext | null;
+}): Promise<AlertSettings> {
+  const { data } = await api.put<AlertSettings>("/jobs/alerts", payload);
+  return data;
+}
+
+export async function runJobAlert(): Promise<AlertRunResult> {
+  const { data } = await api.post<AlertRunResult>("/jobs/alerts/run");
   return data;
 }
 

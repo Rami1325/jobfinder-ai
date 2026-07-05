@@ -929,6 +929,85 @@ check(
 )
 check("get by lang misses cleanly", get_master_resume(lang="fr", db=_db) is None)
 
+# 15c. Job alerts (PLAN 6): settings row, history diffing, email body, and the
+# full run loop with a canned search function (no network, no LLM, no SMTP)
+from app.core.alerts import (  # noqa: E402
+    build_alert_email,
+    get_alert,
+    run_alert,
+    split_new_matches,
+    update_alert,
+)
+from app.models import JobSearchResult, SearchContext as _AlertCtx  # noqa: E402
+
+_al = get_alert(_db)
+check("alert settings row auto-creates (disabled, no email)", _al.enabled is False and _al.email == "")
+update_alert(_db, enabled=True, email="me@example.com", context=_AlertCtx(job_title="Backend Engineer", location="Tel Aviv"))
+_al = get_alert(_db)
+check(
+    "alert settings persist (single row)",
+    _al.enabled is True and _al.email == "me@example.com" and "Backend Engineer" in _al.context_json,
+)
+
+# Put a known URL (back) in history — the 105-row cap test above trimmed it —
+# so the diff has one seen and one unseen job to split.
+record_search_hits(_db, [JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1")])
+_alert_matches = [
+    JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1"),
+    JobMatch(title="Platform Engineer", company="Nova", overall=82.0, url="https://alerts/new-1", source="drushim"),
+]
+_new = split_new_matches(_db, _alert_matches)
+check("alert diff finds only never-seen urls", [m.url for m in _new] == ["https://alerts/new-1"], str([m.url for m in _new]))
+
+_subj, _body = build_alert_email(_new, _AlertCtx(job_title="Backend Engineer", location="Tel Aviv"))
+check(
+    "alert email names the search and lists the job with url + fit",
+    "1 new job" in _subj and "Backend Engineer" in _subj and "Tel Aviv" in _subj
+    and "Platform Engineer" in _body and "https://alerts/new-1" in _body and "82%" in _body,
+    _subj,
+)
+_subj_he, _body_he = build_alert_email(
+    [JobMatch(title="מהנדס/ת תוכנה", company="חברת דוגמה", overall=70.0, url="https://alerts/he-1")],
+    _AlertCtx(job_title="מהנדס תוכנה", location="תל אביב"),
+)
+check("alert email is hebrew-safe", "מהנדס/ת תוכנה" in _body_he and "תל אביב" in _subj_he)
+
+
+def _canned_search(resume, ctx):  # noqa: ANN001 - matches search_jobs' shape
+    return JobSearchResult(
+        context=_AlertCtx(job_title="Backend Engineer", location="Tel Aviv"),
+        matches=_alert_matches,
+        skipped=0,
+    )
+
+
+_run = run_alert(_db, search_fn=_canned_search)
+check(
+    "alert run: 2 found, 1 new, not emailed (smtp unconfigured), no error",
+    _run.ran is True and _run.total == 2 and _run.new_count == 1
+    and _run.emailed is False and _run.error == "",
+    str(_run),
+)
+_al = get_alert(_db)
+check("alert run bookkeeping persisted", _al.last_new_count == 1 and _al.last_run_at is not None and _al.last_error == "")
+_run2 = run_alert(_db, search_fn=_canned_search)
+check("alert re-run: nothing new (hits now in history)", _run2.new_count == 0, str(_run2))
+update_alert(_db, enabled=False, email="me@example.com", context=None)
+check("alert run respects the toggle", run_alert(_db, search_fn=_canned_search).ran is False)
+check("alert run with force ignores the toggle", run_alert(_db, force=True, search_fn=_canned_search).ran is True)
+
+
+def _broken_search(resume, ctx):  # noqa: ANN001
+    raise ValueError("boards are down")
+
+
+_run_err = run_alert(_db, force=True, search_fn=_broken_search)
+check(
+    "alert run reports search failure instead of raising",
+    _run_err.ran is True and "boards are down" in _run_err.error
+    and "boards are down" in get_alert(_db).last_error,
+)
+
 # 16. Comeet company registry: auto-seed, token persistence, careers-URL upsert
 from app.core.providers.comeet_seed import SEED_COMPANIES  # noqa: E402
 from app.db.comeet import list_companies, save_tokens, upsert_company  # noqa: E402

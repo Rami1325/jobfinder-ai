@@ -6,10 +6,12 @@ import type { TFunction } from "i18next";
 import {
   ArrowRight,
   BadgeCheck,
+  Bell,
   Briefcase,
   ExternalLink,
   Link2,
   Loader2,
+  MessageCircle,
   Plus,
   Search,
   Trash2,
@@ -20,10 +22,13 @@ import {
   clearJobHistory,
   deleteJobHistoryItem,
   fetchJob,
+  getJobAlert,
   getJobHistory,
   listApplications,
   matchJobs,
+  runJobAlert,
   searchContext,
+  updateJobAlert,
 } from "../api/client";
 import ResumeUpload from "../components/ResumeUpload";
 import {
@@ -37,6 +42,7 @@ import { onboardingRole } from "../lib/onboarding";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, useToast } from "../components/ui";
 import type {
+  AlertSettings,
   ApplicationOut,
   FactsLedger,
   JobMatch,
@@ -146,6 +152,24 @@ function CompanyAvatar({ company, url }: { company: string; url?: string }) {
     >
       {(company.trim().charAt(0) || "•").toUpperCase()}
     </span>
+  );
+}
+
+/** WhatsApp share for a job card — Israel's default way to pass a job along. */
+function WhatsAppShare({ title, company, url }: { title: string; company: string; url: string }) {
+  const { t } = useTranslation("jobs");
+  if (!url) return null;
+  const text = `${title || t("card.untitled")}${company ? ` — ${company}` : ""}\n${url}`;
+  return (
+    <a
+      href={`https://wa.me/?text=${encodeURIComponent(text)}`}
+      target="_blank"
+      rel="noreferrer"
+      title={t("card.shareWhatsApp")}
+      className="inline-flex items-center gap-1 text-mint hover:underline"
+    >
+      <MessageCircle size={12} /> {t("card.share")}
+    </a>
   );
 }
 
@@ -274,6 +298,7 @@ function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStat
                 <ExternalLink size={12} /> {t("card.viewOn", { source: sourceLabel(m.source) || "LinkedIn" })}
               </a>
             )}
+            <WhatsAppShare title={m.title} company={m.company} url={m.url} />
           </div>
           {m.top_gaps.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -342,6 +367,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
                 <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(hit.source) || "LinkedIn" })}
               </a>
             )}
+            <WhatsAppShare title={hit.title} company={hit.company} url={hit.url} />
           </div>
         </div>
       </div>
@@ -370,6 +396,120 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
         >
           <Trash2 size={14} />
         </button>
+      </div>
+    </Card>
+  );
+}
+
+/** Email-alert settings: daily saved-search re-run that emails unseen jobs.
+ * The schedule itself is a server cron; this card is the toggle + "Run now". */
+function AlertsCard({ getContext }: { getContext: () => SearchContext | null }) {
+  const { t } = useTranslation("jobs");
+  const toast = useToast();
+  const [settings, setSettings] = useState<AlertSettings | null>(null);
+  const [email, setEmail] = useState("");
+  const [enabled, setEnabled] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    getJobAlert()
+      .then((s) => {
+        setSettings(s);
+        setEmail(s.email);
+        setEnabled(s.enabled);
+      })
+      .catch(() => {}); // older backend without alerts — card hides itself
+  }, []);
+
+  if (!settings) return null;
+
+  async function save(nextEnabled: boolean) {
+    if (nextEnabled && !email.trim()) {
+      toast("error", t("alerts.needEmail"));
+      return;
+    }
+    setSaving(true);
+    try {
+      const s = await updateJobAlert({ enabled: nextEnabled, email, context: getContext() });
+      setSettings(s);
+      setEnabled(s.enabled);
+      toast("success", t("alerts.saved"));
+    } catch (e: any) {
+      toast("error", e?.response?.data?.detail || t("alerts.saveError"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runNow() {
+    setRunning(true);
+    try {
+      const r = await runJobAlert();
+      if (r.error) {
+        toast("error", t("alerts.runError", { error: r.error }));
+      } else {
+        toast(
+          "success",
+          t("alerts.runResult", { total: r.total, count: r.new_count }) +
+            (r.emailed ? t("alerts.runEmailed", { email }) : ""),
+        );
+      }
+      setSettings(await getJobAlert());
+    } catch (e: any) {
+      toast("error", e?.response?.data?.detail || t("alerts.runError", { error: "" }));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardTitle>
+        <span className="inline-flex items-center gap-2">
+          <Bell size={16} className="text-accent-soft" /> {t("alerts.title")}
+        </span>
+      </CardTitle>
+      <p className="mt-1 text-sm text-ink-muted">{t("alerts.body")}</p>
+
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={saving}
+            onChange={(e) => save(e.target.checked)}
+            className="h-4 w-4 accent-accent"
+          />
+          {t("alerts.enable")}
+        </label>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onBlur={() => enabled && email.trim() && email !== settings.email && save(enabled)}
+          placeholder={t("alerts.emailPlaceholder")}
+          dir="ltr"
+          className={inputCls}
+        />
+        <Button size="sm" variant="secondary" loading={running} onClick={runNow}>
+          {t("alerts.runNow")}
+        </Button>
+      </div>
+
+      <div className="mt-3 space-y-1 text-xs text-ink-muted">
+        {settings.last_run_at && (
+          <p>
+            {t("alerts.lastRun", {
+              date: settings.last_run_at.slice(0, 10),
+              count: settings.last_new_count,
+            })}
+          </p>
+        )}
+        {settings.last_error && <p className="text-danger">{settings.last_error}</p>}
+        {enabled && !settings.smtp_configured && (
+          <p className="text-warn">{t("alerts.noSmtp")}</p>
+        )}
       </div>
     </Card>
   );
@@ -917,6 +1057,8 @@ export default function JobsPage() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          <AlertsCard getContext={() => (customOpen ? ctx : onboardingCtx())} />
         </>
       )}
 

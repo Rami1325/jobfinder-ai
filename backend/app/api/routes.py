@@ -1,16 +1,21 @@
 """FastAPI routes wiring the pipeline together."""
 from __future__ import annotations
 
+import hmac
 import io
 import json
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
+
+from app.core import alerts as alerts_core
 from app.core.ats_scan import scan_resume
 from app.core.cover_letter import generate_cover_letter
+from app.core.mailer import smtp_configured
 from app.core.follow_up import write_follow_up
 from app.core.interview import answer_feedback, generate_questions, model_answer
 from app.core.jd_analyzer import analyze_jd
@@ -32,6 +37,9 @@ from app.db.history import (
 from app.db.models import Application, SavedResume
 from app.models import (
     AddComeetCompanyRequest,
+    AlertRunResult,
+    AlertSettingsIn,
+    AlertSettingsOut,
     ApplicationCreate,
     ApplicationDetail,
     ApplicationOut,
@@ -273,6 +281,52 @@ def delete_jobs_history_item(hit_id: int, db: Session = Depends(get_db)) -> dict
 @router.delete("/jobs/history")
 def clear_jobs_history(db: Session = Depends(get_db)) -> dict[str, int]:
     return {"deleted": clear_search_hits(db)}
+
+
+# --------------------------------------------------------------------------- #
+# Job alerts (PLAN 6): saved-search re-runs on a schedule, email new hits
+# --------------------------------------------------------------------------- #
+def _alert_out(row, db: Session) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert ORM row
+    return AlertSettingsOut(
+        enabled=row.enabled,
+        email=row.email,
+        context=alerts_core.alert_context(row),
+        last_run_at=row.last_run_at.isoformat() if row.last_run_at else "",
+        last_new_count=row.last_new_count or 0,
+        last_error=row.last_error or "",
+        smtp_configured=smtp_configured(),
+    )
+
+
+@router.get("/jobs/alerts", response_model=AlertSettingsOut)
+def get_job_alert(db: Session = Depends(get_db)) -> AlertSettingsOut:
+    return _alert_out(alerts_core.get_alert(db), db)
+
+
+@router.put("/jobs/alerts", response_model=AlertSettingsOut)
+def update_job_alert(body: AlertSettingsIn, db: Session = Depends(get_db)) -> AlertSettingsOut:
+    if body.enabled and not body.email.strip():
+        raise HTTPException(400, "Add an email address to enable alerts.")
+    row = alerts_core.update_alert(db, enabled=body.enabled, email=body.email, context=body.context)
+    return _alert_out(row, db)
+
+
+@router.post("/jobs/alerts/run", response_model=AlertRunResult)
+def run_job_alert(db: Session = Depends(get_db)) -> AlertRunResult:
+    """Manual 'Run now' from the UI — runs even when the toggle is off."""
+    return alerts_core.run_alert(db, force=True)
+
+
+@router.get("/jobs/alerts/cron", response_model=AlertRunResult)
+def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertRunResult:
+    """Vercel cron entrypoint (exempt from the X-App-Key gate — see main.py).
+    When CRON_SECRET is set, Vercel sends it as a Bearer token; require it."""
+    secret = get_settings().cron_secret
+    if secret:
+        auth = request.headers.get("authorization", "")
+        if not hmac.compare_digest(auth, f"Bearer {secret}"):
+            raise HTTPException(401, "Bad cron secret.")
+    return alerts_core.run_alert(db)
 
 
 @router.get("/jobs/comeet/companies", response_model=ComeetCompanyList)

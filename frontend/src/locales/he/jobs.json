@@ -78,7 +78,24 @@
     "openOn": "פתיחה ב{{source}}",
     "tailorToThis": "התאימו למשרה הזו",
     "tailor": "התאמה",
-    "removeFromHistory": "הסרה מההיסטוריה"
+    "removeFromHistory": "הסרה מההיסטוריה",
+    "share": "שיתוף",
+    "shareWhatsApp": "שיתוף בוואטסאפ"
+  },
+  "alerts": {
+    "title": "התראות במייל",
+    "body": "פעם ביום אנחנו מריצים שוב את חיפוש המשרות ושולחים לכם במייל רק משרות שעוד לא ראיתם.",
+    "enable": "שלחו לי משרות חדשות במייל",
+    "emailPlaceholder": "you@email.com",
+    "needEmail": "הוסיפו קודם כתובת מייל.",
+    "saved": "הגדרות ההתראות נשמרו",
+    "saveError": "לא הצלחנו לשמור את הגדרות ההתראות.",
+    "runNow": "הרצה עכשיו",
+    "runResult": "נמצאו {{total}} משרות, {{count}} חדשות",
+    "runEmailed": " — נשלחו אל {{email}}",
+    "runError": "הרצת ההתראה נכשלה: {{error}}",
+    "lastRun": "הרצה אחרונה {{date}} — {{count}} משרות חדשות",
+    "noSmtp": "שליחת מייל עוד לא מוגדרת בשרת (ALERT_SMTP_* בקובץ backend/.env) — הרצות יעדכנו את ההיסטוריה אבל לא יישלח מייל."
   },
   "posted": {
     "today": "היום",

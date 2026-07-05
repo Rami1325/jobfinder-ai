@@ -204,6 +204,33 @@ class MasterResumeList(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Job alerts
+# --------------------------------------------------------------------------- #
+class AlertSettingsIn(BaseModel):
+    enabled: bool = False
+    email: str = ""
+    context: Optional["SearchContext"] = None  # None = derive from the résumé
+
+
+class AlertSettingsOut(BaseModel):
+    enabled: bool = False
+    email: str = ""
+    context: Optional["SearchContext"] = None
+    last_run_at: str = ""
+    last_new_count: int = 0
+    last_error: str = ""
+    smtp_configured: bool = False  # False => runs won't email; UI explains
+
+
+class AlertRunResult(BaseModel):
+    ran: bool = False
+    total: int = 0  # jobs the search returned
+    new_count: int = 0  # of those, never seen in history before
+    emailed: bool = False
+    error: str = ""
+
+
+# --------------------------------------------------------------------------- #
 # Application tracker
 # --------------------------------------------------------------------------- #
 class ApplicationCreate(BaseModel):

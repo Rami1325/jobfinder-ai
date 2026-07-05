@@ -202,6 +202,22 @@ export interface SearchContext {
   limit: number;
   sources?: string[]; // provider ids to search ("linkedin", "drushim", …); absent on older backends
 }
+export interface AlertSettings {
+  enabled: boolean;
+  email: string;
+  context: SearchContext | null;
+  last_run_at: string;
+  last_new_count: number;
+  last_error: string;
+  smtp_configured: boolean;
+}
+export interface AlertRunResult {
+  ran: boolean;
+  total: number;
+  new_count: number;
+  emailed: boolean;
+  error: string;
+}
 export interface JobSearchResult {
   context: SearchContext;
   matches: JobMatch[];
