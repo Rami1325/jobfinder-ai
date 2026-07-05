@@ -72,7 +72,13 @@ def _migrate_missing_columns() -> None:
             for col in table.columns:
                 if col.name in live_cols:
                     continue
-                ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}"
+                # IF NOT EXISTS guards the concurrent-cold-start race on serverless
+                # Postgres; SQLite (single-process local dev) doesn't support it.
+                exists_guard = "IF NOT EXISTS " if engine.dialect.name == "postgresql" else ""
+                ddl = (
+                    f"ALTER TABLE {table.name} ADD COLUMN {exists_guard}"
+                    f"{col.name} {col.type.compile(engine.dialect)}"
+                )
                 default = _default_clause(col)
                 if default is not None:
                     ddl += f" DEFAULT {default}"
