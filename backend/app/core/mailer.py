@@ -18,14 +18,18 @@ def smtp_configured() -> bool:
     return bool(s.alert_smtp_host and (s.alert_email_from or s.alert_smtp_user))
 
 
-def send_email(to: str, subject: str, text: str) -> None:
-    """Send a plain-text email; raises on failure (callers report, not crash)."""
+def send_email(to: str, subject: str, text: str, html: str = "") -> None:
+    """Send an email; raises on failure (callers report, not crash).
+    `text` is always the plain-text part; `html`, when given, is attached as
+    the preferred multipart/alternative so clients that render HTML use it."""
     s = get_settings()
     msg = EmailMessage()
     msg["From"] = s.alert_email_from or s.alert_smtp_user
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(text)
+    if html:
+        msg.add_alternative(html, subtype="html")
     if s.alert_smtp_port == 465:
         with smtplib.SMTP_SSL(s.alert_smtp_host, s.alert_smtp_port, timeout=30) as smtp:
             if s.alert_smtp_user:

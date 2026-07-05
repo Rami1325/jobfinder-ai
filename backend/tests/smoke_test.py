@@ -942,6 +942,7 @@ check("get by lang misses cleanly", get_master_resume(lang="fr", db=_db) is None
 # full run loop with a canned search function (no network, no LLM, no SMTP)
 from app.core.alerts import (  # noqa: E402
     build_alert_email,
+    build_alert_email_html,
     get_alert,
     run_alert,
     split_new_matches,
@@ -980,6 +981,37 @@ _subj_he, _body_he = build_alert_email(
     _AlertCtx(job_title="מהנדס תוכנה", location="תל אביב"),
 )
 check("alert email is hebrew-safe", "מהנדס/ת תוכנה" in _body_he and "תל אביב" in _subj_he)
+
+# HTML alternative: dark-theme card layout, escaped, dir="auto" for Hebrew,
+# manage-link only when an app url is configured
+_html = build_alert_email_html(_new, _AlertCtx(job_title="Backend Engineer", location="Tel Aviv"))
+check(
+    "alert html lists the job with link, fit pill, source badge",
+    "Platform Engineer" in _html and 'href="https://alerts/new-1"' in _html
+    and "82% fit" in _html and "Drushim" in _html and "1 new job" in _html,
+)
+check("alert html omits manage link without APP_BASE_URL", "Manage alerts" not in _html)
+check(
+    "alert html adds manage link from APP_BASE_URL",
+    'href="https://app.example/jobs"' in build_alert_email_html(_new, _AlertCtx(job_title="X"), app_url="https://app.example/"),
+)
+_html_evil = build_alert_email_html(
+    [JobMatch(title='<script>alert("x")</script>', company="A&B", overall=50.0, url="https://alerts/e-1")],
+    _AlertCtx(job_title="Backend <b>Engineer</b>"),
+)
+check(
+    "alert html escapes job fields and search context",
+    "<script>" not in _html_evil and "&lt;script&gt;" in _html_evil
+    and "A&amp;B" in _html_evil and "<b>Engineer</b>" not in _html_evil,
+)
+_html_he = build_alert_email_html(
+    [JobMatch(title="מהנדס/ת תוכנה", company="חברת דוגמה", overall=70.0, url="https://alerts/he-1")],
+    _AlertCtx(job_title="מהנדס תוכנה", location="תל אביב"),
+)
+check(
+    "alert html is hebrew-safe with dir=auto",
+    "מהנדס/ת תוכנה" in _html_he and 'dir="auto"' in _html_he,
+)
 
 
 def _canned_search(resume, ctx):  # noqa: ANN001 - matches search_jobs' shape
