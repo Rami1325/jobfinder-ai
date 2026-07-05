@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>JobFinder Job Clipper</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="popup">
+  <header class="bar">
+    <div class="brand">
+      <span class="accent">JobFinder</span>
+      <span class="sub" data-i18n="popupHeading">Job Clipper</span>
+    </div>
+    <button id="openOptions" class="icon-btn" data-i18n-title="optionsLinkTitle" title="Settings">&#9881;</button>
+  </header>
+
+  <main>
+    <div id="status" class="status" hidden>
+      <span id="statusText"></span>
+      <a id="statusOptionsLink" data-i18n="linkOpenOptions" hidden>Open settings</a>
+    </div>
+
+    <form id="clipForm" hidden>
+      <div class="field">
+        <label for="jobTitle" data-i18n="fieldJobTitle">Job title</label>
+        <input type="text" id="jobTitle" dir="auto" />
+      </div>
+      <div class="field">
+        <label for="company" data-i18n="fieldCompany">Company</label>
+        <input type="text" id="company" dir="auto" />
+      </div>
+      <div class="field">
+        <label for="jobUrl" data-i18n="fieldJobUrl">Link</label>
+        <input type="text" id="jobUrl" dir="auto" readonly />
+      </div>
+      <div class="field">
+        <label for="jdText" data-i18n="fieldJdText">Job description</label>
+        <textarea id="jdText" dir="auto" rows="9"></textarea>
+      </div>
+      <div class="row">
+        <button type="submit" id="saveBtn" class="primary" data-i18n="btnSave">Save to tracker</button>
+      </div>
+    </form>
+
+    <div id="success" class="success-box" hidden>
+      <span class="check">&#10003;</span>
+      <p data-i18n="successSaved">Saved! The job was added to your application tracker.</p>
+      <a id="openTracker" class="button-link" target="_blank" rel="noopener" data-i18n="linkOpenTracker">Open tracker</a>
+    </div>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

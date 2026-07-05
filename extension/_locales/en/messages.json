@@ -1,0 +1,47 @@
+{
+  "extName": { "message": "JobFinder Job Clipper" },
+  "extDescription": { "message": "Clip the job posting on the current page straight into your JobFinder application tracker." },
+
+  "popupHeading": { "message": "Job Clipper" },
+  "optionsLinkTitle": { "message": "Settings" },
+
+  "statusReading": { "message": "Reading the job posting from this page…" },
+  "statusRestricted": { "message": "This page can't be read (browser-internal page). Open a job posting and try again — or fill in the fields manually." },
+
+  "fieldJobTitle": { "message": "Job title" },
+  "fieldCompany": { "message": "Company" },
+  "fieldJobUrl": { "message": "Link" },
+  "fieldJdText": { "message": "Job description" },
+
+  "btnSave": { "message": "Save to tracker" },
+  "btnSaving": { "message": "Saving…" },
+
+  "successSaved": { "message": "Saved! The job was added to your application tracker." },
+  "linkOpenTracker": { "message": "Open tracker" },
+  "linkOpenOptions": { "message": "Open settings" },
+
+  "errNotConfigured": { "message": "The extension isn't configured yet — set the server address and access code first." },
+  "errUnauthorized": { "message": "The access code is missing or wrong (error 401). Update it in the settings." },
+  "errNetwork": { "message": "Can't reach the server. Check your internet connection and the API address in the settings." },
+  "errServer": {
+    "message": "Saving failed (error $STATUS$).",
+    "placeholders": {
+      "status": { "content": "$1" }
+    }
+  },
+
+  "optionsTitle": { "message": "JobFinder Job Clipper — Settings" },
+  "optionsIntro": { "message": "Point the clipper at your JobFinder instance. The defaults match the public deployment." },
+  "fieldAppUrl": { "message": "App URL" },
+  "hintAppUrl": { "message": "The web app address, e.g. https://jobfinder-hazel-pi.vercel.app or http://localhost:5173." },
+  "fieldApiUrl": { "message": "API URL" },
+  "hintApiUrl": { "message": "Leave empty to use the App URL plus /api. For local dev use http://localhost:8000." },
+  "fieldAccessCode": { "message": "Access code" },
+  "hintAccessCode": { "message": "Sent as the X-App-Key header. The public deployment rejects saves without it." },
+  "btnSaveSettings": { "message": "Save settings" },
+  "msgSettingsSaved": { "message": "Settings saved ✓" },
+  "btnTest": { "message": "Test connection" },
+  "msgTesting": { "message": "Testing connection…" },
+  "msgTestOk": { "message": "Server is reachable ✓" },
+  "msgTestFail": { "message": "Server unreachable — check the address." }
+}

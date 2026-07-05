@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>JobFinder Job Clipper — Settings</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="options">
+  <main>
+    <h1 data-i18n="optionsTitle">JobFinder Job Clipper — Settings</h1>
+    <p class="intro" data-i18n="optionsIntro">Point the clipper at your JobFinder instance.</p>
+
+    <form id="settingsForm">
+      <div class="field">
+        <label for="appUrl" data-i18n="fieldAppUrl">App URL</label>
+        <input type="url" id="appUrl" dir="ltr" placeholder="https://jobfinder-hazel-pi.vercel.app" />
+        <div class="hint" data-i18n="hintAppUrl"></div>
+      </div>
+
+      <div class="field">
+        <label for="apiUrl" data-i18n="fieldApiUrl">API URL</label>
+        <input type="url" id="apiUrl" dir="ltr" placeholder="https://jobfinder-hazel-pi.vercel.app/api" />
+        <div class="hint" data-i18n="hintApiUrl"></div>
+      </div>
+
+      <div class="field">
+        <label for="accessCode" data-i18n="fieldAccessCode">Access code</label>
+        <input type="password" id="accessCode" dir="ltr" autocomplete="off" />
+        <div class="hint" data-i18n="hintAccessCode"></div>
+      </div>
+
+      <div class="row">
+        <button type="submit" id="saveSettings" class="primary" data-i18n="btnSaveSettings">Save settings</button>
+        <button type="button" id="testBtn" class="secondary" data-i18n="btnTest">Test connection</button>
+        <span id="msg" class="inline-msg"></span>
+      </div>
+    </form>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

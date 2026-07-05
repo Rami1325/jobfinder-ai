@@ -1,0 +1,47 @@
+{
+  "extName": { "message": "JobFinder – לוכד המשרות" },
+  "extDescription": { "message": "שמירת המשרה מהעמוד הנוכחי ישירות למעקב המועמדויות של JobFinder." },
+
+  "popupHeading": { "message": "לוכד המשרות" },
+  "optionsLinkTitle": { "message": "הגדרות" },
+
+  "statusReading": { "message": "קורא את פרטי המשרה מהעמוד…" },
+  "statusRestricted": { "message": "אי אפשר לקרוא את העמוד הזה (עמוד פנימי של הדפדפן). פתחו עמוד של משרה ונסו שוב — או מלאו את השדות ידנית." },
+
+  "fieldJobTitle": { "message": "תפקיד" },
+  "fieldCompany": { "message": "חברה" },
+  "fieldJobUrl": { "message": "קישור" },
+  "fieldJdText": { "message": "תיאור המשרה" },
+
+  "btnSave": { "message": "שמירה למעקב" },
+  "btnSaving": { "message": "שומר…" },
+
+  "successSaved": { "message": "נשמר! המשרה נוספה למעקב המועמדויות שלך." },
+  "linkOpenTracker": { "message": "פתיחת לוח המעקב" },
+  "linkOpenOptions": { "message": "פתיחת ההגדרות" },
+
+  "errNotConfigured": { "message": "התוסף עדיין לא הוגדר — קודם צריך להזין כתובת שרת וקוד גישה." },
+  "errUnauthorized": { "message": "קוד הגישה חסר או שגוי (שגיאה 401). עדכנו אותו בהגדרות." },
+  "errNetwork": { "message": "אין חיבור לשרת. בדקו את החיבור לאינטרנט ואת כתובת ה‑API בהגדרות." },
+  "errServer": {
+    "message": "השמירה נכשלה (שגיאה $STATUS$).",
+    "placeholders": {
+      "status": { "content": "$1" }
+    }
+  },
+
+  "optionsTitle": { "message": "JobFinder – לוכד המשרות — הגדרות" },
+  "optionsIntro": { "message": "חברו את התוסף לשרת ה‑JobFinder שלכם. ברירות המחדל מתאימות לפריסה הציבורית." },
+  "fieldAppUrl": { "message": "כתובת האפליקציה" },
+  "hintAppUrl": { "message": "הכתובת של אפליקציית הווב, למשל ‎https://jobfinder-hazel-pi.vercel.app או ‎http://localhost:5173." },
+  "fieldApiUrl": { "message": "כתובת ה‑API" },
+  "hintApiUrl": { "message": "אפשר להשאיר ריק — נשתמש בכתובת האפליקציה בתוספת ‎/api. לפיתוח מקומי: ‎http://localhost:8000." },
+  "fieldAccessCode": { "message": "קוד גישה" },
+  "hintAccessCode": { "message": "נשלח בכותרת X-App-Key. בפריסה הציבורית השמירה תיכשל בלעדיו." },
+  "btnSaveSettings": { "message": "שמירת ההגדרות" },
+  "msgSettingsSaved": { "message": "ההגדרות נשמרו ✓" },
+  "btnTest": { "message": "בדיקת חיבור" },
+  "msgTesting": { "message": "בודק חיבור…" },
+  "msgTestOk": { "message": "השרת זמין ✓" },
+  "msgTestFail": { "message": "השרת לא זמין — בדקו את הכתובת." }
+}
