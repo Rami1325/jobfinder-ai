@@ -1,7 +1,7 @@
 """SQLAlchemy engine/session setup (SQLite)."""
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import get_settings
@@ -39,38 +39,41 @@ def get_db():
         db.close()
 
 
-def _sqlite_default_clause(col) -> str | None:
+def _default_clause(col) -> str | None:
     """Render a column's static default as a SQL literal, or None if not expressible."""
     default = getattr(col.default, "arg", None)
     if default is None or callable(default):
         return None
     if isinstance(default, bool):
-        return "1" if default else "0"
+        if engine.dialect.name == "sqlite":
+            return "1" if default else "0"
+        return "TRUE" if default else "FALSE"
     if isinstance(default, (int, float)):
         return str(default)
     return "'" + str(default).replace("'", "''") + "'"
 
 
 def _migrate_missing_columns() -> None:
-    """Lightweight SQLite migration shim: ADD COLUMN for ORM columns missing from live tables.
+    """Lightweight migration shim: ADD COLUMN for ORM columns missing from live tables.
 
     create_all only creates missing tables — it never alters existing ones, so a
     pre-existing DB silently lacks columns added to the models later. Additive
-    ALTERs are enough for this app; anything fancier belongs in a real migration tool.
+    ALTERs are enough for this app; anything fancier belongs in a real migration
+    tool. Runs on SQLite (local dev) and Postgres (Neon prod) only.
     """
-    if engine.dialect.name != "sqlite":
+    if engine.dialect.name not in ("sqlite", "postgresql"):
         return
+    inspector = inspect(engine)
     with engine.connect() as conn:
         for table in Base.metadata.sorted_tables:
-            rows = conn.exec_driver_sql(f"PRAGMA table_info({table.name})").fetchall()
-            live_cols = {row[1] for row in rows}
-            if not live_cols:  # table doesn't exist yet; create_all handles it
-                continue
+            if not inspector.has_table(table.name):
+                continue  # create_all handles brand-new tables
+            live_cols = {c["name"] for c in inspector.get_columns(table.name)}
             for col in table.columns:
                 if col.name in live_cols:
                     continue
                 ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}"
-                default = _sqlite_default_clause(col)
+                default = _default_clause(col)
                 if default is not None:
                     ddl += f" DEFAULT {default}"
                 conn.exec_driver_sql(ddl)
