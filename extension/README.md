@@ -39,19 +39,25 @@ The extension calls the API directly from the popup, which bypasses CORS **only 
 
 | Site | Title | Company | Description |
 | --- | --- | --- | --- |
-| linkedin.com (logged-in + guest pages) | dedicated selectors | dedicated selectors | dedicated selectors |
-| drushim.co.il | `h1` | fallback | dedicated selectors |
+| linkedin.com (logged-in + guest pages) | selectors → tab-title parse | selectors → tab-title parse | selectors → "About the job" heading walk |
+| drushim.co.il | `h1` | `p.view-on-submit` | `.jobDes` + `.job-requirements` |
 | jobmaster.co.il | `h1` / `.jobTitle` | fallback | description + requirements concatenated |
 | alljobs.co.il | `h1` | fallback | dedicated selectors |
 | comeet careers pages | `h1` | fallback | best effort |
-| everything else | `document.title` | empty | full page text (trimmed to 15k chars) |
+| everything else | JSON-LD → `document.title` | JSON-LD → empty | JSON-LD → full page text (trimmed to 15k chars) |
+
+Any board that embeds a JSON-LD `JobPosting` (`<script type="application/ld+json">`) is parsed from that first wherever the selectors miss — it survives markup redesigns.
 
 Everything is editable in the popup before saving, so a weak extraction is a paste away from correct.
 
+**LinkedIn's 2026 shell** (rolling out mid-2026) hashes all class names, so the old selectors miss; there the extractor parses the tab title for job title + company and finds the description structurally via the "About the job" heading. That section renders lazily — **scroll the description into view before clipping** for the full text; the popup retries extraction for ~4.5s (`partial` flag) before settling for the visible summary.
+
+Live-verified 2026-07-05 against a real logged-in LinkedIn posting (new shell: title/company/full 3.3k-char description) and a real Drushim posting (Hebrew title, company, clean description + requirements), plus a real `POST /applications` round-trip against the production API.
+
 ## Known compromises (v1)
 
-- **Selector fragility**: job boards change markup without notice. The extractor never throws (it falls back to page title + full page text), but per-board selectors will need occasional maintenance.
-- **Company name on Israeli boards** mostly falls back to empty — board markup rarely labels it consistently; edit it in the popup.
+- **Selector fragility**: job boards change markup without notice. The extractor never throws (it falls back to JSON-LD, then page title + full page text), but per-board selectors will need occasional maintenance.
+- **Company name on some Israeli boards** falls back to empty — board markup rarely labels it consistently; edit it in the popup.
 - **Test connection checks reachability only**, not the access code (`/health` is unauthenticated by design).
 - **Comeet `COMPANY_DATA`** (the JS global on Comeet careers sites) is not readable from the isolated content-script world; extraction there is DOM-selector best effort.
 - **No duplicate detection**: clipping the same job twice creates two tracker rows (the backend dedupes only job-search history, not manual saves).
@@ -59,6 +65,6 @@ Everything is editable in the popup before saving, so a weak extraction is a pas
 ## Follow-ups (post-v1)
 
 - Deep **Tailor handoff**: "Save & tailor" that opens `/app` with the clipped JD pre-filled.
-- Per-board **selector hardening** (JSON-LD `JobPosting` parsing would cover most boards generically).
+- ~~JSON-LD `JobPosting` parsing~~ — done 2026-07-05 (generic path + gap-filler on all boards).
 - **Firefox port** (MV3 with `browser.*` polyfill; storage.sync + scripting APIs are compatible).
 - Optional **autofill** of application forms — explicitly out of scope for v1.

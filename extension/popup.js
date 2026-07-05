@@ -76,12 +76,64 @@ function extractJob() {
         .slice(0, MAX_LEN);
     };
 
+    var stripHtml = function (html) {
+      var div = document.createElement("div");
+      div.innerHTML = html;
+      return div.innerText || div.textContent || "";
+    };
+
+    // JSON-LD JobPosting — most reliable source when a board embeds one,
+    // and it survives markup redesigns that break CSS selectors.
+    var fromJsonLd = function () {
+      var scripts = document.querySelectorAll('script[type="application/ld+json"]');
+      for (var i = 0; i < scripts.length; i++) {
+        try {
+          var data = JSON.parse(scripts[i].textContent);
+          var items = Array.isArray(data) ? data : data["@graph"] || [data];
+          for (var j = 0; j < items.length; j++) {
+            var it = items[j];
+            if (it && String(it["@type"]).toLowerCase() === "jobposting") {
+              return {
+                title: String(it.title || ""),
+                company:
+                  (it.hiringOrganization && String(it.hiringOrganization.name || "")) || "",
+                description: it.description ? stripHtml(String(it.description)) : "",
+              };
+            }
+          }
+        } catch (e) {
+          /* not JSON or not a posting — keep going */
+        }
+      }
+      return null;
+    };
+
+    // Structural fallback: a section heading ("About the job") → nearest
+    // ancestor that holds substantial text. Needed on LinkedIn's 2026 shell,
+    // whose class names are hashed and change per build.
+    var descByHeading = function (labels) {
+      var heads = document.querySelectorAll("h1,h2,h3,strong");
+      for (var i = 0; i < heads.length; i++) {
+        var txt = (heads[i].innerText || "").trim().toLowerCase();
+        if (labels.indexOf(txt) === -1) continue;
+        var p = heads[i].parentElement;
+        for (var up = 0; p && up < 6; up++) {
+          var t = (p.innerText || "").trim();
+          if (t.length > 300) return t;
+          p = p.parentElement;
+        }
+      }
+      return "";
+    };
+
     var host = (location.hostname || "").toLowerCase();
     var title = "";
     var company = "";
     var description = "";
+    var knownBoard = false;
 
     if (host.indexOf("linkedin.com") !== -1) {
+      knownBoard = true;
       title = pick(
         ".job-details-jobs-unified-top-card__job-title|.top-card-layout__title|h1"
       );
@@ -91,15 +143,32 @@ function extractJob() {
       description = pick(
         ".jobs-description__content|.show-more-less-html__markup|#job-details"
       );
+      if (!description) {
+        description = descByHeading(["about the job", "על המשרה", "אודות המשרה"]);
+      }
+      if (!title || !company) {
+        // Tab title is stable across shells: "(3) AI Engineer | Baz | LinkedIn"
+        var parts = (document.title || "").replace(/^\(\d+\)\s*/, "").split(" | ");
+        if (parts.length >= 2 && /linkedin/i.test(parts[parts.length - 1])) {
+          if (!title) title = parts[0];
+          if (!company && parts.length >= 3) company = parts[1];
+        }
+      }
     } else if (host.indexOf("drushim.co.il") !== -1) {
+      knownBoard = true;
       title = pick("h1");
-      description = pick('.job-details-section|[class*="jobDescription"]');
+      company = pick("p.view-on-submit|.job-details-top a");
+      var drDesc = pick('.jobDes|.job-details-section|[class*="jobDescription"]');
+      var drReq = pick(".job-requirements");
+      description = [drDesc, drReq].filter(Boolean).join("\n\n");
     } else if (host.indexOf("jobmaster.co.il") !== -1) {
+      knownBoard = true;
       title = pick("h1|.jobTitle");
       var jmDesc = pick("#jobDescriptionContent");
       var jmReq = pick("#jobRequirementsContent");
       description = [jmDesc, jmReq].filter(Boolean).join("\n\n");
     } else if (host.indexOf("alljobs.co.il") !== -1) {
+      knownBoard = true;
       title = pick("h1");
       description = pick('[class*="job-content"]|.PT15');
     } else if (
@@ -107,9 +176,25 @@ function extractJob() {
       host.indexOf("comeet.co") !== -1 ||
       document.querySelector(".positionDetails")
     ) {
+      knownBoard = true;
       title = pick("h1");
       description = pick('.positionDetails|[class*="position"]');
     }
+
+    // JSON-LD fills whatever the site branch missed (or everything, on
+    // boards we have no selectors for).
+    if (!title || !company || !description) {
+      var ld = fromJsonLd();
+      if (ld) {
+        if (!title) title = ld.title;
+        if (!company) company = ld.company;
+        if (!description) description = ld.description;
+      }
+    }
+
+    // On a known board, no description means the SPA hasn't rendered it yet —
+    // the popup retries a couple of times before settling for the fallback.
+    var partial = knownBoard && !description;
 
     // Generic fallbacks — always return something usable.
     if (!title) title = (document.title || "").trim();
@@ -122,6 +207,7 @@ function extractJob() {
       company: clean(company).slice(0, 300),
       description: clean(description),
       url: location.href || "",
+      partial: partial,
     };
   } catch (err) {
     return {
@@ -129,6 +215,7 @@ function extractJob() {
       company: "",
       description: "",
       url: (location && location.href) || "",
+      partial: false,
     };
   }
 }
@@ -177,12 +264,18 @@ async function init() {
 
   if (tab && tab.id != null && /^https?:/i.test(tab.url || "")) {
     try {
-      var results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: extractJob,
-      });
-      if (results && results[0] && results[0].result) {
-        extracted = results[0].result;
+      // SPAs (LinkedIn) render the description late; on a known board with
+      // no description yet, retry a couple of times before settling.
+      for (var attempt = 0; attempt < 3; attempt++) {
+        var results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: extractJob,
+        });
+        if (results && results[0] && results[0].result) {
+          extracted = results[0].result;
+        }
+        if (!extracted || !extracted.partial) break;
+        await new Promise(function (r) { setTimeout(r, 1500); });
       }
     } catch (e) {
       /* injection blocked (store pages, PDFs…) — fall through */
