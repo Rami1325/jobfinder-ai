@@ -7,6 +7,7 @@ import type {
   ATSScanResult,
   FactsLedger,
   FollowUpResult,
+  FreeScanResult,
   InterviewAnswerResult,
   InterviewFeedbackResult,
   InterviewQuestionsResult,
@@ -182,6 +183,15 @@ export async function deleteJobHistoryItem(id: number): Promise<void> {
 
 export async function clearJobHistory(): Promise<void> {
   await api.delete("/jobs/history");
+}
+
+/** Free public CV-vs-JD scan — no access code, nothing stored server-side. */
+export async function freeScan(file: File, jdText: string): Promise<FreeScanResult> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("jd_text", jdText);
+  const { data } = await api.post<FreeScanResult>("/public/scan", form);
+  return data;
 }
 
 export async function atsScan(resume: ResumeModel, jdText = ""): Promise<ATSScanResult> {

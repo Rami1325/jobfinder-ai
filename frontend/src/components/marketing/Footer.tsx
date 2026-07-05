@@ -16,6 +16,7 @@ export default function Footer() {
         </div>
         <div className="flex items-center gap-5">
           <Link to="/jobs" className="hover:text-ink">{t("footer.app")}</Link>
+          <Link to="/scan" className="hover:text-ink">{t("footer.freeScan")}</Link>
           <a href="#how" className="hover:text-ink">{t("footer.how")}</a>
           <a href="#faq" className="hover:text-ink">{t("footer.faq")}</a>
         </div>

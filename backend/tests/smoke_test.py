@@ -20,6 +20,15 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union
 os.environ["USE_STUB_LLM"] = "true"
 # Must be set before any app.* import — app.db.database builds the engine at import time.
 os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(tempfile.mkdtemp(), "smoke.db").replace("\\", "/")
+# Turn the access-code gate ON for the whole suite so the HTTP checks in
+# section 17 can prove /public/scan is exempt while everything else 401s.
+# Harmless elsewhere: only requests through the ASGI middleware see the gate.
+os.environ["APP_ACCESS_CODE"] = "smoke-gate-code"
+# Keep the suite hermetic: real SMTP creds in .env would make the alert-run
+# checks send actual email and fail the "unconfigured" expectations. Env vars
+# outrank .env in pydantic-settings, so blanking them here wins.
+for _smtp_var in ("ALERT_SMTP_HOST", "ALERT_SMTP_USER", "ALERT_SMTP_PASSWORD", "ALERT_EMAIL_FROM"):
+    os.environ[_smtp_var] = ""
 
 from app.config import get_settings  # noqa: E402
 
@@ -1044,6 +1053,122 @@ check(
     and len(list_companies(_db)) == len(_companies) + 1,
 )
 _db.close()
+
+# 17. Free public CV-vs-JD scan (PLAN 6): deterministic keyword extraction,
+# coverage via the scorer, Hebrew prefix rescue, rate limiter, and the
+# HTTP-level gate exemption. Zero LLM calls on this path by construction.
+from app.core.free_scan import (  # noqa: E402
+    RateLimiter,
+    extract_jd_keywords,
+    free_scan,
+)
+
+_fs_en_kws = extract_jd_keywords(
+    "We need a Senior Python Developer. Python, Django and REST APIs are required. "
+    "Experience with Docker and Kubernetes is an advantage."
+)
+_fs_en_lower = [k.lower() for k in _fs_en_kws]
+check(
+    "free scan extracts english tech keywords, drops boilerplate",
+    "python" in _fs_en_lower and "django" in _fs_en_lower and "docker" in _fs_en_lower
+    and "experience" not in _fs_en_lower and "required" not in _fs_en_lower
+    and "advantage" not in _fs_en_lower and "with" not in _fs_en_lower,
+    str(_fs_en_kws),
+)
+check(
+    "free scan ranks the repeated keyword first",
+    _fs_en_lower and _fs_en_lower[0] == "python",
+    str(_fs_en_kws[:3]),
+)
+_fs_he_kws = extract_jd_keywords(
+    "דרוש/ה מפתח/ת פייתון. ניסיון בפייתון — חובה. ידע ב-SQL ו-Docker יתרון. עבודת צוות."
+)
+_fs_he_lower = [k.lower() for k in _fs_he_kws]
+check(
+    "free scan extracts hebrew keywords, drops hebrew boilerplate",
+    "פייתון" in _fs_he_lower and "sql" in _fs_he_lower and "docker" in _fs_he_lower
+    and "ניסיון" not in _fs_he_lower and "חובה" not in _fs_he_lower and "יתרון" not in _fs_he_lower,
+    str(_fs_he_kws),
+)
+_fs_bigram_kws = extract_jd_keywords(
+    "Machine learning engineer. Machine learning models in production. Python required."
+)
+check(
+    "free scan promotes repeated bigrams over their parts",
+    any(k.lower() == "machine learning" for k in _fs_bigram_kws)
+    and "machine" not in [k.lower() for k in _fs_bigram_kws],
+    str(_fs_bigram_kws),
+)
+
+_fs_res = free_scan(
+    "רותם כהן · rotem@example.com · 054-1234567\n"
+    "מהנדסת תוכנה עם ניסיון בפייתון ו-SQL. הובלתי 3 פרויקטים, שיפור של 40%.",
+    "דרוש/ה מפתח/ת פייתון פייתון. ידע ב-SQL חובה. Docker יתרון.",
+)
+_fs_status = {g.keyword.lower(): g.status for g in _fs_res.keywords}
+check(
+    "free scan coverage: hebrew CV covers פייתון+sql, misses docker",
+    _fs_status.get("פייתון") == "covered" and _fs_status.get("sql") == "covered"
+    and _fs_status.get("docker") == "missing",
+    str(_fs_status),
+)
+check(
+    "free scan detects languages deterministically",
+    _fs_res.jd_language == "he" and _fs_res.resume_language == "he",
+)
+check(
+    "free scan raw-text checks: email+phone+numbers good on this CV",
+    {c.id: c.severity for c in _fs_res.checks}.get("email") == "good"
+    and {c.id: c.severity for c in _fs_res.checks}.get("phone") == "good"
+    and {c.id: c.severity for c in _fs_res.checks}.get("numbers") == "good",
+    str([(c.id, c.severity) for c in _fs_res.checks]),
+)
+
+# Prefix rescue: JD only has the glued form "בפייתון"; CV has bare "פייתון".
+_fs_rescue = free_scan("שולטת פייתון ברמה גבוהה", "נדרשת שליטה בפייתון. בפייתון נעשה הכל.")
+_fs_rescue_status = {g.keyword: g.status for g in _fs_rescue.keywords}
+check(
+    "free scan rescues prefix-glued hebrew keyword as partial (not covered)",
+    _fs_rescue_status.get("בפייתון") == "partial",
+    str(_fs_rescue_status),
+)
+
+_rl = RateLimiter(max_requests=3, window_seconds=60)
+check(
+    "rate limiter allows up to the cap then blocks",
+    all(_rl.allow("1.2.3.4", now=t) for t in (0.0, 1.0, 2.0))
+    and not _rl.allow("1.2.3.4", now=3.0)
+    and _rl.allow("5.6.7.8", now=3.0),  # other keys unaffected
+)
+check("rate limiter window slides", _rl.allow("1.2.3.4", now=61.0))
+
+# HTTP: with APP_ACCESS_CODE set (top of file), /public/scan must work with
+# no X-App-Key while a gated route 401s.
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app as _fastapi_app  # noqa: E402
+
+with TestClient(_fastapi_app) as _tc:
+    _scan_resp = _tc.post(
+        "/public/scan",
+        files={"file": ("resume.txt", "Dana Levi\ndana@example.com\nPython, SQL".encode("utf-8"), "text/plain")},
+        data={"jd_text": "Python developer. Python and SQL required. Docker an advantage."},
+    )
+    check(
+        "public scan endpoint bypasses the access gate and scores",
+        _scan_resp.status_code == 200 and 0 < _scan_resp.json()["coverage"] <= 100,
+        f"{_scan_resp.status_code} {_scan_resp.text[:120]}",
+    )
+    check(
+        "public scan rejects an empty JD",
+        _tc.post(
+            "/public/scan",
+            files={"file": ("resume.txt", b"text", "text/plain")},
+            data={"jd_text": " "},
+        ).status_code == 400,
+    )
+    _gated = _tc.post("/jd/analyze", json={"jd_text": "Python developer"})
+    check("gated routes still 401 without the access code", _gated.status_code == 401, str(_gated.status_code))
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

@@ -1,0 +1,36 @@
+{
+  "kicker": "Free scan · no signup",
+  "title": "How well does your CV match the job?",
+  "sub": "Drop your résumé, paste the job description, and see your keyword match instantly — Hebrew or English. No signup, no access code, and nothing is stored.",
+  "resumeLabel": "Your résumé",
+  "drop": "Drop your résumé here or click to browse",
+  "fileTypes": ".docx · .pdf · .txt",
+  "fileReady": "Ready to scan",
+  "jdLabel": "Job description",
+  "jdPlaceholder": "Paste the job description here — Hebrew or English",
+  "scan": "Scan my match",
+  "scanning": "Scanning…",
+  "error": "Scan failed — try again.",
+  "rateLimited": "Too many scans from this device — try again in a bit.",
+  "privacy": "Nothing is saved. The scan runs and forgets.",
+  "results": {
+    "coverage": "Keyword match",
+    "coverageHint": "Deterministic keyword coverage — the same ATS-gate score the full app uses. No AI guesswork in this number.",
+    "matched": "Matched ({{count}})",
+    "partial": "Partial ({{count}})",
+    "missing": "Missing ({{count}})",
+    "checks": "Quick résumé checks",
+    "noKeywords": "We couldn't extract keywords from that job description — try pasting more of it.",
+    "check": {
+      "email": { "good": "Email address found", "warn": "No email address found — add one" },
+      "phone": { "good": "Phone number found", "warn": "No phone number found — add one" },
+      "length": { "good": "Length looks right ({{value}} words)", "warn": "Unusual length ({{value}} words) — one focused page beats four thin ones" },
+      "numbers": { "good": "Results are quantified ({{value}} numbers)", "warn": "Few numbers — add measurable results" }
+    }
+  },
+  "cta": {
+    "title": "Want the missing keywords fixed for you?",
+    "body": "The full app rewrites your résumé for this exact job — with a code-enforced guard that makes sure it never invents anything about you. Hebrew and English, ATS-safe DOCX & PDF.",
+    "button": "Get the full tailored rewrite"
+  }
+}

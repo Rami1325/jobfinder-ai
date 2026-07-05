@@ -450,6 +450,23 @@ class ATSScanResult(BaseModel):
     gaps: list[GapItem] = Field(default_factory=list)
 
 
+# --------------------------------------------------------------------------- #
+# Free public CV-vs-JD scan (no signup, deterministic only — PLAN 6)
+# --------------------------------------------------------------------------- #
+class FreeScanCheck(BaseModel):
+    id: str  # email | phone | length | numbers — stable ids the UI translates
+    severity: str = "good"  # good | warn
+    value: str = ""  # supporting figure for the UI string (word count, ...)
+
+
+class FreeScanResult(BaseModel):
+    coverage: float = 0.0  # deterministic keyword coverage, 0-100
+    keywords: list[GapItem] = Field(default_factory=list)  # covered | partial | missing
+    checks: list[FreeScanCheck] = Field(default_factory=list)
+    jd_language: str = "en"  # "he" | "en", detected deterministically
+    resume_language: str = "en"
+
+
 class LinkedInRequest(BaseModel):
     resume: ResumeModel
 

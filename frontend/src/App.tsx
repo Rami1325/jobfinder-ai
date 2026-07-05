@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import MarketingLayout from "./layouts/MarketingLayout";
 import AppLayout from "./layouts/AppLayout";
 import Landing from "./pages/Landing";
+import ScanPage from "./pages/ScanPage";
 import TailorPage from "./pages/TailorPage";
 import TrackerPage from "./pages/TrackerPage";
 import InterviewPage from "./pages/InterviewPage";
@@ -19,6 +20,7 @@ export default function App() {
       <Routes>
       <Route element={<MarketingLayout />}>
         <Route path="/" element={<Landing />} />
+        <Route path="/scan" element={<ScanPage />} />
       </Route>
       <Route element={<AppLayout />}>
         <Route path="/app" element={<TailorPage />} />

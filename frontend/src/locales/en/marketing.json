@@ -23,21 +23,48 @@
   "features": {
     "kicker": "The toolkit",
     "title": "Everything for the search — honestly built",
-    "tailoring": { "title": "Resume tailoring", "body": "Rewrite for each job, with before/after match scores and a full changelog of every edit." },
-    "interview": { "title": "Interview prep", "body": "Role-specific questions and STAR model answers grounded in your real experience." },
-    "jobs": { "title": "Job match", "body": "Paste or link multiple roles and rank them by fit against your master resume." },
-    "ats": { "title": "ATS scanner", "body": "Check formatting and keyword coverage before a bot ever rejects you." },
-    "linkedin": { "title": "LinkedIn optimizer", "body": "A sharper headline, About, and experience — from facts you already have." },
-    "followUp": { "title": "Follow-up writer", "body": "Concise, specific follow-up emails that don't read like a template." }
+    "tailoring": {
+      "title": "Resume tailoring",
+      "body": "Rewrite for each job, with before/after match scores and a full changelog of every edit."
+    },
+    "interview": {
+      "title": "Interview prep",
+      "body": "Role-specific questions and STAR model answers grounded in your real experience."
+    },
+    "jobs": {
+      "title": "Job match",
+      "body": "Paste or link multiple roles and rank them by fit against your master resume."
+    },
+    "ats": {
+      "title": "ATS scanner",
+      "body": "Check formatting and keyword coverage before a bot ever rejects you."
+    },
+    "linkedin": {
+      "title": "LinkedIn optimizer",
+      "body": "A sharper headline, About, and experience — from facts you already have."
+    },
+    "followUp": {
+      "title": "Follow-up writer",
+      "body": "Concise, specific follow-up emails that don't read like a template."
+    }
   },
   "how": {
     "kicker": "How it works",
     "title": "Three steps. Zero fabrication.",
     "sub": "The same pipeline that runs under the hood — nothing hidden, nothing made up.",
     "step": "Step {{n}}",
-    "upload": { "title": "Upload & structure", "body": "Drop in your resume (DOCX/PDF). We parse it into structured data and build an immutable Facts Ledger of everything you've actually done." },
-    "analyze": { "title": "Analyze & tailor", "body": "Paste the job description. JobFinder scores keyword coverage and recruiter fit, then rewrites your resume to emphasize what matters — never inventing." },
-    "verify": { "title": "Verify & export", "body": "The Fabrication Guard diffs every tailored claim against your ledger. Anything invented gets flagged. Export ATS-safe DOCX or PDF." }
+    "upload": {
+      "title": "Upload & structure",
+      "body": "Drop in your resume (DOCX/PDF). We parse it into structured data and build an immutable Facts Ledger of everything you've actually done."
+    },
+    "analyze": {
+      "title": "Analyze & tailor",
+      "body": "Paste the job description. JobFinder scores keyword coverage and recruiter fit, then rewrites your resume to emphasize what matters — never inventing."
+    },
+    "verify": {
+      "title": "Verify & export",
+      "body": "The Fabrication Guard diffs every tailored claim against your ledger. Anything invented gets flagged. Export ATS-safe DOCX or PDF."
+    }
   },
   "why": {
     "kicker": "Why honesty wins",
@@ -70,5 +97,12 @@
     "title": "Optimize the truth. Land the interview.",
     "sub": "Upload your resume, paste a job, and get a tailored, verified version in under a minute.",
     "cta": "Find jobs for me"
+  },
+  "freeScan": {
+    "kicker": "Free · no signup",
+    "title": "Check your CV against any job — free",
+    "body": "Keyword match score, matched and missing keywords, and quick résumé checks. Hebrew or English, nothing stored. Tools like this cost ₪39/month elsewhere.",
+    "cta": "Scan my CV now",
+    "note": "No account. No access code. Runs in seconds."
   }
 }

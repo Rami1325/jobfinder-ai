@@ -32,8 +32,13 @@ app.add_middleware(
 
 # Paths as seen locally and under the Vercel /api mount. The alerts cron is
 # called by Vercel's scheduler (no X-App-Key); it enforces its own Bearer
-# CRON_SECRET check in the handler.
-_GATE_EXEMPT = {"/", "/health", "/api", "/api/health", "/jobs/alerts/cron", "/api/jobs/alerts/cron"}
+# CRON_SECRET check in the handler. /public/scan is the free no-signup
+# CV-vs-JD scan (deterministic only, rate-limited in its handler).
+_GATE_EXEMPT = {
+    "/", "/health", "/api", "/api/health",
+    "/jobs/alerts/cron", "/api/jobs/alerts/cron",
+    "/public/scan", "/api/public/scan",
+}
 
 
 @app.middleware("http")

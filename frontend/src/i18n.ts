@@ -6,6 +6,7 @@ import enCommon from "./locales/en/common.json";
 import enInterview from "./locales/en/interview.json";
 import enJobs from "./locales/en/jobs.json";
 import enMarketing from "./locales/en/marketing.json";
+import enScan from "./locales/en/scan.json";
 import enTailor from "./locales/en/tailor.json";
 import enTools from "./locales/en/tools.json";
 import enTracker from "./locales/en/tracker.json";
@@ -13,6 +14,7 @@ import heCommon from "./locales/he/common.json";
 import heInterview from "./locales/he/interview.json";
 import heJobs from "./locales/he/jobs.json";
 import heMarketing from "./locales/he/marketing.json";
+import heScan from "./locales/he/scan.json";
 import heTailor from "./locales/he/tailor.json";
 import heTools from "./locales/he/tools.json";
 import heTracker from "./locales/he/tracker.json";
@@ -24,6 +26,7 @@ const resources = {
   en: {
     common: enCommon,
     marketing: enMarketing,
+    scan: enScan,
     jobs: enJobs,
     tailor: enTailor,
     interview: enInterview,
@@ -33,6 +36,7 @@ const resources = {
   he: {
     common: heCommon,
     marketing: heMarketing,
+    scan: heScan,
     jobs: heJobs,
     tailor: heTailor,
     interview: heInterview,

@@ -244,6 +244,20 @@ export interface JobSearchHistory {
   hits: JobSearchHit[];
 }
 
+/** Free public CV-vs-JD scan (no signup, deterministic only). */
+export interface FreeScanCheck {
+  id: "email" | "phone" | "length" | "numbers";
+  severity: "good" | "warn";
+  value: string;
+}
+export interface FreeScanResult {
+  coverage: number;
+  keywords: GapItem[];
+  checks: FreeScanCheck[];
+  jd_language: "en" | "he";
+  resume_language: "en" | "he";
+}
+
 // Tools
 export interface ATSIssue {
   label: string;

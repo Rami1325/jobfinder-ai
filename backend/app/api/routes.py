@@ -5,7 +5,7 @@ import hmac
 import io
 import json
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from app.core.ats_scan import scan_resume
 from app.core.cover_letter import generate_cover_letter
 from app.core.mailer import smtp_configured
 from app.core.follow_up import write_follow_up
+from app.core.free_scan import free_scan, free_scan_limiter
 from app.core.interview import answer_feedback, generate_questions, model_answer
 from app.core.jd_analyzer import analyze_jd
 from app.core.job_match import fetch_job_text, match_jobs
@@ -53,6 +54,7 @@ from app.models import (
     FactsLedger,
     FollowUpRequest,
     FollowUpResult,
+    FreeScanResult,
     InterviewAnswerRequest,
     InterviewAnswerResult,
     InterviewFeedbackRequest,
@@ -353,6 +355,35 @@ def comeet_add_company(
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while adding that company: {e}")
     return ComeetCompanyOut(slug=c.slug, name=c.name, careers_url=c.careers_url)
+
+
+# --------------------------------------------------------------------------- #
+# Free public CV-vs-JD scan (PLAN 6): the landing-page wedge. Exempt from the
+# X-App-Key gate (see main.py), deterministic only — never the LLM — and
+# nothing is persisted. Rate-limited per client because it is public.
+# --------------------------------------------------------------------------- #
+@router.post("/public/scan", response_model=FreeScanResult)
+async def public_scan(
+    request: Request,
+    file: UploadFile = File(...),
+    jd_text: str = Form(""),
+) -> FreeScanResult:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    client_ip = forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    if not free_scan_limiter.allow(client_ip):
+        raise HTTPException(429, "Too many scans from this address — try again in a bit.")
+    if not jd_text.strip():
+        raise HTTPException(400, "Paste the job description text.")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Empty file.")
+    try:
+        raw = extract_text(file.filename or "", data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not raw.strip():
+        raise HTTPException(422, "Could not extract any text from the file.")
+    return free_scan(raw, jd_text)
 
 
 # --------------------------------------------------------------------------- #

@@ -11,13 +11,15 @@
     "how": "How it works",
     "features": "Features",
     "faq": "FAQ",
-    "openApp": "Open app"
+    "openApp": "Open app",
+    "freeScan": "Free CV scan"
   },
   "footer": {
     "tagline": "· Honest AI resume tailoring",
     "app": "App",
     "how": "How it works",
-    "faq": "FAQ"
+    "faq": "FAQ",
+    "freeScan": "Free CV scan"
   },
   "actions": {
     "cancel": "Cancel",
