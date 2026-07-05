@@ -88,6 +88,14 @@ def keyword_analysis(resume: ResumeModel, jd: JDModel) -> tuple[float, list[GapI
     return coverage_pct, gaps
 
 
+def top_matched_and_gaps(gaps: list[GapItem], limit: int = 6) -> tuple[list[str], list[str]]:
+    """The strongest covered keywords and the top not-covered ones, each in the
+    JD's own priority order (keyword_analysis preserves it). Job cards show both."""
+    matched = [g.keyword for g in gaps if g.status == "covered"][:limit]
+    missing = [g.keyword for g in gaps if g.status != "covered"][:limit]
+    return matched, missing
+
+
 def fit_score(resume: ResumeModel, jd: JDModel) -> tuple[float, str]:
     client = get_llm_client()
     data = client.complete_json(

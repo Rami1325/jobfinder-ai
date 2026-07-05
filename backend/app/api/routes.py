@@ -4,6 +4,8 @@ from __future__ import annotations
 import hmac
 import io
 import json
+import queue
+import threading
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -264,18 +266,81 @@ def jobs_search(
     return result
 
 
+def _sse_frame(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/jobs/search/stream")
+def jobs_search_stream(
+    body: JobSearchRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> StreamingResponse:
+    """Same search as POST /jobs/search, but as an SSE stream (PLAN 9.2) so the
+    UI can show real per-board / per-job progress instead of guessing from
+    elapsed time. Events: `progress` (see job_search.ProgressFn), then exactly
+    one terminal `result` (a JobSearchResult) or `error` ({detail, status}).
+    Errors after the 200 header ride the stream — the cap check raises a plain
+    429 before streaming starts, so old error handling still applies there."""
+    check_and_count(db, user, "search", get_settings().daily_search_cap)
+
+    events: queue.Queue = queue.Queue()
+
+    def _worker() -> None:
+        try:
+            result = search_jobs(
+                body.resume, body.customize, progress=lambda e: events.put(("progress", e))
+            )
+            events.put(("result", result))
+        except ValueError as e:  # user-facing scrape/search problems
+            events.put(("error", {"detail": str(e), "status": 400}))
+        except Exception as e:  # noqa: BLE001
+            events.put(("error", {"detail": f"Error while searching jobs: {e}", "status": 502}))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    def _stream():
+        while True:
+            try:
+                kind, payload = events.get(timeout=15)
+            except queue.Empty:
+                yield ": keep-alive\n\n"  # searches sit minutes on slow boards; don't let proxies idle out
+                continue
+            if kind == "progress":
+                yield _sse_frame("progress", payload)
+            elif kind == "result":
+                try:  # best-effort history persistence, same as the non-stream route
+                    record_search_hits(db, payload.matches, user.id)
+                except Exception:  # noqa: BLE001
+                    pass
+                yield _sse_frame("result", payload.model_dump())
+                return
+            else:
+                yield _sse_frame("error", payload)
+                return
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/jobs/history", response_model=JobSearchHistory)
 def jobs_history(
     db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> JobSearchHistory:
     rows = list_search_hits(db, user.id)
     statuses = application_statuses(db, [row.url for row in rows], user.id)
+
+    def _keyword_list(raw: str | None) -> list[str]:
+        try:
+            return json.loads(raw) if raw else []
+        except Exception:  # noqa: BLE001 - tolerate legacy/corrupt rows
+            return []
+
     hits: list[JobSearchHitOut] = []
     for row in rows:
-        try:
-            top_gaps = json.loads(row.top_gaps_json) if row.top_gaps_json else []
-        except Exception:  # noqa: BLE001 - tolerate legacy/corrupt rows
-            top_gaps = []
         hits.append(
             JobSearchHitOut(
                 id=row.id,
@@ -286,7 +351,8 @@ def jobs_history(
                 overall=row.overall,
                 keyword_coverage=row.keyword_coverage,
                 fit_score=row.fit_score,
-                top_gaps=top_gaps,
+                top_matched=_keyword_list(row.top_matched_json),
+                top_gaps=_keyword_list(row.top_gaps_json),
                 jd_text=row.jd_text,
                 posted_at=row.posted_at or "",
                 source=row.source or "linkedin",

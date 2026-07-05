@@ -402,6 +402,7 @@ class JobMatch(BaseModel):
     overall: float = 0.0
     keyword_coverage: float = 0.0
     fit_score: float = 0.0
+    top_matched: list[str] = Field(default_factory=list)  # strongest covered JD keywords
     top_gaps: list[str] = Field(default_factory=list)
     jd_text: str = ""
     url: str = ""  # set for scraped listings; empty for pasted ones
@@ -464,6 +465,7 @@ class JobSearchHitOut(BaseModel):
     overall: float = 0.0
     keyword_coverage: float = 0.0
     fit_score: float = 0.0
+    top_matched: list[str] = Field(default_factory=list)  # strongest covered JD keywords
     top_gaps: list[str] = Field(default_factory=list)
     jd_text: str = ""
     posted_at: str = ""  # ISO date the job was posted; empty when unknown

@@ -185,6 +185,7 @@ export interface JobMatch {
   overall: number;
   keyword_coverage: number;
   fit_score: number;
+  top_matched?: string[]; // strongest covered JD keywords; absent on older backends
   top_gaps: string[];
   jd_text: string;
   url: string; // set for scraped listings; empty for pasted ones
@@ -235,6 +236,7 @@ export interface JobSearchHit {
   overall: number;
   keyword_coverage: number;
   fit_score: number;
+  top_matched?: string[]; // strongest covered JD keywords; absent on older backends
   top_gaps: string[];
   jd_text: string;
   posted_at: string; // ISO date the job was posted; empty when unknown

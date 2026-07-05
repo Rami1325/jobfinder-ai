@@ -154,6 +154,89 @@ export async function searchJobs(
   return data;
 }
 
+// One progress frame from the SSE search stream (mirrors the backend's
+// job_search progress events): which board is being queried, then which job
+// is being fetched + scored.
+export interface SearchProgressEvent {
+  stage: "boards" | "scoring";
+  index: number;
+  total: number;
+  source?: string; // boards stage: provider id being queried
+  title?: string; // scoring stage: the job being scored
+  company?: string;
+}
+
+// Same search as searchJobs, but over the SSE endpoint so the UI gets real
+// per-board / per-job progress. axios can't consume SSE, so this uses fetch and
+// re-throws failures in the axios error shape ({response: {status, data}})
+// to keep apiErrorMessage and the 401 gate event working. A 404/405 means an
+// older backend without the endpoint — callers fall back to searchJobs.
+export async function searchJobsStream(
+  resume: ResumeModel,
+  customize: SearchContext | null,
+  onProgress: (e: SearchProgressEvent) => void,
+): Promise<JobSearchResult> {
+  const code = localStorage.getItem(ACCESS_CODE_KEY);
+  const resp = await fetch(`${api.defaults.baseURL}/jobs/search/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(code ? { "X-App-Key": code } : {}) },
+    body: JSON.stringify({ resume, customize: customize ?? null }),
+  });
+  if (resp.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  const isSse = (resp.headers.get("content-type") || "").includes("text/event-stream");
+  if (!resp.ok || !isSse || !resp.body) {
+    let detail: unknown;
+    try {
+      detail = ((await resp.json()) as { detail?: unknown })?.detail;
+    } catch {
+      /* non-JSON body */
+    }
+    throw { response: { status: resp.status, data: { detail } } };
+  }
+
+  // Minimal SSE parse: our server sends single-line `event:`/`data:` pairs
+  // separated by blank lines, plus ignorable `:` keep-alive comments.
+  const out: {
+    result: JobSearchResult | null;
+    error: { detail?: unknown; status?: number } | null;
+  } = { result: null, error: null };
+  let event = "";
+  let data = "";
+  const dispatch = () => {
+    if (data) {
+      if (event === "progress") onProgress(JSON.parse(data) as SearchProgressEvent);
+      else if (event === "result") out.result = JSON.parse(data) as JobSearchResult;
+      else if (event === "error") out.error = JSON.parse(data);
+    }
+    event = "";
+    data = "";
+  };
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).replace(/\r$/, "");
+      buffer = buffer.slice(nl + 1);
+      if (line.startsWith("event: ")) event = line.slice("event: ".length);
+      else if (line.startsWith("data: ")) data += line.slice("data: ".length);
+      else if (line === "") dispatch();
+    }
+  }
+  if (out.error) {
+    throw { response: { status: out.error.status ?? 502, data: { detail: out.error.detail } } };
+  }
+  if (!out.result) {
+    // Stream ended without a terminal frame (connection dropped mid-search).
+    throw { response: { status: 0, data: { detail: "" } } };
+  }
+  return out.result;
+}
+
 export async function searchContext(resume: ResumeModel): Promise<SearchContext> {
   const { data } = await api.post<SearchContext>("/jobs/search-context", { resume });
   return data;

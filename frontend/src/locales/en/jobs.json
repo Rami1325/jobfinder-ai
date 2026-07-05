@@ -43,7 +43,10 @@
     "stages": {
       "boards": "Searching job boards…",
       "fetching": "Fetching job postings…",
-      "scoring": "Scoring each job against your resume…"
+      "scoring": "Scoring each job against your resume…",
+      "board": "Searching {{source}} ({{index}}/{{total}})…",
+      "scoringJob": "Scoring job {{index}} of {{total}} — {{job}}",
+      "scoringJobBare": "Scoring job {{index}} of {{total}}…"
     },
     "elapsed": "{{time}} elapsed",
     "sourceErrors": "Some sources were unavailable: {{sources}}. Results below come from the sources that responded.",

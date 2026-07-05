@@ -178,6 +178,14 @@ check("interview feedback scored", 0 <= fb.score <= 100, str(fb.score))
 # 9. Job match (reuses jd_analyzer + scorer, ranks by fit)
 jm = match_jobs(resume, ["We need a Python engineer with SQL and REST APIs at Acme."])
 check("job match ranked", len(jm.matches) == 1 and 0 <= jm.matches[0].overall <= 100, str(jm.matches))
+check(
+    "job match splits matched vs gap keywords (PLAN 9.1)",
+    "Python" in jm.matches[0].top_matched
+    and set(jm.matches[0].top_matched).isdisjoint(jm.matches[0].top_gaps)
+    and len(jm.matches[0].top_matched) <= 6
+    and len(jm.matches[0].top_gaps) <= 6,
+    f"matched={jm.matches[0].top_matched} gaps={jm.matches[0].top_gaps}",
+)
 
 # 10. ATS scanner (deterministic checks + optional coverage)
 ats = scan_resume(resume, "Python, SQL, REST APIs required.")
@@ -1553,6 +1561,105 @@ check(
 update_alert(_db3, _admin_id, enabled=False, email="admin@example.com", context=None)
 update_alert(_db3, _dana.id, enabled=False, email="dana@example.com", context=None)
 _db3.close()
+
+# 20. SSE search stream (PLAN 9.2): progress events then one terminal result/
+# error frame, Hebrew-safe payloads, history recorded with top_matched (9.1).
+# The search itself is monkeypatched — providers are network; the endpoint's
+# streaming/queue/persistence plumbing is what's under test here.
+import json as _json  # noqa: E402
+
+import app.api.routes as _routes_mod  # noqa: E402
+
+_STREAM_MATCH = JobMatch(
+    title="מהנדס/ת תוכנה",
+    company="StreamCo",
+    overall=88.0,
+    top_matched=["Python", "SQL"],
+    top_gaps=["Kubernetes"],
+    jd_text="JD",
+    url="https://stream.test/job-1",
+    source="linkedin",
+)
+
+
+def _fake_stream_search(resume, customize, progress=None):  # noqa: ANN001 - matches search_jobs' shape
+    progress({"stage": "boards", "source": "linkedin", "index": 1, "total": 1})
+    progress({"stage": "scoring", "index": 1, "total": 1, "title": _STREAM_MATCH.title, "company": "StreamCo"})
+    return JobSearchResult(context=_AlertCtx(job_title="Backend Engineer"), matches=[_STREAM_MATCH])
+
+
+def _sse_events(text: str) -> list[tuple[str, dict]]:
+    events = []
+    for block in text.split("\n\n"):
+        lines = [ln for ln in block.strip().splitlines() if ln and not ln.startswith(":")]
+        if not lines:
+            continue
+        name = next((ln[len("event: "):] for ln in lines if ln.startswith("event: ")), "")
+        data = next((ln[len("data: "):] for ln in lines if ln.startswith("data: ")), "")
+        events.append((name, _json.loads(data) if data else {}))
+    return events
+
+
+_orig_search_jobs = _routes_mod.search_jobs
+try:
+    _routes_mod.search_jobs = _fake_stream_search
+    with TestClient(_fastapi_app) as _tc:
+        _sresp = _tc.post(
+            "/jobs/search/stream",
+            json={"resume": resume.model_dump(), "customize": None},
+            headers=_ADMIN_H,
+        )
+        check(
+            "search stream: 200 event-stream",
+            _sresp.status_code == 200 and "text/event-stream" in _sresp.headers["content-type"],
+            f"{_sresp.status_code} {_sresp.headers.get('content-type')}",
+        )
+        _frames = _sse_events(_sresp.text)
+        _progress = [d for n, d in _frames if n == "progress"]
+        _results = [d for n, d in _frames if n == "result"]
+        check(
+            "search stream: progress frames arrive in order, then one result",
+            len(_progress) == 2
+            and _progress[0]["stage"] == "boards"
+            and _progress[1] == {"stage": "scoring", "index": 1, "total": 1, "title": _STREAM_MATCH.title, "company": "StreamCo"}
+            and len(_results) == 1
+            and _frames[-1][0] == "result",
+            str(_frames)[:300],
+        )
+        check(
+            "search stream: result is a full JobSearchResult with 9.1 fields, hebrew intact",
+            _results and _results[0]["matches"][0]["top_matched"] == ["Python", "SQL"]
+            and _results[0]["matches"][0]["title"] == "מהנדס/ת תוכנה"
+            and "מהנדס/ת תוכנה" in _sresp.text,  # ensure_ascii=False — no \uXXXX escaping on the wire
+        )
+        _hist_hits = _tc.get("/jobs/history", headers=_ADMIN_H).json()["hits"]
+        _stream_hit = next((h for h in _hist_hits if h["url"] == _STREAM_MATCH.url), None)
+        check(
+            "search stream: hit persisted to history with top_matched",
+            _stream_hit is not None
+            and _stream_hit["top_matched"] == ["Python", "SQL"]
+            and _stream_hit["top_gaps"] == ["Kubernetes"],
+            str(_stream_hit)[:200],
+        )
+
+        def _broken_stream_search(resume, customize, progress=None):  # noqa: ANN001
+            raise ValueError("boards are down")
+
+        _routes_mod.search_jobs = _broken_stream_search
+        _eresp = _tc.post(
+            "/jobs/search/stream",
+            json={"resume": resume.model_dump(), "customize": None},
+            headers=_ADMIN_H,
+        )
+        _eframes = _sse_events(_eresp.text)
+        check(
+            "search stream: user-facing failure rides the stream as an error frame",
+            _eresp.status_code == 200
+            and _eframes == [("error", {"detail": "boards are down", "status": 400})],
+            str(_eframes)[:200],
+        )
+finally:
+    _routes_mod.search_jobs = _orig_search_jobs
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

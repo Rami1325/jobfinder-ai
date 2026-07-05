@@ -98,6 +98,7 @@ class JobSearchHit(Base):
     keyword_coverage: Mapped[float] = mapped_column(Float, default=0.0)
     fit_score: Mapped[float] = mapped_column(Float, default=0.0)
     top_gaps_json: Mapped[str] = mapped_column(Text, default="[]")
+    top_matched_json: Mapped[str] = mapped_column(Text, default="[]")
     jd_text: Mapped[str] = mapped_column(Text, default="")
     posted_at: Mapped[str] = mapped_column(String(32), default="")  # ISO date; "" when unknown
     source: Mapped[str] = mapped_column(String(32), default="linkedin")  # job board (PROVIDERS key)

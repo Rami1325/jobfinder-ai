@@ -42,6 +42,7 @@ def record_search_hits(db: Session, matches: list[JobMatch], user_id: int) -> No
         row.keyword_coverage = m.keyword_coverage
         row.fit_score = m.fit_score
         row.top_gaps_json = json.dumps(m.top_gaps)
+        row.top_matched_json = json.dumps(m.top_matched)
         row.jd_text = m.jd_text
         row.posted_at = m.posted_at
         row.source = m.source

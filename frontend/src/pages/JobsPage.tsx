@@ -29,6 +29,7 @@ import {
   runJobAlert,
   searchContext,
   updateJobAlert,
+  type SearchProgressEvent,
 } from "../api/client";
 import ResumeUpload from "../components/ResumeUpload";
 import {
@@ -210,11 +211,9 @@ function normalizeJobUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
 
-// The whole search is one long backend call, so per-job progress isn't knowable
-// client-side (PLAN: true progress needs a streaming backend). Show an honest
-// stage indicator: the pipeline really does run boards → fetch → score, and
-// per-job scoring dominates, so advance the copy on elapsed time and stay on
-// "scoring" — plus a live elapsed clock.
+// Elapsed-time stage guesses, used only when the SSE stream isn't feeding real
+// progress (old backend fallback): the pipeline really does run boards → fetch
+// → score, and per-job scoring dominates.
 const SEARCH_STAGES = ["boards", "fetching", "scoring"] as const;
 
 function formatElapsed(totalSeconds: number): string {
@@ -223,7 +222,15 @@ function formatElapsed(totalSeconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function SearchProgress({ auto, startedAt }: { auto: boolean; startedAt: number | null }) {
+function SearchProgress({
+  auto,
+  startedAt,
+  progress,
+}: {
+  auto: boolean;
+  startedAt: number | null;
+  progress: SearchProgressEvent | null;
+}) {
   const { t } = useTranslation("jobs");
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -231,18 +238,40 @@ function SearchProgress({ auto, startedAt }: { auto: boolean; startedAt: number 
     return () => clearInterval(id);
   }, []);
   const elapsed = Math.max(0, Math.floor((now - (startedAt ?? now)) / 1000));
-  const stage = SEARCH_STAGES[elapsed < 8 ? 0 : elapsed < 20 ? 1 : 2];
+  let stageLine: string;
+  if (progress?.stage === "boards") {
+    stageLine = t("search.stages.board", {
+      source: sourceLabel(progress.source ?? "") || progress.source,
+      index: progress.index,
+      total: progress.total,
+    });
+  } else if (progress?.stage === "scoring") {
+    const job = [progress.title, progress.company].filter(Boolean).join(" · ");
+    stageLine = job
+      ? t("search.stages.scoringJob", { index: progress.index, total: progress.total, job })
+      : t("search.stages.scoringJobBare", { index: progress.index, total: progress.total });
+  } else {
+    stageLine = t(`search.stages.${SEARCH_STAGES[elapsed < 8 ? 0 : elapsed < 20 ? 1 : 2]}`);
+  }
   return (
     <div className="space-y-3">
       <Card className="flex items-center gap-3">
         <Loader2 size={20} className="shrink-0 animate-spin text-accent-soft" />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-ink">
             {auto ? t("search.searchingAuto") : t("search.searchingManual")}
           </p>
-          <p aria-live="polite" className="mt-0.5 text-xs text-ink-muted">
-            {t(`search.stages.${stage}`)} · {t("search.elapsed", { time: formatElapsed(elapsed) })}
+          <p aria-live="polite" className="mt-0.5 truncate text-xs text-ink-muted">
+            {stageLine} · {t("search.elapsed", { time: formatElapsed(elapsed) })}
           </p>
+          {progress?.stage === "scoring" && progress.total > 0 && (
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-accent transition-all duration-500"
+                style={{ width: `${Math.round((progress.index / progress.total) * 100)}%` }}
+              />
+            </div>
+          )}
         </div>
       </Card>
       <Skeleton className="h-24 w-full" />
@@ -272,6 +301,27 @@ function AppStatusBadge({ status }: { status: string }) {
     <Badge tone={s.tone} className={`shrink-0 ${s.cls ?? ""}`}>
       {t(`status.${status}`)}
     </Badge>
+  );
+}
+
+// Matched (green) then missing (red) JD keywords on a job card. Matched chips
+// are capped at 3 (PLAN 5.1/9.1) — the gaps are the actionable part.
+function KeywordChips({ matched, gaps }: { matched?: string[]; gaps: string[] }) {
+  const top = (matched ?? []).slice(0, 3);
+  if (top.length === 0 && gaps.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {top.map((k) => (
+        <Badge key={`ok-${k}`} tone="covered">
+          {k}
+        </Badge>
+      ))}
+      {gaps.map((g) => (
+        <Badge key={g} tone="missing">
+          {g}
+        </Badge>
+      ))}
+    </div>
   );
 }
 
@@ -315,15 +365,7 @@ function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStat
             )}
             <WhatsAppShare title={m.title} company={m.company} url={m.url} />
           </div>
-          {m.top_gaps.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {m.top_gaps.map((g) => (
-                <Badge key={g} tone="missing">
-                  {g}
-                </Badge>
-              ))}
-            </div>
-          )}
+          <KeywordChips matched={m.top_matched} gaps={m.top_gaps} />
         </div>
       </div>
       <Button
@@ -384,6 +426,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
             )}
             <WhatsAppShare title={hit.title} company={hit.company} url={hit.url} />
           </div>
+          <KeywordChips matched={hit.top_matched} gaps={hit.top_gaps} />
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -555,10 +598,13 @@ export default function JobsPage() {
   const [prefilling, setPrefilling] = useState(false);
   // The search itself lives in a module-level store so it keeps running (and
   // its result is still here) if the user navigates away mid-search.
-  const { searching, result: searchResult, error: searchError, startedAt } = useSyncExternalStore(
-    subscribeJobSearch,
-    getJobSearchState,
-  );
+  const {
+    searching,
+    result: searchResult,
+    error: searchError,
+    startedAt,
+    progress: searchProgress,
+  } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
   const [resultSort, setResultSort] = useState<"fit" | "date">("fit");
   const [historySort, setHistorySort] = useState<"searched" | "fit" | "date">("searched");
 
@@ -654,8 +700,11 @@ export default function JobsPage() {
     }
   }
 
+  // limit 0 means the customize box was emptied — block searching until it's 1–25.
+  const limitInvalid = customOpen && (ctx?.limit ?? 10) < 1;
+
   function runSearch() {
-    if (!master?.resume || searching) return;
+    if (!master?.resume || searching || limitInvalid) return;
     startJobSearch(master.resume, customOpen ? ctx : onboardingCtx());
   }
 
@@ -959,14 +1008,18 @@ export default function JobsPage() {
                       {t("search.limit")}
                       <input
                         type="number"
-                        min={1}
+                        min={0}
                         max={25}
-                        value={ctx?.limit ?? 10}
+                        value={ctx?.limit === 0 ? "" : (ctx?.limit ?? 10)}
                         disabled={prefilling}
                         onChange={(e) =>
+                          // 0 stands for "empty box" — allowed while typing, but Search is disabled until it's 1–25.
                           setCtx((p) => ({
                             ...(p as SearchContext),
-                            limit: Math.max(1, Math.min(25, Number(e.target.value) || 10)),
+                            limit:
+                              e.target.value === ""
+                                ? 0
+                                : Math.max(0, Math.min(25, Math.floor(Number(e.target.value)) || 0)),
                           }))
                         }
                         className={inputCls}
@@ -1022,7 +1075,7 @@ export default function JobsPage() {
                 size="lg"
                 loading={searching}
                 icon={<Search size={18} />}
-                disabled={prefilling}
+                disabled={prefilling || limitInvalid}
                 onClick={runSearch}
               >
                 {t("search.cta")}
@@ -1031,7 +1084,9 @@ export default function JobsPage() {
             </div>
           </Card>
 
-          {searching && <SearchProgress auto={autoSearched} startedAt={startedAt} />}
+          {searching && (
+            <SearchProgress auto={autoSearched} startedAt={startedAt} progress={searchProgress} />
+          )}
 
           <AnimatePresence>
             {searchResult && !searching && (

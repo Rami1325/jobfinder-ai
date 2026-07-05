@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta
+from typing import Callable
 
 from app.core.jd_analyzer import analyze_jd
 
@@ -21,10 +22,15 @@ from app.core.providers.linkedin import (  # noqa: F401 - re-exports
     _build_search_url,
     parse_search_results,
 )
-from app.core.scorer import score_resume
+from app.core.scorer import score_resume, top_matched_and_gaps
 from app.llm import prompts
 from app.llm.client import get_llm_client
 from app.models import JobMatch, JobSearchResult, ResumeModel, SearchContext
+
+# Progress events emitted during a search (consumed by the SSE endpoint, PLAN 9.2):
+#   {"stage": "boards",  "source": <name>, "index": i, "total": n}  per board queried
+#   {"stage": "scoring", "index": i, "total": n, "title": ..., "company": ...}  per job
+ProgressFn = Callable[[dict], None]
 
 MAX_JOBS = 25
 MAX_AGE_DAYS_CAP = 365
@@ -137,8 +143,11 @@ def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) 
 
 
 def search_jobs(
-    resume: ResumeModel, customize: SearchContext | None = None
+    resume: ResumeModel,
+    customize: SearchContext | None = None,
+    progress: ProgressFn | None = None,
 ) -> JobSearchResult:
+    notify = progress or (lambda event: None)
     ctx = _resolve_context(resume, customize)
     if not ctx.job_title:
         raise ValueError(
@@ -148,7 +157,8 @@ def search_jobs(
 
     hits_by_source: dict[str, list[JobHit]] = {}
     source_errors: dict[str, str] = {}
-    for name in ctx.sources:
+    for board_i, name in enumerate(ctx.sources):
+        notify({"stage": "boards", "source": name, "index": board_i + 1, "total": len(ctx.sources)})
         try:
             hits_by_source[name] = freshest_first(
                 PROVIDERS[name].search(ctx), ctx.max_age_days
@@ -173,7 +183,16 @@ def search_jobs(
     matches: list[JobMatch] = []
     skipped = 0
     network_fetches = 0
-    for hit in hits:
+    for job_i, hit in enumerate(hits):
+        notify(
+            {
+                "stage": "scoring",
+                "index": job_i + 1,
+                "total": len(hits),
+                "title": hit.title,
+                "company": hit.company,
+            }
+        )
         jd_text = hit.description
         if not jd_text:  # scrape-style board — fetch the posting, politely throttled
             if network_fetches:
@@ -185,7 +204,7 @@ def search_jobs(
             continue
         jd = analyze_jd(jd_text)
         score = score_resume(resume, jd)
-        top_gaps = [g.keyword for g in score.gaps if g.status != "covered"][:6]
+        top_matched, top_gaps = top_matched_and_gaps(score.gaps)
         matches.append(
             JobMatch(
                 # The board's own card/record is authoritative for title/company;
@@ -195,6 +214,7 @@ def search_jobs(
                 overall=score.overall,
                 keyword_coverage=score.keyword_coverage,
                 fit_score=score.fit_score,
+                top_matched=top_matched,
                 top_gaps=top_gaps,
                 jd_text=jd_text,
                 url=hit.url,

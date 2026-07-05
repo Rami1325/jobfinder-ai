@@ -11,7 +11,7 @@ import re
 import urllib.request
 
 from app.core.jd_analyzer import analyze_jd
-from app.core.scorer import score_resume
+from app.core.scorer import score_resume, top_matched_and_gaps
 from app.models import JobMatch, JobMatchResult, ResumeModel
 
 
@@ -23,7 +23,7 @@ def match_jobs(resume: ResumeModel, listings: list[str]) -> JobMatchResult:
             continue
         jd = analyze_jd(t)
         score = score_resume(resume, jd)
-        top_gaps = [g.keyword for g in score.gaps if g.status != "covered"][:6]
+        top_matched, top_gaps = top_matched_and_gaps(score.gaps)
         matches.append(
             JobMatch(
                 title=jd.job_title,
@@ -31,6 +31,7 @@ def match_jobs(resume: ResumeModel, listings: list[str]) -> JobMatchResult:
                 overall=score.overall,
                 keyword_coverage=score.keyword_coverage,
                 fit_score=score.fit_score,
+                top_matched=top_matched,
                 top_gaps=top_gaps,
                 jd_text=t,
             )
