@@ -1,10 +1,12 @@
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { Sparkles, FileText, MessageSquareText, Briefcase, Wrench, KanbanSquare, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
 import LanguageSwitch from "../components/LanguageSwitch";
+import OnboardingModal from "../components/OnboardingModal";
 import ThemeToggle from "../components/ThemeToggle";
+import { isOnboarded } from "../lib/onboarding";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 
 const nav = [
@@ -18,6 +20,7 @@ const nav = [
 export default function AppLayout() {
   const { t } = useTranslation();
   const { searching } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
+  const [onboardOpen, setOnboardOpen] = useState(() => !isOnboarded());
   return (
     <div className="min-h-screen bg-bg text-ink">
       <header className="sticky top-0 z-30 border-b border-line/70 bg-bg/80 backdrop-blur-xl">
@@ -58,6 +61,7 @@ export default function AppLayout() {
       <main className="mx-auto max-w-6xl px-4 py-8">
         <Outlet />
       </main>
+      <OnboardingModal open={onboardOpen} onClose={() => setOnboardOpen(false)} />
     </div>
   );
 }

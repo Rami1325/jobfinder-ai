@@ -32,6 +32,7 @@ import {
   subscribeJobSearch,
 } from "../state/jobSearchStore";
 import { useMasterResume } from "../hooks/useMasterResume";
+import { onboardingRole } from "../lib/onboarding";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, useToast } from "../components/ui";
 import type {
@@ -49,7 +50,9 @@ const inputCls =
 const WORK_MODES = ["any", "remote", "onsite", "hybrid"] as const;
 
 // Selectable job boards (PROVIDERS registry ids). Empty/absent = all boards.
-const SOURCE_IDS = ["linkedin", "drushim", "comeet"] as const;
+// Keep in sync with the backend registry: a board missing here disappears
+// from any customized search the moment the user unchecks one box.
+const SOURCE_IDS = ["linkedin", "drushim", "comeet", "jobmaster", "jooble"] as const;
 
 // One-click Israeli locations (PLAN 2.3). English values work across all
 // boards: LinkedIn expects English; Drushim matches CityEnglish; Comeet
@@ -474,20 +477,28 @@ export default function JobsPage() {
     }
   }
 
+  // The onboarding "target role" answer steers non-customized searches (blank
+  // SearchContext fields still mean "derive from the résumé" on the backend).
+  function onboardingCtx(): SearchContext | null {
+    const role = onboardingRole();
+    return role ? { job_title: role, location: "", work_mode: "any", limit: 10 } : null;
+  }
+
   function toggleCustomize(checked: boolean) {
     setCustomOpen(checked);
     if (checked && !ctx && master?.resume && !prefilling) {
       setPrefilling(true);
+      const role = onboardingRole();
       searchContext(master.resume)
-        .then(setCtx)
-        .catch(() => setCtx({ job_title: "", location: "", work_mode: "any", limit: 10 }))
+        .then((c) => setCtx(role ? { ...c, job_title: role } : c))
+        .catch(() => setCtx({ job_title: role, location: "", work_mode: "any", limit: 10 }))
         .finally(() => setPrefilling(false));
     }
   }
 
   function runSearch() {
     if (!master?.resume || searching) return;
-    startJobSearch(master.resume, customOpen ? ctx : null);
+    startJobSearch(master.resume, customOpen ? ctx : onboardingCtx());
   }
 
   // Sources selection lives on ctx.sources; empty/absent means "all boards".
@@ -522,7 +533,7 @@ export default function JobsPage() {
     if (firstUpload && !searching) {
       setAutoSearched(true);
       setMode("search");
-      startJobSearch(r, null); // magic moment: upload → jobs appear
+      startJobSearch(r, onboardingCtx()); // magic moment: upload → jobs appear
     }
   }
 

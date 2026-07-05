@@ -58,5 +58,35 @@
   },
   "placeholder": {
     "body": "This section is being built. Check back shortly."
+  },
+  "onboarding": {
+    "title": "Welcome — let's point you the right way",
+    "sub": "Three quick questions. You can change everything later.",
+    "roleLabel": "What role are you looking for?",
+    "rolePlaceholder": "e.g. Backend Engineer",
+    "roleHint": "We'll prefill your job search with it.",
+    "timelineLabel": "How urgent is your search?",
+    "timeline": {
+      "now": "Actively applying",
+      "soon": "In the next few months",
+      "exploring": "Just exploring"
+    },
+    "helpLabel": "Where do you need help first?",
+    "help": {
+      "jobs": {
+        "title": "Find matching jobs",
+        "desc": "Israeli boards + LinkedIn, ranked by fit to your résumé"
+      },
+      "tailor": {
+        "title": "Tailor my résumé",
+        "desc": "Rewrite for a specific job — nothing invented"
+      },
+      "interview": {
+        "title": "Prep for interviews",
+        "desc": "Likely questions and feedback on your answers"
+      }
+    },
+    "skip": "Skip",
+    "start": "Let's go"
   }
 }
