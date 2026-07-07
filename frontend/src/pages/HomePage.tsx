@@ -337,9 +337,12 @@ export default function HomePage() {
       {/* Recent matches + side column */}
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
         <Card className="min-w-0">
-          <div className="flex items-center justify-between">
-            <CardTitle>{t("recent.title")}</CardTitle>
-            <Link to="/jobs" className="text-xs font-semibold text-accent-soft hover:underline">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="truncate">{t("recent.title")}</CardTitle>
+            <Link
+              to="/jobs"
+              className="shrink-0 whitespace-nowrap text-xs font-semibold text-accent-soft hover:underline"
+            >
               {t("recent.viewAll")} →
             </Link>
           </div>

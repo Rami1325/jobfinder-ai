@@ -157,3 +157,14 @@ select {
 @media (max-width: 640px) {
   input, textarea, select { font-size: 16px !important; }
 }
+
+/* Belt-and-suspenders: the page must never scroll or bleed sideways on
+   mobile/tablet. Real content already fits (min-w-0 + truncate), so this only
+   catches stray overflow — a decorative glow, a rounding error, an oversized
+   accessibility font. `clip` (not `hidden`) doesn't create a scroll container,
+   so it leaves `position: sticky` untouched. Regions that scroll horizontally
+   on purpose (e.g. the tracker board) use their own overflow-x-auto and are
+   unaffected. */
+@media (max-width: 1023px) {
+  body { overflow-x: clip; }
+}
