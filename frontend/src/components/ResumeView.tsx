@@ -1,8 +1,19 @@
 import { useTranslation } from "react-i18next";
 import type { ResumeModel } from "../types";
+import { Badge } from "./ui";
 
 interface Props {
   resume: ResumeModel;
+}
+
+/** Section heading — small uppercase accent label with a hairline underline,
+ * matching the premium surfaces (replaces the old `.resume-view h4`). */
+function SectionHead({ children }: { children: React.ReactNode }) {
+  return (
+    <h4 className="mb-1.5 border-b border-line pb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-accent-soft">
+      {children}
+    </h4>
+  );
 }
 
 export default function ResumeView({ resume }: Props) {
@@ -11,23 +22,28 @@ export default function ResumeView({ resume }: Props) {
   const contactBits = [c.email, c.phone, c.location, c.linkedin, c.website].filter(Boolean);
 
   return (
-    <div className="resume-view">
-      <div className="rv-name">{c.name || t("sections.fallbackName")}</div>
-      {contactBits.length > 0 && <div className="rv-contact">{contactBits.join(" · ")}</div>}
+    <div
+      dir="auto"
+      className="rounded-xl border border-line bg-bg-soft p-5 text-ink [&_section]:mt-5"
+    >
+      <div className="text-xl font-bold text-ink">{c.name || t("sections.fallbackName")}</div>
+      {contactBits.length > 0 && (
+        <div className="mt-0.5 text-xs text-ink-muted">{contactBits.join(" · ")}</div>
+      )}
 
       {resume.summary && (
         <section>
-          <h4>{t("sections.summary")}</h4>
-          <p>{resume.summary}</p>
+          <SectionHead>{t("sections.summary")}</SectionHead>
+          <p className="text-sm leading-relaxed text-ink-muted">{resume.summary}</p>
         </section>
       )}
 
       {resume.skills.length > 0 && (
         <section>
-          <h4>{t("sections.skills")}</h4>
-          <div>
+          <SectionHead>{t("sections.skills")}</SectionHead>
+          <div className="flex flex-wrap gap-1.5">
             {resume.skills.map((s) => (
-              <span key={s} className="tag">{s}</span>
+              <Badge key={s}>{s}</Badge>
             ))}
           </div>
         </section>
@@ -35,90 +51,104 @@ export default function ResumeView({ resume }: Props) {
 
       {resume.experience.length > 0 && (
         <section>
-          <h4>{t("sections.experience")}</h4>
-          {resume.experience.map((e, i) => (
-            <div key={i} className="rv-item">
-              <div className="rv-item-head">
-                <strong>{[e.title, e.company].filter(Boolean).join(" — ")}</strong>
-                <span className="muted">
-                  {[e.location, [e.start_date, e.end_date].filter(Boolean).join(" – ")]
-                    .filter(Boolean)
-                    .join(" | ")}
-                </span>
+          <SectionHead>{t("sections.experience")}</SectionHead>
+          <div className="space-y-3">
+            {resume.experience.map((e, i) => (
+              <div key={i}>
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
+                  <strong className="text-sm font-semibold text-ink">
+                    {[e.title, e.company].filter(Boolean).join(" — ")}
+                  </strong>
+                  <span className="text-xs text-ink-muted">
+                    {[e.location, [e.start_date, e.end_date].filter(Boolean).join(" – ")]
+                      .filter(Boolean)
+                      .join(" | ")}
+                  </span>
+                </div>
+                <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
+                  {e.bullets.map((b, j) => (
+                    <li key={j}>{b}</li>
+                  ))}
+                </ul>
               </div>
-              <ul>
-                {e.bullets.map((b, j) => (
-                  <li key={j}>{b}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
+            ))}
+          </div>
         </section>
       )}
 
       {resume.projects.length > 0 && (
         <section>
-          <h4>{t("sections.projects")}</h4>
-          {resume.projects.map((p, i) => (
-            <div key={i} className="rv-item">
-              <strong>{p.name}</strong>
-              {p.description && <span className="muted"> — {p.description}</span>}
-              <ul>
-                {p.bullets.map((b, j) => (
-                  <li key={j}>{b}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
+          <SectionHead>{t("sections.projects")}</SectionHead>
+          <div className="space-y-3">
+            {resume.projects.map((p, i) => (
+              <div key={i}>
+                <strong className="text-sm font-semibold text-ink">{p.name}</strong>
+                {p.description && <span className="text-sm text-ink-muted"> — {p.description}</span>}
+                <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
+                  {p.bullets.map((b, j) => (
+                    <li key={j}>{b}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
       {resume.education.length > 0 && (
         <section>
-          <h4>{t("sections.education")}</h4>
-          {resume.education.map((e, i) => (
-            <div key={i} className="rv-item">
-              <strong>{[e.degree, e.field].filter(Boolean).join(", ") || e.institution}</strong>
-              <span className="muted">
-                {" "}
-                {[e.institution, [e.start_date, e.end_date].filter(Boolean).join(" – ")]
-                  .filter(Boolean)
-                  .join(" | ")}
-              </span>
-              {e.details && <div>{e.details}</div>}
-            </div>
-          ))}
+          <SectionHead>{t("sections.education")}</SectionHead>
+          <div className="space-y-2">
+            {resume.education.map((e, i) => (
+              <div key={i} className="text-sm">
+                <strong className="font-semibold text-ink">
+                  {[e.degree, e.field].filter(Boolean).join(", ") || e.institution}
+                </strong>
+                <span className="text-ink-muted">
+                  {" "}
+                  {[e.institution, [e.start_date, e.end_date].filter(Boolean).join(" – ")]
+                    .filter(Boolean)
+                    .join(" | ")}
+                </span>
+                {e.details && <div className="text-ink-muted">{e.details}</div>}
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
       {(resume.military_service ?? []).length > 0 && (
         <section>
           {/* defaultValue fallbacks: catalog keys pending (locale files owned by the frontend pass) */}
-          <h4>{t("sections.militaryService", "Military Service")}</h4>
-          {(resume.military_service ?? []).map((m, i) => (
-            <div key={i} className="rv-item">
-              <div className="rv-item-head">
-                <strong>{[m.role, m.unit].filter(Boolean).join(" — ")}</strong>
-                <span className="muted">
-                  {[m.rank, [m.start_date, m.end_date].filter(Boolean).join(" – ")]
-                    .filter(Boolean)
-                    .join(" | ")}
-                </span>
+          <SectionHead>{t("sections.militaryService", "Military Service")}</SectionHead>
+          <div className="space-y-3">
+            {(resume.military_service ?? []).map((m, i) => (
+              <div key={i}>
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
+                  <strong className="text-sm font-semibold text-ink">
+                    {[m.role, m.unit].filter(Boolean).join(" — ")}
+                  </strong>
+                  <span className="text-xs text-ink-muted">
+                    {[m.rank, [m.start_date, m.end_date].filter(Boolean).join(" – ")]
+                      .filter(Boolean)
+                      .join(" | ")}
+                  </span>
+                </div>
+                <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
+                  {m.bullets.map((b, j) => (
+                    <li key={j}>{b}</li>
+                  ))}
+                </ul>
               </div>
-              <ul>
-                {m.bullets.map((b, j) => (
-                  <li key={j}>{b}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
+            ))}
+          </div>
         </section>
       )}
 
       {resume.certifications.length > 0 && (
         <section>
-          <h4>{t("sections.certifications")}</h4>
-          <ul>
+          <SectionHead>{t("sections.certifications")}</SectionHead>
+          <ul className="list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
             {resume.certifications.map((cert, i) => (
               <li key={i}>{cert}</li>
             ))}
@@ -128,12 +158,10 @@ export default function ResumeView({ resume }: Props) {
 
       {(resume.languages ?? []).length > 0 && (
         <section>
-          <h4>{t("sections.languages", "Languages")}</h4>
-          <div>
+          <SectionHead>{t("sections.languages", "Languages")}</SectionHead>
+          <div className="flex flex-wrap gap-1.5">
             {(resume.languages ?? []).map((l, i) => (
-              <span key={i} className="tag">
-                {[l.language, l.level].filter(Boolean).join(" – ")}
-              </span>
+              <Badge key={i}>{[l.language, l.level].filter(Boolean).join(" – ")}</Badge>
             ))}
           </div>
         </section>

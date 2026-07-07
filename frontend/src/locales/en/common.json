@@ -1,11 +1,18 @@
 {
   "appName": "JobFinder",
   "nav": {
+    "home": "Home",
     "jobs": "Jobs",
     "tailor": "Tailor",
     "interview": "Interview",
     "tools": "Tools",
-    "tracker": "Tracker"
+    "tracker": "Tracker",
+    "overview": "Overview",
+    "more": "More",
+    "trust": "Every fact verified",
+    "searching": "Searching…",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu"
   },
   "header": {
     "how": "How it works",

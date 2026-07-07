@@ -3,6 +3,7 @@ import MarketingLayout from "./layouts/MarketingLayout";
 import AppLayout from "./layouts/AppLayout";
 import Landing from "./pages/Landing";
 import ScanPage from "./pages/ScanPage";
+import HomePage from "./pages/HomePage";
 import TailorPage from "./pages/TailorPage";
 import TrackerPage from "./pages/TrackerPage";
 import InterviewPage from "./pages/InterviewPage";
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/scan" element={<ScanPage />} />
       </Route>
       <Route element={<AppLayout />}>
+        <Route path="/home" element={<HomePage />} />
         <Route path="/app" element={<TailorPage />} />
         <Route path="/interview" element={<InterviewPage />} />
         <Route path="/jobs" element={<JobsPage />} />

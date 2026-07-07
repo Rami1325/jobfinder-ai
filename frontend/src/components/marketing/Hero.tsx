@@ -53,7 +53,7 @@ export default function Hero() {
             transition={{ duration: 0.6, delay: 0.19 }}
             className="mt-8 flex flex-wrap items-center gap-3"
           >
-            <Link to="/jobs">
+            <Link to="/home">
               <Button size="lg" icon={<ArrowRight size={18} className="rtl:-scale-x-100" />}>
                 {t("hero.ctaPrimary")}
               </Button>

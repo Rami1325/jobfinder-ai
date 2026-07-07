@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
@@ -31,6 +31,7 @@ import ResumeView from "../components/ResumeView";
 import TrackerAnalytics from "../components/TrackerAnalytics";
 import { Badge, Button, Card, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
+import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
 import type { ApplicationDetail, ApplicationOut } from "../types";
 
 // Column labels come from the "tracker" catalog via `status.<key>`.
@@ -48,10 +49,6 @@ const COLUMNS: {
 ];
 
 const STATUSES = COLUMNS.map((c) => c.key);
-/** Statuses that mean the application was actually submitted. */
-const SUBMITTED = new Set(["applied", "interview", "offer", "rejected"]);
-/** Statuses that mean the company answered (any outcome). */
-const RESPONDED = new Set(["interview", "offer", "rejected"]);
 
 /** 1-5 excitement stars (Teal pattern). Clicking the current rating clears it. */
 function Stars({ value, onRate }: { value: number; onRate: (n: number) => void }) {
@@ -106,21 +103,7 @@ export default function TrackerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const metrics = useMemo(() => {
-    const total = apps.length;
-    const applied = apps.filter((a) => SUBMITTED.has(a.status || "saved")).length;
-    const interviews = apps.filter((a) => a.interviewed).length;
-    const offers = apps.filter((a) => a.status === "offer").length;
-    const declined = apps.filter((a) => a.status === "rejected").length;
-    // A "response" = the company answered at all: moved to interview/offer/
-    // rejected, or the interviewed flag was set while still in "applied".
-    const responses = apps.filter(
-      (a) => SUBMITTED.has(a.status || "saved") && (RESPONDED.has(a.status) || a.interviewed),
-    ).length;
-    const interviewRate = applied > 0 ? (interviews / applied) * 100 : 0;
-    const responseRate = applied > 0 ? (responses / applied) * 100 : 0;
-    return { total, applied, interviews, offers, declined, interviewRate, responseRate };
-  }, [apps]);
+  const metrics = useTrackerMetrics(apps);
 
   async function changeStatus(id: number, status: string) {
     const updated = await updateApplication(id, { status });

@@ -1,11 +1,18 @@
 {
   "appName": "JobFinder",
   "nav": {
+    "home": "בית",
     "jobs": "משרות",
     "tailor": "התאמה",
     "interview": "ראיון",
     "tools": "כלים",
-    "tracker": "מעקב"
+    "tracker": "מעקב",
+    "overview": "סקירה",
+    "more": "עוד",
+    "trust": "כל פרט מאומת",
+    "searching": "מחפש…",
+    "openMenu": "פתח תפריט",
+    "closeMenu": "סגור תפריט"
   },
   "header": {
     "how": "איך זה עובד",

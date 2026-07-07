@@ -33,7 +33,7 @@ export default {
         danger: "rgb(var(--danger) / <alpha-value>)",
       },
       fontFamily: {
-        sans: ['"Segoe UI"', "system-ui", "-apple-system", "sans-serif"],
+        sans: ['"Inter Variable"', "Inter", "system-ui", "-apple-system", '"Segoe UI"', "sans-serif"],
       },
       borderRadius: {
         xl2: "14px",

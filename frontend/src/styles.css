@@ -93,13 +93,18 @@ html[lang="he"] body {
 
 body {
   margin: 0;
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-optical-sizing: auto;
   background: rgb(var(--bg));
   color: rgb(var(--ink));
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+
+/* Premium tightening on display headings (Inter reads a touch loose at large
+   sizes). Utility classes like `tracking-tight` still win where set. */
+h1, h2 { letter-spacing: -0.011em; }
 
 ::selection { background: rgb(var(--accent) / 0.28); color: rgb(var(--ink)); }
 
@@ -121,42 +126,6 @@ body {
   }
 }
 
-.app { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
-
-header.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 18px;
-}
-header.topbar h1 { font-size: 22px; margin: 0; }
-header.topbar .logo { color: rgb(var(--accent)); }
-
-.tabs { display: flex; gap: 8px; }
-.tabs button {
-  background: rgb(var(--panel));
-  border: 1px solid rgb(var(--line));
-  color: rgb(var(--ink-muted));
-  padding: 8px 16px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-size: 14px;
-}
-.tabs button.active { color: rgb(var(--ink)); border-color: rgb(var(--accent)); background: rgb(var(--panel-2)); }
-
-.panel {
-  background: rgb(var(--panel));
-  border: 1px solid rgb(var(--line));
-  border-radius: var(--radius);
-  padding: 18px;
-  margin-bottom: 16px;
-}
-.panel h2 { margin: 0 0 12px; font-size: 16px; }
-.panel h3 { margin: 16px 0 8px; font-size: 14px; color: rgb(var(--ink-muted)); text-transform: uppercase; letter-spacing: .04em; }
-
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 820px) { .grid-2 { grid-template-columns: 1fr; } }
-
 textarea, input[type="text"] {
   width: 100%;
   background: rgb(var(--bg));
@@ -168,60 +137,6 @@ textarea, input[type="text"] {
 }
 textarea { min-height: 220px; resize: vertical; }
 
-button.btn {
-  background: rgb(var(--accent));
-  border: none;
-  color: white;
-  padding: 10px 18px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-}
-button.btn:disabled { opacity: .5; cursor: not-allowed; }
-button.btn.secondary { background: rgb(var(--panel-2)); border: 1px solid rgb(var(--line)); color: rgb(var(--ink)); }
-button.btn.ghost { background: transparent; border: 1px solid rgb(var(--line)); color: rgb(var(--ink-muted)); }
-
-.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-.spacer { flex: 1; }
-
-.dropzone {
-  border: 2px dashed rgb(var(--line));
-  border-radius: var(--radius);
-  padding: 28px;
-  text-align: center;
-  color: rgb(var(--ink-muted));
-  cursor: pointer;
-}
-.dropzone.has-file { border-color: rgb(var(--mint)); color: rgb(var(--ink)); }
-
-.score-ring { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
-.metric { text-align: center; }
-.metric .num { font-size: 30px; font-weight: 700; }
-.metric .lbl { font-size: 12px; color: rgb(var(--ink-muted)); }
-.delta-up { color: rgb(var(--mint)); }
-.delta-down { color: rgb(var(--danger)); }
-
-.tag { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; margin: 0 6px 6px 0; border: 1px solid rgb(var(--line)); }
-.tag.covered { background: rgb(var(--mint) / 0.15); border-color: rgb(var(--mint)); }
-.tag.partial { background: rgb(var(--warn) / 0.15); border-color: rgb(var(--warn) / 0.7); }
-.tag.missing { background: rgb(var(--danger) / 0.12); border-color: rgb(var(--danger)); }
-
-.flag {
-  border-left: 3px solid rgb(var(--danger));
-  background: rgb(var(--danger) / 0.08);
-  padding: 8px 12px;
-  border-radius: 6px;
-  margin-bottom: 8px;
-}
-.changelog-item { border-left: 3px solid rgb(var(--accent)); padding: 6px 12px; margin-bottom: 8px; background: rgb(var(--panel-2)); border-radius: 6px; }
-.changelog-item .section { font-weight: 600; color: rgb(var(--accent)); }
-.changelog-item .reason { color: rgb(var(--ink-muted)); font-size: 13px; }
-
-.muted { color: rgb(var(--ink-muted)); }
-.error { color: rgb(var(--danger)); }
-.success { color: rgb(var(--mint)); }
-
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px; border-bottom: 1px solid rgb(var(--line)); font-size: 14px; }
 th { color: rgb(var(--ink-muted)); font-weight: 600; }
@@ -229,39 +144,6 @@ select {
   background: rgb(var(--bg)); color: rgb(var(--ink)); border: 1px solid rgb(var(--line));
   border-radius: 6px; padding: 6px;
 }
-
-.cover-letter { white-space: pre-wrap; background: rgb(var(--bg)); border: 1px solid rgb(var(--line)); border-radius: 8px; padding: 14px; }
-
-.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgb(var(--ink) / 0.3); border-top-color: rgb(var(--ink)); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* Modal */
-.modal-overlay {
-  position: fixed; inset: 0; background: rgb(0 0 0 / 0.6);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 40px 16px; overflow-y: auto; z-index: 50;
-}
-.modal {
-  background: rgb(var(--panel)); border: 1px solid rgb(var(--line)); border-radius: var(--radius);
-  padding: 22px; width: 100%; max-width: 760px; box-shadow: var(--shadow-panel);
-}
-.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-
-/* Resume view */
-.resume-view { background: rgb(var(--bg)); border: 1px solid rgb(var(--line)); border-radius: 8px; padding: 20px; }
-.resume-view .rv-name { font-size: 22px; font-weight: 700; }
-.resume-view .rv-contact { color: rgb(var(--ink-muted)); font-size: 13px; margin-bottom: 8px; }
-.resume-view section { margin-top: 16px; }
-.resume-view h4 {
-  margin: 0 0 6px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
-  color: rgb(var(--accent)); border-bottom: 1px solid rgb(var(--line)); padding-bottom: 3px;
-}
-.resume-view .rv-item { margin-bottom: 10px; }
-.resume-view .rv-item-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.resume-view .rv-item-head .muted { font-size: 12px; }
-.resume-view ul { margin: 4px 0 0; padding-left: 18px; }
-.resume-view li { margin-bottom: 3px; }
-.resume-view p { margin: 0; }
 
 /* iOS Safari zooms the page when a focused control is <16px. */
 @media (max-width: 640px) {

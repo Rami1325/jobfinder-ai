@@ -1,0 +1,60 @@
+{
+  "greeting": {
+    "morning": "Good morning{{name}}",
+    "afternoon": "Good afternoon{{name}}",
+    "evening": "Good evening{{name}}"
+  },
+  "sub": "Here's where your search stands today.",
+  "gate": {
+    "title": "Welcome to JobFinder",
+    "body": "Upload your résumé to unlock your dashboard — job matches, tailoring, and your whole application pipeline in one place."
+  },
+  "snapshot": {
+    "title": "Your pipeline",
+    "total": "Total",
+    "applied": "Applied",
+    "interviews": "Interviews",
+    "offers": "Offers",
+    "declined": "Declined",
+    "responseRate": "Response rate",
+    "interviewRate": "Interview rate"
+  },
+  "actions": {
+    "title": "Quick actions",
+    "findJobs": {
+      "title": "Find jobs",
+      "body": "Scan LinkedIn, Drushim, Comeet & more against your résumé."
+    },
+    "tailor": {
+      "title": "Tailor a résumé",
+      "body": "Rewrite for one role — every fact guard-checked against your original."
+    },
+    "scan": {
+      "title": "Free CV scan",
+      "body": "Instant CV-vs-JD gap check. Nothing stored."
+    }
+  },
+  "recent": {
+    "title": "Recent matches",
+    "viewAll": "View all",
+    "empty": "No searches yet — run your first job search to see matches here.",
+    "tailor": "Tailor"
+  },
+  "kits": {
+    "title": "Application kits",
+    "awaiting": "{{count}} awaiting your review",
+    "none": "No kits waiting. Batch-tailor high-fit jobs from the Jobs page.",
+    "review": "Review"
+  },
+  "alert": {
+    "title": "Daily job alert",
+    "on": "On — {{count}} new roles at the last run.",
+    "off": "Off — turn it on to get new roles emailed daily.",
+    "manage": "Manage"
+  },
+  "trust": {
+    "guard": "Every résumé fact-checked against your original",
+    "ats": "ATS-safe DOCX & PDF exports",
+    "private": "Nothing sold, nothing shared"
+  }
+}

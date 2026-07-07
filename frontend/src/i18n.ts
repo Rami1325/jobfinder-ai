@@ -3,6 +3,7 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
 
 import enCommon from "./locales/en/common.json";
+import enHome from "./locales/en/home.json";
 import enInterview from "./locales/en/interview.json";
 import enJobs from "./locales/en/jobs.json";
 import enMarketing from "./locales/en/marketing.json";
@@ -11,6 +12,7 @@ import enTailor from "./locales/en/tailor.json";
 import enTools from "./locales/en/tools.json";
 import enTracker from "./locales/en/tracker.json";
 import heCommon from "./locales/he/common.json";
+import heHome from "./locales/he/home.json";
 import heInterview from "./locales/he/interview.json";
 import heJobs from "./locales/he/jobs.json";
 import heMarketing from "./locales/he/marketing.json";
@@ -25,6 +27,7 @@ export type Language = (typeof LANGUAGES)[number];
 const resources = {
   en: {
     common: enCommon,
+    home: enHome,
     marketing: enMarketing,
     scan: enScan,
     jobs: enJobs,
@@ -35,6 +38,7 @@ const resources = {
   },
   he: {
     common: heCommon,
+    home: heHome,
     marketing: heMarketing,
     scan: heScan,
     jobs: heJobs,

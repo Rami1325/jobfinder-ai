@@ -2,6 +2,8 @@ export { default as Button } from "./Button";
 export { default as Card, CardTitle, SectionLabel } from "./Card";
 export { default as Badge } from "./Badge";
 export { default as Stat } from "./Stat";
+export { default as CountUp } from "./CountUp";
+export { default as SpotlightCard } from "./SpotlightCard";
 export { default as ProgressRing } from "./ProgressRing";
 export { default as Stepper } from "./Stepper";
 export { default as Skeleton } from "./Skeleton";
