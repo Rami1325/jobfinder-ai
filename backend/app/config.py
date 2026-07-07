@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Auto-submit (PLAN 8.4): real applications sent per user per day.
     daily_submit_cap: int = 10
     jooble_api_key: str = ""  # empty => the Jooble board reports "needs an API key"
+    # Stale-application nudges: an "applied" app with no status change for this
+    # many days surfaces a "time to follow up" reminder on Home (<= 0 disables).
+    stale_application_days: int = 7
     model_id: str = "gpt-4o-mini"
     use_stub_llm: bool = False
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"

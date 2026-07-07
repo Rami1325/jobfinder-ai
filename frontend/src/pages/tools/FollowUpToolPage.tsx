@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Mail, Copy, Sparkles } from "lucide-react";
 import { followUp } from "../../api/client";
@@ -9,11 +10,17 @@ import type { FollowUpResult } from "../../types";
 // Stage ids are sent to the API as-is (English); labels are translated.
 const STAGES = ["after applying", "after an interview", "checking in", "after an offer"];
 
+type NavState = { company?: string; role?: string; stage?: string } | null;
+
 export default function FollowUpToolPage() {
   const { t } = useTranslation("tools");
-  const [company, setCompany] = useState("");
-  const [role, setRole] = useState("");
-  const [stage, setStage] = useState(STAGES[0]);
+  // Prefill when deep-linked from the tracker / a stale-application nudge.
+  const prefill = (useLocation().state as NavState) ?? null;
+  const [company, setCompany] = useState(prefill?.company ?? "");
+  const [role, setRole] = useState(prefill?.role ?? "");
+  const [stage, setStage] = useState(
+    prefill?.stage && STAGES.includes(prefill.stage) ? prefill.stage : STAGES[0],
+  );
   const [context, setContext] = useState("");
   const [result, setResult] = useState<FollowUpResult | null>(null);
   const [running, setRunning] = useState(false);

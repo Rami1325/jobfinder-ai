@@ -186,9 +186,14 @@
     "openOn": "פתיחה ב{{source}}",
     "tailorToThis": "התאימו למשרה הזו",
     "tailor": "התאמה",
+    "outreach": "פנייה",
     "removeFromHistory": "הסרה מההיסטוריה",
     "share": "שיתוף",
     "shareWhatsApp": "שיתוף בוואטסאפ"
+  },
+  "fit": {
+    "strongOn": "חוזקות: {{skills}}",
+    "gap": "לסגור: {{skills}}"
   },
   "alerts": {
     "title": "התראות במייל",

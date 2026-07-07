@@ -5,6 +5,16 @@
   "jdTitle": "תיאור משרת היעד",
   "generate": "צרו שאלות",
   "genericError": "משהו השתבש.",
+  "mode": {
+    "questions": "שאלות ראיון",
+    "recruiter": "שיחת מגייס"
+  },
+  "recruiter": {
+    "build": "בנו דף הכנה",
+    "pitch": "הפיץ' של 30 השניות שלכם",
+    "salary": "ציפיות שכר",
+    "salaryCaveat": "הנחיה לניסוח — לא מספר לנקוב בו. בדקו את טווח השוק לתפקיד ולמיקום."
+  },
   "categories": {
     "behavioral": "התנהגותית",
     "technical": "טכנית",

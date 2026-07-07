@@ -10,6 +10,8 @@ from app.models import (
     InterviewQuestion,
     InterviewQuestionsResult,
     JDModel,
+    RecruiterPrepItem,
+    RecruiterScreenResult,
     ResumeModel,
 )
 
@@ -34,6 +36,21 @@ def model_answer(resume: ResumeModel, jd: JDModel, question: str) -> InterviewAn
     return InterviewAnswerResult(
         answer=str(data.get("answer", "")),
         tips=[str(t) for t in data.get("tips", [])],
+    )
+
+
+def recruiter_screen(resume: ResumeModel, jd_text: str) -> RecruiterScreenResult:
+    client = get_llm_client()
+    data = client.complete_json(
+        # Hebrew résumé => prep sheet in Hebrew (note appended AFTER the Task tag).
+        prompts.with_resume_language(prompts.RECRUITER_SCREEN_SYSTEM, resume_language(resume)),
+        prompts.recruiter_screen_user(resume.model_dump_json(), jd_text),
+    )
+    items = [RecruiterPrepItem.model_validate(x) for x in data.get("items", []) if x]
+    return RecruiterScreenResult(
+        pitch=str(data.get("pitch", "")),
+        items=items,
+        salary_note=str(data.get("salary_note", "")),
     )
 
 

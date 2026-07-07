@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import {
@@ -11,6 +11,7 @@ import {
   Eye,
   KanbanSquare,
   Layers,
+  Mail,
   MessageSquare,
   MessagesSquare,
   Send,
@@ -50,6 +51,13 @@ const COLUMNS: {
 
 const STATUSES = COLUMNS.map((c) => c.key);
 
+// Which follow-up stage to pre-select when jumping to the follow-up writer.
+function followUpStage(status: string): string {
+  if (status === "interview") return "after an interview";
+  if (status === "offer") return "after an offer";
+  return "after applying";
+}
+
 /** 1-5 excitement stars (Teal pattern). Clicking the current rating clears it. */
 function Stars({ value, onRate }: { value: number; onRate: (n: number) => void }) {
   const { t } = useTranslation("tracker");
@@ -80,6 +88,7 @@ let appsCache: ApplicationOut[] | null = null;
 
 export default function TrackerPage() {
   const { t } = useTranslation("tracker");
+  const nav = useNavigate();
   const [apps, setApps] = useState<ApplicationOut[]>(appsCache ?? []);
   // Only the first load shows the skeleton; later visits render the cache and
   // refresh in the background (no flicker when switching tabs).
@@ -486,6 +495,22 @@ export default function TrackerPage() {
                 </a>
               )}
               <div className="flex-1" />
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Mail size={15} />}
+                onClick={() =>
+                  nav("/tools/follow-up", {
+                    state: {
+                      company: detail.company,
+                      role: detail.job_title,
+                      stage: followUpStage(detail.status),
+                    },
+                  })
+                }
+              >
+                {t("actions.followUp")}
+              </Button>
               {detail.tailored_resume && (
                 <>
                   <Button

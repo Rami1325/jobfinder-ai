@@ -126,6 +126,39 @@ class StubClient:
                 "body": "[stub] Hi, thanks for your time. I remain very interested in the role "
                 "and wanted to reiterate one relevant point of fit. Best regards.",
             }
+        if "OUTREACH" in head:
+            return {
+                "connection_note": "[stub] Hi — I build Python/REST backends and admire your "
+                "team's work. Would love to connect about the open role.",
+                "inmail_subject": "[stub] Backend engineer keen on the role",
+                "inmail_body": "[stub] Hi, I'm a backend engineer whose Python and REST API "
+                "experience lines up closely with this role. I'd welcome a short chat about how "
+                "I could help. Thanks for your time!",
+                "referral_message": "[stub] Hi! I saw your company is hiring for this role and it "
+                "looks like a strong fit for my background — would you be open to referring me, "
+                "or a quick chat first?",
+            }
+        if "SCREENING_ANSWER" in head:
+            return {
+                "answer": "[stub] Drawing on my real experience, here is a specific, honest "
+                "answer to the question that ties my background to what the role needs.",
+                "tips": ["Keep it specific", "Tie it back to the role"],
+            }
+        if "RECRUITER_SCREEN" in head:
+            return {
+                "pitch": "[stub] I'm a backend engineer with Python and REST API experience, "
+                "most recently building services at my current role.",
+                "items": [
+                    {"question": "Walk me through your background.",
+                     "talking_point": "[stub] Lead with your most recent role and its impact."},
+                    {"question": "Why are you looking to leave?",
+                     "talking_point": "[stub] Frame it forward-looking, not negative."},
+                    {"question": "What are your salary expectations?",
+                     "talking_point": "[stub] Give a researched range, not a single number."},
+                ],
+                "salary_note": "[stub] Share a researched range for the role and location, "
+                "not a single figure — and ask what they've budgeted.",
+            }
         return {}
 
     def complete_text(self, system: str, user: str) -> str:

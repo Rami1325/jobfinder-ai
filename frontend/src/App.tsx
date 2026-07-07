@@ -13,6 +13,8 @@ import ToolsPage from "./pages/ToolsPage";
 import AtsToolPage from "./pages/tools/AtsToolPage";
 import LinkedInToolPage from "./pages/tools/LinkedInToolPage";
 import FollowUpToolPage from "./pages/tools/FollowUpToolPage";
+import OutreachToolPage from "./pages/tools/OutreachToolPage";
+import ScreeningToolPage from "./pages/tools/ScreeningToolPage";
 import AccessGate from "./components/AccessGate";
 import ScrollToTop from "./components/ScrollToTop";
 
@@ -36,6 +38,8 @@ export default function App() {
         <Route path="/tools/ats" element={<AtsToolPage />} />
         <Route path="/tools/linkedin" element={<LinkedInToolPage />} />
         <Route path="/tools/follow-up" element={<FollowUpToolPage />} />
+        <Route path="/tools/outreach" element={<OutreachToolPage />} />
+        <Route path="/tools/screening" element={<ScreeningToolPage />} />
         <Route path="/tracker" element={<TrackerPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

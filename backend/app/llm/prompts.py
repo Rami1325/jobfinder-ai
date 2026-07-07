@@ -192,6 +192,21 @@ interview questions. Cover a mix of categories. Return JSON:
 Produce 8-10 high-signal questions. Ground them in the actual JD requirements and the \
 candidate's real background. Do not invent facts about the candidate."""
 
+RECRUITER_SCREEN_SYSTEM = """Task: RECRUITER_SCREEN.
+You prepare a candidate for the ~15-minute recruiter phone screen — the first, mostly \
+non-technical call. Ground everything in the candidate's resume and the target role; never \
+invent facts. Return JSON:
+{
+  "pitch": "a 2-3 sentence 'walk me through your background' opener, first person, drawn from the resume",
+  "items": [
+    {"question": "a predictable recruiter-screen question",
+     "talking_point": "a short, specific direction for answering it — grounded in the resume, not a full script"}
+  ],
+  "salary_note": "how to handle 'what are your salary expectations': advise giving a researched RANGE for this role and location and asking their budget — never state a specific number for the candidate"
+}
+Cover the standard screen: background walk-through, why leaving / why now, why this company and \
+role, key strengths, availability / notice period, and salary expectations. Produce 5-7 items."""
+
 INTERVIEW_ANSWER_SYSTEM = """Task: INTERVIEW_ANSWER.
 You coach a candidate on answering an interview question. Write a strong model answer \
 using ONLY facts present in the candidate's resume — never invent employers, metrics, or \
@@ -225,6 +240,30 @@ FOLLOW_UP_SYSTEM = """Task: FOLLOW_UP.
 You write a concise, specific follow-up email for a job application. No clichés, no filler, \
 no fabricated details. Reference the role and company and one genuine point of fit. \
 Keep it under 150 words. Return JSON: {"subject": "...", "body": "plain text email body"}"""
+
+OUTREACH_SYSTEM = """Task: OUTREACH.
+You help a candidate reach a real person about a specific job — the fastest path to an \
+interview is a warm, specific message, not another portal application. Write three messages, \
+all grounded ONLY in facts present in the candidate's resume — never invent employers, titles, \
+metrics, skills, or mutual connections. Reference the target role and company and ONE genuine, \
+specific point of fit. No clichés, no flattery, no filler. Return JSON:
+{
+  "connection_note": "a LinkedIn connection request, 300 characters MAX, first person, one specific reason to connect",
+  "inmail_subject": "a short, specific subject line",
+  "inmail_body": "a LinkedIn InMail / cold email, 180 words MAX, first person: who you are in one line, one real point of fit for THIS role, and a soft ask for a short chat",
+  "referral_message": "a message to an existing contact at the company asking if they'd be open to referring you or a quick chat — warm, low-pressure, easy to say yes to"
+}
+Address the recipient by name only if a contact name is given; otherwise keep it natural and \
+role-appropriate. Adapt tone to the recipient type (recruiter / hiring manager / connection)."""
+
+SCREENING_ANSWER_SYSTEM = """Task: SCREENING_ANSWER.
+You help a candidate answer a job-application or screening question (e.g. "Why do you want \
+to work here?", "Describe a time you…", "What makes you a fit?"). Write ONE strong answer in \
+the first person, grounded ONLY in facts present in the candidate's resume — never invent \
+employers, metrics, or experience. Be specific and concise (~90-160 words); for behavioral \
+questions use a light STAR shape. If the question asks about something the resume does not \
+cover, briefly say what the candidate should add rather than fabricating it. Return JSON:
+{"answer": "the answer text", "tips": ["1-3 short tips for adapting it to their own voice"]}"""
 
 SEARCH_CONTEXT_SYSTEM = """Task: SEARCH_CONTEXT.
 You derive a job-board search query from a candidate's resume. Pick the single job title \
@@ -266,6 +305,31 @@ _ISRAELI_COVER_NOTE = (
 )
 
 
+# Stage-specific tone for the follow-up writer. Appended AFTER the Task tag so
+# the stub still routes on FOLLOW_UP; matched case-insensitively on the stage.
+_FOLLOW_UP_STAGE_NOTES = {
+    "after an interview": (
+        "\n\nThis is a THANK-YOU note after an interview: lead with genuine, specific "
+        "gratitude, reference one concrete moment or topic from the conversation, briefly "
+        "reaffirm fit, and close warmly. Never sound templated."
+    ),
+    "after an offer": (
+        "\n\nThis follows an offer: warm and appreciative, confirm enthusiasm or ask a "
+        "clarifying question professionally, without over-committing."
+    ),
+    "checking in": (
+        "\n\nThis is a gentle status check-in: polite, low-pressure and brief; reaffirm "
+        "interest without sounding impatient."
+    ),
+}
+
+
+def follow_up_system(stage: str) -> str:
+    """FOLLOW_UP system prompt with an optional stage-specific note appended
+    (kept after the Task tag so the stub still routes on FOLLOW_UP)."""
+    return FOLLOW_UP_SYSTEM + _FOLLOW_UP_STAGE_NOTES.get(stage.strip().lower(), "")
+
+
 def analyze_jd_system(language: str = "en") -> str:
     """ANALYZE_JD system prompt, with a Hebrew note appended when the JD is Hebrew."""
     return ANALYZE_JD_SYSTEM + (_JD_HEBREW_NOTE if language == "he" else "")
@@ -291,6 +355,14 @@ def structure_resume_user(raw_text: str) -> str:
 
 def interview_questions_user(resume_json: str, jd_json: str) -> str:
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nTARGET JOB (JSON):\n{jd_json}"
+
+
+def recruiter_screen_user(resume_json: str, jd_text: str) -> str:
+    return (
+        f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
+        f"TARGET JOB DESCRIPTION (may be empty):\n{jd_text or '(none provided)'}\n\n"
+        "Produce the recruiter-screen prep sheet."
+    )
 
 
 def interview_answer_user(resume_json: str, jd_json: str, question: str) -> str:
@@ -319,6 +391,33 @@ def follow_up_user(company: str, role: str, stage: str, extra: str) -> str:
     return (
         f"Company: {company}\nRole: {role}\nStage: {stage}\n"
         f"Context / point of fit: {extra}\n\nWrite the follow-up email."
+    )
+
+
+def outreach_user(
+    resume_json: str,
+    jd_text: str,
+    company: str,
+    job_title: str,
+    contact_name: str,
+    contact_role: str,
+) -> str:
+    return (
+        f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
+        f"TARGET ROLE: {job_title or '(read it from the job description)'}\n"
+        f"COMPANY: {company or '(read it from the job description)'}\n"
+        f"RECIPIENT NAME: {contact_name or '(unknown — do not invent one)'}\n"
+        f"RECIPIENT TYPE: {contact_role}\n\n"
+        f"JOB DESCRIPTION:\n{jd_text or '(none provided — rely on the role/company above)'}\n\n"
+        "Write the three outreach messages."
+    )
+
+
+def screening_user(resume_json: str, jd_text: str, question: str) -> str:
+    return (
+        f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
+        f"TARGET JOB DESCRIPTION (may be empty):\n{jd_text or '(none provided)'}\n\n"
+        f"APPLICATION QUESTION: {question}\n\nWrite the answer."
     )
 
 

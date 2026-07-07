@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ScanLine, Contact, Mail, ArrowUpRight, Wrench } from "lucide-react";
+import { ScanLine, Contact, Mail, Send, MessageSquareText, ArrowUpRight, Wrench } from "lucide-react";
 import { SpotlightCard } from "../components/ui";
 
 const tools = [
+  { to: "/tools/outreach", icon: Send, key: "outreach" },
+  { to: "/tools/screening", icon: MessageSquareText, key: "screening" },
   { to: "/tools/ats", icon: ScanLine, key: "ats" },
   { to: "/tools/linkedin", icon: Contact, key: "linkedin" },
   { to: "/tools/follow-up", icon: Mail, key: "followup" },

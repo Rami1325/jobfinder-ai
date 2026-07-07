@@ -8,6 +8,7 @@ import {
   Award,
   BadgeCheck,
   Bell,
+  Clock,
   FileCheck2,
   FileText,
   Layers,
@@ -20,9 +21,10 @@ import {
   Wand2,
   XCircle,
 } from "lucide-react";
-import { getJobAlert, getJobHistory, listApplications } from "../api/client";
+import { getJobAlert, getJobHistory, getStaleApplications, listApplications } from "../api/client";
 import { getKitsState, loadKits, subscribeKits } from "../state/kitsStore";
 import { useMasterResume } from "../hooks/useMasterResume";
+import { fitReason } from "../lib/fitReason";
 import { useSaveMasterResume, masterResumeLabel } from "../hooks/useSaveMasterResume";
 import { useTrackerMetrics } from "../hooks/useTrackerMetrics";
 import { resumeLanguage } from "../lib/lang";
@@ -44,6 +46,7 @@ import type {
   FactsLedger,
   JobSearchHit,
   ResumeModel,
+  StaleApplication,
 } from "../types";
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -124,6 +127,12 @@ function MatchRow({ hit }: { hit: JobSearchHit }) {
           {hit.company || "—"}
           {hit.location ? ` · ${hit.location}` : ""}
         </p>
+        {(() => {
+          const reason = fitReason(hit.top_matched, hit.top_gaps, t);
+          return reason ? (
+            <p dir="auto" className="mt-1 truncate text-xs text-ink-faint">{reason}</p>
+          ) : null;
+        })()}
       </div>
       <button
         onClick={() =>
@@ -151,6 +160,7 @@ let homeCache: {
   apps: ApplicationOut[];
   history: JobSearchHit[];
   alert: AlertSettings | null;
+  nudges: StaleApplication[];
 } | null = null;
 
 export default function HomePage() {
@@ -162,6 +172,7 @@ export default function HomePage() {
   const [apps, setApps] = useState<ApplicationOut[]>(homeCache?.apps ?? []);
   const [history, setHistory] = useState<JobSearchHit[]>(homeCache?.history ?? []);
   const [alert, setAlert] = useState<AlertSettings | null>(homeCache?.alert ?? null);
+  const [nudges, setNudges] = useState<StaleApplication[]>(homeCache?.nudges ?? []);
   const [dataLoading, setDataLoading] = useState(homeCache === null);
   const { kits } = useSyncExternalStore(subscribeKits, getKitsState);
 
@@ -169,10 +180,11 @@ export default function HomePage() {
     let alive = true;
     (async () => {
       // Best-effort in parallel — each card just hides itself if its call fails.
-      const [a, h, al] = await Promise.allSettled([
+      const [a, h, al, nu] = await Promise.allSettled([
         listApplications(),
         getJobHistory(),
         getJobAlert(),
+        getStaleApplications(),
       ]);
       if (!alive) return;
       // Merge with the prior cache so a single failed call doesn't blank a card.
@@ -180,11 +192,13 @@ export default function HomePage() {
         apps: a.status === "fulfilled" ? a.value : homeCache?.apps ?? [],
         history: h.status === "fulfilled" ? h.value.hits : homeCache?.history ?? [],
         alert: al.status === "fulfilled" ? al.value : homeCache?.alert ?? null,
+        nudges: nu.status === "fulfilled" ? nu.value : homeCache?.nudges ?? [],
       };
       homeCache = next;
       setApps(next.apps);
       setHistory(next.history);
       setAlert(next.alert);
+      setNudges(next.nudges);
       setDataLoading(false);
     })();
     loadKits();
@@ -362,6 +376,45 @@ export default function HomePage() {
         </Card>
 
         <div className="flex min-w-0 flex-col gap-4">
+          {/* Stale-application nudges: time to follow up */}
+          {nudges.length > 0 && (
+            <Card className="flex items-start gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-warn/12 text-warn">
+                <Clock size={18} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <CardTitle>{t("nudges.title")}</CardTitle>
+                <p className="mt-1 text-xs text-ink-muted">
+                  {t("nudges.body", { count: nudges.length })}
+                </p>
+                <div className="mt-2 space-y-1.5">
+                  {nudges.slice(0, 3).map((n) => (
+                    <button
+                      key={n.id}
+                      onClick={() =>
+                        nav("/tools/follow-up", {
+                          state: {
+                            company: n.company,
+                            role: n.job_title,
+                            stage: "after applying",
+                          },
+                        })
+                      }
+                      className="flex w-full items-center justify-between gap-2 rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-start text-xs transition-colors hover:border-accent/50"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-ink" dir="auto">
+                        {n.job_title || n.company || "—"}
+                      </span>
+                      <span className="shrink-0 text-ink-faint">
+                        {t("nudges.days", { count: n.days_stale })}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* Kits awaiting review */}
           <Card className="flex items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/12 text-accent-soft">

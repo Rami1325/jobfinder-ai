@@ -3,6 +3,14 @@
   "sub": "Focused, single-purpose helpers for your search.",
   "back": "All tools",
   "cards": {
+    "outreach": {
+      "title": "Outreach Studio",
+      "body": "Skip the ATS black hole — a connection note, cold email, and referral ask to reach a real person."
+    },
+    "screening": {
+      "title": "Screening answers",
+      "body": "Honest, résumé-grounded answers to application questions like \"Why us?\" or \"Describe a time…\""
+    },
     "ats": {
       "title": "ATS résumé scanner",
       "body": "Score formatting + keyword coverage and get concrete fixes before a bot rejects you."
@@ -15,6 +23,48 @@
       "title": "Follow-up email writer",
       "body": "Concise, specific follow-up emails that don't read like a template."
     }
+  },
+  "outreach": {
+    "gateFeature": "Outreach Studio",
+    "subtitle": "The fastest path to an interview is a warm message to a real person — grounded only in your real résumé.",
+    "targeting": "Outreach for {{role}} at {{company}}",
+    "jdTitle": "Job description",
+    "contactName": "Recipient name (optional)",
+    "contactNamePlaceholder": "e.g. Dana Levi",
+    "role": "Who are you reaching?",
+    "roles": {
+      "recruiter": "Recruiter",
+      "hiring manager": "Hiring manager",
+      "connection": "Existing connection"
+    },
+    "generate": "Generate outreach",
+    "honesty": "Every message uses only facts from your résumé — no invented connections or claims.",
+    "connection": "LinkedIn connection note",
+    "email": "InMail / cold email",
+    "referral": "Referral request",
+    "subject": "Subject: {{subject}}",
+    "chars": "{{count}} / 300 characters",
+    "copied": "Copied to clipboard"
+  },
+  "screening": {
+    "gateFeature": "the screening-answer helper",
+    "subtitle": "Draft an honest answer to any application or screening question — grounded only in your real résumé.",
+    "presetLabel": "Common questions",
+    "presetPlaceholder": "Pick a common question…",
+    "presets": {
+      "whyUs": "Why do you want to work here?",
+      "fit": "What makes you a good fit for this role?",
+      "challenge": "Describe a challenge you overcame.",
+      "aboutYou": "Tell me about yourself.",
+      "whyLeaving": "Why are you leaving your current role?"
+    },
+    "question": "Your question",
+    "questionPlaceholder": "Paste or type the application question…",
+    "jdTitle": "Optional: target job description",
+    "jdPlaceholder": "Paste the JD for a more tailored answer (optional)…",
+    "draft": "Draft answer",
+    "answer": "Answer",
+    "copied": "Answer copied"
   },
   "ats": {
     "gateFeature": "the ATS scanner",

@@ -6,6 +6,7 @@ import io
 import json
 import queue
 import threading
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -22,9 +23,11 @@ from app.core.cover_letter import generate_cover_letter
 from app.core.mailer import smtp_configured
 from app.core.follow_up import write_follow_up
 from app.core.free_scan import free_scan, free_scan_limiter
-from app.core.interview import answer_feedback, generate_questions, model_answer
+from app.core.interview import answer_feedback, generate_questions, model_answer, recruiter_screen
 from app.core.jd_analyzer import analyze_jd
 from app.core.job_match import fetch_job_text, match_jobs
+from app.core.outreach import generate_outreach
+from app.core.screening import answer_screening_question
 from app.core.job_search import derive_search_context, search_jobs
 from app.core import kits as kits_core
 from app.core.lang import resume_language
@@ -111,11 +114,19 @@ from app.models import (
     MasterResumeIn,
     MasterResumeList,
     MasterResumeOut,
+    OutreachRequest,
+    OutreachResult,
+    RecruiterScreenRequest,
+    RecruiterScreenResult,
     RenderRequest,
     ResumeModel,
     ResumeUploadResponse,
+    ScreeningAnswerResult,
+    ScreeningRequest,
     SearchContext,
     SearchContextRequest,
+    StaleApplication,
+    StaleApplicationList,
     TailorRequest,
     TailorResult,
     UserCreate,
@@ -236,6 +247,16 @@ def interview_feedback(body: InterviewFeedbackRequest) -> InterviewFeedbackResul
         return answer_feedback(body.resume, body.question, body.answer)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while evaluating the answer: {e}")
+
+
+@router.post("/interview/recruiter-screen", response_model=RecruiterScreenResult)
+def interview_recruiter_screen(body: RecruiterScreenRequest) -> RecruiterScreenResult:
+    """Prep sheet for the ~15-min recruiter phone screen: pitch, predictable
+    questions with grounded talking points, and honest salary-range framing."""
+    try:
+        return recruiter_screen(body.resume, body.jd_text)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while building the recruiter-screen prep: {e}")
 
 
 # --------------------------------------------------------------------------- #
@@ -701,6 +722,36 @@ def tools_follow_up(body: FollowUpRequest) -> FollowUpResult:
         raise HTTPException(502, f"LLM error while writing the follow-up email: {e}")
 
 
+@router.post("/outreach", response_model=OutreachResult)
+def outreach(body: OutreachRequest) -> OutreachResult:
+    """Outreach Studio: a LinkedIn connection note, an InMail/cold email, and a
+    referral request for one job — the direct-to-a-human path to an interview,
+    grounded only in real résumé facts."""
+    try:
+        return generate_outreach(
+            body.resume,
+            body.jd_text,
+            body.company,
+            body.job_title,
+            body.contact_name,
+            body.contact_role,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while writing outreach messages: {e}")
+
+
+@router.post("/tools/screening-answer", response_model=ScreeningAnswerResult)
+def tools_screening_answer(body: ScreeningRequest) -> ScreeningAnswerResult:
+    """Draft an honest, résumé-grounded answer to an application/screening
+    free-text question (e.g. "Why do you want to work here?")."""
+    if not body.question.strip():
+        raise HTTPException(400, "Question is empty.")
+    try:
+        return answer_screening_question(body.resume, body.jd_text, body.question)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while drafting the answer: {e}")
+
+
 # --------------------------------------------------------------------------- #
 # Master résumés (persisted, reused across Tailor / Interview / Job Match).
 # Paired he/en: one row per language, keyed by the résumé's detected language —
@@ -844,6 +895,44 @@ def list_applications(
     return [_to_out(r) for r in rows]
 
 
+@router.get("/applications/nudges", response_model=StaleApplicationList)
+def application_nudges(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> StaleApplicationList:
+    """Applications stuck in 'applied' with no status change for
+    STALE_APPLICATION_DAYS days — a nudge to follow up. Surfaced on Home."""
+    days = get_settings().stale_application_days
+    if days <= 0:
+        return StaleApplicationList()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    rows = db.execute(
+        select(Application).where(
+            Application.user_id == user.id, Application.status == "applied"
+        )
+    ).scalars().all()
+    items: list[StaleApplication] = []
+    for a in rows:
+        marker = a.status_changed_at or a.created_at
+        if marker is None:
+            continue
+        if marker.tzinfo is None:  # SQLite returns naive datetimes — treat as UTC
+            marker = marker.replace(tzinfo=timezone.utc)
+        if marker <= cutoff:
+            items.append(
+                StaleApplication(
+                    id=a.id,
+                    job_title=a.job_title,
+                    company=a.company,
+                    status=a.status,
+                    days_stale=(now - marker).days,
+                    job_url=a.job_url,
+                )
+            )
+    items.sort(key=lambda x: x.days_stale, reverse=True)
+    return StaleApplicationList(items=items)
+
+
 @router.get("/applications/{app_id}", response_model=ApplicationDetail)
 def get_application(
     app_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
@@ -888,6 +977,7 @@ def create_application(
         overall_score=body.overall_score,
         status=body.status,
         job_url=body.job_url,
+        status_changed_at=datetime.now(timezone.utc),
     )
     db.add(app)
     db.commit()
@@ -904,6 +994,8 @@ def update_application(
 ) -> ApplicationOut:
     app = _owned_application(db, app_id, user)
     if body.status is not None:
+        if body.status != app.status:
+            app.status_changed_at = datetime.now(timezone.utc)
         app.status = body.status
     if body.notes is not None:
         app.notes = body.notes

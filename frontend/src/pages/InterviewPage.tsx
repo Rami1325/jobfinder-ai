@@ -1,19 +1,29 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
-import { MessageSquareText, Sparkles, Lightbulb, ClipboardCheck } from "lucide-react";
-import { analyzeJD, interviewAnswer, interviewFeedback, interviewQuestions } from "../api/client";
+import { MessageSquareText, Sparkles, Lightbulb, ClipboardCheck, Mic, Wallet } from "lucide-react";
+import {
+  analyzeJD,
+  interviewAnswer,
+  interviewFeedback,
+  interviewQuestions,
+  recruiterScreen,
+} from "../api/client";
 import JDPaste from "../components/JDPaste";
 import ResumeGate from "../components/ResumeGate";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
+import { cn } from "../lib/cn";
 import { Badge, Button, Card, CardTitle, Skeleton } from "../components/ui";
 import type {
   InterviewFeedbackResult,
   InterviewQuestion,
   JDModel,
+  RecruiterScreenResult,
   ResumeModel,
 } from "../types";
+
+type Mode = "questions" | "recruiter";
 
 const catTone: Record<string, "accent" | "mint" | "partial" | "neutral"> = {
   behavioral: "accent",
@@ -146,9 +156,11 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
 export default function InterviewPage() {
   const { t } = useTranslation("interview");
   const { master, loading } = useMasterResume();
+  const [mode, setMode] = useState<Mode>("questions");
   const [jdText, setJdText] = useState("");
   const [jd, setJd] = useState<JDModel | null>(null);
   const [questions, setQuestions] = useState<InterviewQuestion[]>([]);
+  const [recruiter, setRecruiter] = useState<RecruiterScreenResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
 
@@ -169,6 +181,20 @@ export default function InterviewPage() {
     }
   }
 
+  async function buildRecruiter() {
+    if (!master?.resume || jdText.trim().length < 30) return;
+    setError("");
+    setRunning(true);
+    setRecruiter(null);
+    try {
+      setRecruiter(await recruiterScreen(master.resume, jdText));
+    } catch (e: any) {
+      setError(apiErrorMessage(e, t("genericError")));
+    } finally {
+      setRunning(false);
+    }
+  }
+
   if (loading) return <Skeleton className="h-48 w-full" />;
   if (!master?.resume) return <ResumeGate feature={t("gateFeature")} />;
 
@@ -181,14 +207,36 @@ export default function InterviewPage() {
         <p className="mt-1 text-sm text-ink-muted">{t("sub")}</p>
       </div>
 
+      <div className="flex flex-wrap gap-2">
+        {(["questions", "recruiter"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
+              mode === m
+                ? "border-accent/60 bg-accent/10 text-ink"
+                : "border-line text-ink-muted hover:text-ink",
+            )}
+          >
+            {t(`mode.${m}`)}
+          </button>
+        ))}
+      </div>
+
       <Card>
         <CardTitle>{t("jdTitle")}</CardTitle>
         <div className="mt-3">
           <JDPaste value={jdText} onChange={setJdText} />
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <Button loading={running} icon={<Sparkles size={16} />} disabled={jdText.trim().length < 30} onClick={generate}>
-            {t("generate")}
+          <Button
+            loading={running}
+            icon={<Sparkles size={16} />}
+            disabled={jdText.trim().length < 30}
+            onClick={mode === "questions" ? generate : buildRecruiter}
+          >
+            {mode === "questions" ? t("generate") : t("recruiter.build")}
           </Button>
           {error && <span className="text-sm text-danger">{error}</span>}
         </div>
@@ -201,15 +249,53 @@ export default function InterviewPage() {
         </div>
       )}
 
-      <AnimatePresence>
-        {questions.length > 0 && jd && !running && (
-          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-            {questions.map((q, i) => (
-              <QuestionCard key={i} q={q} resume={master.resume} jd={jd} />
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {mode === "questions" && (
+        <AnimatePresence>
+          {questions.length > 0 && jd && !running && (
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+              {questions.map((q, i) => (
+                <QuestionCard key={i} q={q} resume={master.resume} jd={jd} />
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      )}
+
+      {mode === "recruiter" && recruiter && !running && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+          {recruiter.pitch && (
+            <Card>
+              <CardTitle className="flex items-center gap-2">
+                <Mic size={16} className="text-accent-soft" /> {t("recruiter.pitch")}
+              </CardTitle>
+              <p className="mt-2 text-sm leading-relaxed text-ink" dir="auto">
+                {recruiter.pitch}
+              </p>
+            </Card>
+          )}
+          {recruiter.items.map((it, i) => (
+            <Card key={i}>
+              <p className="font-medium text-ink" dir="auto">
+                {it.question}
+              </p>
+              <p className="mt-1 text-sm text-ink-muted" dir="auto">
+                {it.talking_point}
+              </p>
+            </Card>
+          ))}
+          {recruiter.salary_note && (
+            <Card className="border-warn/30 bg-warn/5">
+              <CardTitle className="flex items-center gap-2">
+                <Wallet size={16} className="text-warn" /> {t("recruiter.salary")}
+              </CardTitle>
+              <p className="mt-2 text-sm leading-relaxed text-ink" dir="auto">
+                {recruiter.salary_note}
+              </p>
+              <p className="mt-2 text-xs text-ink-faint">{t("recruiter.salaryCaveat")}</p>
+            </Card>
+          )}
+        </motion.div>
+      )}
     </div>
   );
 }

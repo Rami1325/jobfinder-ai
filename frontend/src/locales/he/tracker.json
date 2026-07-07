@@ -50,7 +50,8 @@
   "actions": {
     "openJob": "פתיחת מודעת המשרה",
     "view": "צפייה",
-    "delete": "מחיקה"
+    "delete": "מחיקה",
+    "followUp": "פולו-אפ"
   },
   "modal": {
     "loading": "טוען…",

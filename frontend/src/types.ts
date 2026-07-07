@@ -338,6 +338,34 @@ export interface FollowUpResult {
   subject: string;
   body: string;
 }
+export interface OutreachResult {
+  connection_note: string;
+  inmail_subject: string;
+  inmail_body: string;
+  referral_message: string;
+}
+export interface ScreeningAnswerResult {
+  answer: string;
+  tips: string[];
+}
+export interface RecruiterPrepItem {
+  question: string;
+  talking_point: string;
+}
+export interface RecruiterScreenResult {
+  pitch: string;
+  items: RecruiterPrepItem[];
+  salary_note: string;
+}
+/** A stalled "applied" application worth following up on (GET /applications/nudges). */
+export interface StaleApplication {
+  id: number;
+  job_title: string;
+  company: string;
+  status: string;
+  days_stale: number;
+  job_url: string;
+}
 
 /** Friends-beta feedback (POST /feedback). */
 export interface FeedbackOut {

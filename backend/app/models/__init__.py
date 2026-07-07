@@ -439,6 +439,22 @@ class ApplicationDetail(BaseModel):
     created_at: str
 
 
+class StaleApplication(BaseModel):
+    """An 'applied' application with no status change for a while — a nudge to
+    follow up (GET /applications/nudges)."""
+
+    id: int
+    job_title: str = ""
+    company: str = ""
+    status: str = ""
+    days_stale: int = 0
+    job_url: str = ""
+
+
+class StaleApplicationList(BaseModel):
+    items: list[StaleApplication] = Field(default_factory=list)
+
+
 # --------------------------------------------------------------------------- #
 # Interview prep
 # --------------------------------------------------------------------------- #
@@ -479,6 +495,23 @@ class InterviewFeedbackResult(BaseModel):
     strengths: list[str] = Field(default_factory=list)
     improvements: list[str] = Field(default_factory=list)
     revised_answer: str = ""
+
+
+# Recruiter phone-screen prep — the first ~15-min, mostly non-technical call.
+class RecruiterScreenRequest(BaseModel):
+    resume: ResumeModel
+    jd_text: str = ""
+
+
+class RecruiterPrepItem(BaseModel):
+    question: str = ""
+    talking_point: str = ""  # grounded direction, not a full script
+
+
+class RecruiterScreenResult(BaseModel):
+    pitch: str = ""  # "walk me through your background" opener
+    items: list[RecruiterPrepItem] = Field(default_factory=list)
+    salary_note: str = ""  # range-framing guidance, never a fabricated number
 
 
 # --------------------------------------------------------------------------- #
@@ -677,3 +710,39 @@ class FollowUpRequest(BaseModel):
 class FollowUpResult(BaseModel):
     subject: str = ""
     body: str = ""
+
+
+# --------------------------------------------------------------------------- #
+# Outreach Studio — recruiter / hiring-manager / referral messages that bypass
+# the ATS. Grounded only in real résumé facts (no fabrication guard needed —
+# it's not a résumé — but the prompt enforces the same honesty rule).
+# --------------------------------------------------------------------------- #
+class OutreachRequest(BaseModel):
+    resume: ResumeModel
+    jd_text: str = ""
+    company: str = ""
+    job_title: str = ""
+    contact_name: str = ""
+    contact_role: str = "recruiter"  # recruiter | hiring manager | connection
+
+
+class OutreachResult(BaseModel):
+    connection_note: str = ""  # LinkedIn connection request, ≤300 chars
+    inmail_subject: str = ""
+    inmail_body: str = ""  # longer InMail / cold email
+    referral_message: str = ""  # ask a 1st-degree contact for a referral
+
+
+# --------------------------------------------------------------------------- #
+# Screening-question answerer — honest, résumé-grounded answers to application
+# free-text questions ("Why us?", "Describe a time…").
+# --------------------------------------------------------------------------- #
+class ScreeningRequest(BaseModel):
+    resume: ResumeModel
+    jd_text: str = ""
+    question: str = ""
+
+
+class ScreeningAnswerResult(BaseModel):
+    answer: str = ""
+    tips: list[str] = Field(default_factory=list)

@@ -201,6 +201,50 @@ check("linkedin headline non-empty", len(li.headline) > 0)
 # 12. Follow-up email
 fu = write_follow_up("Acme", "Software Engineer", "after applying", "strong Python fit")
 check("follow-up email has subject + body", len(fu.subject) > 0 and len(fu.body) > 0)
+# Stage-aware: a thank-you still routes through the stub and the note keeps the Task tag first.
+_thanks = write_follow_up("Acme", "Software Engineer", "after an interview", "great chat")
+check("thank-you follow-up has subject + body", len(_thanks.subject) > 0 and len(_thanks.body) > 0)
+check(
+    "FOLLOW_UP stage note keeps Task tag first",
+    _li_prompts.follow_up_system("after an interview").startswith("Task: FOLLOW_UP."),
+)
+
+# 12b. Outreach Studio (new LLM task): connection note + InMail + referral
+from app.core.outreach import generate_outreach  # noqa: E402
+
+_outreach = generate_outreach(
+    resume, jd_text="Backend role: Python, REST APIs.", company="Acme", job_title="Backend Engineer"
+)
+check(
+    "outreach produced all three messages",
+    len(_outreach.connection_note) > 0
+    and len(_outreach.inmail_body) > 0
+    and len(_outreach.referral_message) > 0,
+)
+check("OUTREACH prompt Task tag still first", _li_prompts.OUTREACH_SYSTEM.startswith("Task: OUTREACH."))
+
+# 12c. Screening-question answerer (new LLM task)
+from app.core.screening import answer_screening_question  # noqa: E402
+
+_screen = answer_screening_question(resume, "Python backend role.", "Why do you want this role?")
+check("screening answer non-empty", len(_screen.answer) > 0)
+check(
+    "SCREENING_ANSWER prompt Task tag still first",
+    _li_prompts.SCREENING_ANSWER_SYSTEM.startswith("Task: SCREENING_ANSWER."),
+)
+
+# 12d. Recruiter phone-screen prep (new LLM task)
+from app.core.interview import recruiter_screen  # noqa: E402
+
+_rec = recruiter_screen(resume, "Backend engineer role: Python, REST APIs.")
+check(
+    "recruiter screen has pitch + items + salary note",
+    len(_rec.pitch) > 0 and len(_rec.items) > 0 and len(_rec.salary_note) > 0,
+)
+check(
+    "RECRUITER_SCREEN prompt Task tag still first",
+    _li_prompts.RECRUITER_SCREEN_SYSTEM.startswith("Task: RECRUITER_SCREEN."),
+)
 
 # 13. Job-link fetch helpers (pure, offline): LinkedIn id parsing + login-wall guard
 from app.core.job_match import _linkedin_job_id, _looks_like_login_wall  # noqa: E402
@@ -1569,6 +1613,36 @@ with TestClient(_fastapi_app) as _tc:
     check(
         "friend can't read the admin's application by id (404)",
         _tc.get(f"/applications/{_admin_apps[0]['id']}", headers=_FRIEND_H).status_code == 404,
+    )
+
+    # Stale-application nudges (Home reminder): an "applied" app with no status
+    # change for STALE_APPLICATION_DAYS (7) days surfaces; a fresh one does not.
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+
+    _fresh_app = _tc.post(
+        "/applications",
+        json={"job_title": "Fresh", "company": "FreshCo", "status": "applied"},
+        headers=_ADMIN_H,
+    ).json()
+    _stale_app = _tc.post(
+        "/applications",
+        json={"job_title": "Stale", "company": "StaleCo", "status": "applied"},
+        headers=_ADMIN_H,
+    ).json()
+    _nudge_db = SessionLocal()
+    _stale_row = _nudge_db.get(Application, _stale_app["id"])
+    _stale_row.status_changed_at = _dt.now(_tz.utc) - _td(days=10)
+    _nudge_db.commit()
+    _nudge_db.close()
+    _nudges = _tc.get("/applications/nudges", headers=_ADMIN_H).json()["items"]
+    check(
+        "stale applied app surfaces as a nudge with days_stale >= 7",
+        any(n["id"] == _stale_app["id"] and n["days_stale"] >= 7 for n in _nudges),
+        str(_nudges)[:200],
+    )
+    check(
+        "fresh applied app is not a nudge",
+        all(n["id"] != _fresh_app["id"] for n in _nudges),
     )
 
     # Daily caps (DAILY_TAILOR_CAP=2 at the top of this file; stub LLM = offline).

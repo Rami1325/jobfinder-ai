@@ -74,6 +74,9 @@ class Application(Base):
     job_url: Mapped[str] = mapped_column(String(1000), default="")
     interviewed: Mapped[bool] = mapped_column(Boolean, default=False)
     excitement: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unrated, 1-5 stars
+    # When the status last changed — powers stale-application nudges. Nullable
+    # for the ADD-COLUMN shim; NULL rows fall back to created_at.
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

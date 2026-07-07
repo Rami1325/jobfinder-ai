@@ -52,6 +52,7 @@ import {
 } from "../state/kitsStore";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
+import { fitReason } from "../lib/fitReason";
 import { resumeLanguage } from "../lib/lang";
 import { onboardingRole } from "../lib/onboarding";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
@@ -381,25 +382,45 @@ function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStat
             )}
             <WhatsAppShare title={m.title} company={m.company} url={m.url} />
           </div>
+          {(() => {
+            const reason = fitReason(m.top_matched, m.top_gaps, t);
+            return reason ? (
+              <p dir="auto" className="mt-2 text-xs text-ink-faint">{reason}</p>
+            ) : null;
+          })()}
           <KeywordChips matched={m.top_matched} gaps={m.top_gaps} />
         </div>
       </div>
-      <Button
-        variant="secondary"
-        icon={<ArrowRight size={15} className="rtl:-scale-x-100" />}
-        onClick={() =>
-          nav("/app", {
-            state: {
-              jdText: m.jd_text,
-              jobUrl: m.url || undefined,
-              jobTitle: m.title,
-              company: m.company,
-            },
-          })
-        }
-      >
-        {t("card.tailorToThis")}
-      </Button>
+      <div className="flex shrink-0 flex-col gap-2">
+        <Button
+          variant="secondary"
+          icon={<ArrowRight size={15} className="rtl:-scale-x-100" />}
+          onClick={() =>
+            nav("/app", {
+              state: {
+                jdText: m.jd_text,
+                jobUrl: m.url || undefined,
+                jobTitle: m.title,
+                company: m.company,
+              },
+            })
+          }
+        >
+          {t("card.tailorToThis")}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Send size={14} className="rtl:-scale-x-100" />}
+          onClick={() =>
+            nav("/tools/outreach", {
+              state: { jdText: m.jd_text, company: m.company, jobTitle: m.title },
+            })
+          }
+        >
+          {t("card.outreach")}
+        </Button>
+      </div>
     </Card>
   );
 }
@@ -442,6 +463,12 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
             )}
             <WhatsAppShare title={hit.title} company={hit.company} url={hit.url} />
           </div>
+          {(() => {
+            const reason = fitReason(hit.top_matched, hit.top_gaps, t);
+            return reason ? (
+              <p dir="auto" className="mt-2 text-xs text-ink-faint">{reason}</p>
+            ) : null;
+          })()}
           <KeywordChips matched={hit.top_matched} gaps={hit.top_gaps} />
         </div>
       </div>
@@ -463,6 +490,17 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
         >
           {t("card.tailor")}
         </Button>
+        <button
+          onClick={() =>
+            nav("/tools/outreach", {
+              state: { jdText: hit.jd_text, company: hit.company, jobTitle: hit.title },
+            })
+          }
+          title={t("card.outreach")}
+          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft md:min-h-0 md:min-w-0"
+        >
+          <Send size={14} className="rtl:-scale-x-100" />
+        </button>
         <button
           onClick={() => onDelete(hit.id)}
           title={t("card.removeFromHistory")}

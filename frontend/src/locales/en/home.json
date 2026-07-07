@@ -52,9 +52,20 @@
     "off": "Off — turn it on to get new roles emailed daily.",
     "manage": "Manage"
   },
+  "nudges": {
+    "title": "Time to follow up",
+    "body_one": "{{count}} application has gone quiet — a nudge could restart it.",
+    "body_other": "{{count}} applications have gone quiet — a nudge could restart them.",
+    "days_one": "{{count}} day",
+    "days_other": "{{count}} days"
+  },
   "trust": {
     "guard": "Every résumé fact-checked against your original",
     "ats": "ATS-safe DOCX & PDF exports",
     "private": "Nothing sold, nothing shared"
+  },
+  "fit": {
+    "strongOn": "Strong on {{skills}}",
+    "gap": "gap: {{skills}}"
   }
 }

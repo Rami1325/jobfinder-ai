@@ -48,7 +48,8 @@
   "actions": {
     "openJob": "Open job posting",
     "view": "View",
-    "delete": "Delete"
+    "delete": "Delete",
+    "followUp": "Follow up"
   },
   "modal": {
     "loading": "Loading…",

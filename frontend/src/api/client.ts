@@ -23,9 +23,13 @@ import type {
   KitProcessResult,
   LinkedInResult,
   MasterResume,
+  OutreachResult,
+  RecruiterScreenResult,
   ResumeModel,
   ResumeUploadResponse,
+  ScreeningAnswerResult,
   SearchContext,
+  StaleApplication,
   TailorResult,
 } from "../types";
 
@@ -134,6 +138,17 @@ export async function interviewFeedback(
     resume,
     question,
     answer,
+  });
+  return data;
+}
+
+export async function recruiterScreen(
+  resume: ResumeModel,
+  jdText: string,
+): Promise<RecruiterScreenResult> {
+  const { data } = await api.post<RecruiterScreenResult>("/interview/recruiter-screen", {
+    resume,
+    jd_text: jdText,
   });
   return data;
 }
@@ -377,6 +392,27 @@ export async function followUp(payload: {
   return data;
 }
 
+export async function outreach(payload: {
+  resume: ResumeModel;
+  jd_text?: string;
+  company?: string;
+  job_title?: string;
+  contact_name?: string;
+  contact_role?: string;
+}): Promise<OutreachResult> {
+  const { data } = await api.post<OutreachResult>("/outreach", payload);
+  return data;
+}
+
+export async function screeningAnswer(payload: {
+  resume: ResumeModel;
+  jd_text?: string;
+  question: string;
+}): Promise<ScreeningAnswerResult> {
+  const { data } = await api.post<ScreeningAnswerResult>("/tools/screening-answer", payload);
+  return data;
+}
+
 /** Most recently updated master, or the `lang` one ("en"/"he") when asked. */
 export async function getMasterResume(lang?: "en" | "he"): Promise<MasterResume | null> {
   const { data } = await api.get<MasterResume | null>("/profile/resume", {
@@ -403,6 +439,11 @@ export async function saveMasterResume(payload: {
 export async function listApplications(): Promise<ApplicationOut[]> {
   const { data } = await api.get<ApplicationOut[]>("/applications");
   return data;
+}
+
+export async function getStaleApplications(): Promise<StaleApplication[]> {
+  const { data } = await api.get<{ items: StaleApplication[] }>("/applications/nudges");
+  return data.items;
 }
 
 export async function getApplication(id: number): Promise<ApplicationDetail> {
