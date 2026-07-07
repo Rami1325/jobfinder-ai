@@ -14,7 +14,16 @@ export default function Stepper({ steps, current }: StepperProps) {
         const done = i < current;
         const active = i === current;
         return (
-          <li key={label} className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
+          <li
+            key={label}
+            className={cn(
+              // On mobile only the active step shows its label, so only it
+              // should flex — inactive steps collapse to their circle instead
+              // of reserving an equal third and starving the active label.
+              "flex min-w-0 items-center gap-1.5 sm:flex-1 sm:gap-2",
+              active && "flex-1",
+            )}
+          >
             <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
               <span
                 className={cn(

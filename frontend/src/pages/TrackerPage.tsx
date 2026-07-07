@@ -255,7 +255,7 @@ export default function TrackerPage() {
                     </span>
                     <div className="min-w-0">
                       <div className="text-2xl font-bold leading-none tabular-nums text-ink">{tile.value}</div>
-                      <div className="mt-1 truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
+                      <div className="mt-1 truncate text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-muted sm:tracking-[0.12em]">
                         {tile.label}
                       </div>
                     </div>
@@ -398,11 +398,14 @@ export default function TrackerPage() {
                             )}
                           </div>
 
-                          <div className="mt-3 flex items-center gap-1.5">
+                          {/* Status select gets its own full-width row so the
+                              option text is never clipped in narrow columns;
+                              the actions sit below as an even icon bar. */}
+                          <div className="mt-3 space-y-2">
                             <select
                               value={a.status}
                               onChange={(e) => changeStatus(a.id, e.target.value)}
-                              className="min-w-0 flex-1 cursor-pointer rounded-lg border border-line bg-bg-soft px-2 py-1.5 text-xs text-ink transition-colors hover:border-accent/40 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                              className="w-full cursor-pointer rounded-lg border border-line bg-bg-soft px-2.5 py-1.5 text-xs text-ink transition-colors hover:border-accent/40 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/30"
                             >
                               {STATUSES.map((s) => (
                                 <option key={s} value={s}>
@@ -410,31 +413,36 @@ export default function TrackerPage() {
                                 </option>
                               ))}
                             </select>
-                            {a.job_url && (
-                              <a
-                                href={a.job_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={t("actions.openJob")}
-                                className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-accent/50 hover:text-accent md:min-h-0 md:min-w-0"
+                            <div className="flex items-center gap-1.5">
+                              {a.job_url && (
+                                <a
+                                  href={a.job_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={t("actions.openJob")}
+                                  aria-label={t("actions.openJob")}
+                                  className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-accent/50 hover:text-accent"
+                                >
+                                  <ExternalLink size={15} />
+                                </a>
+                              )}
+                              <button
+                                onClick={() => view(a.id)}
+                                title={t("actions.view")}
+                                aria-label={t("actions.view")}
+                                className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-accent/50 hover:text-ink"
                               >
-                                <ExternalLink size={15} />
-                              </a>
-                            )}
-                            <button
-                              onClick={() => view(a.id)}
-                              title={t("actions.view")}
-                              className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-accent/50 hover:text-ink md:min-h-0 md:min-w-0"
-                            >
-                              <Eye size={15} />
-                            </button>
-                            <button
-                              onClick={() => remove(a.id)}
-                              title={t("actions.delete")}
-                              className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-1.5 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
-                            >
-                              <Trash2 size={15} />
-                            </button>
+                                <Eye size={15} />
+                              </button>
+                              <button
+                                onClick={() => remove(a.id)}
+                                title={t("actions.delete")}
+                                aria-label={t("actions.delete")}
+                                className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-danger/50 hover:text-danger"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
                           </div>
                         </motion.div>
                       );

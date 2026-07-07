@@ -308,7 +308,7 @@ export default function HomePage() {
                         to={tile.value}
                         className="block text-2xl font-bold leading-none tabular-nums text-ink"
                       />
-                      <div className="mt-1 truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
+                      <div className="mt-1 truncate text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-muted sm:tracking-[0.12em]">
                         {tile.label}
                       </div>
                     </div>
@@ -336,7 +336,7 @@ export default function HomePage() {
 
       {/* Recent matches + side column */}
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <Card>
+        <Card className="min-w-0">
           <div className="flex items-center justify-between">
             <CardTitle>{t("recent.title")}</CardTitle>
             <Link to="/jobs" className="text-xs font-semibold text-accent-soft hover:underline">
@@ -358,7 +358,7 @@ export default function HomePage() {
           </div>
         </Card>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4">
           {/* Kits awaiting review */}
           <Card className="flex items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/12 text-accent-soft">
