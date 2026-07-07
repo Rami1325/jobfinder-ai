@@ -74,10 +74,16 @@ function Stars({ value, onRate }: { value: number; onRate: (n: number) => void }
   );
 }
 
+// Module-level cache: the board's applications survive tab switches so revisits
+// render instantly instead of flashing the metrics skeleton. null = never loaded.
+let appsCache: ApplicationOut[] | null = null;
+
 export default function TrackerPage() {
   const { t } = useTranslation("tracker");
-  const [apps, setApps] = useState<ApplicationOut[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [apps, setApps] = useState<ApplicationOut[]>(appsCache ?? []);
+  // Only the first load shows the skeleton; later visits render the cache and
+  // refresh in the background (no flicker when switching tabs).
+  const [loading, setLoading] = useState(appsCache === null);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -88,9 +94,13 @@ export default function TrackerPage() {
   const toast = useToast();
 
   async function refresh() {
-    setLoading(true);
+    // No setLoading(true) here: on revisits the cache is already showing, so a
+    // background refresh must not re-flash the skeleton.
     try {
-      setApps(await listApplications());
+      const next = await listApplications();
+      appsCache = next;
+      setApps(next);
+      setError("");
     } catch {
       setError(t("loadError"));
     } finally {
@@ -102,6 +112,12 @@ export default function TrackerPage() {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep the cache in sync with optimistic mutations (status/notes/stars/delete)
+  // so returning to the board shows the latest state.
+  useEffect(() => {
+    if (!loading) appsCache = apps;
+  }, [apps, loading]);
 
   const metrics = useTrackerMetrics(apps);
 

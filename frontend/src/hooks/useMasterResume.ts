@@ -3,34 +3,61 @@ import { getMasterResume, listMasterResumes } from "../api/client";
 import { resumeLanguage } from "../lib/lang";
 import type { MasterResume } from "../types";
 
+// Module-level cache so navigating between pages that need the master résumé
+// (Home, Jobs, Interview) doesn't re-fetch and flash a skeleton on every visit.
+// Stale-while-revalidate: mounts after the first return the cache instantly and
+// refresh in the background. `null` = never loaded yet.
+let cache: MasterResume[] | null = null;
+
 /** Loads the persisted master résumés once (paired he/en — at most one per
  * language, newest first). `master` is the most recently updated one, which is
  * all Interview / Tools need; Jobs also shows the full pair via `masters`.
  * `setMaster` upserts a freshly uploaded résumé into its language slot without
  * a reload. */
 export function useMasterResume() {
-  const [masters, setMasters] = useState<MasterResume[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [masters, setMasters] = useState<MasterResume[]>(cache ?? []);
+  // Only the first-ever load shows a skeleton; later mounts start from cache.
+  const [loading, setLoading] = useState(cache === null);
+
   useEffect(() => {
+    let alive = true;
     (async () => {
       try {
-        setMasters(await listMasterResumes());
+        const next = await listMasterResumes();
+        if (!alive) return;
+        cache = next;
+        setMasters(next);
       } catch {
         // Older backend without /profile/resumes — fall back to the single master.
         try {
           const m = await getMasterResume();
-          setMasters(m ? [m] : []);
+          if (!alive) return;
+          cache = m ? [m] : [];
+          setMasters(cache);
         } catch {
-          setMasters([]);
+          if (!alive) return;
+          if (cache === null) setMasters([]); // keep any prior cache on transient errors
         }
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
+    return () => {
+      alive = false;
+    };
   }, []);
+
   const setMaster = useCallback((m: MasterResume) => {
     const lang = m.language ?? resumeLanguage(m.resume);
-    setMasters((prev) => [{ ...m, language: lang }, ...prev.filter((p) => (p.language ?? resumeLanguage(p.resume)) !== lang)]);
+    setMasters((prev) => {
+      const next = [
+        { ...m, language: lang },
+        ...prev.filter((p) => (p.language ?? resumeLanguage(p.resume)) !== lang),
+      ];
+      cache = next; // keep the shared cache in sync with in-place upserts
+      return next;
+    });
   }, []);
+
   return { master: masters[0] ?? null, masters, loading, setMaster };
 }

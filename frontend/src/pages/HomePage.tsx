@@ -144,16 +144,25 @@ function MatchRow({ hit }: { hit: JobSearchHit }) {
   );
 }
 
+// Module-level cache so revisiting Home renders the pipeline + recent matches
+// from the last load instead of flashing skeletons; it refreshes in the
+// background. null = never loaded.
+let homeCache: {
+  apps: ApplicationOut[];
+  history: JobSearchHit[];
+  alert: AlertSettings | null;
+} | null = null;
+
 export default function HomePage() {
   const { t } = useTranslation("home");
   const nav = useNavigate();
   const { master, masters, loading: masterLoading } = useMasterResume();
   const persistMaster = useSaveMasterResume();
 
-  const [apps, setApps] = useState<ApplicationOut[]>([]);
-  const [history, setHistory] = useState<JobSearchHit[]>([]);
-  const [alert, setAlert] = useState<AlertSettings | null>(null);
-  const [dataLoading, setDataLoading] = useState(true);
+  const [apps, setApps] = useState<ApplicationOut[]>(homeCache?.apps ?? []);
+  const [history, setHistory] = useState<JobSearchHit[]>(homeCache?.history ?? []);
+  const [alert, setAlert] = useState<AlertSettings | null>(homeCache?.alert ?? null);
+  const [dataLoading, setDataLoading] = useState(homeCache === null);
   const { kits } = useSyncExternalStore(subscribeKits, getKitsState);
 
   useEffect(() => {
@@ -166,9 +175,16 @@ export default function HomePage() {
         getJobAlert(),
       ]);
       if (!alive) return;
-      if (a.status === "fulfilled") setApps(a.value);
-      if (h.status === "fulfilled") setHistory(h.value.hits);
-      if (al.status === "fulfilled") setAlert(al.value);
+      // Merge with the prior cache so a single failed call doesn't blank a card.
+      const next = {
+        apps: a.status === "fulfilled" ? a.value : homeCache?.apps ?? [],
+        history: h.status === "fulfilled" ? h.value.hits : homeCache?.history ?? [],
+        alert: al.status === "fulfilled" ? al.value : homeCache?.alert ?? null,
+      };
+      homeCache = next;
+      setApps(next.apps);
+      setHistory(next.history);
+      setAlert(next.alert);
       setDataLoading(false);
     })();
     loadKits();
