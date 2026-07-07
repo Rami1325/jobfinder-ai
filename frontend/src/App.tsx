@@ -14,10 +14,12 @@ import AtsToolPage from "./pages/tools/AtsToolPage";
 import LinkedInToolPage from "./pages/tools/LinkedInToolPage";
 import FollowUpToolPage from "./pages/tools/FollowUpToolPage";
 import AccessGate from "./components/AccessGate";
+import ScrollToTop from "./components/ScrollToTop";
 
 export default function App() {
   return (
     <>
+      <ScrollToTop />
       <AccessGate />
       <Routes>
       <Route element={<MarketingLayout />}>

@@ -85,6 +85,14 @@
 
 * { box-sizing: border-box; }
 
+/* Always reserve the vertical scrollbar so navigating between a page that
+   scrolls and one that doesn't never shifts the centered content sideways (the
+   custom scrollbar is 11px, so the jump was very visible). `scrollbar-gutter`
+   doesn't reserve on the root here, so force it with overflow-y: scroll — the
+   custom track is transparent, so the reserved strip is invisible when there's
+   nothing to scroll. Also keeps modals (which lock body scroll) from shifting. */
+html { overflow-y: scroll; }
+
 /* Hebrew UI: Heebo carries both Hebrew and Latin so mixed text stays coherent.
    Loaded via @fontsource-variable/heebo in main.tsx. */
 html[lang="he"] body {
