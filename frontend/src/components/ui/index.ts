@@ -4,6 +4,8 @@ export { default as Badge } from "./Badge";
 export { default as Stat } from "./Stat";
 export { default as CountUp } from "./CountUp";
 export { default as SpotlightCard } from "./SpotlightCard";
+export { default as TiltedCard } from "./TiltedCard";
+export { default as BorderGlow } from "./BorderGlow";
 export { default as ProgressRing } from "./ProgressRing";
 export { default as Stepper } from "./Stepper";
 export { default as Skeleton } from "./Skeleton";

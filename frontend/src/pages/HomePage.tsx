@@ -38,7 +38,7 @@ import {
   ProgressRing,
   SectionLabel,
   Skeleton,
-  SpotlightCard,
+  TiltedCard,
 } from "../components/ui";
 import type {
   AlertSettings,
@@ -80,9 +80,9 @@ function QuickAction({
       to={to}
       className="block rounded-xl2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
     >
-      <SpotlightCard className="flex h-full flex-col p-5">
+      <TiltedCard caption={title} className="flex h-full flex-col p-5">
         <div className="flex items-center justify-between">
-          <span className="grid h-11 w-11 place-items-center rounded-xl border border-line bg-panel-2 text-accent-soft transition-colors group-hover:border-accent/40">
+          <span className="grid h-11 w-11 place-items-center rounded-xl border border-line bg-panel-2 text-accent-soft transition-all duration-300 ease-out will-change-transform group-hover:border-accent/40 group-hover:[transform:translate3d(0,-7px,90px)] group-hover:shadow-[0_30px_46px_-14px_rgba(0,0,0,0.9)]">
             <Icon size={19} />
           </span>
           <ArrowUpRight
@@ -92,7 +92,7 @@ function QuickAction({
         </div>
         <h3 className="mt-4 text-base font-semibold text-ink">{title}</h3>
         <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">{body}</p>
-      </SpotlightCard>
+      </TiltedCard>
     </Link>
   );
 }

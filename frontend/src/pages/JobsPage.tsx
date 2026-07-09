@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
@@ -56,7 +56,7 @@ import { fitReason } from "../lib/fitReason";
 import { resumeLanguage } from "../lib/lang";
 import { onboardingRole } from "../lib/onboarding";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
-import { Badge, Button, Card, CardTitle, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
+import { Badge, BorderGlow, Button, Card, CardTitle, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
 import type {
   AlertSettings,
   ApplicationOut,
@@ -342,11 +342,21 @@ function KeywordChips({ matched, gaps }: { matched?: string[]; gaps: string[] })
   );
 }
 
+/** Job-result card surface: a cursor-reactive glowing border (ReactBits) around
+ * the same row layout the results used before. */
+function JobResultCard({ children }: { children: ReactNode }) {
+  return (
+    <BorderGlow innerClassName="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+      {children}
+    </BorderGlow>
+  );
+}
+
 function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStatus?: string }) {
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
   return (
-    <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
+    <JobResultCard>
       <ProgressRing value={m.overall} size={92} stroke={8} label={t("card.fit")} />
       <div className="flex min-w-0 flex-1 items-start gap-3">
         <CompanyAvatar company={m.company} url={m.url || undefined} logoUrl={m.logo_url} />
@@ -421,7 +431,7 @@ function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStat
           {t("card.outreach")}
         </Button>
       </div>
-    </Card>
+    </JobResultCard>
   );
 }
 
@@ -429,7 +439,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
   return (
-    <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
+    <JobResultCard>
       <ProgressRing value={hit.overall} size={64} stroke={6} label={t("card.fit")} />
       <div className="flex min-w-0 flex-1 items-start gap-3">
         <CompanyAvatar company={hit.company} url={hit.url || undefined} logoUrl={hit.logo_url} />
@@ -509,7 +519,7 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
           <Trash2 size={14} />
         </button>
       </div>
-    </Card>
+    </JobResultCard>
   );
 }
 
@@ -676,7 +686,7 @@ function KitRow({
   // backend re-enforces all of this; the button just doesn't offer dead ends.
   const canSend = kit.status === "approved" && kit.source === "comeet" && kit.flag_count === 0;
   return (
-    <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">
+    <JobResultCard>
       <ProgressRing
         value={processed ? kit.score_after : kit.search_overall}
         size={64}
@@ -792,7 +802,7 @@ function KitRow({
           <Trash2 size={14} />
         </button>
       </div>
-    </Card>
+    </JobResultCard>
   );
 }
 

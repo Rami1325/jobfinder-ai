@@ -28,21 +28,24 @@ export default function SpotlightCard({
       ref={ref}
       onMouseMove={onMove}
       className={cn(
-        "group relative overflow-hidden rounded-xl2 border border-line bg-gradient-to-b from-panel to-panel/70 shadow-card",
-        "transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-glow",
+        // No `overflow-hidden`: it forces `transform-style: flat`, which would
+        // collapse any translateZ pop of the children (see TiltedCard). The
+        // glow self-clips via its own border-radius instead.
+        "group relative rounded-xl2 border border-line bg-gradient-to-b from-panel to-panel/70 shadow-card [transform-style:preserve-3d]",
+        "transition-all duration-200 hover:border-accent/50 hover:shadow-glow",
         className,
       )}
       {...rest}
     >
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+        className="pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 transition-opacity duration-300 group-hover:opacity-100"
         style={{
           background:
             "radial-gradient(220px circle at var(--mx, 50%) var(--my, 0%), rgb(var(--accent) / 0.16), transparent 60%)",
         }}
       />
-      <div className="relative">{children}</div>
+      <div className="relative [transform-style:preserve-3d]">{children}</div>
     </div>
   );
 }

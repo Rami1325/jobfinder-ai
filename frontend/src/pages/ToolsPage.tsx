@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ScanLine, Contact, Mail, Send, MessageSquareText, ArrowUpRight, Wrench } from "lucide-react";
-import { SpotlightCard } from "../components/ui";
+import { TiltedCard } from "../components/ui";
 
 const tools = [
   { to: "/tools/outreach", icon: Send, key: "outreach" },
@@ -28,16 +28,16 @@ export default function ToolsPage() {
             to={tool.to}
             className="block rounded-xl2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
           >
-            <SpotlightCard className="flex h-full flex-col p-6">
+            <TiltedCard caption={t(`cards.${tool.key}.title`)} className="flex h-full flex-col p-6">
               <div className="mb-4 flex items-center justify-between">
-                <span className="grid h-10 w-10 place-items-center rounded-xl border border-line bg-panel-2 text-accent-soft transition-colors group-hover:border-accent/40">
+                <span className="grid h-10 w-10 place-items-center rounded-xl border border-line bg-panel-2 text-accent-soft transition-all duration-300 ease-out will-change-transform group-hover:border-accent/40 group-hover:[transform:translate3d(0,-7px,90px)] group-hover:shadow-[0_30px_46px_-14px_rgba(0,0,0,0.9)]">
                   <tool.icon size={18} />
                 </span>
                 <ArrowUpRight size={18} className="text-ink-faint transition-colors group-hover:text-accent-soft rtl:-scale-x-100" />
               </div>
               <h3 className="text-lg font-semibold text-ink">{t(`cards.${tool.key}.title`)}</h3>
               <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t(`cards.${tool.key}.body`)}</p>
-            </SpotlightCard>
+            </TiltedCard>
           </Link>
         ))}
       </div>
