@@ -1,6 +1,8 @@
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useReducedMotion } from "framer-motion";
 import { cn } from "../../lib/cn";
 import Spinner from "./Spinner";
+import SparkBurst from "./ClickSpark";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
@@ -27,16 +29,44 @@ const sizes: Record<Size, string> = {
   lg: "px-6 py-3 text-[15px] rounded-xl gap-2",
 };
 
+type Burst = { id: number; x: number; y: number };
+
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = "primary", size = "md", loading, icon, className, children, disabled, ...rest },
+  {
+    variant = "primary",
+    size = "md",
+    loading,
+    icon,
+    className,
+    children,
+    disabled,
+    onPointerDown,
+    ...rest
+  },
   ref,
 ) {
+  const reduce = useReducedMotion();
+  const [bursts, setBursts] = useState<Burst[]>([]);
+  const burstId = useRef(0);
+
+  // Micro-feedback on primary actions only: a small radial spark burst at the
+  // click point. Feedback, not confetti — pointer clicks, enabled state only.
+  function handlePointerDown(e: React.PointerEvent<HTMLButtonElement>) {
+    onPointerDown?.(e);
+    if (reduce || variant !== "primary" || disabled || loading) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const id = ++burstId.current;
+    setBursts((b) => [...b, { id, x: e.clientX - r.left, y: e.clientY - r.top }]);
+    window.setTimeout(() => setBursts((b) => b.filter((s) => s.id !== id)), 450);
+  }
+
   return (
     <button
       ref={ref}
       disabled={disabled || loading}
+      onPointerDown={handlePointerDown}
       className={cn(
-        "inline-flex items-center justify-center font-semibold transition-all duration-150 select-none",
+        "relative inline-flex items-center justify-center font-semibold transition-all duration-150 select-none",
         // Lift on hover, press back down on click (enabled buttons only).
         "will-change-transform enabled:hover:-translate-y-0.5 enabled:active:translate-y-0",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
@@ -49,6 +79,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     >
       {loading ? <Spinner /> : icon}
       {children}
+      {bursts.map((b) => (
+        <SparkBurst key={b.id} x={b.x} y={b.y} color="rgb(255 255 255 / 0.9)" />
+      ))}
     </button>
   );
 });

@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import { MotionConfig } from "framer-motion";
 import App from "./App";
 import { ToastProvider } from "./components/ui";
 import "./i18n"; // side-effect: initializes i18next + <html lang dir> sync
@@ -23,9 +24,14 @@ if (sentryDsn) {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <ToastProvider>
-        <App />
-      </ToastProvider>
+      {/* Make every framer-motion animation respect prefers-reduced-motion
+          (transform/layout animations become instant; opacity still eases).
+          The CSS killswitch in styles.css covers CSS animations; this covers JS. */}
+      <MotionConfig reducedMotion="user">
+        <ToastProvider>
+          <App />
+        </ToastProvider>
+      </MotionConfig>
     </BrowserRouter>
   </React.StrictMode>,
 );

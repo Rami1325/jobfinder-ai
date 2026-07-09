@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Link, NavLink, Outlet } from "react-router-dom";
-import { AnimatePresence, motion } from "framer-motion";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import {
   Home,
   FileText,
@@ -59,7 +59,7 @@ function NavItem({
         cn(
           "relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
           isActive
-            ? "bg-panel-2 font-semibold text-ink"
+            ? "font-semibold text-ink"
             : "text-ink-muted hover:bg-panel-2/60 hover:text-ink",
         )
       }
@@ -67,14 +67,20 @@ function NavItem({
       {({ isActive }) => (
         <>
           {isActive && (
-            <span
+            // Shared-layout pill: slides between nav entries on route change.
+            // The LayoutGroup id in SidebarBody keeps rail/drawer copies apart.
+            <motion.span
+              layoutId="nav-pill"
               aria-hidden
-              className="absolute inset-y-2 start-1 w-1 rounded-full bg-accent"
-            />
+              transition={{ type: "spring", stiffness: 550, damping: 45 }}
+              className="absolute inset-0 rounded-lg bg-panel-2"
+            >
+              <span className="absolute inset-y-2 start-1 w-1 rounded-full bg-accent" />
+            </motion.span>
           )}
-          <Icon size={17} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{label}</span>
-          {trailing}
+          <Icon size={17} className="relative shrink-0" />
+          <span className="relative min-w-0 flex-1 truncate">{label}</span>
+          {trailing && <span className="relative shrink-0">{trailing}</span>}
         </>
       )}
     </NavLink>
@@ -82,11 +88,16 @@ function NavItem({
 }
 
 /** The sidebar body — shared verbatim between the desktop rail and the mobile
- * drawer, so there is one source of truth for navigation. */
+ * drawer, so there is one source of truth for navigation. `group` namespaces
+ * the sliding nav-pill layoutId: both copies are mounted at once on mobile
+ * (the rail is display:none, not unmounted), and duplicate layoutIds would
+ * make the pill jump between them. */
 function SidebarBody({
+  group,
   searching,
   onNavigate,
 }: {
+  group: string;
   searching: boolean;
   onNavigate?: () => void;
 }) {
@@ -100,6 +111,7 @@ function SidebarBody({
     />
   ) : undefined;
   return (
+    <LayoutGroup id={group}>
     <div className="flex h-full flex-col">
       <Link to="/home" onClick={onNavigate} aria-label={t("appName")} className="mb-6 px-2">
         <Logo size={30} />
@@ -143,11 +155,13 @@ function SidebarBody({
         <ThemeToggle />
       </div>
     </div>
+    </LayoutGroup>
   );
 }
 
 export default function AppLayout() {
   const { t } = useTranslation();
+  const { pathname } = useLocation();
   const { searching } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
   const [onboardOpen, setOnboardOpen] = useState(() => !isOnboarded());
   const [menuOpen, setMenuOpen] = useState(false);
@@ -171,7 +185,7 @@ export default function AppLayout() {
     <div className="min-h-dvh bg-bg text-ink lg:flex">
       {/* Desktop rail */}
       <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 border-e border-line/70 bg-bg-soft/60 px-3 py-5 lg:block">
-        <SidebarBody searching={searching} />
+        <SidebarBody group="rail" searching={searching} />
       </aside>
 
       {/* Mobile top bar */}
@@ -227,16 +241,25 @@ export default function AppLayout() {
               >
                 <X size={18} />
               </button>
-              <SidebarBody searching={searching} onNavigate={() => setMenuOpen(false)} />
+              <SidebarBody group="drawer" searching={searching} onNavigate={() => setMenuOpen(false)} />
             </motion.aside>
           </>
         )}
       </AnimatePresence>
 
-      {/* Content */}
+      {/* Content — remounts with a fast fade+rise per route. Enter-only by
+          design (no exit choreography): product register, 160 ms, never makes
+          the user wait. */}
       <div className="min-w-0 flex-1">
         <main className="mx-auto max-w-6xl px-4 py-8 lg:px-8">
-          <Outlet />
+          <motion.div
+            key={pathname}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <Outlet />
+          </motion.div>
         </main>
       </div>
 

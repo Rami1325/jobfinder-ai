@@ -52,10 +52,19 @@ export default {
           "linear-gradient(135deg, rgb(var(--accent)) 0%, rgb(var(--mint)) 100%)",
         "hero-glow": "var(--hero-glow)",
       },
+      transitionTimingFunction: {
+        // The house easing — every ease-out in the app is this curve.
+        "out-quint": "cubic-bezier(.22,1,.36,1)",
+      },
       keyframes: {
         "fade-up": {
           "0%": { opacity: "0", transform: "translateY(12px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        // One radial spark line of a click burst; --a is set per-spark inline.
+        spark: {
+          "0%": { transform: "rotate(var(--a)) translateY(-6px) scaleY(1)", opacity: "1" },
+          "100%": { transform: "rotate(var(--a)) translateY(-22px) scaleY(0.35)", opacity: "0" },
         },
         "pulse-glow": {
           "0%,100%": { opacity: "0.5" },
@@ -71,6 +80,7 @@ export default {
       },
       animation: {
         "fade-up": "fade-up .5s cubic-bezier(.22,1,.36,1) both",
+        spark: "spark .4s cubic-bezier(.22,1,.36,1) forwards",
         "pulse-glow": "pulse-glow 3s ease-in-out infinite",
         float: "float 6s ease-in-out infinite",
         shimmer: "shimmer 1.6s infinite",
