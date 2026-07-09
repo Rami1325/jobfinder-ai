@@ -507,14 +507,14 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
             })
           }
           title={t("card.outreach")}
-          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft md:min-h-0 md:min-w-0"
+          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:text-accent-soft md:min-h-0 md:min-w-0"
         >
           <Send size={14} className="rtl:-scale-x-100" />
         </button>
         <button
           onClick={() => onDelete(hit.id)}
           title={t("card.removeFromHistory")}
-          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
+          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-all hover:-translate-y-0.5 hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
         >
           <Trash2 size={14} />
         </button>
@@ -797,7 +797,7 @@ function KitRow({
         <button
           onClick={() => onDelete(kit.id)}
           title={t("kits.delete")}
-          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-colors hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
+          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-all hover:-translate-y-0.5 hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
         >
           <Trash2 size={14} />
         </button>

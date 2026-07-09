@@ -145,7 +145,7 @@ function MatchRow({ hit }: { hit: JobSearchHit }) {
             },
           })
         }
-        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-accent/55"
+        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-xs font-semibold text-ink transition-all hover:-translate-y-0.5 hover:border-accent/55"
       >
         <ArrowRight size={13} className="rtl:-scale-x-100" /> {t("recent.tailor")}
       </button>

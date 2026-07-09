@@ -14,7 +14,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-accent text-white shadow-glow hover:bg-accent-soft active:translate-y-px border border-transparent",
+    "bg-accent text-white shadow-glow hover:bg-accent-soft border border-transparent",
   secondary:
     "bg-panel-2 text-ink border border-line hover:border-accent/60 hover:bg-panel-2/80",
   ghost: "bg-transparent text-ink-muted border border-line hover:text-ink hover:border-accent/50",
@@ -37,6 +37,8 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
       disabled={disabled || loading}
       className={cn(
         "inline-flex items-center justify-center font-semibold transition-all duration-150 select-none",
+        // Lift on hover, press back down on click (enabled buttons only).
+        "will-change-transform enabled:hover:-translate-y-0.5 enabled:active:translate-y-0",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
         "disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none",
         variants[variant],
