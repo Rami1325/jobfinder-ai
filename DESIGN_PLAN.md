@@ -6,6 +6,14 @@ Making JobFinder feel premium and alive, with inspiration from
 
 Researched 2026-07-10 against branch `feature/competitive-overhaul`.
 
+> **Status (2026-07-10): implemented.** Phases A–F shipped in commits
+> `cd5cf55` (foundation) through `41e921f` (small surfaces). E5 was skipped —
+> the landing has no honest numeric stats to animate. C2 became select-driven
+> card glides (the board has no real drag). D1 turned out better than planned:
+> the search already streams SSE progress, so the ticker is genuinely live.
+> Verified in-browser: dark + light themes, Hebrew RTL, reduced-motion paths,
+> full tailor run with the VERIFIED stamp landing, zero console errors.
+
 ---
 
 ## 1. The thesis
