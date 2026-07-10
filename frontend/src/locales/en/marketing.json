@@ -17,7 +17,8 @@
       "before": "Before",
       "after": "After",
       "emphasized": "Emphasized <1>Kubernetes</1> — already in your experience",
-      "blocked": "<1>\"Led team of 12\"</1> — blocked, not in your resume"
+      "blocked": "<1>\"Led team of 12\"</1> — blocked, not in your resume",
+      "guardStamp": "Guard"
     }
   },
   "features": {
