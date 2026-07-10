@@ -162,7 +162,22 @@
     "ranked_one": "משרה אחת דורגה",
     "ranked_two": "{{count}} משרות דורגו",
     "ranked_other": "{{count}} משרות דורגו",
-    "skipped": ", {{count}} דולגו"
+    "skipped": ", {{count}} דולגו",
+    "streaming": {
+      "showing_one": "מציגים את המשרה הראשונה מתוך {{total}} שמדורגות",
+      "showing_two": "מציגים את {{count}} המשרות הראשונות מתוך {{total}} שמדורגות",
+      "showing_other": "מציגים את {{count}} המשרות הראשונות מתוך {{total}} שמדורגות",
+      "showingBare_one": "משרה אחת דורגה עד כה",
+      "showingBare_two": "{{count}} משרות דורגו עד כה",
+      "showingBare_other": "{{count}} משרות דורגו עד כה",
+      "interrupted_one": "החיפוש נקטע — מציגים את המשרה שהספיקה להידרג.",
+      "interrupted_two": "החיפוש נקטע — מציגים את {{count}} המשרות שהספיקו להידרג.",
+      "interrupted_other": "החיפוש נקטע — מציגים את {{count}} המשרות שהספיקו להידרג."
+    },
+    "eta": {
+      "secondsLeft": "עוד ~{{n}} שנ׳",
+      "minutesLeft": "עוד ~{{n}} דק׳"
+    }
   },
   "workModes": {
     "any": "הכול",

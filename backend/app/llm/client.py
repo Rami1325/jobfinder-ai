@@ -6,6 +6,7 @@ Swapping models or providers is a config change, not a code change.
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from typing import Any, Protocol
 
 from app.config import get_settings
@@ -28,7 +29,9 @@ class OpenAIClient:
         # Imported lazily so the package isn't required when using the stub.
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=api_key)
+        # timeout/max_retries: the parallel job search fans many calls out at
+        # once — one hung call must not stall a whole search (PLAN 12.1).
+        self._client = OpenAI(api_key=api_key, timeout=90, max_retries=2)
         self._model = model_id
         # Some newer models (e.g. gpt-5.x) reject any non-default temperature.
         # Start by trying a low temperature for deterministic output, and turn
@@ -92,6 +95,15 @@ class StubClient:
             return self._stub_structured_resume(user)
         if "ANALYZE_JD" in head:
             return self._stub_jd(user)
+        if "JD_FIT" in head:
+            # Merged ANALYZE_JD + FIT_SCORE (PLAN 12.1): one call per job in
+            # the search hot path. Neither token is a substring of the other,
+            # so ordering vs. FIT_SCORE below is safe either way.
+            return {
+                **self._stub_jd(user),
+                "fit_score": 72.0,
+                "rationale": "[stub] Reasonable overlap in core skills.",
+            }
         if "TAILOR" in head:
             return self._stub_tailor(user)
         if "FIT_SCORE" in head:
@@ -275,7 +287,13 @@ class StubClient:
         }
 
 
+@lru_cache
 def get_llm_client() -> LLMClient:
+    """Process-wide singleton. The OpenAI SDK client is thread-safe and keeps a
+    connection pool worth reusing across the parallel search workers; building
+    a fresh client per call threw that pool away. (`_send_temperature` mutating
+    on the singleton is the point — the capability probe runs once per process.
+    Settings are lru_cached too, so a changed .env means a new process anyway.)"""
     settings = get_settings()
     if settings.use_stub_llm or not settings.openai_api_key:
         return StubClient()

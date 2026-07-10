@@ -30,7 +30,7 @@ from app.core.jd_analyzer import analyze_jd
 from app.core.job_match import fetch_job_text, match_jobs
 from app.core.outreach import generate_outreach
 from app.core.screening import answer_screening_question
-from app.core.job_search import derive_search_context, search_jobs
+from app.core.job_search import derive_search_context, resume_hash, search_jobs
 from app.core import kits as kits_core
 from app.core.lang import resume_language
 from app.core.linkedin import optimize_linkedin
@@ -40,7 +40,7 @@ from app.core.providers.greenhouse_seed import board_url as greenhouse_board_url
 from app.core.tailor import tailor_resume
 from app.core.usage import check_and_count
 from app.db.comeet import list_companies as list_comeet_companies
-from app.db.database import get_db
+from app.db.database import SessionLocal, get_db
 from app.db.greenhouse import list_companies as list_greenhouse_companies
 from app.db.users import mint_user
 from app.db.history import (
@@ -48,6 +48,7 @@ from app.db.history import (
     clear_search_hits,
     delete_search_hit,
     list_search_hits,
+    load_score_cache,
     record_search_hits,
 )
 from app.db.models import (
@@ -305,14 +306,19 @@ def jobs_search(
     user: User = Depends(current_user),
 ) -> JobSearchResult:
     check_and_count(db, user, "search", get_settings().daily_search_cap)
+    rhash = resume_hash(body.resume)
+    try:  # the cache is an optimization (PLAN 12.4) — never fail the search over it
+        cache = load_score_cache(db, user.id, rhash)
+    except Exception:  # noqa: BLE001
+        cache = {}
     try:
-        result = search_jobs(body.resume, body.customize)
+        result = search_jobs(body.resume, body.customize, cache=cache)
     except ValueError as e:  # user-facing scrape/search problems
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while searching jobs: {e}")
     try:  # history persistence is best-effort — never fail the search because of it
-        record_search_hits(db, result.matches, user.id)
+        record_search_hits(db, result.matches, user.id, resume_hash=rhash)
     except Exception:  # noqa: BLE001
         pass
     return result
@@ -330,18 +336,36 @@ def jobs_search_stream(
 ) -> StreamingResponse:
     """Same search as POST /jobs/search, but as an SSE stream (PLAN 9.2) so the
     UI can show real per-board / per-job progress instead of guessing from
-    elapsed time. Events: `progress` (see job_search.ProgressFn), then exactly
-    one terminal `result` (a JobSearchResult) or `error` ({detail, status}).
-    Errors after the 200 header ride the stream — the cap check raises a plain
-    429 before streaming starts, so old error handling still applies there."""
+    elapsed time. Events: `progress` (boards/scoring stages, see
+    job_search.ProgressFn), `match` (PLAN 12.2 — one scored JobMatch object per
+    frame, as each job finishes; old frontends ignore unknown event names),
+    then exactly one terminal `result` (a JobSearchResult) or `error`
+    ({detail, status}). Errors after the 200 header ride the stream — the cap
+    check raises a plain 429 before streaming starts, so old error handling
+    still applies there."""
     check_and_count(db, user, "search", get_settings().daily_search_cap)
+    # The stream can run for minutes; don't pin the request's pooled (Neon)
+    # connection to it. Read what we still need off the session — including the
+    # score cache (PLAN 12.4), which must be built BEFORE the close — then
+    # release it; history is persisted at the end on a fresh, short-lived
+    # session. (check_and_count committed already; get_db's close() is a no-op.)
+    user_id = user.id
+    rhash = resume_hash(body.resume)
+    try:  # the cache is an optimization — never fail the search over it
+        cache = load_score_cache(db, user_id, rhash)
+    except Exception:  # noqa: BLE001
+        cache = {}
+    db.close()
 
-    events: queue.Queue = queue.Queue()
+    events: queue.Queue = queue.Queue()  # thread-safe: search workers notify from threads
 
     def _worker() -> None:
         try:
             result = search_jobs(
-                body.resume, body.customize, progress=lambda e: events.put(("progress", e))
+                body.resume,
+                body.customize,
+                progress=lambda e: events.put(("progress", e)),
+                cache=cache,
             )
             events.put(("result", result))
         except ValueError as e:  # user-facing scrape/search problems
@@ -359,10 +383,19 @@ def jobs_search_stream(
                 yield ": keep-alive\n\n"  # searches sit minutes on slow boards; don't let proxies idle out
                 continue
             if kind == "progress":
-                yield _sse_frame("progress", payload)
+                if payload.get("stage") == "match":
+                    # Incremental result: the JobMatch itself rides its own
+                    # event name so the UI can render rows as they score.
+                    yield _sse_frame("match", payload["match"])
+                else:
+                    yield _sse_frame("progress", payload)
             elif kind == "result":
                 try:  # best-effort history persistence, same as the non-stream route
-                    record_search_hits(db, payload.matches, user.id)
+                    hist_db = SessionLocal()
+                    try:
+                        record_search_hits(hist_db, payload.matches, user_id, resume_hash=rhash)
+                    finally:
+                        hist_db.close()
                 except Exception:  # noqa: BLE001
                     pass
                 yield _sse_frame("result", payload.model_dump())

@@ -14,6 +14,7 @@ import type {
   InterviewFeedbackResult,
   InterviewQuestionsResult,
   JDModel,
+  JobMatch,
   JobMatchResult,
   JobSearchHistory,
   JobSearchResult,
@@ -189,14 +190,18 @@ export interface SearchProgressEvent {
 }
 
 // Same search as searchJobs, but over the SSE endpoint so the UI gets real
-// per-board / per-job progress. axios can't consume SSE, so this uses fetch and
-// re-throws failures in the axios error shape ({response: {status, data}})
-// to keep apiErrorMessage and the 401 gate event working. A 404/405 means an
-// older backend without the endpoint — callers fall back to searchJobs.
+// per-board / per-job progress. Newer backends also emit one `match` frame per
+// scored job (a JobMatch, unordered) — dispatched to onMatch so results can
+// stream in before the terminal `result`; older backends simply never send
+// them. axios can't consume SSE, so this uses fetch and re-throws failures in
+// the axios error shape ({response: {status, data}}) to keep apiErrorMessage
+// and the 401 gate event working. A 404/405 means an older backend without
+// the endpoint — callers fall back to searchJobs.
 export async function searchJobsStream(
   resume: ResumeModel,
   customize: SearchContext | null,
   onProgress: (e: SearchProgressEvent) => void,
+  onMatch?: (m: JobMatch) => void,
 ): Promise<JobSearchResult> {
   const code = localStorage.getItem(ACCESS_CODE_KEY);
   const resp = await fetch(`${api.defaults.baseURL}/jobs/search/stream`, {
@@ -227,6 +232,7 @@ export async function searchJobsStream(
   const dispatch = () => {
     if (data) {
       if (event === "progress") onProgress(JSON.parse(data) as SearchProgressEvent);
+      else if (event === "match") onMatch?.(JSON.parse(data) as JobMatch);
       else if (event === "result") out.result = JSON.parse(data) as JobSearchResult;
       else if (event === "error") out.error = JSON.parse(data);
     }

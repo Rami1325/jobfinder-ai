@@ -190,6 +190,32 @@ check(
     f"matched={jm.matches[0].top_matched} gaps={jm.matches[0].top_gaps}",
 )
 
+# 9c. Merged JD+fit (PLAN 12.1): analyze_and_score is ONE LLM call doing
+# ANALYZE_JD's extraction + FIT_SCORE's fit — the parallel job search depends
+# on it staying one call; language stays deterministic (never the LLM's claim).
+from app.core.scorer import analyze_and_score  # noqa: E402
+from app.llm.prompts import jd_fit_system  # noqa: E402
+
+_jf_jd, _jf_score = analyze_and_score(resume, "We need a Python engineer with SQL and REST APIs.")
+check(
+    "JD_FIT: one call yields a JDModel with keywords + a Score with fit > 0",
+    len(_jf_jd.keywords) > 0 and _jf_score.fit_score > 0 and len(_jf_score.gaps) > 0,
+    f"kw={_jf_jd.keywords} fit={_jf_score.fit_score}",
+)
+check(
+    "JD_FIT: overall combines coverage+fit exactly like score_resume",
+    _jf_score.overall == round(0.5 * _jf_score.keyword_coverage + 0.5 * _jf_score.fit_score, 1),
+    f"overall={_jf_score.overall} cov={_jf_score.keyword_coverage} fit={_jf_score.fit_score}",
+)
+check(
+    "JD_FIT: language detected deterministically (hebrew regex, not the LLM)",
+    _jf_jd.language == "en" and analyze_and_score(resume, "דרוש מהנדס פייתון")[0].language == "he",
+)
+check(
+    "JD_FIT: Task tag stays inside the stub's 40-char routing window (hebrew note appended)",
+    "JD_FIT" in jd_fit_system("he")[:40].upper(),
+)
+
 # 10. ATS scanner (deterministic checks + optional coverage)
 ats = scan_resume(resume, "Python, SQL, REST APIs required.")
 check("ats scan produced issues + score", len(ats.issues) > 0 and 0 <= ats.score <= 100, str(ats.score))
@@ -1432,7 +1458,7 @@ check(
 )
 
 
-def _canned_search(resume, ctx):  # noqa: ANN001 - matches search_jobs' shape
+def _canned_search(resume, ctx, cache=None):  # noqa: ANN001 - matches search_jobs' shape
     return JobSearchResult(
         context=_AlertCtx(job_title="Backend Engineer", location="Tel Aviv"),
         matches=_alert_matches,
@@ -1458,7 +1484,7 @@ check("alert re-run: nothing new (hits now in history)", _run2.new_count == 0, s
 _seen_ctx: list = []
 
 
-def _recording_search(resume, ctx):  # noqa: ANN001 - matches search_jobs' shape
+def _recording_search(resume, ctx, cache=None):  # noqa: ANN001 - matches search_jobs' shape
     _seen_ctx.append(ctx)
     return JobSearchResult(context=_AlertCtx(job_title="X"), matches=[], skipped=0)
 
@@ -1481,7 +1507,7 @@ check("alert run respects the toggle", run_alert(_db, _admin_id, search_fn=_cann
 check("alert run with force ignores the toggle", run_alert(_db, _admin_id, force=True, search_fn=_canned_search).ran is True)
 
 
-def _broken_search(resume, ctx):  # noqa: ANN001
+def _broken_search(resume, ctx, cache=None):  # noqa: ANN001
     raise ValueError("boards are down")
 
 
@@ -1975,9 +2001,10 @@ _STREAM_MATCH = JobMatch(
 )
 
 
-def _fake_stream_search(resume, customize, progress=None):  # noqa: ANN001 - matches search_jobs' shape
+def _fake_stream_search(resume, customize, progress=None, cache=None):  # noqa: ANN001 - matches search_jobs' shape
     progress({"stage": "boards", "source": "linkedin", "index": 1, "total": 1})
     progress({"stage": "scoring", "index": 1, "total": 1, "title": _STREAM_MATCH.title, "company": "StreamCo"})
+    progress({"stage": "match", "index": 1, "total": 1, "match": _STREAM_MATCH.model_dump()})
     return JobSearchResult(context=_AlertCtx(job_title="Backend Engineer"), matches=[_STREAM_MATCH])
 
 
@@ -2025,6 +2052,18 @@ try:
             and _results[0]["matches"][0]["title"] == "מהנדס/ת תוכנה"
             and "מהנדס/ת תוכנה" in _sresp.text,  # ensure_ascii=False — no \uXXXX escaping on the wire
         )
+        # PLAN 12.2: the "match" progress stage rides its OWN event name, and
+        # its data is the JobMatch object itself (not the progress envelope).
+        _match_frames = [d for n, d in _frames if n == "match"]
+        check(
+            "search stream: `match` frame carries the JobMatch itself, before the result",
+            len(_match_frames) == 1
+            and _match_frames[0]["url"] == _STREAM_MATCH.url
+            and _match_frames[0]["title"] == _STREAM_MATCH.title
+            and "index" not in _match_frames[0]
+            and [n for n, _ in _frames].index("match") < [n for n, _ in _frames].index("result"),
+            str(_match_frames)[:200],
+        )
         _hist_hits = _tc.get("/jobs/history", headers=_ADMIN_H).json()["hits"]
         _stream_hit = next((h for h in _hist_hits if h["url"] == _STREAM_MATCH.url), None)
         check(
@@ -2035,7 +2074,7 @@ try:
             str(_stream_hit)[:200],
         )
 
-        def _broken_stream_search(resume, customize, progress=None):  # noqa: ANN001
+        def _broken_stream_search(resume, customize, progress=None, cache=None):  # noqa: ANN001
             raise ValueError("boards are down")
 
         _routes_mod.search_jobs = _broken_stream_search
@@ -2080,6 +2119,10 @@ class _FakeBoard:
             raise _NoRes(f"No {self.name} jobs found for '{ctx.job_title}'.")
         if self._mode == "down":
             raise ValueError(f"Couldn't reach {self.name}.")
+        if self._mode == "nodesc":  # inline description missing AND unfetchable → skipped
+            return [
+                _FanHit(source=self.name, title="No Desc", company="NoDescCo", url="https://fake.nodesc/1")
+            ]
         raise RuntimeError("boom")
 
     def fetch_description(self, hit):  # noqa: ANN001
@@ -2089,12 +2132,18 @@ class _FakeBoard:
 _fakes = {
     name: _FakeBoard(name, mode)
     for name, mode in (
-        ("fake_ok", "ok"), ("fake_empty", "empty"), ("fake_down", "down"), ("fake_buggy", "buggy"),
+        ("fake_ok", "ok"), ("fake_empty", "empty"), ("fake_down", "down"),
+        ("fake_buggy", "buggy"), ("fake_nodesc", "nodesc"),
     )
 }
 _PROV.update(_fakes)
 try:
-    _fan = _fan_search(resume, _AlertCtx(job_title="Python", sources=list(_fakes), max_age_days=0))
+    _fan_events: list[dict] = []
+    _fan = _fan_search(
+        resume,
+        _AlertCtx(job_title="Python", sources=list(_fakes), max_age_days=0),
+        progress=_fan_events.append,  # called from worker threads; list.append is thread-safe
+    )
     check(
         "fan-out: empty boards land in source_empty, failed boards in source_errors",
         [m.url for m in _fan.matches] == ["https://fake.ok/1"]
@@ -2102,6 +2151,34 @@ try:
         and "No fake_empty jobs" in _fan.source_empty["fake_empty"]
         and set(_fan.source_errors) == {"fake_down", "fake_buggy"},
         f"empty={_fan.source_empty} errors={_fan.source_errors}",
+    )
+    check(
+        "parallel fan-out: undescribable hit skipped (not fatal), matches sorted by overall",
+        _fan.skipped == 1
+        and [m.overall for m in _fan.matches]
+        == sorted((m.overall for m in _fan.matches), reverse=True),
+        f"skipped={_fan.skipped}",
+    )
+    # Boards/jobs run in parallel now: progress events are completion-ordered,
+    # so pin sets/counts (one event per board/job, indexes 1..n) — not sequence.
+    _b_ev = [e for e in _fan_events if e["stage"] == "boards"]
+    _s_ev = [e for e in _fan_events if e["stage"] == "scoring"]
+    _m_ev = [e for e in _fan_events if e["stage"] == "match"]
+    check(
+        "parallel boards: one completion event per board, indexes 1..n, any order",
+        {e["source"] for e in _b_ev} == set(_fakes)
+        and sorted(e["index"] for e in _b_ev) == list(range(1, len(_fakes) + 1))
+        and all(e["total"] == len(_fakes) for e in _b_ev),
+        str(_b_ev)[:300],
+    )
+    check(
+        "parallel scoring: one event per hit; `match` events only for scored hits",
+        sorted(e["index"] for e in _s_ev) == [1, 2]
+        and all(e["total"] == 2 for e in _s_ev)
+        and len(_m_ev) == 1
+        and _m_ev[0]["match"]["url"] == "https://fake.ok/1"
+        and _m_ev[0]["match"]["overall"] == _fan.matches[0].overall,
+        f"scoring={_s_ev} match={str(_m_ev)[:200]}",
     )
     try:
         _fan_search(resume, _AlertCtx(job_title="Python", sources=["fake_empty"], max_age_days=0))
@@ -2126,6 +2203,147 @@ try:
 finally:
     for _k in _fakes:
         _PROV.pop(_k, None)
+
+# 21b. Two-tier score cache (PLAN 12.4): a fresh history row scored against
+# the SAME résumé rebuilds the match with ZERO LLM calls and ZERO fetches
+# (tier 1); a fresh row for a DIFFERENT résumé still spares the description
+# fetch but rescores with exactly one LLM call (tier 2); a stale (>TTL) row is
+# ignored entirely (full path). resume_hash round-trips through the DB.
+from datetime import datetime as _c_dt, timedelta as _c_td, timezone as _c_tz  # noqa: E402
+
+from app.core.job_search import resume_hash as _resume_hash  # noqa: E402
+from app.db.history import CACHE_TTL_DAYS as _CACHE_TTL, load_score_cache as _load_cache  # noqa: E402
+from app.llm.client import get_llm_client as _get_llm  # noqa: E402
+
+_C_URL = "https://fake.cache/1"
+_c_hash = _resume_hash(resume)
+check(
+    "resume_hash is a stable sha256 hex of the résumé",
+    len(_c_hash) == 64 and _c_hash == _resume_hash(resume) and _c_hash != _resume_hash(_he_resume),
+    _c_hash[:16],
+)
+
+_cache_db = SessionLocal()
+
+
+class _CacheBoard:
+    """One posting whose card omits company/logo (the cached row must fill
+    them) but carries a FRESH title/posted_at (which must win over the row)."""
+
+    def __init__(self):
+        self.fetches = 0
+
+    def search(self, ctx):  # noqa: ANN001
+        return [_FanHit(source="fake_cache", title="Py Dev (fresh card)",
+                        url=_C_URL, posted_at="2026-07-10")]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        self.fetches += 1
+        return "Fetched: Python and SQL work."
+
+
+_c_board = _CacheBoard()
+_PROV["fake_cache"] = _c_board
+_c_stub = _get_llm()
+_c_orig_cjson = _c_stub.complete_json
+_c_llm_tasks: list[str] = []
+
+
+def _c_counting_cjson(system, user):  # noqa: ANN001
+    _c_llm_tasks.append(system[:40].upper())
+    return _c_orig_cjson(system, user)
+
+
+try:
+    record_search_hits(_cache_db, [JobMatch(
+        title="Cached Py Dev", company="CacheCo", location="Tel Aviv",
+        overall=64.5, keyword_coverage=57.0, fit_score=72.0,
+        top_matched=["Python"], top_gaps=["Kubernetes"],
+        jd_text="Python and SQL work (cached)", url=_C_URL,
+        posted_at="2026-06-01", source="fake_cache", logo_url="https://logo/cached.png",
+    )], _admin_id, resume_hash=_c_hash)
+    _c_row = {h.url: h for h in list_search_hits(_cache_db, _admin_id)}[_C_URL]
+    check("record_search_hits stores resume_hash on the row", _c_row.resume_hash == _c_hash, _c_row.resume_hash[:16])
+
+    _c_cache = _load_cache(_cache_db, _admin_id, _c_hash)
+    check(
+        "load_score_cache round-trips the row as a full match (key = url.rstrip('/'))",
+        _C_URL in _c_cache and _c_cache[_C_URL].is_full_match is True
+        and _c_cache[_C_URL].jd_text == "Python and SQL work (cached)"
+        and list(_c_cache[_C_URL].top_matched) == ["Python"]
+        and list(_c_cache[_C_URL].top_gaps) == ["Kubernetes"],
+        str(_c_cache.get(_C_URL))[:200],
+    )
+    check("rows without jd_text never enter the cache", "https://bulk/104" not in _c_cache)
+    _c_other = _load_cache(_cache_db, _admin_id, "some-other-resume-hash")
+    check(
+        "different résumé hash → text-reuse entry, not a full match",
+        _C_URL in _c_other and _c_other[_C_URL].is_full_match is False,
+    )
+
+    # The customize context names a title, so no SEARCH_CONTEXT LLM call runs —
+    # every counted JD_FIT call below is a scoring call.
+    _c_ctx = _AlertCtx(job_title="Python", sources=["fake_cache"], max_age_days=0)
+    _c_stub.complete_json = _c_counting_cjson
+
+    # Tier 1: same résumé → zero LLM, zero fetch; scores come from the row;
+    # the fresh card's title/posted_at win; company/logo fall back to the row.
+    _c_events: list[dict] = []
+    _t1 = _fan_search(resume, _c_ctx, progress=_c_events.append, cache=_c_cache)
+    _t1_m = _t1.matches[0]
+    check(
+        "tier 1: zero scoring LLM calls and zero description fetches",
+        _c_board.fetches == 0 and not [t for t in _c_llm_tasks if "JD_FIT" in t],
+        f"fetches={_c_board.fetches} llm={_c_llm_tasks}",
+    )
+    check(
+        "tier 1: match rebuilt from the seeded row's scores + keywords + jd_text",
+        _t1_m.overall == 64.5 and _t1_m.keyword_coverage == 57.0 and _t1_m.fit_score == 72.0
+        and _t1_m.top_matched == ["Python"] and _t1_m.top_gaps == ["Kubernetes"]
+        and _t1_m.jd_text == "Python and SQL work (cached)" and _t1.skipped == 0,
+        f"overall={_t1_m.overall} cov={_t1_m.keyword_coverage} fit={_t1_m.fit_score}",
+    )
+    check(
+        "tier 1: fresh card fields win, cached row fills the card's blanks",
+        _t1_m.title == "Py Dev (fresh card)" and _t1_m.posted_at == "2026-07-10"
+        and _t1_m.company == "CacheCo" and _t1_m.location == "Tel Aviv"
+        and _t1_m.logo_url == "https://logo/cached.png",
+        f"title={_t1_m.title} posted={_t1_m.posted_at} company={_t1_m.company}",
+    )
+    check(
+        "tier 1: scoring + match progress events still fire (streaming looks identical)",
+        [e["stage"] for e in _c_events if e["stage"] != "boards"] == ["scoring", "match"]
+        and next(e for e in _c_events if e["stage"] == "match")["match"]["url"] == _C_URL,
+        str(_c_events)[:200],
+    )
+
+    # Tier 2: different résumé hash → jd_text reused (no fetch), ONE LLM call.
+    _c_llm_tasks.clear()
+    _t2 = _fan_search(resume, _c_ctx, cache=_c_other)
+    check(
+        "tier 2: no fetch, exactly one scoring LLM call, cached jd_text reused",
+        _c_board.fetches == 0 and len([t for t in _c_llm_tasks if "JD_FIT" in t]) == 1
+        and _t2.matches[0].jd_text == "Python and SQL work (cached)",
+        f"fetches={_c_board.fetches} llm={_c_llm_tasks}",
+    )
+
+    # Stale row: force searched_at past the TTL → excluded → full path again.
+    _c_row.searched_at = _c_dt.now(_c_tz.utc).replace(tzinfo=None) - _c_td(days=_CACHE_TTL + 1)
+    _cache_db.commit()
+    _c_stale = _load_cache(_cache_db, _admin_id, _c_hash)
+    check("stale row (past the TTL) is excluded from the cache", _C_URL not in _c_stale)
+    _c_llm_tasks.clear()
+    _t3 = _fan_search(resume, _c_ctx, cache=_c_stale)
+    check(
+        "stale row → full path: description fetched and one scoring LLM call",
+        _c_board.fetches == 1 and len([t for t in _c_llm_tasks if "JD_FIT" in t]) == 1
+        and _t3.matches[0].jd_text == "Fetched: Python and SQL work.",
+        f"fetches={_c_board.fetches} llm={_c_llm_tasks}",
+    )
+finally:
+    _c_stub.complete_json = _c_orig_cjson
+    _PROV.pop("fake_cache", None)
+    _cache_db.close()
 
 # 22. Batch auto-tailor kits (PLAN 8.1): enqueue high-fit jobs, drain the
 # queue one tailor per request (the serverless-safe loop), guard flags mark

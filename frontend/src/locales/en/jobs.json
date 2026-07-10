@@ -153,7 +153,19 @@
     "summaryLoc": "Searched <1>{{title}}</1> in <3>{{location}}</3>",
     "ranked_one": "{{count}} job ranked",
     "ranked_other": "{{count}} jobs ranked",
-    "skipped": ", {{count}} skipped"
+    "skipped": ", {{count}} skipped",
+    "streaming": {
+      "showing_one": "Showing the first {{count}} of {{total}} scored",
+      "showing_other": "Showing the first {{count}} of {{total}} scored",
+      "showingBare_one": "{{count}} job scored so far",
+      "showingBare_other": "{{count}} jobs scored so far",
+      "interrupted_one": "Search was interrupted — showing the {{count}} job scored so far.",
+      "interrupted_other": "Search was interrupted — showing the {{count}} jobs scored so far."
+    },
+    "eta": {
+      "secondsLeft": "~{{n}}s left",
+      "minutesLeft": "~{{n}} min left"
+    }
   },
   "workModes": {
     "any": "Any",

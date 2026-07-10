@@ -249,6 +249,16 @@ function formatElapsed(totalSeconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+// Rough remaining-time estimate for the scoring stage, rounded to friendly
+// units: under ~1.5 min it reads "~40s left" (5 s steps), above it "~2 min
+// left" — precision would be fake anyway.
+function formatEta(secondsLeft: number, t: TFunction): string {
+  if (secondsLeft < 90) {
+    return t("search.eta.secondsLeft", { n: Math.max(5, Math.round(secondsLeft / 5) * 5) });
+  }
+  return t("search.eta.minutesLeft", { n: Math.round(secondsLeft / 60) });
+}
+
 // House ease + split-flap timings for the scan ticker (design plan D1): each
 // board row half-flips shut, swaps content at the hard midpoint, and flips
 // open showing its real count — staggered 120 ms per row, Terminus-style.
@@ -459,6 +469,20 @@ function SearchScanPanel({
     stageLine = t(`search.stages.${SEARCH_STAGES[elapsed < 8 ? 0 : elapsed < 20 ? 1 : 2]}`);
   }
 
+  // Remaining-time estimate once at least 2 jobs have finished scoring:
+  // average seconds per completed job × jobs left. Elapsed includes the
+  // boards fan-out, so the estimate starts pessimistic and converges.
+  let eta = "";
+  if (
+    phase === "scanning" &&
+    progress?.stage === "scoring" &&
+    progress.index >= 2 &&
+    progress.total > progress.index &&
+    elapsed > 0
+  ) {
+    eta = formatEta((elapsed / progress.index) * (progress.total - progress.index), t);
+  }
+
   const activeSource =
     phase === "scanning" && progress?.stage === "boards"
       ? (progress.source ?? "").toLowerCase()
@@ -488,6 +512,7 @@ function SearchScanPanel({
                   </p>
                   <p aria-live="polite" className="mt-0.5 truncate text-xs text-ink-muted">
                     {stageLine} · {t("search.elapsed", { time: formatElapsed(elapsed) })}
+                    {eta && ` · ${eta}`}
                   </p>
                 </div>
               </div>
@@ -1555,6 +1580,7 @@ export default function JobsPage() {
     error: searchError,
     startedAt,
     progress: searchProgress,
+    liveMatches,
   } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
   const [resultSort, setResultSort] = useState<"fit" | "date">("fit");
   const [historySort, setHistorySort] = useState<"searched" | "fit" | "date">("searched");
@@ -1789,6 +1815,11 @@ export default function JobsPage() {
             : (a, b) => (b.posted_at || "").localeCompare(a.posted_at || ""),
         )
       : history;
+  // Streaming (PLAN 12.2): the store keeps per-job `match` frames sorted by
+  // fit; the scoring-progress frames carry how many jobs will be scored in
+  // total. Old backends send no match frames, so this stays empty and the
+  // cards appear when the terminal result lands, exactly as before.
+  const scoringTotal = searchProgress?.stage === "scoring" ? searchProgress.total : 0;
 
   return (
     <div className="space-y-6">
@@ -1924,6 +1955,45 @@ export default function JobsPage() {
             result={searchResult}
             requestedSources={requestedSources}
           />
+
+          {/* Streamed match cards: each scored job lands here the moment its
+              `match` frame arrives, sorted in by fit — the same MatchCard the
+              final results use, so nothing visually changes when the
+              authoritative result replaces them. Also the partial-results
+              surface when an interrupted search still scored some jobs. */}
+          {liveMatches.length > 0 && (searching || (!searchResult && !!searchError)) && (
+            <div className="space-y-4">
+              {searching ? (
+                <p aria-live="polite" className="text-xs text-ink-muted">
+                  {scoringTotal > 0
+                    ? t("search.streaming.showing", {
+                        count: liveMatches.length,
+                        total: scoringTotal,
+                      })
+                    : t("search.streaming.showingBare", { count: liveMatches.length })}
+                </p>
+              ) : (
+                <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
+                  {t("search.streaming.interrupted", { count: liveMatches.length })}
+                </div>
+              )}
+              {liveMatches.map((m, i) => (
+                <motion.div
+                  key={m.url || `${m.title}·${m.company}`}
+                  layout
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{
+                    duration: 0.25,
+                    ease: EASE,
+                    layout: { type: "spring", duration: 0.25, bounce: 0.15 },
+                  }}
+                >
+                  <MatchCard m={m} best={i === 0} appStatus={statusFor(m.url)} />
+                </motion.div>
+              ))}
+            </div>
+          )}
 
           <AnimatePresence>
             {searchResult && !searching && (

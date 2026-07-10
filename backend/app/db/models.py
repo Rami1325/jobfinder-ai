@@ -106,6 +106,10 @@ class JobSearchHit(Base):
     posted_at: Mapped[str] = mapped_column(String(32), default="")  # ISO date; "" when unknown
     source: Mapped[str] = mapped_column(String(32), default="linkedin")  # job board (PROVIDERS key)
     logo_url: Mapped[str] = mapped_column(String(1000), default="")  # company logo; "" when none
+    # sha256 of the résumé the scores were computed against (PLAN 12.4) — lets a
+    # re-search tell "same résumé, reuse the scores" from "different résumé,
+    # rescore". "" on pre-12.4 rows (never treated as a full-reuse match).
+    resume_hash: Mapped[str] = mapped_column(String(64), default="")
     searched_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

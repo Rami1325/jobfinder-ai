@@ -24,8 +24,8 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core import mailer
-from app.core.job_search import search_jobs
-from app.db.history import record_search_hits
+from app.core.job_search import resume_hash, search_jobs
+from app.db.history import load_score_cache, record_search_hits
 from app.db.models import JobAlert, JobSearchHit, SavedResume, User
 from app.models import (
     AlertRunResult,
@@ -281,12 +281,13 @@ def run_alert(
     user_id: int,
     *,
     force: bool = False,
-    search_fn: Callable[[ResumeModel, SearchContext | None], JobSearchResult] = search_jobs,
+    search_fn: Callable[..., JobSearchResult] = search_jobs,
 ) -> AlertRunResult:
     """Execute one alert run for one user. `force=True` runs even when the
     toggle is off (the UI's "Run now"). Never raises: failures land in
     `last_error` and the returned result so the cron caller always gets a 200
-    with the outcome."""
+    with the outcome. `search_fn` is called as
+    `search_fn(resume, context, cache=...)` — fakes must accept the kwarg."""
     row = get_alert(db, user_id)
     if not row.enabled and not force:
         return AlertRunResult(ran=False, error="Alerts are disabled.")
@@ -296,10 +297,19 @@ def run_alert(
         db.commit()
         return AlertRunResult(ran=False, error=row.last_error)
 
+    # PLAN 12.4: the daily cron re-surfaces mostly the SAME postings every
+    # morning — the score cache turns those into zero-LLM, zero-fetch reuse
+    # when the master résumé hasn't changed since they were last scored.
+    master_hash = resume_hash(resume)
+    try:  # the cache is an optimization — an unreadable history must not kill the run
+        cache = load_score_cache(db, user_id, master_hash)
+    except Exception:  # noqa: BLE001
+        cache = {}
+
     try:
-        result = search_fn(resume, alert_context(row))
+        result = search_fn(resume, alert_context(row), cache=cache)
         new = split_new_matches(db, result.matches, user_id)
-        record_search_hits(db, result.matches, user_id)
+        record_search_hits(db, result.matches, user_id, resume_hash=master_hash)
     except Exception as e:  # noqa: BLE001 - report, don't crash the cron
         row.last_run_at = datetime.now(timezone.utc)
         row.last_error = str(e)[:500]
@@ -333,7 +343,7 @@ def run_alert(
 def run_all_alerts(
     db: Session,
     *,
-    search_fn: Callable[[ResumeModel, SearchContext | None], JobSearchResult] = search_jobs,
+    search_fn: Callable[..., JobSearchResult] = search_jobs,
 ) -> list[AlertRunResult]:
     """One cron tick (PLAN 7.3): run the alert of every active user whose
     toggle is on. Per-user failures are isolated inside run_alert, so one

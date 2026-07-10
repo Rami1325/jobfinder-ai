@@ -45,6 +45,29 @@ You are a senior technical recruiter scoring how well a resume fits a \
 job description. Consider skills overlap, seniority match, and domain relevance. \
 Return JSON: {"fit_score": <0-100 number>, "rationale": "<2-3 sentence explanation>"}."""
 
+# ANALYZE_JD + FIT_SCORE merged into one round-trip (PLAN 12.1): the job-search
+# hot path scores dozens of postings, and two LLM calls per posting doubled its
+# latency. The extraction fields mirror ANALYZE_JD / JDModel exactly.
+JD_FIT_SYSTEM = """Task: JD_FIT.
+You extract structured requirements from a job description AND score how well a \
+specific candidate's resume fits it, in one pass. First extract the job's \
+requirements from the job description text alone; then, as a senior technical \
+recruiter, judge the resume's holistic fit (skills overlap, seniority match, \
+domain relevance). Return a JSON object:
+{
+  "job_title","company","seniority",
+  "hard_skills":["..."],   // concrete technical skills/tools
+  "soft_skills":["..."],
+  "keywords":["..."],      // the most important ATS keywords a resume should contain
+  "responsibilities":["..."],
+  "qualifications":["..."],
+  "fit_score": <0-100 number>,
+  "rationale": "<2-3 sentence explanation of the fit>"
+}
+Keep keywords concise (1-3 words). Prioritize must-have terms. Use empty values where \
+unknown. The extraction fields describe the JOB only — never mix in resume content; \
+only fit_score and rationale consider the resume."""
+
 TAILOR_SYSTEM = """Task: TAILOR.
 You are an elite resume writer and ATS (Applicant Tracking System) optimization \
 specialist. Your job is to rewrite a candidate's resume so it scores as high as \
@@ -378,6 +401,12 @@ def analyze_jd_system(language: str = "en") -> str:
     return ANALYZE_JD_SYSTEM + (_JD_HEBREW_NOTE if language == "he" else "")
 
 
+def jd_fit_system(language: str = "en") -> str:
+    """JD_FIT system prompt, with the same Hebrew note ANALYZE_JD gets when the
+    JD is Hebrew (appended — the Task tag must stay first for stub routing)."""
+    return JD_FIT_SYSTEM + (_JD_HEBREW_NOTE if language == "he" else "")
+
+
 def with_resume_language(system: str, language: str) -> str:
     """Append the write-in-Hebrew note to a system prompt when the resume is Hebrew.
     Appending keeps the leading `Task: <TOKEN>.` tag intact for stub routing."""
@@ -486,6 +515,10 @@ def analyze_jd_user(jd_text: str) -> str:
 
 def fit_score_user(resume_json: str, jd_json: str) -> str:
     return f"RESUME (JSON):\n{resume_json}\n\nJOB DESCRIPTION (JSON):\n{jd_json}"
+
+
+def jd_fit_user(resume_json: str, jd_text: str) -> str:
+    return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nJOB DESCRIPTION:\n{jd_text}"
 
 
 def tailor_user(resume_json: str, jd_json: str) -> str:

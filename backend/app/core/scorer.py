@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 
+from app.core.lang import detect_language
 from app.llm.client import get_llm_client
 from app.llm import prompts
 from app.models import GapItem, JDModel, ResumeModel, Score
@@ -120,5 +121,33 @@ def score_resume(resume: ResumeModel, jd: JDModel) -> Score:
         fit_score=fit,
         overall=overall,
         rationale=rationale,
+        gaps=gaps,
+    )
+
+
+def analyze_and_score(resume: ResumeModel, jd_text: str) -> tuple[JDModel, Score]:
+    """JD extraction + holistic fit in ONE LLM round-trip (the JD_FIT task,
+    PLAN 12.1). The job-search hot path scores dozens of postings; splitting
+    analyze_jd + fit_score doubled its LLM latency for no quality gain.
+    Keyword coverage stays deterministic and `overall` combines exactly like
+    score_resume. Tailor and job-match keep using analyze_jd + score_resume."""
+    # Detected deterministically (Hebrew-block regex), never by the LLM — the
+    # same invariant jd_analyzer.analyze_jd enforces.
+    language = detect_language(jd_text)
+    data = get_llm_client().complete_json(
+        prompts.jd_fit_system(language),
+        prompts.jd_fit_user(resume.model_dump_json(), jd_text),
+    )
+    jd = JDModel.model_validate(data)  # the extra fit_score/rationale keys are ignored
+    jd.language = language  # authoritative — overrides anything the LLM emitted
+    fit = float(data.get("fit_score", 0) or 0)
+    fit = round(max(0.0, min(100.0, fit)), 1)
+    coverage, gaps = keyword_analysis(resume, jd)
+    overall = round(0.5 * coverage + 0.5 * fit, 1)
+    return jd, Score(
+        keyword_coverage=coverage,
+        fit_score=fit,
+        overall=overall,
+        rationale=str(data.get("rationale", "")),
         gaps=gaps,
     )
