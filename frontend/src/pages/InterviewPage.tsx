@@ -14,7 +14,8 @@ import ResumeGate from "../components/ResumeGate";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
-import { Badge, Button, Card, CardTitle, Skeleton } from "../components/ui";
+import { Badge, Button, Card, CardTitle, CountUp, Skeleton } from "../components/ui";
+import TypeText from "../components/ui/TypeText";
 import type {
   InterviewFeedbackResult,
   InterviewQuestion,
@@ -32,7 +33,18 @@ const catTone: Record<string, "accent" | "mint" | "partial" | "neutral"> = {
   culture: "neutral",
 };
 
-function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeModel; jd: JDModel }) {
+function QuestionCard({
+  q,
+  resume,
+  jd,
+  typeDelay = 0,
+}: {
+  q: InterviewQuestion;
+  resume: ResumeModel;
+  jd: JDModel;
+  /** Stagger offset (ms) for the question's typewriter reveal. */
+  typeDelay?: number;
+}) {
   const { t } = useTranslation("interview");
   const [answer, setAnswer] = useState("");
   const [tips, setTips] = useState<string[]>([]);
@@ -65,7 +77,9 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
   return (
     <Card>
       <div className="flex items-start justify-between gap-3">
-        <p className="font-medium text-ink">{q.question}</p>
+        <p className="font-medium text-ink" dir="auto">
+          <TypeText text={q.question} delay={typeDelay} />
+        </p>
         {q.category && (
           <Badge tone={catTone[q.category] ?? "neutral"}>
             {t(`categories.${q.category}`, { defaultValue: q.category })}
@@ -118,7 +132,11 @@ function QuestionCard({ q, resume, jd }: { q: InterviewQuestion; resume: ResumeM
       {feedback && (
         <div className="mt-3 space-y-2 rounded-lg border border-accent/30 bg-accent/5 p-3 text-sm">
           <div className="flex items-center gap-2">
-            <span className="text-2xl font-bold tabular-nums text-ink">{Math.round(feedback.score)}</span>
+            <CountUp
+              to={Math.round(feedback.score)}
+              duration={0.8}
+              className="text-2xl font-bold tabular-nums text-ink"
+            />
             <span className="text-xs text-ink-muted">{t("feedback.outOf")}</span>
           </div>
           {feedback.strengths.length > 0 && (
@@ -254,7 +272,7 @@ export default function InterviewPage() {
           {questions.length > 0 && jd && !running && (
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
               {questions.map((q, i) => (
-                <QuestionCard key={i} q={q} resume={master.resume} jd={jd} />
+                <QuestionCard key={i} q={q} resume={master.resume} jd={jd} typeDelay={i * 150} />
               ))}
             </motion.div>
           )}
@@ -276,7 +294,7 @@ export default function InterviewPage() {
           {recruiter.items.map((it, i) => (
             <Card key={i}>
               <p className="font-medium text-ink" dir="auto">
-                {it.question}
+                <TypeText text={it.question} delay={i * 150} />
               </p>
               <p className="mt-1 text-sm text-ink-muted" dir="auto">
                 {it.talking_point}

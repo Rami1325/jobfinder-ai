@@ -20,14 +20,17 @@ export default function ThemeToggle({ className }: { className?: string }) {
         className,
       )}
     >
-      <AnimatePresence mode="wait" initial={false}>
+      {/* Crossfade morph: outgoing icon rotates away and shrinks to nothing
+          while the incoming one rotates in from the other side. Both icons
+          overlap in the same grid cell, so the 8×8 button never shifts. */}
+      <AnimatePresence initial={false}>
         <motion.span
           key={theme}
-          initial={{ rotate: -60, opacity: 0, scale: 0.5 }}
-          animate={{ rotate: 0, opacity: 1, scale: 1 }}
-          exit={{ rotate: 60, opacity: 0, scale: 0.5 }}
-          transition={{ duration: 0.18, ease: "easeOut" }}
-          className="grid place-items-center"
+          initial={{ rotate: -90, scale: 0, opacity: 0 }}
+          animate={{ rotate: 0, scale: 1, opacity: 1 }}
+          exit={{ rotate: 90, scale: 0, opacity: 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="col-start-1 row-start-1 grid place-items-center"
         >
           {theme === "dark" ? <Moon size={15} /> : <Sun size={15} />}
         </motion.span>

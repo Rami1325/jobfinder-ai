@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Check, Minus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { GapItem, ResumeModel } from "../types";
-import { Card, CardTitle, SectionLabel } from "./ui";
+import { Card, CardTitle, CountUp, SectionLabel } from "./ui";
 import { cn } from "../lib/cn";
 import { countOccurrences, keywordRegex, resumeSearchText } from "../lib/keywords";
 
@@ -70,10 +70,27 @@ export default function MatchReport({ gaps, jdText, resume }: Props) {
   const missing = gaps.filter((g) => g.status === "missing").length;
   const selectedRow = rows.find((r) => r.keyword === selected) ?? null;
 
+  // Numbers are alive (A5): count the summary metrics up when the report
+  // lands. Sentinels are interpolated into the translated string and swapped
+  // for CountUps, so translations keep full control of the word order.
+  const summaryParts = t("report.summary", { missing: "@@missing@@", total: "@@total@@" }).split(
+    /(@@missing@@|@@total@@)/,
+  );
+
   return (
     <Card>
       <CardTitle>{t("report.title")}</CardTitle>
-      <p className="mt-1 text-sm text-ink-muted">{t("report.summary", { missing, total: gaps.length })}</p>
+      <p className="mt-1 text-sm text-ink-muted">
+        {summaryParts.map((part, i) =>
+          part === "@@missing@@" ? (
+            <CountUp key={i} to={missing} duration={0.8} className="tabular-nums" />
+          ) : part === "@@total@@" ? (
+            <CountUp key={i} to={gaps.length} duration={0.8} className="tabular-nums" />
+          ) : (
+            part
+          ),
+        )}
+      </p>
       <p className="mt-1 text-xs text-ink-faint">{t("report.clickHint")}</p>
 
       <div className="mt-4 space-y-4">

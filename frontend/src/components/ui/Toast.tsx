@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { CheckCircle2, AlertTriangle, Info } from "lucide-react";
+import SparkBurst from "./ClickSpark";
 
 type ToastKind = "success" | "error" | "info";
 interface ToastItem {
@@ -21,14 +22,32 @@ const icons = {
   info: <Info size={16} className="text-accent-soft" />,
 };
 
+/** One-shot celebration on success toasts: a single spark burst centered on
+ *  the icon, unmounted once the ~400 ms burst animation has finished. */
+function SuccessSpark() {
+  const [live, setLive] = useState(true);
+  useEffect(() => {
+    const id = window.setTimeout(() => setLive(false), 450);
+    return () => window.clearTimeout(id);
+  }, []);
+  return live ? <SparkBurst x={8} y={8} color="rgb(var(--mint))" /> : null;
+}
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
+  const reduce = useReducedMotion();
 
   const push = useCallback((kind: ToastKind, message: string) => {
     const id = Date.now() + Math.random();
     setItems((prev) => [...prev, { id, kind, message }]);
     setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 3600);
   }, []);
+
+  // The stack sits at the inline-end edge, so toasts spring in from that side.
+  // Re-evaluated on every push (each push re-renders), so language switches
+  // are picked up. Under reduced motion framer drops the transform entirely.
+  const fromEnd =
+    typeof document !== "undefined" && document.documentElement.dir === "rtl" ? -56 : 56;
 
   return (
     <ToastCtx.Provider value={push}>
@@ -38,12 +57,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           {items.map((t) => (
             <motion.div
               key={t.id}
-              initial={{ opacity: 0, x: 40 }}
+              initial={{ opacity: 0, x: fromEnd }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 40 }}
+              exit={{ opacity: 0, x: fromEnd / 2, transition: { duration: 0.15, ease: [0.22, 1, 0.36, 1] } }}
+              transition={{ type: "spring", stiffness: 550, damping: 34, mass: 0.9 }}
               className="pointer-events-auto flex items-center gap-2 rounded-lg border border-line bg-panel px-4 py-3 text-sm text-ink shadow-panel"
             >
-              {icons[t.kind]}
+              <span className="relative grid shrink-0 place-items-center">
+                {icons[t.kind]}
+                {t.kind === "success" && !reduce && <SuccessSpark />}
+              </span>
               {t.message}
             </motion.div>
           ))}

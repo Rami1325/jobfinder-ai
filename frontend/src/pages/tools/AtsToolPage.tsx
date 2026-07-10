@@ -5,7 +5,7 @@ import { atsScan } from "../../api/client";
 import ResumeGate from "../../components/ResumeGate";
 import ToolShell from "../../components/ToolShell";
 import { useMasterResume } from "../../hooks/useMasterResume";
-import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton } from "../../components/ui";
+import { Badge, Button, Card, CardTitle, CountUp, ProgressRing, Skeleton } from "../../components/ui";
 import type { ATSScanResult } from "../../types";
 
 const sev = {
@@ -66,7 +66,18 @@ export default function AtsToolPage() {
                   t={t}
                   i18nKey="ats.coverage"
                   values={{ pct: Math.round(result.keyword_coverage) }}
-                  components={[<span key="0" />, <span key="1" className="font-semibold text-ink" />]}
+                  components={[
+                    <span key="0" />,
+                    // CountUp animates the number itself; the "{{pct}}%" the
+                    // template puts inside <1> is dropped (no children prop).
+                    <CountUp
+                      key="1"
+                      to={Math.round(result.keyword_coverage)}
+                      suffix="%"
+                      duration={0.9}
+                      className="font-semibold tabular-nums text-ink"
+                    />,
+                  ]}
                 />
               </p>
             )}
