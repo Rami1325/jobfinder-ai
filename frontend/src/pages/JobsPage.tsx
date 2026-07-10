@@ -37,11 +37,13 @@ import {
   fetchJob,
   getJobAlert,
   getJobHistory,
+  getSearchPrefs,
   listApplications,
   matchJobs,
   runJobAlert,
   searchContext,
   updateJobAlert,
+  updateSearchPrefs,
   type SearchProgressEvent,
 } from "../api/client";
 import ResumeUpload from "../components/ResumeUpload";
@@ -1109,6 +1111,7 @@ function contextKey(c: SearchContext | null): string {
     c.limit,
     c.sources?.length ? [...c.sources].sort() : [...SOURCE_IDS].sort(),
     c.max_age_days ?? 30,
+    c.include_worldwide ?? false,
   ]);
 }
 
@@ -1263,6 +1266,36 @@ function CustomizeFields({
           />
         </label>
       </div>
+
+      {/* Worldwide-remote opt-in: only meaningful (and only shown) for remote
+          searches. Rides SearchContext, so saving an alert with it customizes
+          the daily alert email the same way. */}
+      <AnimatePresence initial={false}>
+        {ctx?.work_mode === "remote" && (
+          <motion.label
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-3 flex w-fit cursor-pointer items-start gap-2 overflow-hidden text-sm text-ink"
+          >
+            <input
+              type="checkbox"
+              checked={!!ctx?.include_worldwide}
+              disabled={prefilling}
+              onChange={(e) =>
+                setCtx((p) => ({ ...(p as SearchContext), include_worldwide: e.target.checked }))
+              }
+              className="mt-0.5 h-4 w-4 accent-accent"
+            />
+            <span>
+              {t("search.worldwide")}
+              <span className="block text-xs font-normal text-ink-muted">
+                {t("search.worldwideHint")}
+              </span>
+            </span>
+          </motion.label>
+        )}
+      </AnimatePresence>
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
         <span className="font-semibold">{t("search.presetsLabel")}</span>
@@ -1572,6 +1605,19 @@ export default function JobsPage() {
   const [customOpen, setCustomOpen] = useState(false);
   const [ctx, setCtx] = useState<SearchContext | null>(null);
   const [prefilling, setPrefilling] = useState(false);
+
+  // Saved customize picks (server-side, per user): prefill and open the panel
+  // so a returning user doesn't re-enter everything. Anything the user typed
+  // before the response lands wins; a missing/old backend just means no prefill.
+  useEffect(() => {
+    getSearchPrefs()
+      .then((saved) => {
+        if (!saved) return;
+        setCtx((prev) => prev ?? saved);
+        setCustomOpen(true);
+      })
+      .catch(() => {});
+  }, []);
   // The search itself lives in a module-level store so it keeps running (and
   // its result is still here) if the user navigates away mid-search.
   const {
@@ -1689,6 +1735,9 @@ export default function JobsPage() {
     const c = customOpen ? ctx : onboardingCtx();
     setRequestedSources(c?.sources?.length ? [...c.sources] : [...SOURCE_IDS]);
     startJobSearch(master.resume, c);
+    // Remember the picks a customized search ran with (or clear them when the
+    // panel is off) so the next visit prefills — best-effort, never blocks.
+    updateSearchPrefs(customOpen ? ctx : null).catch(() => {});
   }
 
   useEffect(() => {
@@ -2047,6 +2096,9 @@ export default function JobsPage() {
                         ]}
                       />
                       {searched.work_mode !== "any" && ` · ${t(`workModes.${searched.work_mode}`)}`}
+                      {searched.work_mode === "remote" &&
+                        searched.include_worldwide &&
+                        ` · ${t("search.worldwideTag")}`}
                       {" — "}
                       {t("search.ranked", { count: searchResult.matches.length })}
                       {searchResult.skipped > 0 && t("search.skipped", { count: searchResult.skipped })}

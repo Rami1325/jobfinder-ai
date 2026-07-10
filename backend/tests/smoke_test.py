@@ -594,6 +594,63 @@ check(
     _resolve_context(resume, SearchContext(max_age_days=7)).max_age_days == 7
     and _resolve_context(resume, SearchContext(max_age_days=-3)).max_age_days == 0,
 )
+
+# Worldwide-remote opt-in (PLAN 13): extra high-earning-market locations on the
+# global-reach board only; inert unless work_mode == "remote".
+from app.core.job_search import (  # noqa: E402
+    WORLDWIDE_BOARD,
+    WORLDWIDE_REMOTE_LOCATIONS,
+    _board_queries,
+)
+
+check(
+    "SearchContext back-compat: include_worldwide defaults off",
+    SearchContext().include_worldwide is False
+    and _resolve_context(resume, None).include_worldwide is False,
+)
+_wctx = _resolve_context(
+    resume,
+    SearchContext(
+        job_title="Dev", location="Tel Aviv", work_mode="remote", include_worldwide=True
+    ),
+)
+check("customized include_worldwide is honored", _wctx.include_worldwide is True)
+check(
+    "worldwide remote: global board queried with local + worldwide locations",
+    [loc for _, loc in _board_queries(WORLDWIDE_BOARD, _wctx)]
+    == ["Tel Aviv"] + WORLDWIDE_REMOTE_LOCATIONS,
+    str(_board_queries(WORLDWIDE_BOARD, _wctx)),
+)
+check(
+    "worldwide remote: local boards never see worldwide locations",
+    [loc for _, loc in _board_queries("drushim", _wctx)] == ["Tel Aviv"],
+    str(_board_queries("drushim", _wctx)),
+)
+_wctx_onsite = _resolve_context(
+    resume,
+    SearchContext(job_title="Dev", location="Tel Aviv", work_mode="any", include_worldwide=True),
+)
+check(
+    "worldwide pass is inert unless work mode is remote",
+    [loc for _, loc in _board_queries(WORLDWIDE_BOARD, _wctx_onsite)] == ["Tel Aviv"],
+    str(_board_queries(WORLDWIDE_BOARD, _wctx_onsite)),
+)
+_wctx_only = _resolve_context(
+    resume,
+    SearchContext(
+        job_title="Dev",
+        location="Tel Aviv",
+        work_mode="remote",
+        include_worldwide=True,
+        sources=["drushim"],
+    ),
+)
+check(
+    "worldwide-only pass (global board unchecked) skips the local location",
+    [loc for _, loc in _board_queries(WORLDWIDE_BOARD, _wctx_only)]
+    == list(WORLDWIDE_REMOTE_LOCATIONS),
+    str(_board_queries(WORLDWIDE_BOARD, _wctx_only)),
+)
 _rc = _resolve_context(
     resume,
     SearchContext(job_titles=["AI Engineer", " ai engineer ", "", "AI Automations"]),

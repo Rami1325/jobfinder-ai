@@ -24,6 +24,10 @@ class User(Base):
     invite_code: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Saved "Customize search" picks (SearchContext JSON; "" = none saved) so
+    # the Jobs page prefills the panel on the next visit. Migrates onto
+    # pre-existing tables via the ADD-COLUMN shim in database.py.
+    search_prefs_json: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

@@ -46,6 +46,14 @@ MAX_AGE_DAYS_CAP = 365
 FETCH_DELAY_S = 0.5  # pause between per-job network fetches to stay under the radar
 SCORE_WORKERS = 5  # concurrent scoring workers; same-board detail fetches stay serialized
 
+# Worldwide-remote opt-in (SearchContext.include_worldwide + work_mode="remote"):
+# extra locations queried on the board(s) with global reach, targeting remote
+# roles hiring from high-earning markets. "European Union" is a real LinkedIn
+# location that covers the high-paying EU markets in one query — keep this list
+# short: every entry multiplies the per-board query count by len(job_titles).
+WORLDWIDE_REMOTE_LOCATIONS: list[str] = ["United States", "United Kingdom", "European Union"]
+WORLDWIDE_BOARD = "linkedin"  # the only registered board with worldwide inventory
+
 
 def resume_hash(resume: ResumeModel) -> str:
     """Content identity of a résumé: sha256 hex of its canonical JSON. History
@@ -144,6 +152,7 @@ def _resolve_context(resume: ResumeModel, customize: SearchContext | None) -> Se
         ctx.limit = customize.limit
         ctx.sources = customize.sources
         ctx.max_age_days = customize.max_age_days
+        ctx.include_worldwide = customize.include_worldwide
     # Unknown board names are ignored; an empty (or all-unknown) selection falls
     # back to every registered provider so old clients keep working unchanged.
     ctx.sources = [s for s in ctx.sources if s in PROVIDERS] or list(DEFAULT_SOURCES)
@@ -213,22 +222,36 @@ def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) 
     return merged
 
 
+def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str]]:
+    """(job_title, location) pairs one board will be queried with — normally
+    every keyword against the context's own location. The worldwide-remote
+    opt-in (work_mode="remote" + include_worldwide) adds each high-earning
+    market in WORLDWIDE_REMOTE_LOCATIONS, but ONLY on the board with global
+    inventory — the local Israeli boards never see those locations. A board
+    that joined the fan-out purely for the worldwide pass (the user unchecked
+    it in `sources`) skips the local location. Pure; pinned by the smoke test."""
+    locations = [ctx.location] if name in ctx.sources else []
+    if name == WORLDWIDE_BOARD and ctx.work_mode == "remote" and ctx.include_worldwide:
+        locations = locations + WORLDWIDE_REMOTE_LOCATIONS
+    return [(t, loc) for t in ctx.job_titles for loc in (locations or [ctx.location])]
+
+
 def _search_board(name: str, ctx: SearchContext) -> tuple[list[JobHit], list[str], list[str]]:
-    """All keyword queries for one board, serially (politeness is per-board).
-    Never raises: a keyword that fails or matches nothing must not hide the
-    other keywords' hits, so per-keyword outcomes are collected and only a
-    board where EVERY keyword came up empty/broken lands in
+    """All queries for one board (keywords × locations), serially (politeness
+    is per-board). Never raises: a query that fails or matches nothing must
+    not hide the other queries' hits, so per-query outcomes are collected and
+    only a board where EVERY query came up empty/broken lands in
     source_empty/source_errors (classified by the caller)."""
     board_hits: list[JobHit] = []
     board_errors: list[str] = []
     board_empty: list[str] = []
-    for title_i, title in enumerate(ctx.job_titles):
-        if title_i:
+    for query_i, (title, location) in enumerate(_board_queries(name, ctx)):
+        if query_i:
             time.sleep(FETCH_DELAY_S)  # polite gap between queries to the same board
-        title_ctx = ctx.model_copy(update={"job_title": title})
+        query_ctx = ctx.model_copy(update={"job_title": title, "location": location})
         try:
-            board_hits.extend(PROVIDERS[name].search(title_ctx))
-        except NoResultsError as e:  # board worked, this keyword just matched nothing
+            board_hits.extend(PROVIDERS[name].search(query_ctx))
+        except NoResultsError as e:  # board worked, this query just matched nothing
             board_empty.append(str(e))
         except ValueError as e:  # board-level failure, user-facing message
             board_errors.append(str(e))
@@ -255,9 +278,15 @@ def search_jobs(
         )
 
     # Boards stage: one worker per board — there's no reason LinkedIn should
-    # wait for Drushim; within a board keywords stay serial (see _search_board).
-    # Results are classified in ctx.sources order so _interleave_and_dedupe's
+    # wait for Drushim; within a board queries stay serial (see _search_board).
+    # Results are classified in fan-out order so _interleave_and_dedupe's
     # round-robin order stays stable regardless of which board finishes first.
+    # The worldwide-remote pass rides the global-reach board's own worker (its
+    # extra locations come from _board_queries), so it joins the fan-out even
+    # when the user unchecked that board for local results.
+    fanout = list(ctx.sources)
+    if ctx.include_worldwide and ctx.work_mode == "remote" and WORLDWIDE_BOARD not in fanout:
+        fanout.append(WORLDWIDE_BOARD)
     hits_by_source: dict[str, list[JobHit]] = {}
     source_errors: dict[str, str] = {}
     source_empty: dict[str, str] = {}
@@ -269,12 +298,12 @@ def search_jobs(
         out = _search_board(name, ctx)
         with progress_lock:  # emitted on COMPLETION — parallel boards have no "starting board i"
             boards_done += 1
-            notify({"stage": "boards", "source": name, "index": boards_done, "total": len(ctx.sources)})
+            notify({"stage": "boards", "source": name, "index": boards_done, "total": len(fanout)})
         return out
 
-    with ThreadPoolExecutor(max_workers=len(ctx.sources)) as pool:
-        board_futures = {name: pool.submit(_run_board, name) for name in ctx.sources}
-    for name in ctx.sources:
+    with ThreadPoolExecutor(max_workers=len(fanout)) as pool:
+        board_futures = {name: pool.submit(_run_board, name) for name in fanout}
+    for name in fanout:
         board_hits, board_errors, board_empty = board_futures[name].result()
         if board_hits:
             hits_by_source[name] = freshest_first(board_hits, ctx.max_age_days)

@@ -132,6 +132,7 @@ from app.models import (
     ScreeningRequest,
     SearchContext,
     SearchContextRequest,
+    SearchPrefs,
     StaleApplication,
     StaleApplicationList,
     TailorRequest,
@@ -297,6 +298,31 @@ def jobs_search_context(body: SearchContextRequest) -> SearchContext:
         return derive_search_context(body.resume)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error deriving search context: {e}")
+
+
+@router.get("/jobs/search-prefs", response_model=SearchPrefs)
+def get_search_prefs(user: User = Depends(current_user)) -> SearchPrefs:
+    """The user's saved 'Customize search' picks — the Jobs page prefills its
+    panel from this so a returning user doesn't re-enter everything."""
+    raw = user.search_prefs_json or ""
+    if not raw:
+        return SearchPrefs()
+    try:
+        return SearchPrefs(context=SearchContext.model_validate_json(raw))
+    except Exception:  # noqa: BLE001 - tolerate legacy/corrupt rows: just no prefill
+        return SearchPrefs()
+
+
+@router.put("/jobs/search-prefs", response_model=SearchPrefs)
+def update_search_prefs(
+    body: SearchPrefs,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> SearchPrefs:
+    """Persist (context set) or clear (context null) the saved customize picks."""
+    user.search_prefs_json = body.context.model_dump_json() if body.context else ""
+    db.commit()
+    return body
 
 
 @router.post("/jobs/search", response_model=JobSearchResult)

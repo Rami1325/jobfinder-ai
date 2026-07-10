@@ -270,6 +270,17 @@ export async function searchContext(resume: ResumeModel): Promise<SearchContext>
   return data;
 }
 
+/** Saved "Customize search" picks (server-side, per user) — null when none saved. */
+export async function getSearchPrefs(): Promise<SearchContext | null> {
+  const { data } = await api.get<{ context: SearchContext | null }>("/jobs/search-prefs");
+  return data.context ?? null;
+}
+
+/** Persist the customize picks (or clear them with null) for the next visit. */
+export async function updateSearchPrefs(context: SearchContext | null): Promise<void> {
+  await api.put("/jobs/search-prefs", { context });
+}
+
 // Batch auto-tailor kits (PLAN 8.1): enqueue high-fit jobs, then drain the
 // queue one tailor per request — each processNextKit call is a single
 // pipeline run, so the client loop is what keeps a serverless backend busy.

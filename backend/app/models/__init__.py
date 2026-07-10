@@ -562,6 +562,20 @@ class SearchContext(BaseModel):
     # applies it server-side (f_TPR); every board is also filtered in the
     # fan-out against JobHit.posted_at, keeping hits with no known date.
     max_age_days: int = 30
+    # Worldwide-remote opt-in: when work_mode is "remote", ALSO search remote
+    # roles in high-earning markets (US/UK/EU — see
+    # job_search.WORLDWIDE_REMOTE_LOCATIONS) on the boards with global reach
+    # (LinkedIn). Local Israeli boards are never queried with those locations,
+    # and the flag is inert unless work_mode == "remote".
+    include_worldwide: bool = False
+
+
+class SearchPrefs(BaseModel):
+    """The user's saved 'Customize search' picks (GET/PUT /jobs/search-prefs) —
+    prefill for the Jobs page so a returning user doesn't re-enter everything.
+    context=None means nothing saved (or cleared)."""
+
+    context: Optional[SearchContext] = None
 
 
 class SearchContextRequest(BaseModel):

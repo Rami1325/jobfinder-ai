@@ -127,6 +127,9 @@
       "israel": "All of Israel"
     },
     "sourcesLabel": "Job boards",
+    "worldwide": "Include worldwide remote jobs",
+    "worldwideHint": "Also searches remote roles in high-earning markets (US, UK, EU) on LinkedIn — the local Israeli boards stay local.",
+    "worldwideTag": "incl. worldwide",
     "cta": "Find jobs for me",
     "searchingAuto": "Resume saved — we're finding jobs that fit it and scoring each one. This can take a minute or two.",
     "searchingManual": "Searching job listings and scoring each one against your resume — this can take a minute or two.",

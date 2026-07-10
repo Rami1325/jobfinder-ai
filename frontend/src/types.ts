@@ -205,6 +205,7 @@ export interface SearchContext {
   limit: number;
   sources?: string[]; // provider ids to search ("linkedin", "drushim", …); absent on older backends
   max_age_days?: number; // only postings at most this old, 0 = any age; backend defaults to 30
+  include_worldwide?: boolean; // remote-only opt-in: also search worldwide remote roles (US/UK/EU) on LinkedIn
 }
 export interface AlertSettings {
   enabled: boolean;
