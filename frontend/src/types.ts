@@ -357,6 +357,13 @@ export interface BriefPerson {
   /** Only set when the address literally appears on the page. */
   email: string;
 }
+/** A likely decision-maker title for the target role, with a LinkedIn deep
+ * link (company People tab when the page linked it, else a people search).
+ * Deterministic role→titles table — never the LLM. */
+export interface BriefTarget {
+  title: string;
+  url: string;
+}
 export interface CompanyBriefResult {
   company: string;
   overview: string;
@@ -365,6 +372,8 @@ export interface CompanyBriefResult {
   interview_style: string[];
   talking_points: string[];
   people: BriefPerson[];
+  targets?: BriefTarget[]; // absent on older backends
+  company_people_url?: string; // absent on older backends
   hiring_emails: string[];
   outreach_subject: string;
   outreach_message: string;

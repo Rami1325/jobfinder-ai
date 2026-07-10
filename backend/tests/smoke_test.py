@@ -294,6 +294,57 @@ except ValueError:
     check("brief with no grounding input raises", True)
 check("COMPANY_BRIEF prompt Task tag still first", _li_prompts.COMPANY_BRIEF_SYSTEM.startswith("Task: COMPANY_BRIEF."))
 
+# Role-aware hiring-chain links (PLAN 11.7): deterministic role→titles table +
+# company-slug extraction; People-tab deep links when the page names the
+# company's LinkedIn, people-search fallback otherwise. Never the LLM.
+from app.core.company_brief import (  # noqa: E402
+    hiring_chain_links,
+    linkedin_company_slug,
+    target_titles,
+)
+
+_t_ai = target_titles("AI Engineer")
+check("ai role targets the AI chain + recruiter", "Head of AI" in _t_ai and _t_ai[-1] == "Recruiter", str(_t_ai))
+check("hebrew role maps too (מדען נתונים ⇒ AI chain)", "Head of AI" in target_titles("מדען נתונים"))
+check("sales role targets the sales chain", "VP Sales" in target_titles("Senior Account Executive"))
+check("unknown/empty role falls back to founders + recruiter", target_titles("") == ["CEO", "Founder", "Recruiter"])
+check(
+    "substring guard: html engineer is NOT an ML role",
+    "Head of AI" not in target_titles("html engineer") and "VP R&D" in target_titles("html engineer"),
+    str(target_titles("html engineer")),
+)
+check(
+    "company slug extracted from a page linkedin link",
+    linkedin_company_slug("Follow us: https://www.linkedin.com/company/example-inc/about/") == "example-inc",
+)
+check("no linkedin link ⇒ no slug (never guessed from the name)", linkedin_company_slug(_PAGE) == "")
+_chain = hiring_chain_links("AI Engineer", "Example Inc", "example-inc")
+check(
+    "chain links hit the company People tab when the slug is known",
+    len(_chain) > 0
+    and all(t.url.startswith("https://www.linkedin.com/company/example-inc/people/?keywords=") for t in _chain),
+    _chain[0].url if _chain else "no links",
+)
+_chain_ns = hiring_chain_links("AI Engineer", "Example Inc", "")
+check(
+    "chain links fall back to people search without a slug",
+    len(_chain_ns) > 0
+    and all(t.url.startswith("https://www.linkedin.com/search/results/people/") for t in _chain_ns),
+)
+check("no slug and no company ⇒ no chain links (bare-title search is useless)", hiring_chain_links("AI Engineer", "", "") == [])
+_brief2 = build_company_brief(
+    resume,
+    company="Example Inc",
+    page_text=_PAGE + " Follow us at https://www.linkedin.com/company/example-inc/.",
+    job_title="AI Engineer",
+)
+check(
+    "brief carries role-aware targets + the company People-tab url",
+    len(_brief2.targets) > 0 and _brief2.targets[0].title == "CTO"
+    and _brief2.company_people_url == "https://www.linkedin.com/company/example-inc/people/",
+    str([t.title for t in _brief2.targets]),
+)
+
 # 12f. Résumé health-check (PLAN 11.2): deterministic checks drive the score;
 # the LLM only writes critique text.
 from app.core.resume_health import (  # noqa: E402

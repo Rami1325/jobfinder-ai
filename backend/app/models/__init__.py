@@ -771,6 +771,16 @@ class BriefPerson(BaseModel):
     email: str = ""  # only when it appears verbatim in the page text
 
 
+class BriefTarget(BaseModel):
+    """A likely decision-maker title for the target role (PLAN 11.7), with a
+    LinkedIn deep link — the company's People tab filtered by the title when
+    the page linked the company's LinkedIn, else a people search. Built from a
+    deterministic role→titles table, never the LLM."""
+
+    title: str = ""  # e.g. "CTO", "Head of AI", "Recruiter"
+    url: str = ""
+
+
 class CompanyBriefResult(BaseModel):
     company: str = ""
     overview: str = ""  # 2-3 plain sentences on what they do
@@ -779,6 +789,8 @@ class CompanyBriefResult(BaseModel):
     interview_style: list[str] = Field(default_factory=list)
     talking_points: list[str] = Field(default_factory=list)  # résumé ↔ company fit
     people: list[BriefPerson] = Field(default_factory=list)  # founders/managers/recruiters
+    targets: list[BriefTarget] = Field(default_factory=list)  # role-aware hiring-chain links (PLAN 11.7)
+    company_people_url: str = ""  # the company's LinkedIn People tab, when the page linked it
     hiring_emails: list[str] = Field(default_factory=list)  # careers@/jobs@/hr@ found on the page
     outreach_subject: str = ""
     outreach_message: str = ""  # short reach-out to the top person (résumé-grounded)

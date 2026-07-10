@@ -38,7 +38,9 @@ export default function CompanyBriefToolPage() {
   const [url, setUrl] = useState(prefill?.url ?? "");
   const [pageText, setPageText] = useState("");
   const [jdText, setJdText] = useState(prefill?.jdText ?? "");
-  const jobTitle = prefill?.jobTitle ?? "";
+  // Editable: the role drives the deterministic "hiring chain" targeting
+  // (AI Engineer ⇒ CTO / Head of AI chips) as well as the reach-out message.
+  const [jobTitle, setJobTitle] = useState(prefill?.jobTitle ?? "");
   const [result, setResult] = useState<CompanyBriefResult | null>(null);
   const [running, setRunning] = useState(false);
   const toast = useToast();
@@ -96,6 +98,16 @@ export default function CompanyBriefToolPage() {
               value={company}
               onChange={(e) => setCompany(e.target.value)}
               placeholder={t("brief.companyPlaceholder")}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-ink-muted">{t("brief.role")}</label>
+            <input
+              dir="auto"
+              className={input}
+              value={jobTitle}
+              onChange={(e) => setJobTitle(e.target.value)}
+              placeholder={t("brief.rolePlaceholder")}
             />
           </div>
           <div>
@@ -222,6 +234,39 @@ export default function CompanyBriefToolPage() {
                     <ExternalLink size={11} className="rtl:-scale-x-100" />
                   </a>
                 )}
+              </div>
+            )}
+            {(result.targets ?? []).length > 0 && (
+              <div className="mt-4 border-t border-line pt-3">
+                <p className="text-xs font-semibold text-ink-muted">{t("brief.chain")}</p>
+                <p className="mt-0.5 text-xs text-ink-faint">
+                  {result.company_people_url ? t("brief.chainPeopleTab") : t("brief.chainSearch")}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(result.targets ?? []).map((tg) => (
+                    <a
+                      key={tg.title}
+                      href={tg.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
+                    >
+                      <UserSearch size={12} /> {tg.title}
+                      <ExternalLink size={11} className="rtl:-scale-x-100" />
+                    </a>
+                  ))}
+                  {result.company_people_url && (
+                    <a
+                      href={result.company_people_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent-soft transition-colors hover:border-accent"
+                    >
+                      <Users size={12} /> {t("brief.allEmployees")}
+                      <ExternalLink size={11} className="rtl:-scale-x-100" />
+                    </a>
+                  )}
+                </div>
               </div>
             )}
             {result.hiring_emails.length > 0 && (
