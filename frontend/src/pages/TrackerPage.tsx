@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import {
   Award,
@@ -30,7 +30,7 @@ import {
 } from "../api/client";
 import ResumeView from "../components/ResumeView";
 import TrackerAnalytics from "../components/TrackerAnalytics";
-import { Badge, Button, Card, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
+import { Badge, Button, Card, CountUp, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
 import type { ApplicationDetail, ApplicationOut } from "../types";
@@ -82,6 +82,81 @@ function Stars({ value, onRate }: { value: number; onRate: (n: number) => void }
   );
 }
 
+/** Status → chip face classes (mirrors the column tones). */
+const CHIP_FACES: Record<string, string> = {
+  saved: "border-line bg-panel-2 text-ink-muted",
+  applied: "border-accent/50 bg-accent/15 text-accent-soft",
+  interview: "border-warn/50 bg-warn/15 text-warn",
+  offer: "border-mint/50 bg-mint/15 text-mint",
+  rejected: "border-danger/50 bg-danger/15 text-danger",
+};
+
+// Pending status flips, id → previous status. Written by changeStatus just
+// before the state update re-parents the card into its new column (which
+// remounts the chip), consumed by the fresh chip so it knows to flip instead
+// of rendering statically. Module-level (like appsCache) because the flip must
+// survive that remount. Entries are deleted when the flip finishes, so a
+// StrictMode double-effect simply replays the flip once.
+const pendingFlips = new Map<number, string>();
+
+/**
+ * C1 — split-flap status chip (Terminus departures-board read): on a real
+ * status change the chip folds to 90° (ease-in), the face — label AND tone —
+ * is swapped hard at the midpoint, and the new face snaps down (ease-out).
+ * ~240 ms total. Initial renders are static; reduced motion swaps in place.
+ */
+function FlipStatusChip({ id, status }: { id: number; status: string }) {
+  const { t } = useTranslation("tracker");
+  const reduce = useReducedMotion();
+  const controls = useAnimationControls();
+  // If a flip is pending, first paint shows the OLD face so there is
+  // something to fold away.
+  const [face, setFace] = useState(() => pendingFlips.get(id) ?? status);
+
+  useEffect(() => {
+    const from = pendingFlips.get(id);
+    if (from === undefined || from === status || reduce) {
+      pendingFlips.delete(id);
+      setFace(status);
+      controls.set({ rotateX: 0 });
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      // Fold the old face away… (small delay so the card's own entrance
+      // doesn't hide the read)
+      await controls.start({ rotateX: 90, transition: { duration: 0.09, ease: "easeIn", delay: 0.06 } });
+      if (cancelled) return;
+      // …swap it at the midpoint — a hard mechanical read, no crossfade…
+      setFace(status);
+      controls.set({ rotateX: -90 });
+      // …and snap the new face down.
+      await controls.start({ rotateX: 0, transition: { duration: 0.09, ease: "easeOut" } });
+      if (!cancelled) pendingFlips.delete(id);
+    })();
+    return () => {
+      cancelled = true;
+      controls.stop();
+    };
+  }, [id, status, reduce, controls]);
+
+  return (
+    <span className="inline-block" style={{ perspective: "300px" }}>
+      <motion.span
+        animate={controls}
+        initial={false}
+        style={{ backfaceVisibility: "hidden" }}
+        className={cn(
+          "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-semibold leading-none",
+          CHIP_FACES[face] ?? CHIP_FACES.saved,
+        )}
+      >
+        {t(`status.${face}`)}
+      </motion.span>
+    </span>
+  );
+}
+
 // Module-level cache: the board's applications survive tab switches so revisits
 // render instantly instead of flashing the metrics skeleton. null = never loaded.
 let appsCache: ApplicationOut[] | null = null;
@@ -100,6 +175,9 @@ export default function TrackerPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
   const [tab, setTab] = useState<"board" | "analytics">("board");
+  // C2 — receiving-column pulse: set on every status change, keyed by `n` so a
+  // repeat move into the same column re-fires the flash.
+  const [pulse, setPulse] = useState<{ col: string; n: number } | null>(null);
   const toast = useToast();
 
   async function refresh() {
@@ -131,8 +209,13 @@ export default function TrackerPage() {
   const metrics = useTrackerMetrics(apps);
 
   async function changeStatus(id: number, status: string) {
+    const from = apps.find((a) => a.id === id)?.status || "saved";
     const updated = await updateApplication(id, { status });
+    // Queue the split-flap BEFORE the state update re-parents the card — the
+    // remounted chip in the new column consumes it (C1).
+    pendingFlips.set(id, from);
     setApps((prev) => prev.map((a) => (a.id === id ? updated : a)));
+    setPulse({ col: updated.status || status, n: Date.now() });
   }
 
   async function toggleInterviewed(a: ApplicationOut) {
@@ -162,6 +245,7 @@ export default function TrackerPage() {
 
   async function remove(id: number) {
     await deleteApplication(id);
+    pendingFlips.delete(id);
     setApps((prev) => prev.filter((a) => a.id !== id));
     toast("info", t("toasts.deleted"));
   }
@@ -263,7 +347,9 @@ export default function TrackerPage() {
                       <tile.icon size={17} />
                     </span>
                     <div className="min-w-0">
-                      <div className="text-2xl font-bold leading-none tabular-nums text-ink">{tile.value}</div>
+                      <div className="text-2xl font-bold leading-none tabular-nums text-ink">
+                        <CountUp to={tile.value} duration={0.9} />
+                      </div>
                       <div className="mt-1 truncate text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-muted sm:tracking-[0.12em]">
                         {tile.label}
                       </div>
@@ -327,13 +413,24 @@ export default function TrackerPage() {
             return (
               <div key={col.key} className="flex w-[82vw] max-w-[320px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl border border-line/60 bg-panel/40 md:w-auto md:max-w-none">
                 <div className={cn("h-[2px] w-full", col.bar)} aria-hidden />
-                <div className="flex items-center justify-between px-3 pb-1 pt-3">
+                <div className="relative flex items-center justify-between px-3 pb-1 pt-3">
+                  {/* C2 — one accent flash on the column that just received a card */}
+                  {pulse?.col === col.key && (
+                    <motion.span
+                      key={pulse.n}
+                      aria-hidden
+                      className="pointer-events-none absolute inset-0 bg-accent/15"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: [0, 1, 0] }}
+                      transition={{ duration: 0.25, ease: "easeOut" }}
+                    />
+                  )}
                   <div className="flex items-center gap-2">
                     <span className={cn("h-1.5 w-1.5 rounded-full", col.dot)} aria-hidden />
                     <Badge tone={col.tone}>{t(`status.${col.key}`)}</Badge>
                   </div>
                   <span className="rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-ink-muted">
-                    {items.length}
+                    <CountUp to={items.length} duration={0.6} />
                   </span>
                 </div>
                 <div className="flex flex-col gap-3 p-3">
@@ -343,16 +440,25 @@ export default function TrackerPage() {
                     </p>
                   )}
                   <AnimatePresence initial={false}>
-                    {items.map((a, i) => {
+                    {items.map((a) => {
                       const submitted = SUBMITTED.has(a.status || "saved");
                       return (
                         <motion.div
                           key={a.id}
-                          layout
+                          // C2 — shared layoutId: on a status change the card
+                          // GLIDES from its old column to the new one (the old
+                          // instance hands its position to this one) instead of
+                          // fading out/in. Select-driven board, so the spring
+                          // settle is the whole "drop" physics.
+                          layoutId={`tracker-card-${a.id}`}
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, scale: 0.96 }}
-                          transition={{ delay: Math.min(i * 0.04, 0.3), duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                          transition={{
+                            duration: 0.25,
+                            ease: [0.22, 1, 0.36, 1],
+                            layout: { type: "spring", duration: 0.25, bounce: 0.15 },
+                          }}
                           className="group rounded-xl border border-line bg-gradient-to-b from-panel to-panel/70 p-3.5 shadow-card transition-all duration-200 hover:border-accent/40 hover:shadow-glow"
                         >
                           <div className="flex items-start justify-between gap-2">
@@ -370,7 +476,7 @@ export default function TrackerPage() {
                                     : "bg-panel-2 text-ink-muted",
                               )}
                             >
-                              {Math.round(a.overall_score)}%
+                              <CountUp to={Math.round(a.overall_score)} suffix="%" duration={0.6} />
                             </span>
                           </div>
 
@@ -388,23 +494,26 @@ export default function TrackerPage() {
                             )}
                           </div>
 
-                          <div className="mt-2 flex items-center justify-between gap-2">
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
                             <span className="text-[11px] text-ink-faint">{a.created_at?.slice(0, 10)}</span>
-                            {submitted && (
-                              <button
-                                onClick={() => toggleInterviewed(a)}
-                                title={t("interviewedToggle")}
-                                className={cn(
-                                  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
-                                  a.interviewed
-                                    ? "border-mint/50 bg-mint/15 text-mint"
-                                    : "border-line bg-panel-2 text-ink-faint hover:border-mint/40 hover:text-ink-muted",
-                                )}
-                              >
-                                <MessageSquare size={11} />
-                                {t("interviewed")}
-                              </button>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                              <FlipStatusChip id={a.id} status={a.status || "saved"} />
+                              {submitted && (
+                                <button
+                                  onClick={() => toggleInterviewed(a)}
+                                  title={t("interviewedToggle")}
+                                  className={cn(
+                                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                                    a.interviewed
+                                      ? "border-mint/50 bg-mint/15 text-mint"
+                                      : "border-line bg-panel-2 text-ink-faint hover:border-mint/40 hover:text-ink-muted",
+                                  )}
+                                >
+                                  <MessageSquare size={11} />
+                                  {t("interviewed")}
+                                </button>
+                              )}
+                            </div>
                           </div>
 
                           {/* Status select gets its own full-width row so the

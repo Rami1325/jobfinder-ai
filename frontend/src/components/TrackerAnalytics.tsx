@@ -1,7 +1,7 @@
 import { useMemo } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
-import { Card, CardTitle } from "./ui";
+import { Card, CardTitle, CountUp, SectionLabel, Sparkline } from "./ui";
 import { cn } from "../lib/cn";
 import type { ApplicationOut } from "../types";
 
@@ -12,6 +12,23 @@ const RESPONDED = new Set(["interview", "offer", "rejected"]);
 
 const WEEKS = 8;
 const BAR_AREA_PX = 128;
+const ACTIVITY_ROWS = 6;
+
+/** Status → dot / text tones for the activity log (mirrors the board columns). */
+const STATUS_DOT: Record<string, string> = {
+  saved: "bg-ink-faint",
+  applied: "bg-accent",
+  interview: "bg-warn",
+  offer: "bg-mint",
+  rejected: "bg-danger",
+};
+const STATUS_TEXT: Record<string, string> = {
+  saved: "text-ink-muted",
+  applied: "text-accent",
+  interview: "text-warn",
+  offer: "text-mint",
+  rejected: "text-danger",
+};
 
 /** Start of the week containing `d` — Sunday, the Israeli work-week start. */
 function weekStart(d: Date): number {
@@ -25,21 +42,39 @@ function responded(a: ApplicationOut): boolean {
   return SUBMITTED.has(a.status || "saved") && (RESPONDED.has(a.status) || a.interviewed);
 }
 
+/** "2 days ago" / "לפני יומיים" — coarse relative timestamp for the activity log. */
+function relativeTime(iso: string, locale: string): string {
+  const ts = new Date(iso).getTime();
+  if (Number.isNaN(ts)) return "";
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  const mins = Math.round((ts - Date.now()) / 60_000);
+  if (Math.abs(mins) < 60) return rtf.format(mins, "minute");
+  const hours = Math.round(mins / 60);
+  if (Math.abs(hours) < 24) return rtf.format(hours, "hour");
+  const days = Math.round(hours / 24);
+  if (Math.abs(days) < 7) return rtf.format(days, "day");
+  return rtf.format(Math.round(days / 7), "week");
+}
+
 /**
- * Search analytics (PLAN 6): applications/week, the submitted→offer funnel
- * (callback rate made visual), and average match score per outcome — all
- * derived client-side from the tracker rows. Charts are plain flex divs, so
- * RTL layout works with no special casing.
+ * Search analytics (PLAN 6), restyled as mission control (DESIGN_PLAN C3):
+ * a live signal strip (awaiting-reply chip + per-week sparkline trends),
+ * applications/week, the submitted→offer funnel (callback rate made visual),
+ * average match score per outcome, and a recent-activity log — all derived
+ * client-side from the tracker rows. Charts are plain flex divs, so RTL
+ * layout works with no special casing.
  */
 export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
   const { t, i18n } = useTranslation("tracker");
   const locale = i18n.language === "he" ? "he-IL" : "en-GB";
 
+  const reduce = useReducedMotion();
+
   const weekly = useMemo(() => {
     const thisWeek = weekStart(new Date());
     const buckets = Array.from({ length: WEEKS }, (_, i) => {
       const start = thisWeek - (WEEKS - 1 - i) * 7 * 86400_000;
-      return { start, total: 0, submitted: 0 };
+      return { start, total: 0, submitted: 0, responded: 0 };
     });
     const byStart = new Map(buckets.map((b) => [b.start, b]));
     for (const a of apps) {
@@ -48,10 +83,30 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
       if (!b) continue; // older than the window
       b.total += 1;
       if (SUBMITTED.has(a.status || "saved")) b.submitted += 1;
+      if (responded(a)) b.responded += 1;
     }
     return buckets;
   }, [apps]);
   const weeklyMax = Math.max(1, ...weekly.map((w) => w.total));
+  const latestWeek = weekly[WEEKS - 1];
+  const appsSeries = weekly.map((w) => w.total);
+  const respSeries = weekly.map((w) => w.responded);
+
+  /** Applied but no answer yet — the live "awaiting reply" signal. */
+  const awaiting = useMemo(
+    () => apps.filter((a) => a.status === "applied" && !a.interviewed).length,
+    [apps],
+  );
+
+  /** Newest additions first — created_at is the only timestamp the API exposes. */
+  const recent = useMemo(
+    () =>
+      [...apps]
+        .filter((a) => a.created_at)
+        .sort((x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime())
+        .slice(0, ACTIVITY_ROWS),
+    [apps],
+  );
 
   const funnel = useMemo(() => {
     const submitted = apps.filter((a) => SUBMITTED.has(a.status || "saved"));
@@ -93,6 +148,67 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="grid gap-4 lg:grid-cols-2"
     >
+      {/* ── Mission-control strip: live signal + per-week trends (C3) ─── */}
+      <Card className="lg:col-span-2">
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
+          <span
+            className={cn(
+              "inline-flex items-center gap-2 rounded-full border px-3 py-1.5",
+              awaiting > 0 ? "border-accent/40 bg-accent/10" : "border-mint/40 bg-mint/10",
+            )}
+          >
+            <span className="relative flex h-2 w-2" aria-hidden>
+              {awaiting > 0 && !reduce && (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+              )}
+              <span
+                className={cn("relative inline-flex h-2 w-2 rounded-full", awaiting > 0 ? "bg-accent" : "bg-mint")}
+              />
+            </span>
+            <span
+              className={cn(
+                "text-[11px] font-semibold uppercase tracking-[0.12em]",
+                awaiting > 0 ? "text-accent-soft" : "text-mint",
+              )}
+            >
+              {awaiting > 0 ? (
+                <>
+                  <CountUp to={awaiting} duration={0.6} className="tabular-nums" />{" "}
+                  {t("analytics.live.awaiting", { count: awaiting })}
+                </>
+              ) : (
+                t("analytics.live.allQuiet")
+              )}
+            </span>
+          </span>
+
+          <div className="flex items-center gap-3">
+            <div>
+              <SectionLabel>{t("analytics.live.appsPerWeek")}</SectionLabel>
+              <div className="mt-1 text-2xl font-bold leading-none tabular-nums text-ink">
+                <CountUp to={latestWeek.total} duration={0.8} />
+              </div>
+            </div>
+            <span className="flex text-accent">
+              <Sparkline values={appsSeries} width={88} height={30} />
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div>
+              <SectionLabel>{t("analytics.live.responsesPerWeek")}</SectionLabel>
+              <div className="mt-1 text-2xl font-bold leading-none tabular-nums text-ink">
+                <CountUp to={latestWeek.responded} duration={0.8} />
+              </div>
+            </div>
+            <span className="flex text-mint">
+              <Sparkline values={respSeries} width={88} height={30} />
+            </span>
+          </div>
+        </div>
+        <p className="mt-3 text-[11px] text-ink-faint">{t("analytics.live.trendHint")}</p>
+      </Card>
+
       {/* ── Applications per week ─────────────────────────────────────── */}
       <Card className="lg:col-span-2">
         <CardTitle>{t("analytics.weekly.title")}</CardTitle>
@@ -108,7 +224,9 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
                 return (
                   <div key={w.start} className="flex flex-1 flex-col items-center justify-end gap-1">
                     {w.total > 0 && (
-                      <span className="text-[11px] font-semibold tabular-nums text-ink-muted">{w.total}</span>
+                      <span className="text-[11px] font-semibold tabular-nums text-ink-muted">
+                        <CountUp to={w.total} duration={0.7} />
+                      </span>
                     )}
                     <div
                       className="flex w-full max-w-12 flex-col justify-end overflow-hidden rounded-t-md bg-transparent"
@@ -156,7 +274,7 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
                   <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
                     <span className="font-medium text-ink">{t(`analytics.funnel.${stage.key}`)}</span>
                     <span className="tabular-nums text-ink-muted">
-                      {stage.count}
+                      <CountUp to={stage.count} duration={0.7} />
                       {stage.key !== "submitted" && (
                         <span className="text-ink-faint"> · {t("analytics.funnel.ofSubmitted", { pct })}</span>
                       )}
@@ -190,7 +308,8 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
                 <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
                   <span className="font-medium text-ink">{row.label}</span>
                   <span className="tabular-nums text-ink-muted">
-                    {t("analytics.score.avg", { score: Math.round(row.avg) })}
+                    {t("analytics.score.avgPrefix")}{" "}
+                    <CountUp to={Math.round(row.avg)} suffix="%" duration={0.7} />
                     <span className="text-ink-faint"> · {t("analytics.score.count", { count: row.count })}</span>
                   </span>
                 </div>
@@ -205,6 +324,44 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
               </div>
             ))}
           </div>
+        )}
+      </Card>
+
+      {/* ── Recent activity log (C3) ──────────────────────────────────── */}
+      <Card className="lg:col-span-2">
+        <CardTitle>{t("analytics.activity.title")}</CardTitle>
+        <p className="mt-1 text-xs text-ink-muted">{t("analytics.activity.hint")}</p>
+        {recent.length === 0 ? (
+          <p className="mt-6 text-sm text-ink-faint">{t("analytics.activity.empty")}</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-line/60">
+            {recent.map((a) => {
+              const status = a.status || "saved";
+              return (
+                <li key={a.id} className="flex items-center gap-3 py-2.5">
+                  <span
+                    className={cn("h-1.5 w-1.5 shrink-0 rounded-full", STATUS_DOT[status] ?? STATUS_DOT.saved)}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                    {a.job_title || "—"}
+                    {a.company && <span className="text-ink-muted"> · {a.company}</span>}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 text-[11px] font-semibold uppercase tracking-[0.08em]",
+                      STATUS_TEXT[status] ?? STATUS_TEXT.saved,
+                    )}
+                  >
+                    {t(`status.${status}`)}
+                  </span>
+                  <span className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-ink-faint">
+                    {relativeTime(a.created_at, locale)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </Card>
     </motion.div>

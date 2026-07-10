@@ -84,11 +84,24 @@
     "score": {
       "title": "Match score vs. outcome",
       "hint": "Average match score of the applications behind each outcome — is tailoring paying off?",
-      "avg": "avg {{score}}%",
+      "avgPrefix": "avg",
       "count_one": "{{count}} application",
       "count_other": "{{count}} applications",
       "noResponse": "No response yet",
       "empty": "Needs a few applications with a match score."
+    },
+    "live": {
+      "awaiting_one": "awaiting reply",
+      "awaiting_other": "awaiting reply",
+      "allQuiet": "all quiet",
+      "appsPerWeek": "Applications / wk",
+      "responsesPerWeek": "Responses / wk",
+      "trendHint": "Last 8 weeks · responses are counted in the week the application was added."
+    },
+    "activity": {
+      "title": "Recent activity",
+      "hint": "The latest applications and where each one stands now.",
+      "empty": "Activity appears here as you add applications."
     }
   }
 }
