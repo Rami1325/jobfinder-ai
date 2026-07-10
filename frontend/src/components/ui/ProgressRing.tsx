@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { animate, motion, useMotionValue, useTransform } from "framer-motion";
+import { animate, motion, useMotionValue, useReducedMotion, useTransform } from "framer-motion";
 import { cn } from "../../lib/cn";
 
 interface ProgressRingProps {
@@ -9,6 +9,8 @@ interface ProgressRingProps {
   label?: string;
   sublabel?: string;
   tone?: "accent" | "mint" | "gradient";
+  /** Seconds before the sweep + count start — lets callers sequence rings into one beat. */
+  delay?: number;
 }
 
 /** Animated circular score gauge. */
@@ -19,15 +21,18 @@ export default function ProgressRing({
   label,
   sublabel,
   tone = "gradient",
+  delay = 0,
 }: ProgressRingProps) {
   const v = Math.max(0, Math.min(100, value));
+  // Reduced motion drops the choreography delay so the score is never gated on a timer.
+  const wait = useReducedMotion() ? 0 : delay;
   // Count the center number up in sync with the ring sweep.
   const mv = useMotionValue(0);
   const rounded = useTransform(mv, (x) => Math.round(x));
   useEffect(() => {
-    const controls = animate(mv, v, { duration: 1.1, ease: [0.22, 1, 0.36, 1] });
+    const controls = animate(mv, v, { duration: 1.1, ease: [0.22, 1, 0.36, 1], delay: wait });
     return () => controls.stop();
-  }, [mv, v]);
+  }, [mv, v, wait]);
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const offset = c - (v / 100) * c;
@@ -55,7 +60,7 @@ export default function ProgressRing({
           strokeDasharray={c}
           initial={{ strokeDashoffset: c }}
           animate={{ strokeDashoffset: offset }}
-          transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1], delay: wait }}
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">

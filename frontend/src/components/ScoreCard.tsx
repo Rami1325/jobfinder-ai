@@ -2,7 +2,7 @@ import { ArrowRight, ArrowUpRight, ArrowDownRight, Minus, ShieldCheck, ShieldAle
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import type { FabricationFlag, Score } from "../types";
-import { Card, CardTitle, ProgressRing } from "./ui";
+import { Card, CardTitle, ProgressRing, Stamp } from "./ui";
 import { cn } from "../lib/cn";
 
 function DeltaPill({ before, after }: { before: number; after: number }) {
@@ -13,7 +13,7 @@ function DeltaPill({ before, after }: { before: number; after: number }) {
     <motion.span
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.95, duration: 0.35 }}
+      transition={{ delay: 1.2, duration: 0.35 }}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
         d === 0 && "bg-bg-soft text-ink-faint",
@@ -41,20 +41,28 @@ function GuardTile({ flags }: { flags: FabricationFlag[] }) {
       className="group flex flex-col items-center gap-3"
       title={t("score.guardDetail")}
     >
-      <div
-        className={cn(
-          "flex h-28 w-28 flex-col items-center justify-center rounded-full border-[6px] transition-transform group-hover:scale-105",
-          clean ? "border-mint/60 bg-mint/10" : "border-danger/60 bg-danger/10",
-        )}
-      >
-        {clean ? <ShieldCheck size={24} className="text-mint" /> : <ShieldAlert size={24} className="text-danger" />}
-        <span className="mt-0.5 text-2xl font-bold tabular-nums text-ink">{flags.length}</span>
+      <div className="relative transition-transform group-hover:scale-105">
+        <div
+          className={cn(
+            "flex h-28 w-28 flex-col items-center justify-center rounded-full border-[6px]",
+            clean ? "border-mint/60 bg-mint/10" : "border-danger/60 bg-danger/10",
+          )}
+        >
+          {clean ? <ShieldCheck size={24} className="text-mint" /> : <ShieldAlert size={24} className="text-danger" />}
+          <span className="mt-0.5 text-2xl font-bold tabular-nums text-ink">{flags.length}</span>
+        </div>
+        {/* Decorative verdict, landing as the choreography's final beat — the pill below stays the accessible signal. */}
+        <span className="pointer-events-none absolute inset-x-0 -bottom-2 flex justify-center">
+          <Stamp tone={clean ? "mint" : "danger"} delay={1.4}>
+            {clean ? t("score.stampVerified") : t("score.stampReview")}
+          </Stamp>
+        </span>
       </div>
       <p className="text-sm font-semibold text-ink">{t("score.guard")}</p>
       <motion.span
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.95, duration: 0.35 }}
+        transition={{ delay: 1.2, duration: 0.35 }}
         className={cn(
           "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
           clean ? "bg-mint/10 text-mint" : "bg-danger/10 text-danger",
@@ -62,6 +70,14 @@ function GuardTile({ flags }: { flags: FabricationFlag[] }) {
       >
         {clean ? t("score.guardClean") : t("score.guardFlags", { count: flags.length })}
       </motion.span>
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 1.2, duration: 0.35 }}
+        className="max-w-[26ch] text-center text-xs leading-snug text-ink-faint"
+      >
+        {clean ? t("score.guardNoteClean") : t("score.guardNoteFlags", { count: flags.length })}
+      </motion.p>
     </button>
   );
 }
@@ -96,7 +112,8 @@ export default function ScoreCard({
               </div>
               <ArrowRight size={18} className="shrink-0 text-ink-faint rtl:-scale-x-100" />
               <div className="flex flex-col items-center gap-1">
-                <ProgressRing value={r.a} size={112} tone={r.tone} />
+                {/* Sequenced beat: before-rings sweep first, after-rings answer 0.45s later. */}
+                <ProgressRing value={r.a} size={112} tone={r.tone} delay={0.45} />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink">
                   {t("score.after")}
                 </span>

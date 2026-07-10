@@ -94,7 +94,12 @@
     "guardClean": "Verified — nothing invented",
     "guardFlags_one": "{{count}} claim to review",
     "guardFlags_other": "{{count}} claims to review",
-    "guardDetail": "See the full fabrication check below"
+    "guardDetail": "See the full fabrication check below",
+    "stampVerified": "Verified · Facts ledger",
+    "stampReview": "Needs review",
+    "guardNoteClean": "Nothing invented. We checked.",
+    "guardNoteFlags_one": "{{count}} claim we couldn't find in your résumé. It doesn't ship until you approve it.",
+    "guardNoteFlags_other": "{{count}} claims we couldn't find in your résumé. They don't ship until you approve them."
   },
   "report": {
     "title": "Keyword match report",

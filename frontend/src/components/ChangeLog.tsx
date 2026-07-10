@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ChangeLogEntry, FabricationFlag } from "../types";
 import type { DiffSeg, EditSection, ResumeEdit } from "../lib/resumeDiff";
 import { editContainsValue, keywordsServed, wordDiff } from "../lib/resumeDiff";
-import { Badge, Card, CardTitle } from "./ui";
+import { Badge, Card, CardTitle, DecryptText } from "./ui";
 import { cn } from "../lib/cn";
 
 interface Props {
@@ -33,7 +33,16 @@ const kindTone: Record<ResumeEdit["kind"], "accent" | "mint" | "danger"> = {
   removed: "danger",
 };
 
-function DiffText({ segs, mode }: { segs: DiffSeg[]; mode: "before" | "after" }) {
+function DiffText({
+  segs,
+  mode,
+  decryptDelay,
+}: {
+  segs: DiffSeg[];
+  mode: "before" | "after";
+  /** ms — when set, the rewritten (after) segments resolve out of a scramble on first mount. */
+  decryptDelay?: number;
+}) {
   return (
     <span dir="auto" className="whitespace-pre-wrap">
       {segs.map((s, i) =>
@@ -45,7 +54,7 @@ function DiffText({ segs, mode }: { segs: DiffSeg[]; mode: "before" | "after" })
           </del>
         ) : (
           <mark key={i} className="rounded bg-mint/20 px-0.5 font-medium text-mint">
-            {s.text}
+            {decryptDelay === undefined ? s.text : <DecryptText text={s.text} duration={400} delay={decryptDelay} />}
           </mark>
         ),
       )}
@@ -73,6 +82,15 @@ export default function ChangeLog({ edits, changelog, flags, jdKeywords, rejecte
     else next.delete(id);
     onSetRejected([...next]);
   };
+
+  // Rewritten lines decrypt once per mount, staggered 40 ms per line in render
+  // order; lines beyond 15 share the cap so long lists never wait seconds.
+  // Deterministic values, so re-renders (accept/reject) don't retrigger.
+  const decryptDelays = new Map<string, number>();
+  let decryptLine = 0;
+  for (const section of SECTION_ORDER)
+    for (const e of edits)
+      if (e.section === section && e.kind !== "removed") decryptDelays.set(e.id, Math.min(decryptLine++, 15) * 40);
 
   return (
     <Card
@@ -234,13 +252,13 @@ export default function ChangeLog({ edits, changelog, flags, jdKeywords, rejecte
                                 <DiffText segs={d.before} mode="before" />
                               </div>
                               <div className="text-ink">
-                                <DiffText segs={d.after} mode="after" />
+                                <DiffText segs={d.after} mode="after" decryptDelay={decryptDelays.get(edit.id)} />
                               </div>
                             </>
                           )}
                           {edit.kind === "added" && (
                             <div dir="auto" className="whitespace-pre-wrap text-ink">
-                              {edit.after}
+                              <DecryptText text={edit.after} duration={400} delay={decryptDelays.get(edit.id) ?? 0} />
                             </div>
                           )}
                           {edit.kind === "removed" && (

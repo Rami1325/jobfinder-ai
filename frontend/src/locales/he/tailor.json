@@ -95,7 +95,13 @@
     "guardFlags_one": "טענה אחת לבדיקה",
     "guardFlags_two": "{{count}} טענות לבדיקה",
     "guardFlags_other": "{{count}} טענות לבדיקה",
-    "guardDetail": "בדיקת הפברוק המלאה למטה"
+    "guardDetail": "בדיקת הפברוק המלאה למטה",
+    "stampVerified": "אומת · פנקס העובדות",
+    "stampReview": "דרושה בדיקה",
+    "guardNoteClean": "שום דבר לא הומצא. בדקנו.",
+    "guardNoteFlags_one": "טענה אחת שלא מצאנו בקורות החיים שלכם. היא לא יוצאת בלי האישור שלכם.",
+    "guardNoteFlags_two": "{{count}} טענות שלא מצאנו בקורות החיים שלכם. הן לא יוצאות בלי האישור שלכם.",
+    "guardNoteFlags_other": "{{count}} טענות שלא מצאנו בקורות החיים שלכם. הן לא יוצאות בלי האישור שלכם."
   },
   "report": {
     "title": "דו״ח התאמת מילות מפתח",
