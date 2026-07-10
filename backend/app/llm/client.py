@@ -144,6 +144,34 @@ class StubClient:
                 "answer to the question that ties my background to what the role needs.",
                 "tips": ["Keep it specific", "Tie it back to the role"],
             }
+        if "COMPANY_BRIEF" in head:
+            return {
+                "company": "Example Inc",
+                "overview": "[stub] Example Inc builds a data-pipeline platform for analytics teams.",
+                "products": ["[stub] Data pipeline platform", "[stub] Analytics dashboard"],
+                "culture": ["[stub] Small teams with ownership, per their careers page"],
+                "interview_style": ["[stub] Likely a practical coding stage, per the hiring page"],
+                "talking_points": [
+                    "[stub] Your Python and REST API work maps to their platform stack."
+                ],
+                "people": [
+                    {"name": "Dana Levi", "role": "Co-founder & CEO",
+                     "evidence": "Founded by Dana Levi"}
+                ],
+                "outreach_subject": "[stub] Engineer interested in the backend role",
+                "outreach_message": "[stub] Hi Dana, I'm a backend engineer working in Python "
+                "and REST APIs — the pipeline work your team does lines up closely with what "
+                "I've been building. Would you be open to a quick chat about the role?",
+            }
+        if "RESUME_HEALTH" in head:
+            return {
+                "strengths": ["[stub] Real metrics in the experience bullets"],
+                "improvements": ["[stub] Lead the summary with your seniority and stack"],
+                "rewrites": [
+                    {"before": "Built things.",
+                     "after": "Built internal tooling for the operations team."}
+                ],
+            }
         if "RECRUITER_SCREEN" in head:
             return {
                 "pitch": "[stub] I'm a backend engineer with Python and REST API experience, "

@@ -5,6 +5,7 @@
   "jdTitle": "תיאור משרת היעד",
   "generate": "צרו שאלות",
   "genericError": "משהו השתבש.",
+  "companyBrief": "תדריך חברה",
   "mode": {
     "questions": "שאלות ראיון",
     "recruiter": "שיחת מגייס"

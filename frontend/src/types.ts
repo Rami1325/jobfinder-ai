@@ -348,6 +348,47 @@ export interface ScreeningAnswerResult {
   answer: string;
   tips: string[];
 }
+/** A hiring-relevant person found on the company page (never model memory). */
+export interface BriefPerson {
+  name: string;
+  role: string;
+  evidence: string;
+  linkedin_search: string;
+  /** Only set when the address literally appears on the page. */
+  email: string;
+}
+export interface CompanyBriefResult {
+  company: string;
+  overview: string;
+  products: string[];
+  culture: string[];
+  interview_style: string[];
+  talking_points: string[];
+  people: BriefPerson[];
+  hiring_emails: string[];
+  outreach_subject: string;
+  outreach_message: string;
+  grounded: boolean;
+}
+/** One deterministic résumé-health check; the UI translates by `id`. */
+export interface HealthCheck {
+  id: string;
+  severity: "good" | "warn" | "bad";
+  count: number;
+  total: number;
+  examples: string[];
+}
+export interface BulletRewrite {
+  before: string;
+  after: string;
+}
+export interface ResumeHealthResult {
+  score: number;
+  checks: HealthCheck[];
+  strengths: string[];
+  improvements: string[];
+  rewrites: BulletRewrite[];
+}
 export interface RecruiterPrepItem {
   question: string;
   talking_point: string;

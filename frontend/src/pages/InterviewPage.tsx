@@ -1,7 +1,8 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
-import { MessageSquareText, Sparkles, Lightbulb, ClipboardCheck, Mic, Wallet } from "lucide-react";
+import { MessageSquareText, Sparkles, Lightbulb, ClipboardCheck, Mic, Wallet, Building2 } from "lucide-react";
 import {
   analyzeJD,
   interviewAnswer,
@@ -173,6 +174,7 @@ function QuestionCard({
 
 export default function InterviewPage() {
   const { t } = useTranslation("interview");
+  const nav = useNavigate();
   const { master, loading } = useMasterResume();
   const [mode, setMode] = useState<Mode>("questions");
   const [jdText, setJdText] = useState("");
@@ -225,7 +227,7 @@ export default function InterviewPage() {
         <p className="mt-1 text-sm text-ink-muted">{t("sub")}</p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {(["questions", "recruiter"] as const).map((m) => (
           <button
             key={m}
@@ -240,6 +242,16 @@ export default function InterviewPage() {
             {t(`mode.${m}`)}
           </button>
         ))}
+        <button
+          onClick={() =>
+            nav("/tools/company-brief", {
+              state: { jdText, company: jd?.company, jobTitle: jd?.job_title },
+            })
+          }
+          className="ms-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
+        >
+          <Building2 size={14} /> {t("companyBrief")}
+        </button>
       </div>
 
       <Card>

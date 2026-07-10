@@ -5,6 +5,7 @@ import type {
   ApplicationDetail,
   ApplicationOut,
   ATSScanResult,
+  CompanyBriefResult,
   FactsLedger,
   FeedbackOut,
   FollowUpResult,
@@ -25,6 +26,7 @@ import type {
   MasterResume,
   OutreachResult,
   RecruiterScreenResult,
+  ResumeHealthResult,
   ResumeModel,
   ResumeUploadResponse,
   ScreeningAnswerResult,
@@ -410,6 +412,23 @@ export async function screeningAnswer(payload: {
   question: string;
 }): Promise<ScreeningAnswerResult> {
   const { data } = await api.post<ScreeningAnswerResult>("/tools/screening-answer", payload);
+  return data;
+}
+
+export async function companyBrief(payload: {
+  resume: ResumeModel;
+  company?: string;
+  url?: string;
+  page_text?: string;
+  jd_text?: string;
+  job_title?: string;
+}): Promise<CompanyBriefResult> {
+  const { data } = await api.post<CompanyBriefResult>("/tools/company-brief", payload);
+  return data;
+}
+
+export async function resumeHealth(resume: ResumeModel): Promise<ResumeHealthResult> {
+  const { data } = await api.post<ResumeHealthResult>("/tools/resume-health", { resume });
   return data;
 }
 

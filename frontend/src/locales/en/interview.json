@@ -5,6 +5,7 @@
   "jdTitle": "Target job description",
   "generate": "Generate questions",
   "genericError": "Something went wrong.",
+  "companyBrief": "Company brief",
   "mode": {
     "questions": "Interview questions",
     "recruiter": "Recruiter screen"

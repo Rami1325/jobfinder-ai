@@ -22,6 +22,14 @@
     "followup": {
       "title": "Follow-up email writer",
       "body": "Concise, specific follow-up emails that don't read like a template."
+    },
+    "brief": {
+      "title": "Company brief",
+      "body": "What to know before you apply or interview — grounded in the company's own pages, with who to reach and a ready reach-out message."
+    },
+    "health": {
+      "title": "Résumé health-check",
+      "body": "A JD-independent grade of your master résumé: weak openers, missing metrics, buzzwords, length, gaps."
     }
   },
   "outreach": {
@@ -87,6 +95,88 @@
     "bullets": "Experience bullets",
     "copyAll": "Copy all",
     "skills": "Skills"
+  },
+  "brief": {
+    "gateFeature": "the company brief",
+    "subtitle": "Do the homework before you apply or interview — built only from the company's own pages, never AI memory.",
+    "targeting": "Brief for {{role}} at {{company}}",
+    "company": "Company name",
+    "companyPlaceholder": "Acme Corp",
+    "url": "About / careers / team page URL",
+    "urlPlaceholder": "https://company.com/about",
+    "urlHint": "We fetch this page and build the brief only from what it actually says — people and emails are never guessed.",
+    "pageText": "Or paste the page text",
+    "pageTextPlaceholder": "If the page can't be fetched, paste its text here (about page, team page, careers page)…",
+    "jdTitle": "Optional: job description",
+    "build": "Build brief",
+    "error": "Couldn't build the brief.",
+    "verify": "Verify before you rely on it — everything below comes only from the page you provided, and pages go stale.",
+    "ungrounded": "This brief is based only on the job description. Add the company's about/careers page URL for a grounded brief.",
+    "overview": "What they do",
+    "products": "Products & services",
+    "culture": "Culture signals",
+    "interviewStyle": "Likely interview style",
+    "talkingPoints": "Your talking points",
+    "people": "Who to reach",
+    "peopleNote": "Only people named on the page you provided — we never guess names, and an email appears only if it's on the page itself.",
+    "peopleEmpty": "The page names nobody. Try their about/team page, or search LinkedIn directly:",
+    "searchOnLinkedin": "Find on LinkedIn",
+    "findRecruiters": "Search {{company}} recruiters",
+    "emailOnPage": "This address appears on the page you provided",
+    "hiringInbox": "Hiring inbox found on the page",
+    "message": "Your reach-out message",
+    "messageNote": "Short, grounded in your résumé, ends with a question. Review it, personalize it — then send it yourself.",
+    "subject": "Subject: {{subject}}",
+    "copied": "Copied"
+  },
+  "health": {
+    "gateFeature": "the résumé health-check",
+    "subtitle": "A job-independent grade of your master résumé — writing, evidence, length, gaps. The score is computed by fixed checks, not the AI.",
+    "run": "Check my résumé",
+    "error": "Couldn't check the résumé.",
+    "scoreLabel": "Health score",
+    "scoreNote": "Scored by deterministic checks — the AI writes the advice below, never the number.",
+    "checks": {
+      "weak-openers": {
+        "label": "Bullet openers.",
+        "ok": "Bullets open with real verbs.",
+        "issue": "{{n}} of {{total}} bullets open with a weak phrase (\"responsible for\", \"helped\"):"
+      },
+      "quantified": {
+        "label": "Evidence & metrics.",
+        "ok": "{{n}} of {{total}} bullets carry a number.",
+        "issue": "Only {{n}} of {{total}} bullets carry a number — add real metrics where you have them."
+      },
+      "buzzwords": {
+        "label": "Buzzwords.",
+        "ok": "No AI-tell buzzwords.",
+        "issue": "{{n}} buzzwords recruiters read as filler — swap for plain verbs:"
+      },
+      "long-bullets": {
+        "label": "Bullet length.",
+        "ok": "No bullet runs past 30 words.",
+        "issue": "{{n}} of {{total}} bullets read as paragraphs — split or trim:"
+      },
+      "length": {
+        "label": "One-page length.",
+        "ok": "≈{{n}} words — fits one page.",
+        "issue": "≈{{n}} words — likely over one page. Cut the weakest bullets first."
+      },
+      "gaps": {
+        "label": "Employment gaps.",
+        "ok": "No gaps over 6 months between roles.",
+        "issue": "{{n}} gap(s) over 6 months — fine, but be ready to explain:"
+      },
+      "repeated-verbs": {
+        "label": "Verb variety.",
+        "ok": "Opening verbs vary.",
+        "issue": "The same opener starts 3+ bullets — vary the sentence shapes:"
+      }
+    },
+    "strengths": "What already works",
+    "improvements": "What to fix first",
+    "rewrites": "Example rewrites",
+    "rewriteNote": "Same facts, stronger wording — nothing invented. Apply the ones that sound like you."
   },
   "followup": {
     "subtitle": "A concise, specific follow-up for any stage — no clichés, no filler.",

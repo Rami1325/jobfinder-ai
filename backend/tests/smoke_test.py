@@ -246,6 +246,134 @@ check(
     _li_prompts.RECRUITER_SCREEN_SYSTEM.startswith("Task: RECRUITER_SCREEN."),
 )
 
+# 12e. Company Research Brief (PLAN 11.1, new LLM task): grounded people +
+# deterministic email extraction (LLM never guesses an address).
+from app.core.company_brief import (  # noqa: E402
+    build_company_brief,
+    email_for_person,
+    extract_emails,
+    hiring_emails,
+    linkedin_people_search,
+)
+
+_PAGE = (
+    "About Example Inc. We build a data-pipeline platform. "
+    "Founded by Dana Levi. Contact: dana.levi@example.com or careers@example.com."
+)
+_emails = extract_emails(_PAGE)
+check("extract_emails finds only page-present addresses", _emails == ["dana.levi@example.com", "careers@example.com"], str(_emails))
+check("hiring_emails keeps the hiring inbox only", hiring_emails(_emails) == ["careers@example.com"])
+check("email_for_person matches by name in the local part", email_for_person("Dana Levi", _emails) == "dana.levi@example.com")
+check("email_for_person never invents (no match ⇒ empty)", email_for_person("Yossi Cohen", _emails) == "")
+check(
+    "linkedin people-search link is a deterministic deep link",
+    linkedin_people_search("Dana Levi", "Example Inc")
+    == "https://www.linkedin.com/search/results/people/?keywords=Dana%20Levi%20Example%20Inc",
+)
+_brief = build_company_brief(resume, company="Example Inc", page_text=_PAGE, jd_text="Backend role.")
+check(
+    "company brief: overview + talking points + grounded",
+    len(_brief.overview) > 0 and len(_brief.talking_points) > 0 and _brief.grounded,
+)
+check(
+    "brief person carries the page email + a linkedin search link",
+    len(_brief.people) > 0
+    and _brief.people[0].name == "Dana Levi"
+    and _brief.people[0].email == "dana.levi@example.com"
+    and _brief.people[0].linkedin_search.startswith("https://www.linkedin.com/search/results/people/"),
+)
+check("brief surfaces the hiring inbox from the page", _brief.hiring_emails == ["careers@example.com"])
+check(
+    "brief reach-out message + subject non-empty",
+    len(_brief.outreach_message) > 0 and len(_brief.outreach_subject) > 0,
+)
+try:
+    build_company_brief(resume)
+    check("brief with no grounding input raises", False)
+except ValueError:
+    check("brief with no grounding input raises", True)
+check("COMPANY_BRIEF prompt Task tag still first", _li_prompts.COMPANY_BRIEF_SYSTEM.startswith("Task: COMPANY_BRIEF."))
+
+# 12f. Résumé health-check (PLAN 11.2): deterministic checks drive the score;
+# the LLM only writes critique text.
+from app.core.resume_health import (  # noqa: E402
+    check_resume_health,
+    deterministic_checks,
+    health_score,
+    parse_month,
+)
+
+_weak_resume = ResumeModel(
+    summary="Results-driven professional.",
+    skills=["Python"],
+    experience=[
+        Experience(
+            company="Acme", title="Dev", start_date="Jan 2015", end_date="2018",
+            bullets=[
+                "Responsible for maintaining the internal reporting system and also handling "
+                "assorted requests from several departments across the organization on a very "
+                "regular recurring basis whenever they came up during the year"
+            ],
+        ),
+        Experience(
+            company="Beta", title="Dev", start_date="March 2020", end_date="Present",
+            bullets=[
+                "Worked on various tasks",
+                "Helped the team with testing",
+                "Helped with deployments",
+                "Helped with code reviews",
+            ],
+        ),
+    ],
+)
+_weak_checks = deterministic_checks(_weak_resume)
+
+
+def _hc(checks, cid):
+    return next((c for c in checks if c.id == cid), None)
+
+
+check("weak openers flagged with verbatim examples", _hc(_weak_checks, "weak-openers").severity == "bad" and len(_hc(_weak_checks, "weak-openers").examples) > 0)
+check("unquantified bullets flagged", _hc(_weak_checks, "quantified").severity == "bad" and _hc(_weak_checks, "quantified").count == 0)
+check("buzzword bloat flagged (results-driven)", _hc(_weak_checks, "buzzwords").count == 1 and "results-driven" in _hc(_weak_checks, "buzzwords").examples)
+check("over-long bullet flagged", _hc(_weak_checks, "long-bullets").count == 1)
+check("employment gap 2018→2020 detected", _hc(_weak_checks, "gaps").severity == "warn" and "Acme" in _hc(_weak_checks, "gaps").examples[0])
+check("repeated opening verb flagged (helped ×3)", "helped" in _hc(_weak_checks, "repeated-verbs").examples)
+
+_strong_resume = ResumeModel(
+    summary="Backend engineer building Python services.",
+    skills=["Python", "SQL"],
+    experience=[
+        Experience(company="Acme", title="Engineer", start_date="Jan 2019", end_date="2020",
+                   bullets=["Cut the nightly batch from 4h to 40min", "Built a REST API serving 2M requests/day"]),
+        Experience(company="Beta", title="Engineer", start_date="January 2021", end_date="Present",
+                   bullets=["Led a team of 3 engineers", "Shipped 12 releases with zero rollbacks"]),
+    ],
+)
+_strong_checks = deterministic_checks(_strong_resume)
+check(
+    "year-only end date reads as December (2020→Jan 2021 is NOT a gap)",
+    _hc(_strong_checks, "gaps").severity == "good",
+    str(_hc(_strong_checks, "gaps").examples),
+)
+check(
+    "strong resume outscores weak resume deterministically",
+    health_score(_strong_checks) > health_score(_weak_checks),
+    f"{health_score(_strong_checks)} vs {health_score(_weak_checks)}",
+)
+check("parse_month start defaults to January", parse_month("2021") % 12 == 0)
+check("parse_month hebrew month + present handled", parse_month("מרץ 2020") % 12 == 2 and parse_month("היום") is not None)
+_health = check_resume_health(_weak_resume)
+check(
+    "resume health result: score + checks + stub critique",
+    _health.score == health_score(_weak_checks)
+    and len(_health.checks) > 0
+    and len(_health.strengths) > 0
+    and len(_health.improvements) > 0
+    and len(_health.rewrites) > 0,
+)
+check("RESUME_HEALTH prompt Task tag still first", _li_prompts.RESUME_HEALTH_SYSTEM.startswith("Task: RESUME_HEALTH."))
+
 # 13. Job-link fetch helpers (pure, offline): LinkedIn id parsing + login-wall guard
 from app.core.job_match import _linkedin_job_id, _looks_like_login_wall  # noqa: E402
 

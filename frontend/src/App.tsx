@@ -15,6 +15,8 @@ import LinkedInToolPage from "./pages/tools/LinkedInToolPage";
 import FollowUpToolPage from "./pages/tools/FollowUpToolPage";
 import OutreachToolPage from "./pages/tools/OutreachToolPage";
 import ScreeningToolPage from "./pages/tools/ScreeningToolPage";
+import CompanyBriefToolPage from "./pages/tools/CompanyBriefToolPage";
+import ResumeHealthToolPage from "./pages/tools/ResumeHealthToolPage";
 import AccessGate from "./components/AccessGate";
 import ScrollToTop from "./components/ScrollToTop";
 
@@ -40,6 +42,8 @@ export default function App() {
         <Route path="/tools/follow-up" element={<FollowUpToolPage />} />
         <Route path="/tools/outreach" element={<OutreachToolPage />} />
         <Route path="/tools/screening" element={<ScreeningToolPage />} />
+        <Route path="/tools/company-brief" element={<CompanyBriefToolPage />} />
+        <Route path="/tools/resume-health" element={<ResumeHealthToolPage />} />
         <Route path="/tracker" element={<TrackerPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

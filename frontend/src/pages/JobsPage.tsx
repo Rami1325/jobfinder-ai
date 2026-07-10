@@ -8,6 +8,7 @@ import {
   BadgeCheck,
   Bell,
   Briefcase,
+  Building2,
   ExternalLink,
   Link2,
   Loader2,
@@ -663,6 +664,18 @@ function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStat
         >
           {t("card.outreach")}
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Building2 size={14} />}
+          onClick={() =>
+            nav("/tools/company-brief", {
+              state: { jdText: m.jd_text, company: m.company, jobTitle: m.title },
+            })
+          }
+        >
+          {t("card.brief")}
+        </Button>
       </div>
     </JobResultCard>
   );
@@ -743,6 +756,17 @@ function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: numbe
           className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:text-accent-soft md:min-h-0 md:min-w-0"
         >
           <Send size={14} className="rtl:-scale-x-100" />
+        </button>
+        <button
+          onClick={() =>
+            nav("/tools/company-brief", {
+              state: { jdText: hit.jd_text, company: hit.company, jobTitle: hit.title },
+            })
+          }
+          title={t("card.brief")}
+          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:text-accent-soft md:min-h-0 md:min-w-0"
+        >
+          <Building2 size={14} />
         </button>
         <button
           onClick={() => onDelete(hit.id)}

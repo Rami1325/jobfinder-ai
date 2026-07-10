@@ -746,3 +746,70 @@ class ScreeningRequest(BaseModel):
 class ScreeningAnswerResult(BaseModel):
     answer: str = ""
     tips: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Company Research Brief — "what to know before you apply/interview here",
+# grounded in a fetched company page (never model memory alone; the UI labels
+# everything "verify these"). Key people come only from the provided text, and
+# emails only from the deterministic extractor — the LLM never guesses one.
+# --------------------------------------------------------------------------- #
+class CompanyBriefRequest(BaseModel):
+    resume: ResumeModel
+    company: str = ""
+    url: str = ""  # company about/careers/team page to fetch (optional)
+    page_text: str = ""  # pasted page text (alternative to url)
+    jd_text: str = ""  # optional target JD for context
+    job_title: str = ""  # optional target role for the reach-out message
+
+
+class BriefPerson(BaseModel):
+    name: str = ""
+    role: str = ""  # e.g. "Co-founder", "VP Engineering", "Talent Acquisition"
+    evidence: str = ""  # short quote from the page text where this person appears
+    linkedin_search: str = ""  # deterministic people-search deep link (server-built)
+    email: str = ""  # only when it appears verbatim in the page text
+
+
+class CompanyBriefResult(BaseModel):
+    company: str = ""
+    overview: str = ""  # 2-3 plain sentences on what they do
+    products: list[str] = Field(default_factory=list)
+    culture: list[str] = Field(default_factory=list)
+    interview_style: list[str] = Field(default_factory=list)
+    talking_points: list[str] = Field(default_factory=list)  # résumé ↔ company fit
+    people: list[BriefPerson] = Field(default_factory=list)  # founders/managers/recruiters
+    hiring_emails: list[str] = Field(default_factory=list)  # careers@/jobs@/hr@ found on the page
+    outreach_subject: str = ""
+    outreach_message: str = ""  # short reach-out to the top person (résumé-grounded)
+    grounded: bool = False  # True when a company page was actually fetched/pasted
+
+
+# --------------------------------------------------------------------------- #
+# Standalone résumé health-check — JD-independent quality grade of the master
+# résumé. Deterministic writing checks (stable ids the UI translates) compute
+# the score; the LLM contributes critique text only, never the number.
+# --------------------------------------------------------------------------- #
+class HealthCheck(BaseModel):
+    id: str  # stable id the UI translates (health.checks.<id>)
+    severity: str = "good"  # good | warn | bad
+    count: int = 0  # numeric payload for the UI copy (meaning varies by id)
+    total: int = 0
+    examples: list[str] = Field(default_factory=list)  # offending snippets, verbatim
+
+
+class BulletRewrite(BaseModel):
+    before: str = ""  # a real bullet, verbatim
+    after: str = ""  # same facts, stronger wording — never new claims
+
+
+class ResumeHealthRequest(BaseModel):
+    resume: ResumeModel
+
+
+class ResumeHealthResult(BaseModel):
+    score: float = 0.0  # deterministic, derived from the checks
+    checks: list[HealthCheck] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)  # LLM critique
+    improvements: list[str] = Field(default_factory=list)  # LLM critique
+    rewrites: list[BulletRewrite] = Field(default_factory=list)

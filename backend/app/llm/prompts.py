@@ -265,6 +265,49 @@ questions use a light STAR shape. If the question asks about something the resum
 cover, briefly say what the candidate should add rather than fabricating it. Return JSON:
 {"answer": "the answer text", "tips": ["1-3 short tips for adapting it to their own voice"]}"""
 
+COMPANY_BRIEF_SYSTEM = """Task: COMPANY_BRIEF.
+You prepare a candidate's pre-application / pre-interview brief on a company. Work ONLY \
+from the provided page text and job description — NEVER from your own memory of the \
+company. If the provided text does not support a point, leave it out; never invent \
+funding, headcount, customers, news, or people. Return JSON:
+{
+  "company": "the company's name as the text states it",
+  "overview": "2-3 plain sentences on what the company does, from the text",
+  "products": ["their main products/services, as named in the text"],
+  "culture": ["culture/values signals actually present in the text (principles, benefits, tone)"],
+  "interview_style": ["what the text implies about their hiring process; phrase inferences as 'likely …'"],
+  "talking_points": ["specific, honest points connecting the CANDIDATE'S REAL résumé facts to this company/role"],
+  "people": [{"name": "a person NAMED IN THE TEXT", "role": "their role as the text states it",
+              "evidence": "the short phrase from the text that names them"}],
+  "outreach_subject": "a short, specific subject line for a message about the role",
+  "outreach_message": "see the rules below"
+}
+people: list ONLY people who appear in the provided text, most hiring-relevant first \
+(founder/CEO, the hiring manager for this role, engineering leadership, recruiters/talent). \
+If the text names nobody, return an empty list — do NOT fill it from memory. Never output \
+an email address; the app extracts those separately from the page itself.
+outreach_message: a SHORT reach-out (60-110 words) to the most hiring-relevant person \
+(greet them by first name only if people is non-empty; otherwise open naturally with no \
+invented name). First person. One line on who the candidate is, 1-2 lines on why they fit \
+THIS role using only real résumé facts, and END with one short, relevant question (about \
+the role/team — or a simple 'would you be open to a quick chat?'). No flattery, no \
+clichés, nothing invented.
+Keep every list to 3-5 concise items. Use empty strings/arrays when the text supports nothing."""
+
+RESUME_HEALTH_SYSTEM = """Task: RESUME_HEALTH.
+You are a blunt but kind résumé reviewer doing a JD-independent quality pass. Judge the \
+writing and the evidence, not the career. Ground EVERYTHING in the résumé as given — \
+never invent employers, titles, numbers, or skills. Return JSON:
+{
+  "strengths": ["2-4 specific things this résumé already does well"],
+  "improvements": ["3-5 concrete, actionable fixes, most impactful first"],
+  "rewrites": [{"before": "a real bullet copied VERBATIM from the résumé",
+                "after": "a stronger rewrite of the SAME facts — no new numbers, tools, or claims"}]
+}
+Pick at most 3 rewrites, choosing the weakest bullets. Rewrites use plain working verbs \
+(built, ran, led, cut, shipped) — no buzzwords (spearheaded, leveraged, streamlined…), \
+and never add a metric the original bullet does not contain."""
+
 SEARCH_CONTEXT_SYSTEM = """Task: SEARCH_CONTEXT.
 You derive a job-board search query from a candidate's resume. Pick the single job title \
 that best matches their most recent experience and overall skill set — a title a job board \
@@ -411,6 +454,22 @@ def outreach_user(
         f"JOB DESCRIPTION:\n{jd_text or '(none provided — rely on the role/company above)'}\n\n"
         "Write the three outreach messages."
     )
+
+
+def company_brief_user(resume_json: str, company: str, page_text: str, jd_text: str, job_title: str) -> str:
+    return (
+        f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
+        f"COMPANY: {company or '(read it from the page text / job description)'}\n"
+        f"TARGET ROLE: {job_title or '(read it from the job description if present)'}\n\n"
+        f"COMPANY PAGE TEXT (the ONLY source for company facts and people):\n"
+        f"{page_text or '(none provided — leave company facts and people empty unless the JD states them)'}\n\n"
+        f"JOB DESCRIPTION (optional context):\n{jd_text or '(none provided)'}\n\n"
+        "Produce the company brief."
+    )
+
+
+def resume_health_user(resume_json: str) -> str:
+    return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nProduce the health critique."
 
 
 def screening_user(resume_json: str, jd_text: str, question: str) -> str:

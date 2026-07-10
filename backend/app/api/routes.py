@@ -19,7 +19,9 @@ from app.config import get_settings
 from app.core import alerts as alerts_core
 from app.core import auto_submit
 from app.core.ats_scan import scan_resume
+from app.core.company_brief import build_company_brief
 from app.core.cover_letter import generate_cover_letter
+from app.core.resume_health import check_resume_health
 from app.core.mailer import smtp_configured
 from app.core.follow_up import write_follow_up
 from app.core.free_scan import free_scan, free_scan_limiter
@@ -73,6 +75,8 @@ from app.models import (
     ATSScanResult,
     ComeetCompanyList,
     ComeetCompanyOut,
+    CompanyBriefRequest,
+    CompanyBriefResult,
     CoverLetterRequest,
     CoverLetterResponse,
     DeleteMyDataResult,
@@ -119,6 +123,8 @@ from app.models import (
     RecruiterScreenRequest,
     RecruiterScreenResult,
     RenderRequest,
+    ResumeHealthRequest,
+    ResumeHealthResult,
     ResumeModel,
     ResumeUploadResponse,
     ScreeningAnswerResult,
@@ -750,6 +756,32 @@ def tools_screening_answer(body: ScreeningRequest) -> ScreeningAnswerResult:
         return answer_screening_question(body.resume, body.jd_text, body.question)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while drafting the answer: {e}")
+
+
+@router.post("/tools/company-brief", response_model=CompanyBriefResult)
+def tools_company_brief(body: CompanyBriefRequest) -> CompanyBriefResult:
+    """Grounded pre-apply/pre-interview company brief: fetches the company's
+    about/careers page (or takes pasted text) and summarizes it — plus key
+    hiring-relevant people from the page and a short résumé-grounded reach-out.
+    Never model memory alone; emails only when they appear on the page."""
+    try:
+        return build_company_brief(
+            body.resume, body.company, body.url, body.page_text, body.jd_text, body.job_title
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while building the company brief: {e}")
+
+
+@router.post("/tools/resume-health", response_model=ResumeHealthResult)
+def tools_resume_health(body: ResumeHealthRequest) -> ResumeHealthResult:
+    """JD-independent résumé health-check: deterministic writing checks drive
+    the score; the LLM adds critique text (strengths/improvements/rewrites)."""
+    try:
+        return check_resume_health(body.resume)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while checking the résumé: {e}")
 
 
 # --------------------------------------------------------------------------- #
