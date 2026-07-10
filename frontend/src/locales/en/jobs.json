@@ -210,6 +210,10 @@
     "runEmailed": " — emailed to {{email}}",
     "runError": "Alert run failed: {{error}}",
     "lastRun": "Last run {{date}} — {{count}} new jobs",
+    "customize": "Customize the alert search",
+    "customizeHint": "The daily alert always runs this exact search — edit and save to change it.",
+    "autoNote": "The daily search is derived automatically from your résumé. Customize it to pin exact keywords, location, or boards.",
+    "unsaved": "Unsaved changes — save to apply them to the daily alert.",
     "noSmtp": "Email sending isn't set up on the server yet (ALERT_SMTP_* in backend/.env) — runs will refresh your history but can't email."
   },
   "posted": {

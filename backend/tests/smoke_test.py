@@ -1400,7 +1400,32 @@ _al = get_alert(_db, _admin_id)
 check("alert run bookkeeping persisted", _al.last_new_count == 1 and _al.last_run_at is not None and _al.last_error == "")
 _run2 = run_alert(_db, _admin_id, search_fn=_canned_search)
 check("alert re-run: nothing new (hits now in history)", _run2.new_count == 0, str(_run2))
+
+# The saved customized SearchContext must be forwarded verbatim into the
+# search — the alerts-card Customize panel relies on this; a cleared context
+# must arrive as None ("derive from the résumé").
+_seen_ctx: list = []
+
+
+def _recording_search(resume, ctx):  # noqa: ANN001 - matches search_jobs' shape
+    _seen_ctx.append(ctx)
+    return JobSearchResult(context=_AlertCtx(job_title="X"), matches=[], skipped=0)
+
+
+run_alert(_db, _admin_id, force=True, search_fn=_recording_search)
+check(
+    "alert run forwards the saved customized context to the search",
+    len(_seen_ctx) == 1 and _seen_ctx[0] is not None
+    and _seen_ctx[0].job_title == "Backend Engineer" and _seen_ctx[0].location == "Tel Aviv",
+    str(_seen_ctx[0]) if _seen_ctx else "no call",
+)
+
 update_alert(_db, _admin_id, enabled=False, email="me@example.com", context=None)
+run_alert(_db, _admin_id, force=True, search_fn=_recording_search)
+check(
+    "alert run forwards None when the customized context is cleared",
+    len(_seen_ctx) == 2 and _seen_ctx[1] is None,
+)
 check("alert run respects the toggle", run_alert(_db, _admin_id, search_fn=_canned_search).ran is False)
 check("alert run with force ignores the toggle", run_alert(_db, _admin_id, force=True, search_fn=_canned_search).ran is True)
 
