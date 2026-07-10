@@ -23,7 +23,7 @@ import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
 import { apiErrorMessage } from "../lib/apiError";
 import { applyEditDecisions, diffResumes, editContainsValue } from "../lib/resumeDiff";
-import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, useToast } from "../components/ui";
+import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, Stamp, useToast } from "../components/ui";
 import type { KitDetail, KitOut } from "../types";
 
 // Mirrors the Kits tab chips on JobsPage.
@@ -207,6 +207,19 @@ export default function KitReviewPage() {
               <Badge tone="mint" className="inline-flex shrink-0 items-center gap-1">
                 <ShieldCheck size={11} /> {t("kits.guardClean")}
               </Badge>
+            )}
+            {/* The guard's verdict, stamped (B1). Decorative — the badges above
+                stay the textual source of truth. Skipped for rejected kits so
+                an "APPROVED" stamp never sits next to a Rejected chip. */}
+            {kit.result && kit.status !== "rejected" && (
+              <Stamp
+                tone={kit.flag_count > 0 ? "danger" : "mint"}
+                delay={0.3}
+                className="ms-1 shrink-0"
+              >
+                {kit.flag_count > 0 ? <ShieldAlert size={11} /> : <ShieldCheck size={11} />}
+                {kit.flag_count > 0 ? t("kitReview.stampFlags") : t("kitReview.stampClean")}
+              </Stamp>
             )}
           </div>
           <p className="text-sm text-ink-muted">

@@ -98,6 +98,8 @@
     "unresolvedFlags_one": "{{count}} unresolved guard flag — reject the flagged edit below, or review it carefully before approving.",
     "unresolvedFlags_other": "{{count}} unresolved guard flags — reject the flagged edits below, or review them carefully before approving.",
     "downloadNote": "Approve, downloads, keyword counts, and the cover letter all use your accept/reject decisions below.",
+    "stampClean": "Approved",
+    "stampFlags": "Needs review",
     "approveError": "Could not approve this kit.",
     "rejectError": "Could not reject this kit.",
     "downloadError": "Could not download the file."
@@ -137,6 +139,13 @@
       "scoringJobBare": "Scoring job {{index}} of {{total}}…"
     },
     "elapsed": "{{time}} elapsed",
+    "ticker": {
+      "scanning": "Scanning…",
+      "found_one": "{{count}} found",
+      "found_other": "{{count}} found",
+      "unavailable": "unavailable",
+      "complete": "Scan complete."
+    },
     "sourceErrors": "Some sources were unavailable: {{sources}}. Results below come from the sources that responded.",
     "sourceEmpty": "Nothing matched this search on {{sources}} — results come from the other boards. Try adjusting the title or location under \"Customize search\".",
     "dismiss": "Dismiss",
@@ -171,8 +180,8 @@
     "best": "Best match",
     "new": "New",
     "untitled": "Untitled role",
-    "ats": "ATS coverage {{pct}}%",
-    "recruiterFit": "Recruiter fit {{pct}}%",
+    "atsLabel": "ATS coverage",
+    "recruiterFitLabel": "Recruiter fit",
     "posted": "Posted {{when}}",
     "viewOn": "View on {{source}}",
     "openOn": "Open on {{source}}",
