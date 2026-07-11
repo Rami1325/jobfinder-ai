@@ -1267,11 +1267,11 @@ function CustomizeFields({
         </label>
       </div>
 
-      {/* Worldwide-remote opt-in: only meaningful (and only shown) for remote
-          searches. Rides SearchContext, so saving an alert with it customizes
-          the daily alert email the same way. */}
+      {/* Worldwide-remote opt-in: only meaningful (and only shown) for searches
+          that can include remote roles ("remote" or "any"). Rides SearchContext,
+          so saving an alert with it customizes the daily alert email the same way. */}
       <AnimatePresence initial={false}>
-        {ctx?.work_mode === "remote" && (
+        {(ctx?.work_mode === "remote" || ctx?.work_mode === "any") && (
           <motion.label
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
@@ -2096,7 +2096,7 @@ export default function JobsPage() {
                         ]}
                       />
                       {searched.work_mode !== "any" && ` · ${t(`workModes.${searched.work_mode}`)}`}
-                      {searched.work_mode === "remote" &&
+                      {(searched.work_mode === "remote" || searched.work_mode === "any") &&
                         searched.include_worldwide &&
                         ` · ${t("search.worldwideTag")}`}
                       {" — "}

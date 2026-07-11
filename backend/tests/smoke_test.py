@@ -596,7 +596,9 @@ check(
 )
 
 # Worldwide-remote opt-in (PLAN 13): extra high-earning-market locations on the
-# global-reach board only; inert unless work_mode == "remote".
+# global-reach board only; inert unless work_mode is "remote" or "any". The
+# worldwide locations are always queried remote-only — with work mode "any" the
+# local location keeps "any" while the worldwide pass forces "remote".
 from app.core.job_search import (  # noqa: E402
     WORLDWIDE_BOARD,
     WORLDWIDE_REMOTE_LOCATIONS,
@@ -617,22 +619,36 @@ _wctx = _resolve_context(
 check("customized include_worldwide is honored", _wctx.include_worldwide is True)
 check(
     "worldwide remote: global board queried with local + worldwide locations",
-    [loc for _, loc in _board_queries(WORLDWIDE_BOARD, _wctx)]
-    == ["Tel Aviv"] + WORLDWIDE_REMOTE_LOCATIONS,
+    [(loc, mode) for _, loc, mode in _board_queries(WORLDWIDE_BOARD, _wctx)]
+    == [("Tel Aviv", "remote")] + [(loc, "remote") for loc in WORLDWIDE_REMOTE_LOCATIONS],
     str(_board_queries(WORLDWIDE_BOARD, _wctx)),
 )
 check(
     "worldwide remote: local boards never see worldwide locations",
-    [loc for _, loc in _board_queries("drushim", _wctx)] == ["Tel Aviv"],
+    [(loc, mode) for _, loc, mode in _board_queries("drushim", _wctx)]
+    == [("Tel Aviv", "remote")],
     str(_board_queries("drushim", _wctx)),
 )
-_wctx_onsite = _resolve_context(
+_wctx_any = _resolve_context(
     resume,
     SearchContext(job_title="Dev", location="Tel Aviv", work_mode="any", include_worldwide=True),
 )
 check(
-    "worldwide pass is inert unless work mode is remote",
-    [loc for _, loc in _board_queries(WORLDWIDE_BOARD, _wctx_onsite)] == ["Tel Aviv"],
+    "worldwide with 'any': local location stays 'any', worldwide forced remote-only",
+    [(loc, mode) for _, loc, mode in _board_queries(WORLDWIDE_BOARD, _wctx_any)]
+    == [("Tel Aviv", "any")] + [(loc, "remote") for loc in WORLDWIDE_REMOTE_LOCATIONS],
+    str(_board_queries(WORLDWIDE_BOARD, _wctx_any)),
+)
+_wctx_onsite = _resolve_context(
+    resume,
+    SearchContext(
+        job_title="Dev", location="Tel Aviv", work_mode="onsite", include_worldwide=True
+    ),
+)
+check(
+    "worldwide pass is inert for onsite work mode",
+    [(loc, mode) for _, loc, mode in _board_queries(WORLDWIDE_BOARD, _wctx_onsite)]
+    == [("Tel Aviv", "onsite")],
     str(_board_queries(WORLDWIDE_BOARD, _wctx_onsite)),
 )
 _wctx_only = _resolve_context(
@@ -647,8 +663,8 @@ _wctx_only = _resolve_context(
 )
 check(
     "worldwide-only pass (global board unchecked) skips the local location",
-    [loc for _, loc in _board_queries(WORLDWIDE_BOARD, _wctx_only)]
-    == list(WORLDWIDE_REMOTE_LOCATIONS),
+    [(loc, mode) for _, loc, mode in _board_queries(WORLDWIDE_BOARD, _wctx_only)]
+    == [(loc, "remote") for loc in WORLDWIDE_REMOTE_LOCATIONS],
     str(_board_queries(WORLDWIDE_BOARD, _wctx_only)),
 )
 _rc = _resolve_context(

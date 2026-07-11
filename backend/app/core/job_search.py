@@ -46,9 +46,10 @@ MAX_AGE_DAYS_CAP = 365
 FETCH_DELAY_S = 0.5  # pause between per-job network fetches to stay under the radar
 SCORE_WORKERS = 5  # concurrent scoring workers; same-board detail fetches stay serialized
 
-# Worldwide-remote opt-in (SearchContext.include_worldwide + work_mode="remote"):
+# Worldwide-remote opt-in (SearchContext.include_worldwide + work_mode "remote" or "any"):
 # extra locations queried on the board(s) with global reach, targeting remote
-# roles hiring from high-earning markets. "European Union" is a real LinkedIn
+# roles hiring from high-earning markets. These queries are always remote-only
+# regardless of the context's work mode (see _board_queries). "European Union" is a real LinkedIn
 # location that covers the high-paying EU markets in one query — keep this list
 # short: every entry multiplies the per-board query count by len(job_titles).
 WORLDWIDE_REMOTE_LOCATIONS: list[str] = ["United States", "United Kingdom", "European Union"]
@@ -222,18 +223,25 @@ def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) 
     return merged
 
 
-def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str]]:
-    """(job_title, location) pairs one board will be queried with — normally
-    every keyword against the context's own location. The worldwide-remote
-    opt-in (work_mode="remote" + include_worldwide) adds each high-earning
-    market in WORLDWIDE_REMOTE_LOCATIONS, but ONLY on the board with global
-    inventory — the local Israeli boards never see those locations. A board
-    that joined the fan-out purely for the worldwide pass (the user unchecked
-    it in `sources`) skips the local location. Pure; pinned by the smoke test."""
-    locations = [ctx.location] if name in ctx.sources else []
-    if name == WORLDWIDE_BOARD and ctx.work_mode == "remote" and ctx.include_worldwide:
-        locations = locations + WORLDWIDE_REMOTE_LOCATIONS
-    return [(t, loc) for t in ctx.job_titles for loc in (locations or [ctx.location])]
+def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str]]:
+    """(job_title, location, work_mode) triples one board will be queried with —
+    normally every keyword against the context's own location and work mode.
+    The worldwide-remote opt-in (work_mode "remote"/"any" + include_worldwide)
+    adds each high-earning market in WORLDWIDE_REMOTE_LOCATIONS, but ONLY on
+    the board with global inventory — the local Israeli boards never see those
+    locations. Worldwide queries are always remote-only, even when the context's
+    work mode is "any": abroad, only remote roles are workable, while the local
+    location keeps the user's mode. A board that joined the fan-out purely for
+    the worldwide pass (the user unchecked it in `sources`) skips the local
+    location. Pure; pinned by the smoke test."""
+    locations = [(ctx.location, ctx.work_mode)] if name in ctx.sources else []
+    if name == WORLDWIDE_BOARD and ctx.work_mode in ("remote", "any") and ctx.include_worldwide:
+        locations = locations + [(loc, "remote") for loc in WORLDWIDE_REMOTE_LOCATIONS]
+    return [
+        (t, loc, mode)
+        for t in ctx.job_titles
+        for loc, mode in (locations or [(ctx.location, ctx.work_mode)])
+    ]
 
 
 def _search_board(name: str, ctx: SearchContext) -> tuple[list[JobHit], list[str], list[str]]:
@@ -245,10 +253,12 @@ def _search_board(name: str, ctx: SearchContext) -> tuple[list[JobHit], list[str
     board_hits: list[JobHit] = []
     board_errors: list[str] = []
     board_empty: list[str] = []
-    for query_i, (title, location) in enumerate(_board_queries(name, ctx)):
+    for query_i, (title, location, work_mode) in enumerate(_board_queries(name, ctx)):
         if query_i:
             time.sleep(FETCH_DELAY_S)  # polite gap between queries to the same board
-        query_ctx = ctx.model_copy(update={"job_title": title, "location": location})
+        query_ctx = ctx.model_copy(
+            update={"job_title": title, "location": location, "work_mode": work_mode}
+        )
         try:
             board_hits.extend(PROVIDERS[name].search(query_ctx))
         except NoResultsError as e:  # board worked, this query just matched nothing
@@ -285,7 +295,7 @@ def search_jobs(
     # extra locations come from _board_queries), so it joins the fan-out even
     # when the user unchecked that board for local results.
     fanout = list(ctx.sources)
-    if ctx.include_worldwide and ctx.work_mode == "remote" and WORLDWIDE_BOARD not in fanout:
+    if ctx.include_worldwide and ctx.work_mode in ("remote", "any") and WORLDWIDE_BOARD not in fanout:
         fanout.append(WORLDWIDE_BOARD)
     hits_by_source: dict[str, list[JobHit]] = {}
     source_errors: dict[str, str] = {}

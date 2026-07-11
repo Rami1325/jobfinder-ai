@@ -562,11 +562,12 @@ class SearchContext(BaseModel):
     # applies it server-side (f_TPR); every board is also filtered in the
     # fan-out against JobHit.posted_at, keeping hits with no known date.
     max_age_days: int = 30
-    # Worldwide-remote opt-in: when work_mode is "remote", ALSO search remote
-    # roles in high-earning markets (US/UK/EU — see
+    # Worldwide-remote opt-in: when work_mode is "remote" or "any", ALSO search
+    # remote roles in high-earning markets (US/UK/EU — see
     # job_search.WORLDWIDE_REMOTE_LOCATIONS) on the boards with global reach
-    # (LinkedIn). Local Israeli boards are never queried with those locations,
-    # and the flag is inert unless work_mode == "remote".
+    # (LinkedIn). Worldwide queries are always remote-only (with "any" the local
+    # location keeps "any"). Local Israeli boards are never queried with those
+    # locations, and the flag is inert for "onsite"/"hybrid".
     include_worldwide: bool = False
 
 
