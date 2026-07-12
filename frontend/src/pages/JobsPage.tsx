@@ -591,25 +591,21 @@ function KeywordChips({ matched, gaps }: { matched?: string[]; gaps: string[] })
   );
 }
 
-/** Job-result card surface. Ordinary rows are plain Cards; only the single
- * top match earns the cursor-reactive BorderGlow (design plan D2) so the glow
- * reads as "this is the one", not as wallpaper. */
-function JobResultCard({ children, glow = false }: { children: ReactNode; glow?: boolean }) {
-  if (glow) {
-    return (
-      <BorderGlow innerClassName="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
-        {children}
-      </BorderGlow>
-    );
-  }
-  return <Card className="flex flex-col gap-4 sm:flex-row sm:items-center">{children}</Card>;
+/** Job-result card surface — every row gets the cursor-reactive BorderGlow;
+ * the top match is still called out by its mint "best" badge. */
+function JobResultCard({ children }: { children: ReactNode }) {
+  return (
+    <BorderGlow innerClassName="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+      {children}
+    </BorderGlow>
+  );
 }
 
 function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStatus?: string }) {
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
   return (
-    <JobResultCard glow={best}>
+    <JobResultCard>
       <ProgressRing value={m.overall} size={92} stroke={8} label={t("card.fit")} />
       <div className="flex min-w-0 flex-1 items-start gap-3">
         <CompanyAvatar company={m.company} url={m.url || undefined} logoUrl={m.logo_url} />
