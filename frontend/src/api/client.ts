@@ -1,4 +1,5 @@
 import axios from "axios";
+import { cachedFetch, clearDataCache, invalidateData } from "../lib/dataCache";
 import type {
   AlertRunResult,
   AlertSettings,
@@ -54,6 +55,7 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(undefined, (error) => {
   if (error?.response?.status === 401) {
+    clearDataCache(); // a different code may sign in next — never leak across users
     window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   }
   return Promise.reject(error);
@@ -174,6 +176,7 @@ export async function searchJobs(
     resume,
     customize: customize ?? null,
   });
+  invalidateData("history"); // the backend records every search into history
   return data;
 }
 
@@ -264,6 +267,7 @@ export async function searchJobsStream(
     // Stream ended without a terminal frame (connection dropped mid-search).
     throw { response: { status: 0, data: { detail: "" } } };
   }
+  invalidateData("history"); // the backend records every search into history
   return out.result;
 }
 
@@ -322,6 +326,7 @@ export async function approveKit(
     resume,
     cover_letter: coverLetter,
   });
+  invalidateData("applications", "nudges"); // approve writes a tracker row
   return data;
 }
 
@@ -335,12 +340,15 @@ export async function rejectKit(id: number, reason: string): Promise<KitOut> {
  * guardrail; this really applies to the job. */
 export async function submitKit(id: number): Promise<KitOut> {
   const { data } = await api.post<KitOut>(`/kits/${id}/submit`);
+  invalidateData("applications", "nudges"); // submit flips the tracker app to applied
   return data;
 }
 
 export async function getJobAlert(): Promise<AlertSettings> {
-  const { data } = await api.get<AlertSettings>("/jobs/alerts");
-  return data;
+  return cachedFetch("alert", async () => {
+    const { data } = await api.get<AlertSettings>("/jobs/alerts");
+    return data;
+  });
 }
 
 export async function updateJobAlert(payload: {
@@ -350,25 +358,31 @@ export async function updateJobAlert(payload: {
   nudge_emails?: boolean;
 }): Promise<AlertSettings> {
   const { data } = await api.put<AlertSettings>("/jobs/alerts", payload);
+  invalidateData("alert");
   return data;
 }
 
 export async function runJobAlert(): Promise<AlertRunResult> {
   const { data } = await api.post<AlertRunResult>("/jobs/alerts/run");
+  invalidateData("alert", "history"); // the run stamps bookkeeping + records hits
   return data;
 }
 
 export async function getJobHistory(): Promise<JobSearchHistory> {
-  const { data } = await api.get<JobSearchHistory>("/jobs/history");
-  return data;
+  return cachedFetch("history", async () => {
+    const { data } = await api.get<JobSearchHistory>("/jobs/history");
+    return data;
+  });
 }
 
 export async function deleteJobHistoryItem(id: number): Promise<void> {
   await api.delete(`/jobs/history/${id}`);
+  invalidateData("history");
 }
 
 export async function clearJobHistory(): Promise<void> {
   await api.delete("/jobs/history");
+  invalidateData("history");
 }
 
 /** Free public CV-vs-JD scan — no access code, nothing stored server-side. */
@@ -401,6 +415,7 @@ export async function sendFeedback(page: string, text: string): Promise<Feedback
  * code keeps working. Returns per-table deleted-row counts. */
 export async function deleteMyData(): Promise<Record<string, number>> {
   const { data } = await api.delete<Record<string, number>>("/profile/data");
+  clearDataCache();
   return data;
 }
 
@@ -454,16 +469,20 @@ export async function resumeHealth(resume: ResumeModel): Promise<ResumeHealthRes
 
 /** Most recently updated master, or the `lang` one ("en"/"he") when asked. */
 export async function getMasterResume(lang?: "en" | "he"): Promise<MasterResume | null> {
-  const { data } = await api.get<MasterResume | null>("/profile/resume", {
-    params: lang ? { lang } : undefined,
+  return cachedFetch(`master:${lang ?? "latest"}`, async () => {
+    const { data } = await api.get<MasterResume | null>("/profile/resume", {
+      params: lang ? { lang } : undefined,
+    });
+    return data ?? null;
   });
-  return data ?? null;
 }
 
 /** Every saved master (at most one per language), newest first. */
 export async function listMasterResumes(): Promise<MasterResume[]> {
-  const { data } = await api.get<{ resumes: MasterResume[] }>("/profile/resumes");
-  return data.resumes ?? [];
+  return cachedFetch("masters", async () => {
+    const { data } = await api.get<{ resumes: MasterResume[] }>("/profile/resumes");
+    return data.resumes ?? [];
+  });
 }
 
 export async function saveMasterResume(payload: {
@@ -472,17 +491,22 @@ export async function saveMasterResume(payload: {
   label?: string;
 }): Promise<MasterResume> {
   const { data } = await api.put<MasterResume>("/profile/resume", payload);
+  invalidateData("master", "masters");
   return data;
 }
 
 export async function listApplications(): Promise<ApplicationOut[]> {
-  const { data } = await api.get<ApplicationOut[]>("/applications");
-  return data;
+  return cachedFetch("applications", async () => {
+    const { data } = await api.get<ApplicationOut[]>("/applications");
+    return data;
+  });
 }
 
 export async function getStaleApplications(): Promise<StaleApplication[]> {
-  const { data } = await api.get<{ items: StaleApplication[] }>("/applications/nudges");
-  return data.items;
+  return cachedFetch("nudges", async () => {
+    const { data } = await api.get<{ items: StaleApplication[] }>("/applications/nudges");
+    return data.items;
+  });
 }
 
 export async function getApplication(id: number): Promise<ApplicationDetail> {
@@ -501,6 +525,7 @@ export async function saveApplication(payload: {
   status?: string;
 }): Promise<ApplicationOut> {
   const { data } = await api.post<ApplicationOut>("/applications", payload);
+  invalidateData("applications", "nudges");
   return data;
 }
 
@@ -509,9 +534,11 @@ export async function updateApplication(
   patch: { status?: string; notes?: string; interviewed?: boolean; excitement?: number },
 ): Promise<ApplicationOut> {
   const { data } = await api.patch<ApplicationOut>(`/applications/${id}`, patch);
+  invalidateData("applications", "nudges");
   return data;
 }
 
 export async function deleteApplication(id: number): Promise<void> {
   await api.delete(`/applications/${id}`);
+  invalidateData("applications", "nudges");
 }
