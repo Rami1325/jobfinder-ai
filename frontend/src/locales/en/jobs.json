@@ -197,6 +197,7 @@
     "fit": "Fit",
     "best": "Best match",
     "new": "New",
+    "older": "Older · posted {{when}}",
     "alsoOn": "Also on",
     "salaryNote": "Salary as stated in the posting — we never estimate.",
     "untitled": "Untitled role",

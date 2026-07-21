@@ -819,6 +819,101 @@ check(
     str([h.url for h in _dup]),
 )
 
+# 14b-4. Relevance-first selection (PLAN 15.6): title_relevance is a pure
+# Hebrew-aware query↔title match; the fan-out fills the limit fresh+relevant
+# → stale+relevant (marked stale) → fresh+loose, dropping stale+irrelevant.
+from app.core.job_search import select_hits, tiered_by_source  # noqa: E402
+from app.core.relevance import RELEVANT_MIN, title_relevance  # noqa: E402
+
+check(
+    "relevance: exact and reordered title matches score 1.0",
+    title_relevance("Senior Software Engineer", ["Software Engineer"]) == 1.0
+    and title_relevance("Engineer, Software (TLV)", ["Software Engineer"]) == 1.0,
+)
+check(
+    "relevance: english query matches hebrew title via aliases (and reverse)",
+    title_relevance("מהנדס/ת תוכנה", ["Software Engineer"]) == 1.0
+    and title_relevance("Software Engineer", ["מהנדס תוכנה"]) == 1.0,
+)
+check(
+    "relevance: suffix-tolerant (engineering/מהנדסת) but java≠javascript",
+    title_relevance("Software Engineering Lead", ["Software Engineer"]) == 1.0
+    and title_relevance("מהנדסת תוכנה", ["מהנדס תוכנה"]) == 1.0
+    and title_relevance("JavaScript Developer", ["Java Developer"]) < 1.0,
+)
+check(
+    "relevance: unrelated title scores below the relevance floor",
+    title_relevance("Product Manager", ["Software Engineer"]) < RELEVANT_MIN
+    and title_relevance("Sales Representative", ["Backend Developer"]) < RELEVANT_MIN,
+)
+check(
+    "relevance: best keyword wins in multi-keyword searches",
+    title_relevance("Data Engineer", ["Product Manager", "Data Engineer"]) == 1.0,
+)
+
+_rel_now = _dtc.fromisoformat("2026-07-21T12:00")
+_rel_hits = {
+    "boardA": [
+        JobHit(source="boardA", title="Backend Engineer", company="FreshCo",
+               url="https://a/fresh-rel", posted_at="2026-07-20"),
+        JobHit(source="boardA", title="Office Manager", company="NoiseCo",
+               url="https://a/fresh-noise", posted_at="2026-07-21"),
+        JobHit(source="boardA", title="Backend Engineer", company="OldCo",
+               url="https://a/old-rel", posted_at="2026-05-10"),
+        JobHit(source="boardA", title="Accountant", company="OldNoiseCo",
+               url="https://a/old-noise", posted_at="2026-05-11"),
+    ],
+}
+_tiers = tiered_by_source(_rel_hits, ["Backend Engineer"], 30, now=_rel_now)
+check(
+    "tiering: fresh-relevant / stale-relevant / fresh-loose split, stale-irrelevant dropped",
+    [h.url for h in _tiers[0]["boardA"]] == ["https://a/fresh-rel"]
+    and [h.url for h in _tiers[1]["boardA"]] == ["https://a/old-rel"]
+    and [h.url for h in _tiers[2]["boardA"]] == ["https://a/fresh-noise"],
+    str([{k: [h.url for h in v] for k, v in t.items()} for t in _tiers]),
+)
+check(
+    "tiering: stale-relevant hits carry the stale flag, fresh ones don't",
+    _tiers[1]["boardA"][0].stale is True
+    and _tiers[0]["boardA"][0].stale is False
+    and _tiers[2]["boardA"][0].stale is False,
+)
+_sel = select_hits(_tiers, 3)
+check(
+    "selection: old-but-relevant outranks fresh-but-irrelevant",
+    [h.url for h in _sel]
+    == ["https://a/fresh-rel", "https://a/old-rel", "https://a/fresh-noise"],
+    str([h.url for h in _sel]),
+)
+check(
+    "selection: limit filled by relevance tier first",
+    [h.url for h in select_hits(_tiers, 2)]
+    == ["https://a/fresh-rel", "https://a/old-rel"],
+)
+check(
+    "tiering: max_age_days=0 means nothing is stale",
+    tiered_by_source(_rel_hits, ["Backend Engineer"], 0, now=_rel_now)[1] == {},
+)
+_dup_tiers = tiered_by_source(
+    {
+        "boardA": [JobHit(source="boardA", title="Backend Engineer", company="Acme",
+                          url="https://a/dup", posted_at="2026-07-20")],
+        "boardB": [JobHit(source="boardB", title="Backend Engineer", company="Acme Ltd",
+                          url="https://b/dup", posted_at="2026-05-01")],
+    },
+    ["Backend Engineer"],
+    30,
+    now=_rel_now,
+)
+_dup_sel = select_hits(_dup_tiers, 10)
+check(
+    "selection: cross-tier duplicate becomes an also_on link, not a second row",
+    len(_dup_sel) == 1
+    and _dup_sel[0].url == "https://a/dup"
+    and [a["url"] for a in _dup_sel[0].also_on] == ["https://b/dup"],
+    str([(h.url, h.also_on) for h in _dup_sel]),
+)
+
 # 14b-3. Salary intelligence v1 (PLAN 15.2): deterministic extraction of
 # LITERAL salary mentions only — currency-adjacent figures, plausibility
 # floor, hourly wages allowed, everything else ignored.
@@ -1640,6 +1735,23 @@ check(
 _html_he = build_alert_email_html(
     [JobMatch(title="מהנדס/ת תוכנה", company="חברת דוגמה", overall=70.0, url="https://alerts/he-1")],
     _AlertCtx(job_title="מהנדס תוכנה", location="תל אביב"),
+)
+# Old-but-relevant backfill (PLAN 15.6): stale matches are marked with their
+# post date in both email bodies; fresh matches never get the chip.
+_stale_match = JobMatch(
+    title="Backend Engineer", company="OldCo", overall=80.0,
+    url="https://alerts/stale-1", posted_at="2026-05-10", stale=True,
+)
+check(
+    "alert html marks stale jobs with an 'Older posting' chip + date",
+    "Older posting" in build_alert_email_html([_stale_match], _AlertCtx(job_title="X"))
+    and "2026-05-10" in build_alert_email_html([_stale_match], _AlertCtx(job_title="X"))
+    and "Older posting" not in _html,
+)
+check(
+    "alert plain text marks stale jobs with the post date",
+    "older posting — 2026-05-10" in build_alert_email([_stale_match], _AlertCtx(job_title="X"))[1]
+    and "older posting" not in _body,
 )
 check(
     "alert html is hebrew-safe with dir=auto",
@@ -2518,6 +2630,43 @@ try:
 finally:
     for _k in _fakes:
         _PROV.pop(_k, None)
+
+# 21a. Relevance tiering through the full search path (PLAN 15.6): an old
+# posting whose title matches the keywords is still scored and comes back
+# marked stale; the fresh loosely-matched hit rides along unmarked.
+class _StaleBoard:
+    name = "fake_stale"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source=self.name, title="Python Developer", company="OldCo",
+                    description="Python and SQL work", url="https://fake.stale/old",
+                    posted_at="2020-01-01"),
+            _FanHit(source=self.name, title="Bookkeeper", company="FreshCo",
+                    description="Python mentioned in passing", url="https://fake.stale/fresh",
+                    posted_at="2099-01-01"),
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+_PROV["fake_stale"] = _StaleBoard()
+try:
+    _st = _fan_search(
+        resume,
+        _AlertCtx(job_title="Python Developer", sources=["fake_stale"], max_age_days=30),
+    )
+    _st_by_url = {m.url: m for m in _st.matches}
+    check(
+        "full search: old-but-relevant hit survives the age window marked stale",
+        len(_st.matches) == 2
+        and _st_by_url["https://fake.stale/old"].stale is True
+        and _st_by_url["https://fake.stale/fresh"].stale is False,
+        str([(m.url, m.stale) for m in _st.matches]),
+    )
+finally:
+    _PROV.pop("fake_stale", None)
 
 # 21b. Two-tier score cache (PLAN 12.4): a fresh history row scored against
 # the SAME résumé rebuilds the match with ZERO LLM calls and ZERO fetches

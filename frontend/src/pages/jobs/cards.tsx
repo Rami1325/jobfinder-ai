@@ -107,6 +107,19 @@ export function NewBadge({ postedAt }: { postedAt?: string }) {
   );
 }
 
+/** Old-but-relevant backfill (PLAN 15.6): the posting is outside the search's
+ * "Posted within" window but its title matches the keywords — show it with its
+ * post date so it's never mistaken for a fresh listing. */
+export function StaleBadge({ stale, postedAt }: { stale?: boolean; postedAt?: string }) {
+  const { t } = useTranslation("jobs");
+  if (!stale || !postedAt) return null;
+  return (
+    <Badge tone="partial" className="shrink-0" title={postedAt}>
+      {t("card.older", { when: postedAgo(postedAt, t) })}
+    </Badge>
+  );
+}
+
 
 
 // Tracker status shown on history rows (colors mirror the Tracker board).
@@ -178,6 +191,7 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
               {m.title || t("card.untitled")}
             </p>
             <NewBadge postedAt={m.posted_at} />
+            <StaleBadge stale={m.stale} postedAt={m.posted_at} />
             {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
             {m.salary?.raw && (
               <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>

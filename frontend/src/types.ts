@@ -195,6 +195,7 @@ export interface JobMatch {
   logo_url?: string; // company logo from the board; empty/absent when it has none
   also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
   salary?: SalaryInfo | null; // only when literally stated in the posting
+  stale?: boolean; // older than the search window, kept for keyword relevance (PLAN 15.6)
 }
 export interface AlsoOn {
   source: string;

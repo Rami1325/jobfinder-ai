@@ -607,6 +607,9 @@ class JobMatch(BaseModel):
     logo_url: str = ""  # company logo from the board; empty when it has none
     also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards
     salary: Optional[SalaryInfo] = None  # only when literally stated in the posting
+    # Posted before the search's max_age_days window but kept because the title
+    # matches the searched keywords (PLAN 15.6). The UI shows an "Older" badge.
+    stale: bool = False
 
 
 class JobMatchResult(BaseModel):

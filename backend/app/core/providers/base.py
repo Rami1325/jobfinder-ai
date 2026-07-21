@@ -51,6 +51,10 @@ class JobHit:
     # found on other boards, as {"source": ..., "url": ...}. Filled by the
     # fan-out's dedupe, never by providers.
     also_on: list = field(default_factory=list)
+    # Older than the search's max_age_days but kept because its title matches
+    # the searched keywords (PLAN 15.6 backfill). Set by the fan-out's tiering,
+    # never by providers; the UI marks these with the post date.
+    stale: bool = False
 
 
 @runtime_checkable

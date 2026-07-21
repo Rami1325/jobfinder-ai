@@ -106,6 +106,8 @@ def build_alert_email(new: list[JobMatch], ctx: SearchContext) -> tuple[str, str
         if m.company:
             bits.append(f"at {m.company}")
         bits.append(f"— fit {round(m.overall)}%")
+        if m.stale and m.posted_at:
+            bits.append(f"(older posting — {m.posted_at[:10]})")
         lines.append("• " + " ".join(bits))
         if m.url:
             lines.append(f"  {m.url}")
@@ -170,6 +172,15 @@ def _job_card_html(m: JobMatch) -> str:
         if source
         else ""
     )
+    # Old-but-relevant backfill (PLAN 15.6): amber chip with the post date so
+    # an older posting is never mistaken for a fresh one.
+    if m.stale and m.posted_at:
+        chips += (
+            f'{" " if chips else ""}<span style="display:inline-block;padding:3px 10px;'
+            f'border-radius:999px;background:#3a2f18;border:1px solid #6b5527;'
+            f'color:#ffc96b;font:600 11px {_EM_FONT};letter-spacing:.4px;">'
+            f"Older posting &#183; {esc(m.posted_at[:10])}</span>"
+        )
     view = (
         f'<a href="{esc(m.url, quote=True)}" style="color:{_EM["accent_soft"]};'
         f'font:600 13px {_EM_FONT};text-decoration:none;">View job &#8594;</a>'

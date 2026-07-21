@@ -25,6 +25,7 @@ from app.core.providers.linkedin import (  # noqa: F401 - re-exports
     _build_search_url,
     parse_search_results,
 )
+from app.core.relevance import RELEVANT_MIN, title_relevance
 from app.core.salary import extract_salary
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
 from app.llm import prompts
@@ -224,17 +225,17 @@ def content_key(title: str, company: str) -> str:
     return " ".join(t_words) + "|" + " ".join(c_words)
 
 
-def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) -> list[JobHit]:
-    """Round-robin merge across sources (so one board can't crowd out the
-    others), deduped by URL, capped at `limit`. Source order follows the
-    context's `sources` order; within a source hits arrive newest-first
-    (see `freshest_first`). The same posting found on several boards (PLAN
-    15.1: matching content_key) becomes ONE hit carrying the other boards'
-    links in `also_on` — it's fetched and scored once, and duplicates don't
-    eat into `limit`."""
-    merged: list[JobHit] = []
-    seen: set[str] = set()
-    by_content: dict[str, JobHit] = {}
+def _interleave_into(
+    merged: list[JobHit],
+    seen: set[str],
+    by_content: dict[str, JobHit],
+    hits_by_source: dict[str, list[JobHit]],
+    limit: int,
+) -> None:
+    """Core of `_interleave_and_dedupe`, with the dedupe state external so
+    `select_hits` can run several tiers through it in priority order — a hit
+    already picked in an earlier tier turns its later-tier duplicates into
+    `also_on` links instead of extra rows."""
     queues = [list(hits) for hits in hits_by_source.values() if hits]
     i = 0
     while queues and len(merged) < limit:
@@ -261,6 +262,69 @@ def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) 
         if ck:
             by_content[ck] = hit
         merged.append(hit)
+
+
+def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) -> list[JobHit]:
+    """Round-robin merge across sources (so one board can't crowd out the
+    others), deduped by URL, capped at `limit`. Source order follows the
+    context's `sources` order; within a source hits arrive newest-first.
+    The same posting found on several boards (PLAN 15.1: matching content_key)
+    becomes ONE hit carrying the other boards' links in `also_on` — it's
+    fetched and scored once, and duplicates don't eat into `limit`."""
+    merged: list[JobHit] = []
+    _interleave_into(merged, set(), {}, hits_by_source, limit)
+    return merged
+
+
+def tiered_by_source(
+    hits_by_source: dict[str, list[JobHit]],
+    query_titles: list[str],
+    max_age_days: int,
+    now: datetime | None = None,
+) -> list[dict[str, list[JobHit]]]:
+    """Split each board's raw hits into selection tiers (PLAN 15.6), so the
+    fetch/scoring budget goes to postings that match the SEARCH, not merely
+    the newest ones:
+
+      0. fresh + title-relevant — what the user actually searched for
+      1. stale + title-relevant — older than max_age_days but on-target;
+         backfill when tier 0 runs short, marked `stale` for the UI/email
+      2. fresh + loosely-matched — keyword matched only in the description;
+         filler for whatever budget remains
+
+    Stale + irrelevant hits are dropped, as the age filter always did; with
+    max_age_days == 0 nothing is stale. Hits with no parseable date count as
+    fresh (missing data shouldn't hide a job) but sort last within their tier.
+    Pure given `now`; pinned by the smoke test."""
+    tiers: list[dict[str, list[JobHit]]] = [{}, {}, {}]
+    cutoff = (now or datetime.now()) - timedelta(days=max_age_days) if max_age_days > 0 else None
+    for name, hits in hits_by_source.items():
+        # Same lexicographic newest-first trick as freshest_first: "" (unknown
+        # date) is smallest, so reverse=True puts undated hits last.
+        for hit in sorted(hits, key=lambda h: h.posted_at, reverse=True):
+            relevant = title_relevance(hit.title, query_titles) >= RELEVANT_MIN
+            dt = _posted_datetime(hit.posted_at)
+            fresh = cutoff is None or dt is None or dt >= cutoff
+            if fresh:
+                tier = 0 if relevant else 2
+            elif relevant:
+                tier = 1
+                hit.stale = True
+            else:
+                continue
+            tiers[tier].setdefault(name, []).append(hit)
+    return tiers
+
+
+def select_hits(tiers: list[dict[str, list[JobHit]]], limit: int) -> list[JobHit]:
+    """Fill `limit` slots tier by tier (see `tiered_by_source`), each tier
+    round-robin-interleaved across boards with dedupe/also_on state shared
+    across tiers. Pure; pinned by the smoke test."""
+    merged: list[JobHit] = []
+    seen: set[str] = set()
+    by_content: dict[str, JobHit] = {}
+    for tier in tiers:
+        _interleave_into(merged, seen, by_content, tier, limit)
     return merged
 
 
@@ -357,7 +421,7 @@ def search_jobs(
     for name in fanout:
         board_hits, board_errors, board_empty = board_futures[name].result()
         if board_hits:
-            hits_by_source[name] = freshest_first(board_hits, ctx.max_age_days)
+            hits_by_source[name] = board_hits
         elif board_errors:
             source_errors[name] = board_errors[0]
         elif board_empty:
@@ -378,11 +442,15 @@ def search_jobs(
             "Check 'Customize search' and adjust the keywords, location, or 'Posted within'."
         )
 
-    hits = _interleave_and_dedupe(hits_by_source, ctx.limit)
-    if not hits:  # every board answered, but only with postings older than the cutoff
+    # Relevance-first selection (PLAN 15.6): budget goes to title-relevant
+    # postings first, then old-but-relevant backfill (marked stale), then
+    # description-only matches. Old + irrelevant stays dropped.
+    hits = select_hits(tiered_by_source(hits_by_source, ctx.job_titles, ctx.max_age_days), ctx.limit)
+    if not hits:  # boards answered, but only with old postings that don't match the keywords
         raise NoResultsError(
-            f"Found jobs, but none posted in the last {ctx.max_age_days} days. "
-            "Loosen 'Posted within' under 'Customize search' and try again."
+            f"Found jobs, but none posted in the last {ctx.max_age_days} days — and the "
+            "older ones don't match your keywords. Loosen 'Posted within' or adjust the "
+            "keywords under 'Customize search' and try again."
         )
 
     # Scoring stage: fetch + score concurrently — each job is ONE merged JD_FIT
@@ -431,6 +499,7 @@ def search_jobs(
                 logo_url=hit.logo_url or cached.logo_url,
                 also_on=[AlsoOn(**a) for a in hit.also_on],
                 salary=extract_salary(cached.jd_text),
+                stale=hit.stale,
             )
             matches_by_hit[hit_i] = match
         else:
@@ -459,6 +528,7 @@ def search_jobs(
                     logo_url=hit.logo_url,
                     also_on=[AlsoOn(**a) for a in hit.also_on],
                     salary=extract_salary(jd_text),
+                    stale=hit.stale,
                 )
                 matches_by_hit[hit_i] = match
         with progress_lock:
