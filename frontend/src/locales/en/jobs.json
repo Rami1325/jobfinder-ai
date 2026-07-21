@@ -131,6 +131,7 @@
     "worldwideHint": "Also searches remote roles in high-earning markets (US, UK, EU) on LinkedIn — the local Israeli boards stay local.",
     "worldwideTag": "incl. worldwide",
     "cta": "Find jobs for me",
+    "cancel": "Cancel",
     "searchingAuto": "Resume saved — we're finding jobs that fit it and scoring each one. This can take a minute or two.",
     "searchingManual": "Searching job listings and scoring each one against your resume — this can take a minute or two.",
     "stages": {
@@ -163,7 +164,9 @@
       "showingBare_one": "{{count}} job scored so far",
       "showingBare_other": "{{count}} jobs scored so far",
       "interrupted_one": "Search was interrupted — showing the {{count}} job scored so far.",
-      "interrupted_other": "Search was interrupted — showing the {{count}} jobs scored so far."
+      "interrupted_other": "Search was interrupted — showing the {{count}} jobs scored so far.",
+      "cancelled_one": "Search cancelled — showing the {{count}} job scored so far.",
+      "cancelled_other": "Search cancelled — showing the {{count}} jobs scored so far."
     },
     "eta": {
       "secondsLeft": "~{{n}}s left",

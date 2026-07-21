@@ -202,12 +202,14 @@ export async function searchJobsStream(
   customize: SearchContext | null,
   onProgress: (e: SearchProgressEvent) => void,
   onMatch?: (m: JobMatch) => void,
+  signal?: AbortSignal,
 ): Promise<JobSearchResult> {
   const code = localStorage.getItem(ACCESS_CODE_KEY);
   const resp = await fetch(`${api.defaults.baseURL}/jobs/search/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(code ? { "X-App-Key": code } : {}) },
     body: JSON.stringify({ resume, customize: customize ?? null }),
+    signal,
   });
   if (resp.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   const isSse = (resp.headers.get("content-type") || "").includes("text/event-stream");

@@ -48,6 +48,7 @@ import {
 } from "../api/client";
 import ResumeUpload from "../components/ResumeUpload";
 import {
+  cancelJobSearch,
   getJobSearchState,
   startJobSearch,
   subscribeJobSearch,
@@ -1641,6 +1642,7 @@ export default function JobsPage() {
     startedAt,
     progress: searchProgress,
     liveMatches,
+    cancelled,
   } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
   const [resultSort, setResultSort] = useState<"fit" | "date">("fit");
   const [historySort, setHistorySort] = useState<"searched" | "fit" | "date">("searched");
@@ -2006,6 +2008,11 @@ export default function JobsPage() {
               >
                 {t("search.cta")}
               </Button>
+              {searching && (
+                <Button size="sm" variant="secondary" onClick={cancelJobSearch}>
+                  {t("search.cancel")}
+                </Button>
+              )}
               {searchError && <span className="text-sm text-danger">{searchError}</span>}
             </div>
           </Card>
@@ -2024,7 +2031,8 @@ export default function JobsPage() {
               final results use, so nothing visually changes when the
               authoritative result replaces them. Also the partial-results
               surface when an interrupted search still scored some jobs. */}
-          {liveMatches.length > 0 && (searching || (!searchResult && !!searchError)) && (
+          {liveMatches.length > 0 &&
+            (searching || (!searchResult && (!!searchError || cancelled))) && (
             <div className="space-y-4">
               {searching ? (
                 <p aria-live="polite" className="text-xs text-ink-muted">
@@ -2034,6 +2042,10 @@ export default function JobsPage() {
                         total: scoringTotal,
                       })
                     : t("search.streaming.showingBare", { count: liveMatches.length })}
+                </p>
+              ) : cancelled ? (
+                <p className="text-sm text-ink-muted">
+                  {t("search.streaming.cancelled", { count: liveMatches.length })}
                 </p>
               ) : (
                 <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">

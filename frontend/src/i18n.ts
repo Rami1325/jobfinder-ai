@@ -2,69 +2,35 @@ import i18n from "i18next";
 import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
 
-import enCommon from "./locales/en/common.json";
-import enHome from "./locales/en/home.json";
-import enInterview from "./locales/en/interview.json";
-import enJobs from "./locales/en/jobs.json";
-import enMarketing from "./locales/en/marketing.json";
-import enScan from "./locales/en/scan.json";
-import enTailor from "./locales/en/tailor.json";
-import enTools from "./locales/en/tools.json";
-import enTracker from "./locales/en/tracker.json";
-import heCommon from "./locales/he/common.json";
-import heHome from "./locales/he/home.json";
-import heInterview from "./locales/he/interview.json";
-import heJobs from "./locales/he/jobs.json";
-import heMarketing from "./locales/he/marketing.json";
-import heScan from "./locales/he/scan.json";
-import heTailor from "./locales/he/tailor.json";
-import heTools from "./locales/he/tools.json";
-import heTracker from "./locales/he/tracker.json";
-
 export const LANGUAGES = ["en", "he"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
-const resources = {
-  en: {
-    common: enCommon,
-    home: enHome,
-    marketing: enMarketing,
-    scan: enScan,
-    jobs: enJobs,
-    tailor: enTailor,
-    interview: enInterview,
-    tools: enTools,
-    tracker: enTracker,
-  },
-  he: {
-    common: heCommon,
-    home: heHome,
-    marketing: heMarketing,
-    scan: heScan,
-    jobs: heJobs,
-    tailor: heTailor,
-    interview: heInterview,
-    tools: heTools,
-    tracker: heTracker,
-  },
-} as const;
+// PLAN 12.5b: locale catalogs are code-split — only the active language rides
+// the critical path (~80 kB of JSON per language leaves the entry chunk).
+// import.meta.glob turns every namespace file into its own lazy chunk.
+const catalogs = import.meta.glob<{ default: Record<string, unknown> }>("./locales/*/*.json");
 
-i18n
-  .use(LanguageDetector)
-  .use(initReactI18next)
-  .init({
-    resources,
-    fallbackLng: "en",
-    supportedLngs: [...LANGUAGES],
-    load: "languageOnly", // "he-IL" -> "he"
-    defaultNS: "common",
-    interpolation: { escapeValue: false }, // React already escapes
-    detection: {
-      order: ["localStorage", "navigator"],
-      caches: ["localStorage"],
-      lookupLocalStorage: "lang", // kept in sync with the no-flash script in index.html
-    },
-  });
+const loaded = new Set<string>();
+
+export async function loadLanguage(lng: Language): Promise<void> {
+  if (loaded.has(lng)) return;
+  const prefix = `./locales/${lng}/`;
+  await Promise.all(
+    Object.entries(catalogs)
+      .filter(([path]) => path.startsWith(prefix))
+      .map(async ([path, load]) => {
+        const ns = path.slice(prefix.length).replace(/\.json$/, "");
+        i18n.addResourceBundle(lng, ns, (await load()).default, true, true);
+      }),
+  );
+  loaded.add(lng);
+}
+
+/** Switch the app language, loading its catalogs first so no keys flash. */
+export async function setLanguage(lng: Language): Promise<void> {
+  await loadLanguage(lng);
+  await i18n.changeLanguage(lng);
+}
 
 /** Keep <html lang dir> in sync — Hebrew flips the whole app to RTL.
  * The inline script in index.html sets the same attributes before first
@@ -74,7 +40,39 @@ function syncDocument(lng: string) {
   document.documentElement.lang = lang;
   document.documentElement.dir = lang === "he" ? "rtl" : "ltr";
 }
-syncDocument(i18n.resolvedLanguage ?? "en");
-i18n.on("languageChanged", syncDocument);
+
+/** Initialize i18next, then load the active language's catalogs. main.tsx
+ * awaits this before the first render, so translations are always present
+ * by the time anything calls t(). */
+export async function initI18n(): Promise<void> {
+  await i18n
+    .use(LanguageDetector)
+    .use(initReactI18next)
+    .init({
+      resources: {}, // catalogs stream in via addResourceBundle
+      partialBundledLanguages: true,
+      fallbackLng: "en",
+      supportedLngs: [...LANGUAGES],
+      load: "languageOnly", // "he-IL" -> "he"
+      defaultNS: "common",
+      interpolation: { escapeValue: false }, // React already escapes
+      detection: {
+        order: ["localStorage", "navigator"],
+        caches: ["localStorage"],
+        lookupLocalStorage: "lang", // kept in sync with the no-flash script in index.html
+      },
+    });
+  const detected = (i18n.resolvedLanguage ?? "en").split("-")[0];
+  const active: Language = (LANGUAGES as readonly string[]).includes(detected)
+    ? (detected as Language)
+    : "en";
+  await loadLanguage(active);
+  // Hebrew falls back to English on any missing key (the catalogs are
+  // parity-checked, so this is a safety net) — warm the fallback off the
+  // critical path.
+  if (active !== "en") void loadLanguage("en");
+  syncDocument(i18n.resolvedLanguage ?? "en");
+  i18n.on("languageChanged", syncDocument);
+}
 
 export default i18n;

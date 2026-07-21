@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { setLanguage } from "../i18n";
 import { cn } from "../lib/cn";
 
 /** EN/עב language switch used in both the app and marketing headers.
@@ -10,7 +11,7 @@ export default function LanguageSwitch({ className }: { className?: string }) {
   return (
     <button
       type="button"
-      onClick={() => i18n.changeLanguage(isHebrew ? "en" : "he")}
+      onClick={() => void setLanguage(isHebrew ? "en" : "he")}
       aria-label={label}
       title={label}
       className={cn(

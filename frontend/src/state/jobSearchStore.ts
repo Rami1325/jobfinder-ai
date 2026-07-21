@@ -15,6 +15,7 @@ export type JobSearchState = {
   // ranked. Cleared when the authoritative `result` lands; kept on error so
   // the page can show the jobs scored before the search was interrupted.
   liveMatches: JobMatch[];
+  cancelled: boolean; // user hit Cancel — liveMatches kept as partial results
 };
 
 let state: JobSearchState = {
@@ -24,6 +25,7 @@ let state: JobSearchState = {
   startedAt: null,
   progress: null,
   liveMatches: [],
+  cancelled: false,
 };
 const listeners = new Set<() => void>();
 
@@ -42,9 +44,22 @@ export function subscribeJobSearch(listener: () => void): () => void {
 }
 
 let seq = 0; // a restarted search must not be overwritten by a stale response
+let controller: AbortController | null = null;
+
+/** Client-side abort (PLAN 12.5a): stops the SSE stream, keeps the jobs
+ * scored so far as partial results. The backend request dies with the
+ * connection; the seq bump makes every in-flight callback a no-op. */
+export function cancelJobSearch(): void {
+  if (!state.searching) return;
+  seq++;
+  controller?.abort();
+  controller = null;
+  set({ searching: false, progress: null, cancelled: true });
+}
 
 export function startJobSearch(resume: ResumeModel, customize: SearchContext | null): void {
   const id = ++seq;
+  controller = new AbortController();
   set({
     searching: true,
     error: "",
@@ -52,6 +67,7 @@ export function startJobSearch(resume: ResumeModel, customize: SearchContext | n
     startedAt: Date.now(),
     progress: null,
     liveMatches: [],
+    cancelled: false,
   });
   searchJobsStream(
     resume,
@@ -68,6 +84,7 @@ export function startJobSearch(resume: ResumeModel, customize: SearchContext | n
       next.splice(at === -1 ? next.length : at, 0, m);
       set({ liveMatches: next });
     },
+    controller.signal,
   )
     .catch((e: unknown) => {
       // Older backends have no /jobs/search/stream — fall back to the plain
