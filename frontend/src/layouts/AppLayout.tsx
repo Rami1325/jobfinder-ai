@@ -12,6 +12,13 @@ import {
   Menu,
   X,
   ShieldCheck,
+  ChevronDown,
+  ScanLine,
+  Building2,
+  HeartPulse,
+  Send,
+  Contact,
+  Mail,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
@@ -35,25 +42,39 @@ const primaryNav: NavEntry[] = [
 
 const moreNav: NavEntry[] = [
   { to: "/interview", labelKey: "nav.interview", icon: MessageSquareText },
-  { to: "/tools", labelKey: "nav.tools", icon: Wrench },
 ];
+
+// Sub-tools listed under the Tools entry — mirrors the cards on ToolsPage
+// (labels come from the "tools" namespace so the two stay in sync).
+const toolsSubNav = [
+  { to: "/tools/ats", key: "ats", icon: ScanLine },
+  { to: "/tools/company-brief", key: "brief", icon: Building2 },
+  { to: "/tools/resume-health", key: "health", icon: HeartPulse },
+  { to: "/tools/outreach", key: "outreach", icon: Send },
+  { to: "/tools/screening", key: "screening", icon: MessageSquareText },
+  { to: "/tools/linkedin", key: "linkedin", icon: Contact },
+  { to: "/tools/follow-up", key: "followup", icon: Mail },
+] as const;
 
 function NavItem({
   to,
   icon: Icon,
   label,
   trailing,
+  end,
   onNavigate,
 }: {
   to: string;
   icon: typeof Home;
   label: string;
   trailing?: ReactNode;
+  end?: boolean;
   onNavigate?: () => void;
 }) {
   return (
     <NavLink
       to={to}
+      end={end}
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
@@ -87,6 +108,90 @@ function NavItem({
   );
 }
 
+/** The Tools nav entry with its sub-tools nested underneath. Clicking Tools
+ * navigates to /tools and expands the list; it auto-expands whenever a
+ * /tools route is active and collapses on a repeat click while inside. */
+function ToolsNavGroup({ onNavigate }: { onNavigate?: () => void }) {
+  const { t } = useTranslation();
+  const { t: tTools } = useTranslation("tools");
+  const { pathname } = useLocation();
+  const inTools = pathname.startsWith("/tools");
+  const [open, setOpen] = useState(inTools);
+
+  useEffect(() => {
+    if (inTools) setOpen(true);
+  }, [inTools]);
+
+  return (
+    <div>
+      <NavItem
+        to="/tools"
+        end
+        icon={Wrench}
+        label={t("nav.tools")}
+        trailing={
+          <ChevronDown
+            size={15}
+            className={cn("transition-transform duration-200", open && "rotate-180")}
+          />
+        }
+        onNavigate={() => {
+          setOpen(inTools ? !open : true);
+          onNavigate?.();
+        }}
+      />
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="ms-4 mt-0.5 space-y-0.5 border-s border-line/70 ps-2 pb-1">
+              {toolsSubNav.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  onClick={onNavigate}
+                  className={({ isActive }) =>
+                    cn(
+                      "relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
+                      isActive
+                        ? "font-semibold text-ink"
+                        : "text-ink-muted hover:bg-panel-2/60 hover:text-ink",
+                    )
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      {isActive && (
+                        <motion.span
+                          layoutId="nav-pill"
+                          aria-hidden
+                          transition={{ type: "spring", stiffness: 550, damping: 45 }}
+                          className="absolute inset-0 rounded-lg bg-panel-2"
+                        >
+                          <span className="absolute inset-y-1.5 start-1 w-1 rounded-full bg-accent" />
+                        </motion.span>
+                      )}
+                      <item.icon size={15} className="relative shrink-0" />
+                      <span className="relative min-w-0 flex-1 truncate">
+                        {tTools(`cards.${item.key}.title`)}
+                      </span>
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /** The sidebar body — shared verbatim between the desktop rail and the mobile
  * drawer, so there is one source of truth for navigation. `group` namespaces
  * the sliding nav-pill layoutId: both copies are mounted at once on mobile
@@ -117,6 +222,9 @@ function SidebarBody({
         <Logo size={30} />
       </Link>
 
+      {/* min-h-0 + overflow: the expanded Tools sub-list can outgrow short
+          viewports — scroll the nav area, keep the trust badge pinned. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
       <SectionLabel className="px-3">{t("nav.overview")}</SectionLabel>
       <nav className="mt-1.5 space-y-0.5">
         {primaryNav.map((item) => (
@@ -142,9 +250,9 @@ function SidebarBody({
             onNavigate={onNavigate}
           />
         ))}
+        <ToolsNavGroup onNavigate={onNavigate} />
       </nav>
-
-      <div className="flex-1" />
+      </div>
 
       <div className="mx-1 mb-3 flex items-center gap-2 rounded-lg border border-mint/35 bg-mint/10 px-3 py-2 text-xs font-semibold text-mint">
         <ShieldCheck size={15} className="shrink-0" />
