@@ -819,6 +819,36 @@ check(
     str([h.url for h in _dup]),
 )
 
+# 14b-3. Salary intelligence v1 (PLAN 15.2): deterministic extraction of
+# LITERAL salary mentions only — currency-adjacent figures, plausibility
+# floor, hourly wages allowed, everything else ignored.
+from app.core.salary import extract_salary as _sal  # noqa: E402
+
+_s1 = _sal("דרוש מפתח. שכר 15,000-18,000 ₪ ברוטו לחודש. משרה מלאה.")
+check(
+    "salary: hebrew ILS range with month period",
+    _s1 is not None and _s1.min == 15000 and _s1.max == 18000
+    and _s1.currency == "ILS" and _s1.period == "month",
+    str(_s1),
+)
+_s2 = _sal("Base compensation $120K–$150K per year plus equity.")
+check(
+    "salary: USD K-range with year period",
+    _s2 is not None and _s2.min == 120000 and _s2.max == 150000
+    and _s2.currency == "USD" and _s2.period == "year" and "$120K" in _s2.raw,
+    str(_s2),
+)
+_s3 = _sal('שכר התחלתי 18K ש"ח')
+check("salary: K suffix + gershayim shekel marker", _s3 is not None and _s3.max == 18000 and _s3.currency == "ILS", str(_s3))
+_s4 = _sal("תשלום ₪60 לשעה, משמרות גמישות")
+check("salary: hourly wage passes the small-figure gate", _s4 is not None and _s4.max == 60 and _s4.period == "hour", str(_s4))
+check(
+    "salary: numbers without currency, tiny perks, and empty text are ignored",
+    _sal("Join a team of 15,000 people with 5 years experience") is None
+    and _sal("You get a $5 gift card") is None
+    and _sal("") is None,
+)
+
 # 14c. Drushim provider: response parser pinned against a trimmed real fixture
 import json as _json  # noqa: E402
 from pathlib import Path  # noqa: E402

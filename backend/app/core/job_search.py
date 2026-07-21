@@ -25,6 +25,7 @@ from app.core.providers.linkedin import (  # noqa: F401 - re-exports
     _build_search_url,
     parse_search_results,
 )
+from app.core.salary import extract_salary
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
 from app.llm import prompts
 from app.llm.client import get_llm_client
@@ -429,6 +430,7 @@ def search_jobs(
                 source=hit.source,
                 logo_url=hit.logo_url or cached.logo_url,
                 also_on=[AlsoOn(**a) for a in hit.also_on],
+                salary=extract_salary(cached.jd_text),
             )
             matches_by_hit[hit_i] = match
         else:
@@ -456,6 +458,7 @@ def search_jobs(
                     source=hit.source,
                     logo_url=hit.logo_url,
                     also_on=[AlsoOn(**a) for a in hit.also_on],
+                    salary=extract_salary(jd_text),
                 )
                 matches_by_hit[hit_i] = match
         with progress_lock:

@@ -194,10 +194,19 @@ export interface JobMatch {
   source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
   logo_url?: string; // company logo from the board; empty/absent when it has none
   also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
+  salary?: SalaryInfo | null; // only when literally stated in the posting
 }
 export interface AlsoOn {
   source: string;
   url: string;
+}
+/** A salary figure literally present in the posting (never an estimate). */
+export interface SalaryInfo {
+  min: number;
+  max: number;
+  currency: string; // ILS | USD | EUR | ""
+  period: string; // hour | month | year | ""
+  raw: string; // the verbatim snippet from the posting
 }
 /** Multi-turn mock interview (PLAN 11.3) — stateless backend, the client
  * sends the whole transcript with every turn. */
@@ -273,6 +282,7 @@ export interface JobSearchHit {
   source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
   logo_url?: string; // company logo from the board; empty/absent when it has none
   also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
+  salary?: SalaryInfo | null; // extracted from the stored posting text on read
   searched_at: string;
   app_status: string; // tracker status if saved/applied: "", saved, applied, interview, offer, rejected
 }

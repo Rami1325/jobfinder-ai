@@ -23,6 +23,7 @@ from app.core.ats_scan import scan_resume
 from app.core.company_brief import build_company_brief
 from app.core.cover_letter import generate_cover_letter
 from app.core.resume_health import check_resume_health
+from app.core.salary import extract_salary
 from app.core.mailer import smtp_configured
 from app.core.follow_up import write_follow_up
 from app.core.free_scan import free_scan, free_scan_limiter
@@ -506,6 +507,7 @@ def jobs_history(
                     for a in _keyword_list(row.also_on_json)
                     if isinstance(a, dict)
                 ],
+                salary=extract_salary(row.jd_text or ""),
                 searched_at=row.searched_at.isoformat() if row.searched_at else "",
                 app_status=statuses.get(row.url, ""),
             )

@@ -179,6 +179,11 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
             </p>
             <NewBadge postedAt={m.posted_at} />
             {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
+            {m.salary?.raw && (
+              <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
+                {m.salary.raw}
+              </Badge>
+            )}
             <AlsoOnLinks links={m.also_on} />
             {appStatus && <AppStatusBadge status={appStatus} />}
           </div>
@@ -290,6 +295,11 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
             </p>
             <NewBadge postedAt={hit.posted_at} />
             {hit.source && <Badge className="shrink-0">{sourceLabel(hit.source)}</Badge>}
+            {hit.salary?.raw && (
+              <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
+                {hit.salary.raw}
+              </Badge>
+            )}
             <AlsoOnLinks links={hit.also_on} />
             <AppStatusBadge status={hit.app_status} />
           </div>

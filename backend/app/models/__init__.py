@@ -579,6 +579,18 @@ class AlsoOn(BaseModel):
     url: str = ""
 
 
+class SalaryInfo(BaseModel):
+    """A salary figure LITERALLY present in the posting text (PLAN 15.2).
+    Deterministic extraction only — never an LLM estimate. `raw` is the
+    verbatim snippet the UI shows."""
+
+    min: float = 0.0
+    max: float = 0.0
+    currency: str = ""  # ILS | USD | EUR | ""
+    period: str = ""  # hour | month | year | "" (not stated)
+    raw: str = ""
+
+
 class JobMatch(BaseModel):
     title: str = ""
     company: str = ""
@@ -594,6 +606,7 @@ class JobMatch(BaseModel):
     source: str = "linkedin"  # which job board this came from (see PROVIDERS registry)
     logo_url: str = ""  # company logo from the board; empty when it has none
     also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards
+    salary: Optional[SalaryInfo] = None  # only when literally stated in the posting
 
 
 class JobMatchResult(BaseModel):
@@ -677,6 +690,7 @@ class JobSearchHitOut(BaseModel):
     source: str = "linkedin"  # which job board surfaced this hit
     logo_url: str = ""  # company logo from the board; empty when it has none
     also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards
+    salary: Optional[SalaryInfo] = None  # extracted on read from the stored jd_text
     searched_at: str = ""
     app_status: str = ""  # tracker status if this job was saved/applied ("", saved, applied, interview, offer, rejected)
 

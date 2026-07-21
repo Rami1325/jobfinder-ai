@@ -11,6 +11,7 @@ import re
 import urllib.request
 
 from app.core.jd_analyzer import analyze_jd
+from app.core.salary import extract_salary
 from app.core.scorer import score_resume, top_matched_and_gaps
 from app.models import JobMatch, JobMatchResult, ResumeModel
 
@@ -34,6 +35,7 @@ def match_jobs(resume: ResumeModel, listings: list[str]) -> JobMatchResult:
                 top_matched=top_matched,
                 top_gaps=top_gaps,
                 jd_text=t,
+                salary=extract_salary(t),
             )
         )
     matches.sort(key=lambda m: m.overall, reverse=True)
