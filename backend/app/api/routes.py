@@ -66,6 +66,7 @@ from app.models import (
     AddComeetCompanyRequest,
     AddGreenhouseCompanyRequest,
     AlertCronResult,
+    AlsoOn,
     NudgeCronResult,
     AlertRunResult,
     AlertSettingsIn,
@@ -469,6 +470,11 @@ def jobs_history(
                 posted_at=row.posted_at or "",
                 source=row.source or "linkedin",
                 logo_url=row.logo_url or "",
+                also_on=[
+                    AlsoOn(source=str(a.get("source", "")), url=str(a.get("url", "")))
+                    for a in _keyword_list(row.also_on_json)
+                    if isinstance(a, dict)
+                ],
                 searched_at=row.searched_at.isoformat() if row.searched_at else "",
                 app_status=statuses.get(row.url, ""),
             )

@@ -10,6 +10,7 @@ of sinking it — the search only fails when every selected board fails.
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -27,7 +28,7 @@ from app.core.providers.linkedin import (  # noqa: F401 - re-exports
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
 from app.llm import prompts
 from app.llm.client import get_llm_client
-from app.models import JobMatch, JobSearchResult, ResumeModel, SearchContext
+from app.models import AlsoOn, JobMatch, JobSearchResult, ResumeModel, SearchContext
 
 # Progress events emitted during a search (consumed by the SSE endpoint, PLAN 9.2 + 12.2).
 # Boards and jobs run in PARALLEL, so events fire on COMPLETION and `index` is a
@@ -195,13 +196,44 @@ def freshest_first(hits: list[JobHit], max_age_days: int, now: datetime | None =
     return sorted(hits, key=lambda h: h.posted_at, reverse=True)
 
 
+# Cross-board duplicate detection (PLAN 15.1). Legal suffixes stripped from
+# company names so "Acme Ltd" (Drushim) matches "Acme" (LinkedIn); anything
+# fancier (similarity scoring) risks merging genuinely different roles, so the
+# fingerprint is exact title + company after normalization, or nothing.
+_CONTENT_NORM_RE = re.compile(r"\W+", re.UNICODE)
+# Hebrew acronyms write their quote INSIDE the word (בע"מ, ע"ר) — strip those
+# marks before word-splitting so the acronym survives as one token.
+_ACRONYM_MARKS_RE = re.compile(r"[\"'׳״]")
+_COMPANY_LEGAL = {"ltd", "limited", "inc", "llc", "corp", "gmbh", "בעמ"}
+
+
+def content_key(title: str, company: str) -> str:
+    """Fingerprint for 'same posting on another board': normalized title +
+    company. Returns "" (never merge) when either half is empty — merging on
+    title alone would collapse different companies' identical roles. Pure;
+    pinned by the smoke test."""
+    t_words = _CONTENT_NORM_RE.sub(" ", _ACRONYM_MARKS_RE.sub("", title.lower())).split()
+    c_words = [
+        w
+        for w in _CONTENT_NORM_RE.sub(" ", _ACRONYM_MARKS_RE.sub("", company.lower())).split()
+        if w not in _COMPANY_LEGAL
+    ]
+    if not t_words or not c_words:
+        return ""
+    return " ".join(t_words) + "|" + " ".join(c_words)
+
+
 def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) -> list[JobHit]:
     """Round-robin merge across sources (so one board can't crowd out the
     others), deduped by URL, capped at `limit`. Source order follows the
     context's `sources` order; within a source hits arrive newest-first
-    (see `freshest_first`)."""
+    (see `freshest_first`). The same posting found on several boards (PLAN
+    15.1: matching content_key) becomes ONE hit carrying the other boards'
+    links in `also_on` — it's fetched and scored once, and duplicates don't
+    eat into `limit`."""
     merged: list[JobHit] = []
     seen: set[str] = set()
+    by_content: dict[str, JobHit] = {}
     queues = [list(hits) for hits in hits_by_source.values() if hits]
     i = 0
     while queues and len(merged) < limit:
@@ -219,6 +251,14 @@ def _interleave_and_dedupe(hits_by_source: dict[str, list[JobHit]], limit: int) 
         if key in seen:
             continue
         seen.add(key)
+        ck = content_key(hit.title, hit.company)
+        prior = by_content.get(ck) if ck else None
+        if prior is not None:
+            if hit.url and all(a.get("url") != hit.url for a in prior.also_on):
+                prior.also_on.append({"source": hit.source, "url": hit.url})
+            continue
+        if ck:
+            by_content[ck] = hit
         merged.append(hit)
     return merged
 
@@ -388,6 +428,7 @@ def search_jobs(
                 posted_at=hit.posted_at or cached.posted_at,
                 source=hit.source,
                 logo_url=hit.logo_url or cached.logo_url,
+                also_on=[AlsoOn(**a) for a in hit.also_on],
             )
             matches_by_hit[hit_i] = match
         else:
@@ -414,6 +455,7 @@ def search_jobs(
                     posted_at=hit.posted_at,
                     source=hit.source,
                     logo_url=hit.logo_url,
+                    also_on=[AlsoOn(**a) for a in hit.also_on],
                 )
                 matches_by_hit[hit_i] = match
         with progress_lock:

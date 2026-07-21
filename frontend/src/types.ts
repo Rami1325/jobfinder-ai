@@ -193,6 +193,11 @@ export interface JobMatch {
   posted_at: string; // ISO date from the LinkedIn search card; empty when unknown
   source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
   logo_url?: string; // company logo from the board; empty/absent when it has none
+  also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
+}
+export interface AlsoOn {
+  source: string;
+  url: string;
 }
 export interface JobMatchResult {
   matches: JobMatch[];
@@ -246,6 +251,7 @@ export interface JobSearchHit {
   posted_at: string; // ISO date the job was posted; empty when unknown
   source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
   logo_url?: string; // company logo from the board; empty/absent when it has none
+  also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
   searched_at: string;
   app_status: string; // tracker status if saved/applied: "", saved, applied, interview, offer, rejected
 }

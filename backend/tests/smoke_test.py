@@ -741,6 +741,50 @@ check(
     str([h.url for h in _rr_q]),
 )
 
+# 14b-2. Cross-board duplicate detection (PLAN 15.1): same title+company on
+# two boards merges into one hit carrying the other board's link; different
+# titles or blank companies never merge; content_key normalization pinned.
+from app.core.job_search import content_key  # noqa: E402
+
+check(
+    "content_key: legal suffixes + punctuation + case normalize away",
+    content_key("Backend Engineer", "Acme Ltd") == content_key("backend engineer!", "ACME")
+    and content_key("מהנדס תוכנה", 'חילן בע"מ') == content_key("מהנדס תוכנה", "חילן"),
+)
+check(
+    "content_key: blank title or company means never-merge",
+    content_key("", "Acme") == "" and content_key("Engineer", "") == "",
+)
+_dup = _interleave_and_dedupe(
+    {
+        "linkedin": [
+            JobHit(source="linkedin", title="Backend Engineer", company="Acme Ltd", url="https://li/a"),
+            JobHit(source="linkedin", title="Data Engineer", company="Acme", url="https://li/b"),
+        ],
+        "drushim": [
+            JobHit(source="drushim", title="Backend Engineer!", company="ACME", url="https://dr/a"),
+            JobHit(source="drushim", title="Backend Engineer", company="Other Co", url="https://dr/b"),
+        ],
+        "comeet": [
+            JobHit(source="comeet", title="Backend Engineer", company="acme", url="https://cm/a"),
+        ],
+    },
+    limit=10,
+)
+check(
+    "cross-board duplicate merges into one hit with also_on links",
+    len(_dup) == 3
+    and _dup[0].url == "https://li/a"
+    and [a["source"] for a in _dup[0].also_on] == ["drushim", "comeet"]
+    and [a["url"] for a in _dup[0].also_on] == ["https://dr/a", "https://cm/a"],
+    str([(h.url, h.also_on) for h in _dup]),
+)
+check(
+    "different title/company at the same company never merge",
+    {h.url for h in _dup} == {"https://li/a", "https://li/b", "https://dr/b"},
+    str([h.url for h in _dup]),
+)
+
 # 14c. Drushim provider: response parser pinned against a trimmed real fixture
 import json as _json  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -1347,11 +1391,19 @@ check(
 )
 check("search history recorded 2 hits", len(list_search_hits(_db, _admin_id)) == 2, str(len(list_search_hits(_db, _admin_id))))
 
-record_search_hits(_db, [JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1")], _admin_id)
+from app.models import AlsoOn as _AlsoOn  # noqa: E402
+
+record_search_hits(_db, [JobMatch(title="Backend Engineer", company="Acme", overall=75.0, url="https://x/jobs/1",
+                                  also_on=[_AlsoOn(source="drushim", url="https://dr/1")])], _admin_id)
 _hits = list_search_hits(_db, _admin_id)
 _by_url = {h.url: h for h in _hits}
 check("re-record upserts by url (still 2 rows)", len(_hits) == 2, str(len(_hits)))
 check("re-record refreshed the score", _by_url["https://x/jobs/1"].overall == 75.0, str(_by_url["https://x/jobs/1"].overall))
+check(
+    "also_on links round-trip through history (PLAN 15.1)",
+    _by_url["https://x/jobs/1"].also_on_json == '[{"source": "drushim", "url": "https://dr/1"}]',
+    _by_url["https://x/jobs/1"].also_on_json,
+)
 
 # Hebrew must survive the DB round-trip byte-identical (UTF-8 through SQLite).
 _he_title = "מהנדס/ת נתונים — תל אביב"

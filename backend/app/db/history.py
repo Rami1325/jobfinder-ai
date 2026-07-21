@@ -52,6 +52,7 @@ def record_search_hits(
         row.posted_at = m.posted_at
         row.source = m.source
         row.logo_url = m.logo_url
+        row.also_on_json = json.dumps([a.model_dump() for a in m.also_on])
         row.resume_hash = resume_hash
         row.searched_at = now
     db.flush()

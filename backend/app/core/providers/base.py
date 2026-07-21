@@ -47,6 +47,10 @@ class JobHit:
     logo_url: str = ""  # company logo image URL, "" when the board has none
     language: str = "en"  # "he" | "en" — best-effort detection by the provider
     raw: dict = field(default_factory=dict)  # provider-native payload for debugging
+    # Cross-board duplicates merged into this hit (PLAN 15.1): the same posting
+    # found on other boards, as {"source": ..., "url": ...}. Filled by the
+    # fan-out's dedupe, never by providers.
+    also_on: list = field(default_factory=list)
 
 
 @runtime_checkable

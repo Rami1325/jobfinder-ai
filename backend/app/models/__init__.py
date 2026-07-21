@@ -541,6 +541,13 @@ class JobMatchRequest(BaseModel):
     listings: list[str] = Field(default_factory=list)  # pasted JD texts
 
 
+class AlsoOn(BaseModel):
+    """The same posting on another board (PLAN 15.1 cross-board dedupe)."""
+
+    source: str = ""
+    url: str = ""
+
+
 class JobMatch(BaseModel):
     title: str = ""
     company: str = ""
@@ -555,6 +562,7 @@ class JobMatch(BaseModel):
     posted_at: str = ""  # ISO date(-time) from the source; empty when unknown
     source: str = "linkedin"  # which job board this came from (see PROVIDERS registry)
     logo_url: str = ""  # company logo from the board; empty when it has none
+    also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards
 
 
 class JobMatchResult(BaseModel):
@@ -637,6 +645,7 @@ class JobSearchHitOut(BaseModel):
     posted_at: str = ""  # ISO date the job was posted; empty when unknown
     source: str = "linkedin"  # which job board surfaced this hit
     logo_url: str = ""  # company logo from the board; empty when it has none
+    also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards
     searched_at: str = ""
     app_status: str = ""  # tracker status if this job was saved/applied ("", saved, applied, interview, offer, rejected)
 

@@ -13,7 +13,32 @@ import {
 import { Badge, BorderGlow, Button, CountUp, ProgressRing } from "../../components/ui";
 import { fitReason } from "../../lib/fitReason";
 import type { JobMatch, JobSearchHit } from "../../types";
+import type { AlsoOn } from "../../types";
 import { avatarTone, companyDomain, isNewPosting, postedAgo, sourceLabel } from "./shared";
+
+/** Cross-board dedupe (PLAN 15.1): the same posting found on other boards —
+ * one merged card, with each duplicate board linked so the user can apply
+ * wherever they prefer. */
+function AlsoOnLinks({ links }: { links?: AlsoOn[] }) {
+  const { t } = useTranslation("jobs");
+  if (!links?.length) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 text-xs text-ink-muted">
+      {t("card.alsoOn")}
+      {links.map((a) => (
+        <a
+          key={a.url}
+          href={a.url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-accent-soft underline-offset-2 hover:underline"
+        >
+          {sourceLabel(a.source)}
+        </a>
+      ))}
+    </span>
+  );
+}
 
 /** Company logo when the job board provided one, else the company favicon when
  * the job URL points at a company domain, else a lettered avatar on a
@@ -154,6 +179,7 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
             </p>
             <NewBadge postedAt={m.posted_at} />
             {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
+            <AlsoOnLinks links={m.also_on} />
             {appStatus && <AppStatusBadge status={appStatus} />}
           </div>
           <p className="text-sm text-ink-muted">
@@ -264,6 +290,7 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
             </p>
             <NewBadge postedAt={hit.posted_at} />
             {hit.source && <Badge className="shrink-0">{sourceLabel(hit.source)}</Badge>}
+            <AlsoOnLinks links={hit.also_on} />
             <AppStatusBadge status={hit.app_status} />
           </div>
           <p className="text-sm text-ink-muted">
