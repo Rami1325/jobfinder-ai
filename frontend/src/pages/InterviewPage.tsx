@@ -12,6 +12,7 @@ import {
 } from "../api/client";
 import JDPaste from "../components/JDPaste";
 import ResumeGate from "../components/ResumeGate";
+import MockInterview from "./interview/MockInterview";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
@@ -25,7 +26,7 @@ import type {
   ResumeModel,
 } from "../types";
 
-type Mode = "questions" | "recruiter";
+type Mode = "questions" | "recruiter" | "mock";
 
 const catTone: Record<string, "accent" | "mint" | "partial" | "neutral"> = {
   behavioral: "accent",
@@ -228,7 +229,7 @@ export default function InterviewPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {(["questions", "recruiter"] as const).map((m) => (
+        {(["questions", "recruiter", "mock"] as const).map((m) => (
           <button
             key={m}
             onClick={() => setMode(m)}
@@ -259,18 +260,24 @@ export default function InterviewPage() {
         <div className="mt-3">
           <JDPaste value={jdText} onChange={setJdText} />
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <Button
-            loading={running}
-            icon={<Sparkles size={16} />}
-            disabled={jdText.trim().length < 30}
-            onClick={mode === "questions" ? generate : buildRecruiter}
-          >
-            {mode === "questions" ? t("generate") : t("recruiter.build")}
-          </Button>
-          {error && <span className="text-sm text-danger">{error}</span>}
-        </div>
+        {mode === "mock" ? (
+          <p className="mt-3 text-xs text-ink-faint">{t("mock.jdOptional")}</p>
+        ) : (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button
+              loading={running}
+              icon={<Sparkles size={16} />}
+              disabled={jdText.trim().length < 30}
+              onClick={mode === "questions" ? generate : buildRecruiter}
+            >
+              {mode === "questions" ? t("generate") : t("recruiter.build")}
+            </Button>
+            {error && <span className="text-sm text-danger">{error}</span>}
+          </div>
+        )}
       </Card>
+
+      {mode === "mock" && <MockInterview resume={master.resume} jdText={jdText} />}
 
       {running && (
         <div className="space-y-3">

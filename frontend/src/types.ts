@@ -199,6 +199,27 @@ export interface AlsoOn {
   source: string;
   url: string;
 }
+/** Multi-turn mock interview (PLAN 11.3) — stateless backend, the client
+ * sends the whole transcript with every turn. */
+export interface ChatTurn {
+  role: "interviewer" | "candidate";
+  text: string;
+}
+export interface InterviewChatResult {
+  message: string;
+  done: boolean;
+}
+export interface QuestionFeedback {
+  question: string;
+  feedback: string;
+}
+export interface InterviewScorecardResult {
+  overall: number;
+  summary: string;
+  strengths: string[];
+  improvements: string[];
+  question_feedback: QuestionFeedback[];
+}
 export interface JobMatchResult {
   matches: JobMatch[];
 }

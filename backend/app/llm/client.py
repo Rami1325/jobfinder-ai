@@ -123,6 +123,22 @@ class StubClient:
                 "improvements": ["Quantify the impact", "Tie it back to the role"],
                 "revised_answer": "[stub] A tightened version of your answer.",
             }
+        if "INTERVIEW_CHAT" in head:
+            return {
+                "message": "[stub] Tell me about a recent project you're proud of — "
+                "what was your specific contribution?",
+                "done": False,
+            }
+        if "INTERVIEW_SCORECARD" in head:
+            return {
+                "overall": 78,
+                "summary": "[stub] Solid session: specific examples, could quantify more.",
+                "strengths": ["[stub] Concrete, resume-grounded examples"],
+                "improvements": ["[stub] Quantify outcomes with numbers"],
+                "question_feedback": [
+                    {"question": "Recent project?", "feedback": "[stub] Good detail and ownership."}
+                ],
+            }
         if "LINKEDIN" in head:
             return {
                 "headline": "[stub] Backend Engineer · Python · Distributed Systems",

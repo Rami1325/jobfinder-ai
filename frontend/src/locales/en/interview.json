@@ -8,7 +8,26 @@
   "companyBrief": "Company brief",
   "mode": {
     "questions": "Interview questions",
-    "recruiter": "Recruiter screen"
+    "recruiter": "Recruiter screen",
+    "mock": "Mock interview"
+  },
+  "mock": {
+    "title": "Mock interview",
+    "intro": "A live back-and-forth: the interviewer asks about your real experience, probes vague answers, and scores the whole session at the end. Nothing is saved on the server.",
+    "jdOptional": "Pasting the job description is optional — with one, the interviewer asks role-specific questions.",
+    "start": "Start mock interview",
+    "restart": "Start over",
+    "placeholder": "Type your answer… (Enter to send, Shift+Enter for a new line)",
+    "send": "Send",
+    "end": "End & get scorecard",
+    "thinking": "The interviewer is typing…",
+    "scoring": "Writing your scorecard…",
+    "doneNote": "The interviewer has finished — end the session to get your scorecard.",
+    "scorecard": "Session scorecard",
+    "overall": "Overall",
+    "strengths": "What worked",
+    "improvements": "To improve",
+    "perQuestion": "Question by question"
   },
   "recruiter": {
     "build": "Build prep sheet",

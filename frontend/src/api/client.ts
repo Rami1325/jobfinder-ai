@@ -7,13 +7,16 @@ import type {
   ApplicationOut,
   ATSScanResult,
   CompanyBriefResult,
+  ChatTurn,
   FactsLedger,
   FeedbackOut,
   FollowUpResult,
   FreeScanResult,
   InterviewAnswerResult,
+  InterviewChatResult,
   InterviewFeedbackResult,
   InterviewQuestionsResult,
+  InterviewScorecardResult,
   JDModel,
   JobMatch,
   JobMatchResult,
@@ -143,6 +146,32 @@ export async function interviewFeedback(
     resume,
     question,
     answer,
+  });
+  return data;
+}
+
+export async function interviewChat(
+  resume: ResumeModel,
+  jdText: string,
+  transcript: ChatTurn[],
+): Promise<InterviewChatResult> {
+  const { data } = await api.post<InterviewChatResult>("/interview/chat", {
+    resume,
+    jd_text: jdText,
+    transcript,
+  });
+  return data;
+}
+
+export async function interviewScorecard(
+  resume: ResumeModel,
+  jdText: string,
+  transcript: ChatTurn[],
+): Promise<InterviewScorecardResult> {
+  const { data } = await api.post<InterviewScorecardResult>("/interview/scorecard", {
+    resume,
+    jd_text: jdText,
+    transcript,
   });
   return data;
 }

@@ -516,6 +516,37 @@ class InterviewFeedbackResult(BaseModel):
     revised_answer: str = ""
 
 
+# Multi-turn mock interview (PLAN 11.3). Stateless backend: the client store
+# holds the session and sends the whole transcript with every turn.
+class ChatTurn(BaseModel):
+    role: str = "interviewer"  # "interviewer" | "candidate"
+    text: str = ""
+
+
+class InterviewChatRequest(BaseModel):
+    resume: ResumeModel
+    jd_text: str = ""
+    transcript: list[ChatTurn] = Field(default_factory=list)
+
+
+class InterviewChatResult(BaseModel):
+    message: str = ""  # the interviewer's next message
+    done: bool = False  # the interviewer has covered its arc — offer the scorecard
+
+
+class QuestionFeedback(BaseModel):
+    question: str = ""
+    feedback: str = ""
+
+
+class InterviewScorecardResult(BaseModel):
+    overall: float = 0.0
+    summary: str = ""
+    strengths: list[str] = Field(default_factory=list)
+    improvements: list[str] = Field(default_factory=list)
+    question_feedback: list[QuestionFeedback] = Field(default_factory=list)
+
+
 # Recruiter phone-screen prep — the first ~15-min, mostly non-technical call.
 class RecruiterScreenRequest(BaseModel):
     resume: ResumeModel

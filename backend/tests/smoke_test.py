@@ -272,6 +272,40 @@ check(
     _li_prompts.RECRUITER_SCREEN_SYSTEM.startswith("Task: RECRUITER_SCREEN."),
 )
 
+# 12d-2. Multi-turn mock interview (PLAN 11.3, two new LLM tasks): the chat
+# turn returns the interviewer's next message; the scorecard evaluates the
+# whole transcript. Stateless — the transcript rides in the request.
+from app.core.interview import chat_turn as _mi_chat, session_scorecard as _mi_score  # noqa: E402
+from app.models import ChatTurn as _ChatTurn  # noqa: E402
+
+_mi_transcript = [
+    _ChatTurn(role="interviewer", text="Tell me about yourself."),
+    _ChatTurn(role="candidate", text="I'm a backend engineer working with Python and SQL."),
+]
+_mi_turn = _mi_chat(resume, "Backend engineer: Python, REST APIs.", _mi_transcript)
+check(
+    "mock interview turn returns a message + done flag",
+    len(_mi_turn.message) > 0 and _mi_turn.done is False,
+    _mi_turn.message[:60],
+)
+_mi_card = _mi_score(resume, "Backend engineer: Python, REST APIs.", _mi_transcript)
+check(
+    "mock interview scorecard has overall + summary + feedback",
+    0 <= _mi_card.overall <= 100
+    and len(_mi_card.summary) > 0
+    and len(_mi_card.strengths) > 0
+    and len(_mi_card.question_feedback) > 0,
+    str(_mi_card.overall),
+)
+check(
+    "INTERVIEW_CHAT / INTERVIEW_SCORECARD Task tags still first (hebrew note appended)",
+    _li_prompts.INTERVIEW_CHAT_SYSTEM.startswith("Task: INTERVIEW_CHAT.")
+    and _li_prompts.INTERVIEW_SCORECARD_SYSTEM.startswith("Task: INTERVIEW_SCORECARD.")
+    and "INTERVIEW_CHAT" in _li_prompts.with_resume_language(
+        _li_prompts.INTERVIEW_CHAT_SYSTEM, "he"
+    )[:40].upper(),
+)
+
 # 12e. Company Research Brief (PLAN 11.1, new LLM task): grounded people +
 # deterministic email extraction (LLM never guesses an address).
 from app.core.company_brief import (  # noqa: E402
@@ -2209,6 +2243,27 @@ with TestClient(_fastapi_app) as _tc:
         "nudge cron endpoint is gate-exempt and reports opted-in users",
         _ncron.status_code == 200 and _ncron.json()["users"] == 0,
         _ncron.text[:100],
+    )
+    # Mock interview endpoints (PLAN 11.3) through the real HTTP stack.
+    _mi_resp = _tc.post(
+        "/interview/chat",
+        json={"resume": resume.model_dump(), "jd_text": "", "transcript": []},
+        headers=_ADMIN_H,
+    )
+    check(
+        "POST /interview/chat opens the interview with a message",
+        _mi_resp.status_code == 200 and len(_mi_resp.json()["message"]) > 0,
+        _mi_resp.text[:80],
+    )
+    _sc_400 = _tc.post(
+        "/interview/scorecard",
+        json={"resume": resume.model_dump(), "jd_text": "", "transcript": []},
+        headers=_ADMIN_H,
+    )
+    check(
+        "scorecard without a single candidate answer 400s",
+        _sc_400.status_code == 400,
+        _sc_400.text[:80],
     )
 
 # 20. SSE search stream (PLAN 9.2): progress events then one terminal result/

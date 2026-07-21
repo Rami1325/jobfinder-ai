@@ -26,7 +26,14 @@ from app.core.resume_health import check_resume_health
 from app.core.mailer import smtp_configured
 from app.core.follow_up import write_follow_up
 from app.core.free_scan import free_scan, free_scan_limiter
-from app.core.interview import answer_feedback, generate_questions, model_answer, recruiter_screen
+from app.core.interview import (
+    answer_feedback,
+    chat_turn,
+    generate_questions,
+    model_answer,
+    recruiter_screen,
+    session_scorecard,
+)
 from app.core.jd_analyzer import analyze_jd
 from app.core.job_match import fetch_job_text, match_jobs
 from app.core.outreach import generate_outreach
@@ -95,8 +102,11 @@ from app.models import (
     GreenhouseCompanyOut,
     InterviewAnswerRequest,
     InterviewAnswerResult,
+    InterviewChatRequest,
+    InterviewChatResult,
     InterviewFeedbackRequest,
     InterviewFeedbackResult,
+    InterviewScorecardResult,
     InterviewQuestionsRequest,
     InterviewQuestionsResult,
     JDAnalyzeRequest,
@@ -267,6 +277,27 @@ def interview_recruiter_screen(body: RecruiterScreenRequest) -> RecruiterScreenR
         return recruiter_screen(body.resume, body.jd_text)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while building the recruiter-screen prep: {e}")
+
+
+@router.post("/interview/chat", response_model=InterviewChatResult)
+def interview_chat(body: InterviewChatRequest) -> InterviewChatResult:
+    """One mock-interview turn (PLAN 11.3). Stateless: the client sends the
+    whole transcript; the model returns the interviewer's next message."""
+    try:
+        return chat_turn(body.resume, body.jd_text, body.transcript)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error during the mock interview: {e}")
+
+
+@router.post("/interview/scorecard", response_model=InterviewScorecardResult)
+def interview_scorecard(body: InterviewChatRequest) -> InterviewScorecardResult:
+    """End-of-session scorecard for a mock-interview transcript (PLAN 11.3)."""
+    if not any(t.role == "candidate" and t.text.strip() for t in body.transcript):
+        raise HTTPException(400, "Answer at least one question before ending the session.")
+    try:
+        return session_scorecard(body.resume, body.jd_text, body.transcript)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while writing the scorecard: {e}")
 
 
 # --------------------------------------------------------------------------- #

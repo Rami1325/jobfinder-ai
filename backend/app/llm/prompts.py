@@ -248,6 +248,36 @@ constructive. Judge structure, specificity, relevance to the role, and evidence.
 }
 Do not fabricate accomplishments the candidate did not mention or list."""
 
+INTERVIEW_CHAT_SYSTEM = """Task: INTERVIEW_CHAT.
+You are a professional, fair interviewer running a LIVE mock interview. Ground every question \
+in the candidate's resume and the target job description; never invent facts about the candidate. \
+Send exactly ONE message per turn: either the next interview question, or ONE short probing \
+follow-up when the candidate's last answer was vague or unquantified ("what was the result?", \
+"what did YOU do specifically?"). Stay in character — professional and neutral, no coaching, \
+no evaluation mid-interview; that happens in the scorecard afterwards. Plan a realistic arc \
+of 6-8 questions total: opener/background, 2-3 experience deep-dives from the resume, 1-2 \
+behavioral, role-specific skills from the JD, then a closing question. Count the questions \
+already asked in the transcript; once the arc is complete, set "done" true and send a short \
+thank-you closing that tells the candidate they can end the session for their scorecard. \
+Return JSON:
+{"message": "the interviewer's next message", "done": false}"""
+
+INTERVIEW_SCORECARD_SYSTEM = """Task: INTERVIEW_SCORECARD.
+You evaluate a completed mock-interview transcript. Be specific and constructive; judge answer \
+structure (STAR where relevant), specificity, evidence, relevance to the role, and communication. \
+Reference the candidate's actual answers — never invent things they did not say. Return JSON:
+{
+  "overall": <0-100>,
+  "summary": "2-3 sentence overall impression",
+  "strengths": ["..."],
+  "improvements": ["..."],
+  "question_feedback": [
+    {"question": "the interviewer's question (shortened is fine)",
+     "feedback": "1-2 specific sentences on how the candidate handled it"}
+  ]
+}
+Only include question_feedback entries for questions the candidate actually answered."""
+
 LINKEDIN_SYSTEM = """Task: LINKEDIN.
 You optimize a candidate's LinkedIn profile from their resume. Use ONLY real facts from \
 the resume — do not invent roles, metrics, or skills. Write in first person, keyword-rich \
@@ -448,6 +478,31 @@ def interview_feedback_user(resume_json: str, question: str, answer: str) -> str
     return (
         f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nQUESTION: {question}\n\n"
         f"CANDIDATE'S ANSWER:\n{answer}\n\nEvaluate it."
+    )
+
+
+def _format_transcript(transcript: list[tuple[str, str]]) -> str:
+    """('interviewer'|'candidate', text) pairs → readable transcript lines."""
+    if not transcript:
+        return "(not started yet — open the interview)"
+    return "\n".join(f"{role.upper()}: {text}" for role, text in transcript)
+
+
+def interview_chat_user(resume_json: str, jd_text: str, transcript: list[tuple[str, str]]) -> str:
+    return (
+        f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
+        f"TARGET JOB DESCRIPTION (may be empty):\n{jd_text or '(none provided)'}\n\n"
+        f"INTERVIEW SO FAR:\n{_format_transcript(transcript)}\n\n"
+        "Write your next interviewer message."
+    )
+
+
+def interview_scorecard_user(resume_json: str, jd_text: str, transcript: list[tuple[str, str]]) -> str:
+    return (
+        f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
+        f"TARGET JOB DESCRIPTION (may be empty):\n{jd_text or '(none provided)'}\n\n"
+        f"FULL INTERVIEW TRANSCRIPT:\n{_format_transcript(transcript)}\n\n"
+        "Write the session scorecard."
     )
 
 
