@@ -168,3 +168,77 @@ select {
 @media (max-width: 1023px) {
   body { overflow-x: clip; }
 }
+
+/* CSS-only light pillar (PLAN 12.5e) — the marketing backdrop that replaced
+   the WebGL raymarcher. Design rules: softness is baked into gradient and
+   mask falloffs (never filter: blur, which re-rasterizes every frame), and
+   the keyframes animate transform/opacity ONLY, so the layers live on the
+   compositor and cost nothing on the scroll path. Colors ride the theme
+   tokens; PillarBackground gates rendering to dark theme + motion-ok. */
+.css-pillar { position: absolute; inset: 0; overflow: hidden; }
+.css-pillar > i { position: absolute; top: -14%; bottom: 0; left: 50%; }
+
+/* Wide origin glow at the very top — anchors the beam like the shader's
+   brightest region did. Static. */
+.css-pillar-halo {
+  width: 120vw;
+  transform: translateX(-50%);
+  background: radial-gradient(52% 34% at 50% 0%, rgb(var(--accent) / 0.22), transparent 72%);
+}
+
+/* The column itself: brand blue falling into mint, soft-edged by a
+   horizontal alpha mask, gently breathing. */
+.css-pillar-core {
+  width: min(44vw, 540px);
+  background: linear-gradient(
+    to bottom,
+    rgb(var(--accent) / 0.5),
+    rgb(var(--accent) / 0.34) 34%,
+    rgb(var(--mint) / 0.26) 68%,
+    transparent 96%
+  );
+  mask-image: linear-gradient(to right, transparent, #000 34% 66%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 34% 66%, transparent);
+  animation: css-pillar-breathe 11s ease-in-out infinite alternate;
+}
+
+/* Two narrow bright wisps drifting across the core sell the old shader's
+   slow churn. Long offbeat durations keep the pair from ever syncing. */
+.css-pillar-wisp-a,
+.css-pillar-wisp-b {
+  background: linear-gradient(
+    to bottom,
+    rgb(var(--accent-soft) / 0.4),
+    rgb(var(--accent) / 0.26) 40%,
+    rgb(var(--mint) / 0.22) 72%,
+    transparent 97%
+  );
+  /* No solid plateau: alpha peaks at the centerline, so a wisp edge can never
+     read as a seam against the core. */
+  mask-image: linear-gradient(to right, transparent, #000 50%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 50%, transparent);
+}
+.css-pillar-wisp-a {
+  width: min(13vw, 160px);
+  animation: css-pillar-sway-a 17s ease-in-out infinite alternate;
+}
+.css-pillar-wisp-b {
+  width: min(8vw, 100px);
+  animation: css-pillar-sway-b 23s ease-in-out infinite alternate;
+}
+
+@keyframes css-pillar-breathe {
+  from { transform: translateX(-50%) scaleX(1); opacity: 0.85; }
+  to { transform: translateX(-50%) scaleX(1.08); opacity: 1; }
+}
+/* Sway is in own-width percentages, so the wisps stay inside the core. */
+@keyframes css-pillar-sway-a {
+  from { transform: translateX(-160%) scaleX(0.9); opacity: 0.55; }
+  50% { opacity: 0.95; }
+  to { transform: translateX(55%) scaleX(1.15); opacity: 0.6; }
+}
+@keyframes css-pillar-sway-b {
+  from { transform: translateX(80%) scaleX(1.1); opacity: 0.5; }
+  50% { opacity: 0.85; }
+  to { transform: translateX(-175%) scaleX(0.85); opacity: 0.55; }
+}
