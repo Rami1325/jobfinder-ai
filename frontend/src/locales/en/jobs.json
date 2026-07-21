@@ -216,6 +216,7 @@
     "title": "Email alerts",
     "body": "Once a day we re-run your job search and email you only the jobs you haven't seen yet.",
     "enable": "Email me new jobs",
+    "nudgeToggle": "Also remind me to follow up on quiet applications",
     "emailPlaceholder": "you@email.com",
     "needEmail": "Add an email address first.",
     "saved": "Alert settings saved",

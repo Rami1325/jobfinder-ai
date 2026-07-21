@@ -17,6 +17,7 @@
     { "source": "/(.*)", "destination": { "service": "frontend" } }
   ],
   "crons": [
-    { "path": "/api/jobs/alerts/cron", "schedule": "0 6 * * *" }
+    { "path": "/api/jobs/alerts/cron", "schedule": "0 6 * * *" },
+    { "path": "/api/jobs/nudges/cron", "schedule": "0 7 * * *" }
   ]
 }

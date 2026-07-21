@@ -215,6 +215,7 @@ export interface AlertSettings {
   last_new_count: number;
   last_error: string;
   smtp_configured: boolean;
+  nudge_emails?: boolean; // PLAN 11.4 follow-up reminders; absent on older backends
 }
 export interface AlertRunResult {
   ran: boolean;

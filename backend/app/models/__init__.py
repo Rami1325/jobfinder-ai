@@ -213,6 +213,7 @@ class AlertSettingsIn(BaseModel):
     enabled: bool = False
     email: str = ""
     context: Optional["SearchContext"] = None  # None = derive from the résumé
+    nudge_emails: bool = False  # PLAN 11.4: email follow-up reminders too
 
 
 class AlertSettingsOut(BaseModel):
@@ -223,6 +224,7 @@ class AlertSettingsOut(BaseModel):
     last_new_count: int = 0
     last_error: str = ""
     smtp_configured: bool = False  # False => runs won't email; UI explains
+    nudge_emails: bool = False
 
 
 class AlertRunResult(BaseModel):
@@ -453,6 +455,23 @@ class StaleApplication(BaseModel):
 
 class StaleApplicationList(BaseModel):
     items: list[StaleApplication] = Field(default_factory=list)
+
+
+class NudgeRunResult(BaseModel):
+    """One user's stale-nudge tick (PLAN 11.4)."""
+
+    ran: bool = False
+    stale: int = 0  # applications currently past the staleness cutoff
+    new_stale: int = 0  # of those, newly crossed since the last nudge email
+    emailed: bool = False
+    error: str = ""
+
+
+class NudgeCronResult(BaseModel):
+    """One nudge cron tick across all opted-in users (PLAN 11.4)."""
+
+    users: int = 0
+    results: list[NudgeRunResult] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

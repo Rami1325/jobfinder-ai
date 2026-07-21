@@ -2054,6 +2054,111 @@ update_alert(_db3, _admin_id, enabled=False, email="admin@example.com", context=
 update_alert(_db3, _dana.id, enabled=False, email="dana@example.com", context=None)
 _db3.close()
 
+# 19c. Stale-nudge emails (PLAN 11.4): opt-in filter, once-per-stale-period
+# watermark, re-arm after a status change, retry after a send failure — all
+# offline via injected send_fn + fixed clock, then the cron endpoint's shape.
+from datetime import timedelta as _td, timezone as _tz  # noqa: E402
+
+from app.core.nudges import build_nudge_email, build_nudge_email_html, run_all_nudges  # noqa: E402
+from app.models import StaleApplication as _StaleApp  # noqa: E402
+
+_db4 = SessionLocal()
+_noga = mint_user(_db4, "Noga")
+_omer = mint_user(_db4, "Omer")
+# Noga + Omer opt in (alerts toggle stays OFF — nudges are independent);
+# Dana/admin keep nudge_emails False, so the loop must skip them.
+update_alert(_db4, _noga.id, enabled=False, email="noga@example.com", context=None, nudge_emails=True)
+update_alert(_db4, _omer.id, enabled=False, email="omer@example.com", context=None, nudge_emails=True)
+_T0 = _dt.now(_tz.utc)
+_noga_app = Application(
+    user_id=_noga.id, job_title="Backend Dev", company="Acme", jd_text="x",
+    status="applied", status_changed_at=_T0 - _td(days=10),
+)
+_omer_app = Application(
+    user_id=_omer.id, job_title="Data Eng", company="מפעל", jd_text="x",
+    status="applied", status_changed_at=_T0 - _td(days=10),
+)
+_db4.add_all([_noga_app, _omer_app])
+_db4.commit()
+
+_sent: list[tuple] = []
+def _capture_send(to, subject, body, html=""):  # noqa: ANN001
+    _sent.append((to, subject, body, html))
+def _boom_send(to, subject, body, html=""):  # noqa: ANN001
+    raise RuntimeError("smtp down")
+
+_run1 = run_all_nudges(_db4, send_fn=_capture_send, now=_T0 - _td(days=2))
+check(
+    "nudges: only opted-in users run; each stale app emailed",
+    len(_run1) == 2 and all(r.emailed and r.new_stale == 1 for r in _run1) and len(_sent) == 2,
+    str([(r.new_stale, r.emailed, r.error) for r in _run1]),
+)
+check(
+    "nudge email: subject + hebrew company + tracker link, all present",
+    "waiting on a follow-up" in _sent[0][1]
+    and "מפעל" in _sent[1][2]
+    and "Acme" in _sent[0][3] and 'dir="auto"' in _sent[0][3],
+)
+_run2 = run_all_nudges(_db4, send_fn=_capture_send, now=_T0 - _td(days=2) + _td(hours=1))
+check(
+    "nudges: second run doesn't re-nag (still stale, nothing newly stale)",
+    all(r.stale == 1 and r.new_stale == 0 and not r.emailed for r in _run2) and len(_sent) == 2,
+    str([(r.stale, r.new_stale) for r in _run2]),
+)
+# Re-arm: Noga's app changes status, then goes quiet again — new stale period.
+_noga_app.status = "interview"
+_db4.commit()
+_noga_app.status = "applied"
+_noga_app.status_changed_at = _T0 - _td(days=8)  # crossed the 7d line at T0-1d > last nudge
+_db4.commit()
+_run3 = run_all_nudges(_db4, send_fn=_capture_send, now=_T0)
+check(
+    "nudges: a later quiet period re-arms the email",
+    _run3[0].emailed and _run3[0].new_stale == 1 and not _run3[1].emailed and len(_sent) == 3,
+    str([(r.new_stale, r.emailed) for r in _run3]),
+)
+# Failure keeps the watermark: Omer's app re-arms, the send blows up, the next
+# run (working SMTP) retries it. Failures never raise out of the loop.
+_omer_app.status = "rejected"
+_db4.commit()
+_omer_app.status = "applied"
+# Crosses the 7d line at T0+30min — after Omer's watermark (T0, stamped by
+# run3's quiet advance) and before run4's clock (T0+1h).
+_omer_app.status_changed_at = _T0 - _td(days=7) + _td(minutes=30)
+_db4.commit()
+_run4 = run_all_nudges(_db4, send_fn=_boom_send, now=_T0 + _td(hours=1))
+check(
+    "nudges: send failure is captured, not raised",
+    _run4[1].new_stale == 1 and not _run4[1].emailed and "smtp down" in _run4[1].error,
+    str([(r.new_stale, r.error) for r in _run4]),
+)
+_run5 = run_all_nudges(_db4, send_fn=_capture_send, now=_T0 + _td(hours=2))
+check(
+    "nudges: failed send is retried on the next run (watermark not advanced)",
+    _run5[1].emailed and _run5[1].new_stale == 1 and len(_sent) == 4,
+    str([(r.new_stale, r.emailed) for r in _run5]),
+)
+# Pure builders: escaping + no-app-url fallback.
+_nudge_items = [
+    _StaleApp(id=1, job_title="Eng <b>Lead</b>", company="A&B", days_stale=9, job_url="")
+]
+check(
+    "nudge html escapes + text falls back without app url",
+    "Eng &lt;b&gt;Lead&lt;/b&gt;" in build_nudge_email_html(_nudge_items)
+    and "Tracker page" in build_nudge_email(_nudge_items)[1],
+)
+update_alert(_db4, _noga.id, enabled=False, email="noga@example.com", context=None, nudge_emails=False)
+update_alert(_db4, _omer.id, enabled=False, email="omer@example.com", context=None, nudge_emails=False)
+_db4.close()
+
+with TestClient(_fastapi_app) as _tc:
+    _ncron = _tc.get("/jobs/nudges/cron")
+    check(
+        "nudge cron endpoint is gate-exempt and reports opted-in users",
+        _ncron.status_code == 200 and _ncron.json()["users"] == 0,
+        _ncron.text[:100],
+    )
+
 # 20. SSE search stream (PLAN 9.2): progress events then one terminal result/
 # error frame, Hebrew-safe payloads, history recorded with top_matched (9.1).
 # The search itself is monkeypatched — providers are network; the endpoint's

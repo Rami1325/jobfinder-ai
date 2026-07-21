@@ -48,6 +48,7 @@ app.add_middleware(
 _GATE_EXEMPT = {
     "/", "/health", "/api", "/api/health",
     "/jobs/alerts/cron", "/api/jobs/alerts/cron",
+    "/jobs/nudges/cron", "/api/jobs/nudges/cron",
     "/public/scan", "/api/public/scan",
 }
 

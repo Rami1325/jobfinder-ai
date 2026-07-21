@@ -1353,6 +1353,7 @@ function AlertsCard({
   const [settings, setSettings] = useState<AlertSettings | null>(null);
   const [email, setEmail] = useState("");
   const [enabled, setEnabled] = useState(false);
+  const [nudges, setNudges] = useState(false);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   // Alert-specific customized search (independent of the search card's panel).
@@ -1366,6 +1367,7 @@ function AlertsCard({
         setSettings(s);
         setEmail(s.email);
         setEnabled(s.enabled);
+        setNudges(!!s.nudge_emails);
         if (s.context) {
           // A saved context means the alert was customized — show it as such.
           setCtx(s.context);
@@ -1382,6 +1384,7 @@ function AlertsCard({
   // moment the card's draft (email or customized context) drifts from them.
   const unsaved =
     email.trim() !== settings.email ||
+    nudges !== !!settings.nudge_emails ||
     contextKey(customOpen ? ctx : null) !== contextKey(settings.context);
 
   function toggleCustomize(checked: boolean) {
@@ -1403,8 +1406,11 @@ function AlertsCard({
     }
   }
 
-  async function save(nextEnabled: boolean): Promise<AlertSettings | null> {
-    if (nextEnabled && !email.trim()) {
+  async function save(
+    nextEnabled: boolean,
+    nextNudges: boolean = nudges,
+  ): Promise<AlertSettings | null> {
+    if ((nextEnabled || nextNudges) && !email.trim()) {
       toast("error", t("alerts.needEmail"));
       return null;
     }
@@ -1414,9 +1420,11 @@ function AlertsCard({
         enabled: nextEnabled,
         email,
         context: customOpen ? ctx : null,
+        nudge_emails: nextNudges,
       });
       setSettings(s);
       setEnabled(s.enabled);
+      setNudges(!!s.nudge_emails);
       if (s.context) setCtx(s.context); // server echo — canonical field set
       toast("success", t("alerts.saved"));
       return s;
@@ -1471,6 +1479,16 @@ function AlertsCard({
             className="h-4 w-4 accent-accent"
           />
           {t("alerts.enable")}
+        </label>
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+          <input
+            type="checkbox"
+            checked={nudges}
+            disabled={saving}
+            onChange={(e) => save(enabled, e.target.checked)}
+            className="h-4 w-4 accent-accent"
+          />
+          {t("alerts.nudgeToggle")}
         </label>
         <input
           type="email"
@@ -1533,7 +1551,7 @@ function AlertsCard({
           </p>
         )}
         {settings.last_error && <p className="text-danger">{settings.last_error}</p>}
-        {enabled && !settings.smtp_configured && (
+        {(enabled || nudges) && !settings.smtp_configured && (
           <p className="text-warn">{t("alerts.noSmtp")}</p>
         )}
       </div>

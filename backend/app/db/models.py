@@ -237,6 +237,10 @@ class JobAlert(Base):
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     last_new_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str] = mapped_column(Text, default="")
+    # PLAN 11.4 — stale-application nudge emails. Opt-in lives here because the
+    # row already holds the recipient address; independent of `enabled`.
+    nudge_emails: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_nudge_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
 
 class SavedResume(Base):

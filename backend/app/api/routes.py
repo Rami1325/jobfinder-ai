@@ -6,7 +6,7 @@ import io
 import json
 import queue
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -18,6 +18,7 @@ from app.config import get_settings
 
 from app.core import alerts as alerts_core
 from app.core import auto_submit
+from app.core import nudges as nudges_core
 from app.core.ats_scan import scan_resume
 from app.core.company_brief import build_company_brief
 from app.core.cover_letter import generate_cover_letter
@@ -65,6 +66,7 @@ from app.models import (
     AddComeetCompanyRequest,
     AddGreenhouseCompanyRequest,
     AlertCronResult,
+    NudgeCronResult,
     AlertRunResult,
     AlertSettingsIn,
     AlertSettingsOut,
@@ -133,7 +135,6 @@ from app.models import (
     SearchContext,
     SearchContextRequest,
     SearchPrefs,
-    StaleApplication,
     StaleApplicationList,
     TailorRequest,
     TailorResult,
@@ -503,6 +504,7 @@ def _alert_out(row, db: Session) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert
         last_new_count=row.last_new_count or 0,
         last_error=row.last_error or "",
         smtp_configured=smtp_configured(),
+        nudge_emails=bool(row.nudge_emails),
     )
 
 
@@ -519,10 +521,15 @@ def update_job_alert(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> AlertSettingsOut:
-    if body.enabled and not body.email.strip():
+    if (body.enabled or body.nudge_emails) and not body.email.strip():
         raise HTTPException(400, "Add an email address to enable alerts.")
     row = alerts_core.update_alert(
-        db, user.id, enabled=body.enabled, email=body.email, context=body.context
+        db,
+        user.id,
+        enabled=body.enabled,
+        email=body.email,
+        context=body.context,
+        nudge_emails=body.nudge_emails,
     )
     return _alert_out(row, db)
 
@@ -547,6 +554,21 @@ def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertCron
             raise HTTPException(401, "Bad cron secret.")
     results = alerts_core.run_all_alerts(db)
     return AlertCronResult(users=len(results), results=results)
+
+
+@router.get("/jobs/nudges/cron", response_model=NudgeCronResult)
+def cron_nudges(request: Request, db: Session = Depends(get_db)) -> NudgeCronResult:
+    """Vercel cron entrypoint for stale-application nudges (PLAN 11.4) —
+    exempt from the X-App-Key gate (see main.py), guarded by the same Bearer
+    CRON_SECRET as the alerts cron. Emails every opted-in user whose 'applied'
+    applications newly went stale."""
+    secret = get_settings().cron_secret
+    if secret:
+        auth = request.headers.get("authorization", "")
+        if not hmac.compare_digest(auth, f"Bearer {secret}"):
+            raise HTTPException(401, "Bad cron secret.")
+    results = nudges_core.run_all_nudges(db)
+    return NudgeCronResult(users=len(results), results=results)
 
 
 # --------------------------------------------------------------------------- #
@@ -996,32 +1018,8 @@ def application_nudges(
     if days <= 0:
         return StaleApplicationList()
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=days)
-    rows = db.execute(
-        select(Application).where(
-            Application.user_id == user.id, Application.status == "applied"
-        )
-    ).scalars().all()
-    items: list[StaleApplication] = []
-    for a in rows:
-        marker = a.status_changed_at or a.created_at
-        if marker is None:
-            continue
-        if marker.tzinfo is None:  # SQLite returns naive datetimes — treat as UTC
-            marker = marker.replace(tzinfo=timezone.utc)
-        if marker <= cutoff:
-            items.append(
-                StaleApplication(
-                    id=a.id,
-                    job_title=a.job_title,
-                    company=a.company,
-                    status=a.status,
-                    days_stale=(now - marker).days,
-                    job_url=a.job_url,
-                )
-            )
-    items.sort(key=lambda x: x.days_stale, reverse=True)
-    return StaleApplicationList(items=items)
+    pairs = nudges_core.stale_rows(db, user.id, days, now)
+    return StaleApplicationList(items=nudges_core.to_stale_out(pairs, now))
 
 
 @router.get("/applications/{app_id}", response_model=ApplicationDetail)

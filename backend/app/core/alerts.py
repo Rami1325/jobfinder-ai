@@ -50,12 +50,19 @@ def get_alert(db: Session, user_id: int) -> JobAlert:
 
 
 def update_alert(
-    db: Session, user_id: int, *, enabled: bool, email: str, context: SearchContext | None
+    db: Session,
+    user_id: int,
+    *,
+    enabled: bool,
+    email: str,
+    context: SearchContext | None,
+    nudge_emails: bool = False,
 ) -> JobAlert:
     row = get_alert(db, user_id)
     row.enabled = enabled
     row.email = email.strip()
     row.context_json = context.model_dump_json() if context else ""
+    row.nudge_emails = nudge_emails
     db.commit()
     db.refresh(row)
     return row

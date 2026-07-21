@@ -345,6 +345,7 @@ export async function updateJobAlert(payload: {
   enabled: boolean;
   email: string;
   context?: SearchContext | null;
+  nudge_emails?: boolean;
 }): Promise<AlertSettings> {
   const { data } = await api.put<AlertSettings>("/jobs/alerts", payload);
   return data;
