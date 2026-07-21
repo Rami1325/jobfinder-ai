@@ -1,75 +1,178 @@
 {
-  "extName": { "message": "JobFinder Job Clipper" },
-  "extDescription": { "message": "Clip the job posting on the current page straight into your JobFinder application tracker." },
-
-  "popupHeading": { "message": "Job Clipper" },
-  "optionsLinkTitle": { "message": "Settings" },
-
-  "statusReading": { "message": "Reading the job posting from this page…" },
-  "statusRestricted": { "message": "This page can't be read (browser-internal page). Open a job posting and try again — or fill in the fields manually." },
-
-  "fieldJobTitle": { "message": "Job title" },
-  "fieldCompany": { "message": "Company" },
-  "fieldJobUrl": { "message": "Link" },
-  "fieldJdText": { "message": "Job description" },
-
-  "btnSave": { "message": "Save to tracker" },
-  "btnSaving": { "message": "Saving…" },
-  "btnSaveTailor": { "message": "Save & tailor" },
-
-  "applySectionTitle": { "message": "Assisted apply" },
-  "applyHint": { "message": "Fills this page's application form from your approved kit — contact details, tailored résumé file, cover letter. You review everything and click Send yourself." },
-  "applyKitLabel": { "message": "Application kit" },
-  "applyFormatLabel": { "message": "Résumé file format" },
-  "btnAutofill": { "message": "Autofill this page" },
-  "btnAutofilling": { "message": "Filling…" },
-  "autofillPreparing": { "message": "Preparing your kit…" },
+  "extName": {
+    "message": "JobFinder Job Clipper"
+  },
+  "extDescription": {
+    "message": "Clip the job posting on the current page straight into your JobFinder application tracker."
+  },
+  "popupHeading": {
+    "message": "Job Clipper"
+  },
+  "optionsLinkTitle": {
+    "message": "Settings"
+  },
+  "statusReading": {
+    "message": "Reading the job posting from this page…"
+  },
+  "statusRestricted": {
+    "message": "This page can't be read (browser-internal page). Open a job posting and try again — or fill in the fields manually."
+  },
+  "fieldJobTitle": {
+    "message": "Job title"
+  },
+  "fieldCompany": {
+    "message": "Company"
+  },
+  "fieldJobUrl": {
+    "message": "Link"
+  },
+  "fieldJdText": {
+    "message": "Job description"
+  },
+  "btnSave": {
+    "message": "Save to tracker"
+  },
+  "btnSaving": {
+    "message": "Saving…"
+  },
+  "btnSaveTailor": {
+    "message": "Save & tailor"
+  },
+  "applySectionTitle": {
+    "message": "Assisted apply"
+  },
+  "applyHint": {
+    "message": "Fills this page's application form from your approved kit — contact details, tailored résumé file, cover letter. You review everything and click Send yourself."
+  },
+  "applyKitLabel": {
+    "message": "Application kit"
+  },
+  "applyFormatLabel": {
+    "message": "Résumé file format"
+  },
+  "btnAutofill": {
+    "message": "Autofill this page"
+  },
+  "btnAutofilling": {
+    "message": "Filling…"
+  },
+  "autofillPreparing": {
+    "message": "Preparing your kit…"
+  },
   "autofillFilled": {
     "message": "Filled $COUNT$ fields",
     "placeholders": {
-      "count": { "content": "$1" }
+      "count": {
+        "content": "$1"
+      }
     }
   },
-  "autofillFileAttached": { "message": "résumé attached" },
-  "autofillCoverAdded": { "message": "cover letter added" },
-  "autofillReviewNote": { "message": "Check the form, then submit it yourself." },
-  "autofillNoForm": { "message": "No application form found on this page. Open the apply form (click the job's Apply button) first, then try again." },
+  "autofillFileAttached": {
+    "message": "résumé attached"
+  },
+  "autofillCoverAdded": {
+    "message": "cover letter added"
+  },
+  "autofillAnswering": {
+    "message": "Drafting answers to the application questions…"
+  },
+  "autofillAnswered": {
+    "message": "drafted $COUNT$ question answers",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "autofillReviewNote": {
+    "message": "Check the form, then submit it yourself."
+  },
+  "autofillNoForm": {
+    "message": "No application form found on this page. Open the apply form (click the job's Apply button) first, then try again."
+  },
   "errKitFetch": {
     "message": "Couldn't load the kit (error $STATUS$).",
     "placeholders": {
-      "status": { "content": "$1" }
+      "status": {
+        "content": "$1"
+      }
     }
   },
-  "reviewHint": { "message": "This job already has a tailored kit waiting for your review." },
-  "linkReviewKit": { "message": "Review kit" },
-  "dupHint": { "message": "This job is already in your tracker — saving again creates a duplicate." },
-
-  "successSaved": { "message": "Saved! The job was added to your application tracker." },
-  "linkOpenTracker": { "message": "Open tracker" },
-  "linkOpenOptions": { "message": "Open settings" },
-
-  "errNotConfigured": { "message": "The extension isn't configured yet — set the server address and access code first." },
-  "errUnauthorized": { "message": "The access code is missing or wrong (error 401). Update it in the settings." },
-  "errNetwork": { "message": "Can't reach the server. Check your internet connection and the API address in the settings." },
+  "reviewHint": {
+    "message": "This job already has a tailored kit waiting for your review."
+  },
+  "linkReviewKit": {
+    "message": "Review kit"
+  },
+  "dupHint": {
+    "message": "This job is already in your tracker — saving again creates a duplicate."
+  },
+  "successSaved": {
+    "message": "Saved! The job was added to your application tracker."
+  },
+  "linkOpenTracker": {
+    "message": "Open tracker"
+  },
+  "linkOpenOptions": {
+    "message": "Open settings"
+  },
+  "errNotConfigured": {
+    "message": "The extension isn't configured yet — set the server address and access code first."
+  },
+  "errUnauthorized": {
+    "message": "The access code is missing or wrong (error 401). Update it in the settings."
+  },
+  "errNetwork": {
+    "message": "Can't reach the server. Check your internet connection and the API address in the settings."
+  },
   "errServer": {
     "message": "Saving failed (error $STATUS$).",
     "placeholders": {
-      "status": { "content": "$1" }
+      "status": {
+        "content": "$1"
+      }
     }
   },
-
-  "optionsTitle": { "message": "JobFinder Job Clipper — Settings" },
-  "optionsIntro": { "message": "Point the clipper at your JobFinder instance. The defaults match the public deployment." },
-  "fieldAppUrl": { "message": "App URL" },
-  "hintAppUrl": { "message": "The web app address, e.g. https://jobfinder-hazel-pi.vercel.app or http://localhost:5173." },
-  "fieldApiUrl": { "message": "API URL" },
-  "hintApiUrl": { "message": "Leave empty to use the App URL plus /api. For local dev use http://localhost:8000." },
-  "fieldAccessCode": { "message": "Access code" },
-  "hintAccessCode": { "message": "Sent as the X-App-Key header. The public deployment rejects saves without it." },
-  "btnSaveSettings": { "message": "Save settings" },
-  "msgSettingsSaved": { "message": "Settings saved ✓" },
-  "btnTest": { "message": "Test connection" },
-  "msgTesting": { "message": "Testing connection…" },
-  "msgTestOk": { "message": "Server is reachable ✓" },
-  "msgTestFail": { "message": "Server unreachable — check the address." }
+  "optionsTitle": {
+    "message": "JobFinder Job Clipper — Settings"
+  },
+  "optionsIntro": {
+    "message": "Point the clipper at your JobFinder instance. The defaults match the public deployment."
+  },
+  "fieldAppUrl": {
+    "message": "App URL"
+  },
+  "hintAppUrl": {
+    "message": "The web app address, e.g. https://jobfinder-hazel-pi.vercel.app or http://localhost:5173."
+  },
+  "fieldApiUrl": {
+    "message": "API URL"
+  },
+  "hintApiUrl": {
+    "message": "Leave empty to use the App URL plus /api. For local dev use http://localhost:8000."
+  },
+  "fieldAccessCode": {
+    "message": "Access code"
+  },
+  "hintAccessCode": {
+    "message": "Sent as the X-App-Key header. The public deployment rejects saves without it."
+  },
+  "btnSaveSettings": {
+    "message": "Save settings"
+  },
+  "msgSettingsSaved": {
+    "message": "Settings saved ✓"
+  },
+  "btnTest": {
+    "message": "Test connection"
+  },
+  "msgTesting": {
+    "message": "Testing connection…"
+  },
+  "msgTestOk": {
+    "message": "Server is reachable ✓"
+  },
+  "msgTestFail": {
+    "message": "Server unreachable — check the address."
+  }
 }

@@ -415,6 +415,99 @@ function fillApplicationForm(payload) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Screening-question autofill (PLAN 11.5) — pass 1: find free-text    */
+/* application questions. Self-contained like the filler. Tags each    */
+/* candidate textarea with data-jf-screen-q so pass 2 can find it      */
+/* again after the popup fetched answers from the API. Never touches   */
+/* contact fields, the cover letter, or anything already filled.       */
+/* ------------------------------------------------------------------ */
+function collectScreeningQuestions() {
+  try {
+    var scopes = [];
+    document.querySelectorAll('[role="dialog"], dialog').forEach(function (el) {
+      if (el.querySelector("input, textarea, select")) scopes.push(el);
+    });
+    if (!scopes.length) {
+      document.querySelectorAll("form").forEach(function (f) {
+        if (f.querySelector('input[type="file"]')) scopes.push(f);
+      });
+    }
+    if (!scopes.length) scopes = [document];
+
+    var labelText = function (el) {
+      var parts = [];
+      if (el.id) {
+        try {
+          var sel = 'label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]';
+          var lab = document.querySelector(sel);
+          if (lab) parts.push(lab.innerText || "");
+        } catch (e) { /* unescapable id */ }
+      }
+      var wrap = el.closest ? el.closest("label") : null;
+      if (wrap) parts.push(wrap.innerText || "");
+      parts.push(el.getAttribute("aria-label") || "");
+      parts.push(el.getAttribute("placeholder") || "");
+      return parts.join(" ").replace(/\s+/g, " ").trim();
+    };
+    var visible = function (el) {
+      return !!(el.offsetParent || el.offsetWidth || el.offsetHeight);
+    };
+
+    var coverRe = /cover[ _-]?letter|motivation letter|מכתב מקדים|מכתב פנייה/i;
+    var questionRe = /\?|why|describe|tell us|tell me|what interests|motivat|experience with|מדוע|למה|ספרו|תארו|כיצד|מה מושך|נסיון עם|ניסיון עם/i;
+
+    var out = [];
+    var n = 0;
+    scopes.forEach(function (scope) {
+      scope.querySelectorAll("textarea").forEach(function (el) {
+        try {
+          if (out.length >= 4) return; // cap the LLM cost per page
+          if (el.disabled || el.readOnly || !visible(el)) return;
+          if (String(el.value || "").trim()) return; // already answered/filled
+          var label = labelText(el);
+          if (label.length < 12) return; // no readable question to answer
+          if (coverRe.test(label)) return; // the cover-letter pass owns this
+          if (!questionRe.test(label)) return;
+          n++;
+          el.setAttribute("data-jf-screen-q", String(n));
+          out.push({ n: n, question: label.slice(0, 500) });
+        } catch (e) { /* one bad element must not stop the sweep */ }
+      });
+    });
+    return out;
+  } catch (err) {
+    return [];
+  }
+}
+
+/* Pass 2: write the drafted answers into the tagged textareas. Skips   */
+/* anything the user typed into meanwhile; never clicks submit.         */
+function fillScreeningAnswers(answers) {
+  try {
+    var setNativeValue = function (el, value) {
+      var desc = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value");
+      if (desc && desc.set) desc.set.call(el, value);
+      else el.value = value;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    var filled = 0;
+    (answers || []).forEach(function (a) {
+      try {
+        var el = document.querySelector('textarea[data-jf-screen-q="' + a.n + '"]');
+        if (!el || String(el.value || "").trim() || !a.text) return;
+        setNativeValue(el, a.text);
+        el.removeAttribute("data-jf-screen-q");
+        filled++;
+      } catch (e) { /* skip */ }
+    });
+    return filled;
+  } catch (err) {
+    return 0;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* UI helpers                                                          */
 /* ------------------------------------------------------------------ */
 function showStatus(kind, messageKey, subs, withOptionsLink) {
@@ -650,12 +743,69 @@ async function onAutofill() {
 
     if (!total.fields && !total.file && !total.cover) {
       showApplyStatus("warn", t("autofillNoForm"));
-    } else {
-      var parts = [t("autofillFilled", [String(total.fields)])];
-      if (total.file) parts.push(t("autofillFileAttached"));
-      if (total.cover) parts.push(t("autofillCoverAdded"));
-      showApplyStatus("ok", parts.join(" · ") + " " + t("autofillReviewNote"));
+      return;
     }
+
+    // 4. Free-text application questions (PLAN 11.5): collect them from every
+    //    frame, draft honest answers via the screening answerer, write them
+    //    back. Best-effort — a failure here never undoes the contact fill.
+    var answered = 0;
+    if (resume) try {
+      showApplyStatus("", t("autofillAnswering"));
+      var qResults;
+      try {
+        qResults = await chrome.scripting.executeScript({
+          target: { tabId: activeTab.id, allFrames: true },
+          func: collectScreeningQuestions,
+        });
+      } catch (e) {
+        qResults = await chrome.scripting.executeScript({
+          target: { tabId: activeTab.id },
+          func: collectScreeningQuestions,
+        });
+      }
+      var remaining = 4; // cap the LLM cost per autofill, across all frames
+      for (var qi = 0; qi < (qResults || []).length; qi++) {
+        var frame = qResults[qi];
+        var questions = (frame && frame.result) || [];
+        var answers = [];
+        for (var qj = 0; qj < questions.length && remaining > 0; qj++) {
+          var q = questions[qj];
+          var aRes = await fetch(settings.apiUrl + "/tools/screening-answer", {
+            method: "POST",
+            headers: apiHeaders(settings, true),
+            body: JSON.stringify({
+              resume: resume,
+              jd_text: detail.jd_text || "",
+              question: q.question,
+            }),
+          });
+          if (!aRes.ok) continue;
+          var aData = await aRes.json();
+          if (aData && aData.answer) {
+            answers.push({ n: q.n, text: aData.answer });
+            remaining--;
+          }
+        }
+        if (!answers.length) continue;
+        var target = { tabId: activeTab.id };
+        if (frame.frameId != null) target.frameIds = [frame.frameId];
+        var fillRes = await chrome.scripting.executeScript({
+          target: target,
+          func: fillScreeningAnswers,
+          args: [answers],
+        });
+        (fillRes || []).forEach(function (r) {
+          answered += (r && r.result) || 0;
+        });
+      }
+    } catch (e) { /* best-effort — the summary below still reports the rest */ }
+
+    var parts = [t("autofillFilled", [String(total.fields)])];
+    if (total.file) parts.push(t("autofillFileAttached"));
+    if (total.cover) parts.push(t("autofillCoverAdded"));
+    if (answered) parts.push(t("autofillAnswered", [String(answered)]));
+    showApplyStatus("ok", parts.join(" · ") + " " + t("autofillReviewNote"));
   } catch (err) {
     showApplyStatus("error", t("errNetwork"));
   } finally {

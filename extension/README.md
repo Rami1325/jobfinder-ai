@@ -85,5 +85,6 @@ Live-verified 2026-07-05 against a real logged-in LinkedIn posting (new shell: t
 - ~~Deep **Tailor handoff**: "Save & tailor" that opens `/app` with the clipped JD pre-filled.~~ — done 2026-07-06 (v0.2).
 - ~~JSON-LD `JobPosting` parsing~~ — done 2026-07-05 (generic path + gap-filler on all boards).
 - ~~Optional **autofill** of application forms~~ — done 2026-07-06 (v0.2 assisted apply, PLAN 8.3).
+- ~~**Screening-question autofill**~~ — done 2026-07-21 (v0.3, PLAN 11.5): after the contact fill, free-text application questions (label with "?"/why/describe/מדוע/ספרו… — cover letter excluded) are collected per frame, answered honestly via `POST /tools/screening-answer` grounded in the kit's résumé + JD (capped at 4 per page), and written back React-safely. Answers land in the form for the user to REVIEW — the extension still never clicks submit.
 - **Firefox port** (MV3 with `browser.*` polyfill; storage.sync + scripting APIs are compatible).
 - Per-board **apply-form selector refresh cadence**. ~~Duplicate-clip detection~~ — done 2026-07-06 (URL-matched warning + tracker link).
