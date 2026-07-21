@@ -225,7 +225,7 @@ export default function InterviewPage() {
         <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
           <MessageSquareText className="text-accent-soft" /> {t("title")}
         </h1>
-        <p className="mt-1 text-sm text-ink-muted">{t("sub")}</p>
+        <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("sub")}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

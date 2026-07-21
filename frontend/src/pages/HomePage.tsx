@@ -80,18 +80,25 @@ function QuickAction({
       to={to}
       className="block rounded-xl2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
     >
-      <TiltedCard caption={title} className="flex h-full flex-col p-5">
-        <div className="flex items-center justify-between">
-          <span className="grid h-11 w-11 place-items-center rounded-xl border border-line bg-panel-2 text-accent-soft transition-all duration-300 ease-out will-change-transform group-hover:border-accent/40 group-hover:[transform:translate3d(0,-7px,90px)] group-hover:shadow-[0_30px_46px_-14px_rgba(0,0,0,0.9)]">
-            <Icon size={19} />
-          </span>
-          <ArrowUpRight
-            size={18}
-            className="text-ink-faint transition-colors group-hover:text-accent-soft rtl:-scale-x-100"
-          />
+      {/* Phones get a compact tappable row (icon · title · arrow); the body
+          copy and card layout appear from sm up. The flex wrapper is ours —
+          SpotlightCard's className lands on its outer div, not around children. */}
+      <TiltedCard caption={title} className="h-full p-4 sm:p-5">
+        <div className="flex flex-row items-center gap-3 sm:flex-col sm:items-stretch sm:gap-0">
+          <div className="contents sm:flex sm:items-center sm:justify-between">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-line bg-panel-2 text-accent-soft transition-all duration-300 ease-out will-change-transform group-hover:border-accent/40 group-hover:[transform:translate3d(0,-7px,90px)] group-hover:shadow-[0_30px_46px_-14px_rgba(0,0,0,0.9)] sm:h-11 sm:w-11">
+              <Icon size={19} />
+            </span>
+            <ArrowUpRight
+              size={18}
+              className="order-last shrink-0 text-ink-faint transition-colors group-hover:text-accent-soft rtl:-scale-x-100 sm:order-none"
+            />
+          </div>
+          <div className="min-w-0 flex-1 sm:mt-4 sm:flex-none">
+            <h3 className="truncate text-[15px] font-semibold text-ink sm:whitespace-normal sm:text-base">{title}</h3>
+            <p className="mt-1.5 hidden text-sm leading-relaxed text-ink-muted sm:block">{body}</p>
+          </div>
         </div>
-        <h3 className="mt-4 text-base font-semibold text-ink">{title}</h3>
-        <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">{body}</p>
       </TiltedCard>
     </Link>
   );
@@ -269,9 +276,12 @@ export default function HomePage() {
   ];
 
   return (
-    <div className="space-y-6">
+    // flex + order so phones lead with "what can I do" (quick actions) and
+    // desktop keeps the stats-first cockpit. gap replaces space-y because
+    // space-y margins follow DOM order, not visual order.
+    <div className="flex flex-col gap-6">
       {/* Greeting */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="order-1 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-ink sm:text-[26px]">{greeting}</h1>
           <p className="mt-1 text-sm text-ink-muted">{t("sub")}</p>
@@ -299,6 +309,7 @@ export default function HomePage() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="order-3 sm:order-2"
       >
         <Card glow className="relative overflow-hidden p-0">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-accent-gradient" aria-hidden />
@@ -339,9 +350,9 @@ export default function HomePage() {
       </motion.div>
 
       {/* Quick actions */}
-      <div>
+      <div className="order-2 sm:order-3">
         <SectionLabel className="mb-2">{t("actions.title")}</SectionLabel>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3 sm:gap-4">
           <QuickAction to="/jobs" icon={Search} title={t("actions.findJobs.title")} body={t("actions.findJobs.body")} />
           <QuickAction to="/app" icon={Wand2} title={t("actions.tailor.title")} body={t("actions.tailor.body")} />
           <QuickAction to="/scan" icon={ScanLine} title={t("actions.scan.title")} body={t("actions.scan.body")} />
@@ -349,7 +360,7 @@ export default function HomePage() {
       </div>
 
       {/* Recent matches + side column */}
-      <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
+      <div className="order-4 grid gap-4 lg:grid-cols-[1.5fr_1fr]">
         <Card className="min-w-0">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="truncate">{t("recent.title")}</CardTitle>
@@ -461,8 +472,8 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Trust strip */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-dashed border-line bg-bg-soft/50 px-4 py-3">
+      {/* Trust strip — desktop only; the drawer carries the trust badge on phones. */}
+      <div className="order-5 hidden flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-dashed border-line bg-bg-soft/50 px-4 py-3 sm:flex">
         {trust.map(({ icon: Icon, text }) => (
           <span key={text} className="inline-flex items-center gap-2 text-xs text-ink-muted">
             <Icon size={15} className="shrink-0 text-mint" /> {text}

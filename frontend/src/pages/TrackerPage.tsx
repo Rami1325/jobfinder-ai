@@ -292,7 +292,7 @@ export default function TrackerPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-ink">{t("title")}</h1>
-          <p className="mt-1 text-sm text-ink-muted">{t("sub", { count: apps.length })}</p>
+          <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("sub", { count: apps.length })}</p>
         </div>
         {/* Board / Analytics switch (PLAN 6: search analytics dashboard) */}
         <div className="inline-flex rounded-lg border border-line bg-panel-2 p-0.5" role="tablist">

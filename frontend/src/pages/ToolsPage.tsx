@@ -24,9 +24,9 @@ export default function ToolsPage() {
         <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
           <Wrench className="text-accent-soft" /> {t("title")}
         </h1>
-        <p className="mt-1 text-sm text-ink-muted">{t("sub")}</p>
+        <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("sub")}</p>
       </div>
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
         {tools.map((tool) => {
           const featured = tool.key === "ats";
           return (
@@ -38,32 +38,48 @@ export default function ToolsPage() {
                 featured && "sm:col-span-2",
               )}
             >
+              {/* Phones get a compact tappable row (icon · title · arrow);
+                  the body copy and card layout appear from sm up. The flex
+                  wrapper is ours — SpotlightCard's className lands on its
+                  outer div, not around children. */}
               <TiltedCard
                 caption={t(`cards.${tool.key}.title`)}
-                className={cn("flex h-full flex-col", featured ? "p-6 lg:p-8" : "p-6")}
+                className={cn("h-full p-4", featured ? "sm:p-6 lg:p-8" : "sm:p-6")}
               >
-                <div className="mb-4 flex items-center justify-between">
+                <div className="flex flex-row items-center gap-3 sm:flex-col sm:items-stretch sm:gap-0">
+                <div className="contents sm:mb-4 sm:flex sm:items-center sm:justify-between">
                   <span
                     className={cn(
-                      "grid place-items-center rounded-xl border border-line bg-panel-2 text-accent-soft transition-all duration-300 ease-out will-change-transform group-hover:border-accent/40 group-hover:[transform:translate3d(0,-7px,90px)] group-hover:shadow-[0_30px_46px_-14px_rgba(0,0,0,0.9)]",
-                      featured ? "h-12 w-12" : "h-10 w-10",
+                      "grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-line bg-panel-2 text-accent-soft transition-all duration-300 ease-out will-change-transform group-hover:border-accent/40 group-hover:[transform:translate3d(0,-7px,90px)] group-hover:shadow-[0_30px_46px_-14px_rgba(0,0,0,0.9)]",
+                      featured && "sm:h-12 sm:w-12",
                     )}
                   >
                     <tool.icon size={featured ? 20 : 18} />
                   </span>
-                  <ArrowUpRight size={18} className="text-ink-faint transition-colors group-hover:text-accent-soft rtl:-scale-x-100" />
+                  <ArrowUpRight
+                    size={18}
+                    className="order-last shrink-0 text-ink-faint transition-colors group-hover:text-accent-soft rtl:-scale-x-100 sm:order-none"
+                  />
                 </div>
-                <h3 className={cn("font-semibold text-ink", featured ? "text-xl" : "text-lg")}>
-                  {t(`cards.${tool.key}.title`)}
-                </h3>
-                <p
-                  className={cn(
-                    "mt-2 leading-relaxed text-ink-muted",
-                    featured ? "max-w-[58ch] text-sm lg:text-[15px]" : "text-sm",
-                  )}
-                >
-                  {t(`cards.${tool.key}.body`)}
-                </p>
+                <div className="min-w-0 flex-1 sm:flex-none">
+                  <h3
+                    className={cn(
+                      "truncate text-[15px] font-semibold text-ink sm:whitespace-normal",
+                      featured ? "sm:text-xl" : "sm:text-lg",
+                    )}
+                  >
+                    {t(`cards.${tool.key}.title`)}
+                  </h3>
+                  <p
+                    className={cn(
+                      "mt-2 hidden leading-relaxed text-ink-muted sm:block",
+                      featured ? "max-w-[58ch] text-sm lg:text-[15px]" : "text-sm",
+                    )}
+                  >
+                    {t(`cards.${tool.key}.body`)}
+                  </p>
+                </div>
+                </div>
               </TiltedCard>
             </Link>
           );

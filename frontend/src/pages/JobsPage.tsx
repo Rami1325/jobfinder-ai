@@ -395,7 +395,7 @@ export default function JobsPage() {
         <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
           <Briefcase className="text-accent-soft" /> {t("title")}
         </h1>
-        <p className="mt-1 text-sm text-ink-muted">
+        <p className="mt-1 hidden text-sm text-ink-muted sm:block">
           {t("sub")}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -474,7 +474,7 @@ export default function JobsPage() {
         <>
           <Card>
             <CardTitle>{t("search.cardTitle")}</CardTitle>
-            <p className="mt-1 text-sm text-ink-muted">
+            <p className="mt-1 hidden text-sm text-ink-muted sm:block">
               {t("search.cardBody")}
             </p>
 

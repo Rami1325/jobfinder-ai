@@ -51,7 +51,7 @@ export default function FeedbackButton() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 end-4 z-40 flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-2.5 text-sm font-medium text-ink-muted shadow-panel transition-colors hover:border-accent/50 hover:text-ink sm:px-3.5"
+        className="fixed bottom-[calc(4.25rem+env(safe-area-inset-bottom))] end-4 z-40 flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-2.5 text-sm font-medium text-ink-muted shadow-panel transition-colors hover:border-accent/50 hover:text-ink sm:px-3.5 lg:bottom-4"
       >
         <MessageSquarePlus size={16} />
         <span className="hidden sm:inline">{t("feedback.button")}</span>

@@ -9,7 +9,6 @@ import {
   Wrench,
   KanbanSquare,
   Loader2,
-  Menu,
   X,
   ShieldCheck,
   ChevronDown,
@@ -19,6 +18,7 @@ import {
   Send,
   Contact,
   Mail,
+  MoreHorizontal,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
@@ -267,6 +267,75 @@ function SidebarBody({
   );
 }
 
+/** Bottom tab bar — the primary navigation on phones. Always visible and
+ * thumb-reachable (the drawer behind the old hamburger hid every destination).
+ * The four core pages get a tab each; "More" opens the drawer with the rest
+ * (Interview, Tools). Hidden on lg+ where the sidebar rail takes over. */
+function MobileTabBar({
+  searching,
+  moreActive,
+  onMore,
+}: {
+  searching: boolean;
+  moreActive: boolean;
+  onMore: () => void;
+}) {
+  const { t } = useTranslation();
+  const tabCls = (active: boolean) =>
+    cn(
+      "relative flex min-w-0 flex-1 flex-col items-center gap-1 pb-1.5 pt-2 text-[10.5px] font-semibold transition-colors",
+      active ? "text-accent-soft" : "text-ink-muted",
+    );
+  return (
+    <nav
+      aria-label={t("nav.overview")}
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-line/70 bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden"
+    >
+      <div className="mx-auto flex max-w-md items-stretch">
+        {primaryNav.map((item) => (
+          <NavLink key={item.to} to={item.to} className={({ isActive }) => tabCls(isActive)}>
+            {({ isActive }) => (
+              <>
+                {isActive && (
+                  <motion.span
+                    layoutId="tabbar-dash"
+                    aria-hidden
+                    transition={{ type: "spring", stiffness: 550, damping: 45 }}
+                    className="absolute top-0 h-0.5 w-9 rounded-full bg-accent"
+                  />
+                )}
+                <span className="relative">
+                  <item.icon size={21} strokeWidth={isActive ? 2.2 : 1.7} />
+                  {item.to === "/jobs" && searching && (
+                    <span
+                      role="status"
+                      aria-label={t("nav.searching")}
+                      className="absolute -end-1 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-accent"
+                    />
+                  )}
+                </span>
+                <span className="max-w-full truncate">{t(item.labelKey)}</span>
+              </>
+            )}
+          </NavLink>
+        ))}
+        <button type="button" onClick={onMore} className={tabCls(moreActive)}>
+          {moreActive && (
+            <motion.span
+              layoutId="tabbar-dash"
+              aria-hidden
+              transition={{ type: "spring", stiffness: 550, damping: 45 }}
+              className="absolute top-0 h-0.5 w-9 rounded-full bg-accent"
+            />
+          )}
+          <MoreHorizontal size={21} strokeWidth={moreActive ? 2.2 : 1.7} />
+          <span className="max-w-full truncate">{t("nav.more")}</span>
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 export default function AppLayout() {
   const { t } = useTranslation();
   const { pathname } = useLocation();
@@ -296,16 +365,9 @@ export default function AppLayout() {
         <SidebarBody group="rail" searching={searching} />
       </aside>
 
-      {/* Mobile top bar */}
+      {/* Mobile top bar — brand + utilities only; navigation lives in the
+          bottom tab bar where thumbs can reach it. */}
       <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line/70 bg-bg/80 px-4 py-3 backdrop-blur-xl lg:hidden">
-        <button
-          type="button"
-          onClick={() => setMenuOpen(true)}
-          aria-label={t("nav.openMenu")}
-          className="grid h-9 w-9 place-items-center rounded-lg border border-line text-ink-muted transition-colors hover:bg-panel-2/60 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
-        >
-          <Menu size={19} />
-        </button>
         <Link to="/home" aria-label={t("appName")}>
           <Logo size={26} />
         </Link>
@@ -359,7 +421,8 @@ export default function AppLayout() {
           design (no exit choreography): product register, 160 ms, never makes
           the user wait. */}
       <div className="min-w-0 flex-1">
-        <main className="mx-auto max-w-6xl px-4 py-8 lg:px-8">
+        {/* pb clears the fixed bottom tab bar on phones. */}
+        <main className="mx-auto max-w-6xl px-4 pb-24 pt-8 lg:px-8 lg:pb-8">
           <motion.div
             key={pathname}
             initial={{ opacity: 0, y: 6 }}
@@ -370,6 +433,12 @@ export default function AppLayout() {
           </motion.div>
         </main>
       </div>
+
+      <MobileTabBar
+        searching={searching}
+        moreActive={pathname.startsWith("/interview") || pathname.startsWith("/tools")}
+        onMore={() => setMenuOpen(true)}
+      />
 
       <FeedbackButton />
       <OnboardingModal open={onboardOpen} onClose={() => setOnboardOpen(false)} />

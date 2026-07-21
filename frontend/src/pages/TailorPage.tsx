@@ -230,7 +230,7 @@ export default function TailorPage() {
           </div>
         )}
         <h1 className="text-2xl font-bold text-ink">{t("title")}</h1>
-        <p className="mt-1 text-sm text-ink-muted">{t("sub")}</p>
+        <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("sub")}</p>
       </div>
 
       <Card>
@@ -277,7 +277,7 @@ export default function TailorPage() {
 
         <Card>
           <CardTitle>{t("jd.title")}</CardTitle>
-          <p className="mt-1 text-sm text-ink-muted">{t("jd.hint")}</p>
+          <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("jd.hint")}</p>
           <div className="mt-3">
             <JDPaste value={jdText} onChange={(v) => setTailorState({ jdText: v })} />
           </div>
