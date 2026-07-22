@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # Caps guard the OpenAI key while friends test; <= 0 disables a cap and
     # admins are always exempt.
     sentry_dsn: str = ""
+    # Sentry environment tag: "production" on Vercel, "development" locally,
+    # so local runs never pollute the prod error stream.
+    sentry_environment: str = "development"
     daily_search_cap: int = 20
     daily_tailor_cap: int = 30
     # Auto-submit (PLAN 8.4): real applications sent per user per day.

@@ -29,6 +29,7 @@ if settings.sentry_dsn:
 
     sentry_sdk.init(
         dsn=settings.sentry_dsn,
+        environment=settings.sentry_environment,
         send_default_pii=False,
         max_request_body_size="never",
         traces_sample_rate=0.0,

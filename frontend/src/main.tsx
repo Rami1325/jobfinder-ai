@@ -15,7 +15,13 @@ import "./styles.css";
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
 if (sentryDsn) {
   import("@sentry/react")
-    .then((Sentry) => Sentry.init({ dsn: sentryDsn, sendDefaultPii: false }))
+    .then((Sentry) =>
+      Sentry.init({
+        dsn: sentryDsn,
+        environment: import.meta.env.MODE, // "production" in builds, "development" in dev
+        sendDefaultPii: false,
+      }),
+    )
     .catch(() => {
       /* error reporting is best-effort — never block the app */
     });
