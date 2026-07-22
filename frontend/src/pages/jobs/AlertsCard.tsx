@@ -173,19 +173,24 @@ export function CustomizeFields({
 
       {/* Worldwide-remote opt-in: only meaningful (and only shown) for searches
           that can include remote roles ("remote" or "any"). Rides SearchContext,
-          so saving an alert with it customizes the daily alert email the same way. */}
+          so saving an alert with it customizes the daily alert email the same way.
+          The pass runs on LinkedIn (the only board with worldwide inventory), and
+          the board checkboxes are authoritative (PLAN 15.9) — with LinkedIn
+          unchecked the toggle is inert, so grey it out and say why. */}
       <AnimatePresence initial={false}>
         {(ctx?.work_mode === "remote" || ctx?.work_mode === "any") && (
           <motion.label
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="mt-3 flex w-fit cursor-pointer items-start gap-2 overflow-hidden text-sm text-ink"
+            className={`mt-3 flex w-fit items-start gap-2 overflow-hidden text-sm text-ink ${
+              selectedSources.includes("linkedin") ? "cursor-pointer" : "opacity-50"
+            }`}
           >
             <input
               type="checkbox"
               checked={!!ctx?.include_worldwide}
-              disabled={prefilling}
+              disabled={prefilling || !selectedSources.includes("linkedin")}
               onChange={(e) =>
                 setCtx((p) => ({ ...(p as SearchContext), include_worldwide: e.target.checked }))
               }
@@ -194,7 +199,9 @@ export function CustomizeFields({
             <span>
               {t("search.worldwide")}
               <span className="block text-xs font-normal text-ink-muted">
-                {t("search.worldwideHint")}
+                {selectedSources.includes("linkedin")
+                  ? t("search.worldwideHint")
+                  : t("search.worldwideNeedsLinkedIn")}
               </span>
             </span>
           </motion.label>

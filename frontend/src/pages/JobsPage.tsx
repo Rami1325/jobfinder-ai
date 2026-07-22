@@ -59,6 +59,7 @@ import type {
 import { AlertsCard, CustomizeFields } from "./jobs/AlertsCard";
 import { HistoryRow, MatchCard } from "./jobs/cards";
 import { BatchTailorCard, KitRow } from "./jobs/kits";
+import { SkillsEditorModal } from "./jobs/SkillsEditor";
 import { SearchScanPanel } from "./jobs/ScanPanel";
 import { EASE, inputCls, normalizeJobUrl, SOURCE_IDS, sourceLabel } from "./jobs/shared";
 
@@ -109,6 +110,7 @@ export default function JobsPage() {
 
   // -- Résumé upload state (Jobs is the front door: upload lives here too) --
   const [showReplace, setShowReplace] = useState(false);
+  const [showSkills, setShowSkills] = useState(false);
   const [autoSearched, setAutoSearched] = useState(false); // first upload kicks off a search automatically
   const [sourceErrorsDismissed, setSourceErrorsDismissed] = useState(false);
 
@@ -417,8 +419,23 @@ export default function JobsPage() {
           >
             {showReplace ? t("common:actions.cancel") : t("common:actions.replace")}
           </button>
+          {masters.length > 0 && (
+            <button
+              onClick={() => setShowSkills(true)}
+              className="text-xs font-semibold text-accent-soft hover:underline"
+            >
+              {t("skillsEditor.open")}
+            </button>
+          )}
         </div>
       </div>
+
+      <SkillsEditorModal
+        open={showSkills}
+        onClose={() => setShowSkills(false)}
+        masters={masters}
+        onSaved={setMaster}
+      />
 
       <AnimatePresence initial={false}>
         {showReplace && (
@@ -646,7 +663,11 @@ export default function JobsPage() {
                   </label>
                 </div>
                 {sortedMatches.length > 0 && (
-                  <BatchTailorCard matches={searchResult.matches} onViewKits={() => setMode("kits")} />
+                  <BatchTailorCard
+                    matches={searchResult.matches}
+                    onViewKits={() => setMode("kits")}
+                    attractKey={startedAt}
+                  />
                 )}
                 {sortedMatches.map((m, i) => (
                   <motion.div

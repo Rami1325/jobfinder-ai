@@ -696,9 +696,8 @@ _wctx_only = _resolve_context(
     ),
 )
 check(
-    "worldwide-only pass (global board unchecked) skips the local location",
-    [(loc, mode) for _, loc, mode in _board_queries(WORLDWIDE_BOARD, _wctx_only)]
-    == [(loc, "remote") for loc in WORLDWIDE_REMOTE_LOCATIONS],
+    "unchecked global board is never queried — worldwide pass included (PLAN 15.9)",
+    _board_queries(WORLDWIDE_BOARD, _wctx_only) == [],
     str(_board_queries(WORLDWIDE_BOARD, _wctx_only)),
 )
 _rc = _resolve_context(
@@ -2627,6 +2626,42 @@ try:
             "All job boards failed" in str(e) and "fake_down" in str(e),
             str(e),
         )
+
+    # PLAN 15.9: the checkboxes are authoritative at the full-search level too —
+    # the worldwide pass must not resurrect an unchecked global board into the
+    # fan-out (it used to, and it read as a bug to the actual user).
+    _spy_calls: list[str] = []
+
+    class _SpyGlobalBoard:
+        name = WORLDWIDE_BOARD
+
+        def search(self, ctx):  # noqa: ANN001
+            _spy_calls.append(ctx.job_title)
+            raise _NoRes("the unchecked global board must never be queried")
+
+        def fetch_description(self, hit):  # noqa: ANN001
+            return hit.description
+
+    _real_ww = _PROV.get(WORLDWIDE_BOARD)
+    _PROV[WORLDWIDE_BOARD] = _SpyGlobalBoard()
+    try:
+        _ww_res = _fan_search(
+            resume,
+            _AlertCtx(
+                job_title="Python", sources=["fake_ok"], work_mode="remote",
+                include_worldwide=True, max_age_days=0,
+            ),
+        )
+        check(
+            "15.9: worldwide opt-in never queries an unchecked global board",
+            _spy_calls == [] and {m.source for m in _ww_res.matches} == {"fake_ok"},
+            f"spy_calls={_spy_calls} sources={ {m.source for m in _ww_res.matches} }",
+        )
+    finally:
+        if _real_ww is not None:
+            _PROV[WORLDWIDE_BOARD] = _real_ww
+        else:
+            _PROV.pop(WORLDWIDE_BOARD, None)
 finally:
     for _k in _fakes:
         _PROV.pop(_k, None)

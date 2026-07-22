@@ -11,6 +11,19 @@
     "en": "English",
     "he": "Hebrew"
   },
+  "skillsEditor": {
+    "open": "Add skills",
+    "title": "Your skills",
+    "body": "Add skills you actually have that your résumé doesn't mention. They become part of your master résumé — match scores count them and tailoring may use them.",
+    "honesty": "Only add skills you truly have — they will appear on your résumé as facts.",
+    "empty": "No skills on this résumé yet.",
+    "placeholder": "e.g. Docker, SQL — Enter or comma to add",
+    "add": "Add",
+    "remove": "Remove",
+    "save": "Save to my résumé",
+    "savedToast": "Skills saved to your master résumé.",
+    "saveError": "Couldn't save — try again."
+  },
   "tabs": {
     "search": "Job search",
     "manual": "Paste / URL",
@@ -129,6 +142,7 @@
     "sourcesLabel": "Job boards",
     "worldwide": "Include worldwide remote jobs",
     "worldwideHint": "Also searches remote roles in high-earning markets (US, UK, EU) on LinkedIn — the local Israeli boards stay local.",
+    "worldwideNeedsLinkedIn": "Runs on LinkedIn — check the LinkedIn board below to enable it.",
     "worldwideTag": "incl. worldwide",
     "cta": "Find jobs for me",
     "cancel": "Cancel",
@@ -207,6 +221,9 @@
     "viewOn": "View on {{source}}",
     "openOn": "Open on {{source}}",
     "tailorToThis": "Tailor to this",
+    "kit": "Application kit",
+    "kitFailed": "Tailoring this kit failed — try again.",
+    "kitExists": "This job already has a kit — see the Kits tab.",
     "tailor": "Tailor",
     "outreach": "Outreach",
     "brief": "Company brief",

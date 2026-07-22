@@ -13,9 +13,9 @@ import {
 } from "lucide-react";
 import { Badge, Button, Card, CardTitle, ProgressRing, useToast } from "../../components/ui";
 import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
-import type { JobMatch, KitJobIn, KitOut } from "../../types";
+import type { JobMatch, KitOut } from "../../types";
 import { CompanyAvatar, JobResultCard } from "./cards";
-import { inputCls, sourceLabel } from "./shared";
+import { inputCls, kitJobFromMatch, sourceLabel } from "./shared";
 
 // Batch auto-tailor (PLAN 8.1): jobs at/above the fit threshold become queued
 // "application kits" — the backend tailors them one process-next call at a
@@ -24,26 +24,16 @@ export const KIT_MAX_BATCH = 10; // mirrors the backend's MAX_BATCH
 export const KIT_DEFAULT_THRESHOLD = 75;
 export const KIT_THRESHOLDS = [60, 65, 70, 75, 80, 85, 90] as const;
 
-export function kitJobFromMatch(m: JobMatch): KitJobIn {
-  return {
-    title: m.title,
-    company: m.company,
-    location: m.location,
-    url: m.url,
-    source: m.source ?? "linkedin",
-    logo_url: m.logo_url ?? "",
-    posted_at: m.posted_at,
-    jd_text: m.jd_text,
-    overall: m.overall,
-  };
-}
-
 export function BatchTailorCard({
   matches,
   onViewKits,
+  attractKey,
 }: {
   matches: JobMatch[];
   onViewKits: () => void;
+  /** Changes when a fresh search lands — restarts the attention pulse (PLAN
+   * 15.9: users scrolled straight past this card to the result rows). */
+  attractKey?: number | null;
 }) {
   const { t } = useTranslation("jobs");
   const toast = useToast();
@@ -71,7 +61,17 @@ export function BatchTailorCard({
   }
 
   return (
-    <Card>
+    <Card className="relative">
+      {/* Post-search attention pulse: an accent ring that breathes three times
+          then goes quiet. Only the overlay's opacity animates (compositor-cheap
+          per the 12.5e rules); the reduced-motion killswitch disables it. */}
+      {!batching && attractKey != null && eligible.length > 0 && (
+        <span
+          key={attractKey}
+          aria-hidden
+          className="animate-kit-attract pointer-events-none absolute -inset-px rounded-xl2 border-2 border-accent/70 shadow-[0_0_24px_rgb(var(--accent)/0.35)]"
+        />
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <CardTitle className="flex items-center gap-2">

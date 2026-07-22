@@ -336,10 +336,13 @@ def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str]]:
     the board with global inventory — the local Israeli boards never see those
     locations. Worldwide queries are always remote-only, even when the context's
     work mode is "any": abroad, only remote roles are workable, while the local
-    location keeps the user's mode. A board that joined the fan-out purely for
-    the worldwide pass (the user unchecked it in `sources`) skips the local
-    location. Pure; pinned by the smoke test."""
-    locations = [(ctx.location, ctx.work_mode)] if name in ctx.sources else []
+    location keeps the user's mode. A board the user unchecked in `sources` is
+    never queried AT ALL — not even by the worldwide pass (PLAN 15.9: the
+    checkboxes are authoritative; the pass riding an unchecked LinkedIn read as
+    a bug to the actual user). Pure; pinned by the smoke test."""
+    if name not in ctx.sources:
+        return []
+    locations = [(ctx.location, ctx.work_mode)]
     if name == WORLDWIDE_BOARD and ctx.work_mode in ("remote", "any") and ctx.include_worldwide:
         locations = locations + [(loc, "remote") for loc in WORLDWIDE_REMOTE_LOCATIONS]
     return [
@@ -396,12 +399,10 @@ def search_jobs(
     # wait for Drushim; within a board queries stay serial (see _search_board).
     # Results are classified in fan-out order so _interleave_and_dedupe's
     # round-robin order stays stable regardless of which board finishes first.
-    # The worldwide-remote pass rides the global-reach board's own worker (its
-    # extra locations come from _board_queries), so it joins the fan-out even
-    # when the user unchecked that board for local results.
+    # The fan-out is EXACTLY the checked boards (PLAN 15.9): the worldwide
+    # pass extends the global board's queries in _board_queries, but never
+    # adds a board the user unchecked.
     fanout = list(ctx.sources)
-    if ctx.include_worldwide and ctx.work_mode in ("remote", "any") and WORLDWIDE_BOARD not in fanout:
-        fanout.append(WORLDWIDE_BOARD)
     hits_by_source: dict[str, list[JobHit]] = {}
     source_errors: dict[str, str] = {}
     source_empty: dict[str, str] = {}

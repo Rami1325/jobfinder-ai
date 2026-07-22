@@ -1,7 +1,7 @@
 // Shared constants + pure helpers for the Jobs surfaces (split out of
 // JobsPage.tsx — PLAN 12.5d). No JSX here.
 import type { TFunction } from "i18next";
-import type { SearchContext } from "../../types";
+import type { JobMatch, KitJobIn, SearchContext } from "../../types";
 
 // House ease curve — shared by the scan ticker flips and JobsPage's tab/card motion.
 export const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -87,6 +87,22 @@ export function avatarTone(name: string): string {
   return AVATAR_TONES[h % AVATAR_TONES.length];
 }
 
+
+/** A search/manual match as the kit-batch endpoint wants it (PLAN 8.1) —
+ * shared by the batch card and the per-job kit button (15.9). */
+export function kitJobFromMatch(m: JobMatch): KitJobIn {
+  return {
+    title: m.title,
+    company: m.company,
+    location: m.location,
+    url: m.url,
+    source: m.source ?? "linkedin",
+    logo_url: m.logo_url ?? "",
+    posted_at: m.posted_at,
+    jd_text: m.jd_text,
+    overall: m.overall,
+  };
+}
 
 /** Posted within the last 48 hours. */
 export function isNewPosting(iso: string): boolean {

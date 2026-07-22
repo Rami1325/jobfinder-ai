@@ -77,6 +77,12 @@ export default {
         shimmer: {
           "100%": { transform: "translateX(100%)" },
         },
+        // PLAN 15.9: the "Tailor my top matches" attention ring — opacity-only
+        // (the ring's static shadow rides along on the compositor).
+        "kit-attract": {
+          "0%,100%": { opacity: "0" },
+          "50%": { opacity: "1" },
+        },
       },
       animation: {
         "fade-up": "fade-up .5s cubic-bezier(.22,1,.36,1) both",
@@ -84,6 +90,8 @@ export default {
         "pulse-glow": "pulse-glow 3s ease-in-out infinite",
         float: "float 6s ease-in-out infinite",
         shimmer: "shimmer 1.6s infinite",
+        // 3 breaths, starts once the result rows have settled, ends invisible.
+        "kit-attract": "kit-attract 1.1s ease-in-out .6s 3 both",
       },
     },
   },

@@ -1,5 +1,5 @@
 // Job result/history card components (split out of JobsPage.tsx — PLAN 12.5d).
-import { useState, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -9,12 +9,22 @@ import {
   MessageCircle,
   Send,
   Trash2,
+  Wand2,
 } from "lucide-react";
-import { Badge, BorderGlow, Button, CountUp, ProgressRing } from "../../components/ui";
+import { listKits } from "../../api/client";
+import { Badge, BorderGlow, Button, CountUp, ProgressRing, useToast } from "../../components/ui";
 import { fitReason } from "../../lib/fitReason";
+import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
 import type { JobMatch, JobSearchHit } from "../../types";
 import type { AlsoOn } from "../../types";
-import { avatarTone, companyDomain, isNewPosting, postedAgo, sourceLabel } from "./shared";
+import {
+  avatarTone,
+  companyDomain,
+  isNewPosting,
+  kitJobFromMatch,
+  postedAgo,
+  sourceLabel,
+} from "./shared";
 
 /** Cross-board dedupe (PLAN 15.1): the same posting found on other boards —
  * one merged card, with each duplicate board linked so the user can apply
@@ -179,6 +189,38 @@ export function JobResultCard({ children }: { children: ReactNode }) {
 export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStatus?: string }) {
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
+  const toast = useToast();
+  const { batching } = useSyncExternalStore(subscribeKits, getKitsState);
+
+  // Per-job application kit (PLAN 15.9): the auto-apply path for ONE job —
+  // batch "Tailor my top matches" was the only way in, and users looking at a
+  // specific posting never found it. Creates + processes a single kit, then
+  // lands on its review page (approve → send).
+  async function makeKit() {
+    const summary = await startKitBatch([kitJobFromMatch(m)]);
+    if (!summary) {
+      const err = getKitsState().error;
+      if (err) toast("error", err);
+      return;
+    }
+    try {
+      // The drain may have processed leftover queued kits too — find OURS by
+      // URL rather than trusting lastKit.
+      const kit = (await listKits()).find((k) => k.url === m.url);
+      if (kit && kit.status !== "queued" && kit.status !== "running") {
+        if (kit.status === "failed") {
+          toast("error", kit.error || t("card.kitFailed"));
+        } else {
+          nav(`/kits/${kit.id}`); // done/approved/rejected/submitted all review fine
+        }
+        return;
+      }
+    } catch {
+      /* listing failed — fall through to the generic pointer */
+    }
+    toast("info", t("card.kitExists"));
+  }
+
   return (
     <JobResultCard>
       <ProgressRing value={m.overall} size={92} stroke={8} label={t("card.fit")} />
@@ -265,6 +307,17 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
         >
           {t("card.tailorToThis")}
         </Button>
+        {m.url && m.jd_text && (
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={batching}
+            icon={<Wand2 size={14} />}
+            onClick={makeKit}
+          >
+            {t("card.kit")}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
