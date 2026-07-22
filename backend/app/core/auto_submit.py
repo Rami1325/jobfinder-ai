@@ -60,6 +60,32 @@ _POSITION_URL_RE = re.compile(
 # (url, body, content_type) -> response body. Injectable for offline tests.
 PostFn = Callable[[str, bytes, str], str]
 
+# Comeet enables reCAPTCHA per POSITION (not per company): a position page ships
+# `RECAPTCHA_ENABLED = true` and its own client appends a grecaptcha_token to the
+# apply form. We can't (and won't) solve a reCAPTCHA, so those positions can't be
+# auto-submitted — the public endpoint answers 423 ("Locked") without the token.
+# Detected pre-flight from the position page so we refuse cleanly instead of
+# firing a doomed POST and burning the daily cap. Note the careers *listing*
+# page can say false while a position under it says true — always check the
+# position page. (Injectable so the smoke test never hits the network.)
+_RECAPTCHA_RE = re.compile(r"RECAPTCHA_ENABLED\s*=\s*true", re.IGNORECASE)
+
+
+def _fetch_page(url: str) -> str:
+    from app.core.job_match import _http_get
+
+    return _http_get(url, timeout=_TIMEOUT_S)
+
+
+def position_requires_recaptcha(position_url: str, fetch: Callable[[str], str] | None = None) -> bool:
+    """True when the Comeet position page gates applications behind reCAPTCHA.
+    Best-effort: a fetch failure returns False (let the send attempt surface the
+    real error) rather than blocking a submit on a transient network blip."""
+    try:
+        return bool(_RECAPTCHA_RE.search((fetch or _fetch_page)(position_url)))
+    except Exception:  # noqa: BLE001 - network/markup trouble ⇒ don't block on a guess
+        return False
+
 
 class ComeetPositionRef(NamedTuple):
     slug: str
@@ -176,6 +202,7 @@ def submit_kit(
     kit: TailorKit,
     charge: Callable[[], None] | None = None,
     post_fn: PostFn | None = None,
+    recaptcha_fn: Callable[[str], bool] | None = None,
 ) -> TailorKit:
     """Send one approved kit's application through Comeet's public apply
     endpoint, enforcing every 8.4 guardrail. Raises ValueError with a
@@ -200,6 +227,21 @@ def submit_kit(
             "public application API). Apply to this one on the board itself."
         )
     ref = parse_comeet_position_url(kit.url or "")
+
+    # reCAPTCHA-gated positions can't be auto-submitted: the apply endpoint
+    # answers 423 without a grecaptcha_token we can't (and won't) produce.
+    # Refuse here — a cheap guardrail alongside the others, before the app-row
+    # lookup, the cap charge, and any network send — and point at the
+    # assisted-apply path (the browser extension fills the form; the user
+    # clicks Apply, which produces the token legitimately).
+    if (recaptcha_fn or position_requires_recaptcha)(kit.url or ""):
+        raise ValueError(
+            f"{kit.company or ref.slug} protects this position with a reCAPTCHA "
+            "bot check, so it can't be auto-submitted. Use the browser extension's "
+            "assisted apply (it fills the form with this kit — you click Apply), or "
+            "apply on the Comeet page directly."
+        )
+
     company_key = (kit.company or "").strip().lower()
     if company_key:
         already = db.execute(
@@ -267,6 +309,15 @@ def submit_kit(
             detail = str(payload.get("message") or payload.get("error") or "")
         except Exception:  # noqa: BLE001 - non-JSON error body
             pass
+        if e.code == 423:
+            # "Locked" — almost always a reCAPTCHA/bot gate our pre-flight
+            # check didn't catch, or a position that just closed.
+            raise ValueError(
+                f"{kit.company or ref.slug} locked this application against "
+                "automated sending (usually a bot check, or the position just "
+                "closed). Use the extension's assisted apply, or apply on Comeet "
+                "directly."
+            ) from e
         raise ValueError(
             f"Comeet declined the application (HTTP {e.code})"
             + (f": {detail}" if detail else ".")

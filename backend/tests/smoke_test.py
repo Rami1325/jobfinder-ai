@@ -3126,9 +3126,24 @@ def _fake_apply_post(url: str, body: bytes, content_type: str) -> str:
     return _json.dumps({"post_submit_questionnaires": "https://apply.example/q/1"})
 
 
+# Pure reCAPTCHA-detection pins (PLAN 14.5): a position page with
+# RECAPTCHA_ENABLED=true is gated; false / fetch-failure ⇒ not gated.
+check(
+    "position_requires_recaptcha: true page gated, false page not, fetch error ⇒ false",
+    _asub.position_requires_recaptcha("u", fetch=lambda u: "x RECAPTCHA_ENABLED = true; y") is True
+    and _asub.position_requires_recaptcha("u", fetch=lambda u: "RECAPTCHA_ENABLED = false") is False
+    and _asub.position_requires_recaptcha(
+        "u", fetch=lambda u: (_ for _ in ()).throw(RuntimeError("net down"))
+    ) is False,
+)
+
 _real_post, _real_token = _asub._default_post, _asub._resolve_token
 _asub._default_post = _fake_apply_post
 _asub._resolve_token = lambda db, ref: "TOK123"
+# Default every submit in this block to a NON-reCAPTCHA position; the dedicated
+# reCAPTCHA-refusal check below overrides it. (Real sends still fetch the page.)
+_real_recaptcha = _asub.position_requires_recaptcha
+_asub.position_requires_recaptcha = lambda url, fetch=None: False
 try:
     with TestClient(_fastapi_app) as _tc:
         _sub = _tc.post("/admin/users", json={"name": "Sub"}, headers=_ADMIN_H).json()
@@ -3247,6 +3262,30 @@ try:
         check("per-company dedupe: one auto-application per company", False)
     except ValueError as _e:
         check("per-company dedupe: one auto-application per company", "already auto-applied" in str(_e), str(_e))
+
+    # PLAN 14.5: a reCAPTCHA-gated position refuses BEFORE charging the cap or
+    # sending — the real 423 the DriveNets position returned, caught pre-flight.
+    _recaptcha_kit = _TKit(
+        user_id=_sub_row.id, status="approved", source="comeet", flag_count=0,
+        company="DriveNets", url="https://www.comeet.com/jobs/drivenets/72.006/ai/6A.D68",
+        application_id=None,
+    )
+    _dbs.add(_recaptcha_kit)
+    _dbs.commit()
+    _charged = []
+    try:
+        _asub.submit_kit(
+            _dbs, _sub_row, _recaptcha_kit,
+            charge=lambda: _charged.append(1),
+            recaptcha_fn=lambda url: True,
+        )
+        check("reCAPTCHA-gated position is refused before send", False)
+    except ValueError as _e:
+        check(
+            "reCAPTCHA-gated position refused pre-flight (no cap charge, no send)",
+            "reCAPTCHA" in str(_e) and not _charged and len(_sent_apps) == 1,
+            str(_e)[:120],
+        )
     check(
         "guardrail refusals left no extra network sends",
         len(_sent_apps) == 1,
@@ -3256,6 +3295,7 @@ try:
 finally:
     _asub._default_post = _real_post
     _asub._resolve_token = _real_token
+    _asub.position_requires_recaptcha = _real_recaptcha
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)
