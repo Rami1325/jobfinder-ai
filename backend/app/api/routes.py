@@ -990,6 +990,10 @@ def save_master_resume(
     user: User = Depends(current_user),
 ) -> MasterResumeOut:
     language = resume_language(body.resume)
+    # A ledger-less save (the from-scratch builder, PLAN 15.3) derives the
+    # facts ledger from the résumé itself: the user typed these facts, so the
+    # résumé IS the source of truth the fabrication guard should protect.
+    ledger = body.ledger or build_facts_ledger(body.resume)
     row = next(
         (r for r in _master_rows(db, user.id) if (r.language or "en") == language), None
     )
@@ -998,12 +1002,12 @@ def save_master_resume(
         db.add(row)
     row.label = body.label
     row.resume_json = body.resume.model_dump_json()
-    row.ledger_json = body.ledger.model_dump_json() if body.ledger else ""
+    row.ledger_json = ledger.model_dump_json()
     db.commit()
     db.refresh(row)
     return MasterResumeOut(
         resume=body.resume,
-        ledger=body.ledger,
+        ledger=ledger,
         label=row.label,
         language=row.language,
         updated_at=row.updated_at.isoformat() if row.updated_at else "",

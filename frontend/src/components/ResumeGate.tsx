@@ -16,9 +16,15 @@ export default function ResumeGate({ feature }: { feature: string }) {
       <p className="mx-auto mt-1 max-w-md text-sm text-ink-muted">
         {t("resumeGate.body", { feature })}
       </p>
-      <Link to="/jobs" className="mt-5 inline-block">
-        <Button>{t("resumeGate.cta")}</Button>
-      </Link>
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+        <Link to="/jobs">
+          <Button>{t("resumeGate.cta")}</Button>
+        </Link>
+        {/* PLAN 15.3: cold-start escape hatch — no file needed. */}
+        <Link to="/builder">
+          <Button variant="secondary">{t("resumeGate.build")}</Button>
+        </Link>
+      </div>
     </Card>
   );
 }

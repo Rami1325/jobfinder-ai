@@ -273,6 +273,12 @@ export default function TailorPage() {
           <div className="mt-3">
             <ResumeUpload onParsed={onParsed} savedLabel={resume ? masterLabel || undefined : undefined} />
           </div>
+          {/* PLAN 15.3: cold-start path — no file to upload yet. */}
+          {!resume && (
+            <Link to="/builder" className="mt-3 inline-block text-sm text-accent-soft hover:underline">
+              {t("upload.buildLink")}
+            </Link>
+          )}
         </Card>
 
         <Card>

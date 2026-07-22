@@ -1,0 +1,111 @@
+{
+  "title": "Résumé builder",
+  "sub": "No résumé yet? Answer a few questions — we'll build a clean, ATS-safe one.",
+  "startOver": "Start over",
+  "nameRequired": "Just your name to get going.",
+  "steps": {
+    "contact": "Contact",
+    "experience": "Experience",
+    "service": "Service",
+    "education": "Education",
+    "skills": "Skills",
+    "finish": "Finish"
+  },
+  "nav": {
+    "back": "Back",
+    "next": "Next"
+  },
+  "dates": {
+    "start": "From",
+    "end": "To",
+    "startPh": "2021",
+    "endPh": "2024 or today"
+  },
+  "contact": {
+    "title": "Who are you?",
+    "name": "Full name",
+    "email": "Email",
+    "phone": "Phone",
+    "location": "City",
+    "linkedin": "LinkedIn URL",
+    "website": "Website / portfolio",
+    "optionalHint": "Only the name is required — everything else can wait."
+  },
+  "experience": {
+    "title": "Work experience",
+    "empty": "No work experience yet? Skip — projects and service count too.",
+    "add": "Add role",
+    "role": "Job title",
+    "company": "Company",
+    "location": "Location",
+    "bullets": "What did you do? One line each.",
+    "bulletsHint": "Start with a verb; numbers help — e.g. \"Cut build time 40%\".",
+    "remove": "Remove"
+  },
+  "projects": {
+    "title": "Projects",
+    "hint": "Side or school projects count as experience.",
+    "add": "Add project",
+    "name": "Project name",
+    "description": "One-line description",
+    "bullets": "Highlights — one per line"
+  },
+  "service": {
+    "title": "Military service",
+    "hint": "Standard on Israeli résumés — and it's real experience. Not relevant? Skip.",
+    "add": "Add service entry",
+    "unit": "Unit",
+    "role": "Role",
+    "rank": "Rank (optional)",
+    "bullets": "What did you do? One line each."
+  },
+  "education": {
+    "title": "Education",
+    "hint": "Degrees, bootcamps and courses all belong here.",
+    "add": "Add education",
+    "institution": "Institution",
+    "degree": "Degree / program",
+    "field": "Field",
+    "details": "Details (optional)"
+  },
+  "skills": {
+    "title": "Skills",
+    "hint": "Press Enter or comma to add each one.",
+    "placeholder": "e.g. Python",
+    "languagesTitle": "Languages",
+    "language": "Language",
+    "level": "Level",
+    "levelPlaceholder": "native / fluent / basic",
+    "addLanguage": "Add language",
+    "certsTitle": "Certifications",
+    "certsPlaceholder": "e.g. AWS Solutions Architect"
+  },
+  "finish": {
+    "title": "Finish up",
+    "summaryLabel": "Short summary (optional)",
+    "summaryHint": "2–3 sentences about who you are. Leaving it empty is fine.",
+    "counts": {
+      "experience": "{{n}} roles",
+      "service": "{{n}} service",
+      "education": "{{n}} education",
+      "projects": "{{n}} projects",
+      "skills": "{{n}} skills"
+    },
+    "honesty": "Every word here is yours — we never invent facts.",
+    "template": "Template",
+    "replaceWarn": "Saving replaces your current saved résumé ({{label}}).",
+    "save": "Save as my résumé",
+    "saved": "Saved",
+    "savedToast": "Saved — it now powers Jobs, Tailor and Tools.",
+    "saveError": "Could not save. Is the backend running?",
+    "docx": "Download .docx",
+    "pdf": "Download .pdf",
+    "atsNote": "Single-column, ATS-safe — no tables, columns or images.",
+    "autosaved": "Draft saved on this device",
+    "next": {
+      "title": "What's next?",
+      "jobs": "Find matching jobs",
+      "tailor": "Tailor it to a job"
+    }
+  }
+}

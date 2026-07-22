@@ -1646,6 +1646,31 @@ check(
     len(_pair) == 2 and any(m.label == "EN master v2" for m in _pair),
     str([(m.language, m.label) for m in _pair]),
 )
+
+# 15b-2. PLAN 15.3 (résumé builder): a ledger-less save derives the facts
+# ledger from the résumé itself — the user typed those facts, so the résumé IS
+# the guard's source of truth and a built master never has an empty ledger.
+check(
+    "ledger-less master save derives the ledger from the résumé",
+    _saved_en.ledger is not None
+    and _saved_en.ledger.model_dump() == build_facts_ledger(resume).model_dump()
+    and any(_saved_en.ledger.model_dump().values()),
+)
+# An explicitly passed ledger must be stored verbatim, never rebuilt.
+_explicit_ledger = build_facts_ledger(resume)
+_explicit_ledger.employers.append("Ledger-Pin Co")
+_saved_explicit = save_master_resume(
+    MasterResumeIn(resume=resume, ledger=_explicit_ledger, label="EN master v2"),
+    db=_db,
+    user=_admin_user,
+)
+check(
+    "explicitly passed ledger is stored verbatim, not rebuilt",
+    _saved_explicit.ledger is not None
+    and "Ledger-Pin Co" in _saved_explicit.ledger.employers,
+)
+# Restore the derived ledger so downstream master-résumé checks see clean state.
+save_master_resume(MasterResumeIn(resume=resume, label="EN master v2"), db=_db, user=_admin_user)
 _he_master = get_master_resume(lang="he", db=_db, user=_admin_user)
 _en_master = get_master_resume(lang="en", db=_db, user=_admin_user)
 check(

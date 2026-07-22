@@ -16,6 +16,7 @@ const ScanPage = lazy(() => import("./pages/ScanPage"));
 const AppLayout = lazy(() => import("./layouts/AppLayout"));
 const HomePage = lazy(() => import("./pages/HomePage"));
 const TailorPage = lazy(() => import("./pages/TailorPage"));
+const BuilderPage = lazy(() => import("./pages/BuilderPage"));
 const TrackerPage = lazy(() => import("./pages/TrackerPage"));
 const InterviewPage = lazy(() => import("./pages/InterviewPage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
@@ -55,6 +56,7 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route path="/home" element={<HomePage />} />
             <Route path="/app" element={<TailorPage />} />
+            <Route path="/builder" element={<BuilderPage />} />
             <Route path="/interview" element={<InterviewPage />} />
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/kits/:id" element={<KitReviewPage />} />

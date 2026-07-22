@@ -24,7 +24,8 @@
     "notYet": "Not yet"
   },
   "upload": {
-    "title": "1 · Your résumé"
+    "title": "1 · Your résumé",
+    "buildLink": "No résumé yet? Build one from scratch →"
   },
   "jd": {
     "title": "2 · Target job description",
