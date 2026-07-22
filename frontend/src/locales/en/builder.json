@@ -85,11 +85,11 @@
     "summaryLabel": "Short summary (optional)",
     "summaryHint": "2–3 sentences about who you are. Leaving it empty is fine.",
     "counts": {
-      "experience": "{{n}} roles",
-      "service": "{{n}} service",
-      "education": "{{n}} education",
-      "projects": "{{n}} projects",
-      "skills": "{{n}} skills"
+      "experience": "Roles: {{n}}",
+      "service": "Service: {{n}}",
+      "education": "Education: {{n}}",
+      "projects": "Projects: {{n}}",
+      "skills": "Skills: {{n}}"
     },
     "honesty": "Every word here is yours — we never invent facts.",
     "template": "Template",
