@@ -21,6 +21,7 @@ import {
 import ChangeLog from "../components/ChangeLog";
 import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
+import VoicePanel from "../components/VoicePanel";
 import { apiErrorMessage } from "../lib/apiError";
 import { applyEditDecisions, diffResumes, editContainsValue } from "../lib/resumeDiff";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, Stamp, useToast } from "../components/ui";
@@ -363,6 +364,14 @@ export default function KitReviewPage() {
       {kit.result && base && tailored && (
         <>
           <p className="text-xs text-ink-muted">{t("kitReview.downloadNote")}</p>
+          {/* Humanization audit (16.4): same panel as the Tailor page — voice
+              score, positioning story, credibility warnings. Old kits stored
+              before Phase 16 have no voice_report and render nothing. */}
+          <VoicePanel
+            report={kit.result.voice_report}
+            plan={kit.result.plan}
+            credibility={kit.result.credibility_flags ?? []}
+          />
           <ChangeLog
             edits={edits}
             changelog={kit.result.changelog}
