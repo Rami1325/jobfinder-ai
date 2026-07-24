@@ -249,6 +249,9 @@ Address ONLY the audit findings you are given:
   construction; rewrite the rest as plain statements of the same fact.
 - jd_echo: the phrase was copied from the job description — describe the same real
   work in different words (keep individual technical keywords).
+- keyword_stuffing: the keyword appears too many times. Keep it in the skills list
+  and its 1-2 most important mentions; rephrase or drop the other occurrences. This
+  refines the "keep ATS keywords present" rule — present, not repeated everywhere.
 - uniform_bullets: vary the rhythm — shorten a couple of bullets to their plain core;
   leave the strongest ones detailed.
 

@@ -41,9 +41,11 @@ _BANNED_PATTERNS: list[tuple[str, str]] = [
     ("impactful", r"impactful"),
     ("delve", r"delv(e|ed|ing)"),
     ("empowered", r"empower\w*"),
+    # Verb forms only: "orchestration"/"test harness" are legitimate technical
+    # nouns (16.3 live run flagged a real resume's "workflow orchestration").
     ("championed", r"champion(ed|ing)"),
-    ("orchestrated", r"orchestrat\w*"),
-    ("harnessed", r"harness\w*"),
+    ("orchestrated", r"orchestrat(ed|ing|es)"),
+    ("harnessed", r"harness(ed|ing|es)"),
     ("fostered a culture", r"foster\w* a culture"),
     ("streamlined", r"streamlin\w*"),
     ("actionable insights", r"actionable insights"),
@@ -239,7 +241,9 @@ def audit_voice(resume: ResumeModel, jd: JDModel | None = None) -> VoiceReport:
             if not k or k in seen_kw:
                 continue
             seen_kw.add(k)
-            n = full_text.count(k)
+            # Boundary-aware count — a substring count would match "ai" inside
+            # "email"/"maintain" (16.3 live-run fix).
+            n = len(re.findall(rf"(?<![a-z0-9+#]){re.escape(k)}(?![a-z0-9+#])", full_text))
             if n > _KEYWORD_STUFFING_MAX:
                 issues.append(
                     VoiceIssue(

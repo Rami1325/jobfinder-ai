@@ -3498,6 +3498,31 @@ check(
     f"bad={_audit(_v_bad, _v_jd).jd_copy_pct} clean={result.voice_report.jd_copy_pct}",
 )
 
+# 16.3 live-run fixes pinned: legit technical nouns are not banned-verb hits,
+# and keyword counting is boundary-aware (no substring matches).
+_t_resume = resume.model_copy(deep=True)
+_t_resume.summary = "Owns workflow orchestration and the test harness for AI systems."
+_t_resume.experience[0].bullets = ["Maintained email pipelines.", "Improved processes by 20%."]
+_t_report = _audit(_t_resume, _VJD(job_title="X", keywords=["AI"], responsibilities=[]))
+check(
+    "voice audit: 'orchestration'/'test harness' nouns not flagged as banned verbs",
+    not any(i.category == "banned_phrase" for i in _t_report.issues),
+    str([(i.category, i.value) for i in _t_report.issues]),
+)
+check(
+    "voice audit: keyword count is boundary-aware ('AI' never counts 'email'/'maintained')",
+    not any(i.category == "keyword_stuffing" for i in _t_report.issues),
+    str([(i.category, i.value) for i in _t_report.issues]),
+)
+_t_verbs = resume.model_copy(deep=True)
+_t_verbs.summary = "Orchestrated teams while harnessing synergies."
+check(
+    "voice audit: verb forms 'orchestrated'/'harnessing' still banned",
+    any(i.category == "banned_phrase" for i in _audit(_t_verbs, None).issues),
+    str([(i.category, i.value) for i in _audit(_t_verbs, None).issues]),
+)
+check("HUMANIZE prompt covers keyword_stuffing", "keyword_stuffing" in _prompts.HUMANIZE_SYSTEM)
+
 # §26 feedback loop: rejected phrases persist per user, dedupe, cap, and reach
 # the tailor prompt as an avoid-list.
 _wdb = SessionLocal()
