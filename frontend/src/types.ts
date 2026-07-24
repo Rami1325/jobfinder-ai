@@ -62,7 +62,9 @@ export interface JDModel {
   job_title: string;
   company: string;
   seniority: string;
-  hard_skills: string[];
+  hard_skills: string[]; // mandatory/required skills
+  preferred_skills?: string[]; // nice-to-have skills; absent on older backends
+  business_outcomes?: string[]; // outcomes the role drives; absent on older backends
   soft_skills: string[];
   keywords: string[];
   responsibilities: string[];
@@ -107,6 +109,49 @@ export interface FabricationFlag {
   detail: string;
 }
 
+export interface VoiceIssue {
+  category:
+    | "banned_phrase"
+    | "repeated_verb"
+    | "repeated_phrase"
+    | "outcome_clause"
+    | "jd_echo"
+    | "uniform_bullets";
+  value: string;
+  location: string;
+  detail: string;
+}
+
+export interface VoiceReport {
+  human_voice_score: number;
+  jd_copy_pct?: number; // % of resume 5-word phrases copied from the JD
+  issues: VoiceIssue[];
+  fixed: VoiceIssue[];
+  revised: boolean;
+}
+
+export interface CVPlan {
+  positioning: string;
+  lead_strengths: string[];
+  emphasize: string[];
+  downplay: string[];
+  conservative_notes: string[];
+}
+
+export interface CredibilityFlag {
+  text: string;
+  risk:
+    | "exaggerated_ownership"
+    | "inflated_seniority"
+    | "unverified_production"
+    | "vague_impact"
+    | "excessive_scale"
+    | "tool_padding"
+    | "unclear_contribution";
+  detail: string;
+  suggestion: string;
+}
+
 export interface TailorResult {
   tailored_resume: ResumeModel;
   changelog: ChangeLogEntry[];
@@ -114,6 +159,9 @@ export interface TailorResult {
   fabrication_flags: FabricationFlag[];
   score_before: Score;
   score_after: Score;
+  voice_report?: VoiceReport; // absent on results saved by older backends
+  plan?: CVPlan | null;
+  credibility_flags?: CredibilityFlag[];
 }
 
 export interface ResumeUploadResponse {

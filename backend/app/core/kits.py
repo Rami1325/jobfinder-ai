@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.core.jd_analyzer import analyze_jd
 from app.core.lang import detect_language
 from app.core.tailor import tailor_resume
+from app.core import writing_prefs
 from app.db.models import Application, SavedResume, TailorKit, User
 from app.models import (
     FactsLedger,
@@ -259,7 +260,10 @@ def process_next_kit(
             except Exception:  # noqa: BLE001 - tailor rebuilds it from the résumé
                 ledger = None
         jd = analyze_fn(row.jd_text)
-        result = tailor_fn(resume, jd, ledger=ledger)
+        result = tailor_fn(
+            resume, jd, ledger=ledger,
+            avoid_phrases=writing_prefs.avoid_phrases(user),
+        )
         row.base_resume_json = master.resume_json
         row.base_language = master.language or "en"
         row.jd_json = jd.model_dump_json()

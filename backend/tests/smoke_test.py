@@ -3076,7 +3076,7 @@ _flag_rows, _ = _enqueue_kits(
 )
 
 
-def _flagging_tailor(resume, jd, ledger=None):  # noqa: ANN001 - matches tailor_resume's shape
+def _flagging_tailor(resume, jd, ledger=None, **_kw):  # noqa: ANN001 - matches tailor_resume's shape
     return _KTR(
         tailored_resume=resume,
         fabrication_flags=[_KFlag(category="employer", value="FakeCo", detail="invented")],
@@ -3321,6 +3321,219 @@ finally:
     _asub._default_post = _real_post
     _asub._resolve_token = _real_token
     _asub.position_requires_recaptcha = _real_recaptcha
+
+# 23. CV humanization (spec): deterministic voice audit + HUMANIZE LLM pass.
+# The audit hunts AI tells (banned buzzwords, repeated verbs/phrases, outcome
+# clauses, JD echo, uniform bullets); the humanizer fixes wording and is only
+# accepted when guard-clean AND the re-audit confirms improvement.
+from app.core.humanizer import humanize_resume as _humanize  # noqa: E402
+from app.core.voice_audit import audit_voice as _audit  # noqa: E402
+from app.llm.client import get_llm_client as _get_client  # noqa: E402
+from app.models import JDModel as _VJD  # noqa: E402
+
+# An honest stub tailor result must audit clean — and the pipeline must carry
+# the report on TailorResult.
+check(
+    "tailor result carries a clean voice report for plain writing",
+    result.voice_report.human_voice_score == 100.0
+    and result.voice_report.issues == []
+    and result.voice_report.revised is False,
+    str(result.voice_report),
+)
+
+# Seed a resume dripping with AI tells and a JD it plagiarizes.
+_v_jd = _VJD(
+    job_title="Software Engineer",
+    keywords=["Python", "REST APIs"],
+    hard_skills=["Python"],
+    responsibilities=["Design and build scalable REST services for our analytics platform"],
+    qualifications=["Proven experience with Python in production"],
+)
+_v_bad = resume.model_copy(deep=True)
+_v_bad.summary = "Results-driven dynamic professional passionate about cutting-edge technology."
+_v_bad.experience[0].bullets = [
+    "Spearheaded development of internal tools, resulting in improved efficiency.",
+    "Leveraged Python to streamline workflows, resulting in faster delivery.",
+    "Developed dashboards to improve visibility.",
+    "Developed reports to improve tracking.",
+    "Developed and build scalable REST services for our analytics platform.",
+]
+_v_report = _audit(_v_bad, _v_jd)
+_v_cats = {i.category for i in _v_report.issues}
+check(
+    "voice audit catches banned phrases",
+    "banned_phrase" in _v_cats
+    and any(i.value.lower().startswith("spearhead") for i in _v_report.issues),
+    str([(i.category, i.value) for i in _v_report.issues]),
+)
+check(
+    "voice audit catches repeated starting verbs",
+    any(i.category == "repeated_verb" and i.value == "developed" for i in _v_report.issues),
+    str([(i.category, i.value) for i in _v_report.issues]),
+)
+check(
+    "voice audit catches outcome-clause overuse ('resulting in' x2, 'to improve' x2)",
+    any(i.category == "outcome_clause" and i.value == "resulting in" for i in _v_report.issues)
+    and any(i.category == "outcome_clause" and i.value == "to improve" for i in _v_report.issues),
+    str([(i.category, i.value) for i in _v_report.issues]),
+)
+check(
+    "voice audit catches verbatim JD echo (5+ word copy)",
+    any(i.category == "jd_echo" for i in _v_report.issues),
+    str([(i.category, i.value) for i in _v_report.issues]),
+)
+check(
+    "voice score drops with issues and stays in range",
+    0 <= _v_report.human_voice_score < 100.0,
+    str(_v_report.human_voice_score),
+)
+
+# HUMANIZE routes through the stub on its Task tag and echoes a fixed resume.
+_v_hum = _get_client().complete_json(
+    _prompts.HUMANIZE_SYSTEM,
+    _prompts.humanize_user(_v_bad.model_dump_json(), "- [banned_phrase] spearheaded", ["Python"]),
+)
+check(
+    "HUMANIZE stub routes and returns a revised_resume",
+    isinstance(_v_hum.get("revised_resume"), dict),
+    str(_v_hum)[:120],
+)
+check(
+    "HUMANIZE stub swaps banned verbs for plain ones",
+    "Led development" in _v_hum["revised_resume"]["experience"][0]["bullets"][0]
+    and "Used Python" in _v_hum["revised_resume"]["experience"][0]["bullets"][1],
+    str(_v_hum["revised_resume"]["experience"][0]["bullets"])[:200],
+)
+
+# The full component loop: humanize -> guard-clean vs the ledger -> better score.
+_v_revised = _humanize(_v_bad, _v_report.issues, _v_jd)
+check("humanizer returns a valid ResumeModel", _v_revised is not None)
+if _v_revised is not None:
+    _v_ledger = build_facts_ledger(_v_bad)
+    check(
+        "humanized resume stays guard-clean (facts untouched)",
+        check_fabrication(_v_revised, _v_ledger) == [],
+        str(check_fabrication(_v_revised, _v_ledger)),
+    )
+    _v_post = _audit(_v_revised, _v_jd)
+    check(
+        "humanizer pass improves the voice score",
+        _v_post.human_voice_score > _v_report.human_voice_score,
+        f"{_v_report.human_voice_score} -> {_v_post.human_voice_score}",
+    )
+check("humanizer with no issues is a no-op (no LLM call)", _humanize(_v_bad, [], _v_jd) is None)
+
+# Prompt pins: stub routing tag stays first; the tailor prompt keeps the new
+# anti-AI rules; the humanize user message keeps its stub-parsing markers.
+check("HUMANIZE prompt Task tag first", _prompts.HUMANIZE_SYSTEM.startswith("Task: HUMANIZE."))
+check("HUMANIZE prompt forbids fact changes", "Do NOT change facts" in _prompts.HUMANIZE_SYSTEM)
+check("TAILOR prompt bans JD echo", "NEVER ECHO THE JD" in _prompts.TAILOR_SYSTEM)
+check("TAILOR prompt self-check scans for JD echo", "JD-ECHO SCAN" in _prompts.TAILOR_SYSTEM)
+check(
+    "humanize_user keeps the stub's parse markers",
+    "RESUME TO EDIT (JSON):" in _prompts.humanize_user("{}", "", [])
+    and "END RESUME" in _prompts.humanize_user("{}", "", []),
+)
+
+# 24. Humanization spec — remaining stages: JD mandatory/preferred split,
+# CV positioning plan (PLAN_CV), credibility review (CREDIBILITY), keyword
+# stuffing + JD copy %, and the writing-prefs feedback loop (§26).
+from app.core.credibility import review_credibility as _cred  # noqa: E402
+from app.core.cv_planner import plan_cv as _plan  # noqa: E402
+from app.core import writing_prefs as _wprefs  # noqa: E402
+from app.db.models import User as _WPUser  # noqa: E402
+from sqlalchemy import select as _wpsel  # noqa: E402
+
+# Stage 2: the JD parser separates mandatory from preferred and captures outcomes.
+check(
+    "jd analysis carries preferred skills and business outcomes",
+    jd.preferred_skills == ["Docker", "Kubernetes"] and len(jd.business_outcomes) > 0,
+    f"{jd.preferred_skills} / {jd.business_outcomes}",
+)
+
+# Stage 4: the positioning plan routes through the stub and lands on the result.
+_p = _plan(resume, jd)
+check("PLAN_CV stub routes to a positioning plan", _p is not None and _p.positioning != "", str(_p))
+check(
+    "tailor result carries the plan and clean credibility flags for plain writing",
+    result.plan is not None
+    and result.plan.positioning != ""
+    and result.credibility_flags == [],
+    f"plan={result.plan} cred={result.credibility_flags}",
+)
+
+# Stage 11: the credibility reviewer flags true-but-overstated wording.
+_c_resume = resume.model_copy(deep=True)
+_c_resume.experience[0].bullets = [
+    "Architected enterprise-grade automation infrastructure.",
+    "Wrote SQL reports for internal teams.",
+]
+_c_flags = _cred(_c_resume, jd)
+check(
+    "CREDIBILITY stub flags exaggerated scale wording with a defensible rewording",
+    len(_c_flags) == 1
+    and _c_flags[0].risk == "excessive_scale"
+    and "enterprise-grade" in _c_flags[0].text
+    and _c_flags[0].suggestion != "",
+    str(_c_flags),
+)
+check("credibility review passes plain bullets", _cred(result.tailored_resume, jd) == [], str(_cred(result.tailored_resume, jd)))
+
+# Stage 9: keyword stuffing + JD phrase-overlap percentage.
+_s_resume = resume.model_copy(deep=True)
+_s_resume.summary = "Python developer using Python daily."
+_s_resume.experience[0].bullets = [
+    "Built Python tools in Python for Python teams.",
+    "Improved processes by 20%.",
+]
+_s_report = _audit(_s_resume, _v_jd)
+check(
+    "voice audit detects keyword stuffing (Python x6)",
+    any(i.category == "keyword_stuffing" and i.value.lower() == "python" for i in _s_report.issues),
+    str([(i.category, i.value) for i in _s_report.issues]),
+)
+check(
+    "voice audit reports JD copy % on the echoing resume, 0 on the clean one",
+    _audit(_v_bad, _v_jd).jd_copy_pct > 0 and result.voice_report.jd_copy_pct == 0.0,
+    f"bad={_audit(_v_bad, _v_jd).jd_copy_pct} clean={result.voice_report.jd_copy_pct}",
+)
+
+# §26 feedback loop: rejected phrases persist per user, dedupe, cap, and reach
+# the tailor prompt as an avoid-list.
+_wdb = SessionLocal()
+_wuser = _wdb.execute(_wpsel(_WPUser)).scalars().first()
+_stored = _wprefs.record_rejected(_wdb, _wuser, ["Leveraged synergies", "  ", "Leveraged synergies"])
+check("writing prefs store rejected phrases deduped", _stored == ["Leveraged synergies"], str(_stored))
+_stored = _wprefs.record_rejected(_wdb, _wuser, [f"phrase {i}" for i in range(60)])
+check(
+    "writing prefs cap at 50, newest first",
+    len(_stored) == 50 and _stored[0] == "phrase 0" and _wprefs.avoid_phrases(_wuser) == _stored,
+    f"len={len(_stored)} first={_stored[0]}",
+)
+_wdb.close()
+_tu = _prompts.tailor_user("{}", "{}", plan_json='{"positioning":"X"}', avoid_phrases=["Leveraged synergies"])
+check(
+    "tailor prompt carries the plan and the rejected-phrase avoid-list",
+    "POSITIONING PLAN" in _tu and '"Leveraged synergies"' in _tu,
+)
+check(
+    "tailor prompt without plan/prefs stays clean (back-compat)",
+    "POSITIONING PLAN" not in _prompts.tailor_user("{}", "{}")
+    and "REJECTED BEFORE" not in _prompts.tailor_user("{}", "{}"),
+)
+
+# Prompt pins for the new tasks (stub routing + extraction rules).
+check("PLAN_CV prompt Task tag first", _prompts.PLAN_CV_SYSTEM.startswith("Task: PLAN_CV."))
+check("CREDIBILITY prompt Task tag first", _prompts.CREDIBILITY_SYSTEM.startswith("Task: CREDIBILITY."))
+check(
+    "ANALYZE_JD and JD_FIT extract the mandatory/preferred split",
+    "preferred_skills" in _prompts.ANALYZE_JD_SYSTEM and "preferred_skills" in _prompts.JD_FIT_SYSTEM,
+)
+check(
+    "credibility_user keeps the stub's parse markers",
+    "RESUME TO REVIEW (JSON):" in _prompts.credibility_user("{}", "{}")
+    and "END RESUME" in _prompts.credibility_user("{}", "{}"),
+)
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

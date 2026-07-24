@@ -28,6 +28,11 @@ class User(Base):
     # the Jobs page prefills the panel on the next visit. Migrates onto
     # pre-existing tables via the ADD-COLUMN shim in database.py.
     search_prefs_json: Mapped[str] = mapped_column(Text, default="")
+    # Writing-profile feedback loop (CV humanization spec §26): JSON list of
+    # phrases this user rejected in the per-bullet review, fed to the TAILOR
+    # prompt as an avoid-list. Learned only from explicit user decisions.
+    # "" = none. Migrates via the ADD-COLUMN shim.
+    writing_prefs_json: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

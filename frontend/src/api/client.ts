@@ -81,6 +81,14 @@ export async function tailor(resume: ResumeModel, jd: JDModel): Promise<TailorRe
   return data;
 }
 
+/** Feedback loop (§26): phrases the user rejected in the per-bullet review are
+ * stored server-side and fed to future tailors as an avoid-list. Best-effort —
+ * callers fire-and-forget. */
+export async function recordRejectedPhrases(rejected: string[]): Promise<void> {
+  if (rejected.length === 0) return;
+  await api.post("/profile/writing-prefs", { rejected });
+}
+
 export async function coverLetter(
   resume: ResumeModel,
   jd: JDModel,

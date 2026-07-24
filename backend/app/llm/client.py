@@ -106,6 +106,18 @@ class StubClient:
             }
         if "TAILOR" in head:
             return self._stub_tailor(user)
+        if "HUMANIZE" in head:
+            return self._stub_humanize(user)
+        if "PLAN_CV" in head:
+            return {
+                "positioning": "[stub] Software engineer focused on Python services and REST APIs.",
+                "lead_strengths": ["Python", "REST APIs", "SQL"],
+                "emphasize": ["Engineer at Acme Corp"],
+                "downplay": ["[stub] Early unrelated coursework"],
+                "conservative_notes": ["[stub] Keep process-improvement claims tied to the 20% metric"],
+            }
+        if "CREDIBILITY" in head:
+            return self._stub_credibility(user)
         if "FIT_SCORE" in head:
             return {"fit_score": 72.0, "rationale": "[stub] Reasonable overlap in core skills."}
         if "INTERVIEW_QUESTIONS" in head:
@@ -263,6 +275,8 @@ class StubClient:
             "company": "Example Inc",
             "seniority": "Mid",
             "hard_skills": ["Python", "REST APIs", "SQL"],
+            "preferred_skills": ["Docker", "Kubernetes"],
+            "business_outcomes": ["Ship features faster", "Improve system reliability"],
             "soft_skills": ["Communication", "Teamwork"],
             "keywords": ["Python", "REST APIs", "SQL", "CI/CD", "Agile"],
             "responsibilities": ["Build features", "Review code"],
@@ -280,6 +294,94 @@ class StubClient:
                  "rationale": "[stub] Motivation fit."},
             ]
         }
+
+    # Plain-verb rewrites the humanizer stub applies, mirroring what the real
+    # HUMANIZE prompt asks for. Deterministic and fact-safe (verbs only), so
+    # the voice-audit -> humanize -> guard loop is observable offline.
+    _HUMANIZE_FIXES = [
+        ("spearheaded", "led"),
+        ("spearheading", "leading"),
+        ("leveraged", "used"),
+        ("leveraging", "using"),
+        ("utilized", "used"),
+        ("utilizing", "using"),
+        ("streamlined", "reworked"),
+        ("orchestrated", "ran"),
+        ("championed", "led"),
+        ("passionate about", "focused on"),
+        ("results-driven", "hands-on"),
+        ("cutting-edge", "modern"),
+    ]
+
+    def _stub_humanize(self, user: str) -> dict[str, Any]:
+        # Extract the resume between the markers humanize_user() writes, then
+        # swap banned buzzwords for plain verbs (case-preserving on the first
+        # letter). Anything unexpected -> {} and the caller keeps the original.
+        start = user.find("RESUME TO EDIT (JSON):")
+        end = user.find("END RESUME")
+        if start == -1 or end == -1:
+            return {}
+        try:
+            resume = json.loads(user[start + len("RESUME TO EDIT (JSON):"):end].strip())
+        except json.JSONDecodeError:
+            return {}
+
+        def fix(text: str) -> str:
+            for bad, good in self._HUMANIZE_FIXES:
+                text = text.replace(bad, good)
+                text = text.replace(bad.capitalize(), good.capitalize())
+            return text
+
+        resume["summary"] = fix(resume.get("summary", ""))
+        for exp in resume.get("experience", []):
+            exp["bullets"] = [fix(b) for b in exp.get("bullets", [])]
+        for proj in resume.get("projects", []):
+            proj["description"] = fix(proj.get("description", ""))
+            proj["bullets"] = [fix(b) for b in proj.get("bullets", [])]
+        return {"revised_resume": resume}
+
+    # Exaggeration markers the credibility stub scans for — the same wording
+    # the real CREDIBILITY prompt treats as scale/ownership inflation, so the
+    # audit loop is observable offline.
+    _CREDIBILITY_MARKERS = [
+        ("enterprise-grade", "excessive_scale"),
+        ("company-wide", "excessive_scale"),
+        ("mission-critical", "excessive_scale"),
+        ("architected", "exaggerated_ownership"),
+    ]
+
+    def _stub_credibility(self, user: str) -> dict[str, Any]:
+        # Scan the resume between the markers credibility_user() writes; flag
+        # each bullet/summary line containing a known exaggeration marker.
+        start = user.find("RESUME TO REVIEW (JSON):")
+        end = user.find("END RESUME")
+        if start == -1 or end == -1:
+            return {"flags": []}
+        try:
+            resume = json.loads(user[start + len("RESUME TO REVIEW (JSON):"):end].strip())
+        except json.JSONDecodeError:
+            return {"flags": []}
+        texts = [resume.get("summary", "")]
+        for exp in resume.get("experience", []):
+            texts.extend(exp.get("bullets", []))
+        for proj in resume.get("projects", []):
+            texts.append(proj.get("description", ""))
+            texts.extend(proj.get("bullets", []))
+        flags = []
+        for text in texts:
+            low = text.lower()
+            for marker, risk in self._CREDIBILITY_MARKERS:
+                if marker in low:
+                    flags.append(
+                        {
+                            "text": text,
+                            "risk": risk,
+                            "detail": f"[stub] '{marker}' implies more than the resume supports.",
+                            "suggestion": f"[stub] Restate without '{marker}' — name the actual system and your part.",
+                        }
+                    )
+                    break
+        return {"flags": flags}
 
     def _stub_tailor(self, user: str) -> dict[str, Any]:
         # Apply realistic, guard-clean edits (no new numbers/employers/titles/

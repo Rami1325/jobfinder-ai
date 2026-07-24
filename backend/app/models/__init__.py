@@ -84,7 +84,12 @@ class JDModel(BaseModel):
     # "he" | "en" — set deterministically by jd_analyzer (regex on the Hebrew
     # Unicode block, never the LLM). Defaults "en" for back-compat.
     language: str = "en"
-    hard_skills: list[str] = Field(default_factory=list)
+    hard_skills: list[str] = Field(default_factory=list)  # mandatory/required skills
+    # Humanization spec stage 2: nice-to-have skills and the business outcomes
+    # the role exists to drive — parsed separately from hard requirements so
+    # the planner and tailor never treat a "bonus" skill as a must-have gap.
+    preferred_skills: list[str] = Field(default_factory=list)
+    business_outcomes: list[str] = Field(default_factory=list)
     soft_skills: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
     responsibilities: list[str] = Field(default_factory=list)
@@ -139,6 +144,58 @@ class ChangeLogEntry(BaseModel):
     reason: str = ""
 
 
+class VoiceIssue(BaseModel):
+    # banned_phrase | repeated_verb | repeated_phrase | outcome_clause |
+    # jd_echo | uniform_bullets
+    category: str
+    value: str  # the offending phrase/verb
+    location: str = ""  # e.g. "summary", "experience: Acme Corp"
+    detail: str = ""
+
+
+class VoiceReport(BaseModel):
+    """Deterministic 'does this read like a human wrote it' audit of a resume.
+
+    Produced by app/core/voice_audit.py after every tailor. `issues` are what
+    remains AFTER the humanizer pass (if it ran); `fixed` are issues the pass
+    removed. 100 = no AI tells detected."""
+
+    human_voice_score: float = 100.0  # 0-100
+    # % of the resume's 5-word phrases that appear verbatim in the JD's prose
+    # (humanization spec stage 9: high overlap = the CV copies the employer's
+    # wording instead of describing real experience).
+    jd_copy_pct: float = 0.0
+    issues: list[VoiceIssue] = Field(default_factory=list)
+    fixed: list[VoiceIssue] = Field(default_factory=list)
+    revised: bool = False  # a humanizer LLM pass ran and was accepted
+
+
+class CVPlan(BaseModel):
+    """Positioning strategy decided BEFORE tailoring (humanization spec stage 4):
+    one coherent professional story, not a keyword collection. Fed into the
+    TAILOR prompt and surfaced to the user."""
+
+    positioning: str = ""  # one-line professional identity for THIS role
+    lead_strengths: list[str] = Field(default_factory=list)
+    emphasize: list[str] = Field(default_factory=list)  # experience/projects to lead with
+    downplay: list[str] = Field(default_factory=list)  # content to trim or move down
+    conservative_notes: list[str] = Field(default_factory=list)  # claims needing careful wording
+
+
+class CredibilityFlag(BaseModel):
+    """A claim the candidate may struggle to defend in an interview
+    (humanization spec stage 11). Unlike FabricationFlags these are not
+    invented facts — they are true-but-overstated wording. Advisory: surfaced
+    as warnings, never auto-removed."""
+
+    text: str  # the flagged bullet/sentence (as written)
+    # exaggerated_ownership | inflated_seniority | unverified_production |
+    # vague_impact | excessive_scale | tool_padding | unclear_contribution
+    risk: str
+    detail: str = ""
+    suggestion: str = ""  # a more defensible rewording of the SAME facts
+
+
 class TailorResult(BaseModel):
     tailored_resume: ResumeModel
     changelog: list[ChangeLogEntry] = Field(default_factory=list)
@@ -146,11 +203,26 @@ class TailorResult(BaseModel):
     fabrication_flags: list[FabricationFlag] = Field(default_factory=list)
     score_before: Score = Field(default_factory=Score)
     score_after: Score = Field(default_factory=Score)
+    voice_report: VoiceReport = Field(default_factory=VoiceReport)
+    plan: CVPlan | None = None
+    credibility_flags: list[CredibilityFlag] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
 # API request/response bodies
 # --------------------------------------------------------------------------- #
+class WritingPrefsIn(BaseModel):
+    """Feedback-loop signals (humanization spec §26): phrases the user rejected
+    in the per-bullet review. Learned ONLY from explicit user decisions —
+    never from unapproved generated output."""
+
+    rejected: list[str] = Field(default_factory=list)
+
+
+class WritingPrefsOut(BaseModel):
+    avoid: list[str] = Field(default_factory=list)
+
+
 class JDAnalyzeRequest(BaseModel):
     jd_text: str
 

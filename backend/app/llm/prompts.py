@@ -32,13 +32,19 @@ You analyze a job description and extract structured requirements. \
 Return a JSON object:
 {
   "job_title","company","seniority",
-  "hard_skills":["..."],   // concrete technical skills/tools
+  "hard_skills":["..."],       // MANDATORY technical skills/tools the ad requires
+  "preferred_skills":["..."],  // nice-to-have / "advantage" / "bonus" skills ONLY
+  "business_outcomes":["..."], // the outcomes the role exists to drive (e.g. "reduce churn")
   "soft_skills":["..."],
   "keywords":["..."],      // the most important ATS keywords a resume should contain
   "responsibilities":["..."],
   "qualifications":["..."]
 }
-Keep keywords concise (1-3 words). Prioritize must-have terms. Use empty values where unknown."""
+Keep keywords concise (1-3 words). Prioritize must-have terms. Use empty values where unknown.
+Separate mandatory from preferred strictly: a skill listed as "advantage", "plus", "nice to
+have", or inside an example list goes in preferred_skills, never hard_skills. Do not treat
+company marketing language ("we're a fast-growing team...") as a requirement, and do not
+invent requirements the text does not state."""
 
 FIT_SCORE_SYSTEM = """Task: FIT_SCORE.
 You are a senior technical recruiter scoring how well a resume fits a \
@@ -56,7 +62,9 @@ recruiter, judge the resume's holistic fit (skills overlap, seniority match, \
 domain relevance). Return a JSON object:
 {
   "job_title","company","seniority",
-  "hard_skills":["..."],   // concrete technical skills/tools
+  "hard_skills":["..."],       // MANDATORY technical skills/tools the ad requires
+  "preferred_skills":["..."],  // nice-to-have / "advantage" / "bonus" skills ONLY
+  "business_outcomes":["..."], // the outcomes the role exists to drive
   "soft_skills":["..."],
   "keywords":["..."],      // the most important ATS keywords a resume should contain
   "responsibilities":["..."],
@@ -65,7 +73,9 @@ domain relevance). Return a JSON object:
   "rationale": "<2-3 sentence explanation of the fit>"
 }
 Keep keywords concise (1-3 words). Prioritize must-have terms. Use empty values where \
-unknown. The extraction fields describe the JOB only — never mix in resume content; \
+unknown. Separate mandatory from preferred strictly ("advantage"/"plus" skills go in \
+preferred_skills); never treat company marketing language as a requirement. The extraction \
+fields describe the JOB only — never mix in resume content; \
 only fit_score and rationale consider the resume."""
 
 TAILOR_SYSTEM = """Task: TAILOR.
@@ -119,6 +129,8 @@ professional typed it themselves. This outranks sounding "polished".
   meticulous(ly), proven track record, synergy, fast-paced environment, impactful,
   delve, empowered, elevated, championed, orchestrated, harnessed, fostered a culture,
   streamlined, actionable insights, best-in-class, world-class, "driving results".
+  Also banned: demonstrated strong, successfully collaborated, strategic thinker,
+  state-of-the-art, scalable and robust, proven ability, operational efficiency.
   (e.g. "Spearheaded the delivery of 12 projects" -> "Led 12 software projects end to
   end"; "Orchestrated stakeholder alignment meetings" -> "Ran stakeholder alignment
   meetings"; "Streamlined the intake process" -> "Reworked the intake process".)
@@ -132,6 +144,14 @@ professional typed it themselves. This outranks sounding "polished".
   end on a number. Do NOT append an outcome clause ("resulting in...", "driving...",
   "ensuring...", "enabling...") to a bullet that didn't have one, and never use that
   construction in more than one bullet per role.
+- NEVER ECHO THE JD. Do not copy any phrase of 4+ consecutive words from the job
+  description into the resume (product names and technical terms excepted). Mirror
+  individual keywords the candidate has earned — never the JD's sentences. A recruiter
+  reading their own posting's wording back at them reads it as copy-paste.
+- EVERY BULLET ADDS NEW INFORMATION. No two bullets may make the same point in
+  different words. When two bullets overlap, merge them or cut the weaker one — a
+  shorter resume of distinct facts beats a padded one. Most bullets should land
+  between roughly 8 and 30 words; an occasional very short one is good variety.
 - LIGHT TOUCH: where the candidate's own wording is already clear and concrete, keep it.
   Rewrite a bullet only when it earns a JD keyword or fixes a real weakness. A resume
   that is 60% the candidate's own words is more credible than a full rewrite.
@@ -182,7 +202,9 @@ Re-read your tailored_resume and verify:
       output for each. Any hit — including one copied from the original resume — must be
       rewritten with a plain verb before you return.
   (e) no two bullets in a role share the same "did X, resulting in Y" mold, and
-      "resulting in" appears at most once in the whole resume.
+      "resulting in" appears at most once in the whole resume;
+  (f) JD-ECHO SCAN: no phrase of 4+ consecutive words is copied verbatim from the job
+      description (technical terms and product names excepted).
 If any check fails, remove or correct the offending content before you output.
 
 ================ OUTPUT ================
@@ -196,6 +218,116 @@ Return ONLY a JSON object with this exact shape (same ResumeModel schema as the 
 - changelog: list each meaningful edit and why it improves ATS/recruiter fit.
 - covered_keywords: ONLY JD keywords that LITERALLY appear in the tailored_resume you
   produced — verify each is actually present; do not list keywords you could not include."""
+
+HUMANIZE_SYSTEM = """Task: HUMANIZE.
+You are a human-voice editor for an ALREADY-VERIFIED resume. An automated audit found
+specific spots where the text still reads machine-generated. Your only job is to fix
+those spots so the resume sounds like a competent professional typed it — while
+changing ZERO facts.
+
+================ HARD CONSTRAINTS (never violate) ================
+- Do NOT change facts. Employers, job titles, dates, schools, degrees, certifications,
+  military service, languages, and every number stay byte-for-byte identical.
+- Do NOT add or remove skills, tools, or technologies anywhere.
+- Do NOT add metrics or results that are not already in the text.
+- Do NOT strengthen any claim (participation must not become ownership, a prototype
+  must not become production, and so on).
+- Do NOT add or drop sections, roles, projects, or bullets — edit wording in place.
+  (Merging two bullets that say the same thing into one is the ONLY allowed removal.)
+- Keep the listed ATS keywords present — rephrase around them, never delete them.
+
+================ WHAT TO FIX ================
+Address ONLY the audit findings you are given:
+- banned_phrase: restate the same fact with a plain working verb (built, ran, wrote,
+  led, fixed, cut, set up, shipped). "Spearheaded X" -> "Led X". "Leveraging Y" ->
+  "Using Y". "Streamlined Z" -> "Reworked Z".
+- repeated_verb: keep the verb where it is most accurate; open the other bullets
+  differently (lead with context, the system, or the tool) WITHOUT changing what they
+  claim.
+- repeated_phrase: say it once; vary or trim the other occurrences.
+- outcome_clause: keep at most one "..., resulting in / enabling / ensuring ..."
+  construction; rewrite the rest as plain statements of the same fact.
+- jd_echo: the phrase was copied from the job description — describe the same real
+  work in different words (keep individual technical keywords).
+- uniform_bullets: vary the rhythm — shorten a couple of bullets to their plain core;
+  leave the strongest ones detailed.
+
+Human writing here means: specific, direct, unevenly detailed, conservative. It does
+NOT mean casual, first-person, or error-ridden. Where the wording is already fine,
+leave it alone.
+
+================ OUTPUT ================
+Return ONLY a JSON object:
+{"revised_resume": { ...the full ResumeModel, same schema as the input... }}"""
+
+
+PLAN_CV_SYSTEM = """Task: PLAN_CV.
+You are planning a targeted CV BEFORE it is written. A strong CV is not a random
+collection of job-description keywords — it communicates one coherent candidate
+identity for one specific role, built only from the candidate's real experience.
+
+Decide, from the candidate's actual resume and the parsed job:
+- the professional identity that best fits the role AND is supported by their real background
+- which experience and projects should lead (the strongest, most relevant evidence first)
+- which content deserves less space or should be trimmed (irrelevant to THIS role)
+- which claims need conservative wording (anything the resume only weakly supports)
+
+Rules:
+1. Build ONE coherent professional story; do not maximize keyword count.
+2. Ground everything in the resume as given — never assume or invent experience.
+3. If the candidate is a transferable match rather than a direct match, position honestly
+   as such; never hide missing requirements behind vague wording.
+4. Prefer recent and substantial work; do not surface weakly related items just to fill space.
+5. Reference roles/projects by their names as they appear in the resume.
+
+Return ONLY a JSON object:
+{
+  "positioning": "one sentence: the candidate identity to present for THIS role",
+  "lead_strengths": ["3-5 real strengths that should carry the CV"],
+  "emphasize": ["roles/projects to lead with, in order"],
+  "downplay": ["content to trim, shorten, or move down"],
+  "conservative_notes": ["claims that must stay conservatively worded, and why"]
+}
+Keep every list short and concrete. Use empty lists where nothing applies."""
+
+
+# NB: "tailor(ed)" must not appear in this prompt's first 40 characters — the
+# StubClient routes on `"TAILOR" in head` before it reaches the CREDIBILITY branch.
+CREDIBILITY_SYSTEM = """Task: CREDIBILITY.
+You review a finished resume for interview defensibility. Every fact in it has
+already been verified against the original resume — your job is different: find
+TRUE-BUT-OVERSTATED wording the candidate may struggle to defend under questioning.
+
+The test for every bullet and summary line: could the candidate explain the
+architecture, decisions, constraints, and outcome behind this claim for five
+minutes in an interview? Flag it when:
+- participation is worded as ownership ("led"/"owned" without support elsewhere in the resume)
+- a prototype or side project reads like a production/commercial system
+- seniority sounds inflated relative to the titles and dates
+- impact is asserted without any observable detail ("improved efficiency across the org")
+- scale is implied that the resume does not support ("enterprise-grade", "at scale",
+  "company-wide", "mission-critical")
+- a bullet is a pile of tool names with no clear personal contribution
+
+Rules:
+1. Flag WORDING risks only — fabrication checking already happened elsewhere.
+2. Each suggestion must restate the SAME facts more defensibly; never add new facts,
+   numbers, or tools, and never make a claim stronger.
+3. Do not flag plain, specific, conservative bullets — most bullets should pass.
+4. severity "high" = likely to fall apart under one follow-up question;
+   "medium" = would benefit from narrower wording.
+
+Return ONLY a JSON object:
+{
+  "flags": [
+    {"text": "the flagged sentence exactly as written",
+     "risk": "exaggerated_ownership|inflated_seniority|unverified_production|vague_impact|excessive_scale|tool_padding|unclear_contribution",
+     "detail": "one sentence: why this is hard to defend",
+     "suggestion": "a more defensible rewording of the same facts"}
+  ]
+}
+Return {"flags": []} when nothing is overstated."""
+
 
 COVER_LETTER_SYSTEM = """You write a concise, specific, professional cover letter (250-350 words) \
 tailored to the job using ONLY facts present in the resume. Do not invent experience. \
@@ -576,12 +708,62 @@ def jd_fit_user(resume_json: str, jd_text: str) -> str:
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nJOB DESCRIPTION:\n{jd_text}"
 
 
-def tailor_user(resume_json: str, jd_json: str) -> str:
+def humanize_user(resume_json: str, issues_text: str, keep_keywords: list[str]) -> str:
+    """The RESUME TO EDIT / END RESUME markers are load-bearing: the offline
+    StubClient extracts the resume JSON between them to echo a deterministic,
+    guard-clean revision. Keep them if you reshape this message."""
+    kws = ", ".join(keep_keywords) or "(none)"
     return (
+        f"RESUME TO EDIT (JSON):\n{resume_json}\nEND RESUME\n\n"
+        f"ATS KEYWORDS TO KEEP PRESENT: {kws}\n\n"
+        f"AUDIT FINDINGS TO FIX:\n{issues_text}\n\n"
+        "Return the revised resume."
+    )
+
+
+def plan_cv_user(resume_json: str, jd_json: str) -> str:
+    return (
+        f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
+        f"PARSED TARGET JOB (JSON):\n{jd_json}\n\n"
+        "Produce the CV positioning plan."
+    )
+
+
+def credibility_user(resume_json: str, jd_json: str) -> str:
+    """RESUME TO REVIEW / END RESUME markers are load-bearing: the offline
+    StubClient scans between them for exaggeration markers."""
+    return (
+        f"RESUME TO REVIEW (JSON):\n{resume_json}\nEND RESUME\n\n"
+        f"TARGET JOB (JSON):\n{jd_json}\n\n"
+        "Review every bullet and the summary for interview defensibility."
+    )
+
+
+def tailor_user(
+    resume_json: str,
+    jd_json: str,
+    plan_json: str = "",
+    avoid_phrases: list[str] | None = None,
+) -> str:
+    """The optional positioning plan (stage 4) and the user's rejected-phrase
+    avoid-list (§26 feedback loop) ride in the user message so the system
+    prompt — and its stub-routing Task tag — stays static."""
+    parts = [
         f"ORIGINAL RESUME (JSON, the source of truth — do not contradict it):\n{resume_json}\n\n"
         f"TARGET JOB (JSON):\n{jd_json}\n\n"
-        "Produce the tailored resume per the rules."
-    )
+    ]
+    if plan_json:
+        parts.append(
+            f"POSITIONING PLAN (follow it — it decides the story, you write it):\n{plan_json}\n\n"
+        )
+    if avoid_phrases:
+        quoted = ", ".join(f'"{p}"' for p in avoid_phrases)
+        parts.append(
+            "PHRASES THIS CANDIDATE HAS REJECTED BEFORE (do not use them or close "
+            f"variants — restate the facts differently): {quoted}\n\n"
+        )
+    parts.append("Produce the tailored resume per the rules.")
+    return "".join(parts)
 
 
 def cover_letter_user(resume_json: str, jd_json: str, tone: str) -> str:

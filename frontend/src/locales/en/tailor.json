@@ -102,6 +102,38 @@
     "guardNoteFlags_one": "{{count}} claim we couldn't find in your résumé. It doesn't ship until you approve it.",
     "guardNoteFlags_other": "{{count}} claims we couldn't find in your résumé. They don't ship until you approve them."
   },
+  "voice": {
+    "title": "Human voice check",
+    "score": "{{value}}/100",
+    "cleanNote": "Reads like you wrote it — no AI tells detected.",
+    "issuesNote_one": "{{count}} spot still sounds machine-written. Worth a quick manual edit.",
+    "issuesNote_other": "{{count}} spots still sound machine-written. Worth a quick manual edit.",
+    "fixed_one": "{{count}} AI-sounding phrase rewritten:",
+    "fixed_other": "{{count}} AI-sounding phrases rewritten:",
+    "cat": {
+      "banned_phrase": "résumé buzzword",
+      "repeated_verb": "repeated opening verb",
+      "repeated_phrase": "repeated phrase",
+      "outcome_clause": "repeated outcome clause",
+      "jd_echo": "copied from the job description",
+      "uniform_bullets": "uniform bullet lengths",
+      "keyword_stuffing": "keyword stuffing"
+    },
+    "positioning": "The story this résumé tells:",
+    "credTitle_one": "{{count}} claim to be ready to defend",
+    "credTitle_other": "{{count}} claims to be ready to defend",
+    "credNote": "True but strongly worded — an interviewer may dig in. Soften the wording or be ready to back it up.",
+    "credSuggestion": "More defensible:",
+    "risk": {
+      "exaggerated_ownership": "ownership sounds bigger than the résumé shows",
+      "inflated_seniority": "seniority sounds inflated",
+      "unverified_production": "production claim without support",
+      "vague_impact": "impact claimed without detail",
+      "excessive_scale": "scale sounds bigger than supported",
+      "tool_padding": "tool list without your contribution",
+      "unclear_contribution": "your part isn't clear"
+    }
+  },
   "report": {
     "title": "Keyword match report",
     "summary": "{{missing}} of {{total}} key terms still missing. Only add terms that reflect real experience.",

@@ -8,6 +8,7 @@ import {
   resumeFilename,
   getApplication,
   getMasterResume,
+  recordRejectedPhrases,
   RESUME_TEMPLATES,
   type ResumeTemplate,
   saveApplication,
@@ -19,6 +20,7 @@ import MatchReport from "../components/MatchReport";
 import JDPaste from "../components/JDPaste";
 import ResumeUpload from "../components/ResumeUpload";
 import ScoreCard from "../components/ScoreCard";
+import VoicePanel from "../components/VoicePanel";
 import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { applyEditDecisions, diffResumes } from "../lib/resumeDiff";
 import { Badge, Button, Card, CardTitle, Skeleton, Stepper, useToast } from "../components/ui";
@@ -133,6 +135,16 @@ export default function TailorPage() {
     if (m) setTailorState({ masterLabel: m.label });
   }
 
+  // Feedback loop (§26): the AI wording the user rejected becomes a stored
+  // negative signal — future tailors receive it as an avoid-list. Fired on
+  // save/apply (the moment the review decisions are final), best-effort.
+  function persistRejectedPhrases() {
+    const phrases = edits
+      .filter((e) => rejectedSet.has(e.id) && e.after.trim() !== "")
+      .map((e) => e.after);
+    recordRejectedPhrases(phrases).catch(() => {});
+  }
+
   async function save() {
     if (!result || !jd) return;
     if (savedAppId !== null) {
@@ -151,6 +163,7 @@ export default function TailorPage() {
       job_url: jobUrl || undefined,
     });
     setTailorState({ savedAppId: app.id, saved: true });
+    persistRejectedPhrases();
     toast("success", t("toasts.savedToTracker"));
   }
 
@@ -173,6 +186,7 @@ export default function TailorPage() {
         });
         setTailorState({ savedAppId: app.id, saved: true, applied: true });
       }
+      persistRejectedPhrases();
       toast("success", t("toasts.markedApplied"));
     } catch {
       toast("error", t("toasts.trackerError"));
@@ -328,6 +342,11 @@ export default function TailorPage() {
               </div>
             )}
             <ScoreCard before={result.score_before} after={result.score_after} flags={result.fabrication_flags} />
+            <VoicePanel
+              report={result.voice_report}
+              plan={result.plan}
+              credibility={result.credibility_flags ?? []}
+            />
             <MatchReport gaps={result.score_after.gaps} jdText={jdText} resume={effectiveResume} />
             <ChangeLog
               edits={edits}

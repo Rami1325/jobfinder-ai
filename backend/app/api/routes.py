@@ -48,6 +48,7 @@ from app.core.providers.greenhouse import register_company as register_greenhous
 from app.core.providers.greenhouse_seed import board_url as greenhouse_board_url
 from app.core.tailor import tailor_resume
 from app.core.usage import check_and_count
+from app.core import writing_prefs as writing_prefs_core
 from app.db.comeet import list_companies as list_comeet_companies
 from app.db.database import SessionLocal, get_db
 from app.db.greenhouse import list_companies as list_greenhouse_companies
@@ -150,6 +151,8 @@ from app.models import (
     StaleApplicationList,
     TailorRequest,
     TailorResult,
+    WritingPrefsIn,
+    WritingPrefsOut,
     UserCreate,
     UserList,
     UserOut,
@@ -205,9 +208,28 @@ def tailor(
 ) -> TailorResult:
     check_and_count(db, user, "tailor", get_settings().daily_tailor_cap)
     try:
-        return tailor_resume(body.resume, body.jd)
+        return tailor_resume(
+            body.resume, body.jd,
+            avoid_phrases=writing_prefs_core.avoid_phrases(user),
+        )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while tailoring résumé: {e}")
+
+
+@router.get("/profile/writing-prefs", response_model=WritingPrefsOut)
+def get_writing_prefs(user: User = Depends(current_user)) -> WritingPrefsOut:
+    return WritingPrefsOut(avoid=writing_prefs_core.avoid_phrases(user))
+
+
+@router.post("/profile/writing-prefs", response_model=WritingPrefsOut)
+def add_writing_prefs(
+    body: WritingPrefsIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> WritingPrefsOut:
+    """Record phrases the user rejected in the per-bullet review (§26 feedback
+    loop). Future tailors receive them as an avoid-list."""
+    return WritingPrefsOut(avoid=writing_prefs_core.record_rejected(db, user, body.rejected))
 
 
 @router.post("/cover-letter", response_model=CoverLetterResponse)
