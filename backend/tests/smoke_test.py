@@ -49,7 +49,7 @@ from app.core.jd_analyzer import analyze_jd  # noqa: E402
 from app.core.job_match import match_jobs  # noqa: E402
 from app.core.linkedin import optimize_linkedin  # noqa: E402
 from app.core.tailor import tailor_resume  # noqa: E402
-from app.models import Experience, FactsLedger, ResumeModel  # noqa: E402
+from app.models import Contact, Education, Experience, FactsLedger, ResumeModel  # noqa: E402
 from app.parsers.structurer import build_facts_ledger, structure_resume  # noqa: E402
 from app.render.docx_renderer import render_docx  # noqa: E402
 from app.render.pdf_renderer import render_pdf  # noqa: E402
@@ -268,6 +268,136 @@ check(
 # 10. ATS scanner (deterministic checks + optional coverage)
 ats = scan_resume(resume, "Python, SQL, REST APIs required.")
 check("ats scan produced issues + score", len(ats.issues) > 0 and 0 <= ats.score <= 100, str(ats.score))
+
+# 10b. Deeper ATS checks (PLAN 17.4) — all deterministic, all explainable, and
+# all reporting rather than rewriting. Each is pinned on a résumé that trips it
+# AND one that does not, so a check that silently always fires can't hide.
+from app.core.dates import ats_form, is_current, parse_date, years_of_experience  # noqa: E402
+
+check(
+    "dates: the ATS-safe form is derived, and a bare year is never given an invented month",
+    ats_form("03/2020") == "Mar 2020"
+    and ats_form("March 2020") == "Mar 2020"
+    and ats_form("מרץ 2020") == "Mar 2020"
+    and ats_form("2020") == "2020"
+    and ats_form("summer of 2019") == "2019"
+    and ats_form("sometime") == ""
+    and ats_form("היום") == "Present",
+    f'{ats_form("summer of 2019")=} {ats_form("2020")=}',
+)
+check(
+    "dates: hebrew and english 'still there' words both read as current",
+    is_current("Present") and is_current("היום") and not is_current("2020"),
+)
+check(
+    "dates: concurrent roles are unioned, not summed",
+    years_of_experience(
+        ResumeModel(experience=[
+            Experience(company="A", start_date="2020", end_date="2024"),
+            Experience(company="B", start_date="2021", end_date="2023"),
+        ])
+    ) == 4.0,
+    str(years_of_experience(ResumeModel(experience=[
+        Experience(company="A", start_date="2020", end_date="2024"),
+        Experience(company="B", start_date="2021", end_date="2023"),
+    ]))),
+)
+
+
+def _ats_labels(r: ResumeModel, severity: str | None = None) -> set[str]:
+    return {i.label for i in scan_resume(r).issues if severity is None or i.severity == severity}
+
+
+_messy = ResumeModel(
+    contact=Contact(name="A", email="a@b.com", phone="050"),
+    summary="I lead ML work and my focus is CI/CD.",
+    skills=["Python", "SQL", "Docker", "Git", "Linux"],
+    experience=[Experience(
+        company="Acme", title="Eng", start_date="summer of 2019", end_date="sometime",
+        bullets=["Did.", "Shipped a thing."],
+    )],
+)
+_messy_warn = _ats_labels(_messy)
+check(
+    "ats 17.4: unreadable dates, unpaired acronyms, pronouns and stub bullets all surface",
+    "Unreadable employment dates" in _messy_warn
+    and "Pair each acronym with its long form once" in _messy_warn
+    and "Drop the first-person pronouns" in _messy_warn
+    and "Some bullets are the wrong length" in _messy_warn,
+    str(sorted(_messy_warn)),
+)
+_tidy = ResumeModel(
+    contact=Contact(name="A", email="a@b.com", phone="050"),
+    summary="Backend engineer building payment services.",
+    skills=["Python", "SQL", "FastAPI", "Docker", "Git"],
+    experience=[Experience(
+        company="Acme", title="Eng", start_date="Mar 2019", end_date="Present",
+        bullets=["Cut checkout latency from 840ms to 210ms across 1.2M monthly transactions.",
+                 "Reduced failed charges by 38% with an idempotent retry pipeline."],
+    )],
+)
+_tidy_good = _ats_labels(_tidy, "good")
+check(
+    "ats 17.4: a clean résumé passes every new check (no always-on warnings)",
+    {"Dates are in an ATS-readable format", "Acronyms are spelled out",
+     "No first-person pronouns", "Bullet lengths are well judged",
+     "Length suits the experience"} <= _tidy_good,
+    str(sorted(_ats_labels(_tidy) - _tidy_good)),
+)
+check(
+    "ats 17.4: 'I' is matched as a word, not inside other words",
+    "Drop the first-person pronouns" not in _ats_labels(
+        _tidy.model_copy(update={"summary": "Migrated it, improved it, integrated it."})
+    ),
+)
+
+# 10c. Section order by profile (PLAN 17.5): education outranks experience for
+# an early-career résumé, and both renderers follow the same rule.
+from app.core.section_order import EARLY_CAREER_ORDER, EXPERIENCED_ORDER, is_early_career, section_order  # noqa: E402
+
+_senior = ResumeModel(
+    contact=Contact(name="S"), summary="x", skills=["Python"],
+    experience=[Experience(company="A", title="Eng", start_date="2015", end_date="2024", bullets=["Did work."])],
+    education=[Education(institution="TAU", degree="BSc", start_date="2011", end_date="2014")],
+)
+_student = _senior.model_copy(deep=True)
+_student.experience = [Experience(company="A", title="Intern", start_date="2025", end_date="2026", bullets=["Did work."])]
+_student.education = [Education(institution="TAU", degree="BSc", start_date="2023", end_date="")]
+_no_jobs = _senior.model_copy(deep=True)
+_no_jobs.experience = []
+_no_school = _senior.model_copy(deep=True)
+_no_school.education = []
+_no_school.experience = [Experience(company="A", title="Eng", start_date="2025", end_date="2026", bullets=["Did work."])]
+check(
+    "17.5: early-career = still studying, no jobs yet, or under 3 years",
+    is_early_career(_student) and is_early_career(_no_jobs)
+    and not is_early_career(_senior) and not is_early_career(_no_school),
+    f"student={is_early_career(_student)} nojobs={is_early_career(_no_jobs)} "
+    f"senior={is_early_career(_senior)} noschool={is_early_career(_no_school)}",
+)
+check(
+    "17.5: the two orders differ only in where education sits",
+    section_order(_senior) == EXPERIENCED_ORDER
+    and section_order(_student) == EARLY_CAREER_ORDER
+    and set(EARLY_CAREER_ORDER) == set(EXPERIENCED_ORDER),
+)
+_old_blank = _senior.model_copy(deep=True)
+_old_blank.education = [Education(institution="TAU", degree="BSc", start_date="2005", end_date="")]
+check(
+    "17.5: a blank end date on an OLD degree means unfilled, not 'still studying'",
+    not is_early_career(_old_blank),
+    str(section_order(_old_blank)[:4]),
+)
+_no_dates = _senior.model_copy(deep=True)
+_no_dates.education = [Education(institution="TAU", degree="BSc")]
+check(
+    "17.5: a degree with no dates at all makes no claim either way",
+    not is_early_career(_no_dates),
+)
+
+
+# The rendered proof of 17.5 lives with the other render checks (section 18b),
+# where the PDF text extractor is in scope.
 
 # 11. LinkedIn optimizer
 li = optimize_linkedin(resume)
@@ -2176,6 +2306,26 @@ _hl_he.headline = "מהנדס תוכנה"
 check(
     "headline renders right-to-left in a hebrew résumé",
     _get_display(_hl_he.headline, base_dir="R") in _pdf_text(render_pdf(_hl_he)),
+)
+
+
+def _heading_order(text: str) -> list[str]:
+    heads = [h for h in ("SUMMARY", "SKILLS", "EXPERIENCE", "EDUCATION") if h in text]
+    return sorted(heads, key=text.index)
+
+
+_pdf_senior = _heading_order(_pdf_text(render_pdf(_senior)))
+_pdf_student = _heading_order(_pdf_text(render_pdf(_student)))
+check(
+    "17.5: the PDF lays the sections out in the profile's order",
+    _pdf_senior == ["SUMMARY", "SKILLS", "EXPERIENCE", "EDUCATION"]
+    and _pdf_student == ["SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE"],
+    f"senior={_pdf_senior} student={_pdf_student}",
+)
+check(
+    "17.5: the DOCX agrees with the PDF (one rule, both downloads)",
+    _heading_order(_li_extract_text("resume.docx", render_docx(_senior))) == _pdf_senior
+    and _heading_order(_li_extract_text("resume.docx", render_docx(_student))) == _pdf_student,
 )
 
 # One page is the convention this product ships for. A résumé that overflows by

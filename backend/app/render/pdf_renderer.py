@@ -28,6 +28,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import BaseDocTemplate, Flowable, Frame, KeepTogether, PageTemplate
 
 from app.core.lang import resume_language
+from app.core.section_order import section_order
 from app.models import ResumeModel
 from app.render.labels import labels_for
 from app.render.templates import DEFAULT_TEMPLATE, TemplateSpec, get_template
@@ -527,16 +528,18 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> list:
     def seg(text: str, color, size: float | None = None) -> tuple:
         return (text, s.reg, size if size is not None else s.body, color, "")
 
-    # --- summary / skills -------------------------------------------------
-    if resume.summary:
-        flow.append(KeepTogether([heading("summary"), body(resume.summary)]))
+    # One builder per section key; the ORDER comes from section_order(), which
+    # puts Education above Experience for an early-career résumé.
+    def build_summary() -> None:
+        if resume.summary:
+            flow.append(KeepTogether([heading("summary"), body(resume.summary)]))
 
-    if resume.skills:
-        # Comma-separated on purpose: it is what ATS keyword parsers split on.
-        flow.append(KeepTogether([heading("skills"), body(", ".join(resume.skills))]))
+    def build_skills() -> None:
+        if resume.skills:
+            # Comma-separated on purpose: it is what ATS keyword parsers split on.
+            flow.append(KeepTogether([heading("skills"), body(", ".join(resume.skills))]))
 
-    # --- experience -------------------------------------------------------
-    if resume.experience:
+    def build_experience() -> None:
         section("experience", [
             entry(
                 exp.title or exp.company,
@@ -547,15 +550,13 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> list:
             for i, exp in enumerate(resume.experience)
         ])
 
-    # --- projects ---------------------------------------------------------
-    if resume.projects:
+    def build_projects() -> None:
         section("projects", [
             entry(proj.name, "", [seg(proj.description, s.muted)], proj.bullets, first=(i == 0))
             for i, proj in enumerate(resume.projects)
         ])
 
-    # --- education --------------------------------------------------------
-    if resume.education:
+    def build_education() -> None:
         section("education", [
             entry(
                 ", ".join(b for b in [edu.degree, edu.field] if b) or edu.institution,
@@ -567,8 +568,7 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> list:
             for i, edu in enumerate(resume.education)
         ])
 
-    # --- military ---------------------------------------------------------
-    if resume.military_service:
+    def build_military() -> None:
         section("military", [
             entry(
                 " — ".join(b for b in [ms.role, ms.unit] if b) or labels["military"],
@@ -579,21 +579,32 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> list:
             for i, ms in enumerate(resume.military_service)
         ])
 
-    # --- certifications / languages --------------------------------------
-    live_certs = [cert for cert in resume.certifications if cert]
-    if live_certs:
-        items = [bullet(cert, last=(i == len(live_certs) - 1)) for i, cert in enumerate(live_certs)]
+    def build_certifications() -> None:
+        live = [cert for cert in resume.certifications if cert]
+        if not live:
+            return
+        items = [bullet(cert, last=(i == len(live) - 1)) for i, cert in enumerate(live)]
         flow.append(KeepTogether([heading("certifications"), items[0]]))
         flow.extend(items[1:])
 
-    lang_segs = [
-        seg(" – ".join(b for b in [ls.language, ls.level] if b), s.ink)
-        for ls in resume.languages
-    ]
-    if any(x[0] for x in lang_segs):
+    def build_languages() -> None:
+        segs = [
+            seg(" – ".join(b for b in [ls.language, ls.level] if b), s.ink)
+            for ls in resume.languages
+        ]
+        if not any(x[0] for x in segs):
+            return
         flow.append(KeepTogether([
             heading("languages"),
-            _Segments(lang_segs, sep=" · ", sep_color=s.sep, leading=s.lead, align="start", rtl=s.rtl),
+            _Segments(segs, sep=" · ", sep_color=s.sep, leading=s.lead, align="start", rtl=s.rtl),
         ]))
+
+    builders = {
+        "summary": build_summary, "skills": build_skills, "experience": build_experience,
+        "projects": build_projects, "education": build_education, "military": build_military,
+        "certifications": build_certifications, "languages": build_languages,
+    }
+    for key in section_order(resume):
+        builders[key]()
 
     return flow

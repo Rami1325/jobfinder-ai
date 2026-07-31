@@ -26,6 +26,7 @@ from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
 from app.core.lang import resume_language
+from app.core.section_order import section_order
 from app.models import ResumeModel
 from app.render.labels import labels_for
 from app.render.pdf_renderer import fit_squeeze
@@ -285,16 +286,23 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
         bullets(items)
 
     # --- content ----------------------------------------------------------
-    if resume.summary:
-        heading("summary")
-        body(resume.summary)
+    # One builder per section key; the ORDER comes from section_order(), which
+    # puts Education above Experience for an early-career résumé. Mirrors the
+    # PDF exactly — the two must never disagree about layout.
+    def build_summary() -> None:
+        if resume.summary:
+            heading("summary")
+            body(resume.summary)
 
-    if resume.skills:
-        heading("skills")
-        # Comma-separated on purpose: it is what ATS keyword parsers split on.
-        body(", ".join(resume.skills))
+    def build_skills() -> None:
+        if resume.skills:
+            heading("skills")
+            # Comma-separated on purpose: it is what ATS keyword parsers split on.
+            body(", ".join(resume.skills))
 
-    if resume.experience:
+    def build_experience() -> None:
+        if not resume.experience:
+            return
         heading("experience")
         for i, exp in enumerate(resume.experience):
             entry(
@@ -305,13 +313,17 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
                 exp.bullets, first=(i == 0),
             )
 
-    if resume.projects:
+    def build_projects() -> None:
+        if not resume.projects:
+            return
         heading("projects")
         for i, proj in enumerate(resume.projects):
             entry(proj.name, "", [(proj.description, spec.body_size, s.muted)],
                   proj.bullets, first=(i == 0))
 
-    if resume.education:
+    def build_education() -> None:
+        if not resume.education:
+            return
         heading("education")
         for i, edu in enumerate(resume.education):
             entry(
@@ -321,7 +333,9 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
                 [edu.details] if edu.details else [], first=(i == 0),
             )
 
-    if resume.military_service:
+    def build_military() -> None:
+        if not resume.military_service:
+            return
         heading("military")
         for i, ms in enumerate(resume.military_service):
             entry(
@@ -331,15 +345,27 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
                 ms.bullets, first=(i == 0),
             )
 
-    if resume.certifications:
+    def build_certifications() -> None:
+        if not resume.certifications:
+            return
         heading("certifications")
         bullets(resume.certifications)
 
-    if resume.languages:
+    def build_languages() -> None:
+        if not resume.languages:
+            return
         heading("languages")
         p = para()
         joined(p, [(" – ".join(b for b in [ls.language, ls.level] if b), spec.body_size, s.ink)
                    for ls in resume.languages])
+
+    builders = {
+        "summary": build_summary, "skills": build_skills, "experience": build_experience,
+        "projects": build_projects, "education": build_education, "military": build_military,
+        "certifications": build_certifications, "languages": build_languages,
+    }
+    for key in section_order(resume):
+        builders[key]()
 
     if rtl:
         # One sweep over every paragraph written above (incl. bullets) so no
