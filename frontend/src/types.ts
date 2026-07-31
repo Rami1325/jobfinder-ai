@@ -48,6 +48,8 @@ export interface LanguageSkill {
 
 export interface ResumeModel {
   contact: Contact;
+  /** Target-title line under the name; tailoring aims it at the JD. */
+  headline?: string;
   summary: string;
   skills: string[];
   experience: Experience[];
@@ -187,6 +189,10 @@ export interface ApplicationOut {
   job_url: string;
   interviewed: boolean;
   excitement: number; // 0 = unrated, 1-5 stars
+  /** What was sent. "" / null means the row predates 17.3 — unknown, not zero. */
+  template: string;
+  voice_score: number | null;
+  fabrication_flag_count: number | null;
   created_at: string;
 }
 

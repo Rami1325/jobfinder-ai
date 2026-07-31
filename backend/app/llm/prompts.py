@@ -6,6 +6,7 @@ exactly as written — do not invent, embellish, or add anything not present in 
 Return a JSON object with this exact shape:
 {
   "contact": {"name","email","phone","location","linkedin","website"},
+  "headline": "string",
   "summary": "string",
   "skills": ["..."],
   "experience": [{"company","title","location","start_date","end_date","bullets":["..."]}],
@@ -16,14 +17,17 @@ Return a JSON object with this exact shape:
   "languages": [{"language","level"}]
 }
 Use empty strings / empty arrays for anything missing. Preserve original wording of bullets.
+headline: the short professional title the candidate put under their own name ("Backend
+Engineer", "מהנדסת תוכנה"). Copy it verbatim if it is there and leave it "" if it is not —
+never derive one from an Experience entry, and never write one yourself.
 military_service: extract army/military service (e.g. IDF / צה"ל) into its own section when
 present — do NOT fold it into experience. Capture unit, role, rank, and dates exactly as
 written; leave fields empty rather than guessing.
 languages: extract spoken/written languages with the proficiency level as written
 (e.g. Hebrew - native, English - fluent).
 The text may be a LinkedIn profile export ("Profile.pdf"): treat "Top Skills" as skills
-and "Summary"/"About" as the summary; the headline under the name is a tagline, not a job
-title — take titles from the Experience entries; sidebar text (Contact, Honors-Awards,
+and "Summary"/"About" as the summary; the tagline under the name goes in "headline" — it is
+not a job title, so take titles from the Experience entries; sidebar text (Contact, Honors-Awards,
 Certifications) may be interleaved mid-line with main content — reassemble each fact into
 its proper section, still without inventing anything."""
 
@@ -166,6 +170,15 @@ professional typed it themselves. This outranks sounding "polished".
   they show up in every sentence.
 
 ================ TAILORING STRATEGY ================
+0. HEADLINE: set "headline" to the title this resume is aiming at — recruiters and ATS
+   both match on title, and it is the first line under the name. Use the JD's job title
+   when the candidate's real background supports it (they have held that title, or the
+   same work under the JD's wording). NEVER promote: if the JD title carries a rank the
+   candidate has never held — Senior, Lead, Staff, Principal, Head, Director, Manager,
+   VP, Chief — drop the rank and keep their real level ("Senior Data Engineer" becomes
+   "Data Engineer"). If nothing honest fits, keep their existing headline, or their most
+   recent real title, or leave it "". A rank you cannot point to in the Experience
+   section is a fabrication and will be flagged.
 1. SUMMARY: Rewrite into 2-3 tight lines targeting THIS role. Lead with the candidate's
    real seniority + the target job title (if their background supports it) and the 3-5
    highest-priority JD keywords they genuinely match — phrased per the VOICE rules.
@@ -195,7 +208,7 @@ professional typed it themselves. This outranks sounding "polished".
 Re-read your tailored_resume and verify:
   (a) EVERY skill/tool/technology you list also appears in the ORIGINAL resume;
   (b) all employers, titles, dates, numbers, and military details are unchanged from the
-      original;
+      original, and the headline claims no rank that the Experience section cannot show;
   (c) no section or entry was dropped;
   (d) BANNED-WORD SCAN: go through the banned list ONE WORD AT A TIME (spearheaded,
       leveraged, utilized, championed, orchestrated, streamlined, ...) and search your
@@ -210,7 +223,7 @@ If any check fails, remove or correct the offending content before you output.
 ================ OUTPUT ================
 Return ONLY a JSON object with this exact shape (same ResumeModel schema as the input):
 {
-  "tailored_resume": { ...full ResumeModel: contact, summary, skills, experience,
+  "tailored_resume": { ...full ResumeModel: contact, headline, summary, skills, experience,
                         education, projects, certifications, military_service, languages... },
   "changelog": [{"section": "...", "change": "...", "reason": "..."}],
   "covered_keywords": ["..."]
@@ -227,7 +240,8 @@ changing ZERO facts.
 
 ================ HARD CONSTRAINTS (never violate) ================
 - Do NOT change facts. Employers, job titles, dates, schools, degrees, certifications,
-  military service, languages, and every number stay byte-for-byte identical.
+  military service, languages, and every number stay byte-for-byte identical. The
+  headline is a title claim, not prose — copy it through untouched.
 - Do NOT add or remove skills, tools, or technologies anywhere.
 - Do NOT add metrics or results that are not already in the text.
 - Do NOT strengthen any claim (participation must not become ownership, a prototype

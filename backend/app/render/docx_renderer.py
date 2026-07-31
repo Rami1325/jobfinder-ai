@@ -224,6 +224,15 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
     text(name_p, c.name or "Name", size=spec.name_size, color=s.accent if spec.accent_name else s.ink,
          bold=True, track=spec.name_tracking * (0.5 if rtl else 1.0))
 
+    if resume.headline:
+        # Sits between the name and the contact line: the first thing a
+        # recruiter reads after the name, and what the ATS matches on. Coloured
+        # opposite the name so the two never flatten into one block.
+        headline_p = para(before=1.0, after=1.0, center=spec.name_centered, lead=False)
+        text(headline_p, resume.headline, size=spec.body_size + 0.8,
+             color=s.ink if spec.accent_name else s.accent,
+             track=0.3 * (0.5 if rtl else 1.0))
+
     bits = [b for b in [c.email, c.phone, c.location, c.linkedin, c.website] if b]
     contact_p = None
     if bits:

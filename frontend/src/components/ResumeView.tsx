@@ -27,6 +27,9 @@ export default function ResumeView({ resume }: Props) {
       className="rounded-xl border border-line bg-bg-soft p-5 text-ink [&_section]:mt-5"
     >
       <div className="text-xl font-bold text-ink">{c.name || t("sections.fallbackName")}</div>
+      {resume.headline && (
+        <div className="mt-0.5 text-sm font-medium text-accent-soft">{resume.headline}</div>
+      )}
       {contactBits.length > 0 && (
         <div className="mt-0.5 text-xs text-ink-muted">{contactBits.join(" · ")}</div>
       )}

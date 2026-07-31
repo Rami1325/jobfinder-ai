@@ -14,6 +14,21 @@ const WEEKS = 8;
 const BAR_AREA_PX = 128;
 const ACTIVITY_ROWS = 6;
 
+/** "What's converting" thresholds. Reply rates over a handful of applications
+ * are noise, and a dimension with one group compares nothing — both would read
+ * as findings, so both are withheld rather than shown with a caveat. */
+const MIN_PANEL = 8;
+const MIN_GROUP = 3;
+const MIN_GROUPS_PER_DIM = 2;
+
+/** Match-score bands, best first. */
+const SCORE_BANDS = [
+  { key: "85+", min: 85 },
+  { key: "75–84", min: 75 },
+  { key: "60–74", min: 60 },
+  { key: "< 60", min: 0 },
+];
+
 /** Status → dot / text tones for the activity log (mirrors the board columns). */
 const STATUS_DOT: Record<string, string> = {
   saved: "bg-ink-faint",
@@ -141,6 +156,89 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
       .map((b) => ({ key: b.key, label: b.label, tone: b.tone, count: b.apps.length, avg: avg(b.apps) }));
   }, [apps, t]);
 
+  /**
+   * What's converting (PLAN 17.3): reply rate broken down by what was actually
+   * sent. A row whose value is unknown — anything saved before we started
+   * recording it — is excluded from that dimension entirely, never folded in
+   * as a zero, so an old tracker cannot invent a finding.
+   */
+  const converting = useMemo(() => {
+    const submitted = apps.filter((a) => SUBMITTED.has(a.status || "saved"));
+
+    const tally = (
+      keyOf: (a: ApplicationOut) => string | null,
+      labelOf: (key: string) => string,
+      order?: string[],
+    ) => {
+      const groups = new Map<string, { key: string; total: number; replied: number }>();
+      for (const a of submitted) {
+        const key = keyOf(a);
+        if (key === null) continue; // unknown — not a value
+        const g = groups.get(key) ?? { key, total: 0, replied: 0 };
+        g.total += 1;
+        if (responded(a)) g.replied += 1;
+        groups.set(key, g);
+      }
+      const rows = [...groups.values()]
+        .filter((g) => g.total >= MIN_GROUP)
+        .map((g) => ({ ...g, label: labelOf(g.key), rate: (100 * g.replied) / g.total }));
+      rows.sort((x, y) =>
+        order ? order.indexOf(x.key) - order.indexOf(y.key) : y.rate - x.rate,
+      );
+      return rows.length >= MIN_GROUPS_PER_DIM ? rows : [];
+    };
+
+    const band = (score: number) => SCORE_BANDS.find((b) => score >= b.min)?.key ?? null;
+    return {
+      enough: submitted.length >= MIN_PANEL,
+      dims: [
+        {
+          key: "score",
+          rows: tally(
+            (a) => (a.overall_score > 0 ? band(a.overall_score) : null),
+            (k) => k,
+            SCORE_BANDS.map((b) => b.key),
+          ),
+        },
+        {
+          key: "template",
+          rows: tally(
+            (a) => a.template || null,
+            (k) => t(`download.templates.${k}.name`, { ns: "tailor", defaultValue: k }),
+          ),
+        },
+        {
+          key: "guard",
+          rows: tally(
+            (a) =>
+              a.fabrication_flag_count === null || a.fabrication_flag_count === undefined
+                ? null
+                : a.fabrication_flag_count === 0
+                  ? "clean"
+                  : "flagged",
+            (k) => t(`analytics.converting.guard.${k}`),
+            ["clean", "flagged"],
+          ),
+        },
+        {
+          key: "voice",
+          rows: tally(
+            (a) =>
+              a.voice_score === null || a.voice_score === undefined
+                ? null
+                : a.voice_score >= 90
+                  ? "high"
+                  : a.voice_score >= 70
+                    ? "mid"
+                    : "low",
+            (k) => t(`analytics.converting.voice.${k}`),
+            ["high", "mid", "low"],
+          ),
+        },
+      ].filter((d) => d.rows.length > 0),
+    };
+  }, [apps, t]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -207,6 +305,46 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
           </div>
         </div>
         <p className="mt-3 text-[11px] text-ink-faint">{t("analytics.live.trendHint")}</p>
+      </Card>
+
+      {/* ── What's converting (17.3): reply rate by what was sent ─────── */}
+      <Card className="lg:col-span-2">
+        <CardTitle>{t("analytics.converting.title")}</CardTitle>
+        <p className="mt-1 text-xs text-ink-muted">{t("analytics.converting.hint")}</p>
+        {!converting.enough || converting.dims.length === 0 ? (
+          <p className="mt-6 text-sm text-ink-faint">{t("analytics.converting.notEnough")}</p>
+        ) : (
+          <div className="mt-5 grid gap-5 sm:grid-cols-2">
+            {converting.dims.map((dim) => (
+              <div key={dim.key}>
+                <SectionLabel>{t(`analytics.converting.dims.${dim.key}`)}</SectionLabel>
+                <ul className="mt-2 space-y-2">
+                  {dim.rows.map((row) => (
+                    <li key={row.key} className="flex items-center gap-3">
+                      <span className="w-24 shrink-0 truncate text-xs text-ink-muted" title={row.label}>
+                        {row.label}
+                      </span>
+                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink-faint/20">
+                        <motion.span
+                          className="block h-full rounded-full bg-accent"
+                          initial={reduce ? false : { width: 0 }}
+                          animate={{ width: `${row.rate}%` }}
+                          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                        />
+                      </span>
+                      <span className="w-9 shrink-0 text-end text-xs font-semibold tabular-nums text-ink">
+                        {Math.round(row.rate)}%
+                      </span>
+                      <span className="w-8 shrink-0 text-end text-[11px] tabular-nums text-ink-faint">
+                        {t("analytics.converting.sample", { n: row.total })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       {/* ── Applications per week ─────────────────────────────────────── */}

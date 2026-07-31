@@ -24,6 +24,7 @@
   "contact": {
     "title": "Who are you?",
     "name": "Full name",
+    "headline": "Headline — the job title you're going for",
     "email": "Email",
     "phone": "Phone",
     "location": "City",

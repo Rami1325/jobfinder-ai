@@ -83,6 +83,13 @@ class Application(Base):
     job_url: Mapped[str] = mapped_column(String(1000), default="")
     interviewed: Mapped[bool] = mapped_column(Boolean, default=False)
     excitement: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unrated, 1-5 stars
+    # What was actually sent (PLAN 17.3). Without these the tracker can show
+    # that a reply rate exists but never which résumé earned it. All three are
+    # nullable/"" on purpose: rows written before 17.3 genuinely do not know,
+    # and counting an unknown as "guard-clean, voice 0" would poison the report.
+    template: Mapped[str] = mapped_column(String(32), default="")
+    voice_score: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    fabrication_flag_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     # When the status last changed — powers stale-application nudges. Nullable
     # for the ADD-COLUMN shim; NULL rows fall back to created_at.
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)

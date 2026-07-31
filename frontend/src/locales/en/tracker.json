@@ -102,6 +102,27 @@
       "title": "Recent activity",
       "hint": "The latest applications and where each one stands now.",
       "empty": "Activity appears here as you add applications."
+    },
+    "converting": {
+      "title": "What's converting",
+      "hint": "Reply rate broken down by what you actually sent. Applications saved before we started recording a detail are left out of that row rather than counted as a zero.",
+      "notEnough": "Not enough submitted applications yet — this fills in once you have a handful to compare.",
+      "sample": "n={{n}}",
+      "dims": {
+        "score": "By match score",
+        "template": "By template",
+        "guard": "By fabrication guard",
+        "voice": "By human-voice score"
+      },
+      "guard": {
+        "clean": "Guard clean",
+        "flagged": "Had flags"
+      },
+      "voice": {
+        "high": "90+",
+        "mid": "70–89",
+        "low": "< 70"
+      }
     }
   }
 }

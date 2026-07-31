@@ -1050,6 +1050,9 @@ def _to_out(app: Application) -> ApplicationOut:
         job_url=app.job_url,
         interviewed=app.interviewed,
         excitement=app.excitement or 0,
+        template=app.template or "",
+        voice_score=app.voice_score,
+        fabrication_flag_count=app.fabrication_flag_count,
         created_at=app.created_at.isoformat() if app.created_at else "",
     )
 
@@ -1131,6 +1134,9 @@ def create_application(
         overall_score=body.overall_score,
         status=body.status,
         job_url=body.job_url,
+        template=body.template,
+        voice_score=body.voice_score,
+        fabrication_flag_count=body.fabrication_flag_count,
         status_changed_at=datetime.now(timezone.utc),
     )
     db.add(app)

@@ -6,12 +6,31 @@ wasn't in the original is flagged for the user to review.
 """
 from __future__ import annotations
 
+import re
+
 from app.models import FabricationFlag, FactsLedger, ResumeModel
 from app.parsers.structurer import build_facts_ledger
+
+# Rank words a headline has to have earned. Repositioning is honest — a
+# "Software Engineer" may lead with "Backend Engineer", the same work in the
+# JD's wording — but promoting is not, and a rank the candidate never held is
+# exactly what collapses in the first screening call. Hebrew ranks are listed
+# too; the product is bilingual and a Hebrew CV inflates the same way.
+_RANK_WORDS = (
+    "senior", "sr", "lead", "staff", "principal", "head", "chief", "director",
+    "manager", "vp", "vice president", "cto", "cio", "ceo", "cfo",
+    "בכיר", "בכירה", "ראש", "מנהל", "מנהלת", "סמנכ\"ל", "מנכ\"ל",
+)
 
 
 def _norm(s: str) -> str:
     return " ".join(s.lower().split())
+
+
+def _has_rank(text: str, word: str) -> bool:
+    """Whole-word match, so 'lead' does not fire on 'leading' and the Hebrew
+    ranks do not fire mid-word either (\\w is Unicode-aware in Python 3)."""
+    return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", _norm(text)) is not None
 
 
 def _known(value: str, allowed: list[str]) -> bool:
@@ -47,4 +66,28 @@ def check_fabrication(tailored: ResumeModel, ledger: FactsLedger) -> list[Fabric
     scan(new.certifications, ledger.certifications, "credential")
     scan(new.numbers, ledger.numbers, "number")
     scan(new.military, ledger.military, "military")
+    flags.extend(_headline_flags(tailored, ledger))
     return flags
+
+
+def _headline_flags(tailored: ResumeModel, ledger: FactsLedger) -> list[FabricationFlag]:
+    """Flag a headline that promotes the candidate. Only the rank is checked —
+    the wording is free, because restating the same work in the target role's
+    language is the whole point of the headline."""
+    headline = (tailored.headline or "").strip()
+    if not headline:
+        return []
+    held = " ".join(ledger.titles + ledger.military + ledger.headlines)
+    claimed = [w for w in _RANK_WORDS if _has_rank(headline, w) and not _has_rank(held, w)]
+    if not claimed:
+        return []
+    return [
+        FabricationFlag(
+            category="headline",
+            value=headline,
+            detail=(
+                f"The headline claims '{claimed[0]}' but no role in the original resume "
+                "carries that level. Aim the title at the job without promoting yourself."
+            ),
+        )
+    ]

@@ -47,9 +47,13 @@ def build_facts_ledger(resume: ResumeModel) -> FactsLedger:
         for b in ms.bullets:
             ledger.numbers.extend(_extract_numbers(b))
     ledger.numbers.extend(_extract_numbers(resume.summary))
+    # Deliberately NOT folded into `titles`: a headline is positioning, not an
+    # employment record, so the generic title diff must not fire every time
+    # tailoring rewords it. `check_fabrication` reads it for rank inflation.
+    _add(ledger.headlines, resume.headline)
 
     # De-duplicate while preserving order.
-    for field in ("employers", "titles", "dates", "institutions", "degrees", "certifications", "numbers", "military"):
+    for field in ("employers", "titles", "dates", "institutions", "degrees", "certifications", "numbers", "military", "headlines"):
         setattr(ledger, field, _dedupe(getattr(ledger, field)))
     return ledger
 

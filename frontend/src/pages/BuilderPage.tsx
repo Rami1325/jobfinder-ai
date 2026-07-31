@@ -47,6 +47,7 @@ type StepId = (typeof STEP_IDS)[number];
 function emptyResume(): ResumeModel {
   return {
     contact: { name: "", email: "", phone: "", location: "", linkedin: "", website: "" },
+    headline: "",
     summary: "",
     skills: [],
     experience: [],
@@ -107,6 +108,7 @@ function pruneResume(r: ResumeModel): ResumeModel {
       linkedin: r.contact.linkedin.trim(),
       website: r.contact.website.trim(),
     },
+    headline: (r.headline ?? "").trim(),
     summary: r.summary.trim(),
     skills: cleanList(r.skills),
     experience: r.experience
@@ -383,6 +385,11 @@ export default function BuilderPage() {
             label={t("contact.name")}
             value={resume.contact.name}
             onChange={(v) => setResume({ contact: { ...resume.contact, name: v } })}
+          />
+          <LabeledInput
+            label={t("contact.headline")}
+            value={resume.headline ?? ""}
+            onChange={(v) => setResume({ headline: v })}
           />
           <div className="grid gap-3 sm:grid-cols-2">
             <LabeledInput

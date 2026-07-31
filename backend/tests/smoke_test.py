@@ -160,6 +160,55 @@ flags = check_fabrication(fake, ledger)
 flagged_employers = [f.value for f in flags if f.category == "employer"]
 check("guard flags fabricated employer", "FAKE Industries Ltd" in flagged_employers, str(flagged_employers))
 
+# 5b. Target-title headline (PLAN 17.2). The headline is a CLAIM, so the guard
+# reads it — but only for rank. Restating the same work in the target role's
+# words is the entire point of the line; awarding yourself a promotion is not.
+check(
+    "ledger keeps the headline apart from employment titles",
+    ledger.headlines == [resume.headline] if resume.headline else ledger.headlines == [],
+    f"headlines={ledger.headlines} titles={ledger.titles}",
+)
+
+
+def _headline_flags(headline: str, base=None, led=None) -> list[str]:
+    r = (base or result.tailored_resume).model_copy(deep=True)
+    r.headline = headline
+    return [f.value for f in check_fabrication(r, led or ledger) if f.category == "headline"]
+
+
+check("guard: repositioned headline is clean", _headline_flags("Backend Engineer") == [])
+check("guard: empty headline is clean", _headline_flags("") == [])
+check(
+    "guard: headline that awards a promotion is flagged",
+    _headline_flags("Senior Backend Engineer") == ["Senior Backend Engineer"],
+    str(_headline_flags("Senior Backend Engineer")),
+)
+check(
+    "guard: rank words only match whole words ('Leading' is not 'Lead')",
+    _headline_flags("Leading Contributor") == [],
+)
+check(
+    "guard: hebrew rank inflation is caught too",
+    _headline_flags("מהנדס תוכנה בכיר") == ["מהנדס תוכנה בכיר"],
+)
+_senior = result.tailored_resume.model_copy(deep=True)
+_senior.experience[0].title = "Senior Engineer"
+check(
+    "guard: a candidate who really is senior keeps the rank",
+    _headline_flags("Senior Backend Engineer", _senior, build_facts_ledger(_senior)) == [],
+)
+check(
+    "tailor stub sets a headline and it survives the guard",
+    result.tailored_resume.headline != ""
+    and [f for f in result.fabrication_flags if f.category == "headline"] == [],
+    result.tailored_resume.headline,
+)
+check(
+    "TAILOR prompt forbids promoting the headline; STRUCTURE prompt copies it verbatim",
+    "NEVER promote" in _li_prompts.TAILOR_SYSTEM
+    and "headline" in _li_prompts.STRUCTURE_RESUME_SYSTEM,
+)
+
 # 6. Renderers produce valid files
 docx_bytes = render_docx(result.tailored_resume)
 check("docx renders (zip/PK header)", docx_bytes[:2] == b"PK", f"{len(docx_bytes)} bytes")
@@ -1522,6 +1571,11 @@ check(
     {"job_url", "interviewed", "excitement"} <= _cols,
     str(sorted(_cols)),
 )
+check(
+    "migration shim added the 17.3 outcome columns to a pre-existing applications table",
+    {"template", "voice_score", "fabrication_flag_count"} <= _cols,
+    str(sorted(_cols)),
+)
 check("migration shim added language to saved_resumes", "language" in _sr_cols, str(sorted(_sr_cols)))
 
 _db = SessionLocal()
@@ -2110,6 +2164,19 @@ check(
     "docx he: bold/size mirrored onto the complex-script twins (Word ignores w:b for Hebrew)",
     "<w:bCs" in _dsg_he_xml and "<w:szCs" in _dsg_he_xml,
 )
+_hl = resume.model_copy(deep=True)
+_hl.headline = "Backend Engineer"
+check(
+    "headline (17.2) renders under the name in both formats",
+    _hl.headline in _pdf_text(render_pdf(_hl))
+    and _hl.headline in _li_extract_text("resume.docx", render_docx(_hl)),
+)
+_hl_he = _he_full.model_copy(deep=True)
+_hl_he.headline = "מהנדס תוכנה"
+check(
+    "headline renders right-to-left in a hebrew résumé",
+    _get_display(_hl_he.headline, base_dir="R") in _pdf_text(render_pdf(_hl_he)),
+)
 
 # One page is the convention this product ships for. A résumé that overflows by
 # a few lines is compressed until it fits; one that is genuinely long is left to
@@ -2225,6 +2292,46 @@ with TestClient(_fastapi_app) as _tc:
     check(
         "friend can't read the admin's application by id (404)",
         _tc.get(f"/applications/{_admin_apps[0]['id']}", headers=_FRIEND_H).status_code == 404,
+    )
+
+    # Outcome feedback loop (PLAN 17.3): the tracker records WHAT WAS SENT, so
+    # the analytics can attribute replies to a résumé instead of guessing. The
+    # unknown case is the one that matters — an old row must stay unknown, not
+    # become "guard-clean with a voice score of zero".
+    _sent = _tc.post(
+        "/applications",
+        json={
+            "job_title": "Backend Dev", "company": "SentCo", "status": "applied",
+            "overall_score": 81.0, "template": "executive",
+            "voice_score": 94.5, "fabrication_flag_count": 0,
+        },
+        headers=_ADMIN_H,
+    ).json()
+    check(
+        "17.3: template + voice score + flag count round-trip onto the tracker row",
+        _sent["template"] == "executive"
+        and _sent["voice_score"] == 94.5
+        and _sent["fabrication_flag_count"] == 0,
+        str(_sent),
+    )
+    _unknown = _tc.post(
+        "/applications",
+        json={"job_title": "Legacy", "company": "OldCo", "status": "applied"},
+        headers=_ADMIN_H,
+    ).json()
+    check(
+        "17.3: a row that did not report what it sent stays unknown, never zero",
+        _unknown["template"] == ""
+        and _unknown["voice_score"] is None
+        and _unknown["fabrication_flag_count"] is None,
+        str(_unknown),
+    )
+    check(
+        "17.3: the fields survive the list endpoint too (what the analytics reads)",
+        any(
+            a["id"] == _sent["id"] and a["voice_score"] == 94.5 and a["template"] == "executive"
+            for a in _tc.get("/applications", headers=_ADMIN_H).json()
+        ),
     )
 
     # Stale-application nudges (Home reminder): an "applied" app with no status
@@ -2933,7 +3040,11 @@ from datetime import datetime as _dt, timedelta as _td  # noqa: E402
 
 from sqlalchemy import select as _ksel  # noqa: E402
 
-from app.core.kits import enqueue_kits as _enqueue_kits, process_next_kit as _process_next  # noqa: E402
+from app.core.kits import (  # noqa: E402
+    _sent_signals,
+    enqueue_kits as _enqueue_kits,
+    process_next_kit as _process_next,
+)
 from app.db.models import TailorKit as _TKit, User as _KUser  # noqa: E402
 from app.models import FabricationFlag as _KFlag, KitJobIn as _KitJob, TailorResult as _KTR  # noqa: E402
 
@@ -3074,6 +3185,26 @@ with TestClient(_fastapi_app) as _tc:
         "approved kit can't be re-approved or rejected (400)",
         _tc.post(f"/kits/{_kit2['id']}/approve", json={}, headers=_KIM_H).status_code == 400
         and _tc.post(f"/kits/{_kit2['id']}/reject", json={"reason": "x"}, headers=_KIM_H).status_code == 400,
+    )
+    # 17.3 on the kit path: the signals come off the kit's stored result, and
+    # `template` stays unknown because kit review never offers a choice.
+    _kit_app_out = next(
+        a for a in _tc.get("/applications", headers=_KIM_H).json()
+        if a["id"] == _apr.json()["application_id"]
+    )
+    check(
+        "17.3: approving a kit carries its voice score + flag count onto the tracker row",
+        _kit_app_out["voice_score"] is not None
+        and _kit_app_out["fabrication_flag_count"] is not None
+        and _kit_app_out["template"] == "",
+        str(_kit_app_out),
+    )
+    check(
+        "17.3: a kit written before the voice audit reports unknown, not the schema default",
+        _sent_signals('{"tailored_resume": {}}') == (None, None)
+        and _sent_signals("not json") == (None, None)
+        and _sent_signals('{"voice_report": {"human_voice_score": 88.0}, "fabrication_flags": []}')
+        == (88.0, 0),
     )
 
     # Reject flow on a fresh admin kit (admins are cap-exempt).

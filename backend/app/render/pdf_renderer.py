@@ -455,6 +455,17 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> list:
         leading=spec.name_size * 1.18, tracking=s.track_name,
         align=name_align, rtl=s.rtl, space_after=1.0,
     ))
+    if resume.headline:
+        # Sits between the name and the contact line: the first thing a
+        # recruiter reads after the name, and what the ATS matches on. Coloured
+        # opposite the name so the two never flatten into one block.
+        flow.append(_Text(
+            resume.headline, font=s.reg, size=s.body + 0.8,
+            color=s.ink if spec.accent_name else s.accent,
+            leading=(s.body + 0.8) * 1.35, tracking=0.3 * (0.5 if s.rtl else 1.0),
+            align=name_align, rtl=s.rtl, space_before=1.0, space_after=1.0,
+        ))
+
     bits = [b for b in [c.email, c.phone, c.location, c.linkedin, c.website] if b]
     if bits:
         flow.append(_Segments(

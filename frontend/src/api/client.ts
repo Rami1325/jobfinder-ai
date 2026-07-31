@@ -560,6 +560,10 @@ export async function saveApplication(payload: {
   overall_score: number;
   job_url?: string;
   status?: string;
+  /** What was sent — feeds the tracker's "what actually converts" report. */
+  template?: ResumeTemplate;
+  voice_score?: number;
+  fabrication_flag_count?: number;
 }): Promise<ApplicationOut> {
   const { data } = await api.post<ApplicationOut>("/applications", payload);
   invalidateData("applications", "nudges");

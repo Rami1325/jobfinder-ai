@@ -64,6 +64,11 @@ class LanguageSkill(BaseModel):
 
 class ResumeModel(BaseModel):
     contact: Contact = Field(default_factory=Contact)
+    # The target-title line under the name ("Backend Engineer"). Recruiters and
+    # ATS both match on title, so tailoring sets this to the JD's title when the
+    # candidate's real background supports it. It is a CLAIM, so the fabrication
+    # guard checks it for rank inflation.
+    headline: str = ""
     summary: str = ""
     skills: list[str] = Field(default_factory=list)
     experience: list[Experience] = Field(default_factory=list)
@@ -110,6 +115,10 @@ class FactsLedger(BaseModel):
     # Military unit / role / rank strings (dates go into `dates`). Protected:
     # invented military claims are a serious credibility problem in Israel.
     military: list[str] = Field(default_factory=list)
+    # The headline the candidate wrote for themselves, kept apart from `titles`
+    # (which are employment records). Tailoring is free to reword a headline —
+    # only a rank it never carried is a fabrication.
+    headlines: list[str] = Field(default_factory=list)
 
 
 class FabricationFlag(BaseModel):
@@ -475,6 +484,10 @@ class ApplicationCreate(BaseModel):
     overall_score: float = 0.0
     status: str = "saved"  # saved | applied | interview | offer | rejected
     job_url: str = ""
+    # What was sent (PLAN 17.3) — feeds the "what actually converts" report.
+    template: str = ""
+    voice_score: Optional[float] = None
+    fabrication_flag_count: Optional[int] = None
 
 
 class ApplicationUpdate(BaseModel):
@@ -494,6 +507,11 @@ class ApplicationOut(BaseModel):
     job_url: str = ""
     interviewed: bool = False
     excitement: int = 0  # 0 = unrated, 1-5 stars
+    # None/"" means "written before we recorded this", not "zero" — the tracker
+    # report drops those rows rather than scoring them.
+    template: str = ""
+    voice_score: Optional[float] = None
+    fabrication_flag_count: Optional[int] = None
     created_at: str
 
 

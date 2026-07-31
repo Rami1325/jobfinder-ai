@@ -17,6 +17,7 @@ offline, including a forced-flags path.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
@@ -285,6 +286,21 @@ def process_next_kit(
     return row, queued_count(db, user.id)
 
 
+def _sent_signals(result_json: str) -> tuple[float | None, int | None]:
+    """(voice score, fabrication-flag count) as actually recorded on a kit, or
+    None for either one the kit predates. See approve_kit."""
+    try:
+        raw = json.loads(result_json or "{}")
+    except ValueError:
+        return None, None
+    voice = raw.get("voice_report")
+    flags = raw.get("fabrication_flags")
+    return (
+        voice.get("human_voice_score") if isinstance(voice, dict) else None,
+        len(flags) if isinstance(flags, list) else None,
+    )
+
+
 def approve_kit(
     db: Session,
     user: User,
@@ -309,6 +325,12 @@ def approve_kit(
         except Exception:  # noqa: BLE001 - corrupt/legacy kit row
             raise ValueError("This kit has no tailored résumé to approve.")
         resume = result.tailored_resume
+    # PLAN 17.3: carry what was sent onto the tracker row, read from the RAW
+    # result so a pre-Phase-16 kit reports "unknown" instead of the schema
+    # default (100.0 would enter the conversion report as a perfect voice
+    # score nobody measured). `template` stays "" — kit review has no template
+    # picker, and guessing the default would record a choice nobody made.
+    voice_score, flag_count = _sent_signals(row.result_json)
     app = Application(
         user_id=user.id,
         job_title=row.job_title,
@@ -319,6 +341,8 @@ def approve_kit(
         overall_score=row.score_after or 0.0,
         status="saved",
         job_url=row.url,
+        voice_score=voice_score,
+        fabrication_flag_count=flag_count,
     )
     db.add(app)
     db.flush()  # need app.id for the back-link

@@ -145,6 +145,16 @@ export default function TailorPage() {
     recordRejectedPhrases(phrases).catch(() => {});
   }
 
+  /** What was actually sent, recorded on the tracker row so the analytics can
+   * later say which résumé earned the replies (PLAN 17.3). */
+  function sentSignals() {
+    return {
+      template,
+      voice_score: result?.voice_report?.human_voice_score,
+      fabrication_flag_count: result?.fabrication_flags.length,
+    };
+  }
+
   async function save() {
     if (!result || !jd) return;
     if (savedAppId !== null) {
@@ -161,6 +171,7 @@ export default function TailorPage() {
       cover_letter: coverLetterText,
       overall_score: result.score_after.overall,
       job_url: jobUrl || undefined,
+      ...sentSignals(),
     });
     setTailorState({ savedAppId: app.id, saved: true });
     persistRejectedPhrases();
@@ -183,6 +194,7 @@ export default function TailorPage() {
           overall_score: result?.score_after.overall ?? 0,
           status: "applied",
           job_url: jobUrl,
+          ...sentSignals(),
         });
         setTailorState({ savedAppId: app.id, saved: true, applied: true });
       }

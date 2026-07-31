@@ -239,6 +239,7 @@ class StubClient:
     def _stub_structured_resume(self, raw: str) -> dict[str, Any]:
         return {
             "contact": {"name": "Sample Candidate", "email": "sample@example.com"},
+            "headline": "Engineer",
             "summary": "Experienced professional.",
             "skills": ["Python", "Communication", "Project Management"],
             "experience": [
@@ -387,6 +388,9 @@ class StubClient:
         # Apply realistic, guard-clean edits (no new numbers/employers/titles/
         # dates) so the per-bullet accept/reject diff is demoable offline.
         resume = self._stub_structured_resume(user)
+        # Repositioned, not promoted — the guard's rank check must stay quiet on
+        # the happy path, so the smoke test can tell a real flag from noise.
+        resume["headline"] = "Software Engineer"
         resume["summary"] = "Software engineer building Python services and REST APIs."
         resume["skills"] = ["Python", "REST APIs", "SQL", "Project Management"]
         resume["experience"][0]["bullets"] = [
