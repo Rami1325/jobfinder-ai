@@ -68,6 +68,14 @@
       "compact": {
         "name": "Compact",
         "desc": "Tight one-pager — the Israeli convention"
+      },
+      "executive": {
+        "name": "Executive",
+        "desc": "Serif type, deep navy, generous margins — reads senior"
+      },
+      "minimal": {
+        "name": "Minimal",
+        "desc": "No colour, wide-tracked headings, lots of white space"
       }
     }
   },

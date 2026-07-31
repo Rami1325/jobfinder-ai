@@ -1,316 +1,588 @@
-"""Render a ResumeModel to an ATS-safe PDF using reportlab (pure-Python).
+"""Render a ResumeModel to an ATS-safe PDF (reportlab, pure Python).
 
-Single-column flowing layout, standard fonts, real selectable text (not images),
-so ATS parsers can read it.
+One layout engine serves both directions. Every run of text is broken into
+lines by our own greedy line-breaker and drawn with `drawString`, so the
+Hebrew path (each line bidi-reordered logical->visual, laid out right-to-left)
+and the English path share the same geometry, rhythm and page rules instead of
+two code paths that drift apart. reportlab's own wrapping is direction-blind,
+which is why the RTL side cannot use `Paragraph`.
 
-Hebrew resumes: reportlab has no bidi/shaping, so we bundle Noto Sans Hebrew
-(OFL, see fonts/OFL.txt), reorder every line logical->visual with python-bidi,
-and lay paragraphs out right-aligned with RTL word wrap. English resumes take
-exactly the same code path as before.
+ATS-safe by construction: single column, real selectable text (never images),
+no tables, no text boxes, no headers/footers, standard section names.
+
+Hebrew uses the bundled Noto Sans Hebrew (OFL, see fonts/OFL.txt); Latin uses
+the bundled Lato / Spectral (OFL). If a font file is ever missing the renderer
+degrades to the base-14 faces rather than failing the download.
 """
 from __future__ import annotations
 
 import io
+from functools import lru_cache
 from pathlib import Path
 
 from bidi.algorithm import get_display
-from reportlab.lib.colors import HexColor
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-from reportlab.lib.pagesizes import LETTER
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import inch
+from reportlab.lib.colors import Color, HexColor
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.pdfmetrics import registerFontFamily, stringWidth
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import BaseDocTemplate, Flowable, Frame, KeepTogether, PageTemplate
 
 from app.core.lang import resume_language
 from app.models import ResumeModel
+from app.render.labels import labels_for
 from app.render.templates import DEFAULT_TEMPLATE, TemplateSpec, get_template
 
-_DARK = HexColor("#222222")
-
+# --------------------------------------------------------------------------- #
+# Fonts
+# --------------------------------------------------------------------------- #
 _FONTS_DIR = Path(__file__).parent / "fonts"
-_HE_FONT = "NotoSansHebrew"
-_HE_FONT_BOLD = "NotoSansHebrew-Bold"
+_HE_FAMILY = "NotoSansHebrew"
 
-# Hebrew section headings (standard names; the English path keeps its literals).
-_HE_HEADINGS = {
-    "summary": "תקציר",
-    "skills": "כישורים",
-    "experience": "ניסיון תעסוקתי",
-    "projects": "פרויקטים",
-    "education": "השכלה",
-    "military": "שירות צבאי",
-    "certifications": "הסמכות",
-    "languages": "שפות",
+_FAMILY_FILES: dict[str, tuple[str, str, str]] = {
+    "Lato": ("Lato-Regular.ttf", "Lato-Bold.ttf", "Lato-Italic.ttf"),
+    "Spectral": ("Spectral-Regular.ttf", "Spectral-Bold.ttf", "Spectral-Italic.ttf"),
+    # Noto Sans Hebrew covers Hebrew + Latin; it has no italic, so the regular
+    # face doubles as one (résumés never need italic Hebrew).
+    _HE_FAMILY: ("NotoSansHebrew-Regular.ttf", "NotoSansHebrew-Bold.ttf", "NotoSansHebrew-Regular.ttf"),
 }
-_EN_MILITARY = "MILITARY SERVICE"
-_EN_LANGUAGES = "LANGUAGES"
+_FALLBACKS: dict[str, tuple[str, str, str]] = {
+    "Spectral": ("Times-Roman", "Times-Bold", "Times-Italic"),
+}
+_BASE14 = ("Helvetica", "Helvetica-Bold", "Helvetica-Oblique")
 
 
-def _ensure_hebrew_fonts() -> None:
-    """Register the bundled Noto Sans Hebrew TTFs once (covers Hebrew + Latin)."""
-    if _HE_FONT in pdfmetrics.getRegisteredFontNames():
-        return
-    pdfmetrics.registerFont(TTFont(_HE_FONT, str(_FONTS_DIR / "NotoSansHebrew-Regular.ttf")))
-    pdfmetrics.registerFont(TTFont(_HE_FONT_BOLD, str(_FONTS_DIR / "NotoSansHebrew-Bold.ttf")))
-    registerFontFamily(_HE_FONT, normal=_HE_FONT, bold=_HE_FONT_BOLD, italic=_HE_FONT, boldItalic=_HE_FONT_BOLD)
+@lru_cache(maxsize=None)
+def _fonts(family: str) -> tuple[str, str, str]:
+    """(regular, bold, italic) PDF font names, registering the bundled TTFs
+    once per process. A missing file degrades to a base-14 face so a bad
+    deploy yields a plain PDF instead of a failed download."""
+    files = _FAMILY_FILES.get(family)
+    if not files:
+        return _FALLBACKS.get(family, _BASE14)
+    names = (family, f"{family}-Bold", f"{family}-Italic")
+    try:
+        registered = set(pdfmetrics.getRegisteredFontNames())
+        for name, filename in zip(names, files):
+            if name not in registered:
+                pdfmetrics.registerFont(TTFont(name, str(_FONTS_DIR / filename)))
+        registerFontFamily(family, normal=names[0], bold=names[1], italic=names[2], boldItalic=names[1])
+        return names
+    except Exception:  # pragma: no cover — missing/corrupt font file
+        return _FALLBACKS.get(family, _BASE14)
+
+
+# --------------------------------------------------------------------------- #
+# Text measuring / breaking / drawing
+# --------------------------------------------------------------------------- #
+def _adv(text: str, font: str, size: float, tracking: float = 0.0) -> float:
+    """Visual width of one drawn line. Tc (char spacing) adds a gap after every
+    glyph, but the gap after the last one carries no glyph, so only n-1 of them
+    are visible — measuring that way keeps right/centre alignment optical."""
+    extra = tracking * (len(text) - 1) if tracking and len(text) > 1 else 0.0
+    return stringWidth(text, font, size) + extra
+
+
+def _wrap_lines(text: str, font: str, size: float, width: float, tracking: float = 0.0) -> list[str]:
+    """Greedy line break on LOGICAL text (bidi reordering happens per line, at
+    draw time — reordering the whole paragraph first would stack the lines
+    bottom-up)."""
+    lines: list[str] = []
+    cur = ""
+    for word in (text or "").split():
+        trial = f"{cur} {word}" if cur else word
+        if cur and _adv(trial, font, size, tracking) > width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = trial
+        # A single token longer than the column (a long URL) is hard-broken.
+        while len(cur) > 1 and _adv(cur, font, size, tracking) > width:
+            cut = 1
+            while cut < len(cur) and _adv(cur[: cut + 1], font, size, tracking) <= width:
+                cut += 1
+            lines.append(cur[:cut])
+            cur = cur[cut:]
+    if cur:
+        lines.append(cur)
+    return lines or [""]
 
 
 def _visual(text: str) -> str:
-    """Reorder one logical Hebrew/mixed line into visual order for reportlab.
-    base_dir='R' keeps mixed Hebrew/English lines anchored right-to-left."""
+    """Reorder one logical Hebrew/mixed line into visual order. base_dir='R'
+    anchors mixed Hebrew/English lines right-to-left."""
     return get_display(text or "", base_dir="R")
 
 
-def _rtl_markup(text: str, font_name: str, font_size: float, max_width: float) -> str:
-    """Break LOGICAL text into lines that fit max_width, bidi-reorder each line
-    to visual order, escape, and join with <br/>.
-
-    reportlab can't do this itself: its wrapping is direction-blind, so a
-    whole-paragraph get_display() wraps with the lines stacked bottom-up.
-    Wrapping first (on logical text) and reordering per line keeps both the
-    reading order of lines (top-down) and the in-line direction correct."""
-    words = (text or "").split()
-    lines: list[str] = []
-    cur = ""
-    for w in words:
-        trial = f"{cur} {w}" if cur else w
-        if cur and stringWidth(trial, font_name, font_size) > max_width:
-            lines.append(cur)
-            cur = w
-        else:
-            cur = trial
-    if cur:
-        lines.append(cur)
-    return "<br/>".join(_esc(_visual(line)) for line in lines)
+def _place(x0: float, x1: float, width: float, align: str, rtl: bool) -> float:
+    """Left edge for a run of `width` inside [x0, x1]. "start"/"end" are
+    direction-relative: start is the left edge in LTR, the right edge in RTL."""
+    if align == "center":
+        return (x0 + x1 - width) / 2
+    return x0 if ((align == "start") != rtl) else x1 - width
 
 
-def _styles(spec: TemplateSpec):
-    base = getSampleStyleSheet()
-    accent = HexColor(f"#{spec.accent}")
-    name_align = TA_CENTER if spec.name_centered else TA_LEFT
-    leading = spec.body_size + (2.5 if spec.tight else 3.5)
-    return {
-        "name": ParagraphStyle("Name", parent=base["Title"], fontSize=spec.name_size, alignment=name_align, textColor=_DARK, spaceAfter=2),
-        "contact": ParagraphStyle("Contact", parent=base["Normal"], fontSize=9, alignment=name_align, textColor=_DARK, spaceAfter=8),
-        "heading": ParagraphStyle("Heading", parent=base["Heading2"], fontSize=spec.heading_size, textColor=accent, spaceBefore=6 if spec.tight else 10, spaceAfter=2 if spec.tight else 3),
-        "body": ParagraphStyle("Body", parent=base["Normal"], fontSize=spec.body_size, textColor=_DARK, leading=leading),
-        "item": ParagraphStyle("ItemHead", parent=base["Normal"], fontSize=spec.body_size, textColor=_DARK, leading=leading, spaceBefore=2 if spec.tight else 4),
-    }
+def _draw_line(canv, text, x0, x1, y, font, size, color, *, tracking=0.0, align="start", rtl=False) -> None:
+    if not text:
+        return
+    shown = _visual(text) if rtl else text
+    x = _place(x0, x1, _adv(shown, font, size, tracking), align, rtl)
+    # A text object, not canvas.drawString: letter-spacing (PDF's Tc) is only
+    # reachable through one, and tracked headings are what stop the sections
+    # from reading like a Word document.
+    obj = canv.beginText(x, y)
+    obj.setFont(font, size)
+    obj.setFillColor(color)
+    if tracking:
+        obj.setCharSpace(tracking)
+    obj.textOut(shown)
+    canv.drawText(obj)
 
 
-def _he_styles(spec: TemplateSpec):
-    """RTL twins of _styles: Hebrew font + right alignment. Text is pre-wrapped
-    and bidi-reordered per line by _rtl_markup, so no wordWrap tricks here.
-    A non-centered name sits at the text start — the right edge, in RTL."""
-    base = getSampleStyleSheet()
-    accent = HexColor(f"#{spec.accent}")
-    name_align = TA_CENTER if spec.name_centered else TA_RIGHT
-    leading = spec.body_size + (2.5 if spec.tight else 3.5)
-    return {
-        "name": ParagraphStyle("NameHe", parent=base["Title"], fontSize=spec.name_size, alignment=name_align, textColor=_DARK, spaceAfter=2, fontName=_HE_FONT),
-        "contact": ParagraphStyle("ContactHe", parent=base["Normal"], fontSize=9, alignment=name_align, textColor=_DARK, spaceAfter=8, fontName=_HE_FONT),
-        "heading": ParagraphStyle("HeadingHe", parent=base["Heading2"], fontSize=spec.heading_size, textColor=accent, spaceBefore=6 if spec.tight else 10, spaceAfter=2 if spec.tight else 3, alignment=TA_RIGHT, fontName=_HE_FONT_BOLD),
-        "body": ParagraphStyle("BodyHe", parent=base["Normal"], fontSize=spec.body_size, textColor=_DARK, leading=leading, alignment=TA_RIGHT, fontName=_HE_FONT),
-        "item": ParagraphStyle("ItemHeadHe", parent=base["Normal"], fontSize=spec.body_size, textColor=_DARK, leading=leading, spaceBefore=2 if spec.tight else 4, alignment=TA_RIGHT, fontName=_HE_FONT_BOLD),
-    }
+# --------------------------------------------------------------------------- #
+# Flowables — all direction-aware, all real text
+# --------------------------------------------------------------------------- #
+class _Text(Flowable):
+    """A wrapped run in one style, optionally with a hanging bullet glyph."""
+
+    def __init__(self, text, *, font, size, color, leading, tracking=0.0, align="start",
+                 rtl=False, glyph="", glyph_color=None, indent=0.0,
+                 space_before=0.0, space_after=0.0):
+        super().__init__()
+        self.text, self.font, self.size, self.color = text, font, size, color
+        self.leading, self.tracking, self.align, self.rtl = leading, tracking, align, rtl
+        self.glyph, self.glyph_color, self.indent = glyph, glyph_color or color, indent
+        self.space_before, self.space_after = space_before, space_after
+
+    def wrap(self, avail_w, avail_h):
+        self._lines = _wrap_lines(self.text, self.font, self.size, avail_w - self.indent, self.tracking)
+        self.width = avail_w
+        self.height = self.space_before + len(self._lines) * self.leading + self.space_after
+        return self.width, self.height
+
+    def draw(self):
+        base = self.height - self.space_before - pdfmetrics.getAscent(self.font, self.size)
+        x0 = self.indent if not self.rtl else 0.0
+        x1 = self.width if not self.rtl else self.width - self.indent
+        for i, line in enumerate(self._lines):
+            _draw_line(self.canv, line, x0, x1, base - i * self.leading, self.font, self.size,
+                       self.color, tracking=self.tracking, align=self.align, rtl=self.rtl)
+        if self.glyph:
+            _draw_line(self.canv, self.glyph, 0.0, self.width, base, self.font, self.size,
+                       self.glyph_color, align="start", rtl=self.rtl)
 
 
-def _esc(text: str) -> str:
-    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+class _Row(Flowable):
+    """Primary text with a meta value pinned to the opposite edge — the
+    role/date line. In RTL the two swap sides automatically."""
+
+    def __init__(self, primary, meta, *, font, size, color, meta_font, meta_size, meta_color,
+                 leading, rtl=False, space_before=0.0, space_after=0.0):
+        super().__init__()
+        self.primary, self.meta = primary, meta
+        self.font, self.size, self.color = font, size, color
+        self.meta_font, self.meta_size, self.meta_color = meta_font, meta_size, meta_color
+        self.leading, self.rtl = leading, rtl
+        self.space_before, self.space_after = space_before, space_after
+
+    def wrap(self, avail_w, avail_h):
+        shown_meta = _visual(self.meta) if self.rtl else self.meta
+        self._meta_w = _adv(shown_meta, self.meta_font, self.meta_size) if self.meta else 0.0
+        limit = avail_w - (self._meta_w + 12 if self._meta_w else 0.0)
+        self._lines = _wrap_lines(self.primary, self.font, self.size, max(limit, avail_w * 0.35))
+        self.width = avail_w
+        self.height = self.space_before + len(self._lines) * self.leading + self.space_after
+        return self.width, self.height
+
+    def draw(self):
+        base = self.height - self.space_before - pdfmetrics.getAscent(self.font, self.size)
+        for i, line in enumerate(self._lines):
+            _draw_line(self.canv, line, 0.0, self.width, base - i * self.leading, self.font,
+                       self.size, self.color, align="start", rtl=self.rtl)
+        if self.meta:
+            _draw_line(self.canv, self.meta, 0.0, self.width, base, self.meta_font,
+                       self.meta_size, self.meta_color, align="end", rtl=self.rtl)
+
+
+class _Segments(Flowable):
+    """A separated inline list where each item can carry its own colour and
+    link — the contact line, the employer · location line, the languages line.
+
+    In RTL the items are laid out in reverse visual order (each item is
+    bidi-reordered on its own), which keeps per-item colour and link boxes
+    correct instead of collapsing the line into one flat string.
+    """
+
+    def __init__(self, segments, *, sep, sep_color, leading, align="start", rtl=False,
+                 space_before=0.0, space_after=0.0):
+        super().__init__()
+        # segments: list of (text, font, size, color, url)
+        self.segments = [s for s in segments if s[0]]
+        self.sep, self.sep_color = sep, sep_color
+        self.leading, self.align, self.rtl = leading, align, rtl
+        self.space_before, self.space_after = space_before, space_after
+
+    def wrap(self, avail_w, avail_h):
+        order = list(reversed(self.segments)) if self.rtl else list(self.segments)
+        rows: list[tuple[list[tuple], float]] = []
+        row: list[tuple] = []
+        x = 0.0
+        for text, font, size, color, url in order:
+            shown = _visual(text) if self.rtl else text
+            w = _adv(shown, font, size)
+            if row:
+                sep_w = _adv(self.sep, font, size)
+                if x + sep_w + w > avail_w:
+                    rows.append((row, x))
+                    row, x = [], 0.0
+                else:
+                    row.append((self.sep, font, size, self.sep_color, "", x))
+                    x += sep_w
+            row.append((shown, font, size, color, url, x))
+            x += w
+        if row:
+            rows.append((row, x))
+        self._rows = rows
+        self.width = avail_w
+        self.height = self.space_before + max(len(rows), 1) * self.leading + self.space_after
+        return self.width, self.height
+
+    def draw(self):
+        canv = self.canv
+        for i, (row, row_w) in enumerate(self._rows):
+            if not row:
+                continue
+            top_font, top_size = row[0][1], row[0][2]
+            base = self.height - self.space_before - pdfmetrics.getAscent(top_font, top_size) - i * self.leading
+            start = _place(0.0, self.width, row_w, self.align, self.rtl)
+            for shown, font, size, color, url, off in row:
+                canv.setFont(font, size)
+                canv.setFillColor(color)
+                canv.drawString(start + off, base, shown)
+                if url:
+                    w = _adv(shown, font, size)
+                    canv.linkURL(url, (start + off, base - 2, start + off + w, base + size), relative=1)
+
+
+class _Heading(Flowable):
+    """Section heading: tracked, uppercased (a no-op in Hebrew), over a
+    hairline that spans the column."""
+
+    def __init__(self, text, *, font, size, color, rule_color, tracking, rtl,
+                 rule=True, space_before=0.0, space_after=0.0):
+        super().__init__()
+        self.text, self.font, self.size, self.color = text, font, size, color
+        self.rule_color, self.tracking, self.rtl, self.rule = rule_color, tracking, rtl, rule
+        self.space_before, self.space_after = space_before, space_after
+
+    def wrap(self, avail_w, avail_h):
+        self.width = avail_w
+        self.height = self.space_before + self.size * 1.15 + (4.5 if self.rule else 0.0) + self.space_after
+        return self.width, self.height
+
+    def draw(self):
+        base = self.height - self.space_before - pdfmetrics.getAscent(self.font, self.size)
+        _draw_line(self.canv, self.text, 0.0, self.width, base, self.font, self.size, self.color,
+                   tracking=self.tracking, align="start", rtl=self.rtl)
+        if self.rule:
+            y = self.space_after + 1.5
+            self.canv.setStrokeColor(self.rule_color)
+            self.canv.setLineWidth(0.6)
+            self.canv.line(0, y, self.width, y)
+
+
+class _Rule(Flowable):
+    def __init__(self, color, *, thickness=0.8, space_before=0.0, space_after=0.0):
+        super().__init__()
+        self.color, self.thickness = color, thickness
+        self.space_before, self.space_after = space_before, space_after
+
+    def wrap(self, avail_w, avail_h):
+        self.width = avail_w
+        self.height = self.space_before + self.thickness + self.space_after
+        return self.width, self.height
+
+    def draw(self):
+        self.canv.setStrokeColor(self.color)
+        self.canv.setLineWidth(self.thickness)
+        y = self.space_after + self.thickness / 2
+        self.canv.line(0, y, self.width, y)
+
+
+# --------------------------------------------------------------------------- #
+# Style sheet resolved from one template spec
+# --------------------------------------------------------------------------- #
+def _mix(a: Color, b: Color, t: float) -> Color:
+    return Color(a.red + (b.red - a.red) * t, a.green + (b.green - a.green) * t,
+                 a.blue + (b.blue - a.blue) * t)
+
+
+class _Sheet:
+    def __init__(self, spec: TemplateSpec, rtl: bool, squeeze: float = 1.0):
+        self.spec, self.rtl, self.squeeze = spec, rtl, squeeze
+        self.reg, self.bold, self.ital = _fonts(_HE_FAMILY if rtl else spec.pdf_family)
+        self.ink = HexColor(f"#{spec.ink}")
+        self.muted = HexColor(f"#{spec.muted}")
+        self.accent = HexColor(f"#{spec.accent}")
+        self.rule = HexColor(f"#{spec.rule}")
+        # Inline separators sit between the hairline and the body grey so they
+        # read as punctuation, not as content.
+        self.sep = _mix(self.muted, self.rule, 0.55)
+        self.body = spec.body_size
+        self.meta = spec.meta_size
+        self.lead = spec.body_size * (1.26 if spec.tight else 1.36) * squeeze
+        self.tight = spec.tight
+        # Hebrew is unicase and its letterforms are already open — half the
+        # Latin tracking keeps headings airy without looking spaced-out.
+        self.track_head = spec.heading_tracking * (0.5 if rtl else 1.0)
+        self.track_name = spec.name_tracking * (0.5 if rtl else 1.0)
+
+    # vertical rhythm ------------------------------------------------------
+    @property
+    def sec_before(self) -> float:
+        return (8.0 if self.tight else 12.0) * self.squeeze
+
+    @property
+    def sec_after(self) -> float:
+        return (3.5 if self.tight else 5.0) * self.squeeze
+
+    @property
+    def entry_before(self) -> float:
+        return (4.5 if self.tight else 7.0) * self.squeeze
+
+    @property
+    def bullet_after(self) -> float:
+        return (0.5 if self.tight else 1.2) * self.squeeze
+
+
+def _url(bit: str) -> str:
+    """Best-effort link target for a contact bit. A space rules a bit out (that
+    is a name or a city), and an all-digits token is a phone number, so what is
+    left that carries a dot is a site or a profile."""
+    b = bit.strip()
+    if not b or " " in b:
+        return ""
+    if "@" in b:
+        return f"mailto:{b}"
+    if b.lower().startswith(("http://", "https://")):
+        return b
+    digits = b.translate(str.maketrans("", "", "+-.()"))
+    if digits.isdigit() or "." not in b.strip("."):
+        return ""
+    return f"https://{b}"
+
+
+# --------------------------------------------------------------------------- #
+# Build
+# --------------------------------------------------------------------------- #
+# A résumé that spills three lines onto a second page reads as sloppy, and one
+# page is the Israeli convention. When the overflow is small enough to absorb,
+# the vertical rhythm is compressed (never the type size) until it fits; below
+# this floor the résumé is genuinely a two-pager and is left alone.
+_MIN_SQUEEZE = 0.86
+
+
+def _content_height(flow: list, width: float) -> float:
+    """Total height of the built flow. KeepTogether reports a sentinel height,
+    so its children are measured directly."""
+    total = 0.0
+    for f in flow:
+        for item in (f._content if isinstance(f, KeepTogether) else [f]):
+            total += item.wrap(width, 0)[1]
+    return total
+
+
+def fit_squeeze(resume: ResumeModel, spec: TemplateSpec, rtl: bool) -> float:
+    """How far the vertical rhythm has to compress for this résumé to land on a
+    single page: 1.0 when it already fits, and 1.0 again when it is a genuine
+    two-pager that no reasonable squeeze would rescue.
+
+    The DOCX renderer reuses this so both downloads make the same call about
+    one page vs. two, even though Word does its own line breaking.
+    """
+    s = _Sheet(spec, rtl)
+    flow = _flow(resume, s, labels_for("he" if rtl else "en"))
+    capacity = spec.page_h_pt - 2 * spec.margin_tb_pt
+    total = _content_height(flow, spec.page_w_pt - 2 * spec.margin_lr_pt)
+    if total <= capacity or total > capacity / _MIN_SQUEEZE:
+        return 1.0
+    # 0.985 leaves room for the slack that keep-together groups leave at a page
+    # foot, which the flat sum above cannot see.
+    return max(_MIN_SQUEEZE, capacity / total * 0.985)
 
 
 def render_pdf(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
     spec = get_template(template)
-    if resume_language(resume) == "he":
-        return _render_pdf_hebrew(resume, spec)
+    rtl = resume_language(resume) == "he"
+    labels = labels_for("he" if rtl else "en")
+
+    s = _Sheet(spec, rtl, squeeze=fit_squeeze(resume, spec, rtl))
+    flow = _flow(resume, s, labels)
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=LETTER,
+    doc = BaseDocTemplate(
+        buf,
+        pagesize=(spec.page_w_pt, spec.page_h_pt),
         topMargin=spec.margin_tb_pt, bottomMargin=spec.margin_tb_pt,
         leftMargin=spec.margin_lr_pt, rightMargin=spec.margin_lr_pt,
         title=resume.contact.name or "Resume",
+        author=resume.contact.name or "",
+        subject="Resume",
     )
-    s = _styles(spec)
-    flow = []
+    # Zero frame padding: reportlab's default 6pt inset would silently eat the
+    # margins the template asked for (and used to break the RTL line breaker,
+    # which measured against the un-padded width).
+    doc.addPageTemplates([
+        PageTemplate(id="body", frames=[
+            Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height,
+                  leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="body")
+        ])
+    ])
 
+    doc.build(flow)
+    return buf.getvalue()
+
+
+def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> list:
+    spec = s.spec
+    flow: list = []
+    name_align = "center" if spec.name_centered else "start"
+
+    # --- header -----------------------------------------------------------
     c = resume.contact
-    flow.append(Paragraph(_esc(c.name or "Name"), s["name"]))
+    flow.append(_Text(
+        c.name or "Name", font=s.bold, size=spec.name_size,
+        color=s.accent if spec.accent_name else s.ink,
+        leading=spec.name_size * 1.18, tracking=s.track_name,
+        align=name_align, rtl=s.rtl, space_after=1.0,
+    ))
     bits = [b for b in [c.email, c.phone, c.location, c.linkedin, c.website] if b]
     if bits:
-        flow.append(Paragraph(_esc(" | ".join(bits)), s["contact"]))
+        flow.append(_Segments(
+            [(b, s.reg, spec.meta_size, s.muted, "" if s.rtl else _url(b)) for b in bits],
+            sep=" · ", sep_color=s.sep, leading=spec.meta_size * 1.45,
+            align=name_align, rtl=s.rtl,
+            # Without a rule to separate it, the header needs the air itself.
+            space_after=0.0 if spec.header_rule else 5.0,
+        ))
+    if spec.header_rule:
+        flow.append(_Rule(s.rule, thickness=0.8, space_before=6.0, space_after=0.0))
 
-    def bullets(items: list[str]):
-        return ListFlowable(
-            [ListItem(Paragraph(_esc(b), s["body"]), leftIndent=12) for b in items if b],
-            bulletType="bullet", start="•", leftIndent=14,
+    def heading(key: str):
+        text = labels[key] if s.rtl else labels[key].upper()
+        return _Heading(
+            text, font=s.bold, size=spec.heading_size, color=s.accent, rule_color=s.rule,
+            tracking=s.track_head, rtl=s.rtl, rule=spec.heading_rule,
+            space_before=s.sec_before, space_after=s.sec_after,
         )
 
+    def body(text: str, **kw):
+        return _Text(text, font=s.reg, size=s.body, color=s.ink, leading=s.lead, rtl=s.rtl, **kw)
+
+    def bullet(text: str, last: bool = False):
+        return _Text(text, font=s.reg, size=s.body, color=s.ink, leading=s.lead, rtl=s.rtl,
+                     glyph="•", glyph_color=s.muted, indent=s.body * 1.05,
+                     space_after=0.0 if last else s.bullet_after)
+
+    def entry(primary: str, meta: str, secondary: list[tuple], bullets: list[str], first: bool):
+        """One role: the title/date row, the employer · location row, and the
+        bullets. Returns (opening, trailing) as flat lists — `section` glues
+        the opening together so a role never strands its head at the foot of a
+        page, while the trailing bullets stay free to flow. Both lists stay
+        flat: a KeepTogether nested inside another reports a sentinel height
+        and would push every section onto its own page."""
+        head: list = [_Row(
+            primary, meta, font=s.bold, size=s.body, color=s.ink,
+            meta_font=s.reg, meta_size=s.meta, meta_color=s.muted,
+            leading=s.lead, rtl=s.rtl, space_before=0.0 if first else s.entry_before,
+        )]
+        if any(part[0] for part in secondary):
+            head.append(_Segments(secondary, sep=" · ", sep_color=s.sep, leading=s.lead,
+                                  align="start", rtl=s.rtl))
+        live = [b for b in bullets if b]
+        items = [bullet(b, last=(i == len(live) - 1)) for i, b in enumerate(live)]
+        return head + items[:1], items[1:]
+
+    def section(key: str, entries: list) -> None:
+        """Heading + entries; the heading is glued to the first entry."""
+        if not entries:
+            return
+        opening, trailing = entries[0]
+        flow.append(KeepTogether([heading(key)] + opening))
+        flow.extend(trailing)
+        for opening, trailing in entries[1:]:
+            flow.append(KeepTogether(opening))
+            flow.extend(trailing)
+
+    def seg(text: str, color, size: float | None = None) -> tuple:
+        return (text, s.reg, size if size is not None else s.body, color, "")
+
+    # --- summary / skills -------------------------------------------------
     if resume.summary:
-        flow += [Paragraph("SUMMARY", s["heading"]), Paragraph(_esc(resume.summary), s["body"])]
+        flow.append(KeepTogether([heading("summary"), body(resume.summary)]))
 
     if resume.skills:
-        flow += [Paragraph("SKILLS", s["heading"]), Paragraph(_esc(", ".join(resume.skills)), s["body"])]
+        # Comma-separated on purpose: it is what ATS keyword parsers split on.
+        flow.append(KeepTogether([heading("skills"), body(", ".join(resume.skills))]))
 
+    # --- experience -------------------------------------------------------
     if resume.experience:
-        flow.append(Paragraph("EXPERIENCE", s["heading"]))
-        for exp in resume.experience:
-            left = " — ".join(b for b in [exp.title, exp.company] if b)
-            dates = " – ".join(b for b in [exp.start_date, exp.end_date] if b)
-            meta = " | ".join(b for b in [exp.location, dates] if b)
-            head = f"<b>{_esc(left)}</b>"
-            if meta:
-                head += f"  <i>({_esc(meta)})</i>"
-            flow.append(Paragraph(head, s["item"]))
-            if exp.bullets:
-                flow.append(bullets(exp.bullets))
+        section("experience", [
+            entry(
+                exp.title or exp.company,
+                " – ".join(b for b in [exp.start_date, exp.end_date] if b),
+                [seg(exp.company if exp.title else "", s.accent), seg(exp.location, s.muted, s.meta)],
+                exp.bullets, first=(i == 0),
+            )
+            for i, exp in enumerate(resume.experience)
+        ])
 
+    # --- projects ---------------------------------------------------------
     if resume.projects:
-        flow.append(Paragraph("PROJECTS", s["heading"]))
-        for proj in resume.projects:
-            head = f"<b>{_esc(proj.name)}</b>"
-            if proj.description:
-                head += f" — {_esc(proj.description)}"
-            flow.append(Paragraph(head, s["item"]))
-            if proj.bullets:
-                flow.append(bullets(proj.bullets))
+        section("projects", [
+            entry(proj.name, "", [seg(proj.description, s.muted)], proj.bullets, first=(i == 0))
+            for i, proj in enumerate(resume.projects)
+        ])
 
+    # --- education --------------------------------------------------------
     if resume.education:
-        flow.append(Paragraph("EDUCATION", s["heading"]))
-        for edu in resume.education:
-            line = ", ".join(b for b in [edu.degree, edu.field] if b) or edu.institution
-            dates = " – ".join(d for d in [edu.start_date, edu.end_date] if d)
-            tail = " | ".join(b for b in [edu.institution if line != edu.institution else "", dates] if b)
-            head = f"<b>{_esc(line)}</b>"
-            if tail:
-                head += f"  <i>({_esc(tail)})</i>"
-            flow.append(Paragraph(head, s["item"]))
-            if edu.details:
-                flow.append(Paragraph(_esc(edu.details), s["body"]))
+        section("education", [
+            entry(
+                ", ".join(b for b in [edu.degree, edu.field] if b) or edu.institution,
+                " – ".join(d for d in [edu.start_date, edu.end_date] if d),
+                [seg(edu.institution if (edu.degree or edu.field) else "", s.accent)],
+                [edu.details] if edu.details else [],
+                first=(i == 0),
+            )
+            for i, edu in enumerate(resume.education)
+        ])
 
+    # --- military ---------------------------------------------------------
     if resume.military_service:
-        flow.append(Paragraph(_EN_MILITARY, s["heading"]))
-        for ms in resume.military_service:
-            left = " — ".join(b for b in [ms.role, ms.unit] if b)
-            dates = " – ".join(b for b in [ms.start_date, ms.end_date] if b)
-            meta = " | ".join(b for b in [ms.rank, dates] if b)
-            head = f"<b>{_esc(left or 'Military Service')}</b>"
-            if meta:
-                head += f"  <i>({_esc(meta)})</i>"
-            flow.append(Paragraph(head, s["item"]))
-            if ms.bullets:
-                flow.append(bullets(ms.bullets))
+        section("military", [
+            entry(
+                " — ".join(b for b in [ms.role, ms.unit] if b) or labels["military"],
+                " – ".join(b for b in [ms.start_date, ms.end_date] if b),
+                [seg(ms.rank, s.muted, s.meta)],
+                ms.bullets, first=(i == 0),
+            )
+            for i, ms in enumerate(resume.military_service)
+        ])
 
-    if resume.certifications:
-        flow.append(Paragraph("CERTIFICATIONS", s["heading"]))
-        flow.append(bullets(resume.certifications))
+    # --- certifications / languages --------------------------------------
+    live_certs = [cert for cert in resume.certifications if cert]
+    if live_certs:
+        items = [bullet(cert, last=(i == len(live_certs) - 1)) for i, cert in enumerate(live_certs)]
+        flow.append(KeepTogether([heading("certifications"), items[0]]))
+        flow.extend(items[1:])
 
-    if resume.languages:
-        flow.append(Paragraph(_EN_LANGUAGES, s["heading"]))
-        bits = [" – ".join(b for b in [ls.language, ls.level] if b) for ls in resume.languages]
-        flow.append(Paragraph(_esc(" | ".join(b for b in bits if b)), s["body"]))
+    lang_segs = [
+        seg(" – ".join(b for b in [ls.language, ls.level] if b), s.ink)
+        for ls in resume.languages
+    ]
+    if any(x[0] for x in lang_segs):
+        flow.append(KeepTogether([
+            heading("languages"),
+            _Segments(lang_segs, sep=" · ", sep_color=s.sep, leading=s.lead, align="start", rtl=s.rtl),
+        ]))
 
-    doc.build(flow)
-    return buf.getvalue()
-
-
-def _render_pdf_hebrew(resume: ResumeModel, spec: TemplateSpec) -> bytes:
-    """Hebrew build path: embedded Hebrew font, every line bidi-reordered
-    logical->visual, right-aligned RTL paragraphs. Still ATS-safe: single
-    column, no tables/images, real selectable text."""
-    _ensure_hebrew_fonts()
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=LETTER,
-        topMargin=spec.margin_tb_pt, bottomMargin=spec.margin_tb_pt,
-        leftMargin=spec.margin_lr_pt, rightMargin=spec.margin_lr_pt,
-        title=resume.contact.name or "Resume",
-    )
-    s = _he_styles(spec)
-    flow = []
-    # Frame width available to paragraphs; wrap slightly inside it so our
-    # measured lines can never trigger a second, direction-blind re-wrap.
-    text_width = LETTER[0] - doc.leftMargin - doc.rightMargin - 2
-
-    def para(text: str, style) -> Paragraph:
-        # Wrap on the logical text, bidi per line, escape — markup (<br/>)
-        # is added after bidi so it never gets reordered.
-        return Paragraph(_rtl_markup(text, style.fontName, style.fontSize, text_width), style)
-
-    def bullet_paras(items: list[str]) -> list[Paragraph]:
-        # ListFlowable pins bullets to the left edge; for RTL we bake the
-        # bullet into the line (logical start => visually rightmost).
-        return [para(f"• {b}", s["body"]) for b in items if b]
-
-    def heading(key: str) -> Paragraph:
-        return para(_HE_HEADINGS[key], s["heading"])
-
-    c = resume.contact
-    flow.append(para(c.name or "Name", s["name"]))
-    bits = [b for b in [c.email, c.phone, c.location, c.linkedin, c.website] if b]
-    if bits:
-        flow.append(para(" | ".join(bits), s["contact"]))
-
-    if resume.summary:
-        flow += [heading("summary"), para(resume.summary, s["body"])]
-
-    if resume.skills:
-        flow += [heading("skills"), para(", ".join(resume.skills), s["body"])]
-
-    if resume.experience:
-        flow.append(heading("experience"))
-        for exp in resume.experience:
-            head = " — ".join(b for b in [exp.title, exp.company] if b)
-            dates = " – ".join(b for b in [exp.start_date, exp.end_date] if b)
-            meta = " | ".join(b for b in [exp.location, dates] if b)
-            flow.append(para(head, s["item"]))
-            if meta:
-                flow.append(para(meta, s["body"]))
-            flow += bullet_paras(exp.bullets)
-
-    if resume.projects:
-        flow.append(heading("projects"))
-        for proj in resume.projects:
-            head = proj.name
-            if proj.description:
-                head += f" — {proj.description}"
-            flow.append(para(head, s["item"]))
-            flow += bullet_paras(proj.bullets)
-
-    if resume.education:
-        flow.append(heading("education"))
-        for edu in resume.education:
-            line = ", ".join(b for b in [edu.degree, edu.field] if b) or edu.institution
-            dates = " – ".join(d for d in [edu.start_date, edu.end_date] if d)
-            tail = " | ".join(b for b in [edu.institution if line != edu.institution else "", dates] if b)
-            flow.append(para(line, s["item"]))
-            if tail:
-                flow.append(para(tail, s["body"]))
-            if edu.details:
-                flow.append(para(edu.details, s["body"]))
-
-    if resume.military_service:
-        flow.append(heading("military"))
-        for ms in resume.military_service:
-            head = " — ".join(b for b in [ms.role, ms.unit] if b) or _HE_HEADINGS["military"]
-            dates = " – ".join(b for b in [ms.start_date, ms.end_date] if b)
-            meta = " | ".join(b for b in [ms.rank, dates] if b)
-            flow.append(para(head, s["item"]))
-            if meta:
-                flow.append(para(meta, s["body"]))
-            flow += bullet_paras(ms.bullets)
-
-    if resume.certifications:
-        flow.append(heading("certifications"))
-        flow += bullet_paras(resume.certifications)
-
-    if resume.languages:
-        flow.append(heading("languages"))
-        bits = [" – ".join(b for b in [ls.language, ls.level] if b) for ls in resume.languages]
-        flow.append(para(" | ".join(b for b in bits if b), s["body"]))
-
-    doc.build(flow)
-    return buf.getvalue()
+    return flow

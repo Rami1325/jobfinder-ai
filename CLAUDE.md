@@ -79,7 +79,12 @@ Beyond the core pipeline, the backend also exposes standalone feature modules (e
 - `app/core/scorer.py` — keyword coverage is pure Python (deterministic, explainable); `fit_score` is the only part that calls the LLM. Both combined into `overall`.
 - `app/api/routes.py` — thin FastAPI handlers that wire the pipeline. No business logic here.
 - `app/db/` — SQLAlchemy + SQLite (`applications` tracker + `saved_resumes` master résumé + `job_search_hits` search history). `init_db()` is called via the FastAPI lifespan hook and includes a lightweight SQLite ADD-COLUMN shim that adds any ORM columns missing from pre-existing tables. Job-search results are auto-persisted as history via `app/db/history.py` (deduped by URL, capped at the newest 100) and exposed at `GET`/`DELETE /jobs/history`.
-- `app/render/` — `docx_renderer.py` (python-docx) and `pdf_renderer.py` (reportlab). ATS-safe: single column, no tables/images/headers/footers.
+- `app/render/` — `docx_renderer.py` (python-docx) and `pdf_renderer.py` (reportlab), both driving one shared design system out of `templates.py` (palette, type, rhythm, page size) and `labels.py` (section names, EN/HE). ATS-safe: single column, no tables/images/headers/footers.
+  - **The PDF has its own layout engine.** Every run is line-broken by `_wrap_lines` and drawn with a text object, so Hebrew (bidi-reordered per line, right-to-left) and English share one set of flowables — `_Text`, `_Row` (title + flush-far-edge dates), `_Segments` (inline list with per-item colour/links), `_Heading` (letter-spaced, over a hairline). reportlab's `Paragraph` is deliberately unused: its wrapping is direction-blind.
+  - **Never nest `KeepTogether`.** It reports a sentinel height, so a nested one pushes every section onto its own page.
+  - `fit_squeeze()` decides one page vs. two by measuring the built flow, and compresses the vertical rhythm (never the type size) when the résumé overflows by a little. The DOCX renderer calls the same function so both downloads agree.
+  - Hebrew DOCX must mirror `w:b`/`w:sz` onto `w:bCs`/`w:szCs` — Word formats Hebrew through the complex-script properties and ignores the plain ones.
+  - Fonts are bundled under OFL (see `fonts/README.md`); a missing file degrades to base-14 rather than failing the download.
 
 **Frontend layout:**
 - `src/types.ts` — mirrors the backend Pydantic schemas. Keep in sync when models change.
@@ -101,5 +106,5 @@ Default `MODEL_ID` is **`gpt-4o-mini`** — cheap, fast, and strong at this JSON
 ## Key invariants
 
 - The fabrication guard runs **after** every tailor call, not just in tests. If the LLM invents an employer/title/date/credential/number, the API still returns it but `fabrication_flags` will be non-empty. The UI surfaces these as warnings.
-- ATS rendering rules are enforced in both renderers: no tables, no text-boxes, no images, no headers/footers, single column, standard section names.
+- ATS rendering rules are enforced in both renderers: no tables, no text-boxes, no images, no headers/footers, single column, standard section names. Everything that makes the download *look* designed is achieved without breaking those rules — hairlines are paragraph borders, flush-right dates are a tab stop (DOCX) or a drawn string (PDF), and letter-spacing is small enough that extractors still read whole words. The smoke test pins all three.
 - `FactsLedger` is derived from the **original** resume (before tailoring) and is never mutated. It is the source of truth for the guard.

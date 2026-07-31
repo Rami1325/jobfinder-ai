@@ -2028,8 +2028,8 @@ with TestClient(_fastapi_app) as _tc:
 from app.render.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template  # noqa: E402
 
 check(
-    "template registry: 3 templates, default present",
-    len(TEMPLATES) == 3 and DEFAULT_TEMPLATE in TEMPLATES,
+    "template registry: 5 templates, default present",
+    len(TEMPLATES) == 5 and DEFAULT_TEMPLATE in TEMPLATES,
     str(list(TEMPLATES)),
 )
 check(
@@ -2090,6 +2090,63 @@ for _tpl in TEMPLATES:
         and _get_display(_he_full.contact.name, base_dir="R") in _tpl_he_pdf_txt
         and "Python" in _tpl_he_pdf_txt,
     )
+
+# 18b. Design pass on the rendered CV. Letter-spacing, hairlines and flush-right
+# dates are what make the download look designed rather than typed — each one is
+# also a way to break an ATS, so each is pinned here.
+_dsg_pdf_txt = _pdf_text(render_pdf(resume))
+check(
+    "pdf: letter-spaced headings still extract as whole words (Tc must not inject spaces)",
+    "SUMMARY" in _dsg_pdf_txt and "EXPERIENCE" in _dsg_pdf_txt,
+    _dsg_pdf_txt[:160],
+)
+_dsg_docx_xml = _docx_xml(render_docx(resume))
+check(
+    "docx: hairlines are paragraph borders and dates a right tab stop — no table anywhere",
+    "<w:pBdr" in _dsg_docx_xml and "<w:tabs" in _dsg_docx_xml and "<w:tbl" not in _dsg_docx_xml,
+)
+_dsg_he_xml = _docx_xml(render_docx(_he_full))
+check(
+    "docx he: bold/size mirrored onto the complex-script twins (Word ignores w:b for Hebrew)",
+    "<w:bCs" in _dsg_he_xml and "<w:szCs" in _dsg_he_xml,
+)
+
+# One page is the convention this product ships for. A résumé that overflows by
+# a few lines is compressed until it fits; one that is genuinely long is left to
+# break naturally rather than squeezed into illegibility.
+from app.render.pdf_renderer import fit_squeeze  # noqa: E402
+from app.render.templates import get_template as _get_tpl  # noqa: E402
+
+_fit_spec = _get_tpl(DEFAULT_TEMPLATE)
+
+
+def _pdf_pages(b: bytes) -> int:
+    with _pdfplumber.open(_io.BytesIO(b)) as pdf:
+        return len(pdf.pages)
+
+
+# Grow the résumé a bullet at a time until it is the first size that no longer
+# fits — the near-miss the squeeze exists for. Self-calibrating, so changing the
+# fixture above cannot silently turn this check into a no-op.
+_long = resume.model_copy(deep=True)
+while fit_squeeze(_long, _fit_spec, rtl=False) == 1.0 and len(_long.experience[0].bullets) < 200:
+    _long.experience[0].bullets.append("Shipped an internal tool the whole team now uses daily.")
+_long_squeeze = fit_squeeze(_long, _fit_spec, rtl=False)
+check(
+    "fit: a résumé that overflows slightly is squeezed onto one page",
+    _long_squeeze < 1.0 and _pdf_pages(render_pdf(_long)) == 1,
+    f"squeeze={_long_squeeze:.3f} bullets={len(_long.experience[0].bullets)}",
+)
+_huge = resume.model_copy(deep=True)
+_huge.experience = [resume.experience[0].model_copy(deep=True) for _ in range(25)]
+check(
+    "fit: a genuinely long résumé is left at full size and flows onto more pages",
+    fit_squeeze(_huge, _fit_spec, rtl=False) == 1.0 and _pdf_pages(render_pdf(_huge)) > 1,
+)
+check(
+    "fit: a short résumé is never stretched",
+    fit_squeeze(resume, _fit_spec, rtl=False) == 1.0,
+)
 
 # 19. Friends beta (PLAN 7): invite-code auth, per-user isolation, admin
 # mint/revoke, daily caps, feedback, delete-my-data — all through the HTTP

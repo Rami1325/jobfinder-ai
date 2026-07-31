@@ -110,7 +110,7 @@ export function resumeFilename(candidateName: string, company: string): string {
 }
 
 /** Visual templates the backend renderers support (see app/render/templates.py). */
-export const RESUME_TEMPLATES = ["classic", "modern", "compact"] as const;
+export const RESUME_TEMPLATES = ["classic", "modern", "compact", "executive", "minimal"] as const;
 export type ResumeTemplate = (typeof RESUME_TEMPLATES)[number];
 
 export async function downloadResume(
