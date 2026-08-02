@@ -4122,6 +4122,40 @@ check(
     _wrap_text[-90:],
 )
 
+# The master résumé is an inventory and may grow without limit — only the
+# TAILORED output is capped. Dropping one project at a time cost one render per
+# drop and blew the measurement budget: a 126-project master shipped 7 pages,
+# silently over the hard limit. The binary search has to hold at any size.
+for _n_proj in (60, 150):
+    _huge = _master_resume(n_projects=_n_proj)
+    _huge_fit, _huge_rep = fit_to_pages(_huge, _jd_b, max_pages=2, hard_max_pages=3)
+    check(
+        f"a {_n_proj}-project master still tailors inside the hard limit",
+        page_count(_huge_fit) <= 3,
+        f"{_huge_rep.pages_before} -> {page_count(_huge_fit)} pages, "
+        f"{len(_huge_fit.projects)} projects kept",
+    )
+    check(
+        f"protected entries survive a {_n_proj}-project master",
+        len(_huge_fit.experience) == len(_huge.experience)
+        and len(_huge_fit.education) == len(_huge.education)
+        and len(_huge_fit.languages) == len(_huge.languages),
+    )
+# When it genuinely cannot fit, it must SAY so rather than return a quiet
+# over-length résumé.
+_unfittable = _master_resume(n_projects=1)
+_unfittable.experience = [
+    _Experience_b(company=f"Company {i}", title="Engineer", start_date="2010",
+                  end_date="2011", bullets=[f"{_BLURB} ({i})"] * 3)
+    for i in range(40)
+]
+_uf_fit, _uf_rep = fit_to_pages(_unfittable, _jd_b, max_pages=2, hard_max_pages=3)
+check(
+    "an impossible résumé reports the overflow instead of hiding it",
+    page_count(_uf_fit) <= 3 or any("could not get below" in n for n in _uf_rep.notes),
+    f"{page_count(_uf_fit)} pages, notes={_uf_rep.notes}",
+)
+
 # Relevance decides HOW MANY projects, not an arbitrary cap: ten short relevant
 # projects that fit inside the page budget must all survive.
 _many = _Resume_b(

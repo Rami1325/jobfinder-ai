@@ -123,6 +123,15 @@ def project_relevance(project: Project, jd: JDModel, plan: CVPlan | None = None)
     return score
 
 
+def ranked_indices(resume: ResumeModel, jd: JDModel, plan: CVPlan | None = None) -> list[int]:
+    """Project indices, MOST relevant first. Indices stay valid because the
+    binary search always slices the same base résumé rather than removing
+    projects one at a time."""
+    scored = [(project_relevance(p, jd, plan), -i, i) for i, p in enumerate(resume.projects)]
+    scored.sort(reverse=True)
+    return [i for _, _, i in scored]
+
+
 def rank_projects(resume: ResumeModel, jd: JDModel, plan: CVPlan | None = None) -> list[str]:
     """Project names in DROP order — least relevant first.
 
@@ -143,19 +152,13 @@ def _first_sentences(text: str, n: int) -> str:
     return " ".join(parts[:n]).strip() if len(parts) > n else (text or "").strip()
 
 
-def _drop_one_project(resume: ResumeModel, drop_order: list[str], floor: int) -> ResumeModel | None:
-    """Remove the least relevant project still present, or None at the floor."""
-    if len(resume.projects) <= floor:
-        return None
-    for name in drop_order:
-        for i, p in enumerate(resume.projects):
-            if p.name == name:
-                out = resume.model_copy(deep=True)
-                out.projects = [q for j, q in enumerate(out.projects) if j != i]
-                return out
-    # Ranking went stale (duplicate/blank names): fall back to the last one.
+def _keep_top_projects(resume: ResumeModel, ranked: list[int], n: int) -> ResumeModel:
+    """Keep the `n` highest-ranked projects, in their original order."""
+    if n >= len(resume.projects):
+        return resume
+    keep = set(ranked[:max(0, n)])
     out = resume.model_copy(deep=True)
-    out.projects = out.projects[:-1]
+    out.projects = [p for i, p in enumerate(out.projects) if i in keep]
     return out
 
 
@@ -249,8 +252,39 @@ def fit_to_pages(
         return resume, report
 
     original_names = [p.name for p in resume.projects]
-    order = rank_projects(resume, jd, plan)
+    ranked = ranked_indices(resume, jd, plan)
     current, pages, budget = resume, before, _MAX_MEASUREMENTS
+
+    def fit_projects(floor: int, target: int, note: str) -> None:
+        """Keep the MOST projects that still fit, by binary search.
+
+        Dropping one project at a time and re-measuring costs one render per
+        drop, which a big master résumé exhausts: at 126 projects the old loop
+        hit the measurement cap and returned a 7-page CV, silently over the
+        hard limit. Page count is monotonic in the number of projects kept, so
+        the largest fitting count is a binary search — ~7 renders instead of
+        ~120, and it lands on the MOST projects that fit rather than the first
+        count that happens to.
+        """
+        nonlocal current, pages, budget
+        if pages <= target or len(current.projects) <= floor:
+            return
+        base, lo, hi, best = current, floor, len(current.projects), None
+        while lo <= hi and budget > 0:
+            mid = (lo + hi) // 2
+            candidate = _keep_top_projects(base, ranked, mid)
+            budget -= 1
+            if page_count(candidate, template) <= target:
+                best, lo = mid, mid + 1
+            else:
+                hi = mid - 1
+        keep = best if best is not None else floor
+        if keep < len(base.projects):
+            current = _keep_top_projects(base, ranked, keep)
+            pages = page_count(current, template)
+            budget -= 1
+            if note not in report.notes:
+                report.notes.append(note)
 
     def apply(candidate: ResumeModel | None, note: str) -> bool:
         """Measure a candidate and keep it. Trims only remove content, so a
@@ -291,9 +325,7 @@ def fit_to_pages(
         candidate, note = step()
         apply(candidate, note)
 
-    while pages > max_pages and budget > 0:
-        if not apply(_drop_one_project(current, order, SOFT_MIN_PROJECTS), "dropped less relevant projects"):
-            break
+    fit_projects(SOFT_MIN_PROJECTS, max_pages, "dropped less relevant projects")
     while pages > max_pages and budget > 0:
         if not apply(
             _trim_experience_bullets(current, SOFT_MIN_BULLETS_RECENT, SOFT_MIN_BULLETS_OLDER),
@@ -305,9 +337,7 @@ def fit_to_pages(
     # Descriptions and project bullets are already at their floor by now; what
     # is left is dropping below the soft minimums.
     if pages > hard_max_pages:
-        while pages > hard_max_pages and budget > 0:
-            if not apply(_drop_one_project(current, order, HARD_MIN_PROJECTS), "dropped more projects to fit"):
-                break
+        fit_projects(HARD_MIN_PROJECTS, hard_max_pages, "dropped more projects to fit")
         while pages > hard_max_pages and budget > 0:
             if not apply(
                 _trim_experience_bullets(current, HARD_MIN_BULLETS_RECENT, HARD_MIN_BULLETS_OLDER),
@@ -322,4 +352,12 @@ def fit_to_pages(
     report.dropped_projects = [n for n in original_names if n not in kept]
     report.pages_after = pages
     report.trimmed = pages != before or bool(report.notes)
+    # Say so when the budget could not be met. A silent over-length CV reads as
+    # "this fits" to every caller downstream, which is how the 126-project case
+    # shipped seven pages without anyone noticing.
+    if pages > hard_max_pages:
+        report.notes.append(
+            f"could not get below {hard_max_pages} pages — still {pages}; "
+            "everything trimmable is already at its floor"
+        )
     return current, report
