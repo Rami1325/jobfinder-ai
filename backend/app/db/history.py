@@ -6,6 +6,7 @@ dedupe is per (user, url), and the newest-100 cap applies per user.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
@@ -142,8 +143,12 @@ def _url_key(url: str) -> str:
     return _linkedin_job_id(url) or url.split("?")[0].rstrip("/")
 
 
-def application_statuses(db: Session, urls: list[str], user_id: int) -> dict[str, str]:
-    """Map each history URL to its tracker status ('' when never saved/applied).
+def applied_status_map(db: Session, user_id: int) -> dict[str, str]:
+    """Every job this user already has in the tracker, keyed by normalized URL.
+
+    Read once and passed around as a plain dict so the SSE search can stamp
+    results after it has released its pooled connection — that stream runs for
+    minutes and must not hold a Neon connection open to answer this.
     Newest application wins if the same job was saved twice."""
     status_by_key: dict[str, str] = {}
     rows = db.execute(
@@ -153,7 +158,45 @@ def application_statuses(db: Session, urls: list[str], user_id: int) -> dict[str
     ).all()
     for job_url, status in rows:
         status_by_key[_url_key(job_url)] = status or "saved"
+    return status_by_key
+
+
+def application_statuses(db: Session, urls: list[str], user_id: int) -> dict[str, str]:
+    """Map each history URL to its tracker status ('' when never saved/applied)."""
+    status_by_key = applied_status_map(db, user_id)
     return {u: status_by_key.get(_url_key(u), "") for u in urls if u}
+
+
+def _match_urls(m: JobMatch | dict) -> list[str]:
+    if isinstance(m, dict):
+        also = m.get("also_on") or []
+        return [m.get("url") or "", *[(a or {}).get("url") or "" for a in also]]
+    return [m.url, *(a.url for a in m.also_on)]
+
+
+def stamp_applied(matches: Sequence[JobMatch | dict], status_by_key: dict[str, str]) -> None:
+    """Mark search results the user has already dealt with, in place.
+
+    Also checks the cross-board duplicates (`also_on`): the same posting shows
+    up on LinkedIn and Comeet under different URLs, and having applied through
+    one of them is exactly the reason not to look at the other again.
+
+    Takes models OR dicts because the SSE search stamps both — the incremental
+    `match` frames are already `model_dump()`ed by the time they reach the
+    endpoint, while the terminal `result` still holds real JobMatch objects.
+    """
+    if not status_by_key:
+        return
+    for m in matches:
+        for url in _match_urls(m):
+            status = status_by_key.get(_url_key(url)) if url else ""
+            if not status:
+                continue
+            if isinstance(m, dict):
+                m["application_status"] = status
+            else:
+                m.application_status = status
+            break
 
 
 def delete_search_hit(db: Session, hit_id: int, user_id: int) -> bool:

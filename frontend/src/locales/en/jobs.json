@@ -172,6 +172,9 @@
     "ranked_one": "{{count}} job ranked",
     "ranked_other": "{{count}} jobs ranked",
     "skipped": ", {{count}} skipped",
+    "hideApplied_one": "Hide {{count}} already applied to",
+    "hideApplied_other": "Hide {{count}} already applied to",
+    "hideAppliedHint": "Hides jobs your tracker already marks applied, interviewing, offered or rejected. Saved jobs stay visible.",
     "streaming": {
       "showing_one": "Showing the first {{count}} of {{total}} scored",
       "showing_other": "Showing the first {{count}} of {{total}} scored",

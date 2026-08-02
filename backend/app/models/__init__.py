@@ -722,6 +722,11 @@ class JobMatch(BaseModel):
     # Posted before the search's max_age_days window but kept because the title
     # matches the searched keywords (PLAN 15.6). The UI shows an "Older" badge.
     stale: bool = False
+    # Tracker status when this posting is already in the user's tracker
+    # ("saved" | "applied" | "interview" | "offer" | "rejected"), else "".
+    # Carries the status rather than a bool so the card can say WHICH — "saved"
+    # is a job to come back to, "applied" is one to stop re-reading.
+    application_status: str = ""
 
 
 class JobMatchResult(BaseModel):

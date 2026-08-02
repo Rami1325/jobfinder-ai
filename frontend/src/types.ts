@@ -250,6 +250,9 @@ export interface JobMatch {
   also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
   salary?: SalaryInfo | null; // only when literally stated in the posting
   stale?: boolean; // older than the search window, kept for keyword relevance (PLAN 15.6)
+  // Tracker status when this posting is already in the tracker ("saved" |
+  // "applied" | "interview" | "offer" | "rejected"); "" or absent when new.
+  application_status?: string;
 }
 export interface AlsoOn {
   source: string;

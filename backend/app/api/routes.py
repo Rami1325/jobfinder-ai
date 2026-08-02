@@ -59,7 +59,9 @@ from app.db.history import (
     delete_search_hit,
     list_search_hits,
     load_score_cache,
+    applied_status_map,
     record_search_hits,
+    stamp_applied,
 )
 from app.db.models import (
     Application,
@@ -403,6 +405,10 @@ def jobs_search(
         record_search_hits(db, result.matches, user.id, resume_hash=rhash)
     except Exception:  # noqa: BLE001
         pass
+    try:  # so is the already-applied marking
+        stamp_applied(result.matches, applied_status_map(db, user.id))
+    except Exception:  # noqa: BLE001
+        pass
     return result
 
 
@@ -437,6 +443,10 @@ def jobs_search_stream(
         cache = load_score_cache(db, user_id, rhash)
     except Exception:  # noqa: BLE001
         cache = {}
+    try:  # read the tracker BEFORE the session closes; the stream runs for minutes
+        applied_map = applied_status_map(db, user_id)
+    except Exception:  # noqa: BLE001
+        applied_map = {}
     db.close()
 
     events: queue.Queue = queue.Queue()  # thread-safe: search workers notify from threads
@@ -468,6 +478,10 @@ def jobs_search_stream(
                 if payload.get("stage") == "match":
                     # Incremental result: the JobMatch itself rides its own
                     # event name so the UI can render rows as they score.
+                    # Stamped here too — these frames ARE the list the user
+                    # reads while the search runs; only marking the terminal
+                    # `result` would show every job unmarked until the end.
+                    stamp_applied([payload["match"]], applied_map)
                     yield _sse_frame("match", payload["match"])
                 else:
                     yield _sse_frame("progress", payload)
@@ -480,6 +494,7 @@ def jobs_search_stream(
                         hist_db.close()
                 except Exception:  # noqa: BLE001
                     pass
+                stamp_applied(payload.matches, applied_map)
                 yield _sse_frame("result", payload.model_dump())
                 return
             else:

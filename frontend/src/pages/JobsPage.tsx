@@ -182,7 +182,23 @@ export default function JobsPage() {
     for (const a of apps) if (a.job_url) map.set(normalizeJobUrl(a.job_url), a.status || "saved");
     return map;
   }, [apps]);
-  const statusFor = (url: string) => (url ? appStatusByUrl.get(normalizeJobUrl(url)) : undefined);
+  /** The backend stamps `application_status` on every match, matching by
+   * LinkedIn job id and across the `also_on` boards. The local map only
+   * compares trimmed URLs, so it misses a tracked job whose card URL carries
+   * tracking params or a different slug — prefer the server's answer and keep
+   * this as the fallback for a backend that predates the field. */
+  const statusFor = (m: JobMatch) =>
+    m.application_status || (m.url ? appStatusByUrl.get(normalizeJobUrl(m.url)) : undefined);
+
+  // "Hide applied": statuses that mean the user has already acted on the job.
+  // `saved` is deliberately NOT one of them — saving is how you say "come back
+  // to this", so hiding it would bury the shortlist.
+  const [hideApplied, setHideApplied] = useState(false);
+  const isDone = (m: JobMatch) => {
+    const s = statusFor(m);
+    return !!s && s !== "saved";
+  };
+  const visible = (list: JobMatch[]) => (hideApplied ? list.filter((m) => !isDone(m)) : list);
 
   async function loadHistory() {
     setHistoryLoading(true);
@@ -370,6 +386,8 @@ export default function JobsPage() {
     searchResult && searchResult.matches.length > 0
       ? searchResult.matches.reduce((a, b) => (b.overall > a.overall ? b : a))
       : null;
+  // Only offer the "hide applied" toggle when it would actually do something.
+  const appliedCount = searchResult ? searchResult.matches.filter(isDone).length : 0;
   const sortedMatches = searchResult
     ? [...searchResult.matches].sort(
         resultSort === "date"
@@ -572,7 +590,7 @@ export default function JobsPage() {
                   {t("search.streaming.interrupted", { count: liveMatches.length })}
                 </div>
               )}
-              {liveMatches.map((m, i) => (
+              {visible(liveMatches).map((m, i) => (
                 <motion.div
                   key={m.url || `${m.title}·${m.company}`}
                   layout
@@ -584,7 +602,7 @@ export default function JobsPage() {
                     layout: { type: "spring", duration: 0.25, bounce: 0.15 },
                   }}
                 >
-                  <MatchCard m={m} best={i === 0} appStatus={statusFor(m.url)} />
+                  <MatchCard m={m} best={i === 0} appStatus={statusFor(m)} />
                 </motion.div>
               ))}
             </div>
@@ -650,17 +668,33 @@ export default function JobsPage() {
                       {searchResult.skipped > 0 && t("search.skipped", { count: searchResult.skipped })}
                     </p>
                   )}
-                  <label className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
-                    {t("sort.label")}
-                    <select
-                      value={resultSort}
-                      onChange={(e) => setResultSort(e.target.value as "fit" | "date")}
-                      className={inputCls}
-                    >
-                      <option value="fit">{t("sort.fit")}</option>
-                      <option value="date">{t("sort.date")}</option>
-                    </select>
-                  </label>
+                  <div className="flex flex-wrap items-center gap-4">
+                    {appliedCount > 0 && (
+                      <label
+                        className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-ink-muted"
+                        title={t("search.hideAppliedHint")}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={hideApplied}
+                          onChange={(e) => setHideApplied(e.target.checked)}
+                          className="h-3.5 w-3.5 accent-mint"
+                        />
+                        {t("search.hideApplied", { count: appliedCount })}
+                      </label>
+                    )}
+                    <label className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
+                      {t("sort.label")}
+                      <select
+                        value={resultSort}
+                        onChange={(e) => setResultSort(e.target.value as "fit" | "date")}
+                        className={inputCls}
+                      >
+                        <option value="fit">{t("sort.fit")}</option>
+                        <option value="date">{t("sort.date")}</option>
+                      </select>
+                    </label>
+                  </div>
                 </div>
                 {sortedMatches.length > 0 && (
                   <BatchTailorCard
@@ -669,14 +703,14 @@ export default function JobsPage() {
                     attractKey={startedAt}
                   />
                 )}
-                {sortedMatches.map((m, i) => (
+                {visible(sortedMatches).map((m, i) => (
                   <motion.div
                     key={m.url || i}
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25, ease: EASE, delay: Math.min(i, 12) * 0.04 }}
                   >
-                    <MatchCard m={m} best={m === bestMatch} appStatus={statusFor(m.url)} />
+                    <MatchCard m={m} best={m === bestMatch} appStatus={statusFor(m)} />
                   </motion.div>
                 ))}
               </motion.div>
@@ -759,14 +793,14 @@ export default function JobsPage() {
           <AnimatePresence>
             {matches.length > 0 && !running && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-                {matches.map((m, i) => (
+                {visible(matches).map((m, i) => (
                   <motion.div
                     key={i}
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25, ease: EASE, delay: Math.min(i, 12) * 0.04 }}
                   >
-                    <MatchCard m={m} best={i === 0} appStatus={statusFor(m.url)} />
+                    <MatchCard m={m} best={i === 0} appStatus={statusFor(m)} />
                   </motion.div>
                 ))}
               </motion.div>

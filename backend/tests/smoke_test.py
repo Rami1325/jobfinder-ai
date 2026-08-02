@@ -1775,6 +1775,75 @@ check(
     _by_url["https://x/jobs/1"].also_on_json,
 )
 
+# Already-applied marking on search results: the point is to stop re-reading a
+# job you have handled. Matching by URL alone is not enough — the tracker's URL
+# and the search card's URL differ in shape for the same LinkedIn posting, and
+# the same job appears on two boards under two URLs.
+from app.db.history import applied_status_map, stamp_applied  # noqa: E402
+
+_applied_app = Application(
+    user_id=_admin_id, job_title="Tracked Role", company="TrackedCo", overall_score=70.0,
+    status="applied", job_url="https://www.linkedin.com/jobs/view/4012345678/",
+)
+_saved_app = Application(
+    user_id=_admin_id, job_title="Saved Role", company="SavedCo", overall_score=60.0,
+    status="saved", job_url="https://boards.example/jobs/77",
+)
+_db.add_all([_applied_app, _saved_app])
+_db.commit()
+
+_stamp_map = applied_status_map(_db, _admin_id)
+_to_stamp = [
+    # Same LinkedIn posting, different slug + tracking params than the tracker's.
+    JobMatch(title="Tracked Role", company="TrackedCo",
+             url="https://il.linkedin.com/jobs/view/backend-engineer-at-trackedco-4012345678?refId=abc"),
+    # Saved (not applied) — still badged, but must NOT count as "done".
+    JobMatch(title="Saved Role", company="SavedCo", url="https://boards.example/jobs/77"),
+    # Applied via a different board; this card is the LinkedIn twin.
+    JobMatch(title="Cross Board", company="XCo", url="https://linkedin.com/jobs/view/999",
+             also_on=[_AlsoOn(source="comeet", url="https://boards.example/jobs/77")]),
+    JobMatch(title="Brand New", company="NewCo", url="https://boards.example/jobs/never-seen"),
+]
+stamp_applied(_to_stamp, _stamp_map)
+check(
+    "applied marking survives a different LinkedIn slug + tracking params",
+    _to_stamp[0].application_status == "applied",
+    _to_stamp[0].application_status,
+)
+check(
+    "a saved job is marked saved, not applied",
+    _to_stamp[1].application_status == "saved",
+    _to_stamp[1].application_status,
+)
+check(
+    "a job handled on another board is marked via also_on",
+    _to_stamp[2].application_status == "saved",
+    _to_stamp[2].application_status,
+)
+check(
+    "an untouched job stays unmarked",
+    _to_stamp[3].application_status == "",
+    _to_stamp[3].application_status,
+)
+_untouched = [JobMatch(title="X", url="https://boards.example/jobs/77")]
+stamp_applied(_untouched, {})
+check("empty tracker marks nothing", _untouched[0].application_status == "")
+
+# The SSE search stamps DICTS: its incremental `match` frames are already
+# model_dump()ed by the time they reach the endpoint, and those frames are the
+# list the user reads while the search runs.
+_frame = JobMatch(
+    title="Tracked Role", company="TrackedCo",
+    url="https://il.linkedin.com/jobs/view/backend-engineer-4012345678?refId=x",
+).model_dump()
+_frame_cross = JobMatch(title="Cross", url="https://other/1",
+                        also_on=[_AlsoOn(source="comeet", url="https://boards.example/jobs/77")]).model_dump()
+stamp_applied([_frame, _frame_cross], _stamp_map)
+check("SSE match frames (dicts) get stamped too", _frame["application_status"] == "applied",
+      _frame["application_status"])
+check("dict frames follow also_on as well", _frame_cross["application_status"] == "saved",
+      _frame_cross["application_status"])
+
 # Hebrew must survive the DB round-trip byte-identical (UTF-8 through SQLite).
 _he_title = "מהנדס/ת נתונים — תל אביב"
 _he_jd_text = "דרישות: ניסיון ב-Python ו-SQL, עבודה בענן (AWS)."
