@@ -4055,6 +4055,47 @@ check("plan name match does not confuse Alpha 1 with Alpha 12",
 check("plan name match still tolerates the planner's own wording",
       _nm("Ziko delivery platform", "Ziko delivery platform — single city"))
 
+# Promoting a project into Experience invents an employer. Splitting the tailor
+# rules into "roles protected / projects droppable" makes that an attractive way
+# to rescue a project, and gpt-5.4-mini really did it on the CHEQ job — the CV
+# came back claiming employment at "JobFinder AI".
+from app.core.fabrication_guard import drop_invented_roles as _drop_roles  # noqa: E402
+from app.parsers.structurer import build_facts_ledger as _build_ledger  # noqa: E402
+
+_real = _Resume_b(
+    contact=_Contact_b(name="Role Test", email="r@example.com"),
+    experience=[_Experience_b(company="Fixr Solutions", title="Engineer",
+                              start_date="2021", end_date="Present", bullets=["Built things."])],
+)
+_real_ledger = _build_ledger(_real)
+_promoted = _real.model_copy(deep=True)
+_promoted.experience.append(
+    _Experience_b(company="JobFinder AI", title="Founder", start_date="2026",
+                  end_date="Present", bullets=["Shipped a résumé tailoring app."])
+)
+_cleaned, _removed = _drop_roles(_promoted, _real_ledger)
+check(
+    "a project promoted into Experience is cut, not shipped as employment",
+    len(_cleaned.experience) == 1
+    and _cleaned.experience[0].company == "Fixr Solutions"
+    and _removed == ["JobFinder AI"],
+    f"kept={[e.company for e in _cleaned.experience]} removed={_removed}",
+)
+# ...and a real role that was merely reworded must survive untouched.
+_reworded = _real.model_copy(deep=True)
+_reworded.experience[0].title = "AI Automation Engineer"
+_kept, _none = _drop_roles(_reworded, _real_ledger)
+check(
+    "a genuine role survives rewording",
+    len(_kept.experience) == 1 and _none == [],
+    f"removed={_none}",
+)
+check(
+    "TAILOR prompt forbids moving content between sections",
+    "SECTIONS ARE NOT INTERCHANGEABLE" in _prompts.TAILOR_SYSTEM
+    and "A project is not a job" in _prompts.TAILOR_SYSTEM,
+)
+
 # A long project description must WRAP, not run off the page and get clipped.
 # It used to ride in the single-line "Company · Location" meta slot, so a master
 # résumé's prose descriptions were silently cut at the right margin.

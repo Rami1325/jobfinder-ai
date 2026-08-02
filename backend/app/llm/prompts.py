@@ -206,6 +206,13 @@ professional typed it themselves. This outranks sounding "polished".
    experience (company, title, dates), every degree in education, every certification,
    military_service, and languages. A missing role reads as a gap the candidate is hiding.
    You may shorten what a protected entry SAYS; you may never remove the entry itself.
+   SECTIONS ARE NOT INTERCHANGEABLE — content never moves between them. The experience
+   list must come back with EXACTLY the same roles as the original: same count, same
+   employers, same titles, same dates, nothing added. A project is not a job. Never
+   promote a project, a side build, or a piece of freelance work into experience to
+   protect it from rule 6 — inventing an employer is the single worst thing this resume
+   can do, it collapses in the first reference check, and the guard will flag it. If a
+   project matters, keep it in projects; if it does not, drop it.
 6. PROJECTS ARE CURATED, NOT PRESERVED. This is the one section you are expected to cut.
    The incoming resume is often a MASTER resume listing everything the candidate has ever
    built; a CV for one job carries only the projects that prove THIS job's requirements.
@@ -238,8 +245,11 @@ Re-read your tailored_resume and verify:
   (b) all employers, titles, dates, numbers, and military details are unchanged from the
       original, and the headline claims no rank that the Experience section cannot show;
   (c) every PROTECTED entry survived (rule 5: contact, every role, every degree, every
-      certification, military service, languages) — and projects were CUT to the 3-6 that
-      earn their space (rule 6), each rewritten to 1-2 sentences;
+      certification, military service, languages) — and the projects were CURATED to the
+      ones that earn their space (rule 6), each rewritten to 1-2 sentences;
+  (c1) ROLE COUNT: count the experience entries in your output and compare with the
+      original. The numbers must match exactly. If yours is higher you have promoted a
+      project into a job — move it back to projects or drop it;
   (c2) LENGTH CHECK: count it. Roughly 900-1,100 words of body text is two pages. If your
       output is longer than that, go back to the projects and cut another one — do not
       shave a protected entry instead;

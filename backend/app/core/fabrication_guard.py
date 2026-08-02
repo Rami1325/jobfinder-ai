@@ -70,6 +70,41 @@ def check_fabrication(tailored: ResumeModel, ledger: FactsLedger) -> list[Fabric
     return flags
 
 
+def drop_invented_roles(tailored: ResumeModel, ledger: FactsLedger) -> tuple[ResumeModel, list[str]]:
+    """Remove experience entries whose employer never appears in the original.
+
+    Structural repair, not a style choice. Splitting the tailor's rules into
+    "roles are protected, projects are droppable" gave the model an obvious way
+    to save a project it liked: promote it into experience, where nothing may
+    remove it. It does exactly that often enough to matter, and the result
+    claims employment at "JobFinder AI" — a fabricated employer is the single
+    worst thing a CV can carry, and the one a reference check kills instantly.
+
+    The guard already FLAGS this, but flags are advisory and this pipeline runs
+    unattended over many jobs, so the invented rows are cut rather than
+    reported. Removal only, and only for employers the ledger has never seen —
+    `_known` tolerates rephrasing in both directions, so a lightly reworded real
+    employer is never touched.
+
+    Returns the cleaned résumé and the names removed (for the changelog: content
+    must never disappear silently).
+    """
+    if not tailored.experience:
+        return tailored, []
+    kept, removed = [], []
+    for exp in tailored.experience:
+        label = (exp.company or exp.title or "").strip()
+        if exp.company and not _known(exp.company, ledger.employers):
+            removed.append(label)
+            continue
+        kept.append(exp)
+    if not removed:
+        return tailored, []
+    out = tailored.model_copy(deep=True)
+    out.experience = kept
+    return out, removed
+
+
 def _headline_flags(tailored: ResumeModel, ledger: FactsLedger) -> list[FabricationFlag]:
     """Flag a headline that promotes the candidate. Only the rank is checked —
     the wording is free, because restating the same work in the target role's

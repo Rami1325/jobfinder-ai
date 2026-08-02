@@ -5,7 +5,7 @@ from __future__ import annotations
 from app.config import get_settings
 from app.core.credibility import review_credibility
 from app.core.cv_planner import plan_cv
-from app.core.fabrication_guard import check_fabrication
+from app.core.fabrication_guard import check_fabrication, drop_invented_roles
 from app.core.humanizer import humanize_resume
 from app.core.lang import resume_language
 from app.core.length_budget import fit_to_pages
@@ -67,6 +67,22 @@ def tailor_resume(
     tailored = ResumeModel.model_validate(data.get("tailored_resume", resume.model_dump()))
     changelog = [ChangeLogEntry.model_validate(c) for c in data.get("changelog", [])]
     covered = list(data.get("covered_keywords", []))
+
+    # Structural repair first: "roles are protected, projects are droppable"
+    # gives the model a way to rescue a project it likes — promote it into
+    # experience, where nothing may remove it — and the output then claims
+    # employment that never happened. Cut those rows before anything measures
+    # or audits the résumé.
+    tailored, invented_roles = drop_invented_roles(tailored, ledger)
+    if invented_roles:
+        changelog.append(
+            ChangeLogEntry(
+                section="experience",
+                change="Removed " + ", ".join(invented_roles) + " from Experience",
+                reason="Not employers in your résumé — they were projects promoted into "
+                "job entries. Kept in Projects where they belong.",
+            )
+        )
 
     # Page budget: the prompt asks for a 2-pager, this guarantees one. Runs
     # BEFORE the guard and the voice pass so every later stage sees exactly
