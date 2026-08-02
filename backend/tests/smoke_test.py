@@ -18,6 +18,13 @@ import tempfile
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 os.environ["USE_STUB_LLM"] = "true"
+# Never report smoke-test failures to Sentry. This suite drives failure paths on
+# purpose — 401/403/429, malformed payloads, a search stream that used to raise —
+# and with a real SENTRY_DSN in backend/.env every one of them landed in the live
+# Sentry project. Tagged `development`, but indistinguishable at a glance from a
+# production incident: PYTHON-FASTAPI-6 was a local test run that read as an
+# outage. Must be set before any app.* import — main.py inits Sentry at import.
+os.environ["SENTRY_DSN"] = ""
 # Must be set before any app.* import — app.db.database builds the engine at import time.
 os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(tempfile.mkdtemp(), "smoke.db").replace("\\", "/")
 # Turn the access-code gate ON for the whole suite so the HTTP checks in
