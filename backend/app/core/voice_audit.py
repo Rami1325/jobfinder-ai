@@ -233,8 +233,16 @@ def audit_voice(resume: ResumeModel, jd: JDModel | None = None) -> VoiceReport:
 
     # 5b. Keyword stuffing: a JD keyword repeated past any natural need. ATS
     # software penalizes this too (spec stage 9: critical keyword 1-3 uses).
+    #
+    # Measured as repetition WITHIN a chunk, not a raw total across the résumé.
+    # One mention per bullet or per project is how a real CV reads — a résumé
+    # listing eight projects, each with its own tech-stack line, will name
+    # "React" eight times without a word of stuffing in it. A raw total flagged
+    # exactly that, and then sent the humanizer off to delete real technologies
+    # from real projects. `redundant` counts only the mentions beyond the first
+    # in each chunk, so cramming a term into one bullet still trips it.
     if jd is not None:
-        full_text = " . ".join(t for _, t in scannable).lower()
+        chunks = [t.lower() for _, t in scannable]
         seen_kw: set[str] = set()
         for kw in [*jd.keywords, *jd.hard_skills]:
             k = kw.lower().strip()
@@ -243,13 +251,19 @@ def audit_voice(resume: ResumeModel, jd: JDModel | None = None) -> VoiceReport:
             seen_kw.add(k)
             # Boundary-aware count — a substring count would match "ai" inside
             # "email"/"maintain" (16.3 live-run fix).
-            n = len(re.findall(rf"(?<![a-z0-9+#]){re.escape(k)}(?![a-z0-9+#])", full_text))
-            if n > _KEYWORD_STUFFING_MAX:
+            pattern = rf"(?<![a-z0-9+#]){re.escape(k)}(?![a-z0-9+#])"
+            counts = [len(re.findall(pattern, c)) for c in chunks]
+            total = sum(counts)
+            in_chunks = sum(1 for c in counts if c)
+            redundant = total - in_chunks
+            if redundant >= _KEYWORD_STUFFING_MAX:
                 issues.append(
                     VoiceIssue(
                         category="keyword_stuffing",
                         value=kw,
-                        detail=f"'{kw}' appears {n} times — ATS software penalizes stuffing; 1-3 natural uses is the target.",
+                        detail=f"'{kw}' appears {total} times across {in_chunks} places — "
+                        "repeating it within the same bullet or summary reads as stuffing; "
+                        "1-3 natural uses is the target.",
                     )
                 )
 

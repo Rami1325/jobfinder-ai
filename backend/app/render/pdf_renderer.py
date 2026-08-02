@@ -411,7 +411,13 @@ def fit_squeeze(resume: ResumeModel, spec: TemplateSpec, rtl: bool) -> float:
     return max(_MIN_SQUEEZE, capacity / total * 0.985)
 
 
-def render_pdf(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
+def _render(resume: ResumeModel, template: str) -> tuple[bytes, int]:
+    """Build the PDF once and report both the bytes and the page count.
+
+    `page_count` needs the same layout the download gets — same template, same
+    squeeze, same keep-together grouping — so both callers share this build
+    rather than one of them estimating.
+    """
     spec = get_template(template)
     rtl = resume_language(resume) == "he"
     labels = labels_for("he" if rtl else "en")
@@ -440,7 +446,23 @@ def render_pdf(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
     ])
 
     doc.build(flow)
-    return buf.getvalue()
+    # reportlab counts pages as it lays them out; `doc.page` is the last one.
+    return buf.getvalue(), max(1, int(getattr(doc, "page", 1) or 1))
+
+
+def render_pdf(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
+    return _render(resume, template)[0]
+
+
+def page_count(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> int:
+    """Pages this résumé actually renders to — measured, not estimated.
+
+    The length budget (`app.core.length_budget`) trims against this, so it has
+    to be the real pagination: a flat sum of content heights misses the slack
+    keep-together groups leave at a page foot and would call a 3-pager a
+    2-pager.
+    """
+    return _render(resume, template)[1]
 
 
 def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> list:
@@ -551,10 +573,19 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> list:
         ])
 
     def build_projects() -> None:
-        section("projects", [
-            entry(proj.name, "", [seg(proj.description, s.muted)], proj.bullets, first=(i == 0))
-            for i, proj in enumerate(resume.projects)
-        ])
+        # A project description is PROSE, so it gets wrapping body text. It used
+        # to ride in the `secondary` meta slot — the single non-wrapping row
+        # sized for "Company · Location" — which silently ran anything longer
+        # than one line off the right edge of the page and clipped it.
+        def project(proj, first: bool):
+            opening, trailing = entry(proj.name, "", [], proj.bullets, first=first)
+            if proj.description:
+                desc = _Text(proj.description, font=s.reg, size=s.body, color=s.muted,
+                             leading=s.lead, rtl=s.rtl, space_after=s.bullet_after)
+                opening = opening[:1] + [desc] + opening[1:]
+            return opening, trailing
+
+        section("projects", [project(p, i == 0) for i, p in enumerate(resume.projects)])
 
     def build_education() -> None:
         section("education", [

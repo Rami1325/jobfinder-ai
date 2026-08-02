@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # Stale-application nudges: an "applied" app with no status change for this
     # many days surfaces a "time to follow up" reminder on Home (<= 0 disables).
     stale_application_days: int = 7
+    # Tailored-résumé page budget. A master résumé holds everything the
+    # candidate has ever built; one application needs a couple of pages of it.
+    # The tailor aims for `resume_max_pages`; the deterministic length budget
+    # guarantees `resume_hard_max_pages` — it will sit at the hard limit rather
+    # than gut the CV, but never go past it.
+    resume_max_pages: int = 2
+    resume_hard_max_pages: int = 3
     model_id: str = "gpt-4o-mini"
     use_stub_llm: bool = False
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"

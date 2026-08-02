@@ -1590,10 +1590,38 @@ check(
     [f for f in check_fabrication(result.tailored_resume, _ml) if f.category == "military"] == [],
 )
 
-# Tailor prompt: one-page guidance + military untouchable, Task tag intact.
+# Tailor prompt: page budget + military untouchable, Task tag intact.
 check("TAILOR prompt protects military service", "MILITARY SERVICE IS UNTOUCHABLE" in _prompts.TAILOR_SYSTEM)
-check("TAILOR prompt has one-page guidance", "ONE PAGE" in _prompts.TAILOR_SYSTEM)
+check("TAILOR prompt has page-length guidance", "TWO PAGES" in _prompts.TAILOR_SYSTEM)
+check(
+    "TAILOR prompt tells the model projects are curated, not preserved",
+    "PROJECTS ARE CURATED, NOT PRESERVED" in _prompts.TAILOR_SYSTEM,
+)
+check(
+    "TAILOR prompt still protects roles/degrees/certs from the trim",
+    "PROTECTED ENTRIES" in _prompts.TAILOR_SYSTEM,
+)
 check("TAILOR prompt Task tag still first", _prompts.TAILOR_SYSTEM.startswith("Task: TAILOR."))
+check(
+    "PLAN_CV prompt asks for a project shortlist",
+    "select_projects" in _prompts.PLAN_CV_SYSTEM and "drop_projects" in _prompts.PLAN_CV_SYSTEM,
+)
+check(
+    "TAILOR prompt caps the skills list and unpacks master-CV category blocks",
+    "KEEP IT SHORT AND FLAT" in _prompts.TAILOR_SYSTEM
+    and "15-25 INDIVIDUAL skills" in _prompts.TAILOR_SYSTEM,
+)
+# The budget must reach the model as concrete numbers — a vague "keep it short"
+# against a 20-project master résumé is exactly what produced 5 pages.
+_budget_user = _prompts.tailor_user("{}", "{}", max_pages=2, source_pages=5, source_projects=21)
+check(
+    "tailor_user states the real page/project numbers when the source is long",
+    "5 pages" in _budget_user and "21 projects" in _budget_user and "2 pages" in _budget_user,
+)
+check(
+    "tailor_user stays quiet about cutting when the source already fits",
+    "NEEDS REAL CUTTING" not in _prompts.tailor_user("{}", "{}", max_pages=2, source_pages=1),
+)
 
 # Cover letter "Israeli mode": Hebrew JD => 3-5 sentence email body, not a letter.
 _il_cover = _prompts.cover_letter_system("he", "he")
@@ -3830,6 +3858,25 @@ check(
     any(i.category == "keyword_stuffing" and i.value.lower() == "python" for i in _s_report.issues),
     str([(i.category, i.value) for i in _s_report.issues]),
 )
+# ...but naming a technology once per project is how a real CV reads. A résumé
+# with eight projects, each carrying its own tech-stack line, says "Python"
+# eight times without stuffing anything — flagging that sent the humanizer off
+# to delete real technologies from real projects.
+_ns_resume = resume.model_copy(deep=True)
+_ns_resume.summary = "Engineer who ships backend services."
+_ns_resume.experience[0].bullets = ["Built internal tools.", "Improved processes by 20%."]
+from app.models import Project as _Project_ns  # noqa: E402
+
+_ns_resume.projects = [
+    _Project_ns(name=f"Service {i}", description="Python service with retries.", bullets=[])
+    for i in range(8)
+]
+_ns_report = _audit(_ns_resume, _v_jd)
+check(
+    "one mention per project is not stuffing (8 projects naming Python once each)",
+    not any(i.category == "keyword_stuffing" for i in _ns_report.issues),
+    str([(i.category, i.value, i.detail) for i in _ns_report.issues]),
+)
 check(
     "voice audit reports JD copy % on the echoing resume, 0 on the clean one",
     _audit(_v_bad, _v_jd).jd_copy_pct > 0 and result.voice_report.jd_copy_pct == 0.0,
@@ -3897,6 +3944,192 @@ check(
     "RESUME TO REVIEW (JSON):" in _prompts.credibility_user("{}", "{}")
     and "END RESUME" in _prompts.credibility_user("{}", "{}"),
 )
+
+# ---------------------------------------------------------------------------
+# 18. Page budget: a master résumé must not tailor into a 5-pager.
+# ---------------------------------------------------------------------------
+from app.core.cv_planner import plan_cv as _plan_cv_b  # noqa: E402
+from app.core.length_budget import (  # noqa: E402
+    fit_to_pages,
+    project_relevance,
+    rank_projects,
+)
+from app.core.tailor import tailor_resume as _tailor_b  # noqa: E402
+from app.models import (  # noqa: E402
+    Contact as _Contact_b,
+    CVPlan as _CVPlan_b,
+    Education as _Education_b,
+    Experience as _Experience_b,
+    JDModel as _JDModel_b,
+    LanguageSkill as _Lang_b,
+    Project as _Project_b,
+    ResumeModel as _Resume_b,
+)
+from app.render.pdf_renderer import page_count  # noqa: E402
+
+_BLURB = (
+    "Built the ingestion service that reads inbound events, normalizes them and "
+    "writes structured records downstream. Handles retries, deduplication and a "
+    "fallback path when the upstream API is unavailable. Runs in production and "
+    "is monitored with structured logs and health checks. "
+)
+
+
+def _master_resume(n_projects: int = 20):
+    """A master-CV-shaped résumé: every role kept, dozens of projects."""
+    return _Resume_b(
+        contact=_Contact_b(name="Master Candidate", email="master@example.com", phone="+972-5-0000000"),
+        headline="AI Automation Engineer",
+        summary=_BLURB * 2,
+        skills=[f"Skill group {i}: " + ", ".join(f"tool{i}{j}" for j in range(14)) for i in range(8)],
+        experience=[
+            _Experience_b(
+                company=f"Company {i}", title="Engineer", start_date="2021", end_date="Present",
+                bullets=[f"{_BLURB[:150]} (role {i}, bullet {b})" for b in range(6)],
+            )
+            for i in range(2)
+        ],
+        education=[_Education_b(institution="State University", degree="BSc", field="CS")],
+        projects=[
+            _Project_b(
+                name=f"Alpha {i} system",
+                description=_BLURB + ("Uses Python and PostgreSQL. " if i % 3 == 0 else "Uses Figma. "),
+                bullets=[f"Bullet {b} for project {i}." for b in range(3)],
+            )
+            for i in range(n_projects)
+        ],
+        certifications=["AI Engineering Certification"],
+        languages=[_Lang_b(language="Hebrew", level="native"), _Lang_b(language="English", level="fluent")],
+    )
+
+
+_big = _master_resume()
+_big_pages = page_count(_big)
+check("master-shaped résumé really is long", _big_pages >= 4, f"{_big_pages} pages")
+
+_jd_b = _JDModel_b(
+    job_title="Backend Engineer",
+    hard_skills=["Python", "PostgreSQL"],
+    keywords=["Python", "PostgreSQL", "retries"],
+)
+_fit, _rep = fit_to_pages(_big, _jd_b, plan=None, max_pages=2, hard_max_pages=3)
+_fit_pages = page_count(_fit)
+check("length budget brings a master résumé inside the hard limit", _fit_pages <= 3,
+      f"{_big_pages} -> {_fit_pages} pages")
+check("length budget hits the 2-page target here", _fit_pages <= 2, f"{_fit_pages} pages")
+check("length report records the trim", _rep.trimmed and _rep.pages_after == _fit_pages)
+check("length report names the dropped projects", len(_rep.dropped_projects) > 0)
+
+# Protected entries survive — dropping a role to save a line is the one thing
+# the budget must never do.
+check("budget keeps every role", len(_fit.experience) == len(_big.experience))
+check("budget keeps education", len(_fit.education) == len(_big.education))
+check("budget keeps certifications", len(_fit.certifications) == len(_big.certifications))
+check("budget keeps languages", len(_fit.languages) == len(_big.languages))
+check("budget keeps contact details", _fit.contact.email == _big.contact.email)
+check("budget keeps at least one project", len(_fit.projects) >= 1)
+_orig_names = {p.name for p in _big.projects}
+check("budget invents no projects", all(p.name in _orig_names for p in _fit.projects))
+
+# Relevance: the Python/PostgreSQL projects outrank the Figma ones here.
+_rel_hit = project_relevance(_big.projects[0], _jd_b)
+_rel_miss = project_relevance(_big.projects[1], _jd_b)
+check("JD-relevant project outranks an irrelevant one", _rel_hit > _rel_miss,
+      f"{_rel_hit} vs {_rel_miss}")
+
+# The planner read the JD; its shortlist outranks raw keyword overlap.
+_plan_pick = _CVPlan_b(select_projects=["Alpha 1 system"], drop_projects=["Alpha 0 system"])
+_order = rank_projects(_big, _jd_b, _plan_pick)
+check("planner's reject drops first and its pick drops last",
+      _order[0] == "Alpha 0 system" and _order[-1] == "Alpha 1 system",
+      f"first={_order[0]} last={_order[-1]}")
+_fit_plan, _ = fit_to_pages(_big, _jd_b, plan=_plan_pick, max_pages=2, hard_max_pages=3)
+_kept = {p.name for p in _fit_plan.projects}
+check("planner-selected project is kept", "Alpha 1 system" in _kept, str(sorted(_kept)))
+check("planner-dropped project is gone", "Alpha 0 system" not in _kept, str(sorted(_kept)))
+
+# Name matching is token-wise: "Alpha 1 system" must not claim "Alpha 12 system".
+from app.core.length_budget import _name_matches as _nm  # noqa: E402
+check("plan name match does not confuse Alpha 1 with Alpha 12",
+      _nm("Alpha 1 system", "Alpha 1 system") and not _nm("Alpha 1 system", "Alpha 12 system"))
+check("plan name match still tolerates the planner's own wording",
+      _nm("Ziko delivery platform", "Ziko delivery platform — single city"))
+
+# A long project description must WRAP, not run off the page and get clipped.
+# It used to ride in the single-line "Company · Location" meta slot, so a master
+# résumé's prose descriptions were silently cut at the right margin.
+import io as _io_b  # noqa: E402
+
+import pdfplumber as _pdfplumber_b  # noqa: E402
+
+from app.render.pdf_renderer import render_pdf as _render_pdf_b  # noqa: E402
+
+_LONG_DESC = (
+    "A resume-tailoring and job-search application, built and shipped solo. It fans out "
+    "across five job boards, scores every posting against a stored master resume, and "
+    "tailors the CV per job through a pipeline of parse, structure, analysis and review."
+)
+_wrap_resume = _Resume_b(
+    contact=_Contact_b(name="Wrap Test", email="wrap@example.com"),
+    projects=[_Project_b(name="JobFinder AI", description=_LONG_DESC, bullets=[])],
+)
+with _pdfplumber_b.open(_io_b.BytesIO(_render_pdf_b(_wrap_resume))) as _wd:
+    _wrap_text = " ".join(" ".join((_p.extract_text() or "").split()) for _p in _wd.pages)
+check(
+    "long project description wraps instead of being clipped at the margin",
+    "parse, structure, analysis and review." in _wrap_text,
+    _wrap_text[-90:],
+)
+
+# Relevance decides HOW MANY projects, not an arbitrary cap: ten short relevant
+# projects that fit inside the page budget must all survive.
+_many = _Resume_b(
+    contact=_Contact_b(name="Many Projects", email="many@example.com"),
+    summary="Backend engineer.",
+    skills=["Python", "PostgreSQL"],
+    experience=[_Experience_b(company="Acme", title="Engineer", start_date="2021",
+                              end_date="Present", bullets=["Built Python services."])],
+    projects=[
+        _Project_b(name=f"Service {i}",
+                   description="Python and PostgreSQL service with retries and logging.")
+        for i in range(10)
+    ],
+)
+_many_fit, _many_rep = fit_to_pages(_many, _jd_b, max_pages=2, hard_max_pages=3)
+check(
+    "ten relevant projects that fit are all kept (no arbitrary cap)",
+    len(_many_fit.projects) == 10 and not _many_rep.trimmed,
+    f"kept {len(_many_fit.projects)}, trimmed={_many_rep.trimmed}",
+)
+check(
+    "PLAN_CV prompt sets no fixed project count",
+    "There is NO fixed number" in _prompts.PLAN_CV_SYSTEM,
+)
+check(
+    "TAILOR prompt sets no fixed project count and scales detail to it",
+    "no target count" in _prompts.TAILOR_SYSTEM
+    and "THE MORE YOU KEEP, THE SHORTER EACH MUST BE" in _prompts.TAILOR_SYSTEM,
+)
+
+# A résumé already inside the budget is returned untouched.
+_small = _master_resume(n_projects=2)
+_small.skills = _small.skills[:2]
+_small_fit, _small_rep = fit_to_pages(_small, _jd_b, max_pages=3, hard_max_pages=3)
+check("short résumé passes through untouched",
+      not _small_rep.trimmed and len(_small_fit.projects) == len(_small.projects))
+
+# The stub planner echoes real project names into the select/drop split.
+_stub_plan = _plan_cv_b(_master_resume(6), _jd_b)
+check("stub PLAN_CV splits real project names into select/drop",
+      _stub_plan is not None and len(_stub_plan.select_projects) == 3
+      and len(_stub_plan.drop_projects) == 3,
+      str(_stub_plan.select_projects if _stub_plan else None))
+
+# End to end through the real pipeline.
+_e2e = _tailor_b(_master_resume(12), _jd_b)
+check("tailor result carries a length report", _e2e.length_report is not None)
+check("tailored résumé is within the hard page limit",
+      page_count(_e2e.tailored_resume) <= 3, f"{page_count(_e2e.tailored_resume)} pages")
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

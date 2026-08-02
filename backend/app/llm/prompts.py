@@ -186,6 +186,15 @@ professional typed it themselves. This outranks sounding "polished".
    using the JD's exact wording. Merge duplicates; drop irrelevant noise. Every entry in
    the output skills list must trace back to the original resume — never add an unowned
    skill (or an unowned tool inside a rephrase) to close a gap.
+   KEEP IT SHORT AND FLAT — this section is skimmed in about three seconds, so it is a
+   shortlist, not an inventory. Output roughly 15-25 INDIVIDUAL skills, most job-relevant
+   first, each a short term ("PostgreSQL", "prompt engineering") rather than a sentence.
+   A master resume often groups its skills under category labels ("Backend & Data: Python,
+   PostgreSQL, ...", "GTM & Marketing Operations: ..."). Do NOT carry those labels or their
+   full blocks through: they render as one unreadable 150-word paragraph that eats half a
+   page. Unpack them, keep the items this job asks for, and DROP whole areas it never
+   mentions — a front-end and marketing tool list on a backend application is noise, no
+   matter how real the experience behind it is. It stays in the master resume either way.
 3. EXPERIENCE: Keep companies/titles/dates exactly. Reorder bullets within each role so the
    most JD-relevant achievements come first. Most bullets should open with a verb, but vary
    the verbs and sentence shapes (see VOICE). Mirror the JD's language/keywords where
@@ -193,23 +202,47 @@ professional typed it themselves. This outranks sounding "polished".
    ONLY if dates still read chronologically sensibly; otherwise keep chronological order.
 4. KEYWORD COVERAGE: Maximize how many genuine JD must-have keywords appear, naturally, in
    the summary, skills, and bullets — without inventing experience.
-5. COMPLETENESS: Return the FULL resume. Preserve every original section and entry (contact,
-   summary, skills, experience, education, projects, certifications, military_service,
-   languages). Never drop a role, degree, project, certification, or language, and copy
-   contact details verbatim.
-6. ONE PAGE: resumes are expected to fit one page (an Israeli-market norm, and good practice
-   everywhere under ~10 years of experience). Prefer trimming: cut the weakest/least relevant
-   bullets first (keep 2-4 strong bullets per recent role, fewer for old ones), keep the
-   summary to 2-3 lines, and drop stale skills — but NEVER cut whole roles, degrees,
-   certifications, military service, or languages to save space.
-7. Keep it concise and ATS-parse-safe (plain text, standard sections, no tables/columns).
+5. PROTECTED ENTRIES — never drop these: contact details (copy verbatim), every ROLE in
+   experience (company, title, dates), every degree in education, every certification,
+   military_service, and languages. A missing role reads as a gap the candidate is hiding.
+   You may shorten what a protected entry SAYS; you may never remove the entry itself.
+6. PROJECTS ARE CURATED, NOT PRESERVED. This is the one section you are expected to cut.
+   The incoming resume is often a MASTER resume listing everything the candidate has ever
+   built; a CV for one job carries only the projects that prove THIS job's requirements.
+   - Keep every project that proves something THIS job asks for; drop the rest entirely.
+     There is no target count — ten relevant projects is ten, three is three. Follow the
+     positioning plan's "select_projects" when one is given, in its order: it already made
+     this call, and its order decides what goes first if space runs out.
+   - ORDER the kept projects strongest-first, for the same reason.
+   - Choose for coverage: three projects proving three different requirements beat six
+     proving the same one. When two prove the same point, keep the stronger one only.
+   - Rewrite each kept project down to 1-2 sentences: what it is, what you built, the
+     tech that matters to THIS job. A master resume's five-sentence write-up becomes two.
+     Keep at most 2 bullets on a project, and usually none.
+   - THE MORE YOU KEEP, THE SHORTER EACH MUST BE. Keeping many relevant projects is fine;
+     keeping many long ones is not. Ten projects means one tight sentence each, not ten
+     paragraphs — the page budget in rule 7 still governs.
+   - Dropping a project is not dishonesty — it is editing. Nothing you keep may be altered.
+7. LENGTH: the target is TWO PAGES. Three is the absolute ceiling and only for a genuinely
+   deep history; one page is right for a short one. Getting there is mostly rule 6, then
+   trimming the weakest bullets (keep 3-5 on recent roles, 2-3 on older ones), keeping the
+   summary to 2-3 lines, and dropping skills this job never asks for. Never buy space by
+   cutting a protected entry from rule 5.
+   A résumé that is over-length gets skimmed, so cutting is part of the tailoring, not a
+   failure of it. When you are unsure whether something earns its space, it does not.
+8. Keep it concise and ATS-parse-safe (plain text, standard sections, no tables/columns).
 
 ================ SELF-CHECK BEFORE RETURNING (do this silently) ================
 Re-read your tailored_resume and verify:
   (a) EVERY skill/tool/technology you list also appears in the ORIGINAL resume;
   (b) all employers, titles, dates, numbers, and military details are unchanged from the
       original, and the headline claims no rank that the Experience section cannot show;
-  (c) no section or entry was dropped;
+  (c) every PROTECTED entry survived (rule 5: contact, every role, every degree, every
+      certification, military service, languages) — and projects were CUT to the 3-6 that
+      earn their space (rule 6), each rewritten to 1-2 sentences;
+  (c2) LENGTH CHECK: count it. Roughly 900-1,100 words of body text is two pages. If your
+      output is longer than that, go back to the projects and cut another one — do not
+      shave a protected entry instead;
   (d) BANNED-WORD SCAN: go through the banned list ONE WORD AT A TIME (spearheaded,
       leveraged, utilized, championed, orchestrated, streamlined, ...) and search your
       output for each. Any hit — including one copied from the original resume — must be
@@ -289,6 +322,31 @@ Decide, from the candidate's actual resume and the parsed job:
 - which content deserves less space or should be trimmed (irrelevant to THIS role)
 - which claims need conservative wording (anything the resume only weakly supports)
 
+================ PROJECT SELECTION (the most consequential call you make) ==========
+The incoming resume may be a MASTER resume: a complete inventory of everything the
+candidate has ever built, sometimes twenty projects or more. A CV for one job is not
+that inventory. Your job is to choose the few projects that prove THIS role's
+requirements and to name the rest for removal.
+
+- There is NO fixed number. Select every project that proves something this job asks
+  for, and no others. If ten genuinely earn their place, select ten; if three do,
+  select three. Do not pad the list to look productive, and do not cut a relevant
+  project just to hit a tidy count.
+- ORDER "select_projects" strongest-first. That order is load-bearing: if the CV still
+  runs long the weakest selected project is dropped first, so put the one you would
+  defend hardest at the top.
+- Choose for COVERAGE, not similarity: five projects that all demonstrate the same
+  skill are worth less than three that cover three of the job's requirements. Where two
+  projects prove the same point, select the stronger and drop the other — that is the
+  one case where a relevant project should still go.
+- Prefer recent, substantial, and verifiable work. A shipped, live product outranks a
+  concept or an architecture exercise for the same skill.
+- A project that proves nothing the job asks for does not belong in this CV, no matter
+  how impressive it is on its own.
+- Put every project you did NOT select into "drop_projects". Silence is not a decision:
+  a project missing from both lists will be ranked by crude keyword overlap instead.
+- Use the project names EXACTLY as they appear in the resume so they can be matched.
+
 Rules:
 1. Build ONE coherent professional story; do not maximize keyword count.
 2. Ground everything in the resume as given — never assume or invent experience.
@@ -303,7 +361,9 @@ Return ONLY a JSON object:
   "lead_strengths": ["3-5 real strengths that should carry the CV"],
   "emphasize": ["roles/projects to lead with, in order"],
   "downplay": ["content to trim, shorten, or move down"],
-  "conservative_notes": ["claims that must stay conservatively worded, and why"]
+  "conservative_notes": ["claims that must stay conservatively worded, and why"],
+  "select_projects": ["every project name worth keeping, STRONGEST FIRST — no fixed count"],
+  "drop_projects": ["every other project name, verbatim from the resume"]
 }
 Keep every list short and concrete. Use empty lists where nothing applies."""
 
@@ -761,17 +821,39 @@ def tailor_user(
     jd_json: str,
     plan_json: str = "",
     avoid_phrases: list[str] | None = None,
+    max_pages: int = 2,
+    source_pages: int = 0,
+    source_projects: int = 0,
 ) -> str:
-    """The optional positioning plan (stage 4) and the user's rejected-phrase
-    avoid-list (§26 feedback loop) ride in the user message so the system
-    prompt — and its stub-routing Task tag — stays static."""
+    """The optional positioning plan (stage 4), the user's rejected-phrase
+    avoid-list (§26 feedback loop) and the page budget ride in the user message
+    so the system prompt — and its stub-routing Task tag — stays static.
+
+    The budget is stated in concrete numbers (this résumé is N pages, cut it to
+    M) because "keep it short" against a 20-project master résumé measurably
+    was not enough — the model preserved everything and returned five pages."""
     parts = [
         f"ORIGINAL RESUME (JSON, the source of truth — do not contradict it):\n{resume_json}\n\n"
         f"TARGET JOB (JSON):\n{jd_json}\n\n"
     ]
+    if source_pages > max_pages:
+        over = (
+            f"LENGTH BUDGET — THIS ONE NEEDS REAL CUTTING.\n"
+            f"The source résumé renders to {source_pages} pages"
+            + (f" and lists {source_projects} projects" if source_projects else "")
+            + f". It is a MASTER résumé: a full inventory, not a CV for this job.\n"
+            f"Your output must fit {max_pages} pages. Select the 3-6 projects that prove "
+            f"THIS job's requirements, drop the others completely, and cut each survivor to "
+            f"1-2 sentences. Keep every role, degree, certification and language.\n"
+            f"If it does not obviously fit in {max_pages} pages, you have not cut enough.\n\n"
+        )
+        parts.append(over)
+    else:
+        parts.append(f"LENGTH BUDGET: keep the tailored résumé within {max_pages} pages.\n\n")
     if plan_json:
         parts.append(
-            f"POSITIONING PLAN (follow it — it decides the story, you write it):\n{plan_json}\n\n"
+            "POSITIONING PLAN (follow it — it decides the story and the project shortlist, "
+            f"you write it):\n{plan_json}\n\n"
         )
     if avoid_phrases:
         quoted = ", ".join(f'"{p}"' for p in avoid_phrases)

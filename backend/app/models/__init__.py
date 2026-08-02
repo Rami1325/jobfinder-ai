@@ -189,6 +189,27 @@ class CVPlan(BaseModel):
     emphasize: list[str] = Field(default_factory=list)  # experience/projects to lead with
     downplay: list[str] = Field(default_factory=list)  # content to trim or move down
     conservative_notes: list[str] = Field(default_factory=list)  # claims needing careful wording
+    # Project curation. A master résumé carries every project the candidate has
+    # ever shipped; one job needs a handful. The planner names which ones, in
+    # priority order, and the length budget reuses those names when it has to
+    # drop more. Empty lists = no opinion, fall back to keyword overlap.
+    select_projects: list[str] = Field(default_factory=list)  # keep, most relevant first
+    drop_projects: list[str] = Field(default_factory=list)  # irrelevant to THIS role
+
+
+class LengthReport(BaseModel):
+    """What the page budget had to do to fit the résumé (app/core/length_budget.py).
+
+    Surfaced so the trimming is visible rather than silent — a dropped project
+    is a decision the candidate may want to overrule."""
+
+    pages_before: int = 1
+    pages_after: int = 1
+    max_pages: int = 2
+    hard_max_pages: int = 3
+    trimmed: bool = False
+    dropped_projects: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)  # human-readable trim actions
 
 
 class CredibilityFlag(BaseModel):
@@ -215,6 +236,7 @@ class TailorResult(BaseModel):
     voice_report: VoiceReport = Field(default_factory=VoiceReport)
     plan: CVPlan | None = None
     credibility_flags: list[CredibilityFlag] = Field(default_factory=list)
+    length_report: LengthReport = Field(default_factory=LengthReport)
 
 
 # --------------------------------------------------------------------------- #

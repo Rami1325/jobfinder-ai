@@ -109,13 +109,7 @@ class StubClient:
         if "HUMANIZE" in head:
             return self._stub_humanize(user)
         if "PLAN_CV" in head:
-            return {
-                "positioning": "[stub] Software engineer focused on Python services and REST APIs.",
-                "lead_strengths": ["Python", "REST APIs", "SQL"],
-                "emphasize": ["Engineer at Acme Corp"],
-                "downplay": ["[stub] Early unrelated coursework"],
-                "conservative_notes": ["[stub] Keep process-improvement claims tied to the 20% metric"],
-            }
+            return self._stub_plan_cv(user)
         if "CREDIBILITY" in head:
             return self._stub_credibility(user)
         if "FIT_SCORE" in head:
@@ -383,6 +377,43 @@ class StubClient:
                     )
                     break
         return {"flags": flags}
+
+    @staticmethod
+    def _first_json_object(text: str) -> dict[str, Any]:
+        """Pull the first embedded JSON object out of a user message. Lets the
+        stub react to the REAL résumé it was handed instead of a fixture."""
+        decoder = json.JSONDecoder()
+        start = text.find("{")
+        while start != -1:
+            try:
+                obj, _ = decoder.raw_decode(text[start:])
+            except ValueError:
+                start = text.find("{", start + 1)
+                continue
+            if isinstance(obj, dict):
+                return obj
+            start = text.find("{", start + 1)
+        return {}
+
+    def _stub_plan_cv(self, user: str) -> dict[str, Any]:
+        """Echoes the résumé's real project names into the select/drop split so
+        the offline pipeline exercises project curation instead of always
+        planning against a fixed fixture with no projects."""
+        projects = self._first_json_object(user).get("projects") or []
+        names = [
+            p.get("name", "")
+            for p in projects
+            if isinstance(p, dict) and p.get("name")
+        ]
+        return {
+            "positioning": "[stub] Software engineer focused on Python services and REST APIs.",
+            "lead_strengths": ["Python", "REST APIs", "SQL"],
+            "emphasize": ["Engineer at Acme Corp"],
+            "downplay": ["[stub] Early unrelated coursework"],
+            "conservative_notes": ["[stub] Keep process-improvement claims tied to the 20% metric"],
+            "select_projects": names[:3],
+            "drop_projects": names[3:],
+        }
 
     def _stub_tailor(self, user: str) -> dict[str, Any]:
         # Apply realistic, guard-clean edits (no new numbers/employers/titles/
