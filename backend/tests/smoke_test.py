@@ -3953,6 +3953,7 @@ from app.core.length_budget import (  # noqa: E402
     fit_to_pages,
     project_relevance,
     rank_projects,
+    ranked_indices,
 )
 from app.core.tailor import tailor_resume as _tailor_b  # noqa: E402
 from app.models import (  # noqa: E402
@@ -4154,6 +4155,43 @@ check(
     "an impossible résumé reports the overflow instead of hiding it",
     page_count(_uf_fit) <= 3 or any("could not get below" in n for n in _uf_rep.notes),
     f"{page_count(_uf_fit)} pages, notes={_uf_rep.notes}",
+)
+
+# Ranking must span the candidate's range, not repeat one strength. Pure keyword
+# ranking is self-reinforcing: a JD saying "automation" over and over put eight
+# near-identical n8n workflows above every shipped application, so the CHEQ CV
+# proved one skill eight times and buried the full-stack products.
+_dupe_jd = _JDModel_b(
+    job_title="AI Engineer",
+    hard_skills=["automation", "n8n", "workflow"],
+    keywords=["automation", "n8n", "workflow", "Python", "React"],
+)
+_mixed = _Resume_b(
+    contact=_Contact_b(name="Mixed", email="m@example.com"),
+    projects=[
+        _Project_b(name=f"Automation {i}",
+                   description="n8n workflow automation with webhooks and retries.")
+        for i in range(6)
+    ] + [
+        _Project_b(name="Shipped Web App",
+                   description="Full-stack React and Python application deployed to production."),
+        _Project_b(name="Desktop Tool",
+                   description="Python desktop application with SQLite and an installer."),
+    ],
+)
+_top3 = [_mixed.projects[i].name for i in ranked_indices(_mixed, _dupe_jd)[:3]]
+check(
+    "ranking does not fill the top with near-identical projects",
+    any(not n.startswith("Automation") for n in _top3),
+    f"top3={_top3}",
+)
+# ...but the planner still outranks diversity — it read the job description.
+_dupe_plan = _CVPlan_b(select_projects=[f"Automation {i}" for i in range(3)])
+_planned_top3 = [_mixed.projects[i].name for i in ranked_indices(_mixed, _dupe_jd, _dupe_plan)[:3]]
+check(
+    "the planner's picks still win over the diversity penalty",
+    all(n.startswith("Automation") for n in _planned_top3),
+    f"top3={_planned_top3}",
 )
 
 # Relevance decides HOW MANY projects, not an arbitrary cap: ten short relevant

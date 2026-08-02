@@ -50,6 +50,15 @@ HARD_DESC_SENTENCES = 1
 # Bound the work: each measurement is a real reportlab build.
 _MAX_MEASUREMENTS = 60
 
+# Redundancy discount: a project's value to the reader is its relevance times
+# its NOVELTY, so one sharing most of its vocabulary with a project already
+# picked keeps only the fraction that is actually new, and an exact duplicate
+# adds nothing. At 1.0 that reads directly as `keyword * (1 - overlap)`.
+# Discounting a share of the global best score instead (the obvious additive
+# form) lets a duplicate that matches the JD 4x better than anything else win
+# every slot regardless — which is the eight-n8n-workflows CV.
+_DIVERSITY_WEIGHT = 1.0
+
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -81,6 +90,44 @@ def _project_text(p: Project) -> str:
     return f"{p.name} {p.description} {' '.join(p.bullets)}"
 
 
+def _relevance_parts(project: Project, jd: JDModel, plan: CVPlan | None = None) -> tuple[float, float]:
+    """(keyword_score, plan_boost) — kept apart so the diversity penalty can
+    act on the keyword half without ever outweighing the planner's decision."""
+    text = _project_text(project).lower()
+    tokens = set(_WORD_RE.findall(text))
+    if not tokens:
+        return -1e6, 0.0  # an empty project is the first thing to go
+
+    keyword = 0.0
+    for weight, group in ((3.0, jd.hard_skills), (2.0, jd.keywords), (1.0, jd.preferred_skills)):
+        for kw in group:
+            kw = (kw or "").strip().lower()
+            if not kw:
+                continue
+            if kw in text:  # whole phrase present
+                keyword += weight
+                continue
+            parts = _WORD_RE.findall(kw)
+            if parts and all(p in tokens for p in parts):
+                keyword += weight
+            elif parts and any(p in tokens for p in parts):
+                keyword += weight * 0.5
+
+    boost = 0.0
+    if plan is not None:
+        for rank, name in enumerate(plan.select_projects):
+            if _name_matches(name, project.name):
+                boost += 1000.0 - rank  # keep the planner's ordering intact
+                break
+        if any(_name_matches(n, project.name) for n in plan.emphasize):
+            boost += 200.0
+        if any(_name_matches(n, project.name) for n in plan.drop_projects):
+            boost -= 1000.0
+        if any(_name_matches(n, project.name) for n in plan.downplay):
+            boost -= 150.0
+    return keyword, boost
+
+
 def project_relevance(project: Project, jd: JDModel, plan: CVPlan | None = None) -> float:
     """How much this project earns its space for THIS job.
 
@@ -89,59 +136,56 @@ def project_relevance(project: Project, jd: JDModel, plan: CVPlan | None = None)
     picks dominate the ranking when it expressed an opinion — it read the job
     description, this function only counts tokens.
     """
-    text = _project_text(project).lower()
-    tokens = set(_WORD_RE.findall(text))
-    if not tokens:
-        return -1e6  # an empty project is the first thing to go
+    keyword, boost = _relevance_parts(project, jd, plan)
+    return keyword + boost
 
-    score = 0.0
-    for weight, group in ((3.0, jd.hard_skills), (2.0, jd.keywords), (1.0, jd.preferred_skills)):
-        for kw in group:
-            kw = (kw or "").strip().lower()
-            if not kw:
-                continue
-            if kw in text:  # whole phrase present
-                score += weight
-                continue
-            parts = _WORD_RE.findall(kw)
-            if parts and all(p in tokens for p in parts):
-                score += weight
-            elif parts and any(p in tokens for p in parts):
-                score += weight * 0.5
 
-    if plan is not None:
-        for rank, name in enumerate(plan.select_projects):
-            if _name_matches(name, project.name):
-                score += 1000.0 - rank  # keep the planner's ordering intact
-                break
-        if any(_name_matches(n, project.name) for n in plan.emphasize):
-            score += 200.0
-        if any(_name_matches(n, project.name) for n in plan.drop_projects):
-            score -= 1000.0
-        if any(_name_matches(n, project.name) for n in plan.downplay):
-            score -= 150.0
-    return score
+def _similarity(a: set[str], b: set[str]) -> float:
+    """Jaccard overlap of two projects' vocabulary. Shared tooling dominates it,
+    which is exactly the signal wanted: eight n8n workflows look alike here."""
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
 
 
 def ranked_indices(resume: ResumeModel, jd: JDModel, plan: CVPlan | None = None) -> list[int]:
-    """Project indices, MOST relevant first. Indices stay valid because the
-    binary search always slices the same base résumé rather than removing
-    projects one at a time."""
-    scored = [(project_relevance(p, jd, plan), -i, i) for i, p in enumerate(resume.projects)]
-    scored.sort(reverse=True)
-    return [i for _, _, i in scored]
+    """Project indices, MOST relevant first — picked greedily so the ordering
+    spans the candidate's range instead of repeating one strength.
+
+    Pure keyword ranking is self-reinforcing: a JD that says "automation" eight
+    times ranks eight near-identical n8n workflows above every shipped
+    application, so trimming to fit keeps proving the same single skill and
+    buries the full-stack products. Each pick is therefore discounted by how
+    much vocabulary it shares with what is already chosen (classic maximal
+    marginal relevance). The discount applies to the KEYWORD half of the score
+    only, never the planner's ±1000 boosts, so it reorders within the planner's
+    selection without ever promoting a project the planner rejected.
+    """
+    parts = [_relevance_parts(p, jd, plan) for p in resume.projects]
+    vocab = [set(_WORD_RE.findall(_project_text(p).lower())) for p in resume.projects]
+
+    chosen: list[int] = []
+    remaining = list(range(len(resume.projects)))
+    while remaining:
+        best, best_value = remaining[0], None
+        for i in remaining:
+            keyword, boost = parts[i]
+            overlap = max((_similarity(vocab[i], vocab[j]) for j in chosen), default=0.0)
+            # Marginal value: what this project still adds once the reader has
+            # already seen the ones above it.
+            value = boost + keyword * (1.0 - _DIVERSITY_WEIGHT * overlap)
+            if best_value is None or value > best_value:
+                best, best_value = i, value
+        chosen.append(best)
+        remaining.remove(best)
+    return chosen
 
 
 def rank_projects(resume: ResumeModel, jd: JDModel, plan: CVPlan | None = None) -> list[str]:
-    """Project names in DROP order — least relevant first.
-
-    Names rather than indices on purpose: the drop loop removes one project at
-    a time, so any index captured up front would point at the wrong project
-    from the second removal onward.
-    """
-    scored = [(project_relevance(p, jd, plan), i, p.name) for i, p in enumerate(resume.projects)]
-    scored.sort(key=lambda t: (t[0], -t[1]))  # ties broken by later-listed-first
-    return [name for _, _, name in scored]
+    """Project names in DROP order — least relevant first, i.e. the reverse of
+    `ranked_indices`, so both agree on what goes and what stays."""
+    order = ranked_indices(resume, jd, plan)
+    return [resume.projects[i].name for i in reversed(order)]
 
 
 # --------------------------------------------------------------------------- #

@@ -349,6 +349,19 @@ requirements and to name the rest for removal.
   skill are worth less than three that cover three of the job's requirements. Where two
   projects prove the same point, select the stronger and drop the other — that is the
   one case where a relevant project should still go.
+- DO NOT LET ONE KIND OF WORK TAKE OVER THE LIST. Before you finalise, group your picks
+  by what they actually demonstrate and by the tooling they use. If one group holds most
+  of the list, swap its weakest members for projects that prove something the job also
+  asked for and nothing else on the list covers. Two or three examples of one capability
+  is plenty; the fourth teaches the reader nothing the third did not.
+- MATCH THE KIND OF EVIDENCE TO THE ASK. A job that says "built and shipped products",
+  "end to end", "production", or that names programming languages, databases and
+  warehouses is asking for ENGINEERING RANGE — shipped applications, real codebases,
+  deployments, data work. A job about operations, integrations or internal tooling is
+  asking for workflow automation. When the candidate has both, lead with the kind the
+  job actually described and use the other as support. A list of near-identical
+  automation workflows reads as one skill repeated, however relevant each one looks on
+  its own — and it hides the shipped products sitting further down the resume.
 - Prefer recent, substantial, and verifiable work. A shipped, live product outranks a
   concept or an architecture exercise for the same skill.
 - A project that proves nothing the job asks for does not belong in this CV, no matter
