@@ -60,7 +60,7 @@ from app.core.jd_analyzer import analyze_jd  # noqa: E402
 from app.core.job_match import match_jobs  # noqa: E402
 from app.core.linkedin import optimize_linkedin  # noqa: E402
 from app.core.tailor import tailor_resume  # noqa: E402
-from app.models import Contact, Education, Experience, FactsLedger, ResumeModel  # noqa: E402
+from app.models import Contact, Education, Experience, FactsLedger, Project, ResumeModel  # noqa: E402
 from app.parsers.structurer import build_facts_ledger, structure_resume  # noqa: E402
 from app.render.docx_renderer import render_docx  # noqa: E402
 from app.render.pdf_renderer import render_pdf  # noqa: E402
@@ -170,6 +170,56 @@ fake.experience.append(Experience(company="FAKE Industries Ltd", title="CEO", st
 flags = check_fabrication(fake, ledger)
 flagged_employers = [f.value for f in flags if f.category == "employer"]
 check("guard flags fabricated employer", "FAKE Industries Ltd" in flagged_employers, str(flagged_employers))
+
+# 5a. Numbers inside PROJECTS are guarded too (PLAN 20.5 / C1). The ledger read
+# experience, education, certifications, military and the summary but never
+# projects, so a metric invented into a project bullet passed silently — and
+# because the omission was symmetric (the guard rebuilds the ledger the same way
+# from the tailored résumé) nothing ever went red to reveal it. The false-
+# positive cases are pinned alongside the catch: this must not start firing on
+# the rewording and re-homing the tailor is explicitly allowed to do.
+_pj_orig = ResumeModel(
+    experience=[
+        Experience(company="Acme", title="Engineer", start_date="2020", end_date="2023",
+                   bullets=["Cut latency 30%."])
+    ],
+    projects=[
+        Project(name="Ziko", description="Delivery app serving 12 restaurants.",
+                bullets=["Handled 500 orders/week."])
+    ],
+)
+_pj_ledger = build_facts_ledger(_pj_orig)
+check(
+    "ledger records numbers from project text",
+    {"12", "500"} <= set(_pj_ledger.numbers),
+    str(_pj_ledger.numbers),
+)
+
+
+def _pj_numbers(mutate) -> list[str]:  # noqa: ANN001
+    r = _pj_orig.model_copy(deep=True)
+    mutate(r)
+    return [f.value for f in check_fabrication(r, _pj_ledger) if f.category == "number"]
+
+
+def _set_project_bullet(text: str):  # noqa: ANN001
+    return lambda r: r.projects[0].bullets.__setitem__(0, text)
+
+
+check(
+    "guard flags a metric invented into a project bullet",
+    _pj_numbers(_set_project_bullet("Handled 50,000 orders/week.")) == ["50,000"],
+    str(_pj_numbers(_set_project_bullet("Handled 50,000 orders/week."))),
+)
+check(
+    "rewording a real project metric is NOT flagged",
+    _pj_numbers(_set_project_bullet("Processed 500 orders every week for the client.")) == [],
+)
+check(
+    "a metric moved from experience into a project is NOT flagged",
+    _pj_numbers(_set_project_bullet("Cut latency 30% on the ordering path.")) == [],
+)
+check("an untouched résumé stays clean under the project guard", _pj_numbers(lambda r: None) == [])
 
 # 5b. Target-title headline (PLAN 17.2). The headline is a CLAIM, so the guard
 # reads it — but only for rank. Restating the same work in the target role's

@@ -46,6 +46,19 @@ def build_facts_ledger(resume: ResumeModel) -> FactsLedger:
         _add(ledger.dates, ms.end_date)
         for b in ms.bullets:
             ledger.numbers.extend(_extract_numbers(b))
+    # Projects contribute NUMBERS only — no employer/title/date claim lives here,
+    # and PLAN 18.3 already cuts projects the tailor promoted into Experience.
+    # They were missing entirely until PLAN 20.5/C1: the omission was symmetric
+    # (the guard rebuilds a ledger the same way from the tailored résumé, so it
+    # produced no false positives) which is exactly why it went unnoticed — a
+    # metric invented into a project bullet simply passed. Projects are the
+    # section the tailor rewrites most freely, so that was the wrong section to
+    # leave unguarded.
+    for proj in resume.projects:
+        ledger.numbers.extend(_extract_numbers(proj.name))
+        ledger.numbers.extend(_extract_numbers(proj.description))
+        for b in proj.bullets:
+            ledger.numbers.extend(_extract_numbers(b))
     ledger.numbers.extend(_extract_numbers(resume.summary))
     # Deliberately NOT folded into `titles`: a headline is positioning, not an
     # employment record, so the generic title diff must not fire every time
