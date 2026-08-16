@@ -309,6 +309,30 @@ class MasterResumeList(BaseModel):
     resumes: list[MasterResumeOut] = Field(default_factory=list)
 
 
+class ResumeVersionOut(BaseModel):
+    """One restore point (PLAN 20.8 / N1) — METADATA ONLY.
+
+    Deliberately without `resume`: the list view shows a dozen of these and a
+    master résumé is ~48 kB of JSON, so shipping the content would make the
+    picker heavier than everything it is offered next to. `GET
+    /profile/resume/versions/{id}` returns the full thing when one is opened.
+    """
+
+    id: int
+    label: str = ""
+    language: str = "en"
+    # When this content stopped being current — what the UI labels the point with.
+    created_at: str = ""
+    # Enough to tell two restore points apart without opening either.
+    headline: str = ""
+    experience_count: int = 0
+    project_count: int = 0
+
+
+class ResumeVersionList(BaseModel):
+    versions: list[ResumeVersionOut] = Field(default_factory=list)
+
+
 # --------------------------------------------------------------------------- #
 # Job alerts
 # --------------------------------------------------------------------------- #
@@ -496,6 +520,9 @@ class DeleteMyDataResult(BaseModel):
     """Row counts wiped by DELETE /profile/data (PLAN 7.5)."""
 
     resumes: int = 0
+    # Version history (PLAN 20.8/N1). These hold FULL past résumés, so a wipe
+    # that skipped them would leave the PII the wipe exists to remove.
+    resume_versions: int = 0
     applications: int = 0
     history: int = 0
     alerts: int = 0

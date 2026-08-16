@@ -179,6 +179,19 @@ export interface MasterResume {
   updated_at: string;
 }
 
+/** One restore point for the master résumé (PLAN 20.8/N1). Metadata only — the
+ * backend deliberately omits `resume` here so the picker stays light; fetch the
+ * full version with `getResumeVersion` when one is opened. */
+export interface ResumeVersion {
+  id: number;
+  label: string;
+  language: string; // "en" | "he"
+  created_at: string; // when this content STOPPED being current
+  headline: string;
+  experience_count: number;
+  project_count: number;
+}
+
 export interface ApplicationOut {
   id: number;
   job_title: string;

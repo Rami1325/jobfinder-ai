@@ -11,6 +11,20 @@
     "en": "English",
     "he": "Hebrew"
   },
+  "versions": {
+    "open": "Version history",
+    "title": "Résumé version history",
+    "body": "Every time your master résumé is replaced, the previous one is kept here. Restoring brings it back — and the version you're on now is kept too, so you can always come back.",
+    "empty": "No earlier versions yet. One is saved the first time your résumé is replaced.",
+    "untitled": "Untitled résumé",
+    "counts": "{{roles}} roles · {{projects}} projects",
+    "restore": "Restore",
+    "confirm": "Restore this one",
+    "restored": "Résumé restored.",
+    "restoreError": "Couldn't restore that version.",
+    "loadError": "Couldn't load your version history.",
+    "note": "The 20 most recent versions per language are kept."
+  },
   "skillsEditor": {
     "open": "Add skills",
     "title": "Your skills",

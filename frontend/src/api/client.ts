@@ -35,6 +35,7 @@ import type {
   ResumeHealthResult,
   ResumeModel,
   ResumeUploadResponse,
+  ResumeVersion,
   ScreeningAnswerResult,
   SearchContext,
   StaleApplication,
@@ -523,6 +524,29 @@ export async function listMasterResumes(): Promise<MasterResume[]> {
     const { data } = await api.get<{ resumes: MasterResume[] }>("/profile/resumes");
     return data.resumes ?? [];
   });
+}
+
+/** Restore points for the master résumé (PLAN 20.8/N1) — metadata only; the
+ * full résumé comes from `getResumeVersion`. Not cached: after a save the list
+ * has changed by definition, and it's only fetched when the picker opens. */
+export async function listResumeVersions(lang?: "en" | "he"): Promise<ResumeVersion[]> {
+  const { data } = await api.get<{ versions: ResumeVersion[] }>("/profile/resume/versions", {
+    params: lang ? { lang } : undefined,
+  });
+  return data.versions;
+}
+
+export async function getResumeVersion(id: number): Promise<MasterResume> {
+  const { data } = await api.get<MasterResume>(`/profile/resume/versions/${id}`);
+  return data;
+}
+
+/** Make a version current again. The replaced state is snapshotted server-side,
+ * so this is itself undoable. */
+export async function restoreResumeVersion(id: number): Promise<MasterResume> {
+  const { data } = await api.post<MasterResume>(`/profile/resume/versions/${id}/restore`);
+  invalidateData("master", "masters");
+  return data;
 }
 
 export async function saveMasterResume(payload: {

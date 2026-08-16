@@ -54,6 +54,7 @@ from app.db.comeet import list_companies as list_comeet_companies
 from app.db.database import SessionLocal, get_db
 from app.db.greenhouse import list_companies as list_greenhouse_companies
 from app.db.users import mint_user
+from app.db import resume_versions
 from app.db.history import (
     application_statuses,
     clear_search_hits,
@@ -70,6 +71,7 @@ from app.db.models import (
     JobAlert,
     JobSearchHit,
     SavedResume,
+    SavedResumeVersion,
     TailorKit,
     UsageLog,
     User,
@@ -137,6 +139,8 @@ from app.models import (
     MasterResumeIn,
     MasterResumeList,
     MasterResumeOut,
+    ResumeVersionList,
+    ResumeVersionOut,
     OutreachRequest,
     OutreachResult,
     RecruiterScreenRequest,
@@ -996,7 +1000,14 @@ def tools_resume_health(body: ResumeHealthRequest, _u: User = Depends(llm_user))
 # Paired he/en: one row per language, keyed by the résumé's detected language —
 # never client-supplied, so the pairing can't drift from the actual content.
 # --------------------------------------------------------------------------- #
-def _row_to_master(row: SavedResume) -> MasterResumeOut | None:
+def _saved_to_master(row, stamp) -> MasterResumeOut | None:  # noqa: ANN001
+    """Parse a stored résumé row into the API shape, or None if unreadable.
+
+    Takes the timestamp as an argument because it serves BOTH `saved_resumes`
+    (whose column is `updated_at`) and `saved_resume_versions` (`created_at`,
+    meaning "when this stopped being current"). Duck-typing the two was the
+    first attempt and it raised on the attribute that isn't shared.
+    """
     if not row.resume_json:
         return None
     try:
@@ -1014,8 +1025,16 @@ def _row_to_master(row: SavedResume) -> MasterResumeOut | None:
         ledger=ledger,
         label=row.label,
         language=row.language or "en",
-        updated_at=row.updated_at.isoformat() if row.updated_at else "",
+        updated_at=stamp.isoformat() if stamp else "",
     )
+
+
+def _row_to_master(row: SavedResume) -> MasterResumeOut | None:
+    return _saved_to_master(row, row.updated_at)
+
+
+def _version_to_master(row) -> MasterResumeOut | None:  # noqa: ANN001 - SavedResumeVersion
+    return _saved_to_master(row, row.created_at)
 
 
 def _master_rows(db: Session, user_id: int) -> list[SavedResume]:
@@ -1087,6 +1106,14 @@ def save_master_resume(
     if row is None:
         row = SavedResume(language=language, user_id=user.id)
         db.add(row)
+    else:
+        # Keep the outgoing content before it is overwritten (PLAN 20.8/N1).
+        # Best-effort: a failure here must never cost the user the save they
+        # actually asked for — losing an undo point beats losing the résumé.
+        try:
+            resume_versions.snapshot(db, row, body.resume.model_dump_json())
+        except Exception:  # noqa: BLE001
+            pass
     row.label = body.label
     row.resume_json = body.resume.model_dump_json()
     row.ledger_json = ledger.model_dump_json()
@@ -1098,6 +1125,100 @@ def save_master_resume(
         label=row.label,
         language=row.language,
         updated_at=row.updated_at.isoformat() if row.updated_at else "",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Master résumé version history (PLAN 20.8 / N1). The save above overwrites in
+# place, and several UI paths save without the user thinking of it as a save —
+# so these are the undo.
+# --------------------------------------------------------------------------- #
+def _version_out(row) -> ResumeVersionOut:  # noqa: ANN001 - SavedResumeVersion ORM row
+    """Metadata for the picker. The résumé is parsed only for the three counts
+    that let a user tell restore points apart; a corrupt row still lists (with
+    zeros) rather than vanishing, because a version you cannot see is a version
+    you cannot restore."""
+    headline, experience, projects = "", 0, 0
+    try:
+        resume = ResumeModel.model_validate_json(row.resume_json)
+        headline = resume.headline or resume.contact.name
+        experience, projects = len(resume.experience), len(resume.projects)
+    except Exception:  # noqa: BLE001
+        pass
+    return ResumeVersionOut(
+        id=row.id,
+        label=row.label,
+        language=row.language or "en",
+        created_at=row.created_at.isoformat() if row.created_at else "",
+        headline=headline,
+        experience_count=experience,
+        project_count=projects,
+    )
+
+
+@router.get("/profile/resume/versions", response_model=ResumeVersionList)
+def list_resume_versions(
+    lang: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ResumeVersionList:
+    """Restore points, newest first. Metadata only — see ResumeVersionOut."""
+    rows = resume_versions.list_versions(db, user.id, lang or "")
+    return ResumeVersionList(versions=[_version_out(r) for r in rows])
+
+
+@router.get("/profile/resume/versions/{version_id}", response_model=MasterResumeOut)
+def get_resume_version(
+    version_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> MasterResumeOut:
+    """One full version, for previewing before restoring."""
+    row = resume_versions.owned_version(db, version_id, user.id)
+    if row is None:
+        raise HTTPException(404, "Version not found.")
+    master = _version_to_master(row)
+    if master is None:
+        raise HTTPException(422, "That version can't be read.")
+    return master
+
+
+@router.post("/profile/resume/versions/{version_id}/restore", response_model=MasterResumeOut)
+def restore_resume_version(
+    version_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> MasterResumeOut:
+    """Make a version current again.
+
+    The CURRENT content is snapshotted on the way past, so restoring is itself
+    undoable — a mis-click in the picker must not be the thing that loses the
+    résumé. Restores into the version's OWN language slot, so restoring a
+    Hebrew version can never overwrite the English master.
+    """
+    row = resume_versions.owned_version(db, version_id, user.id)
+    if row is None:
+        raise HTTPException(404, "Version not found.")
+    master = _version_to_master(row)
+    if master is None:
+        raise HTTPException(422, "That version can't be read.")
+
+    language = row.language or "en"
+    current = next(
+        (r for r in _master_rows(db, user.id) if (r.language or "en") == language), None
+    )
+    if current is None:
+        current = SavedResume(language=language, user_id=user.id)
+        db.add(current)
+    else:
+        resume_versions.snapshot(db, current, row.resume_json)
+    current.label = row.label
+    current.resume_json = row.resume_json
+    current.ledger_json = row.ledger_json
+    db.commit()
+    db.refresh(current)
+    return MasterResumeOut(
+        resume=master.resume,
+        ledger=master.ledger,
+        label=current.label,
+        language=current.language,
+        updated_at=current.updated_at.isoformat() if current.updated_at else "",
     )
 
 
@@ -1277,6 +1398,7 @@ def delete_my_data(
 
     result = DeleteMyDataResult(
         resumes=_wipe(SavedResume),
+        resume_versions=_wipe(SavedResumeVersion),
         applications=_wipe(Application),
         history=_wipe(JobSearchHit),
         alerts=_wipe(JobAlert),

@@ -4734,5 +4734,117 @@ with TestClient(_fastapi_app) as _tc:
         _tok_row is not None and _tok_row.action == TOKENS_ACTION and TOKENS_ACTION not in ("llm", "tailor", "search"),
     )
 
+# ---------------------------------------------------------------------------
+# 27. Master résumé version history (PLAN 20.8 / N1): PUT /profile/resume
+# overwrites in place, so these are the undo.
+# ---------------------------------------------------------------------------
+from app.db.resume_versions import MAX_VERSIONS as _MAX_VERSIONS  # noqa: E402
+
+with TestClient(_fastapi_app) as _tc:
+    _vu = _tc.post("/admin/users", json={"name": "Version Tester"}, headers=_ADMIN_H).json()
+    _VH = {"X-App-Key": _vu["invite_code"]}
+
+    def _put_resume(headline: str, headers=_VH):  # noqa: ANN001
+        r = resume.model_copy(deep=True)
+        r.headline = headline
+        return _tc.put("/profile/resume", json={"resume": r.model_dump(), "label": "M"}, headers=headers)
+
+    def _versions(headers=_VH):  # noqa: ANN001
+        return _tc.get("/profile/resume/versions", headers=headers).json()["versions"]
+
+    _put_resume("Backend Engineer")
+    check("the first save creates no version (nothing was overwritten)", _versions() == [])
+
+    _put_resume("Platform Engineer")
+    _v = _versions()
+    check(
+        "overwriting snapshots the OUTGOING content, not the incoming one",
+        len(_v) == 1 and _v[0]["headline"] == "Backend Engineer",
+        str([x["headline"] for x in _v]),
+    )
+
+    _put_resume("Platform Engineer")  # byte-identical re-save
+    check(
+        "an identical re-save is not a new restore point",
+        len(_versions()) == 1,
+        str(len(_versions())),
+    )
+
+    # Restore must bring back the old content AND keep the current one reachable,
+    # so a mis-click in the picker can't be what loses the résumé.
+    _restore = _tc.post(f"/profile/resume/versions/{_v[0]['id']}/restore", headers=_VH)
+    check(
+        "restore makes the old content current again",
+        _restore.status_code == 200 and _restore.json()["resume"]["headline"] == "Backend Engineer",
+        f"{_restore.status_code} {_restore.text[:90]}",
+    )
+    check(
+        "the master really changed, not just the response",
+        _tc.get("/profile/resume", headers=_VH).json()["resume"]["headline"] == "Backend Engineer",
+    )
+    check(
+        "restoring is itself undoable — the replaced state became a version",
+        "Platform Engineer" in [x["headline"] for x in _versions()],
+        str([x["headline"] for x in _versions()]),
+    )
+
+    # Language isolation: the he/en masters are separate slots and a restore
+    # must never cross them.
+    _he = ResumeModel(
+        contact=Contact(name="דנה לוי"), headline="מהנדסת תוכנה",
+        summary="מהנדסת תוכנה עם ניסיון בפייתון.",
+        experience=[Experience(company="אקמי", title="מהנדסת", start_date="2020", end_date="2023")],
+    )
+    _tc.put("/profile/resume", json={"resume": _he.model_dump(), "label": "HE"}, headers=_VH)
+    _he2 = _he.model_copy(deep=True)
+    _he2.headline = "מפתחת בכירה"
+    _tc.put("/profile/resume", json={"resume": _he2.model_dump(), "label": "HE"}, headers=_VH)
+    _he_versions = [x for x in _versions() if x["language"] == "he"]
+    check("hebrew saves version into their own language slot", len(_he_versions) == 1, str(_he_versions))
+    _tc.post(f"/profile/resume/versions/{_he_versions[0]['id']}/restore", headers=_VH)
+    check(
+        "restoring a hebrew version leaves the english master untouched",
+        _tc.get("/profile/resume", params={"lang": "en"}, headers=_VH).json()["resume"]["headline"]
+        == "Backend Engineer"
+        and _tc.get("/profile/resume", params={"lang": "he"}, headers=_VH).json()["resume"]["headline"]
+        == "מהנדסת תוכנה",
+    )
+
+    # Another user's version is invisible AND unrestorable — it holds a full résumé.
+    _other = _tc.post("/admin/users", json={"name": "Other"}, headers=_ADMIN_H).json()
+    _OH = {"X-App-Key": _other["invite_code"]}
+    _victim_id = _v[0]["id"]
+    check(
+        "another user can neither read nor restore your version",
+        _tc.get(f"/profile/resume/versions/{_victim_id}", headers=_OH).status_code == 404
+        and _tc.post(f"/profile/resume/versions/{_victim_id}/restore", headers=_OH).status_code == 404
+        and _versions(_OH) == [],
+    )
+
+    # The buffer is capped: this is undo, not an archive.
+    for _i in range(_MAX_VERSIONS + 5):
+        _put_resume(f"Role {_i}")
+    _en_versions = [x for x in _versions() if x["language"] == "en"]
+    check(
+        f"version history is capped at {_MAX_VERSIONS} per language",
+        len(_en_versions) == _MAX_VERSIONS,
+        str(len(_en_versions)),
+    )
+    check(
+        "the cap drops the OLDEST, keeping the most recent restore points",
+        _en_versions[0]["headline"] == f"Role {_MAX_VERSIONS + 3}",
+        str([x["headline"] for x in _en_versions[:3]]),
+    )
+
+    # Privacy: these rows hold full past résumés, so the wipe must take them.
+    _wiped = _tc.delete("/profile/data", headers=_VH)
+    check(
+        "delete-my-data wipes version history too",
+        _wiped.status_code == 200
+        and _wiped.json()["resume_versions"] >= _MAX_VERSIONS
+        and _versions() == [],
+        _wiped.text[:120],
+    )
+
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

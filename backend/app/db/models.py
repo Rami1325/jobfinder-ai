@@ -268,6 +268,37 @@ class JobAlert(Base):
     last_nudge_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
 
+class SavedResumeVersion(Base):
+    """A previous state of a master résumé (PLAN 20.8 / N1).
+
+    `PUT /profile/resume` overwrites `SavedResume` in place, so until this
+    existed there was no undo for the single most valuable object a user owns —
+    and the Builder autosaves, the Skills editor saves, and a re-upload
+    replaces. One bad save was unrecoverable.
+
+    A snapshot of the OUTGOING row is taken before each overwrite, so the
+    newest version here is always the state just before the current one.
+    Identical consecutive saves are skipped (see `db.resume_versions.snapshot`)
+    and only the newest `MAX_VERSIONS` per (user, language) are kept — this is
+    an undo buffer, not an archive.
+    """
+
+    __tablename__ = "saved_resume_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
+    label: Mapped[str] = mapped_column(String(255), default="")
+    language: Mapped[str] = mapped_column(String(8), default="en")
+    resume_json: Mapped[str] = mapped_column(Text, default="")
+    ledger_json: Mapped[str] = mapped_column(Text, default="")
+    # When this content STOPPED being current, i.e. when it was superseded —
+    # that is what the UI needs to label a restore point ("saved until …"),
+    # and it is the snapshot time, not the original authoring time.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class SavedResume(Base):
     """The user's persisted master résumés, reused across Tailor / Interview / Job Match.
 
