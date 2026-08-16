@@ -331,6 +331,11 @@ class AlertSettingsOut(BaseModel):
 
 
 class AlertRunResult(BaseModel):
+    # Whose run this was. The cron returns a list of these and, since PLAN
+    # 20.5/C2, runs users longest-unrun-first — so position no longer implies
+    # identity and an anonymous outcome is undebuggable. 0 for a manual
+    # "Run now", where the caller already knows.
+    user_id: int = 0
     ran: bool = False
     total: int = 0  # jobs the search returned
     new_count: int = 0  # of those, never seen in history before
@@ -343,6 +348,11 @@ class AlertCronResult(BaseModel):
 
     users: int = 0  # enabled alerts found
     results: list[AlertRunResult] = Field(default_factory=list)
+    # Enabled alerts the tick's time budget didn't reach (PLAN 20.5/C2). They
+    # sort first on the next tick, so a non-zero value here is a rotation, not
+    # a loss — but a value that stays non-zero every day means the budget can no
+    # longer cover the user list and the cron needs to run more often.
+    skipped: int = 0
 
 
 # --------------------------------------------------------------------------- #

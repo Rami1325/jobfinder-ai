@@ -16,10 +16,11 @@ network, no LLM.
 from __future__ import annotations
 
 import html as html_lib
+import time
 from datetime import datetime, timezone
 from typing import Callable
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -308,12 +309,12 @@ def run_alert(
     `search_fn(resume, context, cache=...)` — fakes must accept the kwarg."""
     row = get_alert(db, user_id)
     if not row.enabled and not force:
-        return AlertRunResult(ran=False, error="Alerts are disabled.")
+        return AlertRunResult(user_id=user_id, ran=False, error="Alerts are disabled.")
     resume = _master_resume(db, user_id)
     if resume is None:
         row.last_error = "No master résumé saved yet."
         db.commit()
-        return AlertRunResult(ran=False, error=row.last_error)
+        return AlertRunResult(user_id=user_id, ran=False, error=row.last_error)
 
     # PLAN 12.4: the daily cron re-surfaces mostly the SAME postings every
     # morning — the score cache turns those into zero-LLM, zero-fetch reuse
@@ -332,7 +333,7 @@ def run_alert(
         row.last_run_at = datetime.now(timezone.utc)
         row.last_error = str(e)[:500]
         db.commit()
-        return AlertRunResult(ran=True, error=row.last_error)
+        return AlertRunResult(user_id=user_id, ran=True, error=row.last_error)
 
     emailed = False
     email_error = ""
@@ -350,6 +351,7 @@ def run_alert(
     row.last_error = email_error
     db.commit()
     return AlertRunResult(
+        user_id=user_id,
         ran=True,
         total=len(result.matches),
         new_count=len(new),
@@ -358,18 +360,60 @@ def run_alert(
     )
 
 
+def due_user_ids(db: Session) -> list[int]:
+    """Enabled alerts, LONGEST-UNRUN FIRST — the rotation that makes the time
+    budget in `run_all_alerts` fair.
+
+    NULL `last_run_at` (never run) sorts first, via an explicit CASE rather than
+    NULLS FIRST: SQLite puts NULLs first on ASC and Postgres puts them last, so
+    relying on the default would silently starve brand-new alerts in production
+    while looking correct locally. Pure SQL ordering; smoke-pinned.
+    """
+    rows = db.execute(
+        select(JobAlert.user_id)
+        .join(User, User.id == JobAlert.user_id)
+        .where(JobAlert.enabled.is_(True), User.is_active.is_(True))
+        .order_by(
+            case((JobAlert.last_run_at.is_(None), 0), else_=1),
+            JobAlert.last_run_at.asc(),
+            JobAlert.user_id,
+        )
+    ).scalars().all()
+    return [uid for uid in rows if uid is not None]
+
+
 def run_all_alerts(
     db: Session,
     *,
     search_fn: Callable[..., JobSearchResult] = search_jobs,
-) -> list[AlertRunResult]:
-    """One cron tick (PLAN 7.3): run the alert of every active user whose
-    toggle is on. Per-user failures are isolated inside run_alert, so one
-    broken alert never blocks the rest."""
-    user_ids = db.execute(
-        select(JobAlert.user_id)
-        .join(User, User.id == JobAlert.user_id)
-        .where(JobAlert.enabled.is_(True), User.is_active.is_(True))
-        .order_by(JobAlert.user_id)
-    ).scalars().all()
-    return [run_alert(db, uid, search_fn=search_fn) for uid in user_ids if uid is not None]
+    budget_s: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[list[AlertRunResult], int]:
+    """One cron tick (PLAN 7.3): run enabled alerts until the time budget runs
+    out. Returns (results, skipped).
+
+    THE BUDGET IS THE POINT (PLAN 20.5/C2). This used to be a list
+    comprehension over every enabled user, and one alert is a full multi-board
+    fan-out plus up to 25 LLM scoring calls — minutes of work. Vercel kills a
+    function at 300s, so past a handful of users the cron simply died partway
+    and the users at the end of the list silently never got their alerts. There
+    was nothing to notice: no error, no log, just missing email.
+
+    Now it stops cleanly with room to spare and reports what it didn't reach,
+    and `due_user_ids` orders longest-unrun first — so whoever got skipped today
+    is first in line tomorrow instead of being permanently starved by a stable
+    user ordering. Per-user failures stay isolated inside `run_alert`.
+    """
+    if budget_s is None:
+        budget_s = get_settings().alert_cron_budget_s
+    user_ids = due_user_ids(db)
+    results: list[AlertRunResult] = []
+    started = clock()
+    for i, uid in enumerate(user_ids):
+        # Check BEFORE starting a run, never mid-run: an alert that has already
+        # scraped and scored must be allowed to finish and record its history,
+        # or the next tick redoes the same work and calls it "new" again.
+        if budget_s > 0 and i and clock() - started >= budget_s:
+            break
+        results.append(run_alert(db, uid, search_fn=search_fn))
+    return results, len(user_ids) - len(results)

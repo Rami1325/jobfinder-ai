@@ -678,8 +678,8 @@ def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertCron
         auth = request.headers.get("authorization", "")
         if not hmac.compare_digest(auth, f"Bearer {secret}"):
             raise HTTPException(401, "Bad cron secret.")
-    results = alerts_core.run_all_alerts(db)
-    return AlertCronResult(users=len(results), results=results)
+    results, skipped = alerts_core.run_all_alerts(db)
+    return AlertCronResult(users=len(results) + skipped, results=results, skipped=skipped)
 
 
 @router.get("/jobs/nudges/cron", response_model=NudgeCronResult)

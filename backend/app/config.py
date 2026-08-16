@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     # Vercel sends "Authorization: Bearer <CRON_SECRET>" on cron invocations
     # when the CRON_SECRET env var exists; unset = the cron endpoint is open.
     cron_secret: str = ""
+    # Wall-clock budget for one alerts-cron tick (PLAN 20.5/C2). One alert is a
+    # full multi-board fan-out plus up to 25 LLM scoring calls, and Vercel kills
+    # a function at 300s — so the cron stops cleanly at this mark and reports
+    # what it didn't reach, instead of being killed partway with users at the
+    # end of the list silently never getting their email. <= 0 disables the
+    # budget (fine locally, never on serverless).
+    alert_cron_budget_s: int = 240
     app_base_url: str = ""  # public app URL for links in alert emails (no trailing /)
     alert_smtp_host: str = ""  # empty => alerts run but nothing is emailed
     alert_smtp_port: int = 587  # 465 => implicit TLS, anything else => STARTTLS

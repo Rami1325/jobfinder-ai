@@ -2545,7 +2545,8 @@ with TestClient(_fastapi_app) as _tc:
     _cron = _tc.get("/jobs/alerts/cron")
     check(
         "cron endpoint iterates enabled alerts (none yet)",
-        _cron.status_code == 200 and _cron.json() == {"users": 0, "results": []},
+        _cron.status_code == 200
+        and _cron.json() == {"users": 0, "results": [], "skipped": 0},
         _cron.text[:100],
     )
 
@@ -2765,17 +2766,68 @@ update_alert(_db3, _admin_id, enabled=True, email="admin@example.com",
              context=_AlertCtx(job_title="Backend Engineer"))
 update_alert(_db3, _dana.id, enabled=True, email="dana@example.com",
              context=_AlertCtx(job_title="Backend Engineer"))
-_cron_results = run_all_alerts(_db3, search_fn=_canned_search)
-check("cron loop runs every enabled user's alert", len(_cron_results) == 2, str(len(_cron_results)))
+_cron_results, _cron_skipped = run_all_alerts(_db3, search_fn=_canned_search)
+check(
+    "cron loop runs every enabled user's alert",
+    len(_cron_results) == 2 and _cron_skipped == 0,
+    f"{len(_cron_results)} ran, {_cron_skipped} skipped",
+)
+# Keyed by user_id, not by position: since PLAN 20.5/C2 the cron runs
+# longest-unrun-first, so the admin (who already used "Run now" above) now comes
+# AFTER dana. The outcome per user is what this check was ever about.
+_by_user = {r.user_id: r for r in _cron_results}
 check(
     "per-user diff: admin saw these urls before, dana never did",
-    _cron_results[0].new_count == 0 and _cron_results[1].new_count == 2,
-    str([(r.new_count, r.error) for r in _cron_results]),
+    _by_user[_admin_id].new_count == 0 and _by_user[_dana.id].new_count == 2,
+    str([(r.user_id, r.new_count, r.error) for r in _cron_results]),
+)
+check(
+    "each cron result says which user it belongs to",
+    set(_by_user) == {_admin_id, _dana.id},
+    str(sorted(_by_user)),
 )
 check(
     "dana's run recorded into dana's own history",
     len(list_search_hits(_db3, _dana.id)) == 2
     and all(h.user_id == _dana.id for h in list_search_hits(_db3, _dana.id)),
+)
+
+# 19b-2. The cron's time budget + fair rotation (PLAN 20.5/C2). One alert is a
+# full fan-out plus up to 25 LLM calls, and Vercel kills a function at 300s —
+# this used to be an unbounded list comprehension that simply died partway, with
+# the users at the end of the list silently never getting their email.
+from app.core.alerts import due_user_ids as _due_ids  # noqa: E402
+
+_eli = mint_user(_db3, "Eli")
+_db3.add(_SR(user_id=_eli.id, language="en", resume_json=resume.model_dump_json()))
+_db3.commit()
+update_alert(_db3, _eli.id, enabled=True, email="eli@example.com",
+             context=_AlertCtx(job_title="Backend Engineer"))
+check(
+    "a never-run alert sorts ahead of ones that already ran",
+    _due_ids(_db3)[0] == _eli.id,
+    f"order={_due_ids(_db3)} eli={_eli.id}",
+)
+
+# A clock that jumps past the budget right after the first user.
+_ticks = iter([0.0] + [10_000.0] * 50)
+_budget_results, _budget_skipped = run_all_alerts(
+    _db3, search_fn=_canned_search, budget_s=240, clock=lambda: next(_ticks)
+)
+check(
+    "the cron stops on its time budget and reports what it didn't reach",
+    len(_budget_results) == 1 and _budget_skipped == 2,
+    f"{len(_budget_results)} ran, {_budget_skipped} skipped",
+)
+check(
+    "whoever got skipped is first in line on the next tick",
+    _due_ids(_db3)[0] != _eli.id and _eli.id not in _due_ids(_db3)[:1],
+    f"eli ran, next order={_due_ids(_db3)}",
+)
+check(
+    "budget <= 0 disables the limit (local dev runs everyone)",
+    len(run_all_alerts(_db3, search_fn=_canned_search, budget_s=0,
+                       clock=lambda: 10_000.0)[0]) == 3,
 )
 update_alert(_db3, _admin_id, enabled=False, email="admin@example.com", context=None)
 update_alert(_db3, _dana.id, enabled=False, email="dana@example.com", context=None)
