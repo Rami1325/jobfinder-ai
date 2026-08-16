@@ -1,7 +1,6 @@
 export { default as Button } from "./Button";
 export { default as Card, CardTitle, SectionLabel } from "./Card";
 export { default as Badge } from "./Badge";
-export { default as Stat } from "./Stat";
 export { default as CountUp } from "./CountUp";
 export { default as SparkBurst } from "./ClickSpark";
 export { default as Stamp } from "./Stamp";

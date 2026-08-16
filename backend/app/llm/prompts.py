@@ -805,6 +805,11 @@ def fit_score_user(resume_json: str, jd_json: str) -> str:
 
 
 def jd_fit_user(resume_json: str, jd_text: str) -> str:
+    # RÉSUMÉ FIRST, JD SECOND — do not swap. One search scores up to 25 postings
+    # against the SAME résumé, so the résumé is a shared prefix across all 25
+    # calls and OpenAI's automatic prompt caching bills it at the cached rate
+    # (a master CV is ~48 kB of JSON, so this is most of the input). Putting the
+    # JD first makes every call's prefix unique and throws that away.
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nJOB DESCRIPTION:\n{jd_text}"
 
 

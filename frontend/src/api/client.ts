@@ -1,4 +1,5 @@
 import axios from "axios";
+import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT } from "../lib/accessCode";
 import { cachedFetch, clearDataCache, invalidateData } from "../lib/dataCache";
 import type {
   AlertRunResult,
@@ -44,11 +45,6 @@ import type {
 // In production (Vercel), set VITE_API_BASE_URL to the deployed backend URL
 // (e.g. https://jobfinder-api.onrender.com) so the frontend calls it directly.
 const api = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || "/api" });
-
-// Deployed instances are gated by an access code (backend APP_ACCESS_CODE).
-// The code is remembered per device; a 401 pops the AccessGate overlay.
-export const ACCESS_CODE_KEY = "jobfinder.accessCode";
-export const UNAUTHORIZED_EVENT = "jobfinder:unauthorized";
 
 api.interceptors.request.use((config) => {
   const code = localStorage.getItem(ACCESS_CODE_KEY);

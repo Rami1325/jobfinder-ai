@@ -116,7 +116,3 @@ def title_relevance(title: str, query_titles: list[str]) -> float:
         )
         best = max(best, matched / len(q_tokens))
     return best
-
-
-def is_relevant(title: str, query_titles: list[str]) -> bool:
-    return title_relevance(title, query_titles) >= RELEVANT_MIN

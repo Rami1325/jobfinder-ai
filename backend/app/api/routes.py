@@ -571,7 +571,7 @@ def clear_jobs_history(
 # --------------------------------------------------------------------------- #
 # Job alerts (PLAN 6): saved-search re-runs on a schedule, email new hits
 # --------------------------------------------------------------------------- #
-def _alert_out(row, db: Session) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert ORM row
+def _alert_out(row) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert ORM row
     return AlertSettingsOut(
         enabled=row.enabled,
         email=row.email,
@@ -588,7 +588,7 @@ def _alert_out(row, db: Session) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert
 def get_job_alert(
     db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> AlertSettingsOut:
-    return _alert_out(alerts_core.get_alert(db, user.id), db)
+    return _alert_out(alerts_core.get_alert(db, user.id))
 
 
 @router.put("/jobs/alerts", response_model=AlertSettingsOut)
@@ -607,7 +607,7 @@ def update_job_alert(
         context=body.context,
         nudge_emails=body.nudge_emails,
     )
-    return _alert_out(row, db)
+    return _alert_out(row)
 
 
 @router.post("/jobs/alerts/run", response_model=AlertRunResult)

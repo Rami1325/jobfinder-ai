@@ -2,7 +2,9 @@ import { type FormEvent, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { KeyRound } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT } from "../api/client";
+// From lib/, not api/client: importing it from there pulls axios + the whole
+// typed API surface into the eager entry chunk (see lib/accessCode.ts).
+import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT } from "../lib/accessCode";
 import { Button } from "./ui";
 import Logo from "./Logo";
 

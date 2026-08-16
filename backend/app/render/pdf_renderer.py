@@ -83,13 +83,18 @@ def _adv(text: str, font: str, size: float, tracking: float = 0.0) -> float:
     return stringWidth(text, font, size) + extra
 
 
-def _wrap_lines(text: str, font: str, size: float, width: float, tracking: float = 0.0) -> list[str]:
-    """Greedy line break on LOGICAL text (bidi reordering happens per line, at
-    draw time — reordering the whole paragraph first would stack the lines
-    bottom-up)."""
+# Line breaking is pure given (text, font, size, width, tracking) — font metrics
+# never change once `_fonts` has registered a face, and a fallback registers
+# under a different NAME, so the key can't go stale. Caching it matters because
+# the page budget (app.core.length_budget) is allowed 60 real builds per tailor
+# and every one of them re-wraps the same bullets at the same column width:
+# measured 21.4 -> 11.9 ms per page_count() on a 30-project résumé, for 37
+# entries. Bounded so a long-lived process can't accumulate.
+@lru_cache(maxsize=4096)
+def _wrap_cached(text: str, font: str, size: float, width: float, tracking: float) -> tuple[str, ...]:
     lines: list[str] = []
     cur = ""
-    for word in (text or "").split():
+    for word in text.split():
         trial = f"{cur} {word}" if cur else word
         if cur and _adv(trial, font, size, tracking) > width:
             lines.append(cur)
@@ -105,7 +110,15 @@ def _wrap_lines(text: str, font: str, size: float, width: float, tracking: float
             cur = cur[cut:]
     if cur:
         lines.append(cur)
-    return lines or [""]
+    return tuple(lines) or ("",)
+
+
+def _wrap_lines(text: str, font: str, size: float, width: float, tracking: float = 0.0) -> list[str]:
+    """Greedy line break on LOGICAL text (bidi reordering happens per line, at
+    draw time — reordering the whole paragraph first would stack the lines
+    bottom-up). Returns a fresh list each call: the cache holds a tuple, so a
+    caller that ever mutates its lines can't corrupt the next render."""
+    return list(_wrap_cached(text or "", font, size, width, tracking))
 
 
 def _visual(text: str) -> str:

@@ -577,7 +577,3 @@ def search_jobs(
         source_errors=source_errors,
         source_empty=source_empty,
     )
-
-
-# Backwards-compatible alias from the LinkedIn-only era.
-search_linkedin_jobs = search_jobs

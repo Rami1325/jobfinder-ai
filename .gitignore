@@ -7,7 +7,11 @@ venv/
 .pytest_cache/
 
 # Env / secrets
+# .env.* covers .env.local / .env.production; the negation MUST stay last —
+# git takes the last matching pattern, so a later `.env*` re-ignores the
+# example file and makes a new one un-addable without `git add -f`.
 .env
+.env.*
 *.env
 !.env.example
 
@@ -36,4 +40,3 @@ Thumbs.db
 .agents/
 
 .vercel
-.env*

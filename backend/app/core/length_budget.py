@@ -160,24 +160,33 @@ def ranked_indices(resume: ResumeModel, jd: JDModel, plan: CVPlan | None = None)
     marginal relevance). The discount applies to the KEYWORD half of the score
     only, never the planner's ±1000 boosts, so it reorders within the planner's
     selection without ever promoting a project the planner rejected.
+
+    `overlaps[i]` carries each candidate's similarity to the BEST-matching
+    project already chosen, updated against the new pick each round. Recomputing
+    it from scratch every round — max() over all of `chosen` — compares the same
+    pair once per remaining round and makes this O(n³): measured 2 ms at 30
+    projects but 154 ms at 126, and a 126-project master is a real case (18.4).
+    The running maximum is the same number by induction, at O(n²).
     """
     parts = [_relevance_parts(p, jd, plan) for p in resume.projects]
     vocab = [set(_WORD_RE.findall(_project_text(p).lower())) for p in resume.projects]
 
     chosen: list[int] = []
+    overlaps = [0.0] * len(resume.projects)  # similarity to the closest already-chosen project
     remaining = list(range(len(resume.projects)))
     while remaining:
         best, best_value = remaining[0], None
         for i in remaining:
             keyword, boost = parts[i]
-            overlap = max((_similarity(vocab[i], vocab[j]) for j in chosen), default=0.0)
             # Marginal value: what this project still adds once the reader has
             # already seen the ones above it.
-            value = boost + keyword * (1.0 - _DIVERSITY_WEIGHT * overlap)
+            value = boost + keyword * (1.0 - _DIVERSITY_WEIGHT * overlaps[i])
             if best_value is None or value > best_value:
                 best, best_value = i, value
         chosen.append(best)
         remaining.remove(best)
+        for i in remaining:
+            overlaps[i] = max(overlaps[i], _similarity(vocab[i], vocab[best]))
     return chosen
 
 
