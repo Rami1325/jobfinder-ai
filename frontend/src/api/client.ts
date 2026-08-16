@@ -120,8 +120,15 @@ export async function downloadResume(
   const a = document.createElement("a");
   a.href = url;
   a.download = `${filename || "resume"}.${fmt}`;
+  // In the document and revoked late, both on purpose. A detached anchor's
+  // download click is ignored outside Chrome, and revoking in the same tick can
+  // cancel a download that hasn't started reading the blob — neither shows up
+  // in Chrome, which is where this was written.
+  a.style.display = "none";
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export async function interviewQuestions(

@@ -4325,6 +4325,74 @@ check("tailored résumé is within the hard page limit",
       page_count(_e2e.tailored_resume) <= 3, f"{page_count(_e2e.tailored_resume)} pages")
 
 # ---------------------------------------------------------------------------
+# 24b. One bad posting must not sink a whole search (PLAN 20.5 / C3). A search
+# fires up to 25 concurrent LLM calls, so a single 500 or a mangled JSON body is
+# not a rare event — it used to propagate through future.result() and turn 24
+# scored jobs into a 502.
+# ---------------------------------------------------------------------------
+import app.core.job_search as _js_mod  # noqa: E402
+
+
+class _FlakyBoard:
+    """Three postings; the middle one's description makes scoring explode."""
+
+    name = "fake_flaky"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source=self.name, title="Python Developer", company="OkCo",
+                    description="Python and SQL work", url="https://fake.flaky/1"),
+            _FanHit(source=self.name, title="Python Developer", company="BoomCo",
+                    description="BOOM Python and SQL work", url="https://fake.flaky/2"),
+            _FanHit(source=self.name, title="Python Developer", company="AlsoOkCo",
+                    description="Python and REST work", url="https://fake.flaky/3"),
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+_orig_analyze_and_score = _js_mod.analyze_and_score
+
+
+def _boom_on_marker(_resume, jd_text):  # noqa: ANN001
+    if "BOOM" in jd_text:
+        raise RuntimeError("simulated model 500")
+    return _orig_analyze_and_score(_resume, jd_text)
+
+
+_PROV["fake_flaky"] = _FlakyBoard()
+_js_mod.analyze_and_score = _boom_on_marker
+try:
+    _flaky_res = _fan_search(resume, _AlertCtx(job_title="Python Developer", sources=["fake_flaky"]))
+    check(
+        "a job that fails to score is skipped, the rest of the search survives",
+        len(_flaky_res.matches) == 2
+        and _flaky_res.skipped == 1
+        and "https://fake.flaky/2" not in {m.url for m in _flaky_res.matches},
+        f"{len(_flaky_res.matches)} matches, skipped={_flaky_res.skipped}",
+    )
+
+    # Every job failing must report the REAL reason, not "the boards may be throttling".
+    _js_mod.analyze_and_score = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("simulated model 500"))
+    _all_failed_msg = ""
+    try:
+        _fan_search(resume, _AlertCtx(job_title="Python Developer", sources=["fake_flaky"]))
+    except ValueError as _e:
+        _all_failed_msg = str(_e)
+    check(
+        "an all-failed search names the real error instead of blaming the boards",
+        "couldn't score any of them" in _all_failed_msg
+        and "simulated model 500" in _all_failed_msg
+        and "throttling" not in _all_failed_msg,
+        _all_failed_msg[:90],
+    )
+finally:
+    _js_mod.analyze_and_score = _orig_analyze_and_score
+    _PROV.pop("fake_flaky", None)
+
+
+# ---------------------------------------------------------------------------
 # 25. SSRF guard + upload limits (PLAN 20.6 / S1+S3). Hermetic: every host here
 # is a literal IP or `localhost`, so getaddrinfo never leaves the machine.
 # ---------------------------------------------------------------------------

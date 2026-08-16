@@ -462,6 +462,7 @@ def search_jobs(
     fetch_locks: dict[str, threading.Lock] = {h.source: threading.Lock() for h in hits}
     last_fetch: dict[str, float] = {}
     scored_done = 0
+    score_errors: list[str] = []  # why individual jobs were skipped (see _score_hit)
 
     def _fetch_throttled(hit: JobHit) -> str:
         with fetch_locks[hit.source]:
@@ -474,7 +475,49 @@ def search_jobs(
                 last_fetch[hit.source] = time.monotonic()
 
     def _score_hit(hit_i: int, hit: JobHit) -> None:
+        """Score one posting. Never raises for a per-job problem.
+
+        A search runs up to 25 concurrent LLM calls, so hitting one transient
+        failure — a 500 the SDK's two retries didn't cover, JSON mangled enough
+        to fail JDModel validation, a board that hangs mid-fetch — is not a rare
+        event. Letting it propagate discarded every OTHER job that had already
+        scored fine and returned a 502 for the whole search. It's now recorded
+        and the job is left out, which is exactly the `skipped` case the result
+        already reports. The reasons are kept so an ALL-failed search can say
+        what actually went wrong instead of blaming the boards for throttling.
+        """
         nonlocal scored_done
+        try:
+            match = _build_match(hit)
+        except Exception as e:  # noqa: BLE001 - one bad posting must not sink the search
+            match = None
+            with progress_lock:
+                score_errors.append(f"{hit.title or hit.url}: {e}")
+        if match is not None:
+            matches_by_hit[hit_i] = match
+        with progress_lock:
+            scored_done += 1
+            notify(
+                {
+                    "stage": "scoring",
+                    "index": scored_done,
+                    "total": len(hits),
+                    "title": hit.title,
+                    "company": hit.company,
+                }
+            )
+            if match is not None:  # incremental result (PLAN 12.2) — the SSE
+                # endpoint forwards this as its own `match` frame
+                notify(
+                    {
+                        "stage": "match",
+                        "index": scored_done,
+                        "total": len(hits),
+                        "match": match.model_dump(),
+                    }
+                )
+
+    def _build_match(hit: JobHit) -> JobMatch | None:
         cached = (cache or {}).get(hit.url.rstrip("/"))
         match: JobMatch | None = None
         if cached is not None and cached.is_full_match:
@@ -502,7 +545,6 @@ def search_jobs(
                 salary=extract_salary(cached.jd_text),
                 stale=hit.stale,
             )
-            matches_by_hit[hit_i] = match
         else:
             # Tier 2: a fresh row for a DIFFERENT résumé still spares the
             # description fetch (and its politeness throttle) — the posting's
@@ -531,33 +573,14 @@ def search_jobs(
                     salary=extract_salary(jd_text),
                     stale=hit.stale,
                 )
-                matches_by_hit[hit_i] = match
-        with progress_lock:
-            scored_done += 1
-            notify(
-                {
-                    "stage": "scoring",
-                    "index": scored_done,
-                    "total": len(hits),
-                    "title": hit.title,
-                    "company": hit.company,
-                }
-            )
-            if match is not None:  # incremental result (PLAN 12.2) — the SSE
-                # endpoint forwards this as its own `match` frame
-                notify(
-                    {
-                        "stage": "match",
-                        "index": scored_done,
-                        "total": len(hits),
-                        "match": match.model_dump(),
-                    }
-                )
+        return match
 
     with ThreadPoolExecutor(max_workers=SCORE_WORKERS) as pool:
         score_futures = [pool.submit(_score_hit, i, hit) for i, hit in enumerate(hits)]
     for future in score_futures:
-        future.result()  # re-raise the first fetch/LLM failure, like the old serial loop
+        # _score_hit swallows per-job failures by design, so this only re-raises
+        # a bug in the wrapper itself — which is exactly what should still be loud.
+        future.result()
 
     # hits order survives (matches_by_hit is index-addressed), so the sort below
     # stays stable across ties exactly as the serial append-then-sort was.
@@ -565,6 +588,13 @@ def search_jobs(
     skipped = len(hits) - len(matches)
 
     if not matches:
+        if score_errors:
+            # Say what actually broke. Blaming board throttling when every job
+            # died on the model sends the user to re-run a search that will fail
+            # the same way.
+            raise ValueError(
+                f"Found {len(hits)} jobs but couldn't score any of them — {score_errors[0]}"
+            )
         raise ValueError(
             "Found jobs but couldn't fetch any of their descriptions (the boards may be "
             "throttling). Try again shortly or lower the result count."
