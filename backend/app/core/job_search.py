@@ -14,6 +14,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable
@@ -576,7 +577,15 @@ def search_jobs(
         return match
 
     with ThreadPoolExecutor(max_workers=SCORE_WORKERS) as pool:
-        score_futures = [pool.submit(_score_hit, i, hit) for i, hit in enumerate(hits)]
+        # copy_context() per submit, not a bare submit: a pool worker starts
+        # from an EMPTY context, so the request's LLM token tally (PLAN 20.8/N2)
+        # would be invisible here — and this loop is the single biggest token
+        # spender in the app. A fresh copy each time because one Context cannot
+        # be entered from two threads at once. The tally itself is mutable and
+        # shared by reference, so the workers' usage lands on the request's.
+        score_futures = [
+            pool.submit(copy_context().run, _score_hit, i, hit) for i, hit in enumerate(hits)
+        ]
     for future in score_futures:
         # _score_hit swallows per-job failures by design, so this only re-raises
         # a bug in the wrapper itself — which is exactly what should still be loud.

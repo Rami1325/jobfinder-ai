@@ -10,6 +10,7 @@ from functools import lru_cache
 from typing import Any, Protocol
 
 from app.config import get_settings
+from app.llm.metering import record
 
 
 class LLMClient(Protocol):
@@ -45,15 +46,29 @@ class OpenAIClient:
         if self._send_temperature:
             kwargs["temperature"] = temperature
         try:
-            return self._client.chat.completions.create(**kwargs)
+            return self._metered(kwargs)
         except Exception as e:  # noqa: BLE001 - inspect message for the temperature restriction
             if self._send_temperature and "temperature" in str(e).lower():
                 # Model only supports the default temperature: retry without it
                 # and stop sending it for the rest of this client's life.
                 self._send_temperature = False
                 kwargs.pop("temperature", None)
-                return self._client.chat.completions.create(**kwargs)
+                return self._metered(kwargs)
             raise
+
+    def _metered(self, kwargs: dict[str, Any]):
+        """One API call, with its token usage reported to the request's tally
+        (PLAN 20.8 / N2). Metering is strictly observational: a missing or
+        malformed `usage` block must never turn a good completion into an error,
+        so everything here is defensive."""
+        resp = self._client.chat.completions.create(**kwargs)
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            record(
+                int(getattr(usage, "prompt_tokens", 0) or 0),
+                int(getattr(usage, "completion_tokens", 0) or 0),
+            )
+        return resp
 
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
         resp = self._create(

@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     sentry_environment: str = "development"
     daily_search_cap: int = 20
     daily_tailor_cap: int = 30
+    # Everything else that calls the model (cover letter, interview turns,
+    # outreach, company brief, the tools…). Until PLAN 20.6/S2 these 17 routes
+    # were free, which made the other two caps decorative — /interview/chat in
+    # particular is a user-driven loop, one call per turn, resending the whole
+    # transcript. 150 is generous for real use (a long mock interview is ~25
+    # turns) and still a hard stop on a runaway client.
+    daily_llm_cap: int = 150
     # Auto-submit (PLAN 8.4): real applications sent per user per day.
     daily_submit_cap: int = 10
     # Upload limits. Both upload routes read the file into memory to parse it,

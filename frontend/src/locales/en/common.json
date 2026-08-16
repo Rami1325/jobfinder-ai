@@ -86,7 +86,10 @@
   },
   "dailyLimit": {
     "search": "Daily limit reached — you've used all {{cap}} searches for today. Try again tomorrow.",
-    "tailor": "Daily limit reached — you've used all {{cap}} tailorings for today. Try again tomorrow."
+    "tailor": "Daily limit reached — you've used all {{cap}} tailorings for today. Try again tomorrow.",
+    "llm": "Daily limit reached — you've used all {{cap}} AI requests for today. Try again tomorrow.",
+    "submit": "Daily limit reached — you've sent all {{cap}} applications for today. Try again tomorrow.",
+    "generic": "Daily limit reached — you've used your {{cap}} for today. Try again tomorrow."
   },
   "accessGate": {
     "title": "Access code",

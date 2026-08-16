@@ -41,6 +41,9 @@ os.environ["DAILY_SUBMIT_CAP"] = "1"
 # body. Only the two HTTP upload routes read it; the direct extract_text() calls
 # elsewhere in this suite are unaffected.
 os.environ["MAX_UPLOAD_MB"] = "1"
+# Small llm cap so section 26 can prove PLAN 20.6/S2 with three calls. Section
+# 26 mints its own user for it, so no earlier section can spend the budget first.
+os.environ["DAILY_LLM_CAP"] = "3"
 # Keep the suite hermetic: real SMTP creds in .env would make the alert-run
 # checks send actual email and fail the "unconfigured" expectations. Env vars
 # outrank .env in pydantic-settings, so blanking them here wins.
@@ -4559,6 +4562,125 @@ check(
     "a normal-length PDF still parses",
     bool(_li_extract_text("resume.pdf", render_pdf(resume)).strip()),
 )
+
+# ---------------------------------------------------------------------------
+# 26. LLM cost control (PLAN 20.6/S2 + 20.8/N2): the 17 previously-free routes
+# are capped, and what they actually SPEND is recorded.
+# ---------------------------------------------------------------------------
+from sqlalchemy import select as _select  # noqa: E402
+
+from app.core.usage import TOKENS_ACTION  # noqa: E402
+from app.db.database import SessionLocal as _Session  # noqa: E402
+from app.db.models import UsageLog as _UsageLog  # noqa: E402
+from app.llm.metering import meter as _meter, record as _record  # noqa: E402
+
+# --- N2: tokens spent inside the search's WORKER THREADS reach the request's
+# tally. This is the check that matters: a pool worker starts from an empty
+# context, so without copy_context() the biggest spender in the app reports 0
+# and nothing anywhere goes red.
+_meter_calls = {"n": 0}
+
+
+class _MeterBoard:
+    name = "fake_meter"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source=self.name, title="Python Developer", company=f"Co{i}",
+                    description="Python and SQL work", url=f"https://fake.meter/{i}")
+            for i in range(3)
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+def _recording_analyze(_resume, jd_text):  # noqa: ANN001
+    _meter_calls["n"] += 1
+    _record(100, 20)  # what OpenAIClient._metered does with resp.usage
+    return _orig_analyze_and_score(_resume, jd_text)
+
+
+_PROV["fake_meter"] = _MeterBoard()
+_js_mod.analyze_and_score = _recording_analyze
+try:
+    with _meter() as _tally:
+        _fan_search(resume, _AlertCtx(job_title="Python Developer", sources=["fake_meter"]))
+    check(
+        "tokens spent in the search's worker threads reach the request tally",
+        _meter_calls["n"] == 3 and _tally.calls == 3 and _tally.prompt == 300 and _tally.completion == 60,
+        f"scored={_meter_calls['n']} tally calls={_tally.calls} prompt={_tally.prompt}",
+    )
+finally:
+    _js_mod.analyze_and_score = _orig_analyze_and_score
+    _PROV.pop("fake_meter", None)
+
+check("record() outside a meter is a harmless no-op", _record(999, 999) is None)
+
+with TestClient(_fastapi_app) as _tc:
+    _cap_user = _tc.post("/admin/users", json={"name": "Cap Tester"}, headers=_ADMIN_H).json()
+    _CAP_H = {"X-App-Key": _cap_user["invite_code"]}
+
+    # --- S2: a previously-free route now charges the llm cap (3 for this suite).
+    _jd_body = {"jd_text": "Python developer. Python and SQL required."}
+    _codes = [_tc.post("/jd/analyze", json=_jd_body, headers=_CAP_H).status_code for _ in range(4)]
+    check(
+        "previously-uncapped LLM routes now charge the daily llm cap",
+        _codes[:3] == [200, 200, 200] and _codes[3] == 429,
+        str(_codes),
+    )
+    _over = _tc.post("/tools/follow-up",
+                     json={"company": "Acme", "role": "Engineer", "stage": "after_apply", "context": ""},
+                     headers=_CAP_H)
+    check(
+        "the cap is shared across all of them, with the structured detail",
+        _over.status_code == 429
+        and _over.json()["detail"] == {"code": "daily_limit", "action": "llm", "cap": 3},
+        _over.text[:120],
+    )
+    check(
+        "admin stays exempt from the llm cap",
+        all(_tc.post("/jd/analyze", json=_jd_body, headers=_ADMIN_H).status_code == 200 for _ in range(4)),
+    )
+    check(
+        "deterministic tools are NOT charged (ats-scan calls no model)",
+        _tc.post("/tools/ats-scan", json={"resume": _resume_json, "jd_text": ""},
+                 headers=_CAP_H).status_code == 200,
+    )
+
+    # --- N2 end to end: middleware tally -> endpoint -> dependency -> UsageLog.
+    import app.api.routes as _routes_mod  # noqa: E402
+
+    _orig_route_analyze = _routes_mod.analyze_jd
+
+    def _spending_analyze(jd_text):  # noqa: ANN001
+        _record(1234, 567)
+        return _orig_route_analyze(jd_text)
+
+    _routes_mod.analyze_jd = _spending_analyze
+    try:
+        _tc.post("/jd/analyze", json=_jd_body, headers=_ADMIN_H)
+    finally:
+        _routes_mod.analyze_jd = _orig_route_analyze
+
+    _tok_db = _Session()
+    try:
+        _tok_row = _tok_db.execute(
+            _select(_UsageLog).where(_UsageLog.action == TOKENS_ACTION).order_by(_UsageLog.id.desc())
+        ).scalars().first()
+    finally:
+        _tok_db.close()
+    check(
+        "a metered request writes real token counts to usage_log",
+        _tok_row is not None
+        and _tok_row.prompt_tokens >= 1234
+        and _tok_row.completion_tokens >= 567,
+        f"prompt={getattr(_tok_row, 'prompt_tokens', None)} completion={getattr(_tok_row, 'completion_tokens', None)}",
+    )
+    check(
+        "token rows never collide with the count-based cap actions",
+        _tok_row is not None and _tok_row.action == TOKENS_ACTION and TOKENS_ACTION not in ("llm", "tailor", "search"),
+    )
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

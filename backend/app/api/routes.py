@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import admin_user, current_user
+from app.api.deps import admin_user, current_user, llm_user, metered_user
 from app.config import get_settings
 
 from app.core import alerts as alerts_core
@@ -47,7 +47,8 @@ from app.core.providers.comeet import register_company as register_comeet_compan
 from app.core.providers.greenhouse import register_company as register_greenhouse_company
 from app.core.providers.greenhouse_seed import board_url as greenhouse_board_url
 from app.core.tailor import tailor_resume
-from app.core.usage import check_and_count
+from app.core.usage import check_and_count, record_tokens
+from app.llm.metering import TokenTally, bind
 from app.core import writing_prefs as writing_prefs_core
 from app.db.comeet import list_companies as list_comeet_companies
 from app.db.database import SessionLocal, get_db
@@ -195,7 +196,7 @@ async def _read_capped(file: UploadFile) -> bytes:
 
 
 @router.post("/resume/upload", response_model=ResumeUploadResponse)
-async def upload_resume(file: UploadFile = File(...)) -> ResumeUploadResponse:
+async def upload_resume(file: UploadFile = File(...), _u: User = Depends(llm_user)) -> ResumeUploadResponse:
     data = await _read_capped(file)
     if not data:
         raise HTTPException(400, "Empty file.")
@@ -214,7 +215,7 @@ async def upload_resume(file: UploadFile = File(...)) -> ResumeUploadResponse:
 
 
 @router.post("/jd/analyze", response_model=JDModel)
-def jd_analyze(body: JDAnalyzeRequest) -> JDModel:
+def jd_analyze(body: JDAnalyzeRequest, _u: User = Depends(llm_user)) -> JDModel:
     if not body.jd_text.strip():
         raise HTTPException(400, "Job description text is empty.")
     try:
@@ -227,7 +228,7 @@ def jd_analyze(body: JDAnalyzeRequest) -> JDModel:
 def tailor(
     body: TailorRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(metered_user),  # keeps its own tailor cap; meters tokens
 ) -> TailorResult:
     check_and_count(db, user, "tailor", get_settings().daily_tailor_cap)
     try:
@@ -256,7 +257,7 @@ def add_writing_prefs(
 
 
 @router.post("/cover-letter", response_model=CoverLetterResponse)
-def cover_letter(body: CoverLetterRequest) -> CoverLetterResponse:
+def cover_letter(body: CoverLetterRequest, _u: User = Depends(llm_user)) -> CoverLetterResponse:
     try:
         text = generate_cover_letter(body.resume, body.jd, body.tone)
     except Exception as e:  # noqa: BLE001
@@ -288,7 +289,7 @@ def render(body: RenderRequest):
 # Interview prep
 # --------------------------------------------------------------------------- #
 @router.post("/interview/questions", response_model=InterviewQuestionsResult)
-def interview_questions(body: InterviewQuestionsRequest) -> InterviewQuestionsResult:
+def interview_questions(body: InterviewQuestionsRequest, _u: User = Depends(llm_user)) -> InterviewQuestionsResult:
     try:
         return generate_questions(body.resume, body.jd)
     except Exception as e:  # noqa: BLE001
@@ -296,7 +297,7 @@ def interview_questions(body: InterviewQuestionsRequest) -> InterviewQuestionsRe
 
 
 @router.post("/interview/answer", response_model=InterviewAnswerResult)
-def interview_answer(body: InterviewAnswerRequest) -> InterviewAnswerResult:
+def interview_answer(body: InterviewAnswerRequest, _u: User = Depends(llm_user)) -> InterviewAnswerResult:
     if not body.question.strip():
         raise HTTPException(400, "Question is empty.")
     try:
@@ -306,7 +307,7 @@ def interview_answer(body: InterviewAnswerRequest) -> InterviewAnswerResult:
 
 
 @router.post("/interview/feedback", response_model=InterviewFeedbackResult)
-def interview_feedback(body: InterviewFeedbackRequest) -> InterviewFeedbackResult:
+def interview_feedback(body: InterviewFeedbackRequest, _u: User = Depends(llm_user)) -> InterviewFeedbackResult:
     if not body.answer.strip():
         raise HTTPException(400, "Answer is empty.")
     try:
@@ -316,7 +317,7 @@ def interview_feedback(body: InterviewFeedbackRequest) -> InterviewFeedbackResul
 
 
 @router.post("/interview/recruiter-screen", response_model=RecruiterScreenResult)
-def interview_recruiter_screen(body: RecruiterScreenRequest) -> RecruiterScreenResult:
+def interview_recruiter_screen(body: RecruiterScreenRequest, _u: User = Depends(llm_user)) -> RecruiterScreenResult:
     """Prep sheet for the ~15-min recruiter phone screen: pitch, predictable
     questions with grounded talking points, and honest salary-range framing."""
     try:
@@ -326,7 +327,7 @@ def interview_recruiter_screen(body: RecruiterScreenRequest) -> RecruiterScreenR
 
 
 @router.post("/interview/chat", response_model=InterviewChatResult)
-def interview_chat(body: InterviewChatRequest) -> InterviewChatResult:
+def interview_chat(body: InterviewChatRequest, _u: User = Depends(llm_user)) -> InterviewChatResult:
     """One mock-interview turn (PLAN 11.3). Stateless: the client sends the
     whole transcript; the model returns the interviewer's next message."""
     try:
@@ -336,7 +337,7 @@ def interview_chat(body: InterviewChatRequest) -> InterviewChatResult:
 
 
 @router.post("/interview/scorecard", response_model=InterviewScorecardResult)
-def interview_scorecard(body: InterviewChatRequest) -> InterviewScorecardResult:
+def interview_scorecard(body: InterviewChatRequest, _u: User = Depends(llm_user)) -> InterviewScorecardResult:
     """End-of-session scorecard for a mock-interview transcript (PLAN 11.3)."""
     if not any(t.role == "candidate" and t.text.strip() for t in body.transcript):
         raise HTTPException(400, "Answer at least one question before ending the session.")
@@ -350,7 +351,7 @@ def interview_scorecard(body: InterviewChatRequest) -> InterviewScorecardResult:
 # Job discovery / matching
 # --------------------------------------------------------------------------- #
 @router.post("/jobs/match", response_model=JobMatchResult)
-def jobs_match(body: JobMatchRequest) -> JobMatchResult:
+def jobs_match(body: JobMatchRequest, _u: User = Depends(llm_user)) -> JobMatchResult:
     if not body.listings:
         raise HTTPException(400, "Provide at least one job listing.")
     try:
@@ -370,7 +371,7 @@ def jobs_fetch(body: JobFetchRequest) -> JobFetchResponse:
 
 
 @router.post("/jobs/search-context", response_model=SearchContext)
-def jobs_search_context(body: SearchContextRequest) -> SearchContext:
+def jobs_search_context(body: SearchContextRequest, _u: User = Depends(llm_user)) -> SearchContext:
     """Derive what/where to search from the résumé, so the UI can prefill the
     'Customize search' fields before any scrape runs."""
     try:
@@ -408,7 +409,7 @@ def update_search_prefs(
 def jobs_search(
     body: JobSearchRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(metered_user),  # keeps its own search cap; meters tokens
 ) -> JobSearchResult:
     check_and_count(db, user, "search", get_settings().daily_search_cap)
     rhash = resume_hash(body.resume)
@@ -441,6 +442,8 @@ def _sse_frame(event: str, data: dict) -> str:
 def jobs_search_stream(
     body: JobSearchRequest,
     db: Session = Depends(get_db),
+    # current_user, NOT metered_user: the LLM work happens after this returns,
+    # in a thread the dependency's tally can't see. Metered explicitly below.
     user: User = Depends(current_user),
 ) -> StreamingResponse:
     """Same search as POST /jobs/search, but as an SSE stream (PLAN 9.2) so the
@@ -471,56 +474,82 @@ def jobs_search_stream(
     db.close()
 
     events: queue.Queue = queue.Queue()  # thread-safe: search workers notify from threads
+    # Token accounting (PLAN 20.8/N2) can't ride the metered_user dependency
+    # here: this endpoint returns its StreamingResponse immediately and does the
+    # LLM work afterwards in a raw thread, so there is no teardown left to read
+    # a tally from. Bind one explicitly and write it when the stream ends.
+    tally = TokenTally()
 
     def _worker() -> None:
-        try:
-            result = search_jobs(
-                body.resume,
-                body.customize,
-                progress=lambda e: events.put(("progress", e)),
-                cache=cache,
-            )
-            events.put(("result", result))
-        except ValueError as e:  # user-facing scrape/search problems
-            events.put(("error", {"detail": str(e), "status": 400}))
-        except Exception as e:  # noqa: BLE001
-            events.put(("error", {"detail": f"Error while searching jobs: {e}", "status": 502}))
+        with bind(tally):
+            try:
+                result = search_jobs(
+                    body.resume,
+                    body.customize,
+                    progress=lambda e: events.put(("progress", e)),
+                    cache=cache,
+                )
+                events.put(("result", result))
+            except ValueError as e:  # user-facing scrape/search problems
+                events.put(("error", {"detail": str(e), "status": 400}))
+            except Exception as e:  # noqa: BLE001
+                events.put(("error", {"detail": f"Error while searching jobs: {e}", "status": 502}))
 
     threading.Thread(target=_worker, daemon=True).start()
 
-    def _stream():
-        while True:
+    def _record_tokens_now() -> None:
+        """Persist what the search spent. In a finally, so an abandoned stream
+        (the client navigated away mid-search) still bills the tokens it burned."""
+        if not tally.calls:
+            return
+        try:
+            tok_db = SessionLocal()
             try:
-                kind, payload = events.get(timeout=15)
-            except queue.Empty:
-                yield ": keep-alive\n\n"  # searches sit minutes on slow boards; don't let proxies idle out
-                continue
-            if kind == "progress":
-                if payload.get("stage") == "match":
-                    # Incremental result: the JobMatch itself rides its own
-                    # event name so the UI can render rows as they score.
-                    # Stamped here too — these frames ARE the list the user
-                    # reads while the search runs; only marking the terminal
-                    # `result` would show every job unmarked until the end.
-                    stamp_applied([payload["match"]], applied_map)
-                    yield _sse_frame("match", payload["match"])
+                record_tokens(tok_db, user_id, tally.prompt, tally.completion)
+            finally:
+                tok_db.close()
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the stream
+            pass
+
+    def _stream():
+        try:
+            while True:
+                try:
+                    kind, payload = events.get(timeout=15)
+                except queue.Empty:
+                    yield ": keep-alive\n\n"  # searches sit minutes on slow boards; don't let proxies idle out
+                    continue
+                if kind == "progress":
+                    if payload.get("stage") == "match":
+                        # Incremental result: the JobMatch itself rides its own
+                        # event name so the UI can render rows as they score.
+                        # Stamped here too — these frames ARE the list the user
+                        # reads while the search runs; only marking the terminal
+                        # `result` would show every job unmarked until the end.
+                        stamp_applied([payload["match"]], applied_map)
+                        yield _sse_frame("match", payload["match"])
+                    else:
+                        yield _sse_frame("progress", payload)
+                elif kind == "result":
+                    try:  # best-effort history persistence, same as the non-stream route
+                        hist_db = SessionLocal()
+                        try:
+                            record_search_hits(hist_db, payload.matches, user_id, resume_hash=rhash)
+                        finally:
+                            hist_db.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    stamp_applied(payload.matches, applied_map)
+                    yield _sse_frame("result", payload.model_dump())
+                    return
                 else:
-                    yield _sse_frame("progress", payload)
-            elif kind == "result":
-                try:  # best-effort history persistence, same as the non-stream route
-                    hist_db = SessionLocal()
-                    try:
-                        record_search_hits(hist_db, payload.matches, user_id, resume_hash=rhash)
-                    finally:
-                        hist_db.close()
-                except Exception:  # noqa: BLE001
-                    pass
-                stamp_applied(payload.matches, applied_map)
-                yield _sse_frame("result", payload.model_dump())
-                return
-            else:
-                yield _sse_frame("error", payload)
-                return
+                    yield _sse_frame("error", payload)
+                    return
+        finally:
+            # Runs on the normal return, on an error frame, and on GeneratorExit
+            # when the client disconnects mid-search — the tokens were spent
+            # either way, so they get billed either way.
+            _record_tokens_now()
 
     return StreamingResponse(
         _stream(),
@@ -700,7 +729,7 @@ def kits_batch(
 
 @router.post("/kits/process-next", response_model=KitProcessResult)
 def kits_process_next(
-    db: Session = Depends(get_db), user: User = Depends(current_user)
+    db: Session = Depends(get_db), user: User = Depends(metered_user)
 ) -> KitProcessResult:
     """Run the tailor pipeline on the oldest queued kit (already charged to the
     cap at batch time). Pipeline failures land on the kit as status=failed —
@@ -891,7 +920,7 @@ def tools_ats_scan(body: ATSScanRequest) -> ATSScanResult:
 
 
 @router.post("/tools/linkedin", response_model=LinkedInResult)
-def tools_linkedin(body: LinkedInRequest) -> LinkedInResult:
+def tools_linkedin(body: LinkedInRequest, _u: User = Depends(llm_user)) -> LinkedInResult:
     try:
         return optimize_linkedin(body.resume)
     except Exception as e:  # noqa: BLE001
@@ -899,7 +928,7 @@ def tools_linkedin(body: LinkedInRequest) -> LinkedInResult:
 
 
 @router.post("/tools/follow-up", response_model=FollowUpResult)
-def tools_follow_up(body: FollowUpRequest) -> FollowUpResult:
+def tools_follow_up(body: FollowUpRequest, _u: User = Depends(llm_user)) -> FollowUpResult:
     try:
         return write_follow_up(body.company, body.role, body.stage, body.context)
     except Exception as e:  # noqa: BLE001
@@ -907,7 +936,7 @@ def tools_follow_up(body: FollowUpRequest) -> FollowUpResult:
 
 
 @router.post("/outreach", response_model=OutreachResult)
-def outreach(body: OutreachRequest) -> OutreachResult:
+def outreach(body: OutreachRequest, _u: User = Depends(llm_user)) -> OutreachResult:
     """Outreach Studio: a LinkedIn connection note, an InMail/cold email, and a
     referral request for one job — the direct-to-a-human path to an interview,
     grounded only in real résumé facts."""
@@ -925,7 +954,7 @@ def outreach(body: OutreachRequest) -> OutreachResult:
 
 
 @router.post("/tools/screening-answer", response_model=ScreeningAnswerResult)
-def tools_screening_answer(body: ScreeningRequest) -> ScreeningAnswerResult:
+def tools_screening_answer(body: ScreeningRequest, _u: User = Depends(llm_user)) -> ScreeningAnswerResult:
     """Draft an honest, résumé-grounded answer to an application/screening
     free-text question (e.g. "Why do you want to work here?")."""
     if not body.question.strip():
@@ -937,7 +966,7 @@ def tools_screening_answer(body: ScreeningRequest) -> ScreeningAnswerResult:
 
 
 @router.post("/tools/company-brief", response_model=CompanyBriefResult)
-def tools_company_brief(body: CompanyBriefRequest) -> CompanyBriefResult:
+def tools_company_brief(body: CompanyBriefRequest, _u: User = Depends(llm_user)) -> CompanyBriefResult:
     """Grounded pre-apply/pre-interview company brief: fetches the company's
     about/careers page (or takes pasted text) and summarizes it — plus key
     hiring-relevant people from the page and a short résumé-grounded reach-out.
@@ -953,7 +982,7 @@ def tools_company_brief(body: CompanyBriefRequest) -> CompanyBriefResult:
 
 
 @router.post("/tools/resume-health", response_model=ResumeHealthResult)
-def tools_resume_health(body: ResumeHealthRequest) -> ResumeHealthResult:
+def tools_resume_health(body: ResumeHealthRequest, _u: User = Depends(llm_user)) -> ResumeHealthResult:
     """JD-independent résumé health-check: deterministic writing checks drive
     the score; the LLM adds critique text (strengths/improvements/rewrites)."""
     try:

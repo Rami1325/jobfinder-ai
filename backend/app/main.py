@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api.routes import router
 from app.config import get_settings
 from app.db.database import init_db
+from app.llm.metering import meter
 
 
 @asynccontextmanager
@@ -52,6 +53,27 @@ _GATE_EXEMPT = {
     "/jobs/nudges/cron", "/api/jobs/nudges/cron",
     "/public/scan", "/api/public/scan",
 }
+
+
+@app.middleware("http")
+async def llm_metering(request: Request, call_next):
+    """Bind a per-request LLM token tally (PLAN 20.8 / N2).
+
+    It lives HERE rather than in the `metered_user`/`llm_user` dependencies for
+    a concrete reason: FastAPI runs a `yield` dependency through
+    `contextmanager_in_threadpool`, so its setup and teardown can land in
+    different contexts — binding there raised "Token was created in a different
+    Context" on teardown, and the endpoint never saw the tally at all. Middleware
+    sets and resets in one context, and a sync endpoint's threadpool hop copies
+    that context, so `record()` reaches this object from the endpoint, from the
+    search's scoring pool, and back. Verified both directions before relying on it.
+
+    The tally also rides `request.state` so the dependencies can read it without
+    touching contextvars at all.
+    """
+    with meter() as tally:
+        request.state.llm_tally = tally
+        return await call_next(request)
 
 
 @app.middleware("http")

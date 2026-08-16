@@ -54,15 +54,26 @@ class Feedback(Base):
 
 class UsageLog(Base):
     """Per-user per-day action counters (PLAN 7.4) backing the daily cost caps.
-    One row per (user, action, day); day is a UTC YYYY-MM-DD string."""
+    One row per (user, action, day); day is a UTC YYYY-MM-DD string.
+
+    Token columns (PLAN 20.8 / N2) hold what the actions actually COST, not just
+    how many there were: tailoring a 126-project master and writing a follow-up
+    email are both "one action" and differ by orders of magnitude. Written under
+    the reserved `action="tokens"` row so the count-based caps keep working
+    untouched. Both migrate via the ADD-COLUMN shim, and a row that predates
+    them reads 0 — which is honest here, unlike the nullable tracker columns:
+    nothing was ever measured, so nothing was spent as far as this table knows.
+    """
 
     __tablename__ = "usage_log"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
-    action: Mapped[str] = mapped_column(String(32), default="")  # search | tailor
+    action: Mapped[str] = mapped_column(String(32), default="")  # search | tailor | llm | tokens
     day: Mapped[str] = mapped_column(String(10), default="")
     count: Mapped[int] = mapped_column(Integer, default=0)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Application(Base):
