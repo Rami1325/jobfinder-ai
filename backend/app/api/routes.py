@@ -173,9 +173,30 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+async def _read_capped(file: UploadFile) -> bytes:
+    """Read an upload, refusing anything over MAX_UPLOAD_MB.
+
+    Chunked on purpose: `await file.read()` with no argument pulls the WHOLE
+    upload into memory before anything can object to its size, which on the
+    no-access-code /public/scan route is a free way to exhaust an instance.
+    This stops at the first chunk that crosses the line.
+    """
+    limit = get_settings().max_upload_mb * 1024 * 1024
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(256 * 1024):
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(
+                413, f"That file is too large — {get_settings().max_upload_mb} MB max."
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.post("/resume/upload", response_model=ResumeUploadResponse)
 async def upload_resume(file: UploadFile = File(...)) -> ResumeUploadResponse:
-    data = await file.read()
+    data = await _read_capped(file)
     if not data:
         raise HTTPException(400, "Empty file.")
     try:
@@ -846,7 +867,7 @@ async def public_scan(
         raise HTTPException(429, "Too many scans from this address — try again in a bit.")
     if not jd_text.strip():
         raise HTTPException(400, "Paste the job description text.")
-    data = await file.read()
+    data = await _read_capped(file)
     if not data:
         raise HTTPException(400, "Empty file.")
     try:

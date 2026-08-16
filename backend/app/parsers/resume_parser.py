@@ -15,6 +15,8 @@ from __future__ import annotations
 import io
 import re
 
+from app.config import get_settings
+
 # "Page 1 of 3" footer LinkedIn stamps on every exported page.
 _LI_PAGE_FOOTER_RE = re.compile(r"^\s*Page \d+ of \d+\s*$", re.MULTILINE)
 # The "(LinkedIn)" suffix the export appends after the profile URL.
@@ -73,11 +75,25 @@ def _extract_docx(data: bytes) -> str:
     return "\n".join(lines)
 
 
+def _assert_page_count(pdf) -> None:  # noqa: ANN001 - pdfplumber.PDF
+    """Refuse absurd page counts before extracting.
+
+    `pdf.pages` is lazy, so counting is cheap while extraction is not — this is
+    the cheapest place to stop a crafted PDF from burning an instance's CPU on
+    the no-access-code /public/scan route. The ceiling is deliberately far above
+    any real résumé (a master CV runs ~30 rendered pages at the extreme).
+    """
+    limit = get_settings().max_pdf_pages
+    if len(pdf.pages) > limit:
+        raise ValueError(f"That PDF has too many pages ({len(pdf.pages)}); {limit} is the limit.")
+
+
 def _extract_pdf(data: bytes) -> str:
     import pdfplumber
 
     parts: list[str] = []
     with pdfplumber.open(io.BytesIO(data)) as pdf:
+        _assert_page_count(pdf)
         for page in pdf.pages:
             text = page.extract_text() or ""
             if text.strip():

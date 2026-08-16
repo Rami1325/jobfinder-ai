@@ -37,6 +37,10 @@ os.environ["DAILY_TAILOR_CAP"] = "2"
 # Submit cap of 1 so section 22b can prove the auto-submit daily limit with a
 # single real (mocked-transport) send.
 os.environ["DAILY_SUBMIT_CAP"] = "1"
+# 1 MB upload cap so section 25 can prove the limit without building a 10 MB
+# body. Only the two HTTP upload routes read it; the direct extract_text() calls
+# elsewhere in this suite are unaffected.
+os.environ["MAX_UPLOAD_MB"] = "1"
 # Keep the suite hermetic: real SMTP creds in .env would make the alert-run
 # checks send actual email and fail the "unconfigured" expectations. Env vars
 # outrank .env in pydantic-settings, so blanking them here wins.
@@ -4319,6 +4323,124 @@ _e2e = _tailor_b(_master_resume(12), _jd_b)
 check("tailor result carries a length report", _e2e.length_report is not None)
 check("tailored résumé is within the hard page limit",
       page_count(_e2e.tailored_resume) <= 3, f"{page_count(_e2e.tailored_resume)} pages")
+
+# ---------------------------------------------------------------------------
+# 25. SSRF guard + upload limits (PLAN 20.6 / S1+S3). Hermetic: every host here
+# is a literal IP or `localhost`, so getaddrinfo never leaves the machine.
+# ---------------------------------------------------------------------------
+from app.core.net_guard import (  # noqa: E402
+    BlockedURLError,
+    _GuardedRedirectHandler,
+    assert_fetchable,
+    is_public_ip,
+)
+
+check(
+    "is_public_ip allows real public v4/v6",
+    all(is_public_ip(ip) for ip in ("8.8.8.8", "93.184.216.34", "2606:4700::1111")),
+)
+check(
+    "is_public_ip blocks loopback / RFC1918 / link-local / CGNAT / v6-local / junk",
+    not any(
+        is_public_ip(ip)
+        for ip in (
+            "127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1",
+            "169.254.169.254",  # the cloud metadata endpoint — the one that matters
+            "100.64.0.1",       # CGNAT: is_private does NOT catch this, is_global does
+            "0.0.0.0", "::1", "fd00::1", "fe80::1", "224.0.0.1", "not-an-ip", "",
+        )
+    ),
+)
+
+
+def _blocked(url: str) -> bool:
+    try:
+        assert_fetchable(url)
+    except BlockedURLError:
+        return True
+    return False
+
+
+check(
+    "assert_fetchable refuses metadata, loopback and private literals",
+    all(
+        _blocked(u)
+        for u in (
+            "http://169.254.169.254/latest/meta-data/",
+            "http://127.0.0.1:8000/admin/users",
+            "http://localhost:8000/health",
+            "http://[::1]:8000/",
+            "http://10.0.0.5/jobs/1",
+            "http://100.64.0.1/",
+        )
+    ),
+)
+check(
+    "assert_fetchable refuses non-http schemes and host-less URLs",
+    all(_blocked(u) for u in ("file:///etc/passwd", "gopher://x/", "ftp://internal/", "http:///x")),
+)
+check(
+    "assert_fetchable allows a publicly routable host",
+    not _blocked("https://8.8.8.8/jobs/view/1"),
+)
+# The redirect hop is the bypass that makes checking only the typed URL
+# worthless: harmless.example -> 302 -> 169.254.169.254.
+_redir_blocked = False
+try:
+    _GuardedRedirectHandler().redirect_request(
+        None, None, 302, "Found", {}, "http://169.254.169.254/latest/meta-data/"
+    )
+except BlockedURLError:
+    _redir_blocked = True
+check("guarded redirect handler re-checks each hop", _redir_blocked)
+
+# Upload caps. MAX_UPLOAD_MB is 1 for this suite (set at the top).
+with TestClient(_fastapi_app) as _tc:
+    _too_big = b"x" * (1024 * 1024 + 1024)
+    check(
+        "public scan refuses an over-cap upload with 413",
+        _tc.post(
+            "/public/scan",
+            files={"file": ("big.txt", _too_big, "text/plain")},
+            data={"jd_text": "Python developer"},
+        ).status_code == 413,
+    )
+    check(
+        "an under-cap upload still goes through",
+        _tc.post(
+            "/public/scan",
+            files={"file": ("resume.txt", b"Dana Levi\nPython, SQL\n" + b"filler " * 1000, "text/plain")},
+            data={"jd_text": "Python and SQL required."},
+        ).status_code == 200,
+    )
+
+# PDF page ceiling: refused BEFORE extraction, which is the expensive half.
+import io as _io  # noqa: E402
+
+from reportlab.pdfgen import canvas as _rl_canvas  # noqa: E402
+
+from app.config import get_settings as _get_settings  # noqa: E402
+
+_many = _io.BytesIO()
+_c = _rl_canvas.Canvas(_many)
+for _i in range(_get_settings().max_pdf_pages + 10):
+    _c.drawString(72, 720, f"page {_i}")
+    _c.showPage()
+_c.save()
+_pdf_bomb_refused = False
+try:
+    _li_extract_text("bomb.pdf", _many.getvalue())
+except ValueError:
+    _pdf_bomb_refused = True
+check(
+    "a PDF over the page ceiling is refused before extraction",
+    _pdf_bomb_refused,
+    f"limit {_get_settings().max_pdf_pages}",
+)
+check(
+    "a normal-length PDF still parses",
+    bool(_li_extract_text("resume.pdf", render_pdf(resume)).strip()),
+)
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
 raise SystemExit(1 if failures else 0)

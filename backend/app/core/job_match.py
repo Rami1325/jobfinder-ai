@@ -11,6 +11,7 @@ import re
 import urllib.request
 
 from app.core.jd_analyzer import analyze_jd
+from app.core.net_guard import assert_fetchable, guarded_opener
 from app.core.salary import extract_salary
 from app.core.scorer import score_resume, top_matched_and_gaps
 from app.models import JobMatch, JobMatchResult, ResumeModel
@@ -114,6 +115,11 @@ def _looks_like_login_wall(text: str) -> bool:
 
 
 def _http_get(url: str, timeout: float = 15) -> str:
+    """Every outbound fetch in the app funnels through here, so the SSRF guard
+    lives here too rather than only on the two user-URL routes: board URLs are
+    parsed out of third-party HTML, and a board that starts serving private
+    addresses should be refused the same way a hand-typed one is."""
+    assert_fetchable(url)  # raises BlockedURLError (a ValueError) on non-public hosts
     req = urllib.request.Request(
         url,
         headers={
@@ -124,7 +130,9 @@ def _http_get(url: str, timeout: float = 15) -> str:
             "Accept-Language": "en-US,en;q=0.9",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - see fetch_job_text docstring
+    # guarded_opener re-checks each redirect hop; urlopen's default opener would
+    # follow a 302 into a private address without asking.
+    with guarded_opener.open(req, timeout=timeout) as resp:  # noqa: S310 - guarded above
         return resp.read(3_000_000).decode("utf-8", errors="ignore")
 
 
@@ -180,8 +188,9 @@ def fetch_job_text(url: str) -> str:
     stripping the whole page. If all we can see is a sign-in / bot-block page, we
     raise instead of returning that garbage so the user knows to paste the text.
 
-    Single-user local tool: we accept arbitrary URLs (no SSRF allowlist). If this
-    is ever exposed to multiple users, add an allowlist / block private ranges.
+    The URL is caller-supplied and the body comes back in the response, so every
+    fetch below goes through `net_guard.assert_fetchable` (public hosts only,
+    re-checked on each redirect hop). See app/core/net_guard.py.
     """
     u = url.strip()
     if not u.startswith(("http://", "https://")):

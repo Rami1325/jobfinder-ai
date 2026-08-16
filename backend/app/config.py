@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     daily_tailor_cap: int = 30
     # Auto-submit (PLAN 8.4): real applications sent per user per day.
     daily_submit_cap: int = 10
+    # Upload limits. Both upload routes read the file into memory to parse it,
+    # and /public/scan takes NO access code, so an unbounded read is a free way
+    # to exhaust a serverless instance. A résumé is a couple of hundred kB; 10 MB
+    # is generous for a scan-heavy PDF and still nowhere near dangerous. The page
+    # ceiling bounds pdfplumber, which is the expensive half — a master CV can
+    # legitimately be ~30 rendered pages (PLAN 18.4), so 50 leaves real headroom
+    # while stopping a thousand-page decompression bomb.
+    max_upload_mb: int = 10
+    max_pdf_pages: int = 50
     jooble_api_key: str = ""  # empty => the Jooble board reports "needs an API key"
     # Stale-application nudges: an "applied" app with no status change for this
     # many days surfaces a "time to follow up" reminder on Home (<= 0 disables).
