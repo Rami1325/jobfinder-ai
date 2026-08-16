@@ -1,6 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex when working with code in this repository.
+
+> Kept byte-identical to `CLAUDE.md` apart from this header, on purpose. It drifted once —
+> missing everything from Phase 17 onward, which made it a second and WRONG source of truth
+> about the renderers and the page budget. If you change one, copy it to the other.
 
 ## Running the app
 
