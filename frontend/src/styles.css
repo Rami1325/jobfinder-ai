@@ -99,8 +99,8 @@
   layouts/MarketingLayout.tsx). Every existing `bg-bg` / `text-ink` /
   `border-line` utility inside the landing then resolves to paper, while
   /home, /app, /jobs, /tools/*, /tracker keep whatever the toggle chose.
-  `.ink-slab` below does the same trick in reverse for the one full-bleed
-  dark band on the page.
+  There is no second palette on this page: every section sits on the same
+  paper background, so the aurora reads as one continuous backdrop.
 
   Measured contrast against --bg (#fbf9f5): ink 14.8:1, ink-muted 6.6:1,
   ink-faint 4.3:1, accent 6.4:1, white-on-accent 6.8:1, mint 5.1:1,
@@ -158,37 +158,6 @@
 }
 :root {
   --shadow-doc: 0 2px 6px rgb(0 0 0 / 0.4), 0 20px 45px -20px rgb(0 0 0 / 0.6);
-}
-
-/*
-  The single full-bleed dark band inside the paper page. Restates the dark
-  palette (it cannot inherit it — `.paper` overrode it on an ancestor), so
-  every token-driven utility keeps working unchanged inside the band.
-*/
-.ink-slab {
-  color-scheme: dark;
-
-  --bg: 15 20 32;
-  --bg-soft: 12 16 25;
-  --bg-elevated: 19 26 40;
-  --panel: 24 32 47;
-  --panel-2: 31 42 61;
-  --line: 52 67 94;
-  --ink: 233 238 246;
-  --ink-muted: 166 178 199;
-  --ink-faint: 128 141 165;
-  --accent: 132 164 255;
-  --accent-soft: 158 184 255;
-  --accent-deep: 79 140 255;
-  --mint: 61 224 174;
-  --warn: 255 201 107;
-  --danger: 255 128 128;
-
-  --ring-track: 38 50 74;
-  --shadow-glow: 0 0 0 1px rgb(var(--accent) / 0.25), 0 8px 40px -8px rgb(var(--accent) / 0.4);
-  --shadow-glow-mint: 0 0 0 1px rgb(var(--mint) / 0.25), 0 8px 40px -8px rgb(var(--mint) / 0.35);
-  --shadow-panel: 0 20px 60px -20px rgb(0 0 0 / 0.6);
-  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 12px 30px -18px rgb(0 0 0 / 0.7);
 }
 
 * { box-sizing: border-box; }

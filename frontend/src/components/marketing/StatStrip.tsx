@@ -40,8 +40,13 @@ const STATS = [
   { key: "checks", to: 600, suffix: "+", tint: "bg-paper-blush/[0.18]", ink: "text-accent" },
 ] as const;
 
-/** Staggered, not aligned — the tiles sit on a loose baseline on desktop. */
-const OFFSETS = ["", "lg:mt-10", "", "lg:mt-10"] as const;
+// The tiles used to be staggered (`lg:mt-10` on the 2nd and 4th) to borrow the
+// competitor's loose, playful baseline. It did not survive contact with real
+// copy: grid items stretch, so the BOTTOMS stayed pinned to the row while the
+// tops stepped down — four cards of visibly different heights with a ragged
+// top edge, which reads as a layout bug rather than as a deliberate rhythm.
+// A stagger only works when the tiles are free-standing and equal-sized; here
+// they are neither. Straight row, equal heights.
 
 export default function StatStrip() {
   const { t } = useTranslation("marketing");
@@ -60,10 +65,10 @@ export default function StatStrip() {
       </Reveal>
 
       <ul ref={ref} className="mt-12 grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-4">
-        {STATS.map((s, i) => (
+        {STATS.map((s) => (
           <li
             key={s.key}
-            className={`rounded-xl3 border border-line/70 p-5 sm:p-6 ${s.tint} ${OFFSETS[i]}`}
+            className={`flex flex-col rounded-xl3 border border-line/70 p-5 sm:p-6 ${s.tint}`}
           >
             {/* `dir="ltr"` on an INLINE span, not the block: a trailing "+" is a
                 bidi-neutral character, so inside the RTL page "600+" would be

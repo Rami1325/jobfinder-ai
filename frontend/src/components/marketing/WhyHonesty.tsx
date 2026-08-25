@@ -8,28 +8,17 @@ const US_KEYS = ["us1", "us2", "us3", "us4"] as const;
 const GUARDED = ["employers", "titles", "dates", "credentials", "numbers"] as const;
 
 /**
- * The one full-bleed dark band on the paper page.
- *
- * `.ink-slab` (styles.css) restates the DARK token values on this subtree, so
- * every `bg-panel` / `text-ink` / `border-line` utility inside keeps working
- * unchanged — the same scoped-token trick `.paper` uses, in reverse. The band
- * is deliberately the honesty argument: it is the part of the pitch that
- * should feel like a different room.
+ * The honesty argument. Deliberately NOT a band: it shipped first as a
+ * full-bleed near-black slab and then as a violet-tinted one, and both read as
+ * a different palette dropped into the page rather than as a beat within it.
+ * It now sits on the same paper background as every other section, transparent
+ * so `PaperAurora` runs behind it unbroken. The contrast it needs comes from
+ * the two comparison cards, which is where the argument actually lives.
  */
 export default function WhyHonesty() {
   const { t } = useTranslation("marketing");
   return (
-    <section className="ink-slab relative overflow-hidden bg-bg py-20 text-ink sm:py-24">
-      {/* Very soft navy → plum → rose wash, the band's only decoration. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-70"
-        style={{
-          background:
-            "radial-gradient(60% 55% at 18% 0%, rgb(var(--accent) / 0.22), transparent 70%), radial-gradient(55% 50% at 82% 100%, rgb(var(--paper-blush) / 0.14), transparent 72%)",
-        }}
-      />
-
+    <section className="relative py-20 text-ink sm:py-24">
       <div className="relative mx-auto max-w-6xl px-4">
         <Reveal className="mx-auto max-w-2xl text-center">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">
