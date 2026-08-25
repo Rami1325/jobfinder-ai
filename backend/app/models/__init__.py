@@ -904,6 +904,12 @@ class ATSScanRequest(BaseModel):
     jd_text: str = ""
 
 
+class ATSXrayRequest(BaseModel):
+    resume: ResumeModel
+    template: str = ""  # "" falls back to the default, like every render call
+    fmt: str = "pdf"  # pdf | docx
+
+
 class ATSIssue(BaseModel):
     label: str
     severity: str = "good"  # good | warn | bad
@@ -915,6 +921,40 @@ class ATSScanResult(BaseModel):
     keyword_coverage: float = 0.0
     issues: list[ATSIssue] = Field(default_factory=list)
     gaps: list[GapItem] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# ATS X-ray (PLAN 21.7) — render the résumé, read it back as a parser does
+# --------------------------------------------------------------------------- #
+class ATSXrayFact(BaseModel):
+    # Stable ids the UI translates: name | email | phone | location | linkedin |
+    # headline | title | employer | dates | bullet | institution | degree |
+    # military | certification | skill | language
+    kind: str
+    value: str
+    # clean    — recovered whole, on one line
+    # split    — every word survived but the fact wrapped across lines
+    # polluted — recovered, but sharing its line with text from the other column
+    # missing  — the parser did not get it back at all
+    status: str = "clean"
+    line: str = ""  # the extracted line it landed on
+    collided_with: str = ""  # the sidebar value glued onto it, when polluted
+
+
+class ATSXrayResult(BaseModel):
+    template: str = ""
+    fmt: str = "pdf"
+    pages: int = 1
+    two_column: bool = False
+    # Set when the user asked for a DOCX of a two-column template: the Word file
+    # is really this single-column sibling, so the X-ray says which.
+    docx_fallback: str = ""
+    text: str = ""  # exactly what the parser recovered, verbatim
+    facts: list[ATSXrayFact] = Field(default_factory=list)
+    clean: int = 0
+    split: int = 0
+    polluted: int = 0
+    missing: int = 0
 
 
 # --------------------------------------------------------------------------- #

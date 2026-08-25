@@ -20,6 +20,7 @@ from app.core import alerts as alerts_core
 from app.core import auto_submit
 from app.core import nudges as nudges_core
 from app.core.ats_scan import scan_resume
+from app.core.ats_xray import xray
 from app.core.company_brief import build_company_brief
 from app.core.cover_letter import generate_cover_letter
 from app.core.resume_health import check_resume_health
@@ -90,6 +91,8 @@ from app.models import (
     ApplicationOut,
     ApplicationUpdate,
     ATSScanRequest,
+    ATSXrayRequest,
+    ATSXrayResult,
     ATSScanResult,
     ComeetCompanyList,
     ComeetCompanyOut,
@@ -921,6 +924,18 @@ def tools_ats_scan(body: ATSScanRequest) -> ATSScanResult:
         return scan_resume(body.resume, body.jd_text)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while scanning résumé: {e}")
+
+
+# Deterministic like /tools/ats-scan — it renders and re-parses, never calls the
+# model — so it is deliberately uncapped. That exclusion is smoke-pinned.
+@router.post("/tools/ats-xray", response_model=ATSXrayResult)
+def tools_ats_xray(body: ATSXrayRequest) -> ATSXrayResult:
+    try:
+        return xray(body.resume, template=body.template, fmt=body.fmt)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Error while x-raying résumé: {e}")
 
 
 @router.post("/tools/linkedin", response_model=LinkedInResult)

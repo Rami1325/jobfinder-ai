@@ -1603,6 +1603,7 @@ check("greenhouse registered in the fan-out", "greenhouse" in PROVIDERS and "gre
 import io as _io  # noqa: E402
 import zipfile as _zipfile  # noqa: E402
 
+import re as _re  # noqa: E402
 import pdfplumber as _pdfplumber  # noqa: E402
 from bidi.algorithm import get_display as _get_display  # noqa: E402
 
@@ -2373,13 +2374,190 @@ with TestClient(_fastapi_app) as _tc:
 from app.render.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template  # noqa: E402
 
 check(
-    "template registry: 5 templates, default present",
-    len(TEMPLATES) == 5 and DEFAULT_TEMPLATE in TEMPLATES,
+    "template registry: 11 templates, default present",
+    len(TEMPLATES) == 11 and DEFAULT_TEMPLATE in TEMPLATES,
     str(list(TEMPLATES)),
+)
+check(
+    "every template differs from every other in SHAPE, not just hue — a set that "
+    "varies only by accent colour is what made the downloads read as undesigned",
+    len({(t.header, t.heading, t.entry, t.skills, t.layout, t.rail, t.pdf_family,
+          t.heading_case, t.bullet_glyph, bool(t.page_bg)) for t in TEMPLATES.values()}) >= 9,
+    str(sorted((t.id, t.header, t.heading, t.entry, t.layout) for t in TEMPLATES.values())),
+)
+check(
+    "a section heading is never SMALLER than the body it governs (the old set "
+    "shipped 9.5pt headings over 10.2pt body — a live hierarchy inversion)",
+    all(t.heading_size + t.heading_bump >= t.body_size for t in TEMPLATES.values()),
+    str([(t.id, t.heading_size + t.heading_bump, t.body_size) for t in TEMPLATES.values()
+         if t.heading_size + t.heading_bump < t.body_size]),
+)
+check(
+    "two-column templates are PDF-only and every one names a single-column "
+    "DOCX fallback that itself renders in one column",
+    all(t.docx_fallback and not TEMPLATES[t.docx_fallback].pdf_only
+        for t in TEMPLATES.values() if t.pdf_only),
+    str([(t.id, t.docx_fallback) for t in TEMPLATES.values() if t.pdf_only]),
 )
 check(
     "unknown/empty template names fall back to the default (old clients unaffected)",
     get_template("no-such-template").id == DEFAULT_TEMPLATE and get_template(None).id == DEFAULT_TEMPLATE,
+)
+
+# 18a. A run taller than one frame must SPLIT, not raise. reportlab cannot place
+# a bare Flowable that does not implement split(), so before this a résumé with a
+# long summary (or one very long bullet) made POST /render raise LayoutError and
+# return a 500. It is a crash, not a layout nicety — pinned per template because
+# the page geometry that triggers it differs per template.
+_huge = ResumeModel(
+    contact=Contact(name="Overflow Candidate", email="of@example.com"),
+    summary=("Backend engineer with deep experience across payments, data and platform. " * 90),
+    experience=[Experience(company="X", title="Engineer",
+                           bullets=[("Shipped a thing that mattered a great deal. " * 120)])],
+)
+_huge_want = _re.sub(r"\s+", " ", _huge.summary).strip()
+for _tpl in TEMPLATES:
+    try:
+        _huge_pdf = render_pdf(_huge, template=_tpl)
+        _huge_txt = _re.sub(r"\s+", " ", _pdf_text(_huge_pdf))
+        _ok = _huge_pdf[:4] == b"%PDF" and _huge_want in _huge_txt
+    except Exception as _e:  # LayoutError or anything else = the 500 is back
+        _huge_pdf, _ok = b"", False
+        _huge_txt = f"{type(_e).__name__}: {_e}"
+    check(
+        f"pdf[{_tpl}]: an over-long run splits across pages instead of raising, "
+        f"and no word is lost or duplicated",
+        _ok, _huge_txt[:180],
+    )
+
+# 18a-2. A split bullet must not grow a SECOND glyph on its continuation.
+check(
+    "pdf: a bullet that splits across a page keeps exactly one glyph",
+    _pdf_text(render_pdf(_huge)).count("•") == 1,
+    str(_pdf_text(render_pdf(_huge)).count("•")),
+)
+
+# 18a-3. Two-column templates are PDF-only for a MEASURED reason: text
+# extraction y-sorts across the full page width, so sidebar text is glued to the
+# front of the main-column line at the same height. Individual bullets survive
+# intact (keyword matching is fine) but title/employer attribution is polluted.
+# This pins the behaviour we shipped knowingly, so nobody later "fixes" the
+# fallback away believing a two-column DOCX would be equivalent.
+_2col = render_pdf(resume, template="split")
+_2col_txt = _pdf_text(_2col)
+check(
+    "pdf[split]: every bullet still survives extraction as one contiguous string",
+    resume.experience[0].bullets[0].split(",")[0] in _re.sub(r"\s+", " ", _2col_txt),
+    _2col_txt[:200],
+)
+_split_docx_xml = _docx_xml(render_docx(resume, template="split"))
+# python-docx always writes a single-column <w:cols w:space="..."/> in the
+# sectPr, so the real invariant is "never a MULTI-column section and never a
+# table" — not the absence of the element.
+check(
+    "docx[split]: falls back to a single-column sibling — no table, no snaking columns",
+    "<w:tbl" not in _split_docx_xml
+    and not _re.search(r'<w:cols[^>]*w:num="(?!1")', _split_docx_xml)
+    and resume.contact.name in _li_extract_text("resume.docx", render_docx(resume, template="split")),
+    str(_re.findall(r"<w:cols[^>]*>", _split_docx_xml)),
+)
+check(
+    "docx[split] renders the SAME bytes as its declared fallback — one code path, "
+    "so the Word file can never silently drift from the sibling the UI names",
+    render_docx(resume, template="split") == render_docx(resume, template=get_template("split").docx_fallback),
+)
+
+# 18c. ATS X-ray (21.7). We render the file and read it back with our OWN parser
+# — the closest proxy we have to an ATS — and report what survived. The point is
+# to stop asserting that templates are ATS-safe and start showing it.
+from app.core.ats_xray import xray  # noqa: E402
+
+
+def _xray_bad() -> bool:
+    try:
+        xray(resume, "classic", "rtf")
+    except ValueError:
+        return True
+    return False
+
+_xr = xray(resume, "classic", "pdf")
+check(
+    "x-ray: every protected fact is recovered from the default template — nothing missing",
+    _xr.missing == 0 and _xr.clean > 0 and _xr.polluted == 0,
+    f"clean={_xr.clean} split={_xr.split} polluted={_xr.polluted} missing={_xr.missing}",
+)
+check(
+    "x-ray returns the parser's ACTUAL text, not a summary of it",
+    resume.contact.name in _xr.text and resume.experience[0].company in _xr.text,
+)
+# THE FALSE-POSITIVE PIN. A guard that fires correctly AND fires on clean input
+# is worse than no guard: it teaches users to ignore it. A single-column layout
+# has no second column to interleave with, so it must NEVER report pollution —
+# including the header, whose headline legitimately contains skill words.
+_fp = {t: xray(resume, t, "pdf").polluted
+       for t, spec in TEMPLATES.items() if spec.layout == "single"}
+check(
+    "x-ray: NO single-column template reports column pollution (false-positive pin)",
+    all(v == 0 for v in _fp.values()),
+    str({k: v for k, v in _fp.items() if v}),
+)
+# ...and the true-positive half, so the check can never be satisfied by a guard
+# that simply never fires.
+#
+# Interleaving is CONTENT-dependent, not automatic: it only happens where the
+# sidebar still has content at the same height as a main-column entry. The
+# shared `resume` fixture has a short sidebar and produces none, which is a real
+# and useful fact — so the true-positive case gets a résumé built to trigger it
+# (a full sidebar running down beside three roles).
+_xr_deep = ResumeModel(
+    contact=Contact(name="Column Collider", email="cc@example.com", phone="+972 50-000-0000",
+                    location="Tel Aviv", linkedin="linkedin.com/in/collider"),
+    headline="Platform Engineer",
+    summary="Platform engineer with a long sidebar and a long career.",
+    skills=["Python", "Go", "Rust", "PostgreSQL", "Kafka", "Kubernetes", "AWS",
+            "Terraform", "gRPC", "Redis", "Airflow", "Docker"],
+    experience=[
+        Experience(company="Alpha Systems", title="Staff Engineer", location="Tel Aviv",
+                   start_date="2022", end_date="Present",
+                   bullets=["Ran the platform team and shipped the migration."]),
+        Experience(company="Beta Labs", title="Senior Engineer", location="Haifa",
+                   start_date="2019", end_date="2022",
+                   bullets=["Built the ingestion pipeline end to end."]),
+        Experience(company="Gamma Works", title="Engineer", location="Herzliya",
+                   start_date="2017", end_date="2019",
+                   bullets=["Owned the billing service."]),
+    ],
+    education=[Education(institution="Technion", degree="B.Sc.", field="Computer Science",
+                         start_date="2013", end_date="2017")],
+    certifications=["AWS Certified Solutions Architect", "Certified Kubernetes Administrator"],
+    languages=[LanguageSkill(language="Hebrew", level="Native"),
+               LanguageSkill(language="English", level="Fluent"),
+               LanguageSkill(language="Russian", level="Conversational")],
+)
+_xr2 = xray(_xr_deep, "panel", "pdf")
+check(
+    "x-ray: a two-column PDF DOES report the interleaving we measured, naming the "
+    "main-column fact and the sidebar value glued to it",
+    _xr2.two_column and _xr2.polluted > 0
+    and all(f.collided_with for f in _xr2.facts if f.status == "polluted"),
+    f"polluted={_xr2.polluted} "
+    + str([(f.kind, f.collided_with) for f in _xr2.facts if f.status == "polluted"]),
+)
+_xrd = xray(_xr_deep, "panel", "docx")
+check(
+    "x-ray[docx] of a two-column template reports the single-column sibling the "
+    "user actually receives, and finds nothing polluted in it",
+    (not _xrd.two_column) and _xrd.docx_fallback == get_template("panel").docx_fallback
+    and _xrd.polluted == 0 and _xrd.missing == 0,
+    f"fallback={_xrd.docx_fallback} polluted={_xrd.polluted} missing={_xrd.missing}",
+)
+check(
+    "x-ray survives a hebrew résumé in both formats",
+    xray(_he_full, "classic", "pdf").clean > 0 and xray(_he_full, "classic", "docx").clean > 0,
+)
+check(
+    "x-ray rejects an unknown format instead of guessing",
+    (lambda: [False for _ in [0]] and _xray_bad())(),
 )
 
 _ATS_FORBIDDEN = ("<w:tbl", "<w:pict", "graphicData", "headerReference", "footerReference", "txbxContent")
@@ -2447,8 +2625,32 @@ check(
 )
 _dsg_docx_xml = _docx_xml(render_docx(resume))
 check(
-    "docx: hairlines are paragraph borders and dates a right tab stop — no table anywhere",
-    "<w:pBdr" in _dsg_docx_xml and "<w:tabs" in _dsg_docx_xml and "<w:tbl" not in _dsg_docx_xml,
+    "docx: hairlines/bars are paragraph borders — no table anywhere",
+    "<w:pBdr" in _dsg_docx_xml and "<w:tbl" not in _dsg_docx_xml,
+)
+# The flush-right date is a right TAB STOP, never a table. `classic` moved to the
+# stacked entry (title, then "Employer · Location · Dates") to kill the ~300pt
+# white river that flush-right dates leave beside a short title — so the tab-stop
+# guarantee is now pinned on a template that still uses the split entry.
+_dsg_split_xml = _docx_xml(render_docx(resume, template="executive"))
+check(
+    "docx: a flush-right date is a right tab stop, not a table",
+    "<w:tabs" in _dsg_split_xml and "<w:tbl" not in _dsg_split_xml,
+)
+# The band, the accent bar and the chips are the three moves that carry most of
+# the visual upgrade, and all three had to be reproducible in DOCX without a
+# table — paragraph shading, a left paragraph border, and a bordered run.
+_dsg_band_xml = _docx_xml(render_docx(resume, template="modern"))
+check(
+    "docx: filled header band is paragraph shading and chips are bordered runs — "
+    "still no table, text box, image, header or footer",
+    "<w:shd" in _dsg_band_xml and "<w:bdr" in _dsg_band_xml
+    and not any(tok in _dsg_band_xml for tok in _ATS_FORBIDDEN),
+)
+_dsg_bar_xml = _docx_xml(render_docx(resume, template="compact"))
+check(
+    "docx: the accent bar beside a heading is a left paragraph border",
+    'w:sz="18"' in _dsg_bar_xml and "<w:tbl" not in _dsg_bar_xml,
 )
 _dsg_he_xml = _docx_xml(render_docx(_he_full))
 check(
@@ -4698,6 +4900,11 @@ with TestClient(_fastapi_app) as _tc:
         "deterministic tools are NOT charged (ats-scan calls no model)",
         _tc.post("/tools/ats-scan", json={"resume": _resume_json, "jd_text": ""},
                  headers=_CAP_H).status_code == 200,
+    )
+    check(
+        "deterministic tools are NOT charged (ats-xray renders + re-parses, no model)",
+        all(_tc.post("/tools/ats-xray", json={"resume": _resume_json, "template": "classic"},
+                     headers=_CAP_H).status_code == 200 for _ in range(3)),
     )
 
     # --- N2 end to end: middleware tally -> endpoint -> dependency -> UsageLog.

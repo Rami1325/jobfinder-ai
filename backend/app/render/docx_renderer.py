@@ -79,19 +79,71 @@ def _tracking(run, points: float) -> None:
     _insert_ordered(r_pr, el, _RPR_ORDER)
 
 
-def _hairline(paragraph, color: str, space_pt: int = 3) -> None:
-    """A hairline under one paragraph — a paragraph border, never a table."""
+def _p_border(paragraph, edge: str, color: str, *, sz: int = 4, space_pt: int = 3) -> None:
+    """One edge of a paragraph border. Every rule in this document is a
+    paragraph border — never a table, never a drawn shape — so an ATS parser has
+    nothing to un-pick. `sz` is in eighths of a point (4 = a 0.5pt hairline,
+    18 = the ~2.25pt accent bar beside a section heading)."""
     p_pr = paragraph._p.get_or_add_pPr()
-    if p_pr.find(qn("w:pBdr")) is not None:
+    border = p_pr.find(qn("w:pBdr"))
+    if border is None:
+        border = OxmlElement("w:pBdr")
+        _insert_ordered(p_pr, border, _PPR_ORDER)
+    if border.find(qn(f"w:{edge}")) is not None:
         return
-    border = OxmlElement("w:pBdr")
-    bottom = OxmlElement("w:bottom")
-    bottom.set(qn("w:val"), "single")
-    bottom.set(qn("w:sz"), "4")  # eighths of a point = 0.5pt
-    bottom.set(qn("w:space"), str(space_pt))
-    bottom.set(qn("w:color"), color)
-    border.append(bottom)
-    _insert_ordered(p_pr, border, _PPR_ORDER)
+    el = OxmlElement(f"w:{edge}")
+    el.set(qn("w:val"), "single")
+    el.set(qn("w:sz"), str(sz))
+    el.set(qn("w:space"), str(space_pt))
+    el.set(qn("w:color"), color)
+    # <w:pBdr> children are schema-ordered: top, left, bottom, right.
+    order = ["w:top", "w:left", "w:bottom", "w:right"]
+    _insert_ordered(border, el, [qn(t) for t in order])
+
+
+def _hairline(paragraph, color: str, space_pt: int = 3) -> None:
+    """A hairline under one paragraph."""
+    _p_border(paragraph, "bottom", color, sz=4, space_pt=space_pt)
+
+
+def _shade(paragraph, fill: str) -> None:
+    """Solid paragraph background — the DOCX twin of the PDF's filled header
+    band. Paragraph shading, so still no table and no drawing object."""
+    p_pr = paragraph._p.get_or_add_pPr()
+    if p_pr.find(qn("w:shd")) is not None:
+        return
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), fill)
+    _insert_ordered(p_pr, shd, _PPR_ORDER)
+
+
+def _bleed(paragraph, points: float) -> None:
+    """Negative side indents so a shaded paragraph runs past the text margins
+    and reads as a full-width band rather than a highlighted line."""
+    p_pr = paragraph._p.get_or_add_pPr()
+    if p_pr.find(qn("w:ind")) is not None:
+        return
+    ind = OxmlElement("w:ind")
+    twips = str(int(round(-points * 20)))
+    ind.set(qn("w:left"), twips)
+    ind.set(qn("w:right"), twips)
+    _insert_ordered(p_pr, ind, _PPR_ORDER)
+
+
+def _chip(run, border_color: str) -> None:
+    """A bordered run — the DOCX twin of a PDF skill chip. `w:bdr` draws a box
+    around the run itself, so no table and no shape is involved."""
+    r_pr = run._r.get_or_add_rPr()
+    if r_pr.find(qn("w:bdr")) is not None:
+        return
+    el = OxmlElement("w:bdr")
+    el.set(qn("w:val"), "single")
+    el.set(qn("w:sz"), "4")
+    el.set(qn("w:space"), "0")
+    el.set(qn("w:color"), border_color)
+    _insert_ordered(r_pr, el, _RPR_ORDER)
 
 
 def _mirror_cs(r_pr, src_tag: str, cs_tag: str) -> None:
@@ -138,6 +190,10 @@ class _Sheet:
         # Inline separators sit between the hairline and the body grey so they
         # read as punctuation, not as content.
         self.sep = _blend(self.muted, RGBColor.from_string(spec.rule), 0.55)
+        # Reversed-out palette for a filled header band.
+        self.band_ink = RGBColor.from_string(spec.band_ink)
+        self.band_sub = RGBColor.from_string(spec.band_sub)
+        self.band_meta = RGBColor.from_string(spec.band_meta)
         self.tight = spec.tight
         self.column_pt = spec.page_w_pt - 2 * spec.margin_lr_pt
 
@@ -158,6 +214,12 @@ class _Sheet:
 
 def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
     spec = get_template(template)
+    # A two-column template is PDF-only. Word cannot build a fixed sidebar
+    # without a table, and a table is the one thing the ATS rules forbid — so
+    # the Word download is the closest single-column sibling instead, and the
+    # picker says so where the user chooses and where they download.
+    if spec.docx_fallback:
+        spec = get_template(spec.docx_fallback)
     rtl = resume_language(resume) == "he"
     labels = labels_for("he" if rtl else "en")
     # Same one-page-or-two verdict as the PDF, measured once by the PDF layout
@@ -176,13 +238,21 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
     style.paragraph_format.space_after = Pt(0)
     if rtl:
         # Pin the complex-script face too, or Word substitutes its own Hebrew
-        # default and the document stops matching the PDF.
-        style.element.rPr.rFonts.set(qn("w:cs"), spec.docx_font)
+        # default and the document stops matching the PDF. It has to be a family
+        # that HAS Hebrew glyphs — pinning the Latin `docx_font` here asked Word
+        # for Georgia on a Hebrew `executive`, which it cannot render and
+        # silently replaced.
+        style.element.rPr.rFonts.set(qn("w:cs"), spec.docx_font_he)
 
+    band = spec.header == "band"
     for section in doc.sections:
         section.page_width = Pt(spec.page_w_pt)
         section.page_height = Pt(spec.page_h_pt)
-        section.top_margin = section.bottom_margin = Pt(spec.margin_tb_pt)
+        # A band has to reach the top of the sheet the way the PDF's rectangle
+        # does; with a top margin Word leaves a white strip above it. The air the
+        # margin used to provide is re-added as space_before on the name.
+        section.top_margin = Pt(0) if band else Pt(spec.margin_tb_pt)
+        section.bottom_margin = Pt(spec.margin_tb_pt)
         section.left_margin = section.right_margin = Pt(spec.margin_lr_pt)
 
     def para(*, before: float = 0.0, after: float = 0.0, keep: bool = False, center: bool = False,
@@ -209,48 +279,73 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
         _tracking(run, track)
         return run
 
-    def joined(p, parts: list[tuple[str, float, RGBColor]]) -> None:
+    def joined(p, parts: list[tuple[str, float, RGBColor]], *, sep: str = _SEP,
+               sep_color: RGBColor | None = None, bold_first: bool = False) -> None:
         """Inline list with muted separators — contact, employer · location."""
         live = [x for x in parts if x[0]]
         for i, (value, size, color) in enumerate(live):
             if i:
-                text(p, _SEP, size=size, color=s.sep)
-            text(p, value, size=size, color=color)
+                text(p, sep, size=size, color=sep_color or s.sep)
+            text(p, value, size=size, color=color, bold=bold_first and i == 0)
 
     # --- header -----------------------------------------------------------
     c = resume.contact
+    # A band anchors the name to the top-start corner; centring inside a filled
+    # rectangle reads like a certificate.
+    head_center = spec.name_centered and not band
+    band_paras = []
     # lead=False: the name is far larger than the body, so an exact body line
     # height would clip it.
-    name_p = para(center=spec.name_centered, lead=False)
-    text(name_p, c.name or "Name", size=spec.name_size, color=s.accent if spec.accent_name else s.ink,
+    name_p = para(before=spec.margin_tb_pt * 0.62 if band else 0.0,
+                  center=head_center, lead=False)
+    text(name_p, c.name or "Name", size=spec.name_size,
+         color=s.band_ink if band else (s.accent if spec.accent_name else s.ink),
          bold=True, track=spec.name_tracking * (0.5 if rtl else 1.0))
+    band_paras.append(name_p)
 
     if resume.headline:
         # Sits between the name and the contact line: the first thing a
         # recruiter reads after the name, and what the ATS matches on. Coloured
         # opposite the name so the two never flatten into one block.
-        headline_p = para(before=1.0, after=1.0, center=spec.name_centered, lead=False)
-        text(headline_p, resume.headline, size=spec.body_size + 0.8,
-             color=s.ink if spec.accent_name else s.accent,
+        headline_p = para(before=1.0, after=1.0, center=head_center, lead=False)
+        text(headline_p, resume.headline, size=spec.body_size + (1.2 if band else 0.8),
+             color=s.band_sub if band else (s.ink if spec.accent_name else s.accent),
              track=0.3 * (0.5 if rtl else 1.0))
+        band_paras.append(headline_p)
 
     bits = [b for b in [c.email, c.phone, c.location, c.linkedin, c.website] if b]
     contact_p = None
     if bits:
         # Without a rule to separate it, the header needs the air itself.
-        contact_p = para(before=1.0, after=0.0 if spec.header_rule else 5.0,
-                         center=spec.name_centered)
-        joined(contact_p, [(b, spec.meta_size, s.muted) for b in bits])
-    if spec.header_rule:
+        contact_p = para(before=1.0,
+                         after=(spec.margin_tb_pt * 0.55 if band
+                                else (0.0 if spec.header_rule else 5.0)),
+                         center=head_center)
+        joined(contact_p, [(b, spec.meta_size, s.band_meta if band else s.muted)
+                           for b in bits], sep_color=s.band_meta if band else None)
+        band_paras.append(contact_p)
+    if band:
+        for p in band_paras:
+            _shade(p, spec.band_fill)
+            _bleed(p, spec.margin_lr_pt)
+    elif spec.header_rule:
         _hairline(contact_p or name_p, spec.rule, space_pt=6)
 
     # --- section helpers --------------------------------------------------
     def heading(key: str) -> None:
-        p = para(before=s.sec_before, after=s.sec_after, keep=True)
+        bar = spec.heading == "bar"
+        p = para(before=s.sec_before + (3.0 if bar else 0.0),
+                 after=s.sec_after + (1.0 if bar else 0.0), keep=True)
         label = labels[key] if rtl else labels[key].upper()
-        text(p, label, size=spec.heading_size, color=s.accent, bold=True,
+        text(p, label, size=spec.heading_size + spec.heading_bump,
+             color=s.ink if bar else s.accent, bold=True,
              track=spec.heading_tracking * (0.5 if rtl else 1.0))
-        if spec.heading_rule:
+        if bar:
+            # The twin of the PDF's accent bar. In a bidi paragraph Word mirrors
+            # the border with the text, so "left" lands on the right in Hebrew —
+            # which is what the PDF does too.
+            _p_border(p, "left", spec.accent, sz=18, space_pt=6)
+        elif spec.heading_rule and spec.heading != "plain":
             _hairline(p, spec.rule)
 
     def body(value: str, *, before: float = 0.0, after: float = 0.0) -> None:
@@ -271,6 +366,19 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
 
     def entry(primary: str, meta: str, secondary: list[tuple[str, float, RGBColor]],
               items: list[str], first: bool) -> None:
+        if spec.entry == "stack":
+            # Title on its own line, then "Employer · Location · Dates". The
+            # split style below leaves the whole middle of the column empty
+            # whenever the title is short, which is most of the time.
+            p = para(before=0.0 if first else s.entry_before + 1.5, keep=True)
+            text(p, primary, size=spec.body_size + 0.9, color=s.ink, bold=True)
+            parts = list(secondary)
+            if meta:
+                parts.append((meta, spec.meta_size, s.muted))
+            if any(x[0] for x in parts):
+                joined(para(keep=True), parts, sep="  ·  ", bold_first=True)
+            bullets(items)
+            return
         p = para(before=0.0 if first else s.entry_before, keep=True)
         # Dates go to the far margin on a right tab stop. In a bidi paragraph
         # Word measures tab stops from the right margin, so the same stop puts
@@ -294,11 +402,30 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
             heading("summary")
             body(resume.summary)
 
+    def chips(items: list[str]) -> None:
+        """Bordered runs in one wrapping paragraph — the DOCX twin of _Chips.
+        A real comma stays between them so the extracted text keeps exactly the
+        delimiter the comma-joined run would have given a keyword parser."""
+        live = [i for i in items if i]
+        if not live:
+            return
+        p = para(lead=False)
+        p.paragraph_format.space_after = Pt(1.5)
+        for i, item in enumerate(live):
+            run = text(p, f" {item} ", size=spec.meta_size + 0.4, color=s.ink)
+            _chip(run, spec.rule)
+            if i < len(live) - 1:
+                text(p, ", ", size=spec.meta_size + 0.4, color=s.sep)
+
     def build_skills() -> None:
-        if resume.skills:
-            heading("skills")
-            # Comma-separated on purpose: it is what ATS keyword parsers split on.
-            body(", ".join(resume.skills))
+        if not resume.skills:
+            return
+        heading("skills")
+        if spec.skills == "chips":
+            chips(resume.skills)
+            return
+        # Comma-separated on purpose: it is what ATS keyword parsers split on.
+        body(", ".join(resume.skills))
 
     def build_experience() -> None:
         if not resume.experience:
@@ -354,10 +481,15 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
     def build_languages() -> None:
         if not resume.languages:
             return
+        pairs = [" – ".join(b for b in [ls.language, ls.level] if b) for ls in resume.languages]
+        pairs = [p for p in pairs if p]
+        if not pairs:
+            return
         heading("languages")
-        p = para()
-        joined(p, [(" – ".join(b for b in [ls.language, ls.level] if b), spec.body_size, s.ink)
-                   for ls in resume.languages])
+        if spec.skills == "chips":
+            chips(pairs)
+            return
+        joined(para(), [(p, spec.body_size, s.ink) for p in pairs])
 
     builders = {
         "summary": build_summary, "skills": build_skills, "experience": build_experience,
