@@ -30,6 +30,7 @@ from reportlab.platypus import (BaseDocTemplate, Flowable, Frame, FrameBreak, Ke
 
 from app.core.lang import resume_language
 from app.core.section_order import section_order
+from app.core.skills import skill_blocks
 from app.models import ResumeModel
 from app.render.labels import labels_for
 from app.render.templates import DEFAULT_TEMPLATE, TemplateSpec, get_template
@@ -151,6 +152,147 @@ def _draw_line(canv, text, x0, x1, y, font, size, color, *, tracking=0.0, align=
         obj.setCharSpace(tracking)
     obj.textOut(shown)
     canv.drawText(obj)
+
+
+# --------------------------------------------------------------------------- #
+# Vector icons
+# --------------------------------------------------------------------------- #
+# Small marks on the contact row (and, optionally, a calendar on an entry's
+# dates). They are DRAWN PATHS, never glyphs — that is the whole point:
+#
+#   * No bundled face (Lato, Spectral, Noto Sans Hebrew) has an envelope or a
+#     map pin. Asking for one prints a tofu box.
+#   * A unicode dingbat that DID render would also land in the extracted text —
+#     on the exact line an ATS parses as the email address. "✉ me@example.com"
+#     is a worse contact line than no icon at all.
+#   * A path emits no text operators, so extraction sees precisely what it saw
+#     before the icons existed. The smoke test pins that byte-for-byte.
+#
+# Each icon is defined inside a UNIT BOX (0..1 in x and y) and drawn through a
+# scaled CTM, so one definition serves every size. Line width is in unit space
+# too (0.09 => 0.09 * size pt), which keeps the stroke weight proportional
+# instead of turning into a blob at 5pt.
+_ICON_SCALE = 0.62  # icon size relative to the type size it sits on
+_ICON_GAP = 0.34  # gap between icon and text, relative to the type size
+_ICON_LW = 0.10  # stroke weight, in unit-box terms
+
+# Icons whose shape carries a direction. In RTL the icon leads its label from
+# the right, so a directional mark has to face the other way too — the mirror is
+# applied to the unit box, so any future asymmetric icon gets it for free. The
+# envelope, the pin, the globe and the calendar are symmetric about their
+# vertical axis, so mirroring them is a deliberate no-op rather than an omission.
+_ICON_MIRRORED = ("phone", "link")
+
+
+def _icon_mail(c) -> None:
+    c.roundRect(0.03, 0.18, 0.94, 0.62, 0.10, stroke=1, fill=0)
+    p = c.beginPath()
+    p.moveTo(0.09, 0.74)
+    p.lineTo(0.50, 0.44)
+    p.lineTo(0.91, 0.74)
+    c.drawPath(p)
+
+
+def _icon_phone(c) -> None:
+    # A handset: the curved body, plus the earpiece and mouthpiece as short
+    # strokes across each end.
+    body = c.beginPath()
+    body.moveTo(0.17, 0.83)
+    body.curveTo(0.22, 0.45, 0.45, 0.22, 0.83, 0.17)
+    c.drawPath(body)
+    for x0, y0, x1, y1 in ((0.02, 0.70, 0.32, 0.98), (0.70, 0.02, 0.98, 0.32)):
+        p = c.beginPath()
+        p.moveTo(x0, y0)
+        p.lineTo(x1, y1)
+        c.drawPath(p)
+
+
+def _icon_pin(c) -> None:
+    c.circle(0.50, 0.66, 0.30, stroke=1, fill=0)
+    p = c.beginPath()
+    p.moveTo(0.26, 0.48)
+    p.lineTo(0.50, 0.02)
+    p.lineTo(0.74, 0.48)
+    c.drawPath(p)
+    c.circle(0.50, 0.66, 0.085, stroke=0, fill=1)
+
+
+def _icon_link(c) -> None:
+    # Two overlapping capsules on a 45° diagonal — a chain link.
+    c.saveState()
+    c.translate(0.50, 0.50)
+    c.rotate(45)
+    c.roundRect(-0.44, -0.16, 0.48, 0.32, 0.16, stroke=1, fill=0)
+    c.roundRect(-0.04, -0.16, 0.48, 0.32, 0.16, stroke=1, fill=0)
+    c.restoreState()
+
+
+def _icon_globe(c) -> None:
+    c.circle(0.50, 0.50, 0.46, stroke=1, fill=0)
+    c.ellipse(0.30, 0.04, 0.70, 0.96, stroke=1, fill=0)  # meridian
+    p = c.beginPath()
+    p.moveTo(0.05, 0.50)
+    p.lineTo(0.95, 0.50)
+    c.drawPath(p)
+
+
+def _icon_calendar(c) -> None:
+    c.roundRect(0.05, 0.02, 0.90, 0.80, 0.10, stroke=1, fill=0)
+    p = c.beginPath()
+    p.moveTo(0.05, 0.60)
+    p.lineTo(0.95, 0.60)
+    c.drawPath(p)
+    for x in (0.30, 0.70):
+        q = c.beginPath()
+        q.moveTo(x, 0.70)
+        q.lineTo(x, 0.98)
+        c.drawPath(q)
+
+
+_ICONS = {
+    "mail": _icon_mail,
+    "phone": _icon_phone,
+    "pin": _icon_pin,
+    "link": _icon_link,
+    "globe": _icon_globe,
+    "calendar": _icon_calendar,
+}
+
+# Which contact field gets which mark.
+CONTACT_ICONS = {
+    "email": "mail", "phone": "phone", "location": "pin",
+    "linkedin": "link", "website": "globe",
+}
+
+
+def _icon_w(name: str, size: float) -> float:
+    """Horizontal space one icon claims on a line of `size` type, gap included."""
+    return (size * (_ICON_SCALE + _ICON_GAP)) if name in _ICONS else 0.0
+
+
+def _draw_icon(canv, name: str, x: float, y: float, size: float, color, rtl: bool = False) -> None:
+    """Draw `name` in the box [x, x+size] × [y, y+size], tinted `color`.
+
+    `color` is the colour of the text the icon belongs to, on purpose: an icon
+    louder than its own label out-shouts the thing it is labelling.
+    """
+    draw = _ICONS.get(name)
+    if not draw:
+        return
+    canv.saveState()
+    if rtl and name in _ICON_MIRRORED:
+        canv.translate(x + size, y)
+        canv.scale(-size, size)
+    else:
+        canv.translate(x, y)
+        canv.scale(size, size)
+    canv.setStrokeColor(color)
+    canv.setFillColor(color)
+    canv.setLineWidth(_ICON_LW)
+    canv.setLineCap(1)
+    canv.setLineJoin(1)
+    draw(canv)
+    canv.restoreState()
 
 
 # --------------------------------------------------------------------------- #
@@ -291,13 +433,19 @@ class _Segments(Flowable):
     In RTL the items are laid out in reverse visual order (each item is
     bidi-reordered on its own), which keeps per-item colour and link boxes
     correct instead of collapsing the line into one flat string.
+
+    An item may carry a VECTOR ICON, which sits before it in READING order — to
+    its left in English, to its right in Hebrew. The icon is drawn, never typed,
+    so it costs the extracted text nothing (see `_draw_icon`).
     """
 
     def __init__(self, segments, *, sep, sep_color, leading, align="start", rtl=False, rail=None,
                  space_before=0.0, space_after=0.0):
         super().__init__()
-        # segments: list of (text, font, size, color, url)
-        self.segments = [s for s in segments if s[0]]
+        # segments: (text, font, size, color, url) — with an optional 6th
+        # element naming an icon. Padded here so every call site that predates
+        # icons keeps working untouched.
+        self.segments = [tuple(s) + ("",) * (6 - len(s)) for s in segments if s[0]]
         self.sep, self.sep_color = sep, sep_color
         self.leading, self.align, self.rtl = leading, align, rtl
         self.space_before, self.space_after = space_before, space_after
@@ -308,18 +456,18 @@ class _Segments(Flowable):
         rows: list[tuple[list[tuple], float]] = []
         row: list[tuple] = []
         x = 0.0
-        for text, font, size, color, url in order:
+        for text, font, size, color, url, icon in order:
             shown = _visual(text) if self.rtl else text
-            w = _adv(shown, font, size)
+            w = _adv(shown, font, size) + _icon_w(icon, size)
             if row:
                 sep_w = _adv(self.sep, font, size)
                 if x + sep_w + w > avail_w:
                     rows.append((row, x))
                     row, x = [], 0.0
                 else:
-                    row.append((self.sep, font, size, self.sep_color, "", x))
+                    row.append((self.sep, font, size, self.sep_color, "", "", x))
                     x += sep_w
-            row.append((shown, font, size, color, url, x))
+            row.append((shown, font, size, color, url, icon, x))
             x += w
         if row:
             rows.append((row, x))
@@ -342,13 +490,25 @@ class _Segments(Flowable):
             top_font, top_size = row[0][1], row[0][2]
             base = self.height - self.space_before - pdfmetrics.getAscent(top_font, top_size) - i * self.leading
             start = _place(0.0, self.width, row_w, self.align, self.rtl)
-            for shown, font, size, color, url, off in row:
+            for shown, font, size, color, url, icon, off in row:
+                x = start + off
+                w = _adv(shown, font, size)
+                if _icon_w(icon, size):
+                    side = size * _ICON_SCALE
+                    if self.rtl:
+                        # Reading right-to-left, the icon LEADS its label — so
+                        # it sits at the right-hand end of the item's own box.
+                        _draw_icon(canv, icon, x + w + size * _ICON_GAP,
+                                   base + size * 0.34 - side / 2, side, color, rtl=True)
+                    else:
+                        _draw_icon(canv, icon, x, base + size * 0.34 - side / 2,
+                                   side, color, rtl=False)
+                        x += size * (_ICON_SCALE + _ICON_GAP)
                 canv.setFont(font, size)
                 canv.setFillColor(color)
-                canv.drawString(start + off, base, shown)
+                canv.drawString(x, base, shown)
                 if url:
-                    w = _adv(shown, font, size)
-                    canv.linkURL(url, (start + off, base - 2, start + off + w, base + size), relative=1)
+                    canv.linkURL(url, (x, base - 2, x + w, base + size), relative=1)
 
 
 class _Heading(Flowable):
@@ -490,6 +650,36 @@ class _Chips(Flowable):
         if cur:
             rows.append(cur)
         return rows
+
+    def split(self, avail_w, avail_h):
+        """Break a long chip block at a ROW boundary.
+
+        Same rule as `_Text.split`: any flowable that can outgrow a frame needs
+        one. A 138-skill block is taller than a page, and without this reportlab
+        cannot place it at all — it jumps whole to the next frame and leaves the
+        column it came from empty. That is exactly what a two-column render of a
+        dense résumé looked like: a page-1 main column holding only the summary.
+        """
+        self.wrap(avail_w, avail_h)
+        room = avail_h - self.space_before
+        step = self.chip_h + self.gap
+        fit = int((room + self.gap) // step) if step > 0 else 0
+        # A single stranded row reads worse than moving the whole block, and a
+        # one-row widow on the next frame is no better.
+        if fit < 1 or len(self.rows) - fit < 1:
+            return []
+        head_items = [label for row in self.rows[:fit] for label, _w in row]
+        tail_items = [label for row in self.rows[fit:] for label, _w in row]
+
+        def clone(items, *, before, after):
+            return _Chips(items, font=self.font, size=self.size, ink=self.ink,
+                          border=self.border, rtl=self.rtl, fill=self.fill,
+                          pad=self.pad, gap=self.gap, radius=self.radius,
+                          sep=self.sep, sep_color=self.sep_color,
+                          space_before=before, space_after=after)
+
+        return [clone(head_items, before=self.space_before, after=0.0),
+                clone(tail_items, before=0.0, after=self.space_after)]
 
     def wrap(self, avail_w, avail_h):
         self.width = avail_w
@@ -820,16 +1010,20 @@ def _render(resume: ResumeModel, template: str) -> tuple[bytes, int]:
         if spec.page_bg:
             canv.setFillColor(HexColor(f"#{spec.page_bg}"))
             canv.rect(0, 0, W, H, stroke=0, fill=1)
-        if side and spec.sidebar_panel:
-            canv.setFillColor(s.accent_soft)
-            canv.rect(side_x - 10.0, 0, side_w + 20.0, H, stroke=0, fill=1)
+        # No panel here: page 2+ is a single full-width frame, so painting the
+        # rail would leave a coloured stripe with nothing in it.
         canv.restoreState()
 
     if side:
         first = [frame(side_x, doc.bottomMargin, side_w, body_h, "side"),
                  frame(main_x, doc.bottomMargin, main_w, body_h, "main")]
-        rest = [frame(side_x, doc.bottomMargin, side_w, doc.height, "side2"),
-                frame(main_x, doc.bottomMargin, main_w, doc.height, "main2")]
+        # Page 2+ is ONE FULL-WIDTH frame, and the rail is not painted there.
+        # The sidebar is a page-1 device, exactly like the header band. Keeping
+        # a two-frame page 2 meant main-column overflow landed in page 2's SIDE
+        # frame — which is how Experience ended up rendering inside the rail.
+        # Continuing the rail down page 2 would need two independent flows on
+        # one page, which reportlab cannot do in a single build.
+        rest = [frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, "rest")]
         if band_h:
             first.insert(0, frame(doc.leftMargin, H - band_h + pad_b, doc.width, head_h, "hdr"))
         # Order: [header] -> sidebar -> main. FrameBreak advances one frame.
@@ -922,13 +1116,19 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
             align=name_align, rtl=s.rtl, space_before=1.0, space_after=1.0,
         ))
 
-    bits = [b for b in [c.email, c.phone, c.location, c.linkedin, c.website] if b]
+    bits = [(k, v) for k, v in (("email", c.email), ("phone", c.phone), ("location", c.location),
+                                ("linkedin", c.linkedin), ("website", c.website)) if v]
     if bits:
         flow.append(_Segments(
             # No link annotations on a band: a blue underline would fight the
             # reversed-out text, and the rectangle already carries the emphasis.
-            [(b, s.reg, spec.meta_size, s.band_meta if band else s.muted,
-              "" if (s.rtl or band) else _url(b)) for b in bits],
+            # The icon is the 6th element: a drawn envelope / handset / pin /
+            # link / globe, tinted the same grey as the bit it labels. It emits
+            # no text, so the line an ATS reads as the email address is exactly
+            # what it was before.
+            [(v, s.reg, spec.meta_size, s.band_meta if band else s.muted,
+              "" if (s.rtl or band) else _url(v),
+              CONTACT_ICONS[k] if spec.contact_icons else "") for k, v in bits],
             sep=" · ", sep_color=s.band_meta if band else s.sep,
             leading=spec.meta_size * (1.5 if band else 1.45),
             align=name_align, rtl=s.rtl,
@@ -1005,10 +1205,18 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
             # scans for, so it is set bold rather than sharing the meta weight.
             for i, part in enumerate(parts):
                 if part[0]:
-                    parts[i] = (part[0], s.bold, part[2], part[3], part[4])
+                    # Keep the tail intact — a segment may carry an icon after
+                    # the url, and re-packing only the first five fields would
+                    # silently drop it.
+                    parts[i] = (part[0], s.bold) + tuple(part[2:])
                     break
             if meta:
-                parts.append((meta, s.reg, s.meta, s.muted, ""))
+                # A drawn calendar before the dates, when the template asks for
+                # it: the dates are the one item on this line that is not a
+                # proper noun, so a mark tells the eye what it is looking at
+                # without a word of label.
+                parts.append((meta, s.reg, s.meta, s.muted, "",
+                              "calendar" if spec.date_icon else ""))
             if any(part[0] for part in parts):
                 head.append(_Segments(parts, sep="  ·  ", sep_color=s.sep, leading=s.lead,
                                       align="start", rtl=s.rtl, space_after=1.5,
@@ -1048,18 +1256,61 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
             flow.append(KeepTogether([heading("summary"), body(resume.summary)]))
 
     def build_skills() -> None:
-        if not resume.skills:
+        blocks = skill_blocks(resume)
+        if not blocks:
             return
-        if spec.skills == "chips":
-            # Chips still draw a comma between them, so the extracted text keeps
-            # the delimiter the inline run below relies on.
-            flow.append(KeepTogether([heading("skills"), _Chips(
-                resume.skills, font=s.reg, size=spec.meta_size + 0.4, ink=s.ink,
-                border=s.rule, rtl=s.rtl, sep_color=s.sep,
-            )]))
-            return
-        # Comma-separated on purpose: it is what ATS keyword parsers split on.
-        flow.append(KeepTogether([heading("skills"), body(", ".join(resume.skills))]))
+
+        def label_of(text: str) -> _Text:
+            """A group's label: small, bold, accent — the same weight a real CV
+            gives 'AI & LLMs' over its row of tools."""
+            return _Text(text, font=s.bold, size=spec.meta_size + 0.2, color=s.accent,
+                         leading=(spec.meta_size + 0.2) * 1.35, tracking=s.track_head * 0.5,
+                         rtl=s.rtl, space_before=s.bullet_after + 1.5, space_after=1.0)
+
+        def items_of(items: list[str], before: float = 0.0):
+            if spec.skills == "chips":
+                # Chips still draw a comma between them, so the extracted text
+                # keeps the delimiter the inline run below relies on.
+                return _Chips(items, font=s.reg, size=spec.meta_size + 0.4, ink=s.ink,
+                              border=s.rule, rtl=s.rtl, sep_color=s.sep, space_before=before)
+            # Comma-separated on purpose: it is what ATS keyword parsers split on.
+            return body(", ".join(items), space_before=before)
+
+        def block(label: str, items: list[str], first: bool) -> list:
+            if label:
+                return [label_of(label), items_of(items)]
+            # An UNLABELLED block after a labelled one is the leftover — skills
+            # the groups never claimed. Without the extra air it reads as one
+            # more row of the group above it, i.e. as a claim the résumé does
+            # not make. First block unlabelled = the ungrouped résumé, which
+            # gets exactly the flowables this section produced before groups
+            # existed.
+            return [items_of(items, 0.0 if first else s.entry_before)]
+
+        # KeepTogether is for gluing a heading to its FIRST item, never for
+        # holding a page-sized run: it refuses to split, so a 138-skill block
+        # moved whole to the next frame and left the column it came from empty
+        # — which is exactly what a dense two-column render looked like.
+        # `keepWithNext` gives the same no-stranded-heading guarantee while
+        # letting `_Chips.split()` break at a row boundary.
+        # NEITHER KeepTogether NOR keepWithNext around a chip run. Both refuse
+        # to split — reportlab implements `keepWithNext` by building a
+        # KeepTogether — so a 138-skill block moved whole to the next frame and
+        # left the column it came from empty. Verified by probe: with either
+        # wrapper in place `_Chips.split` is never called at all.
+        #
+        # A skills block is the one section that can be page-sized, so it is
+        # emitted bare and `_Chips.split()` breaks it at a row boundary. The
+        # cost is that its heading can strand at a page foot; that is a far
+        # smaller defect than half an empty column, and every other section
+        # keeps its KeepTogether because none of them can grow that large.
+        def emit(parts: list) -> None:
+            for f in parts:
+                flow.append(f)
+
+        emit([heading("skills")] + block(*blocks[0], first=True))
+        for label, items in blocks[1:]:
+            emit(block(label, items, first=False))
 
     def build_experience() -> None:
         section("experience", [
@@ -1163,10 +1414,45 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
 
     main: list = []
     side: list = []
+
+    # The sidebar MUST NOT be able to overflow its frame. reportlab reacts to a
+    # full frame by advancing to the next one — which here is the MAIN column —
+    # so sidebar overflow silently lands in the main column, and the explicit
+    # FrameBreak that follows then pushes the real main content onto page 2,
+    # where it starts in page 2's SIDE frame. That shipped: a résumé with 138
+    # skills rendered its Summary and Experience inside the 30%-wide rail.
+    #
+    # So each sidebar section is measured at the RAIL's width before it is
+    # placed, and any section that would not fit is demoted to the main column
+    # at its natural position in `section_order`. A section is the unit because
+    # splitting one across the two columns is worse than moving it.
+    side_cap = 0.0
+    side_w = 0.0
+    if side_keys:
+        side_w, _ = _column_widths(spec)
+        head_h, pad_t, pad_b = _band_metrics(header, spec)
+        band_h = (head_h + pad_t + pad_b) if head_h else 0.0
+        top = (spec.page_h_pt - band_h - 4.0) if band_h else (spec.page_h_pt - spec.margin_tb_pt)
+        side_cap = top - spec.margin_tb_pt
+    side_used = 0.0
+
     for key in order:
         # Rebinding `flow` re-points the builders' closure, so each section is
         # appended to whichever column owns it.
-        flow = side if key in side_keys else main
-        builders[key]()
+        if key in side_keys:
+            buf: list = []
+            flow = buf
+            builders[key]()
+            # `_content_height` measures KeepTogether's children; calling
+            # .wrap() on a KeepTogether directly raises (it has no `.canv`).
+            need = _content_height(buf, side_w)
+            if side_used + need <= side_cap:
+                side.extend(buf)
+                side_used += need
+            else:
+                main.extend(buf)
+        else:
+            flow = main
+            builders[key]()
 
     return header, main, side

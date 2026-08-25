@@ -252,7 +252,11 @@ def _trim_experience_bullets(resume: ResumeModel, recent_floor: int, older_floor
 def _drop_unmatched_skill(resume: ResumeModel, jd: JDModel) -> ResumeModel | None:
     """Last resort: drop the longest skills entry that shares nothing with the
     JD. Skills are the ATS keyword surface, so anything the JD asked for stays
-    regardless of how long the line is."""
+    regardless of how long the line is.
+
+    Removes the entry from its skill GROUP as well — the flat list and the
+    groups are one fact in two shapes, and a trim that touched only one of them
+    would either come back or render a skill the scorer no longer counts."""
     jd_tokens: set[str] = set()
     for group in (jd.hard_skills, jd.keywords, jd.preferred_skills):
         for kw in group:
@@ -270,7 +274,18 @@ def _drop_unmatched_skill(resume: ResumeModel, jd: JDModel) -> ResumeModel | Non
     if worst_i < 0:
         return None
     out = resume.model_copy(deep=True)
+    dropped = out.skills[worst_i]
     out.skills = [s for i, s in enumerate(out.skills) if i != worst_i]
+    # Keep the grouped view consistent with the flat one. `skills` is the flat
+    # union of every group's items, and `ResumeModel` re-establishes that on
+    # every construction — so leaving the item in its group would resurrect it
+    # the moment this résumé round-trips through JSON, and the trim would
+    # silently do nothing. Only when the last copy is gone from the flat list:
+    # a skill listed twice is still owned by its group.
+    if out.skill_groups and not any(s == dropped for s in out.skills):
+        for group in out.skill_groups:
+            group.items = [i for i in group.items if i != dropped]
+        out.skill_groups = [g for g in out.skill_groups if g.items]
     return out
 
 

@@ -2461,6 +2461,40 @@ check(
     and resume.contact.name in _li_extract_text("resume.docx", render_docx(resume, template="split")),
     str(_re.findall(r"<w:cols[^>]*>", _split_docx_xml)),
 )
+from app.render.pdf_renderer import _Chips, _column_widths  # noqa: E402
+from reportlab.lib.colors import HexColor as _HexColor  # noqa: E402
+
+# 18f. A dense résumé must not push main-column content into the rail. The
+# sidebar frame is 660pt and a 138-skill résumé's rail content measured 2,453pt;
+# reportlab reacts to a full frame by advancing to the NEXT one -- the main
+# column -- so the overflow landed there and the FrameBreak then pushed the real
+# main content onto page 2, INTO page 2's side frame. Summary and Experience
+# rendered inside a 30%-wide rail. Shipped, and found by the owner's first real
+# tailor. Page 1 is the only page that has a rail, so that is where to look.
+_dense = resume.model_copy(deep=True)
+_dense.skills = [f"Skill {chr(65 + i % 26)}{i} platform" for i in range(140)]
+for _tpl in (t for t, sp in TEMPLATES.items() if sp.layout == "sidebar"):
+    _sp = get_template(_tpl)
+    _rail_right = _sp.margin_lr_pt + _column_widths(_sp)[0]
+    _probe = _dense.summary.split()[:6]
+    with _pdfplumber.open(_io.BytesIO(render_pdf(_dense, template=_tpl))) as _pdf:
+        _p1 = _pdf.pages[0]
+        _intruders = [(w["text"], round(w["x0"], 1)) for w in _p1.extract_words()
+                      if w["text"] in _probe and w["x0"] < _rail_right]
+    check(
+        f"pdf[{_tpl}]: a dense résumé keeps main-column content OUT of the rail "
+        f"on page 1 (the sidebar demotes what will not fit instead of spilling)",
+        not _intruders, str(_intruders),
+    )
+check(
+    "pdf: a page-sized chip run splits instead of jumping whole to the next "
+    "frame -- neither KeepTogether nor keepWithNext may wrap it, both refuse to "
+    "split and leave the column it came from empty",
+    _Chips(["a really quite long skill name " + str(i) for i in range(200)],
+           font="Helvetica", size=9, ink=_HexColor("#000000"),
+           border=_HexColor("#cccccc")).split(300.0, 200.0).__len__() == 2,
+)
+
 check(
     "docx[split] renders the SAME bytes as its declared fallback — one code path, "
     "so the Word file can never silently drift from the sibling the UI names",
@@ -2560,7 +2594,11 @@ check(
     (lambda: [False for _ in [0]] and _xray_bad())(),
 )
 
-_ATS_FORBIDDEN = ("<w:tbl", "<w:pict", "graphicData", "headerReference", "footerReference", "txbxContent")
+# "<w:drawing" joined the list with the vector icons (21.8): the PDF draws small
+# marks on the contact row and the Word file must never answer that by embedding
+# a drawing object — it is exactly what an ATS parser cannot un-pick.
+_ATS_FORBIDDEN = ("<w:tbl", "<w:pict", "<w:drawing", "graphicData", "headerReference",
+                  "footerReference", "txbxContent")
 for _tpl in TEMPLATES:
     # English DOCX: ATS-safe XML + facts survive our own extractor.
     _tpl_docx = render_docx(resume, template=_tpl)
@@ -2657,6 +2695,91 @@ check(
     "docx he: bold/size mirrored onto the complex-script twins (Word ignores w:b for Hebrew)",
     "<w:bCs" in _dsg_he_xml and "<w:szCs" in _dsg_he_xml,
 )
+
+# 18d. VECTOR ICONS on the contact row (21.8). Small drawn marks — envelope,
+# handset, pin, link, globe — and optionally a calendar on an entry's dates.
+# Everything here exists to prove one thing: they are PATHS, not glyphs. No
+# bundled face has these characters, so a glyph would print a tofu box AND land
+# in the extracted text, on the exact line an ATS parses as the email address.
+import dataclasses as _dc  # noqa: E402
+
+check(
+    "icons are a design axis, not a default: some templates opt in and the "
+    "austere ones (minimal / ivy / executive) stay bare",
+    any(t.contact_icons for t in TEMPLATES.values())
+    and not any(TEMPLATES[t].contact_icons or TEMPLATES[t].date_icon
+                for t in ("minimal", "ivy", "executive")),
+    str(sorted(t.id for t in TEMPLATES.values() if t.contact_icons)),
+)
+
+# A twin of `classic` with the ornament switched off. Registered temporarily so
+# the icons-on and icons-off documents can be compared directly — the honest
+# way to show that the icons cost the extracted text NOTHING.
+TEMPLATES["_icons_off"] = _dc.replace(TEMPLATES["classic"], id="_icons_off",
+                                      contact_icons=False, date_icon=False)
+try:
+    _ic_on, _ic_off = render_pdf(resume, "classic"), render_pdf(resume, "_icons_off")
+    check(
+        "pdf: the icons emit NO text — extraction is byte-identical with them on and off",
+        _pdf_text(_ic_on) == _pdf_text(_ic_off),
+        _pdf_text(_ic_on)[:160],
+    )
+    _ic_he_on, _ic_he_off = render_pdf(_he_full, "classic"), render_pdf(_he_full, "_icons_off")
+    check(
+        "pdf he: same in Hebrew — a mirrored icon still adds nothing to the text",
+        _pdf_text(_ic_he_on) == _pdf_text(_ic_he_off),
+    )
+    # The point of "no text" is this line specifically: an ATS reads the contact
+    # block for the email address, and a dingbat glued to it is a broken address.
+    _ic_contact = [ln for ln in _pdf_text(_ic_on).splitlines() if resume.contact.email in ln]
+    _ic_want = " · ".join(b for b in [resume.contact.email, resume.contact.phone,
+                                      resume.contact.location, resume.contact.linkedin,
+                                      resume.contact.website] if b)
+    check(
+        "pdf: the contact line holds the contact bits and NOTHING else — no glyph, "
+        "no stray mark beside the email address",
+        len(_ic_contact) == 1 and _ic_contact[0].strip() == _ic_want,
+        str(_ic_contact),
+    )
+
+    # …and they really are drawn. Without this the check above would also pass
+    # for icons that silently render nothing at all. Measured on a contact-only
+    # résumé so the count is unambiguous: no chips, no heading rules, no bullets
+    # — every curve and line on that page is an icon.
+    def _vectors(b: bytes) -> int:
+        with _pdfplumber.open(_io.BytesIO(b)) as pdf:
+            return len(pdf.pages[0].curves) + len(pdf.pages[0].lines)
+
+    _ic_bare = ResumeModel(contact=Contact(
+        name="Dana Levi", email="dana@example.com", phone="+972-54-123-4567",
+        location="Tel Aviv", linkedin="linkedin.com/in/dana", website="dana.dev"))
+    check(
+        "pdf: the icons are real vector geometry — five contact bits draw paths "
+        "with them on and the page carries none at all with them off",
+        _vectors(render_pdf(_ic_bare, "classic")) >= 5
+        and _vectors(render_pdf(_ic_bare, "_icons_off")) == 0
+        and _pdf_text(render_pdf(_ic_bare, "classic")) == _pdf_text(render_pdf(_ic_bare, "_icons_off")),
+        f"on={_vectors(render_pdf(_ic_bare, 'classic'))} "
+        f"off={_vectors(render_pdf(_ic_bare, '_icons_off'))}",
+    )
+
+    # THE CARVE-OUT. Icons are the one presentation option that does not
+    # reproduce in both renderers: w:drawing / w:pict / graphicData are forbidden
+    # and a unicode dingbat prints tofu in Calibri. So the Word file is the SAME
+    # DOCUMENT without the ornament — byte-identical to the icons-off twin, which
+    # is the strongest statement of "same document" available.
+    check(
+        "docx: an icon template renders the SAME document as its icons-off twin, "
+        "byte for byte — the icons are the only difference and the DOCX drops them",
+        render_docx(resume, "classic") == render_docx(resume, "_icons_off"),
+    )
+    check(
+        "docx: no drawing object ever appears for an icon template (en + he)",
+        not any(tok in _docx_xml(render_docx(resume, "classic")) for tok in _ATS_FORBIDDEN)
+        and not any(tok in _docx_xml(render_docx(_he_full, "classic")) for tok in _ATS_FORBIDDEN),
+    )
+finally:
+    del TEMPLATES["_icons_off"]
 _hl = resume.model_copy(deep=True)
 _hl.headline = "Backend Engineer"
 check(
@@ -2689,6 +2812,143 @@ check(
     "17.5: the DOCX agrees with the PDF (one rule, both downloads)",
     _heading_order(_li_extract_text("resume.docx", render_docx(_senior))) == _pdf_senior
     and _heading_order(_li_extract_text("resume.docx", render_docx(_student))) == _pdf_student,
+)
+
+# 18e. GROUPED SKILLS (21.8). A real CV groups its skills under labels; ours had
+# nowhere to put the grouping, so import destroyed it and the rendered CV showed
+# one undifferentiated run of tokens. `skill_groups` carries the grouping and is
+# ADDITIVE — empty means the old behaviour, unchanged.
+from app.core.skills import skill_blocks as _skill_blocks  # noqa: E402
+from app.models import SkillGroup as _SkillGroup  # noqa: E402
+
+# THE INVARIANT: `skills` stays the flat surface everything SCORES — the scorer's
+# keyword coverage, the ATS scan, the x-ray and résumé health all read it and
+# none of them knows groups exist. So a payload that carries only the grouping
+# must still come out with a full flat list.
+_sg_only = ResumeModel(skill_groups=[
+    _SkillGroup(label="AI & LLMs", items=["OpenAI API", "LangChain"]),
+    _SkillGroup(label="Backend & Data", items=["Python", "PostgreSQL"]),
+])
+check(
+    "grouped skills: `skills` is populated as the flat union of every group — "
+    "the scorer and the ATS scan never see a grouped skill go missing",
+    _sg_only.skills == ["OpenAI API", "LangChain", "Python", "PostgreSQL"],
+    str(_sg_only.skills),
+)
+_sg_partial = ResumeModel(
+    skills=["Python", "Hebrew keyboarding"],
+    skill_groups=[_SkillGroup(label="Backend", items=["python", "FastAPI"])],
+)
+check(
+    "grouped skills: a partial flat list is topped up, case-insensitively, and "
+    "an ungrouped skill is never removed",
+    _sg_partial.skills == ["Python", "Hebrew keyboarding", "FastAPI"],
+    str(_sg_partial.skills),
+)
+check(
+    "grouped skills: no groups = the pre-existing behaviour, untouched",
+    ResumeModel(skills=["Python", "SQL"]).skills == ["Python", "SQL"]
+    and ResumeModel(skills=["Python", "SQL"]).skill_groups == []
+    and _skill_blocks(ResumeModel(skills=["Python", "SQL"])) == [("", ["Python", "SQL"])],
+)
+# NOTHING MAY BE HIDDEN. Groups that cover only part of `skills` still have to
+# put the remainder on the page: an invisible skill is an x-ray "missing" on the
+# document we told the user to send, not a tidier page.
+check(
+    "grouped skills: a skill no group claims is still rendered, in its own "
+    "unlabelled block",
+    _skill_blocks(_sg_partial) == [("Backend", ["python", "FastAPI"]), ("", ["Hebrew keyboarding"])],
+    str(_skill_blocks(_sg_partial)),
+)
+
+_grouped = resume.model_copy(deep=True)
+_grouped.skill_groups = [
+    _SkillGroup(label="AI & LLMs", items=["OpenAI API", "LangChain"]),
+    _SkillGroup(label="Backend & Data", items=["Python", "PostgreSQL"]),
+]
+_grouped.skills = list(_grouped.skills) + ["OpenAI API", "LangChain", "PostgreSQL"]
+_grouped_he = _he_full.model_copy(deep=True)
+_grouped_he.skill_groups = [
+    _SkillGroup(label="בינה מלאכותית", items=["OpenAI API", "LangChain"]),
+    _SkillGroup(label="בקאנד ונתונים", items=["Python", "PostgreSQL"]),
+]
+_grouped_he.skills = list(_grouped_he.skills) + ["OpenAI API", "LangChain", "PostgreSQL"]
+
+# Both renderers, both skills treatments (chips and the inline comma run), both
+# languages. `classic` sets skills="chips"; `executive` sets skills="inline".
+for _gt in ("classic", "executive"):
+    _g_pdf = _re.sub(r"\s+", " ", _pdf_text(render_pdf(_grouped, template=_gt)))
+    _g_docx = _re.sub(r"\s+", " ", _li_extract_text("resume.docx", render_docx(_grouped, template=_gt)))
+    check(
+        f"grouped skills[{_gt}]: every label and every item survives extraction "
+        f"in BOTH downloads",
+        all(v in _g_pdf and v in _g_docx
+            for v in ("AI & LLMs", "Backend & Data", "OpenAI API", "PostgreSQL",
+                      _grouped.skills[0])),
+        _g_pdf[:200],
+    )
+    _gh_pdf = _pdf_text(render_pdf(_grouped_he, template=_gt))
+    _gh_docx = _li_extract_text("resume.docx", render_docx(_grouped_he, template=_gt))
+    check(
+        f"grouped skills[{_gt}] he: hebrew labels render right-to-left in the PDF "
+        f"and intact in the DOCX, latin items untouched",
+        _get_display("בינה מלאכותית", base_dir="R") in _gh_pdf and "OpenAI API" in _gh_pdf
+        and "בינה מלאכותית" in _gh_docx and "OpenAI API" in _gh_docx,
+    )
+
+# The x-ray is the executable version of "nothing is hidden": it renders the
+# file, re-reads it with our own parser and reports every protected fact.
+_gx = xray(_grouped, "classic", "pdf")
+check(
+    "x-ray: a grouped résumé still recovers every skill from the rendered PDF — "
+    "the grouping changed the presentation, not the content",
+    not [f for f in _gx.facts if f.kind == "skill" and f.status == "missing"],
+    str([f.value for f in _gx.facts if f.kind == "skill" and f.status == "missing"]),
+)
+
+# The last-resort trim removes a skill from the flat list AND its group. Leaving
+# it in the group would resurrect it on the next JSON round-trip (the model
+# re-establishes the union), so the trim would silently do nothing.
+from app.core.length_budget import _drop_unmatched_skill as _dus  # noqa: E402
+from app.models import JDModel as _SgJD  # noqa: E402
+
+_trim_src = ResumeModel(skill_groups=[
+    _SkillGroup(label="Backend", items=["Python", "COBOL on a mainframe"]),
+])
+_trimmed = _dus(_trim_src, _SgJD(hard_skills=["Python"], keywords=["Python"]))
+check(
+    "length budget: dropping a skill drops it from its GROUP too, so it does not "
+    "come back when the résumé round-trips through JSON",
+    _trimmed is not None
+    and "COBOL on a mainframe" not in _trimmed.skills
+    and "COBOL on a mainframe" not in ResumeModel.model_validate(_trimmed.model_dump()).skills,
+    str(_trimmed.skills if _trimmed else None) + " / " + str(_trimmed.skill_groups if _trimmed else None),
+)
+
+# The structurer is where grouping enters the app, so the stub has to route it —
+# the rule that every LLM task carries a stub branch is what this suite exists
+# to guard.
+check(
+    "STRUCTURE prompt asks for skill_groups and still pins `skills` as the flat "
+    "list (Task tag unmoved)",
+    "skill_groups" in _li_prompts.STRUCTURE_RESUME_SYSTEM
+    and _li_prompts.STRUCTURE_RESUME_SYSTEM.startswith("Task: STRUCTURE_RESUME."),
+)
+_sg_src = structure_resume(
+    "Dana Levi\nSkills\nAI & LLMs: OpenAI API, LangChain, RAG pipelines\n"
+    "Backend & Data: Python, PostgreSQL\nEmail: dana@example.com\n"
+)
+check(
+    "structurer: a CV that groups its skills keeps the grouping, and every "
+    "grouped item lands in the flat list",
+    [g.label for g in _sg_src.skill_groups] == ["AI & LLMs", "Backend & Data"]
+    and {"OpenAI API", "LangChain", "RAG pipelines", "Python", "PostgreSQL"} <= set(_sg_src.skills),
+    str([(g.label, g.items) for g in _sg_src.skill_groups]),
+)
+check(
+    "structurer: a CV that lists skills flat gets NO invented groups — a "
+    "one-value 'Email: ...' line is not a skill group",
+    resume.skill_groups == [] and structure_resume("Jane Roe\nEngineer").skill_groups == [],
 )
 
 # One page is the convention this product ships for. A résumé that overflows by

@@ -14,6 +14,16 @@ parser has to un-pick.
 Hebrew resumes (detected via resume_language) get RTL paragraph direction
 (w:bidi) + RTL runs (w:rtl) and Hebrew section headings; English resumes never
 get an RTL property written.
+
+ONE thing here is deliberately not a twin of the PDF: a `contact_icons`
+template draws small vector marks on its contact row, and this file draws none.
+There is no safe way to: `w:drawing` / `w:pict` / `graphicData` are exactly the
+drawing objects the ATS rules forbid, and a unicode dingbat prints tofu in
+Calibri *and* lands in the extracted contact line, right beside the email
+address. So the Word file is the SAME DOCUMENT — same sections, same words,
+same order — without the ornament. That is the only kind of difference allowed:
+an icon carries no text, so its absence changes nothing the document says,
+whereas a layout option that differed would.
 """
 from __future__ import annotations
 
@@ -27,6 +37,7 @@ from docx.shared import Pt, RGBColor
 
 from app.core.lang import resume_language
 from app.core.section_order import section_order
+from app.core.skills import skill_blocks
 from app.models import ResumeModel
 from app.render.labels import labels_for
 from app.render.pdf_renderer import fit_squeeze
@@ -402,14 +413,14 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
             heading("summary")
             body(resume.summary)
 
-    def chips(items: list[str]) -> None:
+    def chips(items: list[str], before: float = 0.0) -> None:
         """Bordered runs in one wrapping paragraph — the DOCX twin of _Chips.
         A real comma stays between them so the extracted text keeps exactly the
         delimiter the comma-joined run would have given a keyword parser."""
         live = [i for i in items if i]
         if not live:
             return
-        p = para(lead=False)
+        p = para(before=before, lead=False)
         p.paragraph_format.space_after = Pt(1.5)
         for i, item in enumerate(live):
             run = text(p, f" {item} ", size=spec.meta_size + 0.4, color=s.ink)
@@ -418,14 +429,29 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
                 text(p, ", ", size=spec.meta_size + 0.4, color=s.sep)
 
     def build_skills() -> None:
-        if not resume.skills:
+        blocks = skill_blocks(resume)
+        if not blocks:
             return
         heading("skills")
-        if spec.skills == "chips":
-            chips(resume.skills)
-            return
-        # Comma-separated on purpose: it is what ATS keyword parsers split on.
-        body(", ".join(resume.skills))
+        for i, (label, items) in enumerate(blocks):
+            if label:
+                # The group's label: small, bold, accent, glued to its own
+                # items. Same shape as the PDF — `skill_blocks` is shared
+                # precisely so the two downloads cannot describe the skills
+                # section differently.
+                p = para(before=s.bullet_after + 1.5, after=1.0, keep=True, lead=False)
+                text(p, label, size=spec.meta_size + 0.2, color=s.accent, bold=True,
+                     track=spec.heading_tracking * 0.5 * (0.5 if rtl else 1.0))
+            # An unlabelled block after a labelled one is the leftover — skills
+            # no group claimed. It needs the air, or it reads as one more row of
+            # the group above it. Same rule as the PDF.
+            before = 0.0 if (label or i == 0) else s.entry_before
+            if spec.skills == "chips":
+                chips(items, before=before)
+            else:
+                # Comma-separated on purpose: it is what ATS keyword parsers
+                # split on.
+                body(", ".join(items), before=before)
 
     def build_experience() -> None:
         if not resume.experience:

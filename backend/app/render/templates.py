@@ -3,8 +3,13 @@
 A spec is DECLARATIVE: it varies page size, margins, fonts, type sizes, the
 palette, the vertical rhythm, and — since Phase 21 — the presentation vocabulary
 (`header`, `heading`, `entry`, `skills`, `list_cols`, `rail`, `layout`). It never
-contains layout code. Every option is reproducible in BOTH renderers, so the PDF
-and the DOCX can never disagree about what a template looks like.
+contains layout code. Every LAYOUT option is reproducible in BOTH renderers, so
+the PDF and the DOCX can never disagree about what a template SAYS.
+
+`contact_icons` / `date_icon` are the one carve-out, and they are ornament
+rather than layout: the icons are drawn vector paths that emit no text, and the
+DOCX renders the same document without them. See the field for why a drawing
+object and a dingbat are both worse than the omission.
 
 Everything here stays ATS-safe: real selectable text, zero tables / text boxes /
 images / headers / footers, standard section names. The DOCX twin of a filled
@@ -128,6 +133,29 @@ class TemplateSpec:
     bullet_glyph: str = "•"
     bullet_scale: float = 1.0  # glyph size relative to body; <1 lightens the page
 
+    # --- vector icons (PDF only — see the note below) ---------------------
+    # A small drawn envelope / handset / map pin / link / globe before each
+    # contact bit, and optionally a calendar before an entry's dates. They are
+    # VECTOR PATHS on the canvas, never glyphs: no bundled face has these
+    # characters, and a missing glyph would print a tofu box AND land in the
+    # extracted text — on the exact line an ATS parses as the email address. A
+    # drawn path emits no text at all, which is what makes this safe.
+    #
+    # THIS IS THE ONE PRESENTATION OPTION THAT DOES NOT REPRODUCE IN BOTH
+    # RENDERERS. `w:drawing`, `w:pict` and `graphicData` are forbidden in the
+    # DOCX (an ATS parser must not have to un-pick a drawing object) and a
+    # unicode dingbat prints tofu in Calibri and pollutes the extracted contact
+    # line. So the DOCX renders the SAME DOCUMENT WITHOUT ICONS — same sections,
+    # same words, same order. That is safe precisely because an icon is
+    # ornament: it carries no text, and its absence changes nothing the document
+    # SAYS. A layout option that differed between the two would change what the
+    # document says, and none of the options above is allowed to.
+    #
+    # A design axis, not a default: `minimal`, `ivy` and `executive` stay
+    # austere on purpose.
+    contact_icons: bool = False
+    date_icon: bool = False  # a small calendar on the entry meta line
+
     page_bg: str = ""  # full-bleed paper tint, e.g. warm cream for `executive`
 
     # --- two-column (PDF only) -------------------------------------------
@@ -209,6 +237,7 @@ TEMPLATES: dict[str, TemplateSpec] = {
         # between them in the extracted text, so keyword parsers split the same.
         entry="stack", skills="chips", list_cols=2,
         bullet_scale=0.62, bullet_accent=True,
+        contact_icons=True, date_icon=True,
         margin_tb_pt=46, margin_lr_pt=58,
     ),
 
@@ -227,6 +256,7 @@ TEMPLATES: dict[str, TemplateSpec] = {
         heading_short_pt=32.0,
         entry="stack", skills="chips", list_cols=2,
         bullet_scale=0.62, bullet_accent=True,
+        contact_icons=True, date_icon=True,
         margin_tb_pt=46, margin_lr_pt=58,
     ),
 
@@ -246,6 +276,7 @@ TEMPLATES: dict[str, TemplateSpec] = {
         heading_short_pt=26.0,
         entry="stack", skills="chips", list_cols=1,
         bullet_scale=0.60, bullet_accent=True,
+        contact_icons=True,
         layout="sidebar", sidebar_ratio=0.31, sidebar_gutter=20.0,
         docx_fallback="classic",
         margin_tb_pt=44, margin_lr_pt=48,
@@ -264,6 +295,7 @@ TEMPLATES: dict[str, TemplateSpec] = {
         heading="bar", heading_bump=0.6, heading_bar_w=2.6,
         entry="stack", skills="chips", list_cols=1,
         bullet_scale=0.60, bullet_accent=True,
+        contact_icons=True,
         layout="sidebar", sidebar_ratio=0.30, sidebar_gutter=22.0,
         sidebar_panel=True, docx_fallback="modern",
         margin_tb_pt=44, margin_lr_pt=48,
@@ -348,6 +380,7 @@ TEMPLATES: dict[str, TemplateSpec] = {
         heading_short_pt=30.0,
         entry="stack", skills="chips", list_cols=2,
         bullet_scale=0.62, bullet_accent=True,
+        contact_icons=True, date_icon=True,
         margin_tb_pt=50, margin_lr_pt=62,
     ),
 

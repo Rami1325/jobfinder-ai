@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # --------------------------------------------------------------------------- #
@@ -62,6 +62,22 @@ class LanguageSkill(BaseModel):
     level: str = ""  # e.g. native / fluent / professional / basic — as written
 
 
+class SkillGroup(BaseModel):
+    """One labelled cluster of skills — "AI & LLMs", "Backend & Data".
+
+    Real CVs group their skills; a flat list of 138 tokens is a wall nobody
+    reads. The grouping used to be destroyed on import because the model had
+    nowhere to put it.
+
+    ADDITIVE AND OPTIONAL. `ResumeModel.skill_groups` defaults to empty, and
+    while it is empty every consumer behaves exactly as it did before it
+    existed — so no stored résumé, saved kit or tracker row changes meaning.
+    """
+
+    label: str = ""
+    items: list[str] = Field(default_factory=list)
+
+
 class ResumeModel(BaseModel):
     contact: Contact = Field(default_factory=Contact)
     # The target-title line under the name ("Backend Engineer"). Recruiters and
@@ -70,13 +86,49 @@ class ResumeModel(BaseModel):
     # guard checks it for rank inflation.
     headline: str = ""
     summary: str = ""
+    # THE FLAT SKILL SURFACE, and the only one anything downstream reads: the
+    # scorer's keyword coverage, the ATS scan, the ATS x-ray, résumé health and
+    # the length budget all go through `skills`. It therefore stays populated as
+    # the flat union of every group's items even when `skill_groups` carries the
+    # presentation — see `_sync_skill_groups`, which enforces exactly that.
     skills: list[str] = Field(default_factory=list)
+    # The same skills, as the source CV grouped them. Presentation only: both
+    # renderers read it, nothing that scores or guards does. Empty = the
+    # pre-existing flat behaviour, unchanged.
+    skill_groups: list[SkillGroup] = Field(default_factory=list)
     experience: list[Experience] = Field(default_factory=list)
     education: list[Education] = Field(default_factory=list)
     projects: list[Project] = Field(default_factory=list)
     certifications: list[str] = Field(default_factory=list)
     military_service: list[MilitaryService] = Field(default_factory=list)
     languages: list[LanguageSkill] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _sync_skill_groups(self) -> "ResumeModel":
+        """Guarantee `skills` ⊇ every grouped item, on every construction path.
+
+        The grouping is presentation; `skills` is what gets SCORED. A model
+        (or a hand-written payload) that returns groups and an empty — or
+        partial — `skills` list would otherwise silently drop those skills out
+        of keyword coverage and the ATS scan, which is the one regression this
+        feature is not allowed to cause. Enforcing it here rather than at each
+        call site means an LLM response, a stored JSON row and a smoke fixture
+        all get the same guarantee.
+
+        It only ever ADDS. Removing a skill is a deliberate act (the length
+        budget's last-resort trim), and that caller drops the item from its
+        group too, so the two stay consistent in both directions.
+        """
+        if not self.skill_groups:
+            return self
+        seen = {s.strip().casefold() for s in self.skills if s.strip()}
+        for group in self.skill_groups:
+            for item in group.items:
+                key = item.strip().casefold()
+                if key and key not in seen:
+                    seen.add(key)
+                    self.skills.append(item.strip())
+        return self
 
 
 # --------------------------------------------------------------------------- #

@@ -6,6 +6,7 @@ Swapping models or providers is a config change, not a code change.
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from typing import Any, Protocol
 
@@ -245,12 +246,48 @@ class StubClient:
         )
 
     # -- stub helpers ----------------------------------------------------- #
+    # "AI & LLMs: OpenAI, LangChain, RAG" — a grouped skills line as a CV writes
+    # one. Deliberately narrow on both halves:
+    #   * the comma is required, so a one-value "Email: x@y.com" contact line
+    #     cannot pass for a group;
+    #   * quotes and brackets are excluded, because `_stub_tailor` feeds this the
+    #     TAILOR user payload — résumé JSON *and* JD JSON — and a loose pattern
+    #     matched `"hard_skills": ["Python", "REST APIs", ...]`, quietly grafting
+    #     the JOB's skills onto the candidate. It surfaced as a keyword-stuffing
+    #     voice issue three sections later.
+    _SKILL_GROUP_RE = re.compile(
+        r"^[ \t]*([A-Za-z֐-׿][\w &/+.\-֐-׿]{1,38}):"
+        r"[ \t]*([^\"{}\[\]\n]*,[^\"{}\[\]\n]*)$",
+        re.MULTILINE,
+    )
+
+    def _stub_skill_groups(self, raw: str) -> list[dict[str, Any]]:
+        """Derive skill groups from the raw text, the way the real structurer
+        is asked to: copy the source's own labels when it groups its skills,
+        and return nothing when it lists them flat.
+
+        The stub echoes its input on purpose (see the class docstring) — a
+        canned constant would prove the branch runs but not that grouping
+        survives import, which is the behaviour this feature is about.
+        """
+        groups: list[dict[str, Any]] = []
+        for label, tail in self._SKILL_GROUP_RE.findall(raw or ""):
+            items = [i.strip() for i in tail.split(",") if i.strip()]
+            if len(items) >= 2:
+                groups.append({"label": label.strip(), "items": items})
+        return groups[:6]
+
     def _stub_structured_resume(self, raw: str) -> dict[str, Any]:
+        groups = self._stub_skill_groups(raw)
         return {
             "contact": {"name": "Sample Candidate", "email": "sample@example.com"},
             "headline": "Engineer",
             "summary": "Experienced professional.",
+            # `skills` stays the flat surface everything downstream scores; when
+            # the source grouped them, ResumeModel folds the grouped items into
+            # this list so none of them can go unscored.
             "skills": ["Python", "Communication", "Project Management"],
+            "skill_groups": groups,
             "experience": [
                 {
                     "company": "Acme Corp",

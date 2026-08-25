@@ -9,6 +9,7 @@ Return a JSON object with this exact shape:
   "headline": "string",
   "summary": "string",
   "skills": ["..."],
+  "skill_groups": [{"label":"string","items":["..."]}],
   "experience": [{"company","title","location","start_date","end_date","bullets":["..."]}],
   "education": [{"institution","degree","field","start_date","end_date","details"}],
   "projects": [{"name","description","bullets":["..."]}],
@@ -20,6 +21,12 @@ Use empty strings / empty arrays for anything missing. Preserve original wording
 headline: the short professional title the candidate put under their own name ("Backend
 Engineer", "מהנדסת תוכנה"). Copy it verbatim if it is there and leave it "" if it is not —
 never derive one from an Experience entry, and never write one yourself.
+skill_groups: many CVs group their skills under category labels ("AI & LLMs: OpenAI,
+LangChain", "Backend & Data: Python, PostgreSQL"). When the source does, copy each label
+verbatim into "label" and its skills into "items"; when it just lists skills flat, return
+"skill_groups": []. Never invent a label and never re-file a skill into a category the CV
+did not put it in. "skills" is ALWAYS the flat list of every individual skill — including
+every one that appears inside a group — never the category labels themselves.
 military_service: extract army/military service (e.g. IDF / צה"ל) into its own section when
 present — do NOT fold it into experience. Capture unit, role, rank, and dates exactly as
 written; leave fields empty rather than guessing.
@@ -190,9 +197,11 @@ professional typed it themselves. This outranks sounding "polished".
    shortlist, not an inventory. Output roughly 15-25 INDIVIDUAL skills, most job-relevant
    first, each a short term ("PostgreSQL", "prompt engineering") rather than a sentence.
    A master resume often groups its skills under category labels ("Backend & Data: Python,
-   PostgreSQL, ...", "GTM & Marketing Operations: ..."). Do NOT carry those labels or their
-   full blocks through: they render as one unreadable 150-word paragraph that eats half a
-   page. Unpack them, keep the items this job asks for, and DROP whole areas it never
+   PostgreSQL, ...", "GTM & Marketing Operations: ..."). The master resume keeps that
+   grouping and it renders properly there; a CV for ONE job does not carry it. Return
+   "skill_groups": [] and a flat "skills" shortlist — the master's full taxonomy eats half
+   a page on a document that is skimmed in three seconds. Unpack the groups, keep the
+   items this job asks for, and DROP whole areas it never
    mentions — a front-end and marketing tool list on a backend application is noise, no
    matter how real the experience behind it is. It stays in the master resume either way.
 3. EXPERIENCE: Keep companies/titles/dates exactly. Reorder bullets within each role so the
