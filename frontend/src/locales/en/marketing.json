@@ -1,29 +1,125 @@
 {
+  "TODO_SOCIAL_PROOF": "TODO (owner): this page deliberately contains NO testimonials, star ratings, review counts or user numbers, because none exist yet and inventing them would contradict the product's entire pitch. The `receipts.*` block fills that slot with real product guarantees instead. When there are genuine quotes with attributable names and roles, supply them and swap `receipts.*` for them. The numbers in `stats.*` are counted from the repository (0 accounts; 5 job-board providers in app/core/providers/__init__.py; 2 locales; 600+ smoke-test checks — 666 counted 2026-08-25, printed as a floor because it moves on every backend commit) — re-verify before changing them.",
   "hero": {
-    "badge": "Anti-fabrication AI · ATS-safe output",
-    "title1": "Tailored resumes",
-    "title2": "recruiters",
-    "titleHighlight": "actually trust.",
-    "sub": "JobFinder rewrites your resume for every job to beat the ATS — while a code-enforced guard makes sure every claim traces back to your real experience.",
-    "subEmphasis": "No fabrication. No AI slop.",
-    "ctaPrimary": "Find jobs for me",
-    "ctaSecondary": "See how it works",
-    "bulletNoLogin": "No login required",
-    "bulletOffline": "Runs fully offline",
+    "badge": "ATS-safe DOCX & PDF · Hebrew and English",
+    "title1": "Resumes that look designed.",
+    "title2": "Every claim",
+    "titleHighlight": "traceable to you.",
+    "sub": "JobFinder rewrites your CV for the job you're actually applying to and renders it as a clean, ATS-safe DOCX or PDF — while a code-enforced guard checks every claim back against your real experience.",
+    "subEmphasis": "No invented numbers. No made-up titles.",
+    "ctaPrimary": "Tailor my resume",
+    "ctaSecondary": "Scan my CV free",
+    "bulletNoLogin": "No account, no email, no card",
+    "bulletOffline": "Runs fully offline with a built-in stub",
     "bulletAts": "ATS-safe DOCX & PDF",
+    "bulletBilingual": "English and Hebrew, real RTL",
+    "docAlt": "Preview of a tailored resume page in the Classic template, with one bullet flagged by the fabrication guard",
     "mock": {
       "matchScore": "Match score",
-      "verified": "Verified",
-      "before": "Before",
-      "after": "After",
-      "emphasized": "Emphasized <1>Kubernetes</1> — already in your experience",
-      "blocked": "<1>\"Led team of 12\"</1> — blocked, not in your resume",
-      "guardStamp": "Guard"
+      "guardTitle": "Fabrication guard",
+      "guardBody": "1 claim couldn't be traced back to your resume.",
+      "guardStamp": "Flagged"
     }
+  },
+  "templates": {
+    "nav": "Templates",
+    "kicker": "The output",
+    "title": "This is the thing you actually send",
+    "sub": "One shared design system, and every template a different SHAPE — header band, heading treatment, entry grammar, column count. Not one document in eleven colours.",
+    "alt": "{{name}} template preview",
+    "pdfOnly": "PDF only",
+    "cta": "See them on my own CV",
+    "classic": {
+      "name": "Classic",
+      "desc": "Tinted header card, full-width heading rules. The safe default."
+    },
+    "modern": {
+      "name": "Modern",
+      "desc": "Full-bleed dark band, short thick accent underlines."
+    },
+    "split": {
+      "name": "Split",
+      "desc": "Career story in a wide column, credentials in a rail beside it."
+    },
+    "panel": {
+      "name": "Panel",
+      "desc": "The same split, with the rail as a filled colour panel."
+    },
+    "timeline": {
+      "name": "Timeline",
+      "desc": "A vertical rail with a dot per role. Progression reads first."
+    },
+    "executive": {
+      "name": "Executive",
+      "desc": "Serif on cream paper, centred name, no heading rules."
+    },
+    "ivy": {
+      "name": "Ivy",
+      "desc": "Centred serif, title-case headings. Law, consulting, academia."
+    },
+    "ledger": {
+      "name": "Ledger",
+      "desc": "Heavy black rules, rust accent, dense. Assertive."
+    },
+    "student": {
+      "name": "Student",
+      "desc": "Soft green header card, education kept in the main column."
+    },
+    "compact": {
+      "name": "Compact",
+      "desc": "The Israeli one-pager: dense rhythm, accent bar per heading."
+    },
+    "minimal": {
+      "name": "Minimal",
+      "desc": "No colour at all. Headings hang out in the margin."
+    },
+    "proof": {
+      "ats": {
+        "title": "Every template passes our own ATS scan",
+        "body": "Standard section names, no tables, text boxes, images, headers or footers. The release suite renders every template and re-extracts the text to prove it. The two two-column designs are PDF-only for a measured reason: their .docx falls back to the closest single-column sibling, and the picker says so."
+      },
+      "bilingual": {
+        "title": "The same document in Hebrew",
+        "body": "Not a mirrored screenshot. The PDF is line-broken and bidi-reordered line by line, and the DOCX mirrors weight and size onto the complex-script properties Word actually reads for Hebrew."
+      },
+      "pages": {
+        "title": "One page or two, by measurement",
+        "body": "The renderer measures the built page and compresses the vertical rhythm — never the type size — before it lets your CV spill onto a second sheet."
+      }
+    }
+  },
+  "freeScan": {
+    "kicker": "Free · no signup",
+    "title": "Check your CV against any job — free",
+    "body": "Keyword match score, matched and missing keywords, and quick résumé checks. Hebrew or English, nothing stored. Tools like this cost ₪39/month elsewhere.",
+    "cta": "Scan my CV now",
+    "note": "No account. No access code. Runs in seconds."
+  },
+  "stats": {
+    "kicker": "Numbers we can actually show you",
+    "title": "Counted from the source, not from a deck",
+    "accounts": {
+      "label": "Accounts to create",
+      "note": "No sign-up, no email, no card. The hosted build asks for a one-time access code; the free CV scan doesn't even do that."
+    },
+    "boards": {
+      "label": "Job boards searched",
+      "note": "LinkedIn, Drushim, Comeet, JobMaster and Greenhouse, fanned out at once — one board failing never sinks the search."
+    },
+    "languages": {
+      "label": "Languages, end to end",
+      "note": "English and Hebrew, with real right-to-left in the interface and in the rendered PDF and DOCX alike."
+    },
+    "checks": {
+      "label": "Automated checks per release",
+      "note": "The offline suite runs the whole pipeline, renders every template in both formats and both languages, and re-extracts the text."
+    },
+    "footnote": "What's missing here is a user count, a star rating and an \"interviews landed last month\" figure. This is a new tool and it doesn't have them yet — so it isn't going to print them."
   },
   "features": {
     "kicker": "The toolkit",
     "title": "Everything for the search — honestly built",
+    "sub": "Six surfaces, one master résumé. Save it once and every tool reads from the same set of facts.",
     "tailoring": {
       "title": "Resume tailoring",
       "body": "Rewrite for each job, with before/after match scores and a full changelog of every edit."
@@ -80,30 +176,63 @@
     "us1": "Every claim traced to your real resume",
     "us2": "Code-enforced guard blocks fabrication",
     "us3": "Tailored per job, keyword-accurate",
-    "us4": "You can defend every line you send"
+    "us4": "You can defend every line you send",
+    "guardedLabel": "What the guard diffs, claim by claim",
+    "guarded": {
+      "employers": "Employers",
+      "titles": "Job titles",
+      "dates": "Dates",
+      "credentials": "Credentials",
+      "numbers": "Numbers"
+    },
+    "guardedNote": "Skills are deliberately not on that list. Adopting the job's wording for something you genuinely do is honest tailoring — flagging it would only train you to ignore the flags that matter."
+  },
+  "receipts": {
+    "kicker": "Receipts, not testimonials",
+    "title": "There are no reviews on this page",
+    "sub": "No stars, no user count, no quotes from people who don't exist. Here is what the code promises instead — and what enforces each promise.",
+    "guard": {
+      "quote": "If a claim isn't in your resume, you find out before the recruiter does.",
+      "body": "The guard rebuilds a facts ledger from the tailored résumé and diffs it against the one built from your original. Employers, titles, dates, credentials and numbers that appeared from nowhere are flagged one by one, and you see them before you download anything.",
+      "source": "The fabrication guard — runs after every tailor, not only in tests"
+    },
+    "score": {
+      "quote": "The match score can show its work, term by term.",
+      "body": "Keyword coverage is plain deterministic Python: which terms the job asked for, which ones your résumé already earned, and which ones the rewrite surfaced. Only the recruiter-fit half of the score ever asks a model.",
+      "source": "The scorer — measured before and after every tailor"
+    },
+    "ats": {
+      "quote": "Eleven format checks, and not one of them needs an API key.",
+      "body": "Date formats, acronym pairing, pronouns, bullet length, résumé length weighed against your actual years of experience. Because it's deterministic it's instant, free, and identical every time you run it.",
+      "source": "The ATS scan — free and public, no code required"
+    }
   },
   "faq": {
     "kicker": "FAQ",
     "title": "Straight answers",
     "q1": "Does JobFinder make things up on my resume?",
-    "a1": "No — and that's the whole point. A code-enforced Fabrication Guard diffs every tailored claim against a ledger built from your original resume. Anything it can't trace back to your real experience is flagged, not shipped.",
+    "a1": "No — and that's the whole point. A code-enforced Fabrication Guard diffs every tailored claim against a ledger built from your original resume. Anything it can't trace back to your real experience is flagged, per claim, before you download. Skills are the one deliberate exception: adopting the job's wording for something you genuinely do is honest tailoring, not fabrication.",
     "q2": "Will the output pass ATS screening?",
-    "a2": "Yes. Both the DOCX and PDF exporters enforce ATS-safe rules: single column, standard section names, no tables, text boxes, images, headers, or footers — just clean, parseable text.",
+    "a2": "Both exporters enforce ATS-safe rules by construction: single column, standard section names, no tables, text boxes, images, headers or footers — just clean, selectable text. The release suite renders every template in both formats and both languages and re-extracts the text to prove it stays parseable. No tool can promise a specific company's screener will like you, but nothing in the file is there to trip one.",
     "q3": "Do I need an account or a subscription?",
-    "a3": "No accounts, no billing. It's a personal tool. It even runs fully offline with a built-in stub, so you can try the entire pipeline without an API key.",
+    "a3": "There are no accounts, no email and no billing anywhere in the product. The hosted build is gated by a single access code stored on your device — that's a door key, not a profile. The free CV scan is outside the gate entirely. It also runs fully offline with a built-in stub, so you can exercise the whole pipeline without an API key.",
     "q4": "How is this different from auto-apply tools?",
-    "a4": "Auto-apply tools optimize for volume and often submit generic, fabricated applications that get flagged. JobFinder optimizes for quality and truth: you stay in control of what's sent, and every claim is defensible."
+    "a4": "Auto-apply tools optimize for volume and often submit generic, fabricated applications that get flagged. JobFinder optimizes for quality and truth: you stay in control of what's sent, and every claim is defensible. Automated submission exists for exactly one board, only for kits you approved and the guard cleared — LinkedIn is never automated.",
+    "q5": "Can I choose how the resume looks?",
+    "a5": "Yes. Each template is its own palette, type hierarchy and vertical rhythm, and you switch at download time without re-running the tailor. They share one design system, so the DOCX and the PDF read as the same document rather than two cousins.",
+    "q6": "Does it really handle Hebrew?",
+    "a6": "End to end: the interface, the parsing, the tailoring and both exports. The PDF has its own layout engine that line-breaks and bidi-reorders line by line instead of leaning on a direction-blind paragraph engine, and the Hebrew DOCX mirrors weight and size onto the complex-script properties Word actually reads. Mixed Hebrew/English résumés work too."
   },
   "finalCta": {
-    "title": "Optimize the truth. Land the interview.",
-    "sub": "Upload your resume, paste a job, and get a tailored, verified version in under a minute.",
-    "cta": "Find jobs for me"
+    "title": "Send something you can defend.",
+    "sub": "Upload your CV, paste the job, and get a tailored, guard-checked version as an ATS-safe DOCX or PDF in about a minute.",
+    "cta": "Tailor my resume",
+    "ctaSecondary": "Try the free scan",
+    "note": "Nothing is stored for the free scan, and everything the app does hold about you can be deleted from a single button inside it."
   },
-  "freeScan": {
-    "kicker": "Free · no signup",
-    "title": "Check your CV against any job — free",
-    "body": "Keyword match score, matched and missing keywords, and quick résumé checks. Hebrew or English, nothing stored. Tools like this cost ₪39/month elsewhere.",
-    "cta": "Scan my CV now",
-    "note": "No account. No access code. Runs in seconds."
+  "footer": {
+    "navLabel": "Site sections",
+    "blurb": "An honest résumé tailor. It rewrites for the job, renders ATS-safe DOCX and PDF, and flags anything it can't trace back to you.",
+    "honesty": "Everything claimed on this page is either visible in the product or checkable in its source. There are no user counts, star ratings or testimonials here, because there aren't any yet."
   }
 }

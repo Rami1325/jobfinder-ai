@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ScanLine, Contact, Mail, Send, MessageSquareText, ArrowUpRight, Wrench, Building2, HeartPulse } from "lucide-react";
+import { ScanLine, ScanEye, Contact, Mail, Send, MessageSquareText, ArrowUpRight, Wrench, Building2, HeartPulse } from "lucide-react";
 import { cn } from "../lib/cn";
 import { TiltedCard } from "../components/ui";
 
@@ -8,6 +8,7 @@ import { TiltedCard } from "../components/ui";
 // (sm:col-span-2 keeps every row hole-free at 2 and 3 columns alike).
 const tools = [
   { to: "/tools/ats", icon: ScanLine, key: "ats" },
+  { to: "/tools/xray", icon: ScanEye, key: "xray" },
   { to: "/tools/company-brief", icon: Building2, key: "brief" },
   { to: "/tools/resume-health", icon: HeartPulse, key: "health" },
   { to: "/tools/outreach", icon: Send, key: "outreach" },

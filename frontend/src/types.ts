@@ -534,3 +534,29 @@ export interface FeedbackOut {
   text: string;
   created_at: string;
 }
+
+/** ATS X-ray (21.7) — what a parser actually recovers from the rendered file. */
+export interface ATSXrayFact {
+  kind: string;
+  value: string;
+  /** clean = whole, on one line · split = wrapped · polluted = shares its line
+   *  with the other column · missing = the parser never got it back. */
+  status: "clean" | "split" | "polluted" | "missing";
+  line: string;
+  collided_with: string;
+}
+
+export interface ATSXrayResult {
+  template: string;
+  fmt: "pdf" | "docx";
+  pages: number;
+  two_column: boolean;
+  /** Set for a DOCX of a two-column template: the id actually rendered. */
+  docx_fallback: string;
+  text: string;
+  facts: ATSXrayFact[];
+  clean: number;
+  split: number;
+  polluted: number;
+  missing: number;
+}

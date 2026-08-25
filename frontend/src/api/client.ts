@@ -40,6 +40,7 @@ import type {
   SearchContext,
   StaleApplication,
   TailorResult,
+  ATSXrayResult,
 } from "../types";
 
 // In dev, requests go through the Vite proxy at /api -> http://localhost:8000.
@@ -106,8 +107,23 @@ export function resumeFilename(candidateName: string, company: string): string {
   return parts.join(" - ") || "resume";
 }
 
-/** Visual templates the backend renderers support (see app/render/templates.py). */
-export const RESUME_TEMPLATES = ["classic", "modern", "compact", "executive", "minimal"] as const;
+/** Visual templates the backend renderers support (see app/render/templates.py).
+ * Order is the picker's display order. `split` and `panel` are two-column PDF
+ * designs — their .docx falls back to the closest single-column sibling
+ * (see `isPdfOnlyTemplate` in components/TemplatePicker). */
+export const RESUME_TEMPLATES = [
+  "classic",
+  "modern",
+  "split",
+  "panel",
+  "timeline",
+  "executive",
+  "ivy",
+  "ledger",
+  "student",
+  "compact",
+  "minimal",
+] as const;
 export type ResumeTemplate = (typeof RESUME_TEMPLATES)[number];
 
 export async function downloadResume(
@@ -437,6 +453,16 @@ export async function freeScan(file: File, jdText: string): Promise<FreeScanResu
 
 export async function atsScan(resume: ResumeModel, jdText = ""): Promise<ATSScanResult> {
   const { data } = await api.post<ATSScanResult>("/tools/ats-scan", { resume, jd_text: jdText });
+  return data;
+}
+
+/** Render the résumé and read it back with our own parser — deterministic, uncapped. */
+export async function atsXray(
+  resume: ResumeModel,
+  template: ResumeTemplate = "classic",
+  fmt: "pdf" | "docx" = "pdf",
+): Promise<ATSXrayResult> {
+  const { data } = await api.post<ATSXrayResult>("/tools/ats-xray", { resume, template, fmt });
   return data;
 }
 

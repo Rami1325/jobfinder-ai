@@ -23,6 +23,7 @@ const JobsPage = lazy(() => import("./pages/JobsPage"));
 const KitReviewPage = lazy(() => import("./pages/KitReviewPage"));
 const ToolsPage = lazy(() => import("./pages/ToolsPage"));
 const AtsToolPage = lazy(() => import("./pages/tools/AtsToolPage"));
+const XrayToolPage = lazy(() => import("./pages/tools/XrayToolPage"));
 const LinkedInToolPage = lazy(() => import("./pages/tools/LinkedInToolPage"));
 const FollowUpToolPage = lazy(() => import("./pages/tools/FollowUpToolPage"));
 const OutreachToolPage = lazy(() => import("./pages/tools/OutreachToolPage"));
@@ -62,6 +63,7 @@ export default function App() {
             <Route path="/kits/:id" element={<KitReviewPage />} />
             <Route path="/tools" element={<ToolsPage />} />
             <Route path="/tools/ats" element={<AtsToolPage />} />
+            <Route path="/tools/xray" element={<XrayToolPage />} />
             <Route path="/tools/linkedin" element={<LinkedInToolPage />} />
             <Route path="/tools/follow-up" element={<FollowUpToolPage />} />
             <Route path="/tools/outreach" element={<OutreachToolPage />} />

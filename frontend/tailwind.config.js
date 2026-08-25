@@ -31,20 +31,33 @@ export default {
         mint: "rgb(var(--mint) / <alpha-value>)",
         warn: "rgb(var(--warn) / <alpha-value>)",
         danger: "rgb(var(--danger) / <alpha-value>)",
+        // Marketing-only aurora/tint hues. Decorative — they never carry
+        // text. Defined on both :root and .paper in styles.css so these
+        // utilities are safe anywhere, but they are only *designed* for the
+        // paper landing.
+        paper: {
+          mint: "rgb(var(--paper-mint) / <alpha-value>)",
+          violet: "rgb(var(--paper-violet) / <alpha-value>)",
+          peach: "rgb(var(--paper-peach) / <alpha-value>)",
+          blush: "rgb(var(--paper-blush) / <alpha-value>)",
+        },
       },
       fontFamily: {
         sans: ['"Inter Variable"', "Inter", "system-ui", "-apple-system", '"Segoe UI"', "sans-serif"],
       },
       borderRadius: {
         xl2: "14px",
+        xl3: "22px",
       },
       boxShadow: {
         // Per-theme shadow strings live in styles.css (glows in dark,
-        // soft neutral shadows in light).
+        // soft neutral shadows in light/paper).
         glow: "var(--shadow-glow)",
         "glow-mint": "var(--shadow-glow-mint)",
         panel: "var(--shadow-panel)",
         card: "var(--shadow-card)",
+        // The résumé-page lift used by the landing's document thumbnails.
+        doc: "var(--shadow-doc)",
       },
       backgroundImage: {
         "grid-faint": "var(--grid-faint)",

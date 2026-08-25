@@ -83,6 +83,114 @@
   --hero-glow: radial-gradient(60% 50% at 50% 0%, rgb(var(--accent) / 0.1) 0%, rgb(var(--bg) / 0) 70%);
 }
 
+/*
+  ===========================================================================
+  PAPER — the marketing surface's own palette.
+  ===========================================================================
+  The landing is deliberately LIGHT and warm-white while the app stays dark.
+  The reason is not taste: the product IS a white page, and showing white
+  pages on white is what makes the site read as a career product instead of a
+  developer tool.
+
+  The tokens above are GLOBAL (`:root` = dark, `:root.light` = light) and the
+  theme toggle flips the class on <html> — so flipping them here would flip
+  the whole app. Instead the marketing shell redefines the *same* custom
+  properties on its own subtree via this `.paper` class (applied in
+  layouts/MarketingLayout.tsx). Every existing `bg-bg` / `text-ink` /
+  `border-line` utility inside the landing then resolves to paper, while
+  /home, /app, /jobs, /tools/*, /tracker keep whatever the toggle chose.
+  `.ink-slab` below does the same trick in reverse for the one full-bleed
+  dark band on the page.
+
+  Measured contrast against --bg (#fbf9f5): ink 14.8:1, ink-muted 6.6:1,
+  ink-faint 4.3:1, accent 6.4:1, white-on-accent 6.8:1, mint 5.1:1,
+  danger 5.1:1 — at or above AA for the role each one plays.
+*/
+.paper {
+  color-scheme: light;
+
+  --bg: 251 249 245; /* #fbf9f5 warm near-white */
+  --bg-soft: 244 241 234; /* #f4f1ea */
+  --bg-elevated: 255 255 255; /* #ffffff */
+  --panel: 255 255 255; /* #ffffff — cards are literally paper */
+  --panel-2: 243 240 232; /* #f3f0e8 */
+  --line: 226 220 208; /* #e2dcd0 soft warm hairline */
+  --ink: 38 34 47; /* #26222f near-black, faintly violet */
+  --ink-muted: 93 87 105; /* #5d5769 */
+  --ink-faint: 114 107 127; /* #726b7f */
+  --accent: 91 63 212; /* #5b3fd4 */
+  --accent-soft: 109 82 224; /* #6d52e0 */
+  --accent-deep: 74 48 187; /* #4a30bb */
+  --mint: 11 122 83; /* #0b7a53 */
+  --warn: 150 101 10; /* #96650a */
+  --danger: 194 52 74; /* #c2344a */
+
+  --ring-track: 232 227 216; /* #e8e3d8 */
+  --radius: 12px;
+
+  /* Paper gets shadows, never glows. */
+  --shadow-glow: 0 1px 2px rgb(38 34 47 / 0.06), 0 10px 30px -12px rgb(var(--accent) / 0.42);
+  --shadow-glow-mint: 0 1px 2px rgb(38 34 47 / 0.06), 0 10px 30px -12px rgb(var(--mint) / 0.32);
+  --shadow-panel: 0 1px 2px rgb(38 34 47 / 0.05), 0 26px 60px -30px rgb(38 34 47 / 0.3);
+  --shadow-card: 0 1px 2px rgb(38 34 47 / 0.05), 0 14px 30px -22px rgb(38 34 47 / 0.24);
+  /* The résumé-page lift: crisp near shadow + a long soft one, like a sheet
+     of A4 held a centimetre off the desk. */
+  --shadow-doc: 0 1px 1px rgb(38 34 47 / 0.06), 0 2px 4px rgb(38 34 47 / 0.05),
+    0 18px 40px -18px rgb(38 34 47 / 0.28);
+
+  /* No grid and no hero beam on paper — the aurora blobs do that job. */
+  --grid-faint: none;
+  --hero-glow: radial-gradient(70% 55% at 50% 0%, rgb(var(--accent) / 0.07) 0%, rgb(var(--bg) / 0) 72%);
+}
+
+/*
+  The aurora hues. Decorative only — they never carry text, so they are the
+  one place on the page that is allowed to be soft and saturated at once.
+  Declared on :root as well so the `bg-paper-*` utilities never resolve to an
+  undefined color if one is ever used outside the marketing shell.
+*/
+:root,
+.paper {
+  --paper-mint: 94 214 178; /* #5ed6b2 */
+  --paper-violet: 167 139 250; /* #a78bfa */
+  --paper-peach: 253 186 140; /* #fdba8c */
+  --paper-blush: 244 164 196; /* #f4a4c4 */
+}
+:root {
+  --shadow-doc: 0 2px 6px rgb(0 0 0 / 0.4), 0 20px 45px -20px rgb(0 0 0 / 0.6);
+}
+
+/*
+  The single full-bleed dark band inside the paper page. Restates the dark
+  palette (it cannot inherit it — `.paper` overrode it on an ancestor), so
+  every token-driven utility keeps working unchanged inside the band.
+*/
+.ink-slab {
+  color-scheme: dark;
+
+  --bg: 15 20 32;
+  --bg-soft: 12 16 25;
+  --bg-elevated: 19 26 40;
+  --panel: 24 32 47;
+  --panel-2: 31 42 61;
+  --line: 52 67 94;
+  --ink: 233 238 246;
+  --ink-muted: 166 178 199;
+  --ink-faint: 128 141 165;
+  --accent: 132 164 255;
+  --accent-soft: 158 184 255;
+  --accent-deep: 79 140 255;
+  --mint: 61 224 174;
+  --warn: 255 201 107;
+  --danger: 255 128 128;
+
+  --ring-track: 38 50 74;
+  --shadow-glow: 0 0 0 1px rgb(var(--accent) / 0.25), 0 8px 40px -8px rgb(var(--accent) / 0.4);
+  --shadow-glow-mint: 0 0 0 1px rgb(var(--mint) / 0.25), 0 8px 40px -8px rgb(var(--mint) / 0.35);
+  --shadow-panel: 0 20px 60px -20px rgb(0 0 0 / 0.6);
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 12px 30px -18px rgb(0 0 0 / 0.7);
+}
+
 * { box-sizing: border-box; }
 
 /* Always reserve the vertical scrollbar so navigating between a page that
@@ -92,6 +200,12 @@
    custom track is transparent, so the reserved strip is invisible when there's
    nothing to scroll. Also keeps modals (which lock body scroll) from shifting. */
 html { overflow-y: scroll; }
+
+/* The marketing header is `sticky top-0`, so an in-page jump (#templates, #how,
+   #features, #faq — all reachable from the nav) would otherwise land with the
+   section heading hidden underneath it. Applies to anchor navigation and
+   scrollIntoView only; it never affects normal scrolling. */
+html { scroll-padding-top: 5rem; }
 
 /* Hebrew UI: Heebo carries both Hebrew and Latin so mixed text stays coherent.
    Loaded via @fontsource-variable/heebo in main.tsx. */
@@ -241,4 +355,101 @@ select {
   from { transform: translateX(80%) scaleX(1.1); opacity: 0.5; }
   50% { opacity: 0.85; }
   to { transform: translateX(-175%) scaleX(0.85); opacity: 0.55; }
+}
+
+/*
+  Paper aurora — the marketing backdrop. Large multi-hue blobs bleeding off
+  every edge of the viewport.
+
+  Same two rules as the pillar above, for the same reasons: softness is baked
+  into the gradient falloff (NEVER `filter: blur`, which re-rasterizes the
+  layer every frame), and the drift animates transform only, so the whole
+  backdrop lives on the compositor and costs nothing on the scroll path.
+
+  The drift is deliberately written so BOTH ends of each keyframe look right:
+  the global prefers-reduced-motion rule collapses the duration to 0.001ms
+  with one iteration, which parks every blob at its `to` state permanently.
+
+  Positioned with inset-inline-start so the whole composition mirrors in RTL.
+*/
+.paper-aurora {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: rgb(var(--bg));
+}
+.paper-aurora > i {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+}
+
+.paper-aurora-mint {
+  inset-block-start: -26vh;
+  inset-inline-start: -16vw;
+  width: clamp(420px, 58vw, 1040px);
+  aspect-ratio: 1;
+  background: radial-gradient(
+    closest-side,
+    rgb(var(--paper-mint) / 0.4),
+    rgb(var(--paper-mint) / 0.14) 48%,
+    rgb(var(--paper-mint) / 0) 78%
+  );
+  animation: paper-drift-a 27s ease-in-out infinite alternate;
+}
+
+.paper-aurora-violet {
+  inset-block-start: -18vh;
+  inset-inline-end: -14vw;
+  width: clamp(440px, 62vw, 1120px);
+  aspect-ratio: 1;
+  background: radial-gradient(
+    closest-side,
+    rgb(var(--paper-violet) / 0.42),
+    rgb(var(--paper-violet) / 0.15) 46%,
+    rgb(var(--paper-violet) / 0) 76%
+  );
+  animation: paper-drift-b 34s ease-in-out infinite alternate;
+}
+
+.paper-aurora-peach {
+  inset-block-start: 34vh;
+  inset-inline-start: 22vw;
+  width: clamp(380px, 52vw, 900px);
+  aspect-ratio: 1;
+  background: radial-gradient(
+    closest-side,
+    rgb(var(--paper-peach) / 0.34),
+    rgb(var(--paper-peach) / 0.12) 46%,
+    rgb(var(--paper-peach) / 0) 76%
+  );
+  animation: paper-drift-c 41s ease-in-out infinite alternate;
+}
+
+.paper-aurora-blush {
+  inset-block-end: -24vh;
+  inset-inline-end: -10vw;
+  width: clamp(400px, 56vw, 980px);
+  aspect-ratio: 1;
+  background: radial-gradient(
+    closest-side,
+    rgb(var(--paper-blush) / 0.3),
+    rgb(var(--paper-blush) / 0.11) 46%,
+    rgb(var(--paper-blush) / 0) 76%
+  );
+  animation: paper-drift-a 48s ease-in-out infinite alternate;
+}
+
+@keyframes paper-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(3%, 4%, 0) scale(1.07); }
+}
+@keyframes paper-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.05); }
+  to { transform: translate3d(-4%, 3%, 0) scale(1); }
+}
+@keyframes paper-drift-c {
+  from { transform: translate3d(0, 2%, 0) scale(1.03); }
+  to { transform: translate3d(4%, -3%, 0) scale(1); }
 }

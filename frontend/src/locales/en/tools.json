@@ -15,6 +15,10 @@
       "title": "ATS résumé scanner",
       "body": "Score formatting + keyword coverage and get concrete fixes before a bot rejects you."
     },
+    "xray": {
+      "title": "ATS X-ray",
+      "body": "See the exact text a parser pulls out of your rendered CV — and every fact that came back wrong."
+    },
     "linkedin": {
       "title": "LinkedIn optimizer",
       "body": "A sharper headline, About, and bullets — drawn only from your real experience."
@@ -83,6 +87,54 @@
     "scoreLabel": "ATS score",
     "coverage": "Keyword coverage vs. JD: <1>{{pct}}%</1>",
     "missing": "Missing keywords"
+  },
+  "xray": {
+    "gateFeature": "the ATS X-ray",
+    "subtitle": "Render your résumé, then read it back the way a parser does. Not a promise that it works — the actual text a machine recovers.",
+    "pickTitle": "Which document should we x-ray?",
+    "pickHint": "Pick the template and the file type you'd actually send. Two-column designs are worth checking here first.",
+    "fmtLabel": "File format",
+    "run": "Read it back",
+    "problemsTitle": "What came back wrong",
+    "textTitle": "What the parser actually read",
+    "textHint": "Verbatim, in the order a machine recovers it. This is the file's own text — not a preview, not a summary.",
+    "legendTitle": "How to read this",
+    "collided": "Shares its line with “{{value}}” from the other column, so a parser can misread which is which.",
+    "count": {
+      "clean": "clean",
+      "split": "wrapped",
+      "polluted": "collided",
+      "missing": "lost"
+    },
+    "legend": {
+      "clean": "recovered whole, on one line — exactly what you want.",
+      "split": "every word survived but the line wrapped. Normal, and harmless to keyword matching.",
+      "polluted": "recovered, but sharing its line with the other column. Keywords still match; which employer a title belongs to may not.",
+      "missing": "the parser did not get it back at all. Fix this before you send the file."
+    },
+    "verdict": {
+      "clean": "Every protected fact came back clean. This is what a machine will read.",
+      "polluted": "Some lines came back with both columns fused together. Individual bullets survive, so keyword matching is fine — but a parser may attach a job title to the wrong employer. Single-column templates never do this.",
+      "fallback": "This is a two-column design, so the Word file is really the single-column “{{template}}” — which is what we x-rayed, because it is what you would send."
+    },
+    "kind": {
+      "name": "Name",
+      "email": "Email",
+      "phone": "Phone",
+      "location": "Location",
+      "linkedin": "LinkedIn",
+      "headline": "Headline",
+      "title": "Job title",
+      "employer": "Employer",
+      "dates": "Dates",
+      "bullet": "Bullet",
+      "institution": "Institution",
+      "degree": "Degree",
+      "military": "Military unit",
+      "certification": "Certification",
+      "skill": "Skill",
+      "language": "Language"
+    }
   },
   "linkedin": {
     "gateFeature": "the LinkedIn optimizer",

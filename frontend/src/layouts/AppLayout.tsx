@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   ChevronDown,
   ScanLine,
+  ScanEye,
   Building2,
   HeartPulse,
   Send,
@@ -48,6 +49,7 @@ const moreNav: NavEntry[] = [
 // (labels come from the "tools" namespace so the two stay in sync).
 const toolsSubNav = [
   { to: "/tools/ats", key: "ats", icon: ScanLine },
+  { to: "/tools/xray", key: "xray", icon: ScanEye },
   { to: "/tools/company-brief", key: "brief", icon: Building2 },
   { to: "/tools/resume-health", key: "health", icon: HeartPulse },
   { to: "/tools/outreach", key: "outreach", icon: Send },

@@ -2,18 +2,18 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
-import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft } from "lucide-react";
+import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft, ScanEye } from "lucide-react";
 import {
   downloadResume,
   resumeFilename,
   getApplication,
   getMasterResume,
   recordRejectedPhrases,
-  RESUME_TEMPLATES,
   type ResumeTemplate,
   saveApplication,
   updateApplication,
 } from "../api/client";
+import TemplatePicker, { isPdfOnlyTemplate } from "../components/TemplatePicker";
 import ChangeLog from "../components/ChangeLog";
 import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
@@ -372,30 +372,15 @@ export default function TailorPage() {
             <Card>
               <CardTitle>{t("download.title")}</CardTitle>
               {/* Template picker (PLAN 6): every option is ATS-safe by
-                  construction — the registry only varies fonts/colors/spacing. */}
-              <div className="mt-3 flex flex-wrap gap-2" role="radiogroup" aria-label={t("download.templateLabel")}>
-                {RESUME_TEMPLATES.map((id) => (
-                  <button
-                    key={id}
-                    type="button"
-                    role="radio"
-                    aria-checked={template === id}
-                    onClick={() => setTemplate(id)}
-                    className={
-                      template === id
-                        ? "rounded-xl border border-accent/60 bg-accent/10 px-3 py-2 text-start transition-colors"
-                        : "rounded-xl border border-line bg-panel-2 px-3 py-2 text-start transition-colors hover:border-accent/40"
-                    }
-                  >
-                    <span className="block text-sm font-semibold text-ink">
-                      {t(`download.templates.${id}.name`)}
-                    </span>
-                    <span className="block text-xs text-ink-muted">
-                      {t(`download.templates.${id}.desc`)}
-                    </span>
-                  </button>
-                ))}
-              </div>
+                  construction — no tables, text boxes or images in any of them.
+                  The two-column designs are PDF-only; TemplatePicker badges
+                  them and the note under the buttons says what the .docx does. */}
+              <TemplatePicker
+                className="mt-2"
+                value={template}
+                onChange={setTemplate}
+                label={t("download.templateLabel")}
+              />
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <Button
                   icon={<Download size={16} />}
@@ -442,7 +427,24 @@ export default function TailorPage() {
                 </Button>
               </div>
               {appliedPrompt}
-              <p className="mt-3 text-xs text-ink-muted">{t("download.atsNote")}</p>
+              {/* A two-column pick can't ship as .docx, so the ATS line is
+                  replaced (not stacked) by the plain-language fallback note —
+                  "single-column" would otherwise be false for its PDF. */}
+              <p className="mt-3 text-xs text-ink-muted">
+                {isPdfOnlyTemplate(template)
+                  ? t("download.docxFallback", { name: t(`download.templates.${template}.name`) })
+                  : t("download.atsNote")}
+              </p>
+              {/* The honest half of shipping two-column designs: don't just warn
+                  that a parser might interleave them — let the user go and SEE
+                  what one actually reads back from this exact file. */}
+              <Link
+                to="/tools/xray"
+                className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent-soft underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+              >
+                <ScanEye size={13} />
+                {t("download.xrayLink")}
+              </Link>
             </Card>
 
             <CoverLetter

@@ -89,6 +89,27 @@ function SectionHead({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * The meta line under an entry title: "Employer · Location · Dates".
+ * Mirrors `_Segments` in the PDF renderer — the employer carries the weight and
+ * the accent, the rest is muted, and separators only appear BETWEEN parts (a
+ * dot in front of the first surviving bit is the easy bug here).
+ */
+function MetaLine({ lead = "", bits = [] }: { lead?: string; bits?: (string | undefined)[] }) {
+  const parts = [lead, ...bits].filter((b): b is string => Boolean(b && b.trim()));
+  if (parts.length === 0) return null;
+  return (
+    <div className="text-xs text-ink-muted">
+      {parts.map((bit, i) => (
+        <span key={`${bit}-${i}`}>
+          {i > 0 && <span className="mx-1.5 text-ink-faint">·</span>}
+          <span className={i === 0 && lead ? "font-semibold text-accent-soft" : undefined}>{bit}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function ResumeView({ resume }: Props) {
   const { t } = useTranslation("tailor");
   const c = resume.contact;
@@ -119,18 +140,19 @@ export default function ResumeView({ resume }: Props) {
       <section key="experience">
         <SectionHead>{t("sections.experience")}</SectionHead>
         <div className="space-y-3">
+          {/* Mirrors the renderers' stacked entry (TemplateSpec.entry="stack",
+              the default in 9 of the 11 templates): the title on its own line,
+              then one meta line reading "Employer · Location · Dates". The old
+              preview joined "title — company" and pushed "location | dates"
+              flush right, which is a layout no download has produced since the
+              entry grammar changed. */}
           {resume.experience.map((e, i) => (
             <div key={i}>
-              <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
-                <strong className="text-sm font-semibold text-ink">
-                  {[e.title, e.company].filter(Boolean).join(" — ")}
-                </strong>
-                <span className="text-xs text-ink-muted">
-                  {[e.location, [e.start_date, e.end_date].filter(Boolean).join(" – ")]
-                    .filter(Boolean)
-                    .join(" | ")}
-                </span>
-              </div>
+              <strong className="block text-sm font-semibold text-ink">{e.title || e.company}</strong>
+              <MetaLine
+                lead={e.title ? e.company : ""}
+                bits={[e.location, [e.start_date, e.end_date].filter(Boolean).join(" – ")]}
+              />
               <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
                 {e.bullets.map((b, j) => (
                   <li key={j}>{b}</li>

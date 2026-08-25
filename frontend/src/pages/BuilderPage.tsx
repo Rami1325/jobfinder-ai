@@ -14,14 +14,15 @@ import {
   Trash2,
   Wand2,
   X,
+  ScanEye,
 } from "lucide-react";
 import {
-  RESUME_TEMPLATES,
   downloadResume,
   resumeFilename,
   saveMasterResume,
   type ResumeTemplate,
 } from "../api/client";
+import TemplatePicker, { isPdfOnlyTemplate } from "../components/TemplatePicker";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { masterResumeLabel } from "../hooks/useSaveMasterResume";
 import { resumeLanguage } from "../lib/lang";
@@ -753,31 +754,9 @@ export default function BuilderPage() {
           </Card>
 
           <Card className="space-y-3">
-            {/* Template registry is ATS-safe by construction — reuse the tailor
-                page's translated names so the two pickers never drift. */}
-            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t("finish.template")}>
-              {RESUME_TEMPLATES.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="radio"
-                  aria-checked={template === id}
-                  onClick={() => setTemplate(id)}
-                  className={
-                    template === id
-                      ? "rounded-xl border border-accent/60 bg-accent/10 px-3 py-2 text-start transition-colors"
-                      : "rounded-xl border border-line bg-panel-2 px-3 py-2 text-start transition-colors hover:border-accent/40"
-                  }
-                >
-                  <span className="block text-sm font-semibold text-ink">
-                    {tTailor(`download.templates.${id}.name`)}
-                  </span>
-                  <span className="block text-xs text-ink-muted">
-                    {tTailor(`download.templates.${id}.desc`)}
-                  </span>
-                </button>
-              ))}
-            </div>
+            {/* Same picker as the tailor page — it reads the tailor namespace
+                itself, so the two can never drift apart. */}
+            <TemplatePicker value={template} onChange={setTemplate} label={t("finish.template")} />
 
             {clash && !saved && (
               <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-ink">
@@ -807,7 +786,26 @@ export default function BuilderPage() {
               </Button>
             </div>
             {!hasName && <p className="text-xs text-warn">{t("nameRequired")}</p>}
-            <p className="text-xs text-ink-muted">{t("finish.atsNote")}</p>
+            {/* A two-column pick can't ship as .docx, so the ATS line is
+                replaced (not stacked) by the plain-language fallback note —
+                "single-column" would otherwise be false for its PDF. */}
+            <p className="text-xs text-ink-muted">
+              {isPdfOnlyTemplate(template)
+                ? tTailor("download.docxFallback", {
+                    name: tTailor(`download.templates.${template}.name`),
+                  })
+                : t("finish.atsNote")}
+            </p>
+            {/* The honest half of shipping two-column designs: don't just warn
+                that a parser might interleave them — let the user go and SEE
+                what one actually reads back from this exact file. */}
+            <Link
+              to="/tools/xray"
+              className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent-soft underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+            >
+              <ScanEye size={13} />
+              {tTailor("download.xrayLink")}
+            </Link>
           </Card>
 
           {saved && (

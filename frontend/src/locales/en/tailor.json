@@ -56,28 +56,55 @@
     "pdf": "Download .pdf",
     "atsNote": "Output is single-column, ATS-safe (no tables, columns, or images).",
     "templateLabel": "Template",
+    "pdfOnlyBadge": "PDF only",
+    "docxFallback": "{{name}} is a two-column PDF design. The Word file downloads as the single-column version — and both stay ATS-safe: no tables, text boxes or images.",
     "templates": {
       "classic": {
         "name": "Classic",
-        "desc": "Navy headings, centered name — the safe default"
+        "desc": "The CV Israeli recruiters expect, with every fact exactly where they look."
       },
       "modern": {
         "name": "Modern",
-        "desc": "Teal accent, name at the start, roomier spacing"
+        "desc": "A colour band puts your name and target role where the eye lands first."
       },
-      "compact": {
-        "name": "Compact",
-        "desc": "Tight one-pager — the Israeli convention"
+      "split": {
+        "name": "Split",
+        "desc": "Career story in one wide column, skills and education in a rail beside it. PDF only — the Word file downloads as the single-column version."
+      },
+      "panel": {
+        "name": "Panel",
+        "desc": "A colour panel holds your credentials while your experience runs full height beside it. PDF only — the Word file downloads as the single-column version."
+      },
+      "timeline": {
+        "name": "Timeline",
+        "desc": "Draws your career as one continuous line — the progression reads first."
       },
       "executive": {
         "name": "Executive",
-        "desc": "Serif type, deep navy, generous margins — reads senior"
+        "desc": "Formal and understated — for finance, law and senior roles."
+      },
+      "ivy": {
+        "name": "Ivy",
+        "desc": "The conservative layout hiring committees in law, consulting and academia know."
+      },
+      "ledger": {
+        "name": "Ledger",
+        "desc": "Assertive and dense — for operators with ground to cover and numbers to show."
+      },
+      "student": {
+        "name": "Student",
+        "desc": "Built for a first or second job, where army service and projects carry the weight."
+      },
+      "compact": {
+        "name": "Compact",
+        "desc": "Ten years of work on one page, without shrinking the type past readable."
       },
       "minimal": {
         "name": "Minimal",
-        "desc": "No colour, wide-tracked headings, lots of white space"
+        "desc": "Nothing but type — nothing between the reader and what you did."
       }
-    }
+    },
+    "xrayLink": "See what a parser actually reads from this file"
   },
   "save": {
     "cta": "Save to tracker",
