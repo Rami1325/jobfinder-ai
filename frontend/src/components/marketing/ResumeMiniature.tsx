@@ -1,5 +1,6 @@
-import { useMemo, type ReactNode } from "react";
+import { useId, useMemo, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { useTranslation } from "react-i18next";
 
 /**
  * Hand-drawn résumé thumbnails — the landing's most important asset.
@@ -15,14 +16,34 @@ import { motion, useReducedMotion } from "framer-motion";
  * SPECS below — page size, margins, type sizes, palette, header treatment,
  * heading treatment, entry grammar, column count, bullet glyph — is
  * transcribed from the real `TemplateSpec` values in
- * `backend/app/render/templates.py`. When a template changes there, or one is
+ * `backend/app/render/templates.py`, and the vertical rhythm, the section
+ * order and the entry grammar come from `pdf_renderer.py` itself (`_Sheet`,
+ * `entry()`, `section_order()`). When a template changes there, or one is
  * added, update SPECS to match: a thumbnail that lies about the download is
  * worse than no thumbnail on a page whose entire pitch is honesty.
  *
- * A small layout engine walks down the page emitting "text" as runs of word
- * blocks (real text reads as words with gaps, not as solid bars) and keeps
- * emitting roles until the page is full, so every template renders as a
- * complete page and the dense ones visibly fit more.
+ * WHAT IS DRAWN. Real `<text>`, not grey bars — one fixed, invented demo CV
+ * (see DEMO) laid out by a miniature version of the PDF engine: measure, wrap,
+ * stack, and stop when the page is full. Every template gets the SAME words,
+ * so the eleven thumbnails differ only in design, and a dense template
+ * (compact, ledger) visibly fits more of them than a roomy one (minimal,
+ * executive). That difference is the whole point of the set.
+ *
+ * TEXT AT 4px. A thumbnail is ~260px wide, so 10pt body type lands at about
+ * 4.4 CSS px. That is deliberate: what has to survive is the TEXTURE of a real
+ * document — real word gaps, real line rag, headings that say EXPERIENCE,
+ * employers, date ranges — and zoomed in it has to hold up as a plausible CV.
+ * Every run is measured with a Helvetica-metrics table and drawn with
+ * `textLength`/`lengthAdjust`, so a line can never overflow its column even if
+ * the visitor's browser falls back to a font we did not measure.
+ *
+ * RTL. The callers mirror the whole sheet (`rtl:-scale-x-100`), which is where
+ * the PDF puts the sidebar and the start margin in Hebrew. Mirrored glyphs
+ * would be unreadable, so each run is flipped back about its own box — the
+ * sheet mirrors, the words do not. The demo copy stays English in both
+ * locales on purpose: it is document CONTENT (like a screenshot), not UI
+ * chrome, and it must be identical in all eleven tiles to be a fair
+ * comparison. The only localized strings here are the accessibility ones.
  */
 
 export type MiniatureTemplate =
@@ -56,6 +77,117 @@ export const MINIATURE_TEMPLATES: readonly MiniatureTemplate[] = [
 /** Templates whose sidebar is PDF-only (the DOCX renders a single-column sibling). */
 export const PDF_ONLY_TEMPLATES: readonly MiniatureTemplate[] = ["split", "panel"] as const;
 
+/* -------------------------------------------------------------------------- */
+/* The demo résumé                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One invented, deliberately generic candidate. Not a real person: the address
+ * is on the reserved `example.com` domain and the phone number is a blank
+ * range, and the SVG says so in its `<desc>`.
+ *
+ * The same object feeds all eleven templates. If you change a word here, every
+ * thumbnail changes with it — which is the property that makes the set a
+ * comparison of DESIGNS rather than of copy.
+ */
+const DEMO = {
+  name: "MAYA ELDAR",
+  headline: "Senior Product Manager · B2B SaaS",
+  contact: [
+    "maya.eldar@example.com",
+    "+972 54-000-0000",
+    "Tel Aviv",
+    "linkedin.com/in/mayaeldar",
+  ],
+  summary:
+    "Product manager with eight years taking B2B tools from first customer to " +
+    "steady revenue. I work close to the engineers and closer to the users, and " +
+    "I measure whether the thing shipped actually changed a number.",
+  // Flat, comma-delimited skills — the shape `build_skills` renders, grouped
+  // Product → Technical → Leadership so the order still reads as curated.
+  skills: [
+    "discovery",
+    "roadmapping",
+    "pricing",
+    "A/B testing",
+    "analytics",
+    "SQL",
+    "Figma",
+    "Amplitude",
+    "Jira",
+    "REST APIs",
+    "stakeholder alignment",
+    "hiring",
+    "mentoring",
+  ],
+  experience: [
+    {
+      title: "Senior Product Manager",
+      company: "Latitude",
+      location: "Tel Aviv",
+      dates: "2022 – Present",
+      bullets: [
+        "Led the billing rebuild that cut involuntary churn from 4.1% to 1.6% in two quarters.",
+        "Took the onboarding flow from eleven screens to four; activation rose 34%.",
+        "Run a weekly call with six enterprise accounts, which is where the roadmap actually comes from.",
+      ],
+    },
+    {
+      title: "Product Manager",
+      company: "Northwind",
+      location: "Tel Aviv",
+      dates: "2019 – 2022",
+      bullets: [
+        "Shipped the reporting suite that became the reason 40% of renewals cited for staying.",
+        "Replaced a quarterly release train with continuous delivery, cutting lead time from 38 days to 4.",
+      ],
+    },
+    {
+      title: "Associate Product Manager",
+      company: "Kestrel",
+      location: "Remote",
+      dates: "2017 – 2019",
+      bullets: ["Owned the mobile checkout rewrite; cart abandonment fell 12 points."],
+    },
+  ],
+  projects: [
+    {
+      name: "Pricing Sandbox",
+      description:
+        "An internal tool that lets sales model a discount and see the margin " +
+        "impact before the call, not after it.",
+    },
+    {
+      name: "Churn Signals",
+      description:
+        "A weekly digest that ranks accounts by risk and says which behaviour " +
+        "changed, so CS opens the right conversation.",
+    },
+  ],
+  education: [
+    {
+      degree: "B.Sc. Industrial Engineering",
+      institution: "Technion",
+      dates: "2013 – 2017",
+    },
+  ],
+  languages: ["Hebrew (native)", "English (fluent)"],
+} as const;
+
+/** Section labels, straight from `app/render/labels.py` (English half). */
+const LABEL = {
+  summary: "Summary",
+  skills: "Skills",
+  experience: "Experience",
+  projects: "Projects",
+  education: "Education",
+  languages: "Languages",
+} as const;
+
+/* -------------------------------------------------------------------------- */
+/* Template specs                                                              */
+/* -------------------------------------------------------------------------- */
+
 interface Spec {
   accent: string;
   ink: string;
@@ -70,7 +202,12 @@ interface Spec {
   name: number;
   meta: number;
   nameCentered: boolean;
+  /** heading_tracking, pt. */
   tracking: number;
+  /** name_tracking, pt — negative on every template, names are set tight. */
+  nameTracking: number;
+  /** True where pdf_family is a serif (Spectral / Georgia). */
+  serif: boolean;
   header: "rule" | "plain" | "band";
   headerRulePt: number;
   headerRuleAccent: boolean;
@@ -79,6 +216,7 @@ interface Spec {
   bandSub?: string;
   bandMeta?: string;
   heading: "rule" | "short" | "bar" | "plain" | "hung" | "centered";
+  headingBump: number;
   headingRulePt: number;
   headingRuleColor?: string;
   headingShortPt: number;
@@ -93,7 +231,8 @@ interface Spec {
   sidebarGutter: number;
   sidebarPanel: boolean;
   rail: boolean;
-  bullet: "dot" | "dash";
+  bulletGlyph: string;
+  bulletScale: number;
   bulletAccent: boolean;
   pageBg: string;
   tight: boolean;
@@ -105,6 +244,7 @@ const A4_H = 842;
 const BASE = {
   headerRulePt: 0.8,
   headerRuleAccent: false,
+  headingBump: 0,
   headingRulePt: 0.6,
   headingShortPt: 32,
   headingBarW: 3,
@@ -118,108 +258,182 @@ const BASE = {
   sidebarGutter: 20,
   sidebarPanel: false,
   rail: false,
-  bullet: "dot",
+  bulletGlyph: "•",
+  bulletScale: 1.0,
   bulletAccent: false,
   pageBg: "#ffffff",
   tight: false,
   nameCentered: false,
+  serif: false,
 } as const;
 
 const SPECS: Record<MiniatureTemplate, Spec> = {
   classic: {
     ...BASE, accent: "#1F3A5F", ink: "#111827", muted: "#5C6470", rule: "#DFE3E9", accentSoft: "#E9EEF4",
-    mx: 58, my: 46, body: 10.4, head: 11.0, name: 27, meta: 8.8, tracking: 0.8,
+    mx: 58, my: 46, body: 10.4, head: 11.0, name: 27, meta: 8.8, tracking: 0.8, nameTracking: -0.3,
     header: "band", bandBg: "#EDF1F6", bandInk: "#14243A", bandSub: "#1F3A5F", bandMeta: "#4A5A72",
-    heading: "rule", headingRulePt: 0.5, listCols: 2, bulletAccent: true,
+    heading: "rule", headingRulePt: 0.5, listCols: 2, bulletAccent: true, bulletScale: 0.62,
   },
   modern: {
     ...BASE, accent: "#0E7A5F", ink: "#14181F", muted: "#59616E", rule: "#D9E2DE", accentSoft: "#E4F1EC",
-    mx: 58, my: 46, body: 10.4, head: 11.0, name: 28, meta: 8.8, tracking: 0.8,
+    mx: 58, my: 46, body: 10.4, head: 11.0, name: 28, meta: 8.8, tracking: 0.8, nameTracking: -0.4,
     header: "band", bandBg: "#0B5344", bandInk: "#FFFFFF", bandSub: "#BFDDD2", bandMeta: "#9CC6B9",
     heading: "short", headingRulePt: 1.4, headingRuleColor: "#0E7A5F", headingShortPt: 32,
-    skills: "chips", listCols: 2, bulletAccent: true,
+    skills: "chips", listCols: 2, bulletAccent: true, bulletScale: 0.62,
   },
   split: {
     ...BASE, accent: "#15476B", ink: "#111827", muted: "#59616E", rule: "#DCE2E8", accentSoft: "#E7EEF4",
-    mx: 48, my: 44, body: 10.1, head: 10.8, name: 27, meta: 8.6, tracking: 0.7,
+    mx: 48, my: 44, body: 10.1, head: 10.8, name: 27, meta: 8.6, tracking: 0.7, nameTracking: -0.3,
     header: "band", bandBg: "#EBF0F5", bandInk: "#10283D", bandSub: "#15476B", bandMeta: "#4C5F73",
     heading: "short", headingRulePt: 1.3, headingRuleColor: "#15476B", headingShortPt: 26,
-    skills: "chips", listCols: 1, bulletAccent: true,
+    skills: "chips", listCols: 1, bulletAccent: true, bulletScale: 0.6,
     layout: "sidebar", sidebarRatio: 0.31, sidebarGutter: 20,
   },
   panel: {
     ...BASE, accent: "#15476B", ink: "#111827", muted: "#59616E", rule: "#C3D4E1", accentSoft: "#DCE8F1",
-    mx: 48, my: 44, body: 10.1, head: 10.6, name: 27, meta: 8.6, tracking: 0.7,
+    mx: 48, my: 44, body: 10.1, head: 10.6, name: 27, meta: 8.6, tracking: 0.7, nameTracking: -0.3,
     header: "band", bandBg: "#123C5C", bandInk: "#FFFFFF", bandSub: "#BBD3E4", bandMeta: "#94B2C9",
-    heading: "bar", headingBarW: 2.6, headingRulePt: 0.6,
-    skills: "chips", listCols: 1, bulletAccent: true,
+    heading: "bar", headingBump: 0.6, headingBarW: 2.6, headingRulePt: 0.6,
+    skills: "chips", listCols: 1, bulletAccent: true, bulletScale: 0.6,
     layout: "sidebar", sidebarRatio: 0.3, sidebarGutter: 22, sidebarPanel: true,
   },
   timeline: {
     ...BASE, accent: "#2A5D7C", ink: "#121821", muted: "#5A626E", rule: "#D9E0E6", accentSoft: "#E8EFF4",
-    mx: 56, my: 46, body: 10.3, head: 11.0, name: 27, meta: 8.6, tracking: 0.9,
+    mx: 56, my: 46, body: 10.3, head: 11.0, name: 27, meta: 8.6, tracking: 0.9, nameTracking: -0.3,
     header: "rule", headerRulePt: 1.6, headerRuleAccent: true,
-    heading: "plain", headingRulePt: 0.6, rail: true, listCols: 2, bulletAccent: true,
+    heading: "plain", headingRulePt: 0.6, rail: true, listCols: 2, bulletAccent: true, bulletScale: 0.6,
   },
   executive: {
     ...BASE, accent: "#16304B", ink: "#1B1B18", muted: "#5A5F6A", rule: "#D8D0C2", accentSoft: "#EFE9DE",
-    mx: 70, my: 54, body: 10.4, head: 11.4, name: 29, meta: 8.8, tracking: 0.4,
-    nameCentered: true, header: "rule", headerRulePt: 1.5,
+    mx: 70, my: 54, body: 10.4, head: 11.4, name: 29, meta: 8.8, tracking: 0.4, nameTracking: -0.2,
+    serif: true, nameCentered: true, header: "rule", headerRulePt: 1.5,
     heading: "plain", headingRulePt: 0.6, headingCase: "title",
-    entry: "split", listCols: 2, bullet: "dash", pageBg: "#FDFBF4",
+    entry: "split", listCols: 2, bulletGlyph: "—", bulletScale: 0.58, pageBg: "#FDFBF4",
   },
   ivy: {
     ...BASE, accent: "#1B2430", ink: "#121820", muted: "#6A717B", rule: "#C9CED6", accentSoft: "#ECEEF1",
-    mx: 64, my: 50, body: 10.3, head: 11.6, name: 26, meta: 8.8, tracking: 0.3,
-    nameCentered: true, header: "plain",
+    mx: 64, my: 50, body: 10.3, head: 11.6, name: 26, meta: 8.8, tracking: 0.3, nameTracking: -0.2,
+    serif: true, nameCentered: true, header: "plain",
     heading: "centered", headingRulePt: 0.6, headingCase: "title",
-    entry: "split", listCols: 2,
+    entry: "split", listCols: 2, bulletScale: 0.58,
   },
   ledger: {
     ...BASE, accent: "#B4451F", ink: "#151515", muted: "#6A6A6A", rule: "#D8D8D8", accentSoft: "#F6E9E2",
-    mx: 50, my: 42, body: 10.0, head: 11.2, name: 26, meta: 8.6, tracking: 0.6,
+    mx: 50, my: 42, body: 10.0, head: 11.2, name: 26, meta: 8.6, tracking: 0.6, nameTracking: -0.2,
     header: "rule", headerRulePt: 2.0, headerRuleAccent: true,
     heading: "rule", headingRulePt: 2.0, headingRuleColor: "#1A1A1A",
-    skills: "chips", listCols: 2, bulletAccent: true,
+    skills: "chips", listCols: 2, bulletAccent: true, bulletScale: 0.55,
   },
   student: {
     ...BASE, accent: "#2E6B4F", ink: "#121A16", muted: "#5B6560", rule: "#D9E4DD", accentSoft: "#E8F1EC",
-    mx: 62, my: 50, body: 10.6, head: 11.2, name: 27, meta: 8.8, tracking: 0.8,
+    mx: 62, my: 50, body: 10.6, head: 11.2, name: 27, meta: 8.8, tracking: 0.8, nameTracking: -0.3,
     header: "band", bandBg: "#E8F1EC", bandInk: "#14301F", bandSub: "#2E6B4F", bandMeta: "#47604F",
     heading: "short", headingRulePt: 1.4, headingRuleColor: "#2E6B4F", headingShortPt: 30,
-    skills: "chips", listCols: 2, bulletAccent: true,
+    skills: "chips", listCols: 2, bulletAccent: true, bulletScale: 0.62,
   },
   compact: {
     ...BASE, accent: "#27405C", ink: "#141922", muted: "#5A626E", rule: "#DCE0E6", accentSoft: "#E7ECF2",
-    mx: 46, my: 34, body: 9.9, head: 10.4, name: 22, meta: 8.4, tracking: 0.6,
+    mx: 46, my: 34, body: 9.9, head: 10.4, name: 22, meta: 8.4, tracking: 0.6, nameTracking: -0.2,
     header: "rule", headerRulePt: 1.6, headerRuleAccent: true,
     heading: "bar", headingBarW: 2.4, headingRulePt: 0.6,
-    listCols: 2, bulletAccent: true, tight: true,
+    listCols: 2, bulletAccent: true, bulletScale: 0.58, tight: true,
   },
   minimal: {
     ...BASE, accent: "#374151", ink: "#111827", muted: "#6B7280", rule: "#E4E7EB", accentSoft: "#EDEFF2",
-    mx: 84, my: 54, body: 10.6, head: 10.6, name: 30, meta: 8.8, tracking: 1.0,
+    mx: 84, my: 54, body: 10.6, head: 10.6, name: 30, meta: 8.8, tracking: 1.0, nameTracking: -0.5,
     header: "plain", heading: "hung", headingHangPt: 58, headingRulePt: 0.6,
-    listCols: 2, bullet: "dash",
+    listCols: 2, bulletGlyph: "–", bulletScale: 0.8,
   },
 };
 
-/** Deterministic PRNG so a thumbnail draws identically on every render. */
-function rng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+/* -------------------------------------------------------------------------- */
+/* Type metrics                                                                */
+/* -------------------------------------------------------------------------- */
+
+const SANS = '"Lato","Helvetica Neue",Helvetica,Arial,sans-serif';
+const SERIF = 'Spectral,"Iowan Old Style",Georgia,"Times New Roman",serif';
+
+/**
+ * Advance widths for ASCII 32–126, in 1/1000 em, from the Helvetica AFM — the
+ * closest widely available stand-in for Lato, and the metric family every
+ * fallback in the sans stack is built on.
+ *
+ * The estimate only has to be good enough to break lines and to give each line
+ * an honest rag: `textLength` pins the drawn width to whatever we measured, so
+ * a browser that substitutes a different face still cannot overflow a column.
+ */
+const HELV = [
+  278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278,
+  556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556,
+  1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778,
+  667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556,
+  333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556,
+  556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
+];
+
+/** The handful of non-ASCII characters this demo actually uses. */
+const WIDE: Record<number, number> = {
+  0x00a0: 278, // nbsp
+  0x00b7: 333, // ·
+  0x2013: 556, // –
+  0x2014: 1000, // —
+  0x2019: 191, // ’
+  0x2022: 350, // •
+};
+
+function adv(str: string, size: number, bold: boolean, serif: boolean, tracking = 0): number {
+  let em = 0;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    em += c >= 32 && c < 127 ? HELV[c - 32] : WIDE[c] ?? 550;
+  }
+  let w = (em / 1000) * size;
+  // Spectral/Georgia set a touch narrower than Helvetica at the same size;
+  // both bold faces set wider. Two constants beat a second 95-entry table.
+  if (serif) w *= bold ? 0.95 : 0.9;
+  if (bold) w *= 1.055;
+  return w + tracking * Math.max(0, str.length - 1);
 }
 
-function seedOf(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return h >>> 0;
+/** Greedy word wrap — the same shape as `_wrap_lines` in the PDF renderer. */
+function wrapText(
+  str: string,
+  width: number,
+  size: number,
+  bold: boolean,
+  serif: boolean,
+): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const word of str.split(" ")) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (cur && adv(next, size, bold, serif) > width) {
+      out.push(cur);
+      cur = word;
+    } else {
+      cur = next;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** Blend two hex colours — the rail colour is the accent mixed 45% into white. */
+function mix(a: string, b: string, t: number): string {
+  const parse = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const [r1, g1, b1] = parse(a);
+  const [r2, g2, b2] = parse(b);
+  const ch = (x: number, y: number) => Math.round(x + (y - x) * t).toString(16).padStart(2, "0");
+  return `#${ch(r1, r2)}${ch(g1, g2)}${ch(b1, b2)}`;
+}
+
+/** One drawable strip of the page: `before` is its space-before, `h` its own
+ *  height (space-after folded in), `sec` marks a section heading. */
+interface Item {
+  before: number;
+  h: number;
+  sec?: boolean;
+  draw: (top: number) => void;
 }
 
 export default function ResumeMiniature({
@@ -234,349 +448,616 @@ export default function ResumeMiniature({
   label?: string;
   className?: string;
   /**
-   * Draw one bullet in the first role as a fabrication-guard catch: a danger
-   * dot, and a strike rule that animates across it when `struck` is true.
+   * Draw one bullet in the first role as a fabrication-guard catch: the line
+   * in danger red, and a strike rule that animates across it when `struck`.
    */
   flagBullet?: boolean;
   struck?: boolean;
 }) {
   const reduce = useReducedMotion();
+  const { t, i18n } = useTranslation("marketing");
+  const uid = useId();
   const s = SPECS[template];
+  // The callers mirror the sheet with `rtl:-scale-x-100`, which fires off the
+  // document `dir` i18n sets for Hebrew. `put` reads this to flip each run
+  // back, so the two must agree on what "RTL" means.
+  const rtl = (i18n.language || "en").toLowerCase().startsWith("he");
 
   const { nodes, strike } = useMemo(() => {
-    const next = rng(seedOf(template));
     const out: ReactNode[] = [];
     let k = 0;
     const key = () => `n${k++}`;
-    const lead = s.tight ? 1.3 : 1.48;
-    const bottom = A4_H - s.my;
-    const cw = A4_W - s.mx * 2;
     let strikeRect: { x: number; y: number; w: number } | null = null;
 
-    const rect = (x: number, y: number, w: number, h: number, fill: string, o = 1, r = h * 0.3) =>
-      out.push(<rect key={key()} x={x} y={y} width={Math.max(0, w)} height={h} rx={r} fill={fill} opacity={o} />);
+    // --- rhythm, from `_Sheet` -------------------------------------------
+    const lead = s.body * (s.tight ? 1.26 : 1.36);
+    const secBefore = s.tight ? 8 : 12;
+    const secAfter = s.tight ? 3.5 : 5;
+    const entryBefore = s.tight ? 4.5 : 7;
+    const bulletAfter = s.tight ? 0.5 : 1.2;
+    const font = s.serif ? SERIF : SANS;
+    const ascent = (size: number) => size * (s.serif ? 0.7 : 0.74);
+    const sepColor = mix(s.muted, s.rule, 0.55);
 
-    /** One ragged run of word blocks — real text reads as words, not bars. */
-    const line = (x: number, y: number, maxW: number, size: number, fill: string, o: number, fill_ = 1) => {
-      const target = maxW * fill_;
-      const h = Math.max(1.5, size * 0.56);
-      const gap = size * 0.36;
-      let cx = 0;
-      while (cx < target - size) {
-        let w = size * (1.5 + next() * 3.4);
-        if (cx + w > target) w = target - cx;
-        if (w < size * 0.9) break;
-        rect(x + cx, y, w, h, fill, o, h * 0.34);
-        cx += w + gap;
-      }
-    };
+    const cw = A4_W - s.mx * 2;
+    const bottom = A4_H - s.my;
 
-    /** Tracked caps drawn letter-by-letter, so the template's tracking shows. */
-    const caps = (x: number, y: number, letters: number, size: number, fill: string) => {
-      const w = size * 0.5;
-      const h = size * 0.6;
-      const step = w + s.tracking + size * 0.13;
-      for (let i = 0; i < letters; i++) {
-        // Title case: only the first letter is full height.
-        const lh = s.headingCase === "title" && i > 0 ? h * 0.76 : h;
-        rect(x + i * step, y + (h - lh), w, lh, fill, 0.95, lh * 0.24);
-      }
-      return letters * step - (s.tracking + size * 0.13);
-    };
-
-    // ---- header ---------------------------------------------------------
-    let y = s.my;
-    const nameH = s.name * 0.7;
-
-    if (s.header === "band") {
-      // A filled rectangle that bleeds to the page edges.
-      const bandH = s.my + nameH + s.name * 0.42 + s.meta * 1.5 + s.meta * 1.5 + s.my * 0.45;
-      rect(0, 0, A4_W, bandH, s.bandBg!, 1, 0);
-      y = s.my * 0.92;
-      const nw = cw * 0.46;
-      rect(s.nameCentered ? s.mx + (cw - nw) / 2 : s.mx, y, nw, nameH, s.bandInk!, 1, nameH * 0.18);
-      y += nameH + s.name * 0.34;
-      const hw = cw * 0.3;
-      rect(s.nameCentered ? s.mx + (cw - hw) / 2 : s.mx, y, hw, s.meta * 0.6, s.bandSub!, 0.95);
-      y += s.meta * 1.6;
-      let bx = s.mx;
-      [0.16, 0.12, 0.1, 0.14].forEach((f) => {
-        rect(bx, y, cw * f, s.meta * 0.5, s.bandMeta!, 0.95);
-        bx += cw * f + s.meta * 0.9;
-      });
-      y = bandH + s.my * 0.75;
-    } else {
-      const nw = cw * (s.nameCentered ? 0.44 : 0.4);
-      rect(s.nameCentered ? s.mx + (cw - nw) / 2 : s.mx, y, nw, nameH, s.ink, 1, nameH * 0.18);
-      y += nameH + s.name * 0.36;
-      const hw = cw * 0.28;
-      rect(s.nameCentered ? s.mx + (cw - hw) / 2 : s.mx, y, hw, s.meta * 0.58, s.accent, 0.9);
-      y += s.meta * 1.7;
-      const bits = [0.16, 0.12, 0.1, 0.14].map((f) => cw * f);
-      const bw = bits.reduce((a, b) => a + b, 0) + bits.length * s.meta * 0.9;
-      let bx = s.nameCentered ? s.mx + (cw - bw) / 2 : s.mx;
-      bits.forEach((w) => {
-        rect(bx, y, w, s.meta * 0.5, s.muted, 0.78);
-        bx += w + s.meta * 0.9;
-      });
-      y += s.meta * 1.4;
-      if (s.header === "rule") {
-        rect(s.mx, y, cw, s.headerRulePt, s.headerRuleAccent ? s.accent : s.rule, 1, 0);
-        y += s.headerRulePt;
-      }
-      y += s.my * 0.42;
-    }
-    const bodyTop = y;
-
-    // ---- section heading, in whichever shape this template uses ----------
-    const heading = (x: number, w: number, yy: number, letters: number): number => {
-      const size = s.head * 0.86;
-      const capH = size * 0.6;
-      const rc = s.headingRuleColor ?? (s.heading === "short" ? s.accent : s.rule);
-      if (s.heading === "bar") {
-        rect(x, yy, s.headingBarW, capH, s.accent, 1, 0);
-        caps(x + s.headingBarW + size * 0.45, yy, letters, size, s.accent);
-        return yy + capH + size * 0.75;
-      }
-      if (s.heading === "centered") {
-        const cwid = letters * (size * 0.5 + s.tracking + size * 0.13);
-        caps(x + (w - cwid) / 2, yy, letters, size, s.accent);
-        let ny = yy + capH + size * 0.4;
-        rect(x, ny, w, s.headingRulePt, rc, 1, 0);
-        return ny + s.headingRulePt + size * 0.6;
-      }
-      const width = caps(x, yy, letters, size, s.accent);
-      let ny = yy + capH;
-      if (s.heading === "rule") {
-        ny += size * 0.4;
-        rect(x, ny, w, s.headingRulePt, rc, 1, 0);
-        ny += s.headingRulePt;
-      } else if (s.heading === "short") {
-        ny += size * 0.42;
-        rect(x, ny, Math.min(s.headingShortPt, width * 1.1), s.headingRulePt, rc, 0.95, 0);
-        ny += s.headingRulePt;
-      }
-      return ny + size * (s.heading === "plain" || s.heading === "hung" ? 0.5 : 0.62);
-    };
+    const rect = (x: number, y: number, w: number, h: number, fill: string, o = 1, r = 0) =>
+      out.push(
+        <rect key={key()} x={x} y={y} width={Math.max(0, w)} height={Math.max(0, h)} rx={r} fill={fill} opacity={o} />,
+      );
 
     /**
-     * `hung` headings live OUT in the start margin beside the body, which is
-     * why minimal's side margin is so wide. Everything else shares one x.
+     * Draw one run of text whose box starts at `left` on the LTR sheet, and
+     * return its measured width.
+     *
+     * RTL: the caller mirrors the whole SVG, so the run is flipped back about
+     * the far edge of its own box (`p = left + w`). The box lands exactly
+     * where the mirror puts it — start margin on the right — and the words
+     * inside still read left to right, which is what a Latin run inside a
+     * Hebrew page does.
      */
-    const hung = s.heading === "hung";
-    const mainX = s.mx + (hung ? s.headingHangPt : 0);
-    const mainW = cw - (hung ? s.headingHangPt : 0);
-
-    const section = (x: number, w: number, yy: number, letters: number) =>
-      hung ? (caps(s.mx, yy, letters, s.head * 0.8, s.accent), yy) : heading(x, w, yy, letters);
-
-    const para = (x: number, w: number, yy: number, count: number) => {
-      for (let i = 0; i < count; i++) {
-        line(x, yy, w, s.body, s.ink, 0.76, i === count - 1 ? 0.6 : 1);
-        yy += s.body * lead;
-      }
-      return yy;
+    const put = (
+      str: string,
+      left: number,
+      baseline: number,
+      size: number,
+      fill: string,
+      opt: { bold?: boolean; opacity?: number; tracking?: number; maxW?: number } = {},
+    ): number => {
+      const bold = !!opt.bold;
+      const tracking = opt.tracking ?? 0;
+      const natural = adv(str, size, bold, s.serif, tracking);
+      const w = opt.maxW ? Math.min(natural, opt.maxW) : natural;
+      if (!str || w <= 0) return 0;
+      const p = left + w;
+      out.push(
+        <text
+          key={key()}
+          x={rtl ? p : left}
+          y={baseline}
+          transform={rtl ? `translate(${p * 2} 0) scale(-1 1)` : undefined}
+          fontFamily={font}
+          fontSize={size}
+          fontWeight={bold ? 700 : 400}
+          fill={fill}
+          fillOpacity={opt.opacity ?? 1}
+          letterSpacing={tracking || undefined}
+          textLength={w}
+          lengthAdjust="spacingAndGlyphs"
+        >
+          {str}
+        </text>,
+      );
+      return w;
     };
 
-    // ---- the sidebar geometry (PDF-only templates) ----------------------
-    const sideW = s.layout === "sidebar" ? (cw - s.sidebarGutter) * s.sidebarRatio : 0;
-    const colW = s.layout === "sidebar" ? cw - s.sidebarGutter - sideW : mainW;
+    const measure = (str: string, size: number, bold = false, tracking = 0) =>
+      adv(str, size, bold, s.serif, tracking);
+
+    /**
+     * A `·`-joined run of differently coloured pieces — "Latitude · Tel Aviv ·
+     * 2022 – Present". In RTL the pieces are laid out back to front so that,
+     * once the sheet mirrors, they read in their original order flush to the
+     * start (right) edge.
+     */
+    interface Seg {
+      t: string;
+      size: number;
+      fill: string;
+      bold?: boolean;
+    }
+    const putSegments = (parts: Seg[], left: number, baseline: number, sep = " · ") => {
+      const live = parts.filter((p) => p.t);
+      if (!live.length) return;
+      const order = rtl ? [...live].reverse() : live;
+      const gap = measure(sep, live[0].size);
+      let x = left;
+      order.forEach((p, i) => {
+        if (i > 0) {
+          const dot = measure("·", p.size);
+          put("·", x + (gap - dot) / 2, baseline, p.size, sepColor, { opacity: 0.9 });
+          x += gap;
+        }
+        x += put(p.t, x, baseline, p.size, p.fill, { bold: p.bold });
+      });
+    };
+
+    // --- header ----------------------------------------------------------
+    const band = s.header === "band";
+    // A band anchors the name hard to the top-start corner; centring inside it
+    // reads like a certificate. (`pdf_renderer._build_flow`.)
+    const centred = !band && s.nameCentered;
+    const headlineSize = s.body + (band ? 1.2 : 0.8);
+    const nameLead = s.name * 1.18;
+    const headlineLead = (s.body + 0.8) * 1.35;
+    const metaLead = s.meta * (band ? 1.5 : 1.45);
+
+    const contactLine = DEMO.contact.join(" · ");
+    const headH = nameLead + 1 + 1 + headlineLead + 1 + metaLead;
+    const bandH = band ? headH + s.my * 0.72 + s.my * 0.62 : 0;
+
+    if (band) rect(0, 0, A4_W, bandH, s.bandBg!, 1, 0);
+
+    let hy = band ? s.my * 0.72 : s.my;
+    const place = (w: number) => (centred ? s.mx + (cw - w) / 2 : s.mx);
+
+    const nameW = measure(DEMO.name, s.name, true, s.nameTracking);
+    put(DEMO.name, place(nameW), hy + ascent(s.name), s.name, band ? s.bandInk! : s.ink, {
+      bold: true,
+      tracking: s.nameTracking,
+      maxW: cw,
+    });
+    hy += nameLead + 2;
+
+    const headlineW = measure(DEMO.headline, headlineSize, false, 0.3);
+    put(DEMO.headline, place(headlineW), hy + ascent(headlineSize), headlineSize, band ? s.bandSub! : s.accent, {
+      tracking: 0.3,
+      maxW: cw,
+    });
+    hy += headlineLead + 1;
+
+    const contactW = measure(contactLine, s.meta);
+    putSegments(
+      DEMO.contact.map((t) => ({ t, size: s.meta, fill: band ? s.bandMeta! : s.muted })),
+      place(Math.min(contactW, cw)),
+      hy + ascent(s.meta),
+    );
+    hy += metaLead;
+
+    if (!band && s.header === "rule") {
+      hy += 6;
+      rect(s.mx, hy, cw, s.headerRulePt, s.headerRuleAccent ? s.accent : s.rule);
+      hy += s.headerRulePt;
+    } else if (!band) {
+      // Without a rule to separate it, the header needs the air itself.
+      hy += 5;
+    }
+    // A band bleeds to the page edges and the body starts 4pt under it;
+    // otherwise the header is simply the top of the same flow as the body.
+    const bodyTop = band ? bandH + 4 : hy;
+
+    // --- section heading, in whichever shape this template uses -----------
+    const headingItem = (labelKey: keyof typeof LABEL, x: number, w: number): Item => {
+      const size = s.head + s.headingBump;
+      const bar = s.heading === "bar";
+      const ruled = s.heading === "rule" || s.heading === "short" || s.heading === "centered";
+      const gap = ruled ? s.headingRulePt + 4 : 0;
+      const before = secBefore + (bar ? 3 : 0);
+      const after = secAfter + (bar ? 1 : 0);
+      const h = (bar ? size * 1.34 : size * 1.15 + gap) + after;
+      const text = s.headingCase === "title" ? LABEL[labelKey] : LABEL[labelKey].toUpperCase();
+      const ruleColor = s.headingRuleColor ?? s.rule;
+      // `short` and `hung` set the label in ink and let the accent live in the
+      // mark beside it; every other shape colours the label itself.
+      const color = bar || s.heading === "short" || s.heading === "hung" ? s.ink : s.accent;
+      return {
+        before,
+        h,
+        sec: true,
+        draw: (top) => {
+          if (bar) {
+            const bh = size * 1.34;
+            rect(x, top + bh * 0.16, s.headingBarW, bh * 0.7, s.accent);
+            put(text, x + s.headingBarW + 7, top + bh * 0.72, size, color, {
+              bold: true,
+              tracking: s.tracking,
+              maxW: w - s.headingBarW - 7,
+            });
+            return;
+          }
+          const tw = measure(text, size, true, s.tracking);
+          if (s.heading === "hung") {
+            // Out in the start margin, aligned to its INNER edge so a long
+            // label grows away from the text column.
+            put(text, Math.max(4, x - 8 - tw), top + ascent(size), size, color, {
+              bold: true,
+              tracking: s.tracking,
+            });
+            return;
+          }
+          const tx = s.heading === "centered" ? x + (w - tw) / 2 : x;
+          put(text, tx, top + ascent(size), size, color, { bold: true, tracking: s.tracking, maxW: w });
+          if (!ruled) return;
+          const ry = top + h - after - 1.5 - s.headingRulePt;
+          const rw = s.heading === "short" ? Math.min(s.headingShortPt, w) : w;
+          rect(x, ry, rw, s.headingRulePt, ruleColor);
+        },
+      };
+    };
+
+    const paraItem = (
+      str: string,
+      x: number,
+      w: number,
+      opt: { size?: number; fill?: string; before?: number; after?: number; opacity?: number } = {},
+    ): Item => {
+      const size = opt.size ?? s.body;
+      const lines = wrapText(str, w, size, false, s.serif);
+      return {
+        before: opt.before ?? 0,
+        h: lines.length * lead + (opt.after ?? 0),
+        draw: (top) =>
+          lines.forEach((ln, i) =>
+            put(ln, x, top + ascent(size) + i * lead, size, opt.fill ?? s.ink, {
+              opacity: opt.opacity,
+              maxW: w,
+            }),
+          ),
+      };
+    };
+
+    // --- entries ----------------------------------------------------------
+    // The timeline rail lives in the MARGIN gutter, so it costs the column no
+    // width. One continuous line spanning the whole Experience block, plus a
+    // dot per role — exactly `_Text._draw_rail`.
+    let railFrom = Infinity;
+    let railTo = -Infinity;
+    const railDots: number[] = [];
+    const railSpan = (top: number, bot: number) => {
+      railFrom = Math.min(railFrom, top);
+      railTo = Math.max(railTo, bot);
+    };
+
+    const bulletItem = (
+      str: string,
+      x: number,
+      w: number,
+      last: boolean,
+      flagged: boolean,
+      rail: boolean,
+    ): Item => {
+      const indent = s.body * 1.05;
+      const lines = wrapText(str, w - indent, s.body, false, s.serif);
+      const col = flagged ? "#C2344A" : s.bulletAccent ? s.accent : s.muted;
+      return {
+        before: 0,
+        h: lines.length * lead + (last ? 0 : bulletAfter),
+        draw: (top) => {
+          if (rail) railSpan(top, top + lines.length * lead);
+          const base = top + ascent(s.body);
+          put(s.bulletGlyph, x, base, s.body * s.bulletScale, col, { opacity: flagged ? 1 : 0.9 });
+          lines.forEach((ln, i) => {
+            const lw = put(ln, x + indent, base + i * lead, s.body, flagged ? "#C2344A" : s.ink, {
+              opacity: flagged ? 1 : 0.92,
+              maxW: w - indent,
+            });
+            if (flagged && i === 0) {
+              strikeRect = { x: x + indent, y: base - s.body * 0.28, w: lw };
+            }
+          });
+        },
+      };
+    };
+
+    interface EntryData {
+      title: string;
+      dates: string;
+      secondary: Seg[];
+      bullets: string[];
+      body?: string;
+    }
+
+    const entryItems = (
+      e: EntryData,
+      x: number,
+      w: number,
+      first: boolean,
+      rail: boolean,
+      flagIndex = -1,
+    ): Item[] => {
+      const items: Item[] = [];
+      if (s.entry === "stack") {
+        // The dates ride the meta line: a short title used to leave the widest
+        // dead space on the page between itself and a flush-right date.
+        const size = s.body + 0.9;
+        const titleLead = size * 1.3;
+        items.push({
+          before: first ? 0 : entryBefore + 1.5,
+          h: titleLead,
+          draw: (top) => {
+            if (rail) {
+              railSpan(top, top + titleLead);
+              railDots.push(top + size * 0.62);
+            }
+            put(e.title, x, top + ascent(size), size, s.ink, { bold: true, maxW: w });
+          },
+        });
+        const parts: Seg[] = [...e.secondary];
+        if (parts[0]) parts[0] = { ...parts[0], bold: true };
+        if (e.dates) parts.push({ t: e.dates, size: s.meta, fill: s.muted });
+        if (parts.some((p) => p.t)) {
+          items.push({
+            before: 0,
+            h: lead + 1.5,
+            draw: (top) => {
+              if (rail) railSpan(top, top + lead);
+              putSegments(parts, x, top + ascent(s.body), "  ·  ");
+            },
+          });
+        }
+      } else {
+        // Title at the text start, dates flush to the far margin — a tab stop
+        // in the DOCX, a drawn string in the PDF.
+        items.push({
+          before: first ? 0 : entryBefore,
+          h: lead,
+          draw: (top) => {
+            const base = top + ascent(s.body);
+            const dw = e.dates ? measure(e.dates, s.meta) : 0;
+            put(e.title, x, base, s.body, s.ink, { bold: true, maxW: w - dw - 8 });
+            if (e.dates) put(e.dates, x + w - dw, base, s.meta, s.muted);
+          },
+        });
+        if (e.secondary.some((p) => p.t)) {
+          items.push({
+            before: 0,
+            h: lead,
+            draw: (top) => putSegments(e.secondary, x, top + ascent(s.body)),
+          });
+        }
+      }
+      if (e.body) items.push(paraItem(e.body, x, w, { fill: s.muted, after: bulletAfter }));
+      e.bullets.forEach((b, i) =>
+        items.push(bulletItem(b, x, w, i === e.bullets.length - 1, i === flagIndex, rail)),
+      );
+      return items;
+    };
+
+    // --- skills ----------------------------------------------------------
+    const chipsItem = (labels: readonly string[], x: number, w: number): Item => {
+      const size = s.meta + 0.4;
+      const pad = 5.2;
+      const gap = 4.6;
+      const chipH = size * 1.72;
+      const rows: { t: string; w: number }[][] = [];
+      let cur: { t: string; w: number }[] = [];
+      let cwid = 0;
+      for (const t of labels) {
+        const width = measure(t, size) + 2 * pad;
+        if (cur.length && cwid + gap + width > w) {
+          rows.push(cur);
+          cur = [];
+          cwid = 0;
+        }
+        cur.push({ t, w: width });
+        cwid += (cwid ? gap : 0) + width;
+      }
+      if (cur.length) rows.push(cur);
+      return {
+        before: 0,
+        h: rows.length * (chipH + gap) - gap,
+        draw: (top) => {
+          let y = top;
+          for (const row of rows) {
+            let x0 = x;
+            for (const chip of row) {
+              out.push(
+                <rect
+                  key={key()}
+                  x={x0}
+                  y={y}
+                  width={chip.w}
+                  height={chipH}
+                  rx={2.6}
+                  fill="none"
+                  stroke={s.rule}
+                  strokeWidth={0.6}
+                />,
+              );
+              put(chip.t, x0 + pad, y + chipH * 0.69, size, s.ink, { maxW: chip.w - 2 * pad });
+              x0 += chip.w;
+            }
+            y += chipH + gap;
+          }
+        },
+      };
+    };
+
+    /** Two-column bulleted list — `_ColumnList`, used for the short sections. */
+    const columnListItem = (labels: readonly string[], x: number, w: number, cols: number): Item => {
+      const gap = 16;
+      const colW = (w - gap * (cols - 1)) / cols;
+      const indent = s.body * 1.05;
+      const cells = labels.map((t) => wrapText(t, colW - indent, s.body, false, s.serif));
+      const rowLines: number[] = [];
+      for (let r = 0; r < cells.length; r += cols) {
+        rowLines.push(Math.max(...cells.slice(r, r + cols).map((c) => c.length)));
+      }
+      return {
+        before: 0,
+        h: rowLines.reduce((a, b) => a + b, 0) * lead,
+        draw: (top) => {
+          let y = top;
+          for (let r = 0, row = 0; r < cells.length; r += cols, row++) {
+            cells.slice(r, r + cols).forEach((linesOf, ci) => {
+              const cx = x + ci * (colW + gap);
+              put(s.bulletGlyph, cx, y + ascent(s.body), s.body * s.bulletScale, s.bulletAccent ? s.accent : s.muted, {
+                opacity: 0.9,
+              });
+              linesOf.forEach((ln, li) =>
+                put(ln, cx + indent, y + ascent(s.body) + li * lead, s.body, s.ink, {
+                  opacity: 0.92,
+                  maxW: colW - indent,
+                }),
+              );
+            });
+            y += rowLines[row] * lead;
+          }
+        },
+      };
+    };
+
+    const skillsItems = (x: number, w: number): Item[] => [
+      headingItem("skills", x, w),
+      s.skills === "chips"
+        ? chipsItem(DEMO.skills, x, w)
+        : // Comma-separated on purpose: it is what ATS keyword parsers split on.
+          paraItem(DEMO.skills.join(", "), x, w),
+    ];
+
+    const educationItems = (x: number, w: number): Item[] => [
+      headingItem("education", x, w),
+      ...DEMO.education.flatMap((e, i) =>
+        entryItems(
+          {
+            title: e.degree,
+            dates: e.dates,
+            secondary: [{ t: e.institution, size: s.body, fill: s.accent }],
+            bullets: [],
+          },
+          x,
+          w,
+          i === 0,
+          false,
+        ),
+      ),
+    ];
+
+    const languagesItems = (x: number, w: number): Item[] => [
+      headingItem("languages", x, w),
+      s.skills === "chips"
+        ? chipsItem(DEMO.languages, x, w)
+        : columnListItem(DEMO.languages, x, w, s.listCols),
+    ];
+
+    // --- the sidebar geometry (PDF-only templates) -----------------------
+    const sidebar = s.layout === "sidebar";
+    const sideW = sidebar ? (cw - s.sidebarGutter) * s.sidebarRatio : 0;
+    // A hung heading lives in the MARGIN, so it costs the column no width.
+    const colX = sidebar ? s.mx + sideW + s.sidebarGutter : s.mx;
+    const colW = sidebar ? cw - s.sidebarGutter - sideW : cw;
     // In LTR the sidebar sits at the text start; the whole SVG mirrors in RTL,
     // which is exactly where the PDF puts it in Hebrew.
     const sideX = s.mx;
-    const colX = s.layout === "sidebar" ? s.mx + sideW + s.sidebarGutter : mainX;
 
-    if (s.layout === "sidebar" && s.sidebarPanel) {
-      rect(sideX - 8, bodyTop - 10, sideW + 16, bottom - bodyTop + 20, s.accentSoft, 1, 6);
+    if (sidebar && s.sidebarPanel) {
+      // The panel bleeds to the foot of the page, under the band.
+      rect(sideX - 10, bodyTop - 4, sideW + 20, A4_H - (bodyTop - 4), s.accentSoft, 1, 0);
     }
 
-    // ---- main column: SUMMARY + EXPERIENCE ------------------------------
-    y = bodyTop;
-    y = section(colX, colW, y, 7);
-    y = para(colX, colW, y, s.tight ? 2 : 3);
-    y += s.my * 0.42;
+    // --- the flow ---------------------------------------------------------
+    // Section order is `section_order.EXPERIENCED_ORDER` — Maya has eight
+    // years, so Experience leads and Education follows it. In the two sidebar
+    // templates, `TemplateSpec.sidebar_keys` moves skills/education/languages
+    // into the rail and leaves the career story in the main column.
+    const main: Item[] = [
+      headingItem("summary", colX, colW),
+      paraItem(DEMO.summary, colX, colW),
+      ...(sidebar ? [] : skillsItems(colX, colW)),
+      headingItem("experience", colX, colW),
+      ...DEMO.experience.flatMap((e, i) =>
+        entryItems(
+          {
+            title: e.title,
+            dates: e.dates,
+            secondary: [
+              { t: e.company, size: s.body, fill: s.accent },
+              { t: e.location, size: s.meta, fill: s.muted },
+            ],
+            bullets: [...e.bullets],
+          },
+          colX,
+          colW,
+          i === 0,
+          s.rail,
+          flagBullet && i === 0 ? 1 : -1,
+        ),
+      ),
+      headingItem("projects", colX, colW),
+      ...DEMO.projects.flatMap((p, i) =>
+        entryItems(
+          { title: p.name, dates: "", secondary: [], bullets: [], body: p.description },
+          colX,
+          colW,
+          i === 0,
+          false,
+        ),
+      ),
+      ...(sidebar ? [] : educationItems(colX, colW)),
+      ...(sidebar ? [] : languagesItems(colX, colW)),
+    ];
 
-    y = section(colX, colW, y, 10);
+    const side: Item[] = sidebar
+      ? [...skillsItems(sideX, sideW), ...educationItems(sideX, sideW), ...languagesItems(sideX, sideW)]
+      : [];
 
-    const railX = colX + s.body * 0.42;
-    const roleX = s.rail ? colX + s.body * 1.5 : colX;
-    const roleW = colW - (roleX - colX);
-    const railTop = y;
-    let railBottom = y;
-
-    const bulletsPer = s.tight ? 3 : s.entry === "split" ? 3 : 3;
-    const roleH = s.body * lead * (1 + bulletsPer) + s.meta * lead + s.body * 0.85;
-    // Reserve room for the tail sections so the page always ends tidily.
-    const tailPerSection = s.head * 2.4 + s.body * lead * 2 + s.my * 0.42;
-    const tail = s.layout === "sidebar" ? 0 : tailPerSection * 2;
-    let role = 0;
-
-    // Keep emitting roles until the page is genuinely full, so every template
-    // renders as a complete page and the dense ones visibly fit more. The cap
-    // is only a runaway guard — `bottom - tail` is the real stop.
-    while (role < 9 && y + roleH < bottom - tail) {
-      if (s.rail) {
-        railBottom = y + s.body * 0.34;
-        out.push(
-          <circle key={key()} cx={railX} cy={y + s.body * 0.3} r={s.body * 0.24} fill={s.accent} />,
-        );
+    /**
+     * Lay a column out and draw as much of it as the page holds.
+     *
+     * Truncation is per template, not per section: a dense template fits more
+     * of the same copy than a roomy one, which is the difference the whole set
+     * exists to show. A heading left stranded at the foot with nothing under
+     * it is dropped — the renderer's `KeepTogether` makes the same promise.
+     *
+     * Whatever room is left over is then spread across the section gaps, up to
+     * 60% of one gap each. A one-page CV that stops two thirds down is honest
+     * but reads as a broken thumbnail; the type and the margins never move.
+     */
+    const layout = (items: Item[], top: number) => {
+      const kept: Item[] = [];
+      let y = top;
+      for (const it of items) {
+        if (y + it.before + it.h > bottom) break;
+        y += it.before + it.h;
+        kept.push(it);
       }
-      if (s.entry === "split") {
-        // Title at the text start, dates flush to the far margin — a tab stop
-        // in the DOCX, a drawn string in the PDF.
-        const th = s.body * 0.62;
-        rect(roleX, y, roleW * (0.34 + next() * 0.12), th, s.ink, 1, th * 0.28);
-        rect(roleX + roleW - roleW * 0.19, y + th * 0.1, roleW * 0.19, s.meta * 0.5, s.muted, 0.8);
-        y += s.body * lead;
-        rect(roleX, y, roleW * (0.24 + next() * 0.1), s.meta * 0.56, s.accent, 0.9);
-        y += s.meta * lead;
-      } else {
-        // One title line, then a single "Employer · Location · Dates" meta row.
-        const th = s.body * 0.62;
-        rect(roleX, y, roleW * (0.38 + next() * 0.14), th, s.ink, 1, th * 0.28);
-        y += s.body * lead;
-        let mxx = roleX;
-        const segs = [0.26, 0.14, 0.18];
-        segs.forEach((f, i) => {
-          rect(mxx, y, roleW * f, s.meta * 0.54, i === 0 ? s.accent : s.muted, i === 0 ? 0.9 : 0.78);
-          mxx += roleW * f + s.meta * 0.85;
-        });
-        y += s.meta * lead;
+      while (kept.length && kept[kept.length - 1].sec) {
+        const last = kept.pop()!;
+        y -= last.before + last.h;
       }
+      const gaps = kept.filter((it, i) => it.sec && i > 0).length;
+      const extra = gaps ? Math.min(secBefore * 0.6, Math.max(0, bottom - y) / gaps) : 0;
+      let dy = top;
+      kept.forEach((it, i) => {
+        dy += it.before + (it.sec && i > 0 ? extra : 0);
+        it.draw(dy);
+        dy += it.h;
+      });
+    };
 
-      for (let b = 0; b < bulletsPer; b++) {
-        const flagged = flagBullet && role === 0 && b === 1;
-        const col = flagged ? "#C2344A" : s.bulletAccent ? s.accent : s.muted;
-        const indent = s.body * 1.15;
-        if (s.bullet === "dash") {
-          rect(roleX, y + s.body * 0.26, s.body * 0.42, 1.1, col, 0.85, 0.5);
-        } else {
-          out.push(
-            <circle key={key()} cx={roleX + s.body * 0.2} cy={y + s.body * 0.3} r={s.body * 0.17} fill={col} opacity={flagged ? 1 : 0.8} />,
-          );
-        }
-        const lw = roleW - indent;
-        line(roleX + indent, y, lw, s.body, flagged ? "#C2344A" : s.ink, flagged ? 0.85 : 0.72, b === bulletsPer - 1 ? 0.78 : 1);
-        if (flagged) strikeRect = { x: roleX + indent, y: y + s.body * 0.28, w: lw * 0.82 };
-        y += s.body * lead;
-      }
-      y += s.body * 0.85;
-      role++;
-    }
+    layout(main, bodyTop);
+    if (sidebar) layout(side, bodyTop);
 
-    if (s.rail && railBottom > railTop) {
-      out.push(
-        <rect key={key()} x={railX - 0.4} y={railTop} width={0.9} height={railBottom - railTop} fill={s.rule} />,
+    if (s.rail && railTo > railFrom) {
+      const railColor = mix(s.accent, "#ffffff", 0.45);
+      const rx = colX - 13;
+      rect(rx - 0.35, railFrom, 0.7, railTo - railFrom, railColor);
+      railDots.forEach((cy) =>
+        out.push(<circle key={key()} cx={rx} cy={cy} r={2.1} fill={railColor} />),
       );
     }
 
-    // ---- skills / education / certifications ----------------------------
-    const skillsBlock = (x: number, w: number, yy: number) => {
-      if (s.skills === "chips") {
-        // Bordered chips in a wrapping row.
-        const h = s.body * 1.35;
-        let cx = 0;
-        let rows = 0;
-        while (rows < 3) {
-          const cwid = s.body * (2.6 + next() * 3);
-          if (cx + cwid > w) {
-            cx = 0;
-            rows++;
-            yy += h + s.body * 0.34;
-            if (rows >= (w < 140 ? 4 : 2)) break;
-          }
-          out.push(
-            <rect
-              key={key()}
-              x={x + cx}
-              y={yy}
-              width={cwid}
-              height={h}
-              rx={h * 0.5}
-              fill={s.accentSoft}
-              stroke={s.accent}
-              strokeOpacity={0.35}
-              strokeWidth={0.6}
-            />,
-          );
-          cx += cwid + s.body * 0.34;
-        }
-        return yy + h + s.body * 0.5;
-      }
-      return para(x, w, yy, 2);
-    };
+    return { nodes: out, strike: strikeRect as { x: number; y: number; w: number } | null };
+  }, [template, s, flagBullet, rtl]);
 
-    const listBlock = (x: number, w: number, yy: number, rows: number) => {
-      const cols = s.listCols;
-      const gw = (w - (cols - 1) * s.body) / cols;
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          line(x + c * (gw + s.body), yy, gw, s.body, s.ink, 0.72, 0.85);
-        }
-        yy += s.body * lead;
-      }
-      return yy;
-    };
-
-    if (s.layout === "sidebar") {
-      // Credentials live in the rail beside the career story.
-      let sy = bodyTop;
-      sy = section(sideX, sideW, sy, 6);
-      sy = skillsBlock(sideX, sideW, sy);
-      sy += s.my * 0.4;
-      sy = section(sideX, sideW, sy, 9);
-      for (let e = 0; e < 2 && sy + s.body * lead * 2 < bottom; e++) {
-        const dh = s.body * 0.62;
-        rect(sideX, sy, sideW * (0.7 + next() * 0.2), dh, s.ink, 1, dh * 0.28);
-        sy += s.body * lead;
-        rect(sideX, sy, sideW * 0.6, s.meta * 0.56, s.accent, 0.9);
-        sy += s.meta * lead + s.body * 0.6;
-      }
-      sy += s.my * 0.3;
-      // Certifications, then languages — the rail keeps going to the foot of
-      // the page, which is the whole point of putting them there.
-      for (const letters of [8, 7]) {
-        if (sy + s.head * 3 + s.body * lead * 2 > bottom) break;
-        sy = section(sideX, sideW, sy, letters);
-        for (let i = 0; i < 3 && sy + s.body * lead < bottom; i++) {
-          line(sideX, sy, sideW, s.body, s.ink, 0.7, 0.9);
-          sy += s.body * lead;
-        }
-        sy += s.my * 0.3;
-      }
-    } else {
-      y += s.my * 0.42 - s.body * 0.85;
-      y = section(mainX, mainW, y, 6);
-      y = skillsBlock(mainX, mainW, y);
-      y += s.my * 0.42;
-      if (y + s.head * 3 + s.body * lead * 2 < bottom) {
-        y = section(mainX, mainW, y, 9);
-        const dh = s.body * 0.62;
-        rect(mainX, y, mainW * 0.38, dh, s.ink, 1, dh * 0.28);
-        rect(mainX + mainW - mainW * 0.16, y + dh * 0.1, mainW * 0.16, s.meta * 0.5, s.muted, 0.8);
-        y += s.body * lead;
-        rect(mainX, y, mainW * 0.3, s.meta * 0.56, s.accent, 0.9);
-        y += s.meta * lead + s.my * 0.42;
-      }
-      if (y + s.head * 3 + s.body * lead * 2 < bottom) {
-        y = section(mainX, mainW, y, 8);
-        listBlock(mainX, mainW, y, 2);
-      }
-    }
-
-    return { nodes: out, strike: strikeRect };
-  }, [template, s, flagBullet]);
+  // Assistive-tech copy. It is read aloud, so it is a user-visible string and
+  // lives in the locale bundles like every other one.
+  const note = t("templates.sample.note");
+  const title = label ?? t("templates.sample.title");
 
   return (
     <svg
       viewBox={`0 0 ${A4_W} ${A4_H}`}
       className={className}
-      role={label ? "img" : "presentation"}
-      aria-label={label}
+      role="img"
+      aria-labelledby={label ? `${uid}-t ${uid}-d` : undefined}
       aria-hidden={label ? undefined : true}
       focusable="false"
-      style={{ shapeRendering: "geometricPrecision" }}
+      style={{
+        shapeRendering: "geometricPrecision",
+        textRendering: "geometricPrecision",
+        // The sheet mirrors in RTL, but every run inside it is Latin and is
+        // positioned by hand. Without this the `dir="rtl"` document leaks in,
+        // `text-anchor: start` silently means the RIGHT edge, and every line
+        // lands one line-width off. Direction is a property of the DOCUMENT
+        // being drawn, not of the UI drawing it.
+        direction: "ltr",
+        unicodeBidi: "isolate",
+      }}
     >
+      <title id={`${uid}-t`}>{title}</title>
+      <desc id={`${uid}-d`}>{note}</desc>
       <rect x={0} y={0} width={A4_W} height={A4_H} fill={s.pageBg} />
       {nodes}
       {strike && (

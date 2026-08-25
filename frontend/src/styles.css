@@ -453,3 +453,41 @@ select {
   from { transform: translate3d(0, 2%, 0) scale(1.03); }
   to { transform: translate3d(4%, -3%, 0) scale(1); }
 }
+
+/*
+  Weighted hover — the shadow half of components/ui/WeightedCard.tsx.
+
+  Same compositor rule as .css-pillar and .paper-aurora above: `box-shadow` is
+  a paint property, so it is never animated. Two layers are stacked behind the
+  card with STATIC shadows and only their opacity (plus a few px of translate,
+  handled in JS) moves — a resting document lift that fades down, and a tight
+  dark contact shadow that fades up as the pressed edge closes on the desk.
+
+  `--shadow-doc` is defined on both `.paper` and `:root`, so a weighted card
+  rests correctly whether it sits on the marketing surface or the dark app.
+*/
+.wc-shadow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.wc-shadow-rest { box-shadow: var(--shadow-doc); }
+
+/* Tighter and darker than the resting lift: less blur, less spread, more
+   alpha — the geometry of a gap that has closed. */
+.wc-shadow-press {
+  opacity: 0;
+  /* Dark app surfaces: the desk is dark, so contact reads as near-black. */
+  box-shadow:
+    0 1px 1px rgb(0 0 0 / 0.5),
+    0 2px 4px rgb(0 0 0 / 0.5),
+    0 8px 14px -6px rgb(0 0 0 / 0.65);
+}
+/* Paper: warm near-black ink, matching --shadow-doc's own hue. */
+.paper .wc-shadow-press {
+  box-shadow:
+    0 1px 1px rgb(38 34 47 / 0.1),
+    0 2px 4px rgb(38 34 47 / 0.16),
+    0 7px 12px -5px rgb(38 34 47 / 0.34);
+}

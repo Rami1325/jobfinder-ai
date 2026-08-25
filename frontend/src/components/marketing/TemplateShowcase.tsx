@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { ArrowRight, Columns2, Languages, ScanLine } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Button } from "../ui";
+import { Button, WeightedCard } from "../ui";
 import Reveal from "./Reveal";
 import ResumeMiniature, { MINIATURE_TEMPLATES, PDF_ONLY_TEMPLATES } from "./ResumeMiniature";
 
@@ -38,9 +38,12 @@ export default function TemplateShowcase() {
 
       <ul className="mt-12 grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-6 lg:grid-cols-4">
         {MINIATURE_TEMPLATES.map((id, i) => (
-          <li key={id} className="group">
+          <li key={id}>
             <Reveal delay={(i % 4) * 0.07}>
-              <div className="relative overflow-hidden rounded-[10px] bg-white shadow-doc ring-1 ring-ink/[0.07] transition-transform duration-300 ease-out-quint group-hover:-translate-y-1.5">
+              {/* Weighted hover: the cursor presses the sheet into the page and
+                  the corner under it bears the load. Every card gets it —
+                  animating only the first would read as a bug. */}
+              <WeightedCard className="rounded-[10px] bg-white ring-1 ring-ink/[0.07]">
                 <ResumeMiniature
                   template={id}
                   label={t("templates.alt", { name: t(`templates.${id}.name`) })}
@@ -54,7 +57,7 @@ export default function TemplateShowcase() {
                     {t("templates.pdfOnly")}
                   </span>
                 )}
-              </div>
+              </WeightedCard>
               <h3 className="mt-4 text-sm font-semibold text-ink">{t(`templates.${id}.name`)}</h3>
               <p className="mt-1 text-[13px] leading-snug text-ink-muted">
                 {t(`templates.${id}.desc`)}

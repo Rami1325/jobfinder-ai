@@ -27,6 +27,10 @@
     "title": "This is the thing you actually send",
     "sub": "One shared design system, and every template a different SHAPE — header band, heading treatment, entry grammar, column count. Not one document in eleven colours.",
     "alt": "{{name}} template preview",
+    "sample": {
+      "title": "Sample résumé page",
+      "note": "Sample document. Maya Eldar is an invented person and every line is demo copy — this is not anyone's real CV."
+    },
     "pdfOnly": "PDF only",
     "cta": "See them on my own CV",
     "classic": {

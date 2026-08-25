@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-motion";
 import { ArrowRight, Check, FileCheck2, Globe, ShieldCheck, Zap } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Button, Stamp } from "../ui";
+import { Button, Stamp, WeightedCard } from "../ui";
 import SplitText from "./SplitText";
 import ResumeMiniature from "./ResumeMiniature";
 
@@ -138,7 +138,16 @@ export default function Hero() {
           transition={{ duration: 0.8, delay: 0.2, ease: EASE }}
           className="relative mx-auto w-full max-w-[22rem] sm:max-w-[24rem] lg:max-w-none"
         >
-          <div className="relative -rotate-[1.5deg] rounded-[6px] bg-white p-0 shadow-doc ring-1 ring-ink/[0.07] rtl:rotate-[1.5deg]">
+          {/* The first document a visitor sees, and the one they will reach
+              for with the cursor. It carries the weighted hover: press it and
+              the corner under the pointer takes the load. The resting sheet is
+              unchanged, which is what touch and reduced-motion get. The base
+              -1.5deg lean lives on the perspective wrapper so it never fights
+              the 3D transform underneath. */}
+          <WeightedCard
+            wrapperClassName="-rotate-[1.5deg] rtl:rotate-[1.5deg]"
+            className="rounded-[6px] bg-white ring-1 ring-ink/[0.07]"
+          >
             <ResumeMiniature
               template="classic"
               label={t("hero.docAlt")}
@@ -146,7 +155,7 @@ export default function Hero() {
               flagBullet
               struck={struck}
             />
-          </div>
+          </WeightedCard>
 
           {/* Score chip — the before/after the scorer actually produces. */}
           <motion.div

@@ -46,12 +46,28 @@ export interface LanguageSkill {
   level: string;
 }
 
+export interface SkillGroup {
+  label: string;
+  items: string[];
+}
+
 export interface ResumeModel {
   contact: Contact;
   /** Target-title line under the name; tailoring aims it at the JD. */
   headline?: string;
   summary: string;
+  /**
+   * The flat skill surface — always populated, and the only list anything
+   * scores. When `skill_groups` is present the backend keeps this as the flat
+   * union of every group's items, so nothing here is ever unscored or unshown.
+   */
   skills: string[];
+  /**
+   * The same skills as the source CV grouped them ("AI & LLMs", "Backend &
+   * Data"). Presentation only, and absent on older backends — empty means the
+   * flat list is the whole story.
+   */
+  skill_groups?: SkillGroup[];
   experience: Experience[];
   education: Education[];
   projects: Project[];

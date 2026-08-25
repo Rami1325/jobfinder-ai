@@ -8,6 +8,7 @@ export { default as DecryptText } from "./DecryptText";
 export { default as Sparkline } from "./Sparkline";
 export { default as SpotlightCard } from "./SpotlightCard";
 export { default as TiltedCard } from "./TiltedCard";
+export { default as WeightedCard } from "./WeightedCard";
 export { default as BorderGlow } from "./BorderGlow";
 export { default as ProgressRing } from "./ProgressRing";
 export { default as Stepper } from "./Stepper";

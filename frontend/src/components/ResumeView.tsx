@@ -24,6 +24,41 @@ const EARLY_CAREER_ORDER = [
 ] as const;
 const CURRENT_RE = /present|current|now|today|ongoing|היום|כיום|הווה/i;
 
+/**
+ * Mirror of `app/core/skills.py::skill_blocks` (21.8), duplicated for the same
+ * reason the section order is: the preview must never describe the Skills
+ * section differently from the file the user downloads. Two properties carry
+ * the weight and are the ones to preserve if this is ever edited — with no
+ * groups it returns exactly the old flat block, and whatever the groups do not
+ * claim is emitted as a trailing UNLABELLED block, because `resume.skills` is
+ * the flat surface the scorer and the ATS x-ray read and a skill that renders
+ * nowhere is an x-ray "missing" on the document we told the user to send.
+ */
+function skillBlocksOf(resume: ResumeModel): [string, string[]][] {
+  const live = resume.skills.map((s) => s.trim()).filter(Boolean);
+  const groups = resume.skill_groups ?? [];
+  if (groups.length === 0) return live.length > 0 ? [["", live]] : [];
+
+  const blocks: [string, string[]][] = [];
+  const claimed = new Set<string>();
+  for (const group of groups) {
+    const items: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of group.items) {
+      const item = (raw || "").trim();
+      const key = item.toLocaleLowerCase();
+      if (!item || seen.has(key)) continue;
+      seen.add(key);
+      claimed.add(key);
+      items.push(item);
+    }
+    if (items.length > 0) blocks.push([(group.label || "").trim(), items]);
+  }
+  const leftover = live.filter((s) => !claimed.has(s.toLocaleLowerCase()));
+  if (leftover.length > 0) blocks.push(["", leftover]);
+  return blocks;
+}
+
 /** Years of work, measured over the UNION of the roles so concurrent jobs are
  * not double counted. Year precision is enough to pick a layout. */
 function yearsOfExperience(resume: ResumeModel): number {
@@ -116,6 +151,7 @@ export default function ResumeView({ resume }: Props) {
   const contactBits = [c.email, c.phone, c.location, c.linkedin, c.website].filter(Boolean);
   const military = resume.military_service ?? [];
   const languages = resume.languages ?? [];
+  const skillBlocks = skillBlocksOf(resume);
 
   const sections: Record<string, React.ReactNode> = {
     summary: resume.summary ? (
@@ -125,12 +161,29 @@ export default function ResumeView({ resume }: Props) {
       </section>
     ) : null,
 
-    skills: resume.skills.length > 0 ? (
+    skills: skillBlocks.length > 0 ? (
       <section key="skills">
         <SectionHead>{t("sections.skills")}</SectionHead>
-        <div className="flex flex-wrap gap-1.5">
-          {resume.skills.map((s) => (
-            <Badge key={s}>{s}</Badge>
+        <div className="space-y-2">
+          {skillBlocks.map(([label, items], i) => (
+            <div
+              key={label || `unlabelled-${i}`}
+              // The trailing unlabelled block (the skills no group claimed)
+              // needs more air than the gap between groups, or it reads as one
+              // more row of the group above it. The PDF renderer gives it the
+              // same extra `entry_before` for the same reason.
+              className={!label && i > 0 ? "pt-2" : undefined}
+            >
+              {/* Not uppercased, unlike the section heading above it: a group
+                  label is the user's own taxonomy, copied verbatim from their
+                  résumé, and both renderers print it as written. */}
+              {label && <p className="mb-1 text-xs font-semibold text-accent">{label}</p>}
+              <div className="flex flex-wrap gap-1.5">
+                {items.map((s) => (
+                  <Badge key={s}>{s}</Badge>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </section>
