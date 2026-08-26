@@ -180,7 +180,83 @@ try {
   fail(`coverage-mirror check could not run: ${e.message}`);
 }
 
-// ---- 5. en <-> he key parity --------------------------------------------- //
+// ---- 5. the block-edit vocabulary has labels in both locales -------------- //
+// The sheet renders t(`edit.blocks.<kind>`) and t(`edit.fields.<key>`). A kind
+// or field added to `lib/resumeBlocks.ts` without a label prints the raw key on
+// screen — to a Hebrew user, in the primary market — and nothing goes red.
+try {
+  const blocks = read("lib/resumeBlocks.ts");
+  const at = blocks.indexOf("export type BlockKind =");
+  if (at === -1) throw new Error("could not find the BlockKind union");
+  const kinds = [...blocks.slice(at, blocks.indexOf(";", at)).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+  const fa = blocks.indexOf("export const BLOCK_FIELD_KEYS = [");
+  if (fa === -1) throw new Error("could not find BLOCK_FIELD_KEYS");
+  const fields = [...blocks.slice(fa, blocks.indexOf("]", fa)).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+  if (kinds.length < 10 || fields.length < 20)
+    throw new Error(`parsed only ${kinds.length} kinds / ${fields.length} field keys`);
+
+  for (const loc of ["en", "he"]) {
+    const edit = JSON.parse(read(`locales/${loc}/tailor.json`)).edit || {};
+    const missingKinds = kinds.filter((k) => !edit.blocks?.[k]);
+    const missingFields = fields.filter((k) => !edit.fields?.[k]);
+    if (missingKinds.length)
+      fail(`locales/${loc}/tailor.json: edit.blocks.{${missingKinds.join(", ")}} missing — the sheet title would render a raw key.`);
+    if (missingFields.length)
+      fail(`locales/${loc}/tailor.json: edit.fields.{${missingFields.join(", ")}} missing — that field would render a raw key as its label.`);
+  }
+} catch (e) {
+  fail(`block-edit label check could not run: ${e.message}`);
+}
+
+// ---- 6. `dkey` has exactly one definition -------------------------------- //
+// The view mints block paths and the writer resolves them. Two copies of the
+// key function that drift means the view emits a path the writer cannot find,
+// and the symptom is a sheet that opens empty on exactly one skill.
+try {
+  if (!read("lib/resumeBlocks.ts").includes("export const dkey"))
+    throw new Error("lib/resumeBlocks.ts no longer exports dkey");
+  const view = read("components/ResumeView.tsx");
+  if (!/from "\.\.\/lib\/resumeBlocks"/.test(view))
+    fail("components/ResumeView.tsx must import dkey from lib/resumeBlocks — it mints the paths the writer resolves.");
+  if (/const\s+dkey\s*=/.test(decomment(view)))
+    fail("components/ResumeView.tsx declares its own dkey — there must be exactly one, in lib/resumeBlocks.ts, or the view and the writer drift.");
+} catch (e) {
+  fail(`dkey single-definition check could not run: ${e.message}`);
+}
+
+// ---- 7. the view's path grammar is a subset of BLOCK_PATTERNS ------------- //
+// A new section that ships a tappable, focusable block whose sheet is EMPTY is
+// invisible to tsc, because paths are strings.
+try {
+  const blocks = read("lib/resumeBlocks.ts");
+  const pa = blocks.indexOf("export const BLOCK_PATTERNS = [");
+  if (pa === -1) throw new Error("could not find BLOCK_PATTERNS");
+  const known = new Set(
+    [...blocks.slice(pa, blocks.indexOf("]", pa)).matchAll(/"([^"]+)"/g)].map((m) => m[1]),
+  );
+  if (known.size < 10) throw new Error(`BLOCK_PATTERNS parsed as ${known.size} entries`);
+
+  const view = decomment(read("components/ResumeView.tsx"));
+  const emitted = [...view.matchAll(/blkProps\(\s*(`[^`]*`|"[^"]*")/g)].map((m) =>
+    m[1].slice(1, -1).replace(/\$\{[^}]*\}/g, "*"),
+  );
+  if (emitted.length < 14)
+    throw new Error(`found only ${emitted.length} blkProps call sites — the extraction has stopped matching`);
+
+  const unknown = [...new Set(emitted)].filter((p) => !known.has(p));
+  if (unknown.length)
+    fail(
+      `components/ResumeView.tsx emits block path(s) ${unknown.map((p) => `\`${p}\``).join(", ")} ` +
+        `that lib/resumeBlocks.ts cannot read or write. Add them to BLOCK_PATTERNS and to ` +
+        `readBlock/writeBlock, or the block is tappable and its editor opens empty.`,
+    );
+} catch (e) {
+  fail(`block-path grammar check could not run: ${e.message}`);
+}
+
+// ---- 8. en <-> he key parity --------------------------------------------- //
 // i18next plural suffixes are language-specific (Hebrew has a `_two` form that
 // English does not), so compare on the stem.
 const PLURAL = /_(zero|one|two|few|many|other)$/;

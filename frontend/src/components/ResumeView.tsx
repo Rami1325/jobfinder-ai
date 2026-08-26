@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import type { ResumeModel } from "../types";
 import { Badge } from "./ui";
 import { cn } from "../lib/cn";
+import { dkey } from "../lib/resumeBlocks";
 
 /** How a block relates to the tailoring. `changed` = the AI touched it and you
  * kept the change; `restored` = every edit on it was declined, so what you are
@@ -22,12 +23,13 @@ interface Props {
   activeBlock?: string | null;
   /** Clicking a block asks the review panel to show its change. */
   onSelectBlock?: (path: string) => void;
+  /** Clicking a block opens it for editing. Takes precedence over
+   * `onSelectBlock`: a tailored draft is a review surface, a master résumé is
+   * an editing one, and the page decides which by passing one or the other. */
+  onEditBlock?: (path: string) => void;
 }
 
-/** Twin of `resumeDiff.ts`'s `lkey`. Deliberately `toLowerCase`, NOT the
- * `toLocaleLowerCase` used by `skillBlocksOf` below: a Turkish-locale dotted İ
- * would desync this key from the one the anchor was minted with. */
-const dkey = (s: string) => (s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+
 
 /**
  * Mirror of `app/core/section_order.py` (PLAN 17.5) — Education outranks
@@ -174,6 +176,7 @@ export default function ResumeView({
   marks,
   activeBlock,
   onSelectBlock,
+  onEditBlock,
 }: Props) {
   const { t } = useTranslation("tailor");
   const c = resume.contact;
@@ -198,12 +201,35 @@ export default function ResumeView({
 
   // ONE delegated handler rather than a handler, a role and a tabIndex on every
   // <strong>, <li> and <span> in the document.
-  const onClick = onSelectBlock
+  const act = onEditBlock ?? onSelectBlock;
+  const onClick = act
     ? (ev: React.MouseEvent) => {
         const path = (ev.target as HTMLElement).closest<HTMLElement>("[data-block]")?.dataset.block;
-        if (path) onSelectBlock(path);
+        if (path) act(path);
       }
     : undefined;
+  // Keyboard reaches the same blocks, also delegated. Only EDITABLE blocks
+  // become focusable: a jump target is a convenience, an editor is an action.
+  const onKeyDown = onEditBlock
+    ? (ev: React.KeyboardEvent) => {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        const path = (ev.target as HTMLElement).closest<HTMLElement>("[data-block]")?.dataset.block;
+        if (!path) return;
+        ev.preventDefault();
+        onEditBlock(path);
+      }
+    : undefined;
+
+  /** Everything a block needs, from one path — so the path string is written
+   * ONCE per block instead of twice (as `data-block` and again inside `blk`),
+   * which is a whole class of silent typo removed. */
+  const blkProps = (path: string, shape: "block" | "item" | "chip" = "block", extra?: string) => ({
+    "data-block": path,
+    className: cn(extra, blk(path, shape)),
+    // `role="button"` is deliberately omitted on list items: putting it on every
+    // <li> stops the list being a list for a screen reader.
+    ...(onEditBlock ? { tabIndex: 0, ...(shape !== "item" ? { role: "button" as const } : {}) } : {}),
+  });
   const contactBits = [c.email, c.phone, c.location, c.linkedin, c.website].filter(Boolean);
   const military = resume.military_service ?? [];
   const languages = resume.languages ?? [];
@@ -213,7 +239,7 @@ export default function ResumeView({
     summary: resume.summary ? (
       <section key="summary">
         <SectionHead>{t("sections.summary")}</SectionHead>
-        <p data-block="@summary" className={cn("text-sm leading-relaxed text-ink-muted", blk("@summary"))}>
+        <p {...blkProps("@summary", "block", "text-sm leading-relaxed text-ink-muted")}>
           {resume.summary}
         </p>
       </section>
@@ -238,7 +264,7 @@ export default function ResumeView({
               {label && <p className="mb-1 text-xs font-semibold text-accent">{label}</p>}
               <div className="flex flex-wrap gap-1.5">
                 {items.map((s) => (
-                  <Badge key={s} data-block={`@skills.${dkey(s)}`} className={blk(`@skills.${dkey(s)}`, "chip")}>
+                  <Badge key={s} {...blkProps(`@skills.${dkey(s)}`, "chip")}>
                     {s}
                   </Badge>
                 ))}
@@ -260,7 +286,7 @@ export default function ResumeView({
               flush right, which is a layout no download has produced since the
               entry grammar changed. */}
           {resume.experience.map((e, i) => (
-            <div key={i} data-block={`@exp.${i}`} className={blk(`@exp.${i}`)}>
+            <div key={i} {...blkProps(`@exp.${i}`, "block")}>
               <strong className="block text-sm font-semibold text-ink">{e.title || e.company}</strong>
               <MetaLine
                 lead={e.title ? e.company : ""}
@@ -268,7 +294,7 @@ export default function ResumeView({
               />
               <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
                 {e.bullets.map((b, j) => (
-                  <li key={j} data-block={`@exp.${i}.b.${j}`} className={blk(`@exp.${i}.b.${j}`, "item")}>
+                  <li key={j} {...blkProps(`@exp.${i}.b.${j}`, "item")}>
                     {b}
                   </li>
                 ))}
@@ -284,12 +310,12 @@ export default function ResumeView({
         <SectionHead>{t("sections.projects")}</SectionHead>
         <div className="space-y-3">
           {resume.projects.map((p, i) => (
-            <div key={i} data-block={`@proj.${i}`} className={blk(`@proj.${i}`)}>
+            <div key={i} {...blkProps(`@proj.${i}`, "block")}>
               <strong className="text-sm font-semibold text-ink">{p.name}</strong>
               {p.description && <span className="text-sm text-ink-muted"> — {p.description}</span>}
               <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
                 {p.bullets.map((b, j) => (
-                  <li key={j} data-block={`@proj.${i}.b.${j}`} className={blk(`@proj.${i}.b.${j}`, "item")}>
+                  <li key={j} {...blkProps(`@proj.${i}.b.${j}`, "item")}>
                     {b}
                   </li>
                 ))}
@@ -305,7 +331,7 @@ export default function ResumeView({
         <SectionHead>{t("sections.education")}</SectionHead>
         <div className="space-y-2">
           {resume.education.map((e, i) => (
-            <div key={i} data-block={`@edu.${i}`} className={cn("text-sm", blk(`@edu.${i}`))}>
+            <div key={i} {...blkProps(`@edu.${i}`, "block", "text-sm")}>
               <strong className="font-semibold text-ink">
                 {[e.degree, e.field].filter(Boolean).join(", ") || e.institution}
               </strong>
@@ -328,7 +354,7 @@ export default function ResumeView({
         <SectionHead>{t("sections.militaryService", "Military Service")}</SectionHead>
         <div className="space-y-3">
           {military.map((m, i) => (
-            <div key={i} data-block={`@mil.${i}`} className={blk(`@mil.${i}`)}>
+            <div key={i} {...blkProps(`@mil.${i}`, "block")}>
               <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                 <strong className="text-sm font-semibold text-ink">
                   {[m.role, m.unit].filter(Boolean).join(" — ")}
@@ -341,7 +367,7 @@ export default function ResumeView({
               </div>
               <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
                 {m.bullets.map((b, j) => (
-                  <li key={j} data-block={`@mil.${i}.b.${j}`} className={blk(`@mil.${i}.b.${j}`, "item")}>
+                  <li key={j} {...blkProps(`@mil.${i}.b.${j}`, "item")}>
                     {b}
                   </li>
                 ))}
@@ -357,7 +383,7 @@ export default function ResumeView({
         <SectionHead>{t("sections.certifications")}</SectionHead>
         <ul className="list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
           {resume.certifications.map((cert, i) => (
-            <li key={i} data-block={`@cert.${dkey(cert)}`} className={blk(`@cert.${dkey(cert)}`, "item")}>
+            <li key={i} {...blkProps(`@cert.${dkey(cert)}`, "item")}>
               {cert}
             </li>
           ))}
@@ -372,8 +398,7 @@ export default function ResumeView({
           {languages.map((l, i) => (
             <Badge
               key={i}
-              data-block={`@lang.${dkey(l.language)}`}
-              className={blk(`@lang.${dkey(l.language)}`, "chip")}
+              {...blkProps(`@lang.${dkey(l.language)}`, "chip")}
             >
               {[l.language, l.level].filter(Boolean).join(" – ")}
             </Badge>
@@ -391,6 +416,7 @@ export default function ResumeView({
       // inline element opens a bidi isolate that strands the "·" separators.
       dir="auto"
       onClick={onClick}
+      onKeyDown={onKeyDown}
       className={cn(
         "text-ink [&_section]:mt-5",
         surface === "sheet"
@@ -403,19 +429,18 @@ export default function ResumeView({
           : "rounded-xl border border-line bg-bg-soft p-5",
       )}
     >
-      <div data-block="@contact.name" className={cn("text-xl font-bold text-ink", blk("@contact.name"))}>
+      <div {...blkProps("@contact.name", "block", "text-xl font-bold text-ink")}>
         {c.name || t("sections.fallbackName")}
       </div>
       {resume.headline && (
         <div
-          data-block="@headline"
-          className={cn("mt-0.5 text-sm font-medium text-accent-soft", blk("@headline"))}
+          {...blkProps("@headline", "block", "mt-0.5 text-sm font-medium text-accent-soft")}
         >
           {resume.headline}
         </div>
       )}
       {contactBits.length > 0 && (
-        <div data-block="@contact" className={cn("mt-0.5 text-xs text-ink-muted", blk("@contact"))}>
+        <div {...blkProps("@contact", "block", "mt-0.5 text-xs text-ink-muted")}>
           {contactBits.join(" · ")}
         </div>
       )}
