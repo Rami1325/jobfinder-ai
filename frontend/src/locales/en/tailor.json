@@ -36,7 +36,11 @@
   "langSwitch": {
     "he": "This job is in Hebrew, so we tailored from your saved Hebrew résumé ({{label}}).",
     "en": "This job is in English, so we tailored from your saved English résumé ({{label}}).",
-    "fallbackLabel": "master résumé"
+    "fallbackLabel": "master résumé",
+    "name": {
+      "he": "Hebrew",
+      "en": "English"
+    }
   },
   "toasts": {
     "alreadyInTracker": "Already in your tracker",
@@ -390,6 +394,7 @@
       "role": "Role",
       "rank": "Rank",
       "bullet": "Bullet"
-    }
+    },
+    "apply": "Apply"
   }
 }

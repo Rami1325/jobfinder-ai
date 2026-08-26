@@ -17,6 +17,8 @@ import TemplatePicker, { isPdfOnlyTemplate } from "../components/TemplatePicker"
 import ChangeLog from "../components/ChangeLog";
 import DocumentPanel, { type DocView } from "../components/DocumentPanel";
 import TailorOverlay from "../components/TailorOverlay";
+import BlockEditSheet from "../components/BlockEditSheet";
+import ResumeEditBar from "../components/ResumeEditBar";
 import { useCoverage } from "../hooks/useCoverage";
 import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
@@ -25,9 +27,11 @@ import ScoreCard from "../components/ScoreCard";
 import VoicePanel from "../components/VoicePanel";
 import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { blocksByEdit, mergeForReview } from "../lib/resumeDiff";
+import { resumeLanguage } from "../lib/lang";
 import { classifyEdit } from "../lib/editGroups";
 import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
 import {
+  applyBlockEdit,
   getTailorState,
   setTailorState,
   setTargetJob,
@@ -69,6 +73,10 @@ export default function TailorPage() {
     checkedFor,
     scoredAt,
     overlayOpen,
+    savedResume,
+    editUndo,
+    editSaving,
+    editError,
     jobUrl,
     jobTitle,
     company,
@@ -111,7 +119,12 @@ export default function TailorPage() {
       try {
         const m = await getMasterResume();
         if (m?.resume && !getTailorState().resume) {
-          setTailorState({ resume: m.resume, ledger: m.ledger ?? null, masterLabel: m.label });
+          setTailorState({
+            resume: m.resume,
+            savedResume: m.resume, // the dirty baseline is the SERVER's copy
+            ledger: m.ledger ?? null,
+            masterLabel: m.label,
+          });
         }
       } catch {
         /* no saved résumé yet */
@@ -164,6 +177,16 @@ export default function TailorPage() {
   // carries a nonce so clicking the same block twice re-fires the effect.
   const docRef = useRef<HTMLDivElement>(null);
   const [docView, setDocView] = useState<DocView>("screen");
+  const [editPath, setEditPath] = useState<string | null>(null);
+  // The document is EDITABLE only when it is your master. With a tailor result
+  // up, `shown` is a memo recomputed and thrown away on every accept/decline,
+  // so writing into it would need an override layer that survives the re-merge
+  // — and the decision was that tailoring is a review layer that never writes
+  // back to the master. So: master => edit, tailored => review.
+  const editable = !result && !!resume;
+  // The paper's own direction, frozen from the résumé rather than the UI: the
+  // chrome follows the locale, the document follows its own language.
+  const paperDir = shown && resumeLanguage(shown) === "he" ? ("rtl" as const) : ("ltr" as const);
   const [spot, setSpot] = useState<string | null>(null);
   const [focusEdit, setFocusEdit] = useState<{ id: string; nonce: number } | null>(null);
 
@@ -203,7 +226,7 @@ export default function TailorPage() {
   }
 
   async function onParsed(r: ResumeModel, l: FactsLedger) {
-    setTailorState({ resume: r, ledger: l, result: null, tailoredFrom: null, rejectedEdits: [], saved: false, langSwitched: null });
+    setTailorState({ resume: r, savedResume: r, ledger: l, result: null, tailoredFrom: null, rejectedEdits: [], saved: false, langSwitched: null, editUndo: [], editError: "" });
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
     if (m) setTailorState({ masterLabel: m.label });
   }
@@ -405,6 +428,17 @@ export default function TailorPage() {
         </Button>
       </Card>
 
+      {editable && shown && (
+        <ResumeEditBar
+          resume={shown}
+          savedResume={savedResume}
+          masterLabel={masterLabel}
+          unsaved={editUndo.length}
+          saving={editSaving}
+          error={editError}
+        />
+      )}
+
       {/* The document, or — with no résumé yet — the one thing there is to do. */}
       {shown ? (
         <DocumentPanel
@@ -417,6 +451,7 @@ export default function TailorPage() {
           marks={marks}
           activeBlock={spot}
           onSelectBlock={selectBlock}
+          onEditBlock={editable ? setEditPath : undefined}
         />
       ) : (
         <Card>
@@ -578,6 +613,24 @@ export default function TailorPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {editable && shown && (
+        <BlockEditSheet
+          path={editPath}
+          resume={shown}
+          paperDir={paperDir}
+          onClose={() => setEditPath(null)}
+          onApply={(next, path) => {
+            applyBlockEdit(next);
+            setEditPath(null);
+            if (path) setSpot(path);
+          }}
+          onGone={() => {
+            setEditPath(null);
+            toast("info", t("edit.gone"));
+          }}
+        />
+      )}
 
       {resume && (
         <TailorOverlay

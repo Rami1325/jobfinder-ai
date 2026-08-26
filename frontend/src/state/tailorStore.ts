@@ -2,7 +2,8 @@
 // route changes: TailorPage unmounts when the user navigates away, but the
 // request promise and everything on screen (résumé, JD, results, tracker
 // state) live here, not in component state, and are intact when they return.
-import { analyzeJD, getMasterResume, tailor } from "../api/client";
+import { analyzeJD, getMasterResume, saveMasterResume, tailor } from "../api/client";
+import { resetMasterCache } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { resumeLanguage } from "../lib/lang";
 import type { FactsLedger, FitCheckResult, JDModel, ResumeModel, TailorResult } from "../types";
@@ -41,6 +42,18 @@ export type TailorState = {
   // dies on reload, so a reading can never outlive its stamp.
   scoredAt: number | null;
   overlayOpen: boolean;
+  // --- block editing (22.8) --------------------------------------------- //
+  // The last SAVED state of the master, and the only honest baseline for "is
+  // this dirty". Seeded from the server's copy on load and after every save —
+  // never from the local draft, because the model validator can append to the
+  // flat skills union, and a local baseline it cannot match leaves the document
+  // reading dirty forever.
+  savedResume: ResumeModel | null;
+  /** Previous states, newest last. Local undo; the server versions are the
+   * undo of last resort and are only written on an explicit save. */
+  editUndo: ResumeModel[];
+  editSaving: boolean;
+  editError: string;
   // Target job carried over from the Jobs page ("Tailor to this").
   jobUrl?: string;
   jobTitle?: string;
@@ -68,6 +81,10 @@ let state: TailorState = {
   checkedFor: null,
   scoredAt: null,
   overlayOpen: false,
+  savedResume: null,
+  editUndo: [],
+  editSaving: false,
+  editError: "",
 };
 
 const listeners = new Set<() => void>();
@@ -171,4 +188,86 @@ export function startTailor(): void {
         error: apiErrorMessage(e, "Something went wrong. Is the backend running?"),
       });
   });
+}
+
+
+// --------------------------------------------------------------------------- //
+// Block editing (22.8)
+// --------------------------------------------------------------------------- //
+
+/**
+ * Replace the master résumé with an edited copy.
+ *
+ * The invalidation here is the dangerous part, and every line of it is load
+ * bearing: a fit reading and a tailor result both describe the document as it
+ * was, and leaving either up after an edit means showing a number about a
+ * résumé that no longer exists. `checkedFor` has to go too, or the overlay
+ * suppresses the re-check that would fix it as "already read this posting".
+ */
+export function applyBlockEdit(next: ResumeModel): void {
+  const prev = state.resume;
+  if (!prev) return;
+  setTailorState({
+    resume: next,
+    // Cap the stack: this is an undo, not a history, and a résumé is not small.
+    editUndo: [...state.editUndo, prev].slice(-30),
+    editError: "",
+    fit: null,
+    checkedFor: null,
+    scoredAt: null,
+    result: null,
+    tailoredFrom: null,
+    rejectedEdits: [],
+  });
+}
+
+export function undoBlockEdit(): void {
+  const stack = state.editUndo;
+  if (stack.length === 0) return;
+  setTailorState({ resume: stack[stack.length - 1], editUndo: stack.slice(0, -1), editError: "" });
+}
+
+/** True when the document on screen differs from the last saved state. */
+export function hasUnsavedEdits(): boolean {
+  return state.editUndo.length > 0;
+}
+
+/**
+ * Persist the edited master. Explicit, never automatic.
+ *
+ * Deliberately NOT `useSaveMasterResume`: that hook's bare `catch {}` makes a
+ * 401, a 502 and being offline indistinguishable, and returns null. It is fine
+ * for its documented best-effort use — persisting a freshly parsed résumé — and
+ * exactly wrong behind a Save button, where the user is relying on the result.
+ *
+ * No `ledger` is sent. The backend rebuilds it from the résumé when none is
+ * given, which is what we want: the user typed these facts, so the résumé IS
+ * the source of truth. Passing the LOADED ledger through would store facts
+ * describing the PRE-edit résumé, and the fabrication guard reads the stored
+ * ledger — a corrected employer would then read as an invention forever.
+ */
+export async function commitResumeEdits(label: string, fallbackError: string): Promise<boolean> {
+  const resume = state.resume;
+  if (!resume || state.editSaving) return false;
+  setTailorState({ editSaving: true, editError: "" });
+  try {
+    const saved = await saveMasterResume({ resume, label });
+    setTailorState({
+      // Seed BOTH from the server's copy, never from the local object.
+      resume: saved.resume,
+      savedResume: saved.resume,
+      masterLabel: saved.label,
+      editUndo: [],
+      editSaving: false,
+      editError: "",
+    });
+    // `invalidateData` cannot reach useMasterResume's module-level cache, and
+    // nine pages read the master from it — an X-ray run right after an edit
+    // would otherwise scan the résumé that was just replaced.
+    resetMasterCache();
+    return true;
+  } catch (e: unknown) {
+    setTailorState({ editSaving: false, editError: apiErrorMessage(e, fallbackError) });
+    return false;
+  }
 }

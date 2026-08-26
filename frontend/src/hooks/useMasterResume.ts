@@ -9,6 +9,24 @@ import type { MasterResume } from "../types";
 // refresh in the background. `null` = never loaded yet.
 let cache: MasterResume[] | null = null;
 
+/**
+ * Drop the cache so the next mount refetches.
+ *
+ * This exists because `invalidateData` CANNOT reach this variable — it only
+ * clears the `dataCache` Map, and this is a plain module-level binding. Nine
+ * pages read the master résumé from here (Interview, and every tool), so after
+ * the master is edited and saved, anything that skips this keeps painting AND
+ * SENDING the pre-edit résumé: an ATS X-ray run straight after an edit would
+ * scan the document that was just replaced.
+ *
+ * Set to null rather than to the new value: consumers already treat `null` as
+ * "fetch, with a skeleton", and that is honestly invalidated where an optimistic
+ * upsert would only be half right.
+ */
+export function resetMasterCache(): void {
+  cache = null;
+}
+
 /** Loads the persisted master résumés once (paired he/en — at most one per
  * language, newest first). `master` is the most recently updated one, which is
  * all Interview / Tools need; Jobs also shows the full pair via `masters`.

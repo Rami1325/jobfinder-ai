@@ -23,6 +23,9 @@ interface Props {
   marks?: Map<string, BlockMark>;
   activeBlock?: string | null;
   onSelectBlock?: (path: string) => void;
+  /** Tap a block to edit it. Passed only when the document is the MASTER —
+   * a tailored draft is a review surface, not an editing one. */
+  onEditBlock?: (path: string) => void;
 }
 
 /**
@@ -43,7 +46,7 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, company = "", marks, activeBlock, onSelectBlock },
+  { resume, template, view, onView, company = "", marks, activeBlock, onSelectBlock, onEditBlock },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
@@ -91,6 +94,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           marks={marks}
           activeBlock={activeBlock}
           onSelectBlock={onSelectBlock}
+          onEditBlock={onEditBlock}
         />
       </div>
 
