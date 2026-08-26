@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
@@ -15,15 +15,18 @@ import {
 } from "../api/client";
 import TemplatePicker, { isPdfOnlyTemplate } from "../components/TemplatePicker";
 import ChangeLog from "../components/ChangeLog";
+import DocumentPanel, { type DocView } from "../components/DocumentPanel";
+import TailorOverlay from "../components/TailorOverlay";
+import { useCoverage } from "../hooks/useCoverage";
 import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
-import JDPaste from "../components/JDPaste";
 import ResumeUpload from "../components/ResumeUpload";
 import ScoreCard from "../components/ScoreCard";
 import VoicePanel from "../components/VoicePanel";
 import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
-import { applyEditDecisions, diffResumes } from "../lib/resumeDiff";
-import { Badge, Button, Card, CardTitle, Skeleton, Stepper, useToast } from "../components/ui";
+import { blocksByEdit, mergeForReview } from "../lib/resumeDiff";
+import { classifyEdit } from "../lib/editGroups";
+import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
 import {
   getTailorState,
   setTailorState,
@@ -62,6 +65,10 @@ export default function TailorPage() {
     applied,
     coverLetterText,
     langSwitched,
+    fit,
+    checkedFor,
+    scoredAt,
+    overlayOpen,
     jobUrl,
     jobTitle,
     company,
@@ -112,22 +119,88 @@ export default function TailorPage() {
     })();
   }, []);
 
-  const step = !resume ? 0 : !result ? 1 : 2;
-  const canRun = !!resume && jdText.trim().length > 30 && !loading;
+  // The document is always on screen when a résumé exists, so there is no
+  // stepper any more: `step` gated nothing and described a flow that no
+  // longer happens. Tailoring is an action ON the document, not a stage.
+  const canRun = !!resume && !loading;
 
   // Per-bullet accept/reject: diff the tailored résumé against the one it was
   // tailored from, and build the effective résumé the user actually ships.
   const original = tailoredFrom ?? resume;
-  const edits = useMemo(
-    () => (result && original ? diffResumes(original, result.tailored_resume) : []),
-    [original, result],
-  );
   const rejectedSet = useMemo(() => new Set(rejectedEdits), [rejectedEdits]);
-  const effectiveResume = useMemo(() => {
-    if (!result) return null;
-    if (!original || rejectedSet.size === 0) return result.tailored_resume;
-    return applyEditDecisions(original, result.tailored_resume, rejectedSet);
-  }, [original, result, rejectedSet]);
+  // ONE walk for all three: the edit list, the résumé the user ships, and where
+  // each edit lands in it. Computing them separately is how they drift.
+  const merged = useMemo(
+    () => (result && original ? mergeForReview(original, result.tailored_resume, rejectedSet) : null),
+    [original, result, rejectedSet],
+  );
+  const edits = merged?.edits ?? [];
+  const effectiveResume = merged?.resume ?? result?.tailored_resume ?? null;
+  const editBlock = useMemo(() => (merged ? blocksByEdit(merged.blocks) : {}), [merged]);
+  // What the page shows: the tailored résumé once there is one, the master
+  // before that. This one expression is the whole of "the page always has a CV".
+  const shown = effectiveResume ?? resume;
+
+  // The live, deterministic half of the match — recomputed from the document as
+  // it stands, on every accept and decline. The other half cannot move without
+  // spending, so it is not here.
+  const coverage = useCoverage(shown, jd);
+
+  /** How each block on the page relates to the tailoring. There is no
+   * "undecided" state in this flow — every edit is accepted until rejected — so
+   * a block is either showing the AI's wording or, if every edit on it was
+   * declined, the user's original. The second is the one worth seeing. */
+  const marks = useMemo(() => {
+    const m = new Map<string, "changed" | "restored">();
+    if (merged) {
+      for (const [path, ids] of Object.entries(merged.blocks)) {
+        m.set(path, ids.every((id) => rejectedSet.has(id)) ? "restored" : "changed");
+      }
+    }
+    return m;
+  }, [merged, rejectedSet]);
+
+  // The document ↔ review jump. `spot` is the block lit up right now; `focusEdit`
+  // carries a nonce so clicking the same block twice re-fires the effect.
+  const docRef = useRef<HTMLDivElement>(null);
+  const [docView, setDocView] = useState<DocView>("screen");
+  const [spot, setSpot] = useState<string | null>(null);
+  const [focusEdit, setFocusEdit] = useState<{ id: string; nonce: number } | null>(null);
+
+  useEffect(() => {
+    if (!spot) return;
+    const timer = setTimeout(() => setSpot(null), 2200);
+    return () => clearTimeout(timer);
+  }, [spot]);
+
+  const smooth = () =>
+    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? ("auto" as const)
+      : ("smooth" as const);
+
+  /** Review row → document. */
+  function showInDoc(id: string) {
+    const path = editBlock[id];
+    if (!path) return; // an accepted removal is not on the page — nothing to point at
+    // The file and ATS views hide the screen document, and scrollIntoView on a
+    // display:none node is a silent no-op — so select it before scrolling.
+    setDocView("screen");
+    setSpot(path);
+    requestAnimationFrame(() => {
+      docRef.current
+        ?.querySelector<HTMLElement>(`[data-block="${CSS.escape(path)}"]`)
+        // `center`, not `start`: styles.css sets a global scroll-padding-top for
+        // the marketing header, and a small target reads better centred anyway.
+        ?.scrollIntoView({ block: "center", behavior: smooth() });
+    });
+  }
+
+  /** Document block → review row. */
+  function selectBlock(path: string) {
+    const id = merged?.blocks[path]?.[0];
+    if (!id) return; // an untouched block has nothing to show
+    setFocusEdit({ id, nonce: Date.now() });
+  }
 
   async function onParsed(r: ResumeModel, l: FactsLedger) {
     setTailorState({ resume: r, ledger: l, result: null, tailoredFrom: null, rejectedEdits: [], saved: false, langSwitched: null });
@@ -139,8 +212,12 @@ export default function TailorPage() {
   // negative signal — future tailors receive it as an avoid-list. Fired on
   // save/apply (the moment the review decisions are final), best-effort.
   function persistRejectedPhrases() {
+    // Rewrites only. A rejected TRUNCATION means "put the cut text back", not
+    // "I dislike this wording" — posting its `after` would teach the avoid-list
+    // to shun the user's own sentence, which is the opposite of the signal.
+    // Removals filter themselves out (`after === ""`).
     const phrases = edits
-      .filter((e) => rejectedSet.has(e.id) && e.after.trim() !== "")
+      .filter((e) => rejectedSet.has(e.id) && e.after.trim() !== "" && classifyEdit(e) === "rewrite")
       .map((e) => e.after);
     recordRejectedPhrases(phrases).catch(() => {});
   }
@@ -259,10 +336,6 @@ export default function TailorPage() {
         <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("sub")}</p>
       </div>
 
-      <Card>
-        <Stepper steps={[t("steps.resume"), t("steps.jd"), t("steps.results")]} current={step} />
-      </Card>
-
       {jobUrl && (
         <Card className="border-accent/40">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -286,49 +359,90 @@ export default function TailorPage() {
         </Card>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      {/* Page level, not inside the result gate. `startTailor` can swap the
+          loaded résumé for its paired-language master, and now that the document
+          is always on screen that swap happens under the user's eyes — so the
+          notice has to be visible before any result exists. */}
+      {langSwitched && (
+        <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-ink">
+          <BadgeCheck size={15} className="shrink-0 text-accent-soft" />
+          <span className="min-w-0">
+            {t(`langSwitch.${langSwitched}`, { label: masterLabel || t("langSwitch.fallbackLabel") })}
+          </span>
+        </div>
+      )}
+
+      {/* One row of actions over the document. Tailoring is a thing you DO to
+          the CV on screen, not a stage you pass through. */}
+      <Card className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {resume && masterLabel && (
+          <span className="inline-flex items-center gap-1 text-xs text-mint">
+            <BadgeCheck size={13} /> {masterLabel}
+          </span>
+        )}
+        {loading && <span className="text-sm text-ink-muted">{t("run.keepsRunning")}</span>}
+        {error && <span className="text-sm text-danger">{error}</span>}
+        {edits.length > 0 && (
+          <button
+            type="button"
+            onClick={() =>
+              document.getElementById("trust-panel")?.scrollIntoView({ behavior: smooth(), block: "start" })
+            }
+            className="text-xs font-medium text-accent-soft hover:underline"
+          >
+            {t("toolbar.review", { count: edits.length })}
+          </button>
+        )}
+        <Button
+          className="ms-auto"
+          loading={loading}
+          icon={<Wand2 size={17} />}
+          disabled={!canRun}
+          title={!resume ? t("run.uploadFirst") : undefined}
+          onClick={() => setTailorState({ overlayOpen: true })}
+        >
+          {jd?.job_title ? t("overlay.openFor", { title: jd.job_title }) : t("overlay.open")}
+        </Button>
+      </Card>
+
+      {/* The document, or — with no résumé yet — the one thing there is to do. */}
+      {shown ? (
+        <DocumentPanel
+          ref={docRef}
+          resume={shown}
+          template={template}
+          view={docView}
+          onView={setDocView}
+          company={jd?.company ?? company}
+          marks={marks}
+          activeBlock={spot}
+          onSelectBlock={selectBlock}
+        />
+      ) : (
         <Card>
-          <div className="flex items-center justify-between">
-            <CardTitle>{t("upload.title")}</CardTitle>
-            {masterLabel && resume && (
-              <span className="inline-flex items-center gap-1 text-xs text-mint">
-                <BadgeCheck size={13} /> {masterLabel}
-              </span>
-            )}
-          </div>
+          <CardTitle>{t("upload.title")}</CardTitle>
           <div className="mt-3">
-            <ResumeUpload onParsed={onParsed} savedLabel={resume ? masterLabel || undefined : undefined} />
+            <ResumeUpload onParsed={onParsed} />
           </div>
           {/* PLAN 15.3: cold-start path — no file to upload yet. */}
-          {!resume && (
-            <Link to="/builder" className="mt-3 inline-block text-sm text-accent-soft hover:underline">
-              {t("upload.buildLink")}
-            </Link>
-          )}
+          <Link to="/builder" className="mt-3 inline-block text-sm text-accent-soft hover:underline">
+            {t("upload.buildLink")}
+          </Link>
         </Card>
+      )}
 
-        <Card>
-          <CardTitle>{t("jd.title")}</CardTitle>
-          <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("jd.hint")}</p>
-          <div className="mt-3">
-            <JDPaste value={jdText} onChange={(v) => setTailorState({ jdText: v })} />
-          </div>
-        </Card>
-      </div>
-
-      <Card className="flex flex-wrap items-center gap-3">
-        <Button size="lg" loading={loading} icon={<Wand2 size={18} />} disabled={!canRun} onClick={startTailor}>
-          {loading ? t("run.loading") : t("run.cta")}
-        </Button>
-        {!resume && <span className="text-sm text-ink-muted">{t("run.uploadFirst")}</span>}
-        {resume && jdText.trim().length <= 30 && (
-          <span className="text-sm text-ink-muted">{t("run.pasteJd")}</span>
-        )}
-        {loading && (
-          <span className="text-sm text-ink-muted">{t("run.keepsRunning")}</span>
-        )}
-        {error && <span className="text-sm text-danger">{error}</span>}
-      </Card>
+      {/* The two numbers, as soon as either exists — a fit check produces one
+          before any tailoring. */}
+      {(fit || result) && shown && (
+        <ScoreCard
+          coverage={coverage.data}
+          coverageStale={coverage.stale}
+          fitScore={result ? result.score_after.fit_score : (fit?.fit_score ?? null)}
+          rationale={result ? result.score_after.rationale : fit?.rationale}
+          scoredAt={scoredAt}
+          flags={result?.fabrication_flags ?? []}
+        />
+      )}
 
       {loading && (
         <div className="space-y-4">
@@ -345,21 +459,13 @@ export default function TailorPage() {
             transition={{ duration: 0.4 }}
             className="space-y-6"
           >
-            {langSwitched && (
-              <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-ink">
-                <BadgeCheck size={15} className="shrink-0 text-accent-soft" />
-                <span className="min-w-0">
-                  {t(`langSwitch.${langSwitched}`, { label: masterLabel || t("langSwitch.fallbackLabel") })}
-                </span>
-              </div>
-            )}
-            <ScoreCard before={result.score_before} after={result.score_after} flags={result.fabrication_flags} />
             <VoicePanel
               report={result.voice_report}
               plan={result.plan}
               credibility={result.credibility_flags ?? []}
             />
             <MatchReport gaps={result.score_after.gaps} jdText={jdText} resume={effectiveResume} />
+
             <ChangeLog
               edits={edits}
               changelog={result.changelog}
@@ -367,6 +473,14 @@ export default function TailorPage() {
               jdKeywords={result.score_after.gaps.map((g) => g.keyword)}
               rejected={rejectedSet}
               onSetRejected={(ids) => setTailorState({ rejectedEdits: ids })}
+              original={original}
+              effective={effectiveResume}
+              lengthReport={result.length_report}
+              plan={result.plan}
+              template={template}
+              onShowInDoc={showInDoc}
+              anchoredEdits={editBlock}
+              focusEdit={focusEdit}
             />
 
             <Card>
@@ -436,15 +550,24 @@ export default function TailorPage() {
                   : t("download.atsNote")}
               </p>
               {/* The honest half of shipping two-column designs: don't just warn
-                  that a parser might interleave them — let the user go and SEE
-                  what one actually reads back from this exact file. */}
-              <Link
-                to="/tools/xray"
+                  that a parser might interleave them — let the user SEE what one
+                  actually reads back from this exact file. It used to navigate to
+                  /tools/xray, which meant leaving the review to check the review;
+                  now it opens the ATS view in place, on the résumé as it stands
+                  right now rather than on the saved master. */}
+              <button
+                type="button"
+                onClick={() => {
+                  setDocView("ats");
+                  requestAnimationFrame(() =>
+                    docRef.current?.scrollIntoView({ block: "start", behavior: smooth() }),
+                  );
+                }}
                 className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent-soft underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
               >
                 <ScanEye size={13} />
                 {t("download.xrayLink")}
-              </Link>
+              </button>
             </Card>
 
             <CoverLetter
@@ -455,6 +578,25 @@ export default function TailorPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {resume && (
+        <TailorOverlay
+          open={overlayOpen}
+          onClose={() => setTailorState({ overlayOpen: false })}
+          resume={resume}
+          jdText={jdText}
+          checkedFor={checkedFor}
+          fit={fit}
+          tailoring={loading}
+          onChecked={(text, f) =>
+            setTailorState({ jdText: text, jd: f.jd, fit: f, checkedFor: text, scoredAt: Date.now() })
+          }
+          onTailor={(text) => {
+            setTailorState({ jdText: text, overlayOpen: false });
+            startTailor();
+          }}
+        />
+      )}
     </div>
   );
 }

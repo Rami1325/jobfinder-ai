@@ -154,6 +154,72 @@ export interface CVPlan {
   emphasize: string[];
   downplay: string[];
   conservative_notes: string[];
+  /**
+   * Project curation, in priority order. The planner runs BEFORE the tailor
+   * call, so these are an intent, not a record — the model can and does
+   * contradict them. Read `drop_projects` only to describe what the plan said,
+   * never to claim why something is missing.
+   */
+  select_projects?: string[];
+  drop_projects?: string[];
+}
+
+/**
+ * What the page budget had to do to fit the résumé (app/core/length_budget.py).
+ *
+ * Only `dropped_projects` is safe to read. Its presence proves the budget cut a
+ * project; its ABSENCE proves nothing, because `fit_to_pages` is handed the
+ * model's already-curated output and early-exits when that output already fits.
+ * `trimmed: false` therefore means *unknown*, never *nothing was cut* — the same
+ * rule the tracker applies to its nullable columns. Page numbers here describe
+ * whatever template the tailor measured (always the default) and are not
+ * re-measured after the humanizer pass, so the UI takes them from a live
+ * `POST /tools/page-count` instead.
+ */
+export interface LengthReport {
+  pages_before: number;
+  pages_after: number;
+  max_pages: number;
+  hard_max_pages: number;
+  trimmed: boolean;
+  dropped_projects: string[];
+  notes: string[]; // hard-coded English fragments — never rendered
+}
+
+/** The deterministic half of the match score, on its own — recomputable for
+ * free as often as the document changes. Deliberately carries no `fit_score`
+ * and no `overall`: those need a model call, so a surface that could animate
+ * them would be animating something it did not measure. */
+export interface CoverageResult {
+  keyword_coverage: number;
+  gaps: GapItem[];
+  covered: number;
+  partial: number;
+  missing: number;
+  total: number;
+}
+
+/** Both halves of the match from ONE model round-trip, before any tailoring.
+ * `jd` rides back so tailoring afterwards does not pay to read the same posting
+ * twice. No `overall` and no before/after fit — see the backend docstring. */
+export interface FitCheckResult {
+  jd: JDModel;
+  keyword_coverage: number;
+  fit_score: number;
+  rationale: string;
+  gaps: GapItem[];
+  covered: number;
+  partial: number;
+  missing: number;
+  total: number;
+}
+
+/** A live page measurement for the document the user is about to download. */
+export interface PageCountResult {
+  pages: number;
+  max_pages: number;
+  hard_max_pages: number;
+  template: string; // the resolved spec id, echoed back
 }
 
 export interface CredibilityFlag {
@@ -180,6 +246,7 @@ export interface TailorResult {
   voice_report?: VoiceReport; // absent on results saved by older backends
   plan?: CVPlan | null;
   credibility_flags?: CredibilityFlag[];
+  length_report?: LengthReport; // absent on results saved by older backends
 }
 
 export interface ResumeUploadResponse {

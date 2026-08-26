@@ -1,35 +1,13 @@
-import { ArrowRight, ArrowUpRight, ArrowDownRight, Minus, ShieldCheck, ShieldAlert } from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
-import type { FabricationFlag, Score } from "../types";
+import { ShieldCheck, ShieldAlert } from "lucide-react";
+import type { CoverageResult, FabricationFlag } from "../types";
 import { Card, CardTitle, ProgressRing, Stamp } from "./ui";
 import { cn } from "../lib/cn";
 
-function DeltaPill({ before, after }: { before: number; after: number }) {
-  const { t } = useTranslation("tailor");
-  const d = Math.round((after - before) * 10) / 10;
-  const up = d > 0;
-  return (
-    <motion.span
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 1.2, duration: 0.35 }}
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        d === 0 && "bg-bg-soft text-ink-faint",
-        d !== 0 && up && "bg-mint/10 text-mint",
-        d !== 0 && !up && "bg-danger/10 text-danger",
-      )}
-    >
-      {d === 0 ? <Minus size={12} /> : up ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-      {d === 0 ? t("score.noChange") : t("score.delta", { sign: up ? "+" : "−", value: Math.abs(d) })}
-    </motion.span>
-  );
-}
-
 /**
- * The fabrication guard surfaced as a first-class score next to the rings —
- * no competitor can show this number. Clicking scrolls to the trust panel.
+ * The fabrication guard surfaced as a first-class number next to the match —
+ * no competitor can show this. Clicking scrolls to the trust panel.
  */
 function GuardTile({ flags }: { flags: FabricationFlag[] }) {
   const { t } = useTranslation("tailor");
@@ -51,7 +29,6 @@ function GuardTile({ flags }: { flags: FabricationFlag[] }) {
           {clean ? <ShieldCheck size={24} className="text-mint" /> : <ShieldAlert size={24} className="text-danger" />}
           <span className="mt-0.5 text-2xl font-bold tabular-nums text-ink">{flags.length}</span>
         </div>
-        {/* Decorative verdict, landing as the choreography's final beat — the pill below stays the accessible signal. */}
         <span className="pointer-events-none absolute inset-x-0 -bottom-2 flex justify-center">
           <Stamp tone={clean ? "mint" : "danger"} delay={1.4}>
             {clean ? t("score.stampVerified") : t("score.stampReview")}
@@ -82,50 +59,86 @@ function GuardTile({ flags }: { flags: FabricationFlag[] }) {
   );
 }
 
-export default function ScoreCard({
-  before,
-  after,
-  flags,
-}: {
-  before: Score;
-  after: Score;
+interface Props {
+  /** Live, deterministic, recomputed from the document as it stands. */
+  coverage: CoverageResult | null;
+  coverageStale?: boolean;
+  /** One model reading. Null until a fit check or a tailor has produced one. */
+  fitScore: number | null;
+  /** The model's own sentence about that reading. */
+  rationale?: string;
+  /** When the fit reading was taken, epoch ms. */
+  scoredAt: number | null;
   flags: FabricationFlag[];
-}) {
-  const { t } = useTranslation("tailor");
-  const rings = [
-    { label: t("score.overall"), tone: "gradient" as const, b: before.overall, a: after.overall },
-    { label: t("score.ats"), tone: "accent" as const, b: before.keyword_coverage, a: after.keyword_coverage },
-    { label: t("score.fit"), tone: "mint" as const, b: before.fit_score, a: after.fit_score },
-  ];
+}
+
+/**
+ * Two numbers on two different clocks, and the guard.
+ *
+ * This replaced six rings — before/after pairs for keyword coverage, recruiter
+ * fit, and a blended `overall`. Every part of that was a problem:
+ *
+ *   * `overall` is `0.5*coverage + 0.5*fit`: a live deterministic half averaged
+ *     with a frozen model sample. Half of it is stale by construction, which is
+ *     what the old body copy was apologising for when it said the rings "still
+ *     show the fully-AI version". No amount of recomputation fixes a blend.
+ *
+ *   * A before→after pair on FIT is two samples at temperature 0.3. A few points
+ *     either way is sampling noise, not an improvement, and rendering it with an
+ *     up-arrow claims otherwise.
+ *
+ * So: coverage is live and shows its own raw count, because "24 of 31 terms" is
+ * checkable in a way that "78%" is not. Fit is one reading with the time it was
+ * taken and no delta. The guard is unchanged — it was always live and always
+ * deterministic.
+ */
+export default function ScoreCard({ coverage, coverageStale, fitScore, rationale, scoredAt, flags }: Props) {
+  const { t, i18n } = useTranslation("tailor");
+  const time =
+    scoredAt !== null
+      ? new Intl.DateTimeFormat(i18n.language, { hour: "2-digit", minute: "2-digit" }).format(scoredAt)
+      : "";
+
   return (
     <Card>
-      <CardTitle>{t("score.title")}</CardTitle>
-      <div className="mt-5 grid grid-cols-1 gap-8 sm:grid-cols-2 sm:gap-6 xl:grid-cols-4 xl:gap-4">
-        {rings.map((r) => (
-          <div key={r.label} className="flex flex-col items-center gap-3">
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <div className="flex flex-col items-center gap-1 opacity-50">
-                <ProgressRing value={r.b} size={72} stroke={6} tone={r.tone} />
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-                  {t("score.before")}
-                </span>
-              </div>
-              <ArrowRight size={18} className="shrink-0 text-ink-faint rtl:-scale-x-100" />
-              <div className="flex flex-col items-center gap-1">
-                {/* Sequenced beat: before-rings sweep first, after-rings answer 0.45s later. */}
-                <ProgressRing value={r.a} size={112} tone={r.tone} delay={0.45} />
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink">
-                  {t("score.after")}
-                </span>
-              </div>
-            </div>
-            <p className="text-sm font-semibold text-ink">{r.label}</p>
-            <DeltaPill before={r.b} after={r.a} />
+      <CardTitle>{t("fit.title")}</CardTitle>
+      <div className="mt-5 grid grid-cols-1 gap-8 sm:grid-cols-2 sm:gap-6 xl:grid-cols-3 xl:gap-4">
+        {/* --- live, deterministic ---------------------------------------- */}
+        <div className="flex flex-col items-center gap-3">
+          <div className={cn("transition-opacity", coverageStale && "opacity-60")}>
+            <ProgressRing value={coverage?.keyword_coverage ?? 0} size={112} tone="accent" delay={0.1} />
           </div>
-        ))}
+          <p className="text-sm font-semibold text-ink">{t("fit.coverage")}</p>
+          {coverage && (
+            <p className="text-xs tabular-nums text-ink-muted">
+              {t("fit.coverageSub", { covered: coverage.covered, total: coverage.total })}
+            </p>
+          )}
+          <p className="max-w-[30ch] text-center text-xs leading-snug text-ink-faint">{t("fit.coverageNote")}</p>
+        </div>
+
+        {/* --- one model reading, timestamped, never animated -------------- */}
+        <div className="flex flex-col items-center gap-3">
+          {fitScore === null ? (
+            <div className="flex h-28 w-28 items-center justify-center rounded-full border-[6px] border-line">
+              <span className="px-2 text-center text-[11px] font-medium leading-tight text-ink-faint">
+                {t("fit.notMeasured")}
+              </span>
+            </div>
+          ) : (
+            <ProgressRing value={fitScore} size={112} tone="mint" delay={0.1} />
+          )}
+          <p className="text-sm font-semibold text-ink">{t("fit.recruiter")}</p>
+          <p className="max-w-[32ch] text-center text-xs leading-snug text-ink-faint">
+            {fitScore === null ? t("fit.notMeasuredNote") : t("fit.asOf", { time })}
+          </p>
+        </div>
+
         <GuardTile flags={flags} />
       </div>
-      {after.rationale && <p className="mt-6 text-sm leading-relaxed text-ink-muted">{after.rationale}</p>}
+      {rationale && fitScore !== null && (
+        <p className="mt-6 text-sm leading-relaxed text-ink-muted">{rationale}</p>
+      )}
     </Card>
   );
 }

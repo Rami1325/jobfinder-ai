@@ -1,10 +1,33 @@
 import { useTranslation } from "react-i18next";
 import type { ResumeModel } from "../types";
 import { Badge } from "./ui";
+import { cn } from "../lib/cn";
+
+/** How a block relates to the tailoring. `changed` = the AI touched it and you
+ * kept the change; `restored` = every edit on it was declined, so what you are
+ * reading is your original wording. */
+export type BlockMark = "changed" | "restored";
 
 interface Props {
   resume: ResumeModel;
+  /**
+   * `"panel"` is the original in-app card (the tracker's détail modal);
+   * `"sheet"` is the résumé as a page — white ground, page margins, a lift.
+   */
+  surface?: "panel" | "sheet";
+  /** Block path → how it relates to the tailoring. Paths come from
+   * `resumeDiff.mergeForReview`'s `blocks`, and must use the same grammar. */
+  marks?: Map<string, BlockMark>;
+  /** The block to spotlight right now (a jump from the review panel). */
+  activeBlock?: string | null;
+  /** Clicking a block asks the review panel to show its change. */
+  onSelectBlock?: (path: string) => void;
 }
+
+/** Twin of `resumeDiff.ts`'s `lkey`. Deliberately `toLowerCase`, NOT the
+ * `toLocaleLowerCase` used by `skillBlocksOf` below: a Turkish-locale dotted İ
+ * would desync this key from the one the anchor was minted with. */
+const dkey = (s: string) => (s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 
 /**
  * Mirror of `app/core/section_order.py` (PLAN 17.5) — Education outranks
@@ -145,9 +168,42 @@ function MetaLine({ lead = "", bits = [] }: { lead?: string; bits?: (string | un
   );
 }
 
-export default function ResumeView({ resume }: Props) {
+export default function ResumeView({
+  resume,
+  surface = "panel",
+  marks,
+  activeBlock,
+  onSelectBlock,
+}: Props) {
   const { t } = useTranslation("tailor");
   const c = resume.contact;
+
+  /** Marker + spotlight for one block. Every marker uses LOGICAL properties
+   * (`border-s`, `-ms`, `ps`) so RTL mirrors without a second rule. A bullet
+   * marks its own glyph rather than growing a start-bar, which would collide
+   * with the list's `ps-5` indent. */
+  const blk = (path: string, shape: "block" | "item" | "chip" = "block") => {
+    const mark = marks?.get(path);
+    return cn(
+      onSelectBlock && "cursor-pointer",
+      shape === "block" && mark === "changed" && "-ms-2 border-s-2 border-accent/50 ps-2",
+      shape === "block" && mark === "restored" && "-ms-2 border-s-2 border-warn/60 ps-2",
+      shape === "item" && mark === "changed" && "marker:text-accent",
+      shape === "item" && mark === "restored" && "marker:text-warn",
+      shape === "chip" && mark === "changed" && "ring-1 ring-inset ring-accent/45",
+      shape === "chip" && mark === "restored" && "ring-1 ring-inset ring-warn/55",
+      activeBlock === path && "rounded-[3px] bg-accent/10 outline outline-2 outline-offset-2 outline-accent/60",
+    );
+  };
+
+  // ONE delegated handler rather than a handler, a role and a tabIndex on every
+  // <strong>, <li> and <span> in the document.
+  const onClick = onSelectBlock
+    ? (ev: React.MouseEvent) => {
+        const path = (ev.target as HTMLElement).closest<HTMLElement>("[data-block]")?.dataset.block;
+        if (path) onSelectBlock(path);
+      }
+    : undefined;
   const contactBits = [c.email, c.phone, c.location, c.linkedin, c.website].filter(Boolean);
   const military = resume.military_service ?? [];
   const languages = resume.languages ?? [];
@@ -157,7 +213,9 @@ export default function ResumeView({ resume }: Props) {
     summary: resume.summary ? (
       <section key="summary">
         <SectionHead>{t("sections.summary")}</SectionHead>
-        <p className="text-sm leading-relaxed text-ink-muted">{resume.summary}</p>
+        <p data-block="@summary" className={cn("text-sm leading-relaxed text-ink-muted", blk("@summary"))}>
+          {resume.summary}
+        </p>
       </section>
     ) : null,
 
@@ -180,7 +238,9 @@ export default function ResumeView({ resume }: Props) {
               {label && <p className="mb-1 text-xs font-semibold text-accent">{label}</p>}
               <div className="flex flex-wrap gap-1.5">
                 {items.map((s) => (
-                  <Badge key={s}>{s}</Badge>
+                  <Badge key={s} data-block={`@skills.${dkey(s)}`} className={blk(`@skills.${dkey(s)}`, "chip")}>
+                    {s}
+                  </Badge>
                 ))}
               </div>
             </div>
@@ -200,7 +260,7 @@ export default function ResumeView({ resume }: Props) {
               flush right, which is a layout no download has produced since the
               entry grammar changed. */}
           {resume.experience.map((e, i) => (
-            <div key={i}>
+            <div key={i} data-block={`@exp.${i}`} className={blk(`@exp.${i}`)}>
               <strong className="block text-sm font-semibold text-ink">{e.title || e.company}</strong>
               <MetaLine
                 lead={e.title ? e.company : ""}
@@ -208,7 +268,9 @@ export default function ResumeView({ resume }: Props) {
               />
               <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
                 {e.bullets.map((b, j) => (
-                  <li key={j}>{b}</li>
+                  <li key={j} data-block={`@exp.${i}.b.${j}`} className={blk(`@exp.${i}.b.${j}`, "item")}>
+                    {b}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -222,12 +284,14 @@ export default function ResumeView({ resume }: Props) {
         <SectionHead>{t("sections.projects")}</SectionHead>
         <div className="space-y-3">
           {resume.projects.map((p, i) => (
-            <div key={i}>
+            <div key={i} data-block={`@proj.${i}`} className={blk(`@proj.${i}`)}>
               <strong className="text-sm font-semibold text-ink">{p.name}</strong>
               {p.description && <span className="text-sm text-ink-muted"> — {p.description}</span>}
               <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
                 {p.bullets.map((b, j) => (
-                  <li key={j}>{b}</li>
+                  <li key={j} data-block={`@proj.${i}.b.${j}`} className={blk(`@proj.${i}.b.${j}`, "item")}>
+                    {b}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -241,7 +305,7 @@ export default function ResumeView({ resume }: Props) {
         <SectionHead>{t("sections.education")}</SectionHead>
         <div className="space-y-2">
           {resume.education.map((e, i) => (
-            <div key={i} className="text-sm">
+            <div key={i} data-block={`@edu.${i}`} className={cn("text-sm", blk(`@edu.${i}`))}>
               <strong className="font-semibold text-ink">
                 {[e.degree, e.field].filter(Boolean).join(", ") || e.institution}
               </strong>
@@ -264,7 +328,7 @@ export default function ResumeView({ resume }: Props) {
         <SectionHead>{t("sections.militaryService", "Military Service")}</SectionHead>
         <div className="space-y-3">
           {military.map((m, i) => (
-            <div key={i}>
+            <div key={i} data-block={`@mil.${i}`} className={blk(`@mil.${i}`)}>
               <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                 <strong className="text-sm font-semibold text-ink">
                   {[m.role, m.unit].filter(Boolean).join(" — ")}
@@ -277,7 +341,9 @@ export default function ResumeView({ resume }: Props) {
               </div>
               <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
                 {m.bullets.map((b, j) => (
-                  <li key={j}>{b}</li>
+                  <li key={j} data-block={`@mil.${i}.b.${j}`} className={blk(`@mil.${i}.b.${j}`, "item")}>
+                    {b}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -291,7 +357,9 @@ export default function ResumeView({ resume }: Props) {
         <SectionHead>{t("sections.certifications")}</SectionHead>
         <ul className="list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
           {resume.certifications.map((cert, i) => (
-            <li key={i}>{cert}</li>
+            <li key={i} data-block={`@cert.${dkey(cert)}`} className={blk(`@cert.${dkey(cert)}`, "item")}>
+              {cert}
+            </li>
           ))}
         </ul>
       </section>
@@ -302,7 +370,13 @@ export default function ResumeView({ resume }: Props) {
         <SectionHead>{t("sections.languages", "Languages")}</SectionHead>
         <div className="flex flex-wrap gap-1.5">
           {languages.map((l, i) => (
-            <Badge key={i}>{[l.language, l.level].filter(Boolean).join(" – ")}</Badge>
+            <Badge
+              key={i}
+              data-block={`@lang.${dkey(l.language)}`}
+              className={blk(`@lang.${dkey(l.language)}`, "chip")}
+            >
+              {[l.language, l.level].filter(Boolean).join(" – ")}
+            </Badge>
           ))}
         </div>
       </section>
@@ -311,15 +385,39 @@ export default function ResumeView({ resume }: Props) {
 
   return (
     <div
+      // `dir="auto"` must stay on the element that CONTAINS the text, or a
+      // Hebrew résumé stops resolving RTL. Per-block dir is deliberately not
+      // added: it would need the fused meta lines split first, and `dir` on an
+      // inline element opens a bidi isolate that strands the "·" separators.
       dir="auto"
-      className="rounded-xl border border-line bg-bg-soft p-5 text-ink [&_section]:mt-5"
+      onClick={onClick}
+      className={cn(
+        "text-ink [&_section]:mt-5",
+        surface === "sheet"
+          ? // A page, not a card: white ground, near-square corners, proportional
+            // margins (~the renderers' 9.7% / 5.5%), and a measure near 65-70
+            // characters instead of the 130 a full-width column would give. The
+            // ring is not decoration — the app has a real light theme where the
+            // shadow alone is invisible.
+            "sheet mx-auto w-full max-w-[46rem] rounded-[3px] bg-panel px-[clamp(20px,7%,56px)] py-[clamp(22px,5.5%,46px)] shadow-doc ring-1 ring-black/10"
+          : "rounded-xl border border-line bg-bg-soft p-5",
+      )}
     >
-      <div className="text-xl font-bold text-ink">{c.name || t("sections.fallbackName")}</div>
+      <div data-block="@contact.name" className={cn("text-xl font-bold text-ink", blk("@contact.name"))}>
+        {c.name || t("sections.fallbackName")}
+      </div>
       {resume.headline && (
-        <div className="mt-0.5 text-sm font-medium text-accent-soft">{resume.headline}</div>
+        <div
+          data-block="@headline"
+          className={cn("mt-0.5 text-sm font-medium text-accent-soft", blk("@headline"))}
+        >
+          {resume.headline}
+        </div>
       )}
       {contactBits.length > 0 && (
-        <div className="mt-0.5 text-xs text-ink-muted">{contactBits.join(" · ")}</div>
+        <div data-block="@contact" className={cn("mt-0.5 text-xs text-ink-muted", blk("@contact"))}>
+          {contactBits.join(" · ")}
+        </div>
       )}
 
       {sectionOrder(resume).map((key) => sections[key])}

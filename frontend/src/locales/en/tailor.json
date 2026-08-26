@@ -1,16 +1,11 @@
 {
   "title": "Tailor your résumé",
-  "sub": "Rewrite for a specific job — verified against your real experience.",
+  "sub": "Rewrite for a specific job — checked against your real experience.",
   "breadcrumb": {
     "back": "Back to jobs",
     "thisJob": "this job",
     "tailoringFor": "Tailoring for: <1>{{title}}</1>",
     "tailoringForAt": "Tailoring for: <1>{{title}}</1> at <3>{{company}}</3>"
-  },
-  "steps": {
-    "resume": "Résumé",
-    "jd": "Job description",
-    "results": "Results"
   },
   "target": {
     "label": "Target job: {{title}}",
@@ -118,22 +113,14 @@
     "fetchError": "Could not fetch that link."
   },
   "score": {
-    "title": "Match score — before vs. after",
-    "before": "Before",
-    "after": "After",
-    "overall": "Overall",
-    "ats": "ATS",
-    "fit": "Fit",
-    "noChange": "no change",
-    "delta": "{{sign}}{{value}} pts",
     "guard": "Facts invented",
-    "guardClean": "Verified — nothing invented",
+    "guardClean": "No new facts detected",
     "guardFlags_one": "{{count}} claim to review",
     "guardFlags_other": "{{count}} claims to review",
     "guardDetail": "See the full fabrication check below",
-    "stampVerified": "Verified · Facts ledger",
+    "stampVerified": "Checked · Facts ledger",
     "stampReview": "Needs review",
-    "guardNoteClean": "Nothing invented. We checked.",
+    "guardNoteClean": "We checked every name, date, credential and number against your original. Nothing new turned up.",
     "guardNoteFlags_one": "{{count}} claim we couldn't find in your résumé. It doesn't ship until you approve it.",
     "guardNoteFlags_other": "{{count}} claims we couldn't find in your résumé. They don't ship until you approve them."
   },
@@ -184,9 +171,9 @@
     "close": "Close"
   },
   "changelog": {
-    "cleanTitle": "All claims verified",
+    "cleanTitle": "No new claims detected",
     "flaggedTitle": "Fabrication check — review these",
-    "cleanBody": "Every factual anchor matches your original résumé — nothing invented.",
+    "cleanBody": "Every employer, title, date, credential and number in the rewrite also appears in your original. It is a detector, not a proof — give anything that matters a second look.",
     "flagged_one": "{{count}} item may not be supported by your résumé.",
     "flagged_other": "{{count}} items may not be supported by your résumé.",
     "editsMade": "Edits made",
@@ -196,7 +183,7 @@
   "review": {
     "title": "AI edits — accept or reject each",
     "accepted": "{{accepted}} of {{total}} accepted",
-    "note": "Rejected edits keep your original wording and are left out of downloads, tracker saves, and the keyword report. The score rings above still show the fully-AI version.",
+    "note": "Rejected edits keep your original wording and are left out of downloads, tracker saves, and the keyword report.",
     "acceptAll": "Accept all",
     "rejectAll": "Reject all",
     "accept": "Accept",
@@ -207,7 +194,7 @@
       "removed": "Removed"
     },
     "serves": "Serves:",
-    "guardOk": "Verified",
+    "guardOk": "Nothing new",
     "guardFlagged": "Flagged: {{category}}",
     "rejectedNote": {
       "edited": "Original wording kept",
@@ -216,7 +203,8 @@
     },
     "aiNotes": "The AI's own change notes",
     "flagResolved": "Resolved — edit rejected",
-    "resolvedBody": "All flagged claims resolved — you rejected every flagged edit."
+    "resolvedBody": "All flagged claims resolved — you rejected every flagged edit.",
+    "showInDoc": "Show this on the CV"
   },
   "cover": {
     "title": "Cover letter",
@@ -235,6 +223,7 @@
   },
   "sections": {
     "fallbackName": "Résumé",
+    "headline": "Headline",
     "summary": "Summary",
     "skills": "Skills",
     "experience": "Experience",
@@ -242,6 +231,104 @@
     "education": "Education",
     "certifications": "Certifications",
     "militaryService": "Military Service",
-    "languages": "Languages"
+    "languages": "Languages",
+    "contact": "Contact details"
+  },
+  "groups": {
+    "rewrite": {
+      "title": "Reworded",
+      "count_one": "1 rewrite",
+      "count_other": "{{count}} rewrites"
+    },
+    "addition": {
+      "title": "Added",
+      "count_one": "1 addition",
+      "count_other": "{{count}} additions"
+    },
+    "curation": {
+      "title": "Left out"
+    },
+    "flagged_one": "1 flagged",
+    "flagged_other": "{{count}} flagged",
+    "rejectedHere_one": "1 declined",
+    "rejectedHere_other": "{{count}} declined",
+    "acceptGroup": "Accept these",
+    "rejectGroup": "Keep my wording"
+  },
+  "curation": {
+    "title": "Left out of this version",
+    "count_one": "1 thing from your résumé isn't in this CV",
+    "count_other": "{{count}} things from your résumé aren't in this CV",
+    "complete": "This is everything from your résumé that isn't in this CV.",
+    "ambiguity": "We can show you what's missing, not always who cut it — the AI curates for the job, and the page budget cuts what doesn't fit. Where the page budget recorded the cut, it says so.",
+    "byBudget": "Cut to fit the page limit",
+    "byPlan": "The plan for this job didn't select it",
+    "truncated": "Shortened — nothing reworded",
+    "restore": "Restore",
+    "restored": "Restored",
+    "restoreAll": "Restore all",
+    "restoredNote_one": "1 restored — it's in your download",
+    "restoredNote_other": "{{count}} restored — they're in your download",
+    "allRestored": "Everything is back in your CV"
+  },
+  "additions": {
+    "skillsNote": "Skills aren't fabrication-checked: the AI may adopt the job's wording for something you already have. Read these and drop anything you can't back up."
+  },
+  "pages": {
+    "value_one": "1 page",
+    "value_other": "{{count}} pages",
+    "fits": "{{pages}} — inside the {{max}}-page target.",
+    "over": "{{pages}} — over the {{max}}-page target. Recruiters skim; the download still works.",
+    "hardOver": "{{pages}} — past the {{hard}}-page ceiling. Expect it to be skimmed or dropped.",
+    "measuring": "re-measuring…",
+    "unavailable": "Couldn't re-measure the page count."
+  },
+  "doc": {
+    "viewsLabel": "Document view",
+    "views": {
+      "screen": "On screen",
+      "file": "The real PDF",
+      "ats": "What the ATS reads"
+    },
+    "file": {
+      "note": "Rendered by the same call the Download button makes, from your résumé exactly as it stands — every change you have accepted or declined included.",
+      "download": "Download this PDF",
+      "open": "Open the PDF",
+      "mobile": "Phone browsers can't show a PDF inside a page. Open it — it's the same file.",
+      "failed": "Couldn't build the PDF just now."
+    },
+    "ats": {
+      "note": "We render that PDF, then read it back with the same parser we run on résumés people upload. What follows is the file's own text — not a text version of the page above.",
+      "failed": "Couldn't read the file back just now."
+    }
+  },
+  "overlay": {
+    "open": "Tailor for a job",
+    "openFor": "Tailor for {{title}}",
+    "title": "Tailor for a job",
+    "hint": "Paste the posting, or drop in its link and we'll fetch it.",
+    "checkFit": "Check fit",
+    "checking": "Reading the posting…",
+    "cost": "Reading the posting uses one AI credit. Tailoring afterwards doesn't charge again — it reuses what we already read.",
+    "cached": "We've already read this posting. Checking it again would spend a credit to learn nothing.",
+    "tailor": "Tailor my résumé",
+    "close": "Close",
+    "needsJd": "Paste a job description first.",
+    "failed": "Couldn't read that posting just now.",
+    "topMissing": "Most-wanted terms your CV doesn't say yet"
+  },
+  "fit": {
+    "title": "How this CV matches the job",
+    "coverage": "Keyword coverage",
+    "coverageSub": "{{covered}} of {{total}} key terms matched",
+    "coverageNote": "Recomputed from your CV as it stands right now — every change you accept or decline is already in this number.",
+    "recruiter": "Recruiter fit",
+    "asOf": "One AI reading, taken {{time}}. It doesn't move as you edit: a second reading costs another model call, and part of any difference between two readings is sampling noise rather than progress.",
+    "notMeasured": "Not measured yet",
+    "notMeasuredNote": "Reading how a recruiter would rate this costs one model call. Check fit, or tailor, and it appears here."
+  },
+  "toolbar": {
+    "review_one": "Review 1 change",
+    "review_other": "Review {{count}} changes"
   }
 }

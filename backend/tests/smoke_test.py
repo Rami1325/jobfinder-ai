@@ -2329,6 +2329,26 @@ check(
     str(_fs_rescue_status),
 )
 
+# WHY COVERAGE LIVES ON THE SERVER, pinned so nobody "optimises" it into the
+# frontend. `_keyword_present` tries the VERBATIM phrase first, so a JD keyword
+# finds itself inside a prefixed Hebrew word — Hebrew attaches ב/ל/ה/ו/מ/ש
+# directly. `frontend/src/lib/keywords.ts` wraps the needle in token-boundary
+# guards (`(?<![a-z0-9+#.֐-׿])`), which makes exactly this MISS. A TS
+# reimplementation would therefore show a different number from the one the
+# server computed, in the primary market.
+from app.core.scorer import keyword_analysis as _kw_analysis  # noqa: E402
+from app.models import JDModel as _JD_glue  # noqa: E402
+
+_glue_jd = _JD_glue(keywords=["פייתון"], hard_skills=[])
+_glue_cv = ResumeModel(contact=Contact(name="דנה"), summary="עובדת בפייתון כבר חמש שנים")
+_glue_pct, _glue_gaps = _kw_analysis(_glue_cv, _glue_jd)
+check(
+    "coverage: a hebrew keyword matches inside its prefixed form — the reason this "
+    "is not reimplemented in TypeScript, where the boundary guard makes it miss",
+    _glue_gaps and _glue_gaps[0].status == "covered" and _glue_pct == 100.0,
+    f"pct={_glue_pct} statuses={[(g.keyword, g.status) for g in _glue_gaps]}",
+)
+
 _rl = RateLimiter(max_requests=3, window_seconds=60)
 check(
     "rate limiter allows up to the cap then blocks",
@@ -2585,9 +2605,38 @@ check(
     and _xrd.polluted == 0 and _xrd.missing == 0,
     f"fallback={_xrd.docx_fallback} polluted={_xrd.polluted} missing={_xrd.missing}",
 )
+# The old pin here was `clean > 0` in both formats. A Hebrew résumé carries two
+# Latin facts (email, phone), so it passed while the OTHER 14 read `missing` —
+# a check that passed by never firing, on the honesty feature, in the primary
+# market. PDF extraction returns VISUAL (bidi-reordered) text while a fact from
+# the model is LOGICAL, so nothing Hebrew ever matched. Pin the whole set.
+_he_xr_pdf = xray(_he_full, "classic", "pdf")
+_he_xr_docx = xray(_he_full, "classic", "docx")
 check(
-    "x-ray survives a hebrew résumé in both formats",
-    xray(_he_full, "classic", "pdf").clean > 0 and xray(_he_full, "classic", "docx").clean > 0,
+    f"x-ray[he/pdf]: a correctly rendered Hebrew CV loses NOTHING — {_he_xr_pdf.clean}/{len(_he_xr_pdf.facts)} clean",
+    _he_xr_pdf.missing == 0 and _he_xr_pdf.clean == len(_he_xr_pdf.facts) and len(_he_xr_pdf.facts) > 5,
+    f"clean={_he_xr_pdf.clean} split={_he_xr_pdf.split} missing={_he_xr_pdf.missing} n={len(_he_xr_pdf.facts)}",
+)
+check(
+    "x-ray[he/docx] agrees — docx extraction is logical, so it is the control",
+    _he_xr_docx.missing == 0 and _he_xr_docx.clean == len(_he_xr_docx.facts),
+    f"clean={_he_xr_docx.clean}/{len(_he_xr_docx.facts)} missing={_he_xr_docx.missing}",
+)
+# Its own fixture, deliberately: a wrapped Hebrew bullet is the case the visual
+# lookup has to reach through the SPLIT fallback rather than a whole-line hit,
+# and `_he_full`'s bullets are short enough to never wrap — so a check written
+# against them would pass without ever exercising it (the 21.7 lesson).
+_he_wrap = _he_full.model_copy(deep=True)
+_he_wrap.experience[0].bullets = [
+    "הובלתי את הפיתוח של מערכת ניתוח הנתונים המרכזית של החברה מקצה לקצה, כולל תכנון הסכימה, "
+    "בניית צינורות העיבוד, אופטימיזציה של השאילתות והדרכת ארבעה מפתחים חדשים לאורך הדרך"
+]
+_he_wrap_xr = xray(_he_wrap, "classic", "pdf")
+_wrapped = [f for f in _he_wrap_xr.facts if f.kind == "bullet"]
+check(
+    "x-ray[he/pdf]: a Hebrew bullet long enough to WRAP reads as split, never as lost",
+    bool(_wrapped) and all(f.status == "split" for f in _wrapped) and _he_wrap_xr.missing == 0,
+    f"bullet statuses={[f.status for f in _wrapped]} missing={_he_wrap_xr.missing}",
 )
 check(
     "x-ray rejects an unknown format instead of guessing",
@@ -5165,6 +5214,127 @@ with TestClient(_fastapi_app) as _tc:
         "deterministic tools are NOT charged (ats-xray renders + re-parses, no model)",
         all(_tc.post("/tools/ats-xray", json={"resume": _resume_json, "template": "classic"},
                      headers=_CAP_H).status_code == 200 for _ in range(3)),
+    )
+    check(
+        "deterministic tools are NOT charged (page-count is one reportlab build, no model)",
+        all(_tc.post("/tools/page-count", json={"resume": _resume_json, "template": "classic"},
+                     headers=_CAP_H).status_code == 200 for _ in range(3)),
+    )
+    _jd_json = jd.model_dump(mode="json")
+    check(
+        "deterministic tools are NOT charged (coverage is pure Python, no model)",
+        all(_tc.post("/tools/coverage", json={"resume": _resume_json, "jd": _jd_json},
+                     headers=_CAP_H).status_code == 200 for _ in range(3)),
+    )
+    # The route must report the SAME number the scorer computes, not a literal.
+    from app.core.scorer import keyword_analysis as _ka  # noqa: E402
+
+    _cov = _tc.post("/tools/coverage", json={"resume": _resume_json, "jd": _jd_json},
+                    headers=_CAP_H).json()
+    _pct, _gaps = _ka(ResumeModel.model_validate(_resume_json), jd)
+    check(
+        f"coverage route == scorer.keyword_analysis() — {_cov['keyword_coverage']}%",
+        _cov["keyword_coverage"] == _pct and _cov["total"] == len(_gaps),
+        _cov,
+    )
+    check(
+        "coverage tallies partition the gaps exactly — no keyword counted twice or dropped",
+        _cov["covered"] + _cov["partial"] + _cov["missing"] == _cov["total"],
+        _cov,
+    )
+    # The route takes an ANALYSED JDModel and nothing else. A `jd_text` field
+    # would have to be run through analyze_jd to be useful, which is an LLM
+    # call — and this route is uncapped, so that would be a free door onto the
+    # model. Pin the shape, not just the behaviour.
+    check(
+        "coverage refuses raw job-ad text — an uncapped route may never reach the model",
+        _tc.post("/tools/coverage", json={"resume": _resume_json, "jd_text": "we need python"},
+                 headers=_CAP_H).status_code == 422,
+    )
+
+    # --- /jobs/fit: "check fit" before any tailoring ------------------------ #
+    # It reads the posting, so it IS charged — the whole point of the surface is
+    # that the cost is stated rather than hidden.
+    _fit_body = {"resume": _resume_json, "jd_text": "Python developer. Python, SQL and REST APIs required."}
+    _fit = _tc.post("/jobs/fit", json=_fit_body, headers=_ADMIN_H).json()
+    check(
+        f"/jobs/fit returns BOTH halves plus the analysed JD from one round-trip — cov={_fit['keyword_coverage']} fit={_fit['fit_score']}",
+        _fit["jd"]["keywords"] is not None
+        and _fit["total"] == len(_fit["gaps"])
+        and _fit["covered"] + _fit["partial"] + _fit["missing"] == _fit["total"],
+        {k: _fit[k] for k in ("keyword_coverage", "fit_score", "covered", "partial", "missing", "total")},
+    )
+    check(
+        "/jobs/fit carries NO `overall` — a live half averaged with a frozen sample is the "
+        "number this surface exists to stop showing",
+        "overall" not in _fit,
+        sorted(_fit),
+    )
+    # The JD it hands back must be tailorable, or "check fit then tailor" pays to
+    # read the same posting twice. job_search already relies on this internally;
+    # the route makes it a contract.
+    from app.models import JDModel as _JD_fit  # noqa: E402
+
+    _fit_jd = _JD_fit.model_validate(_fit["jd"])
+    _fit_tailored = tailor_resume(ResumeModel.model_validate(_resume_json), _fit_jd)
+    check(
+        "/jobs/fit's JD is tailorable — so checking fit first costs no extra model call",
+        isinstance(_fit_tailored.tailored_resume, ResumeModel) and _fit_tailored.tailored_resume.experience is not None,
+    )
+    check(
+        "/jobs/fit IS charged — reading a posting is a model call and the UI says so",
+        _tc.post("/jobs/fit", json=_fit_body, headers=_CAP_H).status_code in (200, 429)
+        and _tc.post("/jobs/fit", json=_fit_body, headers=_CAP_H).status_code == 429,
+    )
+    check(
+        "/jobs/fit refuses empty text instead of spending a call on nothing",
+        _tc.post("/jobs/fit", json={"resume": _resume_json, "jd_text": "   "},
+                 headers=_ADMIN_H).status_code == 400,
+    )
+    check(
+        "/render is NOT charged either — CLAUDE.md claims this exclusion is pinned, so pin it",
+        _tc.post("/render", json={"resume": _resume_json, "fmt": "pdf", "template": "classic"},
+                 headers=_CAP_H).status_code == 200,
+    )
+
+    # The route must report the SAME number the renderer measures, not a literal
+    # — otherwise it drifts silently the first time pagination changes.
+    from app.render.pdf_renderer import page_count as _pc  # noqa: E402
+
+    _pc_body = _tc.post("/tools/page-count", json={"resume": _resume_json, "template": "classic"},
+                        headers=_CAP_H).json()
+    check(
+        f"page-count route == pdf_renderer.page_count() — {_pc_body['pages']}",
+        _pc_body["pages"] == _pc(ResumeModel.model_validate(_resume_json), template="classic"),
+        _pc_body,
+    )
+    check(
+        "page-count echoes the RESOLVED template, so an unknown id cannot silently measure another doc",
+        _tc.post("/tools/page-count", json={"resume": _resume_json, "template": "no-such-template"},
+                 headers=_CAP_H).json()["template"] == "classic",
+    )
+    check(
+        "page-count carries the live budget, so the UI never reads a stale length_report",
+        _pc_body["max_pages"] == get_settings().resume_max_pages
+        and _pc_body["hard_max_pages"] == get_settings().resume_hard_max_pages,
+        _pc_body,
+    )
+    # The true-positive, and it needs its OWN fixture: the shared `resume` stub
+    # carries zero projects, so the obvious `projects * 8` grows nothing and the
+    # check would pass by never firing — the 21.7 failure mode exactly.
+    # Restoring curated content must be able to CHANGE the number, or the badge
+    # the UI draws from it is decoration.
+    _big = ResumeModel.model_validate(_resume_json).model_copy(deep=True)
+    _big.projects = [
+        Project(name=f"Restored project {i}", description="A substantial delivery with real scope. " * 12)
+        for i in range(12)
+    ]
+    _big_pages = _tc.post("/tools/page-count",
+                          json={"resume": _big.model_dump(mode="json"), "template": "classic"},
+                          headers=_CAP_H).json()["pages"]
+    check(
+        f"page-count grows when curated content is restored — {_pc_body['pages']} -> {_big_pages}",
+        _big_pages > _pc_body["pages"],
     )
 
     # --- N2 end to end: middleware tally -> endpoint -> dependency -> UsageLog.

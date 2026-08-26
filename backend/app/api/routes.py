@@ -37,6 +37,7 @@ from app.core.interview import (
     session_scorecard,
 )
 from app.core.jd_analyzer import analyze_jd
+from app.core.scorer import analyze_and_score, keyword_analysis
 from app.core.job_match import fetch_job_text, match_jobs
 from app.core.outreach import generate_outreach
 from app.core.screening import answer_screening_question
@@ -82,6 +83,10 @@ from app.models import (
     AddGreenhouseCompanyRequest,
     AlertCronResult,
     AlsoOn,
+    CoverageRequest,
+    CoverageResult,
+    FitCheckRequest,
+    FitCheckResult,
     NudgeCronResult,
     AlertRunResult,
     AlertSettingsIn,
@@ -142,6 +147,8 @@ from app.models import (
     MasterResumeIn,
     MasterResumeList,
     MasterResumeOut,
+    PageCountRequest,
+    PageCountResult,
     ResumeVersionList,
     ResumeVersionOut,
     OutreachRequest,
@@ -171,7 +178,8 @@ from app.models import (
 from app.parsers.resume_parser import extract_text
 from app.parsers.structurer import build_facts_ledger, structure_resume
 from app.render.docx_renderer import render_docx
-from app.render.pdf_renderer import render_pdf
+from app.render.pdf_renderer import page_count, render_pdf
+from app.render.templates import get_template
 
 router = APIRouter()
 
@@ -365,6 +373,37 @@ def jobs_match(body: JobMatchRequest, _u: User = Depends(llm_user)) -> JobMatchR
         return match_jobs(body.resume, body.listings)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while matching jobs: {e}")
+
+
+@router.post("/jobs/fit", response_model=FitCheckResult)
+def jobs_fit(body: FitCheckRequest, _u: User = Depends(llm_user)) -> FitCheckResult:
+    """Read a posting and score the résumé against it, before any tailoring.
+
+    ONE round-trip, on the existing JD_FIT task — no new prompt, no new stub
+    branch. `analyze_jd` alone would cost the same unit and return half of this,
+    so the merged task is strictly the better spend.
+
+    The analysed JD rides back in the response on purpose: the caller tailors
+    with it instead of paying to read the same posting a second time, and
+    re-scores coverage against it for free on `/tools/coverage`.
+    """
+    if not body.jd_text.strip():
+        raise HTTPException(400, "Job description text is empty.")
+    try:
+        jd, score = analyze_and_score(body.resume, body.jd_text)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while reading the job description: {e}")
+    return FitCheckResult(
+        jd=jd,
+        keyword_coverage=score.keyword_coverage,
+        fit_score=score.fit_score,
+        rationale=score.rationale,
+        gaps=score.gaps,
+        covered=sum(1 for g in score.gaps if g.status == "covered"),
+        partial=sum(1 for g in score.gaps if g.status == "partial"),
+        missing=sum(1 for g in score.gaps if g.status == "missing"),
+        total=len(score.gaps),
+    )
 
 
 @router.post("/jobs/fetch", response_model=JobFetchResponse)
@@ -936,6 +975,57 @@ def tools_ats_xray(body: ATSXrayRequest) -> ATSXrayResult:
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while x-raying résumé: {e}")
+
+
+# Pure Python, ~0.05 ms, no model and no network — uncapped like its siblings.
+#
+# This exists so the review surface can move ONE number honestly as the user
+# accepts and declines edits. The other half of the match score (`fit_score`) is
+# an LLM sample and cannot move without spending, so it is deliberately not
+# returned here: a caller that could animate it would be animating noise.
+#
+# NOT reimplemented in TypeScript, and that is the point of the route. The
+# matcher tries the verbatim phrase FIRST, which is what makes Hebrew work —
+# prefixes attach to the word (ב/ל/ה/ו/מ/ש), so "פייתון" has to match inside
+# "בפייתון". The frontend's `keywordRegex` wraps the needle in token-boundary
+# guards, which makes exactly that case miss. One matcher, one number.
+@router.post("/tools/coverage", response_model=CoverageResult)
+def tools_coverage(body: CoverageRequest) -> CoverageResult:
+    try:
+        pct, gaps = keyword_analysis(body.resume, body.jd)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Error while scoring keyword coverage: {e}")
+    return CoverageResult(
+        keyword_coverage=pct,
+        gaps=gaps,
+        covered=sum(1 for g in gaps if g.status == "covered"),
+        partial=sum(1 for g in gaps if g.status == "partial"),
+        missing=sum(1 for g in gaps if g.status == "missing"),
+        total=len(gaps),
+    )
+
+
+# Deterministic like the two above — one reportlab build, no model, no network —
+# so it is deliberately uncapped, and that exclusion is smoke-pinned.
+#
+# The editor calls this whenever the user restores something the page budget cut,
+# because restoring produces a document NOTHING has measured: the trimmed résumé
+# plus the master's full version of the restored item. Deriving it from
+# `length_report.pages_before/after` would be a guess, and a wrong one.
+@router.post("/tools/page-count", response_model=PageCountResult)
+def tools_page_count(body: PageCountRequest) -> PageCountResult:
+    spec = get_template(body.template)
+    s = get_settings()
+    try:
+        pages = page_count(body.resume, template=spec.id)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Error while measuring page count: {e}")
+    return PageCountResult(
+        pages=pages,
+        max_pages=s.resume_max_pages,
+        hard_max_pages=s.resume_hard_max_pages,
+        template=spec.id,
+    )
 
 
 @router.post("/tools/linkedin", response_model=LinkedInResult)

@@ -9,6 +9,8 @@ import type {
   ATSScanResult,
   CompanyBriefResult,
   ChatTurn,
+  CoverageResult,
+  FitCheckResult,
   FactsLedger,
   FeedbackOut,
   FollowUpResult,
@@ -31,6 +33,7 @@ import type {
   LinkedInResult,
   MasterResume,
   OutreachResult,
+  PageCountResult,
   RecruiterScreenResult,
   ResumeHealthResult,
   ResumeModel,
@@ -461,8 +464,66 @@ export async function atsXray(
   resume: ResumeModel,
   template: ResumeTemplate = "classic",
   fmt: "pdf" | "docx" = "pdf",
+  signal?: AbortSignal,
 ): Promise<ATSXrayResult> {
-  const { data } = await api.post<ATSXrayResult>("/tools/ats-xray", { resume, template, fmt });
+  const { data } = await api.post<ATSXrayResult>("/tools/ats-xray", { resume, template, fmt }, { signal });
+  return data;
+}
+
+/** The rendered file itself, as a Blob, WITHOUT triggering a download.
+ *
+ * Deliberately not folded into `downloadResume`: that one carries two
+ * documented cross-browser workarounds on the anchor-and-revoke path, and it is
+ * the shipped download. This is the same POST to the same route, so a preview
+ * built from it is the file the Download button produces — the claim the UI
+ * makes about it stays true by construction.
+ *
+ * The media type is set explicitly rather than trusted from the response: a
+ * blob with the wrong type renders as a download prompt instead of a page. */
+export async function renderResumeBlob(
+  resume: ResumeModel,
+  fmt: "docx" | "pdf",
+  template: ResumeTemplate = "classic",
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const resp = await api.post("/render", { resume, fmt, template }, { responseType: "blob", signal });
+  return new Blob([resp.data as BlobPart], {
+    type:
+      fmt === "pdf"
+        ? "application/pdf"
+        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+}
+
+/** Live page measurement. Deterministic and uncapped — but it is a real
+ * reportlab build (~15 ms), so callers debounce and pass an AbortSignal. */
+export async function pageCount(
+  resume: ResumeModel,
+  template: ResumeTemplate = "classic",
+  signal?: AbortSignal,
+): Promise<PageCountResult> {
+  const { data } = await api.post<PageCountResult>("/tools/page-count", { resume, template }, { signal });
+  return data;
+}
+
+/** Live keyword coverage. Deterministic, uncapped, ~0.15 ms of Python — the one
+ * number on the review surface that can honestly move as the user accepts and
+ * declines edits. Takes an ANALYSED jd, never raw text. */
+export async function coverageOf(
+  resume: ResumeModel,
+  jd: JDModel,
+  signal?: AbortSignal,
+): Promise<CoverageResult> {
+  const { data } = await api.post<CoverageResult>("/tools/coverage", { resume, jd }, { signal });
+  return data;
+}
+
+/** Read a posting and score the résumé against it, before any tailoring.
+ * COSTS ONE AI CREDIT — reading a posting is a model call, and there is no
+ * version of this that is free. Returns the analysed JD so tailoring afterwards
+ * does not pay to read the same posting again. */
+export async function checkFit(resume: ResumeModel, jdText: string): Promise<FitCheckResult> {
+  const { data } = await api.post<FitCheckResult>("/jobs/fit", { resume, jd_text: jdText });
   return data;
 }
 

@@ -9,7 +9,7 @@
     "tracker": "Tracker",
     "overview": "Overview",
     "more": "More",
-    "trust": "Every fact verified",
+    "trust": "Checked against your CV",
     "searching": "Searching…",
     "openMenu": "Open menu",
     "closeMenu": "Close menu"
@@ -120,7 +120,7 @@
       },
       "tailor": {
         "title": "Tailor my résumé",
-        "desc": "Rewrite for a specific job — nothing invented"
+        "desc": "Rewrite for a specific job — checked against your CV"
       },
       "interview": {
         "title": "Prep for interviews",

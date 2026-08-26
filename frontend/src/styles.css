@@ -143,6 +143,54 @@
   --hero-glow: radial-gradient(70% 55% at 50% 0%, rgb(var(--accent) / 0.07) 0%, rgb(var(--bg) / 0) 72%);
 }
 
+/* ===========================================================================
+   SHEET — the résumé document's own palette (PLAN 22.5).
+   ===========================================================================
+   Same MECHANISM as .paper above — re-declare the tokens on a subtree and every
+   `rgb(var(--x) / <alpha-value>)` utility underneath re-resolves, by inheritance
+   rather than by a specificity fight, so it works identically under :root (dark)
+   and :root.light.
+
+   A different palette, for a different reason. `.paper` is the MARKETING
+   surface: warm white, violet accent, 12px radius. This is a DOCUMENT — it has
+   to look like the file the user is about to send, so the ground is plain white,
+   the corners are nearly square, and the accent is the classic template's own
+   navy, never the app blue and never the marketing violet.
+
+   Two tokens MUST be declared here rather than inherited:
+     --accent / --ink, because the global ::selection rule resolves them from the
+       nearest scope; inheriting the dark ones paints selected text near-white on
+       white paper.
+     --scrollbar-thumb, for the same reason — and note it is exactly what .paper
+       forgot, which is why a scrollable marketing surface keeps a dark thumb.
+*/
+.sheet {
+  color-scheme: light;
+
+  --bg: 255 255 255;
+  --bg-soft: 255 255 255;
+  --bg-elevated: 255 255 255;
+  --panel: 255 255 255; /* the sheet itself */
+  --panel-2: 244 245 247; /* #f4f5f7 — skill / language chip fill */
+  --line: 223 226 231; /* #dfe2e7 — the hairline under each section heading */
+  --ink: 27 34 45; /* #1b222d — name, entry titles */
+  --ink-muted: 57 65 78; /* #39414e — body copy */
+  --ink-faint: 138 147 160; /* #8a93a0 — the "·" separators only */
+  --accent: 31 58 95; /* #1f3a5f — the classic template's navy */
+  --accent-soft: 31 58 95;
+  --accent-deep: 20 40 68;
+  --mint: 11 122 83;
+  --warn: 150 101 10;
+  --danger: 178 44 62;
+
+  --scrollbar-thumb: 203 208 216;
+  --scrollbar-thumb-hover: 176 183 194;
+
+  /* The page lift: a crisp near shadow plus a long soft one. */
+  --shadow-doc: 0 1px 1px rgb(27 34 45 / 0.06), 0 2px 4px rgb(27 34 45 / 0.05),
+    0 18px 40px -18px rgb(27 34 45 / 0.28);
+}
+
 /*
   The aurora hues. Decorative only — they never carry text, so they are the
   one place on the page that is allowed to be soft and saturated at once.

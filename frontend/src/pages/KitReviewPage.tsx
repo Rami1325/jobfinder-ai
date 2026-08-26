@@ -23,7 +23,7 @@ import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
 import VoicePanel from "../components/VoicePanel";
 import { apiErrorMessage } from "../lib/apiError";
-import { applyEditDecisions, diffResumes, editContainsValue } from "../lib/resumeDiff";
+import { editContainsValue, mergeForReview } from "../lib/resumeDiff";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, Stamp, useToast } from "../components/ui";
 import type { KitDetail, KitOut } from "../types";
 
@@ -83,12 +83,13 @@ export default function KitReviewPage() {
   // AND the effective résumé, so decisions can never drift from the diff.
   const base = kit?.base_resume ?? null;
   const tailored = kit?.result?.tailored_resume ?? null;
-  const edits = useMemo(() => (base && tailored ? diffResumes(base, tailored) : []), [base, tailored]);
   const rejectedSet = useMemo(() => new Set(rejectedEdits), [rejectedEdits]);
-  const effectiveResume = useMemo(() => {
-    if (!base || !tailored) return null;
-    return rejectedSet.size === 0 ? tailored : applyEditDecisions(base, tailored, rejectedSet);
-  }, [base, tailored, rejectedSet]);
+  const merged = useMemo(
+    () => (base && tailored ? mergeForReview(base, tailored, rejectedSet) : null),
+    [base, tailored, rejectedSet],
+  );
+  const edits = merged?.edits ?? [];
+  const effectiveResume = merged?.resume ?? tailored;
 
   // A flag is resolved when every edit carrying its value was rejected
   // (same rule ChangeLog renders); unresolved flags warn next to Approve.
@@ -379,6 +380,10 @@ export default function KitReviewPage() {
             jdKeywords={kit.jd?.keywords ?? []}
             rejected={rejectedSet}
             onSetRejected={setRejectedEdits}
+            original={base}
+            effective={effectiveResume}
+            lengthReport={kit.result.length_report}
+            plan={kit.result.plan}
           />
           {effectiveResume && kit.jd_text && (
             <MatchReport

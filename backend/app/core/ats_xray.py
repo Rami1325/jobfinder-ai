@@ -25,7 +25,7 @@ import re
 from app.models import ATSXrayFact, ATSXrayResult, ResumeModel
 from app.parsers.resume_parser import extract_text
 from app.render.docx_renderer import render_docx
-from app.render.pdf_renderer import page_count, render_pdf
+from app.render.pdf_renderer import _visual, page_count, render_pdf
 from app.render.templates import get_template
 
 _WS = re.compile(r"\s+")
@@ -39,18 +39,42 @@ def _norm(text: str) -> str:
     return _WS.sub(" ", (text or "").strip()).casefold()
 
 
-def _find(needle: str, lines: list[str]) -> int:
-    """Index of the line holding `needle` as WHOLE WORDS, or -1.
+def _candidates(needle: str) -> list[str]:
+    """The needle in every form the EXTRACTOR could hand it back.
+
+    A correctly rendered Hebrew PDF stores its glyphs already bidi-reordered —
+    that is exactly what `_draw_line` does via `_visual` at draw time — so
+    pdfminer returns VISUAL text while a fact from the résumé model is LOGICAL.
+    Searching one for the other matches nothing.
+
+    Measured before this existed: a clean Hebrew `classic` PDF reported 14 of 16
+    facts `missing`, every one of them present and correct in the file, with the
+    name coming back as `ןהכ הנד`. The x-ray is the honesty feature, Hebrew is
+    the primary market, and it was telling those users their CV had been shredded.
+
+    DOCX extraction is logical, so both forms are tried and the first hit wins.
+    Importing the renderer's own `_visual` rather than calling `get_display`
+    again is deliberate: if the renderer's base_dir ever changes, the x-ray
+    follows it instead of quietly disagreeing.
+    """
+    visual = _norm(_visual(needle))
+    return [needle] if visual == needle else [needle, visual]
+
+
+def _find(needle: str, lines: list[str]) -> tuple[int, str]:
+    """(index of the line holding `needle` as WHOLE WORDS, the form that hit),
+    or (-1, needle).
 
     Plain substring search is too loose here: "Backend Engineer" sits inside
     "Senior Backend Engineer", so a junior title would be located on the senior
     title's line and every judgement after that would be about the wrong row.
     """
-    pattern = re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)")
-    for i, line in enumerate(lines):
-        if pattern.search(line):
-            return i
-    return -1
+    for cand in _candidates(needle):
+        pattern = re.compile(rf"(?<!\w){re.escape(cand)}(?!\w)")
+        for i, line in enumerate(lines):
+            if pattern.search(line):
+                return i, cand
+    return -1, needle
 
 
 def _collision(line: str, needle: str, side_vals: list[str]) -> str:
@@ -159,7 +183,14 @@ def xray(resume: ResumeModel, template: str = "", fmt: str = "pdf") -> ATSXrayRe
     # Only a genuinely two-column PDF can interleave. A DOCX never can (it has
     # no sidebar to interleave with), so pollution is not even tested there.
     two_col = spec.layout == "sidebar" and fmt == "pdf"
-    side_vals = [_norm(v) for v in _sidebar_values(resume, spec.sidebar_keys)] if two_col else []
+    # Both forms, for the same reason `_candidates` exists: in an RTL two-column
+    # PDF the sidebar value arrives visually reordered too, so a logical-only
+    # list could never shape-match a collision.
+    side_vals = (
+        [c for v in _sidebar_values(resume, spec.sidebar_keys) for c in _candidates(_norm(v))]
+        if two_col
+        else []
+    )
 
     # The header block spans the FULL page width above both columns, so nothing
     # in it can be interleaved. Everything from the first line after the contact
@@ -170,21 +201,25 @@ def xray(resume: ResumeModel, template: str = "", fmt: str = "pdf") -> ATSXrayRe
         anchors = [v for v in (resume.contact.email, resume.contact.phone,
                                resume.contact.linkedin, resume.contact.website) if v]
         for a in anchors:
-            i = _find(_norm(a), norm_lines)
+            i, _ = _find(_norm(a), norm_lines)
             if i >= 0:
                 body_from = max(body_from, i + 1)
 
     facts: list[ATSXrayFact] = []
     for kind, value in _facts_of(resume):
         needle = _norm(value)
-        hit = _find(needle, norm_lines)
+        hit, found = _find(needle, norm_lines)
 
         if hit < 0:
             # Not on one line. If every word is somewhere in the document the
             # parser still has the information, it just wrapped — that is normal
-            # and worth distinguishing from an outright loss.
-            words = [w for w in needle.split() if len(w) > 2]
-            split = bool(words) and all(w in flat for w in words)
+            # and worth distinguishing from an outright loss. Tried in every
+            # extractor-form of the needle, or a wrapped Hebrew bullet reads as
+            # lost rather than split.
+            split = any(
+                ws and all(w in flat for w in ws)
+                for ws in ([w for w in c.split() if len(w) > 2] for c in _candidates(needle))
+            )
             facts.append(ATSXrayFact(
                 kind=kind, value=value,
                 status="split" if split else "missing",
@@ -198,7 +233,10 @@ def xray(resume: ResumeModel, template: str = "", fmt: str = "pdf") -> ATSXrayRe
         # A skill landing beside another skill is just the sidebar reading
         # normally, and the header spans both columns so it cannot interleave.
         if two_col and hit >= body_from and kind in ("title", "employer", "dates"):
-            polluted = _collision(norm_lines[hit], needle, side_vals)
+            # , not : the collision test asks whether a sidebar
+            # value is glued to an END of the line, so it has to reason in the
+            # same form the line is written in.
+            polluted = _collision(norm_lines[hit], found, side_vals)
         facts.append(ATSXrayFact(
             kind=kind, value=value,
             status="polluted" if polluted else "clean",

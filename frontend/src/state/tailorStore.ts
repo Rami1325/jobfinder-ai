@@ -5,7 +5,7 @@
 import { analyzeJD, getMasterResume, tailor } from "../api/client";
 import { apiErrorMessage } from "../lib/apiError";
 import { resumeLanguage } from "../lib/lang";
-import type { FactsLedger, JDModel, ResumeModel, TailorResult } from "../types";
+import type { FactsLedger, FitCheckResult, JDModel, ResumeModel, TailorResult } from "../types";
 
 export type TailorState = {
   resume: ResumeModel | null;
@@ -29,6 +29,18 @@ export type TailorState = {
   // Set when the JD's language differed from the loaded résumé and a saved
   // master in the JD's language was swapped in ("he" | "en"); null otherwise.
   langSwitched: "he" | "en" | null;
+  // "Check fit" before any tailoring: the reading, and the exact posting text it
+  // was taken for. Re-checking the same text would spend a credit to learn
+  // nothing, so the overlay compares against `checkedFor` rather than assuming.
+  fit: FitCheckResult | null;
+  checkedFor: string | null;
+  // When the fit reading was taken, epoch ms — stamped on the CLIENT. It is not
+  // a field on the backend `Score` on purpose: `Score` is persisted inside kit
+  // result JSON, and validating a stored kit substitutes schema defaults, so a
+  // new field would read as empty on every pre-existing row forever. This store
+  // dies on reload, so a reading can never outlive its stamp.
+  scoredAt: number | null;
+  overlayOpen: boolean;
   // Target job carried over from the Jobs page ("Tailor to this").
   jobUrl?: string;
   jobTitle?: string;
@@ -52,6 +64,10 @@ let state: TailorState = {
   applied: false,
   coverLetterText: "",
   langSwitched: null,
+  fit: null,
+  checkedFor: null,
+  scoredAt: null,
+  overlayOpen: false,
 };
 
 const listeners = new Set<() => void>();
@@ -117,7 +133,11 @@ export function startTailor(): void {
     langSwitched: null,
   });
   (async () => {
-    const analyzed = await analyzeJD(jdText);
+    // Reuse the posting we already read. `/jobs/fit` hands its analysed JD back
+    // for exactly this reason, so "check fit, then tailor" costs the same one
+    // credit as tailoring straight away — which is what the overlay promises.
+    const prior = state.checkedFor !== null && state.checkedFor === jdText.trim() ? state.jd : null;
+    const analyzed = prior ?? (await analyzeJD(jdText));
     if (id !== seq) return;
     setTailorState({ jd: analyzed });
     // Paired he/en masters: a Hebrew JD is tailored from the Hebrew résumé (and
@@ -143,7 +163,7 @@ export function startTailor(): void {
       }
     }
     const r = await tailor(useResume, analyzed);
-    if (id === seq) setTailorState({ loading: false, result: r });
+    if (id === seq) setTailorState({ loading: false, result: r, scoredAt: Date.now() });
   })().catch((e: unknown) => {
     if (id === seq)
       setTailorState({

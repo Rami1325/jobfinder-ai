@@ -14,5 +14,6 @@ export { default as ProgressRing } from "./ProgressRing";
 export { default as Stepper } from "./Stepper";
 export { default as Skeleton } from "./Skeleton";
 export { default as Modal } from "./Modal";
+export { default as Disclosure } from "./Disclosure";
 export { default as Spinner } from "./Spinner";
 export { ToastProvider, useToast } from "./Toast";

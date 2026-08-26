@@ -113,9 +113,11 @@
       "missing": "the parser did not get it back at all. Fix this before you send the file."
     },
     "verdict": {
-      "clean": "Every protected fact came back clean. This is what a machine will read.",
+      "clean": "Every fact we check came back whole, on its own line. That is what a machine reads.",
       "polluted": "Some lines came back with both columns fused together. Individual bullets survive, so keyword matching is fine — but a parser may attach a job title to the wrong employer. Single-column templates never do this.",
-      "fallback": "This is a two-column design, so the Word file is really the single-column “{{template}}” — which is what we x-rayed, because it is what you would send."
+      "fallback": "This is a two-column design, so the Word file is really the single-column “{{template}}” — which is what we x-rayed, because it is what you would send.",
+      "single": "This is a single-column design, so there is no second column that could fuse into your lines. Two-column designs are the ones worth checking here.",
+      "shredded": "On a two-column design, “lost” usually means the two columns fused mid-word — not that the text is absent from the file. Look for it in the parser's text below."
     },
     "kind": {
       "name": "Name",
@@ -134,7 +136,17 @@
       "certification": "Certification",
       "skill": "Skill",
       "language": "Language"
-    }
+    },
+    "splitNormal_one": "1 fact wrapped onto a second line. That is what wrapping is — every word survived, and keyword matching does not care.",
+    "splitNormal_other": "{{count}} facts wrapped onto a second line. That is what wrapping is — every word survived, and keyword matching does not care.",
+    "pagesNote_one": "1 page, measured on this exact file.",
+    "pagesNote_other": "{{count}} pages, measured on this exact file.",
+    "docxDiffers": "We x-rayed the PDF. Your Word file is a different document — Word cannot draw two columns without tables, so it renders the single-column sibling instead. X-ray that one from the ATS X-ray tool.",
+    "limits": "This shows what our parser recovers from your file. Every ATS parses differently and none of them publishes its output — what we can show you is that the text is in there, in the right order, and not glued to its neighbour.",
+    "scope": "We check the name, contact line, headline, job titles, employers, dates, bullets, institutions, degrees, military units, certifications, skills and languages. We do not check the summary, projects, or anything shorter than three characters.",
+    "empty": "There is nothing to check yet — this résumé has no facts long enough to look for.",
+    "error": "Couldn't read the file back just now.",
+    "retry": "Try again"
   },
   "linkedin": {
     "gateFeature": "the LinkedIn optimizer",
@@ -234,7 +246,7 @@
     "strengths": "What already works",
     "improvements": "What to fix first",
     "rewrites": "Example rewrites",
-    "rewriteNote": "Same facts, stronger wording — nothing invented. Apply the ones that sound like you."
+    "rewriteNote": "Same facts, stronger wording. Apply the ones that sound like you — and check anything it made more specific."
   },
   "followup": {
     "subtitle": "A concise, specific follow-up for any stage — no clichés, no filler.",

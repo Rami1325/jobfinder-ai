@@ -962,6 +962,92 @@ class ATSXrayRequest(BaseModel):
     fmt: str = "pdf"  # pdf | docx
 
 
+class CoverageRequest(BaseModel):
+    """Live keyword coverage for a résumé the user is editing.
+
+    Takes an ANALYSED `JDModel`, never raw `jd_text`. The route is uncapped, and
+    a route that accepted job-ad text would have to run `analyze_jd` to do
+    anything with it — which is an LLM call, which would make an uncapped route
+    a free door onto the model. The caller analyses the posting once, on a
+    capped route, and re-scores against the result as often as it likes.
+    """
+
+    resume: ResumeModel
+    jd: JDModel
+
+
+class CoverageResult(BaseModel):
+    """The deterministic half of the match score, on its own.
+
+    Deliberately NOT the whole `Score`: `fit_score` is an LLM sample and
+    `overall` blends the two, so returning either here would let a caller
+    animate a number that only a paid call can honestly move.
+    """
+
+    keyword_coverage: float = 0.0  # 0-100
+    gaps: list[GapItem] = Field(default_factory=list)
+    covered: int = 0  # keywords fully matched
+    partial: int = 0
+    missing: int = 0
+    total: int = 0  # deduped JD keywords + hard skills
+
+
+class FitCheckRequest(BaseModel):
+    resume: ResumeModel
+    jd_text: str
+
+
+class FitCheckResult(BaseModel):
+    """Both halves of the match, from ONE LLM round-trip, before any tailoring.
+
+    "Check fit" cannot be free, and pretending otherwise would be the exact
+    dishonesty this surface exists to remove: coverage needs `jd.keywords`, and
+    the only thing that produces those is `analyze_jd` — a model call. So it
+    costs one unit either way, and this spends it on the better call: the JD_FIT
+    task returns the analysed JD *and* the fit reading together, where
+    `analyze_jd` alone would return half as much for the same price.
+
+    The analysed `jd` comes back so the caller can tailor without paying to read
+    the posting twice, and can re-score coverage against it for free on
+    `/tools/coverage` as often as it likes.
+
+    No `overall`: it blends a live deterministic half with a frozen LLM sample.
+    And no `fit_before`/`fit_after` — two samples at temperature 0.3 are not a
+    measurement of improvement.
+    """
+
+    jd: JDModel
+    keyword_coverage: float = 0.0
+    fit_score: float = 0.0
+    rationale: str = ""
+    gaps: list[GapItem] = Field(default_factory=list)
+    covered: int = 0
+    partial: int = 0
+    missing: int = 0
+    total: int = 0
+
+
+class PageCountRequest(BaseModel):
+    resume: ResumeModel
+    template: str = ""  # "" falls back to the default, like every render call
+
+
+class PageCountResult(BaseModel):
+    """A live page measurement for a résumé the user is editing.
+
+    Deliberately NOT `LengthReport.pages_after`: that number is measured on
+    whatever template the tailor happened to use (`TailorRequest` carries none,
+    so always the default) and is not re-measured after the humanizer pass, so
+    it can describe a document nobody will download. This one measures what the
+    user is actually about to click.
+    """
+
+    pages: int = 1
+    max_pages: int = 2
+    hard_max_pages: int = 3
+    template: str = ""  # the resolved spec id, echoed back
+
+
 class ATSIssue(BaseModel):
     label: str
     severity: str = "good"  # good | warn | bad

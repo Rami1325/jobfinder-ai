@@ -15,7 +15,28 @@ import { countOccurrences } from "./keywords";
 
 export type EditKind = "edited" | "added" | "removed";
 
+/**
+ * Edit ids, keyed by where they land in the RENDERED (effective) résumé.
+ *
+ * Path grammar — indices are into the document ON SCREEN, not the original:
+ *   `@headline` · `@summary` · `@contact` · `@contact.name`
+ *   `@exp.<k>` · `@exp.<k>.b.<j>`     (same for `@proj`, `@mil`)
+ *   `@edu.<k>`
+ *   `@skills.<lkey>` · `@cert.<lkey>` · `@lang.<lkey>`
+ *
+ * **The `@` is mandatory and is not decoration.** Without it `exp.0.b.1` is
+ * simultaneously a valid EDIT ID (original indices) and a valid PATH (effective
+ * indices) — string-identical, different meaning, silently swappable.
+ *
+ * **Unordered lists are keyed, never indexed**, for two independent reasons: a
+ * restored removal is appended at the END of the merged list rather than its old
+ * slot, and `ResumeView` re-partitions `skills` through `skill_groups`, so a
+ * skill's rendered position is not its index here.
+ */
+export type BlockAnchors = Record<string, string[]>;
+
 export type EditSection =
+  | "headline"
   | "summary"
   | "skills"
   | "experience"
@@ -138,73 +159,163 @@ function mergeResumes(
   original: ResumeModel,
   tailored: ResumeModel,
   isRejected: (id: string) => boolean,
-): { edits: ResumeEdit[]; resume: ResumeModel } {
+): { edits: ResumeEdit[]; resume: ResumeModel; blocks: BlockAnchors } {
   const edits: ResumeEdit[] = [];
+  const blocks: BlockAnchors = {};
+  /** Record `ids` against an OUTPUT block path, skipping empty ones. */
+  const anchor = (path: string, ids: string[]) => {
+    if (ids.length) blocks[path] = ids;
+  };
 
-  /** Scalar field: record an edit when changed, return the effective value. */
-  function pick(id: string, section: EditSection, context: string, before: string, after: string): string {
+  /** Scalar field: record an edit when changed, return the effective value.
+   * `sink` collects the ids that landed, so the caller can anchor them to the
+   * output block it is building. */
+  function pick(
+    id: string,
+    section: EditSection,
+    context: string,
+    before: string,
+    after: string,
+    sink?: string[],
+  ): string {
     if (same(before, after)) return after;
     edits.push({ id, section, context, kind: "edited", before, after });
+    sink?.push(id);
     return isRejected(id) ? before : after;
   }
 
-  /** Unordered string list (skills, certifications): per-item add/remove. */
-  function mergeStringList(idBase: string, section: EditSection, orig: string[], tail: string[]): string[] {
+  /** Unordered string list (skills, certifications): per-item add/remove.
+   * `ids` is index-aligned with `out` — see `mergeBullets` for why. */
+  function mergeStringList(
+    idBase: string,
+    section: EditSection,
+    orig: string[],
+    tail: string[],
+  ): { out: string[]; ids: string[][] } {
     const okeys = orig.map(lkey);
     const tkeys = tail.map(lkey);
     const out: string[] = [];
+    const ids: string[][] = [];
     tail.forEach((s, ti) => {
       if (okeys.includes(tkeys[ti])) {
         out.push(s);
+        ids.push([]);
         return;
       }
       const id = `${idBase}.add.${tkeys[ti]}`;
       edits.push({ id, section, context: "", kind: "added", before: "", after: s });
-      if (!isRejected(id)) out.push(s);
+      if (!isRejected(id)) {
+        out.push(s);
+        ids.push([id]);
+      }
     });
     orig.forEach((s, oi) => {
       if (tkeys.includes(okeys[oi])) return;
       const id = `${idBase}.rm.${okeys[oi]}`;
       edits.push({ id, section, context: "", kind: "removed", before: s, after: "" });
-      if (isRejected(id)) out.push(s);
+      if (isRejected(id)) {
+        out.push(s);
+        ids.push([id]);
+      }
     });
-    return out;
+    return { out, ids };
   }
 
-  /** Bullet list inside a matched entry: pair by similarity, then merge. */
-  function mergeBullets(idBase: string, section: EditSection, context: string, orig: string[], tail: string[]): string[] {
+  /** Bullet list inside a matched entry: pair by similarity, then merge.
+   *
+   * `ids` is maintained in LOCKSTEP with `out` — every push and every splice
+   * touches both. That is what makes an edit id addressable by its position in
+   * the rendered document: edit ids index the ORIGINAL résumé, the document
+   * shows the EFFECTIVE one, and a restored removal is spliced back in at an
+   * index that shifts everything after it. Deriving the mapping afterwards
+   * would mean re-deriving the pairing; carrying it along costs nothing.
+   */
+  function mergeBullets(
+    idBase: string,
+    section: EditSection,
+    context: string,
+    orig: string[],
+    tail: string[],
+  ): { out: string[]; ids: string[][] } {
     const { tailMatch, removed } = pairEntries(orig, tail, bulletScore, 0.3);
     const out: string[] = [];
+    const ids: string[][] = [];
     tail.forEach((t, ti) => {
       const oi = tailMatch[ti];
       if (oi === null) {
         const id = `${idBase}.b.add.${ti}`;
         edits.push({ id, section, context, kind: "added", before: "", after: t });
-        if (!isRejected(id)) out.push(t);
+        if (!isRejected(id)) {
+          out.push(t);
+          ids.push([id]);
+        }
       } else if (same(orig[oi], t)) {
         out.push(t);
+        ids.push([]);
       } else {
         const id = `${idBase}.b.${oi}`;
         edits.push({ id, section, context, kind: "edited", before: orig[oi], after: t });
         out.push(isRejected(id) ? orig[oi] : t);
+        ids.push([id]);
       }
     });
     for (const oi of removed) {
       const id = `${idBase}.b.rm.${oi}`;
       edits.push({ id, section, context, kind: "removed", before: orig[oi], after: "" });
-      if (isRejected(id)) out.splice(Math.min(oi, out.length), 0, orig[oi]);
+      if (isRejected(id)) {
+        const k = Math.min(oi, out.length);
+        out.splice(k, 0, orig[oi]);
+        ids.splice(k, 0, [id]);
+      }
     }
-    return out;
+    return { out, ids };
   }
 
+  /** Entry sections share one shape: a parallel id array per output entry, and
+   * a parallel bullet-id array per output entry. Emitting the paths is the same
+   * loop every time, so it lives here rather than four times below. */
+  function anchorEntries(prefix: string, entryIds: string[][], bulletIds: string[][][] = []) {
+    entryIds.forEach((ids, k) => {
+      anchor(`${prefix}.${k}`, ids);
+      (bulletIds[k] ?? []).forEach((bids, j) => anchor(`${prefix}.${k}.b.${j}`, bids));
+    });
+  }
+
+  // --- headline -------------------------------------------------------- //
+  // The target-title line is a CLAIM the guard reads (for rank), so it has to
+  // be diffable and rejectable like anything else. Leaving it out of this walk
+  // silently DELETED it from the effective résumé the moment one edit was
+  // rejected — and from the download, the tracker row and the cover letter
+  // with it. Optional on older rows, hence the ?? "".
+  const headlineIds: string[] = [];
+  const headline = pick("headline", "headline", "", original.headline ?? "", tailored.headline ?? "", headlineIds);
+  anchor("@headline", headlineIds);
+
   // --- summary --------------------------------------------------------- //
-  const summary = pick("summary", "summary", "", original.summary, tailored.summary);
+  const summaryIds: string[] = [];
+  const summary = pick("summary", "summary", "", original.summary, tailored.summary, summaryIds);
+  anchor("@summary", summaryIds);
 
   // --- skills ---------------------------------------------------------- //
-  const skills = mergeStringList("skills", "skills", original.skills, tailored.skills);
+  const skillsMerged = mergeStringList("skills", "skills", original.skills, tailored.skills);
+  const skills = skillsMerged.out;
+  skillsMerged.out.forEach((s, k) => anchor(`@skills.${lkey(s)}`, skillsMerged.ids[k] ?? []));
+
+  // Groups are presentation, so there is nothing here to accept or reject —
+  // but they may never claim a skill the merge dropped: the backend's
+  // flat-union validator only ever ADDS, so a stale group item resurrects the
+  // skill it names on the next round trip and silently undoes the rejection.
+  // Tailored résumés carry no groups by design, so this is a no-op for the
+  // tailor path and only does work when the base document is a grouped master.
+  const skillKeys = new Set(skills.map(lkey));
+  const skill_groups = tailored.skill_groups
+    ?.map((g) => ({ ...g, items: g.items.filter((k) => skillKeys.has(lkey(k))) }))
+    .filter((g) => g.items.length > 0);
 
   // --- experience ------------------------------------------------------ //
   const experience: Experience[] = [];
+  const expIds: string[][] = [];
+  const expBulletIds: string[][][] = [];
   {
     const orig = original.experience;
     const tail = tailored.experience;
@@ -214,29 +325,49 @@ function mergeResumes(
       if (oi === null) {
         const id = `exp.add.${ti}`;
         edits.push({ id, section: "experience", context: "", kind: "added", before: "", after: formatExperience(t) });
-        if (!isRejected(id)) experience.push(t);
+        if (!isRejected(id)) {
+          experience.push(t);
+          expIds.push([id]);
+          expBulletIds.push(t.bullets.map(() => []));
+        }
         return;
       }
       const o = orig[oi];
       const ctx = [o.title, o.company].filter(Boolean).join(" · ");
-      experience.push({
-        company: pick(`exp.${oi}.company`, "experience", ctx, o.company, t.company),
-        title: pick(`exp.${oi}.title`, "experience", ctx, o.title, t.title),
-        location: pick(`exp.${oi}.location`, "experience", ctx, o.location, t.location),
-        start_date: pick(`exp.${oi}.start`, "experience", ctx, o.start_date, t.start_date),
-        end_date: pick(`exp.${oi}.end`, "experience", ctx, o.end_date, t.end_date),
-        bullets: mergeBullets(`exp.${oi}`, "experience", ctx, o.bullets, t.bullets),
-      });
+      const sink: string[] = [];
+      // Built field-by-field first so the edit ORDER stays "fields, then
+      // bullets" — the review panel lists a group in edit order.
+      const entry: Experience = {
+        company: pick(`exp.${oi}.company`, "experience", ctx, o.company, t.company, sink),
+        title: pick(`exp.${oi}.title`, "experience", ctx, o.title, t.title, sink),
+        location: pick(`exp.${oi}.location`, "experience", ctx, o.location, t.location, sink),
+        start_date: pick(`exp.${oi}.start`, "experience", ctx, o.start_date, t.start_date, sink),
+        end_date: pick(`exp.${oi}.end`, "experience", ctx, o.end_date, t.end_date, sink),
+        bullets: [],
+      };
+      const b = mergeBullets(`exp.${oi}`, "experience", ctx, o.bullets, t.bullets);
+      entry.bullets = b.out;
+      experience.push(entry);
+      expIds.push(sink);
+      expBulletIds.push(b.ids);
     });
     for (const oi of removed) {
       const id = `exp.rm.${oi}`;
       edits.push({ id, section: "experience", context: "", kind: "removed", before: formatExperience(orig[oi]), after: "" });
-      if (isRejected(id)) experience.splice(Math.min(oi, experience.length), 0, orig[oi]);
+      if (isRejected(id)) {
+        const k = Math.min(oi, experience.length);
+        experience.splice(k, 0, orig[oi]);
+        expIds.splice(k, 0, [id]);
+        expBulletIds.splice(k, 0, orig[oi].bullets.map(() => []));
+      }
     }
+    anchorEntries("@exp", expIds, expBulletIds);
   }
 
   // --- projects -------------------------------------------------------- //
   const projects: Project[] = [];
+  const projIds: string[][] = [];
+  const projBulletIds: string[][][] = [];
   {
     const orig = original.projects;
     const tail = tailored.projects;
@@ -246,26 +377,43 @@ function mergeResumes(
       if (oi === null) {
         const id = `proj.add.${ti}`;
         edits.push({ id, section: "projects", context: "", kind: "added", before: "", after: formatProject(t) });
-        if (!isRejected(id)) projects.push(t);
+        if (!isRejected(id)) {
+          projects.push(t);
+          projIds.push([id]);
+          projBulletIds.push(t.bullets.map(() => []));
+        }
         return;
       }
       const o = orig[oi];
       const ctx = o.name;
-      projects.push({
-        name: pick(`proj.${oi}.name`, "projects", ctx, o.name, t.name),
-        description: pick(`proj.${oi}.desc`, "projects", ctx, o.description, t.description),
-        bullets: mergeBullets(`proj.${oi}`, "projects", ctx, o.bullets, t.bullets),
-      });
+      const sink: string[] = [];
+      const entry: Project = {
+        name: pick(`proj.${oi}.name`, "projects", ctx, o.name, t.name, sink),
+        description: pick(`proj.${oi}.desc`, "projects", ctx, o.description, t.description, sink),
+        bullets: [],
+      };
+      const b = mergeBullets(`proj.${oi}`, "projects", ctx, o.bullets, t.bullets);
+      entry.bullets = b.out;
+      projects.push(entry);
+      projIds.push(sink);
+      projBulletIds.push(b.ids);
     });
     for (const oi of removed) {
       const id = `proj.rm.${oi}`;
       edits.push({ id, section: "projects", context: "", kind: "removed", before: formatProject(orig[oi]), after: "" });
-      if (isRejected(id)) projects.splice(Math.min(oi, projects.length), 0, orig[oi]);
+      if (isRejected(id)) {
+        const k = Math.min(oi, projects.length);
+        projects.splice(k, 0, orig[oi]);
+        projIds.splice(k, 0, [id]);
+        projBulletIds.splice(k, 0, orig[oi].bullets.map(() => []));
+      }
     }
+    anchorEntries("@proj", projIds, projBulletIds);
   }
 
   // --- education ------------------------------------------------------- //
   const education: Education[] = [];
+  const eduIds: string[][] = [];
   {
     const orig = original.education;
     const tail = tailored.education;
@@ -275,32 +423,46 @@ function mergeResumes(
       if (oi === null) {
         const id = `edu.add.${ti}`;
         edits.push({ id, section: "education", context: "", kind: "added", before: "", after: formatEducation(t) });
-        if (!isRejected(id)) education.push(t);
+        if (!isRejected(id)) {
+          education.push(t);
+          eduIds.push([id]);
+        }
         return;
       }
       const o = orig[oi];
       const ctx = [o.degree, o.institution].filter(Boolean).join(" · ");
+      const sink: string[] = [];
       education.push({
-        institution: pick(`edu.${oi}.institution`, "education", ctx, o.institution, t.institution),
-        degree: pick(`edu.${oi}.degree`, "education", ctx, o.degree, t.degree),
-        field: pick(`edu.${oi}.field`, "education", ctx, o.field, t.field),
-        start_date: pick(`edu.${oi}.start`, "education", ctx, o.start_date, t.start_date),
-        end_date: pick(`edu.${oi}.end`, "education", ctx, o.end_date, t.end_date),
-        details: pick(`edu.${oi}.details`, "education", ctx, o.details, t.details),
+        institution: pick(`edu.${oi}.institution`, "education", ctx, o.institution, t.institution, sink),
+        degree: pick(`edu.${oi}.degree`, "education", ctx, o.degree, t.degree, sink),
+        field: pick(`edu.${oi}.field`, "education", ctx, o.field, t.field, sink),
+        start_date: pick(`edu.${oi}.start`, "education", ctx, o.start_date, t.start_date, sink),
+        end_date: pick(`edu.${oi}.end`, "education", ctx, o.end_date, t.end_date, sink),
+        details: pick(`edu.${oi}.details`, "education", ctx, o.details, t.details, sink),
       });
+      eduIds.push(sink);
     });
     for (const oi of removed) {
       const id = `edu.rm.${oi}`;
       edits.push({ id, section: "education", context: "", kind: "removed", before: formatEducation(orig[oi]), after: "" });
-      if (isRejected(id)) education.splice(Math.min(oi, education.length), 0, orig[oi]);
+      if (isRejected(id)) {
+        const k = Math.min(oi, education.length);
+        education.splice(k, 0, orig[oi]);
+        eduIds.splice(k, 0, [id]);
+      }
     }
+    anchorEntries("@edu", eduIds);
   }
 
   // --- certifications -------------------------------------------------- //
-  const certifications = mergeStringList("cert", "certifications", original.certifications, tailored.certifications);
+  const certsMerged = mergeStringList("cert", "certifications", original.certifications, tailored.certifications);
+  const certifications = certsMerged.out;
+  certsMerged.out.forEach((c, k) => anchor(`@cert.${lkey(c)}`, certsMerged.ids[k] ?? []));
 
   // --- military service ------------------------------------------------ //
   const military: MilitaryService[] = [];
+  const milIds: string[][] = [];
+  const milBulletIds: string[][][] = [];
   {
     const orig = original.military_service ?? [];
     const tail = tailored.military_service ?? [];
@@ -310,29 +472,46 @@ function mergeResumes(
       if (oi === null) {
         const id = `mil.add.${ti}`;
         edits.push({ id, section: "militaryService", context: "", kind: "added", before: "", after: formatMilitary(t) });
-        if (!isRejected(id)) military.push(t);
+        if (!isRejected(id)) {
+          military.push(t);
+          milIds.push([id]);
+          milBulletIds.push(t.bullets.map(() => []));
+        }
         return;
       }
       const o = orig[oi];
       const ctx = [o.role, o.unit].filter(Boolean).join(" · ");
-      military.push({
-        unit: pick(`mil.${oi}.unit`, "militaryService", ctx, o.unit, t.unit),
-        role: pick(`mil.${oi}.role`, "militaryService", ctx, o.role, t.role),
-        rank: pick(`mil.${oi}.rank`, "militaryService", ctx, o.rank, t.rank),
-        start_date: pick(`mil.${oi}.start`, "militaryService", ctx, o.start_date, t.start_date),
-        end_date: pick(`mil.${oi}.end`, "militaryService", ctx, o.end_date, t.end_date),
-        bullets: mergeBullets(`mil.${oi}`, "militaryService", ctx, o.bullets, t.bullets),
-      });
+      const sink: string[] = [];
+      const entry: MilitaryService = {
+        unit: pick(`mil.${oi}.unit`, "militaryService", ctx, o.unit, t.unit, sink),
+        role: pick(`mil.${oi}.role`, "militaryService", ctx, o.role, t.role, sink),
+        rank: pick(`mil.${oi}.rank`, "militaryService", ctx, o.rank, t.rank, sink),
+        start_date: pick(`mil.${oi}.start`, "militaryService", ctx, o.start_date, t.start_date, sink),
+        end_date: pick(`mil.${oi}.end`, "militaryService", ctx, o.end_date, t.end_date, sink),
+        bullets: [],
+      };
+      const b = mergeBullets(`mil.${oi}`, "militaryService", ctx, o.bullets, t.bullets);
+      entry.bullets = b.out;
+      military.push(entry);
+      milIds.push(sink);
+      milBulletIds.push(b.ids);
     });
     for (const oi of removed) {
       const id = `mil.rm.${oi}`;
       edits.push({ id, section: "militaryService", context: "", kind: "removed", before: formatMilitary(orig[oi]), after: "" });
-      if (isRejected(id)) military.splice(Math.min(oi, military.length), 0, orig[oi]);
+      if (isRejected(id)) {
+        const k = Math.min(oi, military.length);
+        military.splice(k, 0, orig[oi]);
+        milIds.splice(k, 0, [id]);
+        milBulletIds.splice(k, 0, orig[oi].bullets.map(() => []));
+      }
     }
+    anchorEntries("@mil", milIds, milBulletIds);
   }
 
   // --- languages ------------------------------------------------------- //
   const languages: LanguageSkill[] = [];
+  const langIds: string[][] = [];
   {
     const orig = original.languages ?? [];
     const tail = tailored.languages ?? [];
@@ -342,39 +521,53 @@ function mergeResumes(
       if (oi === -1) {
         const id = `lang.add.${lkey(t.language)}`;
         edits.push({ id, section: "languages", context: "", kind: "added", before: "", after: formatLanguage(t) });
-        if (!isRejected(id)) languages.push(t);
+        if (!isRejected(id)) {
+          languages.push(t);
+          langIds.push([id]);
+        }
         return;
       }
       usedO.add(oi);
       const o = orig[oi];
       if (same(o.level, t.level)) {
         languages.push(t);
+        langIds.push([]);
       } else {
         const id = `lang.${lkey(o.language)}`;
         edits.push({ id, section: "languages", context: "", kind: "edited", before: formatLanguage(o), after: formatLanguage(t) });
         languages.push(isRejected(id) ? o : t);
+        langIds.push([id]);
       }
     });
     orig.forEach((o, oi) => {
       if (usedO.has(oi)) return;
       const id = `lang.rm.${lkey(o.language)}`;
       edits.push({ id, section: "languages", context: "", kind: "removed", before: formatLanguage(o), after: "" });
-      if (isRejected(id)) languages.push(o);
+      if (isRejected(id)) {
+        languages.push(o);
+        langIds.push([id]);
+      }
     });
+    languages.forEach((l, k) => anchor(`@lang.${lkey(l.language)}`, langIds[k] ?? []));
   }
 
   // --- contact (the AI must never touch it — surface it loudly if it did) //
   const contact = { ...tailored.contact };
   (["name", "email", "phone", "location", "linkedin", "website"] as const).forEach((f) => {
-    contact[f] = pick(`contact.${f}`, "contact", "", original.contact[f], tailored.contact[f]);
+    const sink: string[] = [];
+    contact[f] = pick(`contact.${f}`, "contact", "", original.contact[f], tailored.contact[f], sink);
+    anchor(f === "name" ? "@contact.name" : "@contact", sink);
   });
 
   return {
     edits,
+    blocks,
     resume: {
       contact,
+      headline,
       summary,
       skills,
+      skill_groups,
       experience,
       education,
       projects,
@@ -397,6 +590,35 @@ export function applyEditDecisions(
   rejected: ReadonlySet<string>,
 ): ResumeModel {
   return mergeResumes(original, tailored, (id) => rejected.has(id)).resume;
+}
+
+/**
+ * The effective résumé, its edits, AND where each edit lands in it — the one
+ * call the review surface wants, because all three come out of a single walk
+ * and therefore cannot disagree.
+ *
+ * `blocks` maps an OUTPUT block path to the edit ids that touch it. Paths index
+ * the document being RENDERED, not the original résumé, which is the whole
+ * point: edit ids carry original indices and the rendered document is the
+ * tailored one with restored removals spliced back in.
+ *
+ * An edit with no entry here has no block in the document — a removal that
+ * stayed removed is the common case, and it is correct that it cannot be
+ * anchored: it is not on the page.
+ */
+export function mergeForReview(
+  original: ResumeModel,
+  tailored: ResumeModel,
+  rejected: ReadonlySet<string>,
+): { resume: ResumeModel; edits: ResumeEdit[]; blocks: BlockAnchors } {
+  return mergeResumes(original, tailored, (id) => rejected.has(id));
+}
+
+/** The reverse index: edit id → the block path it lands in. */
+export function blocksByEdit(blocks: BlockAnchors): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [path, ids] of Object.entries(blocks)) for (const id of ids) out[id] = path;
+  return out;
 }
 
 // --------------------------------------------------------------------- //
