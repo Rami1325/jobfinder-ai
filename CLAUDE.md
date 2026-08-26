@@ -39,15 +39,27 @@ Set `USE_STUB_LLM=true` in `.env`. The entire pipeline (parse, score, tailor, re
 cd backend
 .\.venv\Scripts\python.exe -m tests.smoke_test
 ```
-Exit 0 = all pass (697 checks as of Phase 21). Run this after any backend change. There are no other test files; the smoke test covers parsing, ledger building, JD analysis, tailoring, fabrication guard, DOCX/PDF rendering, cover letter, the SSRF guard, upload caps, LLM cost caps + token metering, the alerts-cron budget, and résumé version history — **plus every LLM task** (interview questions/answer/feedback, job match, ATS scan, LinkedIn optimizer, follow-up email). **Any new LLM task must add a stub branch and a smoke-test check** — the smoke test is what guards the stub-routing invariant.
+Exit 0 = all pass (715 checks as of Phase 22). Run this after any backend change. There are no other test files; the smoke test covers parsing, ledger building, JD analysis, tailoring, fabrication guard, DOCX/PDF rendering, cover letter, the SSRF guard, upload caps, LLM cost caps + token metering, the alerts-cron budget, and résumé version history — **plus every LLM task** (interview questions/answer/feedback, job match, ATS scan, LinkedIn optimizer, follow-up email). **Any new LLM task must add a stub branch and a smoke-test check** — the smoke test is what guards the stub-routing invariant.
 
 Two habits this suite has repaid, both from real misses: **pin the false-positive case next to the catch** (a guard that fires correctly and also fires on legitimate input is worse than no guard), and when a change alters observable behaviour, **fix the assertion rather than weaken it** — the 20.5/C2 reordering broke a check that identified cron runs by list position, and the right answer was to give the result a `user_id`, not to loosen the test.
 
-**Frontend type-check + build:**
+**Frontend checks + build:**
 ```powershell
 cd frontend
-npm run build   # runs tsc -b then vite build; 0 errors expected
+npm run build   # runs scripts/check-mirrors.js, then tsc -b, then vite build
 ```
+**`scripts/check-mirrors.js` is the frontend's only test suite** (Phase 22 — before it there were none, and that gap is why a bug that silently deleted the résumé headline survived every check). It runs FIRST so it fails fast, and it also runs in CI on every Vercel build. Eight checks, each pinned to a defect that actually shipped:
+
+1. every `ResumeModel` field appears in `mergeResumes`' returned object — the exact bug above, and the only thing that catches the next field added to the model
+2. every `EditSection` has a `sections.<key>` label in BOTH locales
+3. every `EditClass` has a `groups.<class>.title` in both locales
+4. keyword STATUS is never computed in TypeScript (see the coverage invariant below)
+5. every `BlockKind` and `BLOCK_FIELD_KEYS` entry has an `edit.blocks.*` / `edit.fields.*` label in both locales
+6. `dkey` has exactly ONE definition, in `lib/resumeBlocks.ts`
+7. every block path `ResumeView` emits is in `BLOCK_PATTERNS` — a new section would otherwise ship a tappable block whose editor opens EMPTY, which `tsc` cannot see because paths are strings
+8. en↔he locale key parity per namespace, normalising i18next plural suffixes (Hebrew has a `_two` form English does not)
+
+**Every check fails loudly when it cannot parse what it looks for.** The first draft of check 1 silently matched the wrong brace and reported "2 fields" — a check that passes by never firing is the 21.7 failure mode, and only the fail-loud path caught it. When adding a check, probe it in BOTH directions: introduce the defect, watch it go red, then restore.
 Stack: React 18 + Vite + **react-router-dom** (routing) + **Tailwind CSS** (styling, theme in `tailwind.config.js` seeded from the original CSS vars) + **framer-motion** (animation) + **lucide-react** (icons). A shared UI kit lives in `src/components/ui/`.
 
 ## Architecture
@@ -122,6 +134,26 @@ The model is provider-agnostic. To swap the model, change `MODEL_ID` in `.env`. 
 Default `MODEL_ID` is **`gpt-4o-mini`** — cheap, fast, and strong at this JSON-extraction/rewrite work. Step up to `gpt-4.1-mini` or `gpt-4o` if you want higher-stakes tailoring quality. (Do not use unverified ids like `gpt-5.5`.)
 
 ## Key invariants
+
+### Phase 22 — the document surface
+
+- **The tailor page IS the document.** `/app` renders the résumé (`ResumeView`, `surface="sheet"`) with a toolbar over it; tailoring is an overlay (`TailorOverlay`), not a page. There is no stepper. `shown = effectiveResume ?? resume` is the whole of "the page always has a CV".
+- **Editing targets the MASTER, never a tailored draft.** `onEditBlock` is passed only when `!result`. With a result up, the document is a memo recomputed and discarded on every accept/decline, so writing into it needs an override layer that survives the re-merge — and the standing decision is that tailoring is a *review layer* that never writes back to the master. Master ⇒ edit, tailored ⇒ review.
+- **`lib/resumeBlocks.ts` is the only reader and writer of a block.** The document addresses blocks by path (`@exp.2`, `@exp.2.b.1`, `@skills.python`) and `readBlock`/`writeBlock`/`removeBlock` resolve them. **The sheet edits an ENTRY, not a field** — that is what dissolves the fused-text-node problem (an experience meta line is five model fields in one text node), so never "fix" it by splitting `MetaLine`: that re-opens the bidi-isolate problem and buys nothing.
+- **Block paths carry an `@` prefix and it is not decoration.** Without it `exp.0.b.1` is simultaneously a valid *edit id* (original indices, from `resumeDiff`) and a valid *block path* (effective indices) — string-identical, different meaning, silently swappable.
+- **`mergeResumes` must return EVERY `ResumeModel` field.** It rebuilds the résumé field by field; a field added to the model and forgotten here is silently DELETED the moment one edit is rejected. This shipped: `headline` and `skill_groups` vanished from the download, the tracker row and the cover letter, and `tsc` was quiet because both are optional. Check 1 exists for this.
+- **Removing a skill is a TWO-FIELD write** (`skills` AND `skill_groups`). The model validator keeps `skills` as the flat union and only ever ADDS, so writing the group alone leaves the old spelling behind and the next round trip restores it — the deletion silently does nothing.
+- **Keyword coverage is computed server-side, on `POST /tools/coverage`, and NEVER in TypeScript.** `scorer._keyword_present` tries the verbatim phrase FIRST, which is what makes Hebrew work: prefixes glue to the word (ב/ל/ה/ו/מ/ש), so `פייתון` must match inside `בפייתון`. `lib/keywords.ts`'s boundary guard makes exactly that case miss, so a second matcher shows a different number in the primary market. Check 4 fails the build if any `lib/*.ts` starts returning `covered`/`partial`/`missing`.
+- **The ATS x-ray must search the VISUAL form of a fact as well as the logical one.** `pdf_renderer._draw_line` draws bidi-reordered glyphs, so pdfminer returns visual text while a fact from `ResumeModel` is logical. Before `_candidates()` existed, a correctly rendered Hebrew PDF reported 14 of 16 facts `missing`. `ats_xray` imports the renderer's own `_visual` on purpose — if the renderer's `base_dir` changes, the x-ray follows it.
+- **The fabrication guard can say "no new claims detected". It can never say "verified".** `_known` is containment in *either* direction, so a ledger holding `"5"` clears an invented `"250"`, and skills are unchecked by design. Nineteen strings claimed otherwise until Phase 22.
+- **Two numbers on two clocks, never a blended one.** Keyword coverage is live and deterministic; recruiter fit is ONE timestamped model reading with no before/after, because two samples at `temperature=0.3` are not a measurement of improvement. `overall` (`0.5*coverage + 0.5*fit`) is off the live surface entirely — half of it is stale by construction. It still exists on the type and in the tracker, where historical rows were scored that way.
+- **Deterministic routes stay uncapped and smoke-pinned**: `/render`, `/tools/ats-scan`, `/tools/ats-xray`, `/tools/page-count`, `/tools/coverage`. **`/tools/coverage` takes `jd: JDModel`, never `jd_text`** — a route that accepted job-ad text would have to reach the model to use it, and an uncapped door onto the model is the thing that rule exists to prevent. Pinned at 422.
+- **Saving the master is EXPLICIT, never automatic**, until three backend fixes land: version snapshots are per changed PUT with only 20 slots per (user, language) — 21 saves evict the uploaded original; `PUT /profile/resume` picks its row by *detected language* and carries no id, so one Hebrew word saves over the other-language CV; and there is no conflict check at any layer. Saving must also **omit the ledger** (the backend rebuilds it — the user typed these facts) and call **`resetMasterCache()`**, because `invalidateData` cannot reach `useMasterResume`'s module-level binding and nine pages read the master from it.
+- **`useSaveMasterResume` swallows every error and returns `null`.** Correct for its documented best-effort use; never use it behind a Save button.
+- **Never animate `height: "auto"` on a click-to-open element.** It wedges at `height: 0px` with the content present underneath — reproduced on a clean load, not reduced-motion, not HMR. `Disclosure` and `BlockEditSheet` both animate transform and opacity only.
+- **`.sheet` is the document's palette; `.paper` is the marketing one.** Same mechanism (re-declare tokens on a subtree), different palettes and different reasons — `.paper` would paint every section heading the marketing violet, a colour no template draws.
+- **Chrome follows the UI locale; the paper follows the résumé language.** Editable fields take an EXPLICIT `dir` from the résumé, never `dir="auto"` — auto resolves from the first strong character, so a Hebrew bullet beginning "React…" flips LTR under the caret.
+
 
 - The fabrication guard runs **after** every tailor call, not just in tests. If the LLM invents an employer/title/date/credential/number, the API still returns it but `fabrication_flags` will be non-empty. The UI surfaces these as warnings. Numbers are read from experience, military, the summary **and projects** — projects were missing until Phase 20 and the gap was invisible precisely because it was symmetric (the guard rebuilds the ledger the same way from the tailored résumé, so nothing ever went red). Skills are still deliberately unguarded: the tailor is explicitly allowed to adopt the JD's wording for something the candidate has, so a strict check would false-positive on exactly that.
 - **The ATS X-ray shows rather than asserts** (`app/core/ats_xray.py`, `POST /tools/ats-xray`, `/tools/xray`). Every competitor *claims* its templates are ATS-safe; we own both the renderer and a parser, so the tool renders the file the user would actually send and re-reads it with `resume_parser.extract_text`, then marks every protected fact `clean` / `split` / `polluted` / `missing` and prints the parser's verbatim text. It is deterministic — no LLM, no network — which is why the route is uncapped.
