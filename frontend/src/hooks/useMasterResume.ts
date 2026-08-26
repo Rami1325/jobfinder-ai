@@ -4,7 +4,7 @@ import { resumeLanguage } from "../lib/lang";
 import type { MasterResume } from "../types";
 
 // Module-level cache so navigating between pages that need the master résumé
-// (Home, Jobs, Interview) doesn't re-fetch and flash a skeleton on every visit.
+// (Resume, Jobs, Interview) doesn't re-fetch and flash a skeleton on every visit.
 // Stale-while-revalidate: mounts after the first return the cache instantly and
 // refresh in the background. `null` = never loaded yet.
 let cache: MasterResume[] | null = null;

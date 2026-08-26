@@ -48,7 +48,7 @@ Two habits this suite has repaid, both from real misses: **pin the false-positiv
 cd frontend
 npm run build   # runs scripts/check-mirrors.js, then tsc -b, then vite build
 ```
-**`scripts/check-mirrors.js` is the frontend's only test suite** (Phase 22 — before it there were none, and that gap is why a bug that silently deleted the résumé headline survived every check). It runs FIRST so it fails fast, and it also runs in CI on every Vercel build. Eight checks, each pinned to a defect that actually shipped:
+**`scripts/check-mirrors.js` is the frontend's only test suite** (Phase 22 — before it there were none, and that gap is why a bug that silently deleted the résumé headline survived every check). It runs FIRST so it fails fast, and it also runs in CI on every Vercel build. Nine checks, each pinned to a defect that actually shipped:
 
 1. every `ResumeModel` field appears in `mergeResumes`' returned object — the exact bug above, and the only thing that catches the next field added to the model
 2. every `EditSection` has a `sections.<key>` label in BOTH locales
@@ -57,7 +57,8 @@ npm run build   # runs scripts/check-mirrors.js, then tsc -b, then vite build
 5. every `BlockKind` and `BLOCK_FIELD_KEYS` entry has an `edit.blocks.*` / `edit.fields.*` label in both locales
 6. `dkey` has exactly ONE definition, in `lib/resumeBlocks.ts`
 7. every block path `ResumeView` emits is in `BLOCK_PATTERNS` — a new section would otherwise ship a tappable block whose editor opens EMPTY, which `tsc` cannot see because paths are strings
-8. en↔he locale key parity per namespace, normalising i18next plural suffixes (Hebrew has a `_two` form English does not)
+8. en↔he locale key parity per namespace, normalising i18next plural suffixes (Hebrew has a `_two` form English does not). It walks the **union** of both directories: driving the loop off `readdirSync("en")` alone meant a namespace deleted from *that* side was never looked at, so its orphaned Hebrew twin kept shipping as a chunk nothing read
+9. every nav `to:` in `AppLayout.tsx` resolves to a declared `<Route path>`, and every nav `labelKey` / `t("nav.*")` resolves in **both** locales. `tsc` sees neither — a route path is a string and a locale key is a string. A dead `to:` leaves the tab permanently unlit and the tap falls through the catch-all to the *marketing* landing, which reads as "you got logged out"; a renamed `labelKey` renders the raw key at 12 px in Hebrew, and **check 8 stays green because en and he are still in parity with each other**. Deliberately scoped to `AppLayout.tsx`: `BuilderPage` calls `t("nav.back")` against the *builder* namespace, so a repo-wide scrape would fire on legitimate input
 
 **Every check fails loudly when it cannot parse what it looks for.** The first draft of check 1 silently matched the wrong brace and reported "2 fields" — a check that passes by never firing is the 21.7 failure mode, and only the fail-loud path caught it. When adding a check, probe it in BOTH directions: introduce the defect, watch it go red, then restore.
 Stack: React 18 + Vite + **react-router-dom** (routing) + **Tailwind CSS** (styling, theme in `tailwind.config.js` seeded from the original CSS vars) + **framer-motion** (animation) + **lucide-react** (icons). A shared UI kit lives in `src/components/ui/`.
@@ -118,6 +119,10 @@ Beyond the core pipeline, the backend also exposes standalone feature modules (e
 - `src/types.ts` — mirrors the backend Pydantic schemas. Keep in sync when models change.
 - `src/api/client.ts` — all `axios` calls; every endpoint has a typed wrapper here.
 - `src/App.tsx` — routes. `/` is the marketing landing (`MarketingLayout`); the app pages (`/app`, `/interview`, `/jobs`, `/tools/*`, `/tracker`) sit under `AppLayout`.
+  - **`/app` is the canonical document route and must not be renamed.** `extension/popup.js` opens `appUrl + "/app?tailor_app=<id>"` — installed software a deploy cannot update — and `TailorPage` reads that param, plus `location.state` from the Jobs page's "Tailor to this", through **silent early-returns**. A `<Navigate>` drops search, hash and state, so a rename turns both handoffs into a blank tailor page with no error.
+  - **A redirect route belongs OUTSIDE the `AppLayout` group** (`/home` → `/app` is the one). The app's only `<Suspense>` wraps `<Routes>` *above* the layout route and its fallback is full-screen, so a redirect placed inside paints the fallback, then the shell with an empty main, then the fallback again.
+  - **The nav is one table.** `primaryNav` in `AppLayout.tsx` feeds the desktop rail, the mobile drawer and the bottom tab bar, so those three can never drift. Three entries + the More button is the four-item bar; at 390 px that is 93.8 px per slot. The `item.to === "/jobs"` checks that hang the search spinner off that entry are string comparisons — renaming the route silently kills the indicator.
+  - **`moreActive` must stay disjoint from every `primaryNav` destination.** `MobileTabBar` has no `<LayoutGroup>`, so both `layoutId="tabbar-dash"` spans register in the root projection stack; two live members crossfade into a doubled, ghosted dash instead of sliding. Nothing checks this.
 - `src/pages/Landing.tsx` + `src/components/marketing/*` — the honesty-first landing page.
 - `src/pages/TailorPage.tsx` — the upload→analyze→tailor→download→save flow (guided stepper; auto-loads/saves the master résumé).
 - `src/pages/TrackerPage.tsx` — kanban application tracker.

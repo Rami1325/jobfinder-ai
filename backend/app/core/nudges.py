@@ -1,4 +1,4 @@
-"""Stale-application nudge emails (PLAN 11.4): the Home "time to follow up"
+"""Stale-application nudge emails (PLAN 11.4): the tracker's "time to follow up"
 card, promoted to a scheduled email.
 
 Opt-in per user via the alert settings row (`JobAlert.nudge_emails` — the
@@ -39,7 +39,7 @@ def stale_rows(
 ) -> list[tuple[Application, datetime]]:
     """(application, staleness marker) pairs for apps stuck in 'applied' with
     no status change for `days`. The marker (status_changed_at or created_at,
-    UTC) is what both the Home card and the nudge watermark reason about."""
+    UTC) is what both the tracker card and the nudge watermark reason about."""
     cutoff = now - timedelta(days=days)
     rows = db.execute(
         select(Application).where(

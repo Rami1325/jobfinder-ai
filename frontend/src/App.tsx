@@ -14,7 +14,6 @@ import { prefetchAppRoutes } from "./lib/prefetchRoutes";
 // src/lib/prefetchRoutes.ts so Vite reuses the same chunks.
 const ScanPage = lazy(() => import("./pages/ScanPage"));
 const AppLayout = lazy(() => import("./layouts/AppLayout"));
-const HomePage = lazy(() => import("./pages/HomePage"));
 const TailorPage = lazy(() => import("./pages/TailorPage"));
 const BuilderPage = lazy(() => import("./pages/BuilderPage"));
 const TrackerPage = lazy(() => import("./pages/TrackerPage"));
@@ -55,7 +54,6 @@ export default function App() {
             <Route path="/scan" element={<ScanPage />} />
           </Route>
           <Route element={<AppLayout />}>
-            <Route path="/home" element={<HomePage />} />
             <Route path="/app" element={<TailorPage />} />
             <Route path="/builder" element={<BuilderPage />} />
             <Route path="/interview" element={<InterviewPage />} />
@@ -72,6 +70,11 @@ export default function App() {
             <Route path="/tools/resume-health" element={<ResumeHealthToolPage />} />
             <Route path="/tracker" element={<TrackerPage />} />
           </Route>
+          {/* /home was the dashboard deleted in 22.9. It carries no query, hash
+              or state, so a bare redirect loses nothing — and `replace` keeps
+              Back from bouncing off it, which matters for the installed PWA
+              (manifest display: standalone) where there is no URL bar. */}
+          <Route path="/home" element={<Navigate to="/app" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

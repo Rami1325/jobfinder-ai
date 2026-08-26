@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     max_pdf_pages: int = 50
     jooble_api_key: str = ""  # empty => the Jooble board reports "needs an API key"
     # Stale-application nudges: an "applied" app with no status change for this
-    # many days surfaces a "time to follow up" reminder on Home (<= 0 disables).
+    # many days surfaces a "time to follow up" reminder on the tracker (<= 0 disables).
     stale_application_days: int = 7
     # Tailored-résumé page budget. A master résumé holds everything the
     # candidate has ever built; one application needs a couple of pages of it.

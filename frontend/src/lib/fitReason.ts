@@ -3,8 +3,8 @@
 // extra LLM call. Complements the colored KeywordChips with a scannable
 // sentence and makes the gap explicit ("what to close before applying").
 //
-// Callers pass their own namespaced `t` (jobs / home); both namespaces carry
-// the `fit.*` keys. Skill names are usually English even in the Hebrew UI, so
+// Callers pass their own namespaced `t` (jobs); that namespace carries the
+// `fit.*` keys. Skill names are usually English even in the Hebrew UI, so
 // a plain comma join reads fine LTR or RTL (the caller wraps it in dir="auto").
 
 type TFn = (key: string, opts?: Record<string, unknown>) => string;

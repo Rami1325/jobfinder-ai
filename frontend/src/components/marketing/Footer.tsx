@@ -17,7 +17,7 @@ export default function Footer() {
             aria-label={tm("footer.navLabel")}
             className="flex flex-wrap gap-x-6 gap-y-2.5 text-sm text-ink-muted"
           >
-            <Link to="/home" className="hover:text-ink">{t("footer.app")}</Link>
+            <Link to="/app" className="hover:text-ink">{t("footer.app")}</Link>
             <Link to="/scan" className="hover:text-ink">{t("footer.freeScan")}</Link>
             <a href="#templates" className="hover:text-ink">{tm("templates.nav")}</a>
             <a href="#how" className="hover:text-ink">{t("footer.how")}</a>

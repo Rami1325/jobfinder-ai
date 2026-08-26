@@ -27,7 +27,7 @@ const NAV = [
  *
  * `paper` is the scoped token override (styles.css): it rebinds --bg / --ink /
  * --accent / … on THIS SUBTREE ONLY, so the landing and the free scan render
- * on warm white while /home, /app, /jobs, /tools/*, /tracker keep the app's
+ * on warm white while /app, /jobs, /tools/*, /tracker keep the app's
  * dark default. The theme toggle still writes the global class on <html> and
  * still drives every app surface — it simply has no say over the marketing
  * page, which is a committed light design.
@@ -72,7 +72,7 @@ export default function MarketingLayout() {
               </Link>
               <LanguageSwitch />
               <ThemeToggle />
-              <Link to="/home">
+              <Link to="/app">
                 <Button size="sm">{t("header.openApp")}</Button>
               </Link>
             </div>

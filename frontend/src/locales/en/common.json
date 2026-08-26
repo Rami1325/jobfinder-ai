@@ -1,13 +1,12 @@
 {
   "appName": "JobFinder",
   "nav": {
-    "home": "Home",
     "jobs": "Jobs",
-    "tailor": "Tailor",
+    "resume": "Resume",
     "interview": "Interview",
     "tools": "Tools",
     "tracker": "Tracker",
-    "overview": "Overview",
+    "primary": "Main",
     "more": "More",
     "trust": "Checked against your CV",
     "searching": "Searching…",
@@ -57,8 +56,8 @@
   },
   "resumeGate": {
     "title": "No resume saved yet",
-    "body": "Upload your resume on the Jobs page first — it becomes your master resume, which {{feature}} uses.",
-    "cta": "Go to Jobs",
+    "body": "Upload your resume on the Resume tab first — it becomes your master resume, which {{feature}} uses.",
+    "cta": "Go to Resume",
     "build": "Build one from scratch"
   },
   "masterResume": {

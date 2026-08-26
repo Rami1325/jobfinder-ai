@@ -17,8 +17,9 @@ export interface TrackerMetrics {
 }
 
 /**
- * Pipeline metrics derived from tracker rows — the single source of truth shared
- * by the Tracker header and the Home dashboard so both always agree.
+ * Pipeline metrics derived from tracker rows. One consumer since 22.9 deleted
+ * the Home dashboard (TrackerPage) — it stays a hook so the numbers keep a
+ * single definition if a second surface ever needs them.
  */
 export function useTrackerMetrics(apps: ApplicationOut[]): TrackerMetrics {
   return useMemo(() => {

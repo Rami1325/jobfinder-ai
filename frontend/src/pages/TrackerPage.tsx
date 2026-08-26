@@ -6,6 +6,7 @@ import {
   Award,
   BarChart3,
   ClipboardList,
+  Clock,
   Download,
   ExternalLink,
   Eye,
@@ -27,13 +28,14 @@ import {
   getApplication,
   listApplications,
   updateApplication,
+  getStaleApplications,
 } from "../api/client";
 import ResumeView from "../components/ResumeView";
 import TrackerAnalytics from "../components/TrackerAnalytics";
-import { Badge, Button, Card, CountUp, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
+import { Badge, Button, Card, CardTitle, CountUp, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
-import type { ApplicationDetail, ApplicationOut } from "../types";
+import type { ApplicationDetail, ApplicationOut, StaleApplication } from "../types";
 
 // Column labels come from the "tracker" catalog via `status.<key>`.
 const COLUMNS: {
@@ -169,6 +171,9 @@ export default function TrackerPage() {
   // refresh in the background (no flicker when switching tabs).
   const [loading, setLoading] = useState(appsCache === null);
   const [error, setError] = useState("");
+  // PLAN 22.9 — rehomed from the deleted Home dashboard. Nudges are post-send,
+  // which is this page, and the /tools/follow-up handoff already lives here.
+  const [nudges, setNudges] = useState<StaleApplication[]>([]);
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -198,6 +203,19 @@ export default function TrackerPage() {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Deliberately NOT part of refresh(): that runs again after every mutation and
+  // sets `error` from t("loadError"), so a failed nudge fetch must not be able
+  // to blank the board. Best-effort — the card just hides itself.
+  useEffect(() => {
+    let alive = true;
+    getStaleApplications()
+      .then((n) => alive && setNudges(n))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // Keep the cache in sync with optimistic mutations (status/notes/stars/delete)
@@ -376,6 +394,44 @@ export default function TrackerPage() {
             </div>
           </Card>
         </motion.div>
+      )}
+
+      {/* Stale-application nudges: time to follow up. Outside the `loading`
+          ternary on purpose — it has its own fetch and never reads `apps`. */}
+      {nudges.length > 0 && (
+        <Card className="flex items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-warn/12 text-warn">
+            <Clock size={18} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <CardTitle>{t("nudges.title")}</CardTitle>
+            <p className="mt-1 text-xs text-ink-muted">{t("nudges.body", { count: nudges.length })}</p>
+            <div className="mt-2 space-y-1.5">
+              {nudges.slice(0, 3).map((n) => (
+                <button
+                  key={n.id}
+                  onClick={() =>
+                    nav("/tools/follow-up", {
+                      state: {
+                        company: n.company,
+                        role: n.job_title,
+                        stage: followUpStage(n.status),
+                      },
+                    })
+                  }
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-start text-xs transition-colors hover:border-accent/50"
+                >
+                  <span className="min-w-0 flex-1 truncate text-ink" dir="auto">
+                    {n.job_title || n.company || "—"}
+                  </span>
+                  <span className="shrink-0 text-ink-faint">
+                    {t("nudges.days", { count: n.days_stale })}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </Card>
       )}
 
       {/* ── Board / Analytics ──────────────────────────────────────────── */}

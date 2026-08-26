@@ -17,6 +17,13 @@
     "offers": "Offers",
     "declined": "Declined"
   },
+  "nudges": {
+    "title": "Time to follow up",
+    "body_one": "{{count}} application has gone quiet — a nudge could restart it.",
+    "body_other": "{{count}} applications have gone quiet — a nudge could restart them.",
+    "days_one": "{{count}} day",
+    "days_other": "{{count}} days"
+  },
   "interviewRate": "interview rate",
   "responseRate": "response rate",
   "excitement": {

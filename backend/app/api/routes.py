@@ -1372,7 +1372,7 @@ def application_nudges(
     db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> StaleApplicationList:
     """Applications stuck in 'applied' with no status change for
-    STALE_APPLICATION_DAYS days — a nudge to follow up. Surfaced on Home."""
+    STALE_APPLICATION_DAYS days — a nudge to follow up. Surfaced on the tracker."""
     days = get_settings().stale_application_days
     if days <= 0:
         return StaleApplicationList()

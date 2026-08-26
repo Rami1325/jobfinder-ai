@@ -2,8 +2,8 @@
 //   node scripts/check-mirrors.js
 //
 // This repo has 5,000+ backend smoke checks and, until now, ZERO frontend
-// assertions — so a whole class of defect had nothing watching it. All three
-// checks below are pinned to bugs that actually shipped:
+// assertions — so a whole class of defect had nothing watching it. Every check
+// below is pinned to a bug that actually shipped:
 //
 //   1. `mergeResumes` (resumeDiff.ts) rebuilds the résumé field by field. When
 //      `headline` and `skill_groups` were added to `ResumeModel`, nobody added
@@ -270,11 +270,20 @@ function flatKeys(obj, prefix = "", out = new Set()) {
 }
 try {
   const dir = (loc) => path.join(SRC, "locales", loc);
-  const files = fs.readdirSync(dir("en")).filter((f) => f.endsWith(".json"));
-  if (!files.length) throw new Error("no locale files found under locales/en");
+  // Union of BOTH directories, not readdir("en") alone: driving the loop off
+  // one side means a namespace deleted from THAT side is never looked at, so
+  // its orphaned twin keeps shipping as a chunk nothing reads. (22.9 deleted
+  // home.json; deleting only the en half would have been silently green.)
+  const json = (loc) => fs.readdirSync(dir(loc)).filter((f) => f.endsWith(".json"));
+  const files = [...new Set([...json("en"), ...json("he")])].sort();
+  if (!files.length) throw new Error("no locale files found under locales/en or locales/he");
 
   for (const f of files) {
     const hePath = path.join(dir("he"), f);
+    if (!fs.existsSync(path.join(dir("en"), f))) {
+      fail(`locales/en/${f} missing — locales/he/${f} has no English twin.`);
+      continue;
+    }
     if (!fs.existsSync(hePath)) {
       fail(`locales/he/${f} missing — locales/en/${f} has no Hebrew twin.`);
       continue;
@@ -288,6 +297,66 @@ try {
   }
 } catch (e) {
   fail(`locale parity check could not run: ${e.message}`);
+}
+
+// ---- 9. nav destinations resolve, nav labels exist ------------------------ //
+// 22.9 rewired every nav destination and renamed two locale keys, and `tsc` can
+// see NEITHER: a route path is a string and a labelKey is a string. The two
+// failure shapes this pins:
+//   (a) a nav `to:` no <Route path> declares. NavLink's isActive is simply never
+//       true, so the tab sits permanently unlit, and the tap falls through
+//       App.tsx's catch-all to the MARKETING landing — which reads to the user
+//       as having been logged out. Green build, no runtime error.
+//   (b) a labelKey with no key in common.json. The tab renders the literal
+//       "nav.resume" at 12px, in Hebrew. Check 8 stays green because en and he
+//       are still in parity WITH EACH OTHER, and checks 2/3/5 only read
+//       tailor.json.
+// Scoped to AppLayout.tsx on purpose: BuilderPage calls t("nav.back") against
+// the BUILDER namespace, which has its own nav block, so a repo-wide scrape
+// would false-positive on legitimate input — and a check that fires on correct
+// code is worse than no check.
+try {
+  const app = read("App.tsx");
+  const routes = [...app.matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]);
+  if (routes.length < 15) throw new Error(`parsed only ${routes.length} <Route path=> entries in App.tsx`);
+  if (!routes.includes("*")) throw new Error("App.tsx has no catch-all — this check's premise is gone");
+  const declared = routes
+    .filter((r) => r !== "*")
+    .map((r) => new RegExp(`^${r.replace(/:[^/]+/g, "[^/]+")}$`));
+
+  const layout = read("layouts/AppLayout.tsx");
+  // Both spellings: `to: "/x"` in the nav tables, `to="/x"` on the logo Links
+  // and the Tools NavItem. A dead logo link is the same bug as a dead tab.
+  const fromTables = [...layout.matchAll(/\bto:\s*"(\/[^"]*)"/g)].map((m) => m[1]);
+  const fromJsx = [...layout.matchAll(/\bto="(\/[^"]*)"/g)].map((m) => m[1]);
+  if (!fromTables.length) throw new Error('parsed no `to: "/…"` nav-table destinations in AppLayout.tsx');
+  if (!fromJsx.length) throw new Error('parsed no `to="/…"` link destinations in AppLayout.tsx');
+  const dests = [...fromTables, ...fromJsx];
+  for (const d of new Set(dests)) {
+    if (!declared.some((re) => re.test(d)))
+      fail(`AppLayout navigates to "${d}", which App.tsx does not route — it falls through the catch-all to the marketing landing and reads as being logged out.`);
+  }
+
+  // Guard the two scrapes SEPARATELY. A floor on the sum is not a fail-loud
+  // guard: `labelKey` could stop matching entirely and the t("nav.*") hits
+  // alone would still clear it. What must be caught is either regex going to
+  // zero — a renamed property, or a different call shape — not the count
+  // drifting when a nav entry is legitimately added or removed.
+  const fromTable = [...layout.matchAll(/\blabelKey:\s*"([^"]+)"/g)].map((m) => m[1]);
+  const fromCalls = [...layout.matchAll(/\bt\("(nav\.[^"]+)"\)/g)].map((m) => m[1]);
+  if (!fromTable.length) throw new Error("parsed no `labelKey:` entries in AppLayout.tsx");
+  if (!fromCalls.length) throw new Error('parsed no t("nav.*") calls in AppLayout.tsx');
+  const labels = [...fromTable, ...fromCalls];
+  for (const loc of ["en", "he"]) {
+    const common = JSON.parse(read(`locales/${loc}/common.json`));
+    for (const key of new Set(labels)) {
+      const v = key.split(".").reduce((o, k) => (o == null ? o : o[k]), common);
+      if (v === undefined)
+        fail(`locales/${loc}/common.json is missing "${key}" — the nav would render the raw key.`);
+    }
+  }
+} catch (e) {
+  fail(`nav destination/label check could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

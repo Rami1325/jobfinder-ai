@@ -98,7 +98,7 @@
   properties on its own subtree via this `.paper` class (applied in
   layouts/MarketingLayout.tsx). Every existing `bg-bg` / `text-ink` /
   `border-line` utility inside the landing then resolves to paper, while
-  /home, /app, /jobs, /tools/*, /tracker keep whatever the toggle chose.
+  /app, /jobs, /tools/*, /tracker keep whatever the toggle chose.
   There is no second palette on this page: every section sits on the same
   paper background, so the aurora reads as one continuous backdrop.
 

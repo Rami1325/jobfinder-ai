@@ -2,7 +2,6 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import {
-  Home,
   FileText,
   MessageSquareText,
   Briefcase,
@@ -21,6 +20,7 @@ import {
   Mail,
   MoreHorizontal,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
 import { SectionLabel } from "../components/ui";
@@ -32,12 +32,11 @@ import ThemeToggle from "../components/ThemeToggle";
 import { isOnboarded } from "../lib/onboarding";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 
-type NavEntry = { to: string; labelKey: string; icon: typeof Home };
+type NavEntry = { to: string; labelKey: string; icon: LucideIcon };
 
 const primaryNav: NavEntry[] = [
-  { to: "/home", labelKey: "nav.home", icon: Home },
+  { to: "/app", labelKey: "nav.resume", icon: FileText },
   { to: "/jobs", labelKey: "nav.jobs", icon: Briefcase },
-  { to: "/app", labelKey: "nav.tailor", icon: FileText },
   { to: "/tracker", labelKey: "nav.tracker", icon: KanbanSquare },
 ];
 
@@ -67,7 +66,7 @@ function NavItem({
   onNavigate,
 }: {
   to: string;
-  icon: typeof Home;
+  icon: LucideIcon;
   label: string;
   trailing?: ReactNode;
   end?: boolean;
@@ -220,14 +219,14 @@ function SidebarBody({
   return (
     <LayoutGroup id={group}>
     <div className="flex h-full flex-col">
-      <Link to="/home" onClick={onNavigate} aria-label={t("appName")} className="mb-6 px-2">
+      <Link to="/app" onClick={onNavigate} aria-label={t("appName")} className="mb-6 px-2">
         <Logo size={30} />
       </Link>
 
       {/* min-h-0 + overflow: the expanded Tools sub-list can outgrow short
           viewports — scroll the nav area, keep the trust badge pinned. */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-      <SectionLabel className="px-3">{t("nav.overview")}</SectionLabel>
+      <SectionLabel className="px-3">{t("nav.primary")}</SectionLabel>
       <nav className="mt-1.5 space-y-0.5">
         {primaryNav.map((item) => (
           <NavItem
@@ -271,8 +270,15 @@ function SidebarBody({
 
 /** Bottom tab bar — the primary navigation on phones. Always visible and
  * thumb-reachable (the drawer behind the old hamburger hid every destination).
- * The four core pages get a tab each; "More" opens the drawer with the rest
- * (Interview, Tools). Hidden on lg+ where the sidebar rail takes over. */
+ * The three core destinations get a tab each; "More" opens the drawer with the
+ * rest (Interview, Tools) — three plus More is the four-item bar.
+ *
+ * INVARIANT: `moreActive` (see the call site) must never be true while any
+ * primaryNav NavLink is active. This function has no <LayoutGroup> of its own,
+ * so both layoutId="tabbar-dash" spans below — the NavLink dash and the More
+ * dash — register in the ROOT projection stack under the bare id, and two live
+ * members crossfade into a doubled, ghosted dash instead of sliding. Nothing
+ * checks this. Hidden on lg+ where the sidebar rail takes over. */
 function MobileTabBar({
   searching,
   moreActive,
@@ -285,12 +291,12 @@ function MobileTabBar({
   const { t } = useTranslation();
   const tabCls = (active: boolean) =>
     cn(
-      "relative flex min-w-0 flex-1 flex-col items-center gap-1 pb-1.5 pt-2 text-[10.5px] font-semibold transition-colors",
+      "relative flex min-w-0 flex-1 flex-col items-center gap-1 pb-1.5 pt-2 text-xs font-semibold transition-colors",
       active ? "text-accent-soft" : "text-ink-muted",
     );
   return (
     <nav
-      aria-label={t("nav.overview")}
+      aria-label={t("nav.primary")}
       className="fixed inset-x-0 bottom-0 z-30 border-t border-line/70 bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden"
     >
       <div className="mx-auto flex max-w-md items-stretch">
@@ -357,6 +363,11 @@ export default function AppLayout() {
     };
   }, [menuOpen]);
 
+  // Must stay disjoint from every primaryNav `to` — see the MobileTabBar
+  // invariant. Home was deleted rather than moved into the drawer, so the two
+  // sets are still disjoint.
+  const moreActive = pathname.startsWith("/interview") || pathname.startsWith("/tools");
+
   const rtl = typeof document !== "undefined" && document.documentElement.dir === "rtl";
   const closed = rtl ? "100%" : "-100%";
 
@@ -370,7 +381,7 @@ export default function AppLayout() {
       {/* Mobile top bar — brand + utilities only; navigation lives in the
           bottom tab bar where thumbs can reach it. */}
       <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line/70 bg-bg/80 px-4 py-3 backdrop-blur-xl lg:hidden">
-        <Link to="/home" aria-label={t("appName")}>
+        <Link to="/app" aria-label={t("appName")}>
           <Logo size={26} />
         </Link>
         {searching && (
@@ -438,7 +449,7 @@ export default function AppLayout() {
 
       <MobileTabBar
         searching={searching}
-        moreActive={pathname.startsWith("/interview") || pathname.startsWith("/tools")}
+        moreActive={moreActive}
         onMore={() => setMenuOpen(true)}
       />
 

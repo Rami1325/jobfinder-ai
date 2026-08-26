@@ -20,7 +20,6 @@ export function prefetchAppRoutes(): void {
     // rejection noise on flaky connections.
     const quiet = (p: Promise<unknown>) => p.catch(() => {});
     quiet(import("../layouts/AppLayout"));
-    quiet(import("../pages/HomePage"));
     quiet(import("../pages/JobsPage"));
     quiet(import("../pages/TailorPage"));
     quiet(import("../pages/TrackerPage"));
