@@ -70,6 +70,29 @@ export default {
         "out-quint": "cubic-bezier(.22,1,.36,1)",
       },
       keyframes: {
+        // The spotlight a block gets when it takes your edit, or when a review
+        // row points at it. It ENDS on the resting highlight, not on nothing:
+        // styles.css collapses every animation to 0.001ms under
+        // prefers-reduced-motion, which parks an element at its `to` state, so
+        // a bloom that faded out would leave a reduced-motion user with no
+        // indication at all. Ending settled means that user simply gets the
+        // highlight instantly, which is the correct reduced-motion behaviour.
+        "block-settle": {
+          "0%": { outlineColor: "rgb(var(--accent) / 0)", outlineOffset: "8px", backgroundColor: "rgb(var(--accent) / 0)" },
+          "45%": { outlineColor: "rgb(var(--accent) / 0.8)", outlineOffset: "2px", backgroundColor: "rgb(var(--accent) / 0.16)" },
+          "100%": { outlineColor: "rgb(var(--accent) / 0.6)", outlineOffset: "2px", backgroundColor: "rgb(var(--accent) / 0.1)" },
+        },
+        // Byte-identical to the above, and that is the point. A CSS animation
+        // only restarts when its NAME changes, and the class string is the same
+        // when the same block is spotted twice running — so the second save to
+        // one block would silently not re-bloom. The caller alternates these by
+        // nonce parity.
+        "block-settle-alt": {
+          "0%": { outlineColor: "rgb(var(--accent) / 0)", outlineOffset: "8px", backgroundColor: "rgb(var(--accent) / 0)" },
+          "45%": { outlineColor: "rgb(var(--accent) / 0.8)", outlineOffset: "2px", backgroundColor: "rgb(var(--accent) / 0.16)" },
+          "100%": { outlineColor: "rgb(var(--accent) / 0.6)", outlineOffset: "2px", backgroundColor: "rgb(var(--accent) / 0.1)" },
+        },
+
         "fade-up": {
           "0%": { opacity: "0", transform: "translateY(12px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
@@ -98,6 +121,11 @@ export default {
         },
       },
       animation: {
+        // `both` so the 0% state holds before the first frame and the settled
+        // 100% state holds after the last one -- the highlight must persist
+        // for the caller's full spotlight window, not snap away at 520ms.
+        "block-settle": "block-settle .52s cubic-bezier(.22,1,.36,1) both",
+        "block-settle-alt": "block-settle-alt .52s cubic-bezier(.22,1,.36,1) both",
         "fade-up": "fade-up .5s cubic-bezier(.22,1,.36,1) both",
         spark: "spark .4s cubic-bezier(.22,1,.36,1) forwards",
         "pulse-glow": "pulse-glow 3s ease-in-out infinite",

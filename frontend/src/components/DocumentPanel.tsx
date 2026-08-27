@@ -22,6 +22,8 @@ interface Props {
   company?: string;
   marks?: Map<string, BlockMark>;
   activeBlock?: string | null;
+  /** Passed straight through to ResumeView — see its own doc comment. */
+  activeNonce?: number;
   onSelectBlock?: (path: string) => void;
   /** Tap a block to edit it. Passed only when the document is the MASTER —
    * a tailored draft is a review surface, not an editing one. */
@@ -46,7 +48,7 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, company = "", marks, activeBlock, onSelectBlock, onEditBlock },
+  { resume, template, view, onView, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
@@ -93,6 +95,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           surface="sheet"
           marks={marks}
           activeBlock={activeBlock}
+          activeNonce={activeNonce}
           onSelectBlock={onSelectBlock}
           onEditBlock={onEditBlock}
         />

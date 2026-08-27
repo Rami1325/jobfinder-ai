@@ -21,6 +21,10 @@ interface Props {
   marks?: Map<string, BlockMark>;
   /** The block to spotlight right now (a jump from the review panel). */
   activeBlock?: string | null;
+  /** Bumped every time the caller spotlights a block, including the SAME one
+   * twice running. A CSS animation restarts only when its name changes, so
+   * this parity is what makes the second save to one block re-bloom. */
+  activeNonce?: number;
   /** Clicking a block asks the review panel to show its change. */
   onSelectBlock?: (path: string) => void;
   /** Clicking a block opens it for editing. Takes precedence over
@@ -175,6 +179,7 @@ export default function ResumeView({
   surface = "panel",
   marks,
   activeBlock,
+  activeNonce,
   onSelectBlock,
   onEditBlock,
 }: Props) {
@@ -221,7 +226,11 @@ export default function ResumeView({
       shape === "item" && mark === "restored" && "marker:text-warn",
       shape === "chip" && mark === "changed" && "ring-1 ring-inset ring-accent/45",
       shape === "chip" && mark === "restored" && "ring-1 ring-inset ring-warn/55",
+      // The resting highlight stays a plain class so it survives the whole
+      // spotlight window; the animation only governs how it ARRIVES.
       activeBlock === path && "rounded-[3px] bg-accent/10 outline outline-2 outline-offset-2 outline-accent/60",
+      activeBlock === path &&
+        ((activeNonce ?? 0) % 2 === 0 ? "animate-block-settle" : "animate-block-settle-alt"),
     );
   };
 

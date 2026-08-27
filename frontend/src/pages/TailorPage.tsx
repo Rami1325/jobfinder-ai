@@ -14,6 +14,7 @@ import {
   updateApplication,
 } from "../api/client";
 import TemplatePicker, { isPdfOnlyTemplate } from "../components/TemplatePicker";
+import PageBadge from "../components/PageBadge";
 import ChangeLog from "../components/ChangeLog";
 import DocumentPanel, { type DocView } from "../components/DocumentPanel";
 import TailorOverlay from "../components/TailorOverlay";
@@ -187,13 +188,20 @@ export default function TailorPage() {
   // The paper's own direction, frozen from the résumé rather than the UI: the
   // chrome follows the locale, the document follows its own language.
   const paperDir = shown && resumeLanguage(shown) === "he" ? ("rtl" as const) : ("ltr" as const);
-  const [spot, setSpot] = useState<string | null>(null);
+  // `spot` carries a nonce for the same reason `focusEdit` below does: React
+  // bails on an identical state value, so setSpot(samePath) was a no-op --
+  // saving two edits to one block, or tapping one review row twice, neither
+  // restarted the 2200ms window nor replayed the highlight.
+  const [spot, setSpot] = useState<{ path: string; nonce: number } | null>(null);
+  const markSpot = (path: string) => setSpot((s) => ({ path, nonce: (s?.nonce ?? 0) + 1 }));
   const [focusEdit, setFocusEdit] = useState<{ id: string; nonce: number } | null>(null);
 
   useEffect(() => {
     if (!spot) return;
     const timer = setTimeout(() => setSpot(null), 2200);
     return () => clearTimeout(timer);
+    // Depends on the OBJECT, not the path: a fresh nonce is a fresh identity,
+    // which is what restarts the window on a repeat spotlight.
   }, [spot]);
 
   const smooth = () =>
@@ -208,7 +216,7 @@ export default function TailorPage() {
     // The file and ATS views hide the screen document, and scrollIntoView on a
     // display:none node is a silent no-op — so select it before scrolling.
     setDocView("screen");
-    setSpot(path);
+    markSpot(path);
     requestAnimationFrame(() => {
       docRef.current
         ?.querySelector<HTMLElement>(`[data-block="${CSS.escape(path)}"]`)
@@ -403,6 +411,14 @@ export default function TailorPage() {
             <BadgeCheck size={13} /> {masterLabel}
           </span>
         )}
+        {/* The one number on this toolbar, and the only one that can be here
+            honestly: it is MEASURED, deterministic, uncapped and free. It also
+            answers the question at the moment it can still be acted on — the
+            count previously appeared only inside the review panel, so you
+            learned your CV was three pages after paying to tailor it.
+            `!result` because ChangeLog mounts the same badge while a result is
+            up, and two mounts would double every server render. */}
+        {!result && <PageBadge resume={shown} template={template} />}
         {loading && <span className="text-sm text-ink-muted">{t("run.keepsRunning")}</span>}
         {error && <span className="text-sm text-danger">{error}</span>}
         {edits.length > 0 && (
@@ -449,7 +465,8 @@ export default function TailorPage() {
           onView={setDocView}
           company={jd?.company ?? company}
           marks={marks}
-          activeBlock={spot}
+          activeBlock={spot?.path ?? null}
+          activeNonce={spot?.nonce}
           onSelectBlock={selectBlock}
           onEditBlock={editable ? setEditPath : undefined}
         />
@@ -623,7 +640,7 @@ export default function TailorPage() {
           onApply={(next, path) => {
             applyBlockEdit(next);
             setEditPath(null);
-            if (path) setSpot(path);
+            if (path) markSpot(path);
           }}
           onGone={() => {
             setEditPath(null);
