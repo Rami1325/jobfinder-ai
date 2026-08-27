@@ -12,8 +12,10 @@ export interface TrackerMetrics {
   interviews: number;
   offers: number;
   declined: number;
-  interviewRate: number;
-  responseRate: number;
+  /** null when nothing has been sent yet. 0/0 is undefined, not 0% — see the
+   * rate calculation below for why that distinction is load-bearing. */
+  interviewRate: number | null;
+  responseRate: number | null;
 }
 
 /**
@@ -33,8 +35,14 @@ export function useTrackerMetrics(apps: ApplicationOut[]): TrackerMetrics {
     const responses = apps.filter(
       (a) => SUBMITTED.has(a.status || "saved") && (RESPONDED.has(a.status) || a.interviewed),
     ).length;
-    const interviewRate = applied > 0 ? (interviews / applied) * 100 : 0;
-    const responseRate = applied > 0 ? (responses / applied) * 100 : 0;
+    // `: null`, never `: 0`. With nothing applied there is no rate to report,
+    // and the old zero fallback rendered as two 104px rings reading "0%" —
+    // the first thing a user saw on the tracker in their first week, stating a
+    // measurement that had not been taken. TrackerAnalytics twelve files away
+    // already withholds rates below a sample threshold and skips unknown keys
+    // with `// unknown -- not a value`; this brings the default tab in line.
+    const interviewRate = applied > 0 ? (interviews / applied) * 100 : null;
+    const responseRate = applied > 0 ? (responses / applied) * 100 : null;
     return { total, applied, interviews, offers, declined, interviewRate, responseRate };
   }, [apps]);
 }

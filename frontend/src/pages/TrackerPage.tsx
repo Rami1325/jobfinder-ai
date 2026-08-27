@@ -376,11 +376,17 @@ export default function TrackerPage() {
                 ))}
               </div>
               <div className="flex items-center justify-center gap-6 border-line lg:border-s lg:ps-6">
+                {/* `metrics.*Rate` is null until something has actually been
+                    sent, and ProgressRing draws "—" for null. The denominator
+                    rides along as the label so the rate stays checkable: "100%"
+                    over one application is a very different claim from "100%"
+                    over forty, and only the count says which. */}
                 <ProgressRing
                   value={metrics.responseRate}
                   size={104}
                   stroke={9}
                   tone="accent"
+                  label={metrics.applied > 0 ? t("ofApplied", { n: metrics.applied }) : undefined}
                   sublabel={t("responseRate")}
                 />
                 <ProgressRing
@@ -388,6 +394,7 @@ export default function TrackerPage() {
                   size={104}
                   stroke={9}
                   tone="mint"
+                  label={metrics.applied > 0 ? t("ofApplied", { n: metrics.applied }) : undefined}
                   sublabel={t("interviewRate")}
                 />
               </div>
@@ -522,17 +529,28 @@ export default function TrackerPage() {
                               <p className="truncate text-sm font-semibold text-ink">{a.job_title || "—"}</p>
                               <p className="truncate text-xs text-ink-muted">{a.company || "—"}</p>
                             </div>
+                            {/* A row that was never scored stores 0.0, so an
+                                unconditional badge printed "0%" — a fabricated
+                                measurement on every manually-created row, and
+                                indistinguishable from a genuinely terrible
+                                match. Unknown is a dash. */}
                             <span
                               className={cn(
                                 "shrink-0 rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums",
-                                a.overall_score >= 80
-                                  ? "bg-mint/15 text-mint"
-                                  : a.overall_score >= 60
-                                    ? "bg-warn/15 text-warn"
-                                    : "bg-panel-2 text-ink-muted",
+                                !a.overall_score
+                                  ? "bg-panel-2 text-ink-faint"
+                                  : a.overall_score >= 80
+                                    ? "bg-mint/15 text-mint"
+                                    : a.overall_score >= 60
+                                      ? "bg-warn/15 text-warn"
+                                      : "bg-panel-2 text-ink-muted",
                               )}
                             >
-                              <CountUp to={Math.round(a.overall_score)} suffix="%" duration={0.6} />
+                              {a.overall_score ? (
+                                <CountUp to={Math.round(a.overall_score)} suffix="%" duration={0.6} />
+                              ) : (
+                                "—"
+                              )}
                             </span>
                           </div>
 

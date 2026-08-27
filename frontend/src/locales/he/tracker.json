@@ -28,6 +28,7 @@
   },
   "interviewRate": "אחוז ראיונות",
   "responseRate": "אחוז מענה",
+  "ofApplied": "מתוך {{n}} שנשלחו",
   "excitement": {
     "title": "כמה אתם מתלהבים מהמשרה הזו?",
     "set_one": "דירוג התלהבות: כוכב אחד",
