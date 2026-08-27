@@ -311,10 +311,15 @@ try {
 //       "nav.resume" at 12px, in Hebrew. Check 8 stays green because en and he
 //       are still in parity WITH EACH OTHER, and checks 2/3/5 only read
 //       tailor.json.
-// Scoped to AppLayout.tsx on purpose: BuilderPage calls t("nav.back") against
-// the BUILDER namespace, which has its own nav block, so a repo-wide scrape
-// would false-positive on legitimate input — and a check that fires on correct
-// code is worse than no check.
+// Scoped to AppLayout.tsx. The original reason was that BuilderPage called
+// t("nav.back") against the BUILDER namespace, so a repo-wide scrape would
+// false-positive on legitimate input — and a check that fires on correct code
+// is worse than no check. 23.4 DELETED BuilderPage, so that exception is gone
+// and `t("nav.*")` outside this file now returns nothing at all.
+// Left scoped anyway, deliberately: widening it would be a behaviour change
+// with no defect behind it, and every check in this file is pinned to a bug
+// that actually shipped. If a second file ever grows a nav block, widen it
+// then — and re-read this note first.
 try {
   const app = read("App.tsx");
   const routes = [...app.matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]);

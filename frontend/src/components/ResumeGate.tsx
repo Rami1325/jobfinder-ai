@@ -16,15 +16,12 @@ export default function ResumeGate({ feature }: { feature: string }) {
       <p className="mx-auto mt-1 max-w-md text-sm text-ink-muted">
         {t("resumeGate.body", { feature })}
       </p>
-      <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-        {/* 22.9: the front door is the Resume tab — TailorPage's own
-            ResumeUpload persists the master, same as the Jobs one did. */}
+      {/* ONE door. Upload and start-from-scratch both live on the Resume tab
+          since 23.4 deleted /builder, so offering two buttons to the same page
+          was asking the user to pick between identical destinations. */}
+      <div className="mt-5 flex items-center justify-center">
         <Link to="/app">
           <Button>{t("resumeGate.cta")}</Button>
-        </Link>
-        {/* PLAN 15.3: cold-start escape hatch — no file needed. */}
-        <Link to="/builder">
-          <Button variant="secondary">{t("resumeGate.build")}</Button>
         </Link>
       </div>
     </Card>

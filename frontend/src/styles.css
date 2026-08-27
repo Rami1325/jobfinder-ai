@@ -508,3 +508,15 @@ select {
     0 2px 4px rgb(38 34 47 / 0.16),
     0 7px 12px -5px rgb(38 34 47 / 0.34);
 }
+
+/* Placeholder for an EMPTY editable block on the paper.
+   Drawn, never stored: a placeholder rendered as real text is committable, and
+   on a nameless CV that means tapping the biggest target on the page and
+   tapping away would write "Résumé" in as the person's name. `::before` on an
+   :empty node has nothing for `innerText` to read, so there is no such hazard.
+   `pointer-events: none` keeps the caret landing in the node, not on the hint. */
+.sheet [data-ph]:empty::before {
+  content: attr(data-ph);
+  color: rgb(var(--ink-faint));
+  pointer-events: none;
+}

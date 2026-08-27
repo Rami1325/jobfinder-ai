@@ -249,6 +249,32 @@ export default function TailorPage() {
     });
   }
 
+  /** Begin with a blank page rather than a wizard. No label and no
+   * `savedResume`: nothing has been saved, so the edit bar correctly shows
+   * nothing to save until the first keystroke, and the 22.11 draft starts
+   * mirroring from that first edit. */
+  function startFromScratch() {
+    setTailorState({
+      resume: {
+        contact: { name: "", email: "", phone: "", location: "", linkedin: "", website: "" },
+        headline: "",
+        summary: "",
+        skills: [],
+        skill_groups: [],
+        experience: [],
+        education: [],
+        projects: [],
+        certifications: [],
+        languages: [],
+        military_service: [],
+      },
+      savedResume: null,
+      ledger: null,
+      masterLabel: "",
+      editUndo: [],
+    });
+  }
+
   function discardDraft() {
     clearDraft();
     setDraft(null);
@@ -610,10 +636,17 @@ export default function TailorPage() {
           <div className="mt-3">
             <ResumeUpload onParsed={onParsed} />
           </div>
-          {/* PLAN 15.3: cold-start path — no file to upload yet. */}
-          <Link to="/builder" className="mt-3 inline-block text-sm text-accent-soft hover:underline">
+          {/* The cold start, and it is now the SAME surface as everything else:
+              a blank page you type on. This replaced /builder — an 848-line
+              wizard that was a second editor for one résumé, and produced the
+              "which one is my real CV" question it existed to avoid. */}
+          <button
+            type="button"
+            onClick={startFromScratch}
+            className="mt-3 inline-block text-sm text-accent-soft hover:underline"
+          >
             {t("upload.buildLink")}
-          </Link>
+          </button>
         </Card>
       )}
 

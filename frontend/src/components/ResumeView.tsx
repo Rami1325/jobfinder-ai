@@ -270,7 +270,7 @@ export default function ResumeView({
   onAdd,
   onAddBullet,
 }: Props) {
-  const { t } = useTranslation("tailor");
+  const { t, i18n } = useTranslation("tailor");
   const c = resume.contact;
 
   /** The paper's own direction, computed the way the RENDERERS compute it.
@@ -283,7 +283,27 @@ export default function ResumeView({
    * surfaces disagreed about the same document. Reproduced in a browser before
    * this line was written.
    */
-  const paperDir: "rtl" | "ltr" = resumeLanguage(resume) === "he" ? "rtl" : "ltr";
+  // The document is the editable MASTER. TailorPage passes both handlers
+  // together (or neither), so either one answers the question.
+  const editable = !!onInlineCommit || !!onEditBlock;
+  /** Is there any prose to detect a language FROM? `resumeLanguage` returns
+   * "en" for an empty résumé exactly as it does for an English one, so a
+   * from-scratch Hebrew CV would be typed into a left-to-right page. With
+   * nothing to detect, follow the interface the user chose. */
+  const hasProse = !!(
+    resume.summary ||
+    resume.skills.length ||
+    resume.experience.some((e) => e.title || e.company || e.bullets.length) ||
+    resume.projects.some((x) => x.name || x.description || x.bullets.length) ||
+    resume.education.some((e) => e.degree || e.field || e.institution)
+  );
+  const paperDir: "rtl" | "ltr" = hasProse
+    ? resumeLanguage(resume) === "he"
+      ? "rtl"
+      : "ltr"
+    : i18n.dir() === "rtl"
+      ? "rtl"
+      : "ltr";
 
   /** Marker + spotlight for one block. Every marker uses LOGICAL properties
    * (`border-s`, `-ms`, `ps`) so RTL mirrors without a second rule. A bullet
@@ -305,7 +325,6 @@ export default function ResumeView({
   //    the only honest feedback a thumb gets.
   // The tint resolves through `.sheet`'s own --accent (the classic template's
   // navy), so it belongs to the document rather than to the app chrome.
-  const editable = !!onEditBlock;
   const blk = (path: string, shape: "block" | "item" | "chip" = "block") => {
     const mark = marks?.get(path);
     return cn(
@@ -460,14 +479,18 @@ export default function ResumeView({
   const skillBlocks = skillBlocksOf(resume);
 
   const sections: Record<string, React.ReactNode> = {
-    summary: resume.summary ? (
-      <section key="summary">
-        <SectionHead>{t("sections.summary")}</SectionHead>
-        <p {...blkProps("@summary", "block", "text-sm leading-relaxed text-ink-muted")}>
-          {resume.summary}
-        </p>
-      </section>
-    ) : null,
+    summary:
+      resume.summary || editable ? (
+        <section key="summary">
+          <SectionHead>{t("sections.summary")}</SectionHead>
+          <p
+            {...blkProps("@summary", "block", "text-sm leading-relaxed text-ink-muted")}
+            data-ph={editable ? t("edit.fields.summary") : undefined}
+          >
+            {resume.summary}
+          </p>
+        </section>
+      ) : null,
 
     skills: skillBlocks.length > 0 ? (
       <section key="skills">
@@ -689,18 +712,35 @@ export default function ResumeView({
           : "rounded-xl border border-line bg-bg-soft p-5",
       )}
     >
-      <div {...blkProps("@contact.name", "block", "text-xl font-bold text-ink")}>
-        {c.name || t("sections.fallbackName")}
+      {/* On an EDITABLE document the empty state is a real placeholder — an
+          empty node plus `data-ph`, drawn by CSS — never the fallback string as
+          text. As text it is committable: tapping the largest target on a
+          nameless CV and tapping away would write "Résumé" in as the person's
+          name. As a placeholder there is nothing there to commit.
+          Read-only surfaces (the tracker's détail modal, a tailored draft)
+          still get the words, because they have no caret to protect. */}
+      <div
+        {...blkProps("@contact.name", "block", "text-xl font-bold text-ink")}
+        data-ph={editable ? t("sections.fallbackName") : undefined}
+      >
+        {editable ? c.name : c.name || t("sections.fallbackName")}
       </div>
-      {resume.headline && (
+      {/* Rendered even when empty while editing, or they are unreachable: a
+          from-scratch résumé has no headline, no summary and no contact line,
+          and a section that renders nothing cannot be tapped into. */}
+      {(resume.headline || editable) && (
         <div
           {...blkProps("@headline", "block", "mt-0.5 text-sm font-medium text-accent-soft")}
+          data-ph={editable ? t("edit.fields.headline") : undefined}
         >
           {resume.headline}
         </div>
       )}
-      {contactBits.length > 0 && (
-        <div {...blkProps("@contact", "block", "mt-0.5 text-xs text-ink-muted")}>
+      {(contactBits.length > 0 || editable) && (
+        <div
+          {...blkProps("@contact", "block", "mt-0.5 text-xs text-ink-muted")}
+          data-ph={editable ? t("edit.blocks.contact") : undefined}
+        >
           {contactBits.join(" · ")}
         </div>
       )}

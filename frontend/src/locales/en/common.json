@@ -59,8 +59,7 @@
   "resumeGate": {
     "title": "No resume saved yet",
     "body": "Upload your resume on the Resume tab first — it becomes your master resume, which {{feature}} uses.",
-    "cta": "Go to Resume",
-    "build": "Build one from scratch"
+    "cta": "Go to Resume"
   },
   "masterResume": {
     "chipFallback": "My resume",
