@@ -324,6 +324,26 @@ function writeSkill(resume: ResumeModel, key: string, next: string | null): Resu
   return { ...resume, skills, ...(resume.skill_groups ? { skill_groups: kept } : {}) };
 }
 
+/**
+ * Replace the flat skills list, pruning `skill_groups` to match.
+ *
+ * The bulk twin of `writeSkill`, and it exists for exactly the same reason.
+ * Writing `skills` alone leaves every removed skill alive inside its group,
+ * where `ResumeModel`'s validator -- which rebuilds `skills` as the flat union
+ * and only ever ADDS -- puts it straight back on the next round trip. The
+ * deletion shows a success toast and does nothing.
+ *
+ * Skills the caller ADDS are left ungrouped on purpose: nothing may be hidden,
+ * and an unclaimed skill renders in the trailing unlabelled block.
+ */
+export function withSkills(resume: ResumeModel, skills: string[]): ResumeModel {
+  const keep = new Set(skills.map((s) => dkey(s)));
+  const groups = (resume.skill_groups ?? [])
+    .map((g) => ({ ...g, items: g.items.filter((s) => keep.has(dkey(s))) }))
+    .filter((g) => g.items.length > 0);
+  return { ...resume, skills, ...(resume.skill_groups ? { skill_groups: groups } : {}) };
+}
+
 const clean = (v: string | undefined) => (v ?? "").trim();
 
 /** Apply the sheet's collected values to one block. */

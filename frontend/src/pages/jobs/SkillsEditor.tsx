@@ -5,6 +5,7 @@
 // here. The fabrication guard is unaffected (it never tracked skills; it
 // guards employers/titles/dates/credentials/numbers/military).
 import { useEffect, useMemo, useState } from "react";
+import { withSkills } from "../../lib/resumeBlocks";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import { saveMasterResume } from "../../api/client";
@@ -64,7 +65,11 @@ export function SkillsEditorModal({
     setSaving(true);
     try {
       const saved = await saveMasterResume({
-        resume: { ...target.resume, skills: draft },
+        // `withSkills`, not a spread. Writing `skills` alone left every removed
+        // skill inside its group, and the model validator's flat union put it
+        // back on the next load -- so deleting a grouped skill here toasted
+        // "saved" and silently did nothing.
+        resume: withSkills(target.resume, draft),
         ledger: target.ledger,
         label: target.label,
       });

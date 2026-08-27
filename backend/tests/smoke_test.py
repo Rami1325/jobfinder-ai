@@ -2899,6 +2899,29 @@ check(
     _sg_partial.skills == ["Python", "Hebrew keyboarding", "FastAPI"],
     str(_sg_partial.skills),
 )
+# REMOVING a grouped skill is a TWO-FIELD write, and this pins the reason. The
+# validator only ever ADDS, so dropping a skill from the flat list alone is
+# undone on the very next construction — which is a silent no-op wearing a
+# success toast. Both halves are asserted here because the one-field case
+# passing is exactly what makes the bug invisible from the frontend.
+_sg_removed_flat_only = ResumeModel(
+    skills=["Python"],  # "FastAPI" dropped here...
+    skill_groups=[_SkillGroup(label="Backend", items=["Python", "FastAPI"])],  # ...but not here
+)
+check(
+    "grouped skills: dropping a skill from the flat list ALONE is silently undone",
+    _sg_removed_flat_only.skills == ["Python", "FastAPI"],
+    str(_sg_removed_flat_only.skills),
+)
+_sg_removed_both = ResumeModel(
+    skills=["Python"],
+    skill_groups=[_SkillGroup(label="Backend", items=["Python"])],
+)
+check(
+    "grouped skills: dropping it from BOTH fields is the deletion that sticks",
+    _sg_removed_both.skills == ["Python"],
+    str(_sg_removed_both.skills),
+)
 check(
     "grouped skills: no groups = the pre-existing behaviour, untouched",
     ResumeModel(skills=["Python", "SQL"]).skills == ["Python", "SQL"]
