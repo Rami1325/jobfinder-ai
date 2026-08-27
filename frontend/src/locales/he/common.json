@@ -10,6 +10,9 @@
     "more": "עוד",
     "trust": "נבדק מול קורות החיים שלכם",
     "searching": "מחפש…",
+    "kitsAwaiting_one": "ערכה אחת ממתינה לבדיקה שלכם",
+    "kitsAwaiting_two": "{{count}} ערכות ממתינות לבדיקה שלכם",
+    "kitsAwaiting_other": "{{count}} ערכות ממתינות לבדיקה שלכם",
     "openMenu": "פתח תפריט",
     "closeMenu": "סגור תפריט"
   },

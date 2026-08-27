@@ -343,15 +343,31 @@ try {
   // zero — a renamed property, or a different call shape — not the count
   // drifting when a nav entry is legitimately added or removed.
   const fromTable = [...layout.matchAll(/\blabelKey:\s*"([^"]+)"/g)].map((m) => m[1]);
-  const fromCalls = [...layout.matchAll(/\bt\("(nav\.[^"]+)"\)/g)].map((m) => m[1]);
+  // `[,)]`, not just `)`. The original required a closing paren immediately
+  // after the string, so ANY nav label with interpolation -- t("nav.x", {...}) --
+  // was invisible to this check. `nav.kitsAwaiting` was added with a count and
+  // sailed straight past a green build with no key in either locale.
+  const fromCalls = [...layout.matchAll(/\bt\("(nav\.[^"]+)"\s*[,)]/g)].map((m) => m[1]);
   if (!fromTable.length) throw new Error("parsed no `labelKey:` entries in AppLayout.tsx");
   if (!fromCalls.length) throw new Error('parsed no t("nav.*") calls in AppLayout.tsx');
   const labels = [...fromTable, ...fromCalls];
   for (const loc of ["en", "he"]) {
     const common = JSON.parse(read(`locales/${loc}/common.json`));
     for (const key of new Set(labels)) {
-      const v = key.split(".").reduce((o, k) => (o == null ? o : o[k]), common);
-      if (v === undefined)
+      const parts = key.split(".");
+      const leaf = parts.pop();
+      const parent = parts.reduce((o, k) => (o == null ? o : o[k]), common);
+      // A counted label exists ONLY under its plural suffixes, so a plain path
+      // lookup would report a correctly-translated key as missing. Restricted
+      // to the real i18next suffixes so `nav.more` cannot be satisfied by some
+      // unrelated `nav.more_menu`.
+      const present =
+        parent != null &&
+        (parent[leaf] !== undefined ||
+          Object.keys(parent).some(
+            (k) => k.startsWith(`${leaf}_`) && /_(zero|one|two|few|many|other)$/.test(k),
+          ));
+      if (!present)
         fail(`locales/${loc}/common.json is missing "${key}" — the nav would render the raw key.`);
     }
   }

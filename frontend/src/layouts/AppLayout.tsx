@@ -31,12 +31,27 @@ import OnboardingModal from "../components/OnboardingModal";
 import ThemeToggle from "../components/ThemeToggle";
 import { isOnboarded } from "../lib/onboarding";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
+import { getKitsState, loadKits, subscribeKits } from "../state/kitsStore";
 
-type NavEntry = { to: string; labelKey: string; icon: LucideIcon };
+type NavEntry = {
+  to: string;
+  labelKey: string;
+  icon: LucideIcon;
+  /** This entry carries live indicators (the search spinner, the kits count).
+   *
+   * A FLAG, not a route-string comparison. Comparing `item.to` against a
+   * hard-coded path is documented in CLAUDE.md as fragile — renaming the route
+   * silently kills the indicator — and hoisting the path into a shared constant
+   * is NOT the fix: check-mirrors check 9 scrapes route LITERALS out of this
+   * table and guards only on the count being non-zero, so a constant would make
+   * the Jobs destination quietly stop being validated. The literal stays in the
+   * table; nothing has to repeat it. */
+  live?: true;
+};
 
 const primaryNav: NavEntry[] = [
   { to: "/app", labelKey: "nav.resume", icon: FileText },
-  { to: "/jobs", labelKey: "nav.jobs", icon: Briefcase },
+  { to: "/jobs", labelKey: "nav.jobs", icon: Briefcase, live: true },
   { to: "/tracker", labelKey: "nav.tracker", icon: KanbanSquare },
 ];
 
@@ -201,10 +216,12 @@ function ToolsNavGroup({ onNavigate }: { onNavigate?: () => void }) {
 function SidebarBody({
   group,
   searching,
+  awaiting,
   onNavigate,
 }: {
   group: string;
   searching: boolean;
+  awaiting: number;
   onNavigate?: () => void;
 }) {
   const { t } = useTranslation();
@@ -216,6 +233,25 @@ function SidebarBody({
       className="shrink-0 animate-spin text-accent-soft"
     />
   ) : undefined;
+  // A finished background batch is otherwise INVISIBLE until someone thinks to
+  // look: BatchTailorCard tailors asynchronously, and nothing on any other page
+  // said so. The count is kits with status "done" — tailored and waiting for a
+  // human — which is exactly what approveKit requires.
+  //
+  // The spinner wins when both apply. A search in flight is about what you just
+  // did and resolves in seconds; the kit count is patient and will still be
+  // there afterwards. Two indicators on one 94.8px tab slot is not a layout
+  // this bar can hold.
+  const kitsBadge =
+    awaiting > 0 ? (
+      <span
+        title={t("nav.kitsAwaiting", { count: awaiting })}
+        aria-label={t("nav.kitsAwaiting", { count: awaiting })}
+        className="grid min-w-[18px] place-items-center rounded-full bg-accent px-1.5 py-px text-[11px] font-bold leading-tight tabular-nums text-white"
+      >
+        {awaiting}
+      </span>
+    ) : undefined;
   return (
     <LayoutGroup id={group}>
     <div className="flex h-full flex-col">
@@ -234,7 +270,7 @@ function SidebarBody({
             to={item.to}
             icon={item.icon}
             label={t(item.labelKey)}
-            trailing={item.to === "/jobs" ? spinner : undefined}
+            trailing={item.live ? spinner ?? kitsBadge : undefined}
             onNavigate={onNavigate}
           />
         ))}
@@ -281,10 +317,12 @@ function SidebarBody({
  * checks this. Hidden on lg+ where the sidebar rail takes over. */
 function MobileTabBar({
   searching,
+  awaiting,
   moreActive,
   onMore,
 }: {
   searching: boolean;
+  awaiting: number;
   moreActive: boolean;
   onMore: () => void;
 }) {
@@ -314,12 +352,23 @@ function MobileTabBar({
                 )}
                 <span className="relative">
                   <item.icon size={21} strokeWidth={isActive ? 2.2 : 1.7} />
-                  {item.to === "/jobs" && searching && (
+                  {item.live && searching && (
                     <span
                       role="status"
                       aria-label={t("nav.searching")}
                       className="absolute -end-1 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-accent"
                     />
+                  )}
+                  {/* Capped at 9+ deliberately: the slot is 94.8px at 390px and
+                      a three-digit pill would push the label into an ellipsis,
+                      which is the one thing 22.9 measured this bar to avoid. */}
+                  {item.live && !searching && awaiting > 0 && (
+                    <span
+                      aria-label={t("nav.kitsAwaiting", { count: awaiting })}
+                      className="absolute -end-2 -top-1.5 grid min-w-[16px] place-items-center rounded-full bg-accent px-1 text-[10px] font-bold leading-[15px] tabular-nums text-white"
+                    >
+                      {awaiting > 9 ? "9+" : awaiting}
+                    </span>
                   )}
                 </span>
                 <span className="max-w-full truncate">{t(item.labelKey)}</span>
@@ -348,6 +397,21 @@ export default function AppLayout() {
   const { t } = useTranslation();
   const { pathname } = useLocation();
   const { searching } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
+  // Kits load HERE, not on JobsPage. JobsPage called loadKits() only once its
+  // Kits tab was open, which made a count on that tab unbuildable: it read zero
+  // until you had already gone and looked, which is the one moment a badge is
+  // useless. The layout is the only component mounted on every app route, and
+  // loadKits() no-ops once the store is populated — so this is ONE GET /kits per
+  // app session, not one per visit, and the store already refreshes itself
+  // (startKitBatch and resumeKitQueue both call loadKits(true) when a batch
+  // finishes), so the badge updates the moment a background batch lands.
+  const { kits } = useSyncExternalStore(subscribeKits, getKitsState);
+  useEffect(() => {
+    void loadKits(); // best-effort: a failure just leaves the badge off
+  }, []);
+  // "done" is tailored-and-waiting-for-a-human, and it is the exact status
+  // approveKit requires — a queued or failed kit is not something to review.
+  const awaitingKits = kits?.filter((k) => k.status === "done").length ?? 0;
   const [onboardOpen, setOnboardOpen] = useState(() => !isOnboarded());
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -375,7 +439,7 @@ export default function AppLayout() {
     <div className="min-h-dvh bg-bg text-ink lg:flex">
       {/* Desktop rail */}
       <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 border-e border-line/70 bg-bg-soft/60 px-3 py-5 lg:block">
-        <SidebarBody group="rail" searching={searching} />
+        <SidebarBody group="rail" searching={searching} awaiting={awaitingKits} />
       </aside>
 
       {/* Mobile top bar — brand + utilities only; navigation lives in the
@@ -424,7 +488,12 @@ export default function AppLayout() {
               >
                 <X size={18} />
               </button>
-              <SidebarBody group="drawer" searching={searching} onNavigate={() => setMenuOpen(false)} />
+              <SidebarBody
+                group="drawer"
+                searching={searching}
+                awaiting={awaitingKits}
+                onNavigate={() => setMenuOpen(false)}
+              />
             </motion.aside>
           </>
         )}
@@ -449,6 +518,7 @@ export default function AppLayout() {
 
       <MobileTabBar
         searching={searching}
+        awaiting={awaitingKits}
         moreActive={moreActive}
         onMore={() => setMenuOpen(true)}
       />

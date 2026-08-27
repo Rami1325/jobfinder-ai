@@ -10,6 +10,8 @@
     "more": "More",
     "trust": "Checked against your CV",
     "searching": "Searching…",
+    "kitsAwaiting_one": "1 application kit awaiting your review",
+    "kitsAwaiting_other": "{{count}} application kits awaiting your review",
     "openMenu": "Open menu",
     "closeMenu": "Close menu"
   },
