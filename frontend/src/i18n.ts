@@ -62,16 +62,33 @@ export async function initI18n(): Promise<void> {
         lookupLocalStorage: "lang", // kept in sync with the no-flash script in index.html
       },
     });
-  const detected = (i18n.resolvedLanguage ?? "en").split("-")[0];
+  // `i18n.language`, NOT `i18n.resolvedLanguage` — and the difference is the
+  // whole bug this line used to have. i18next only assigns `resolvedLanguage`
+  // to a language the STORE ALREADY HAS TRANSLATIONS FOR (`if
+  // (this.store.hasLanguageSomeTranslations(lngInLngs))`). We init with
+  // `resources: {}` and stream the catalogs in afterwards via
+  // `addResourceBundle`, so at this point no language qualifies and
+  // `resolvedLanguage` is *always* undefined — which made `?? "en"` the answer
+  // on every single first load. The detector read "he" out of localStorage
+  // correctly and this line threw it away, so a user who picked Hebrew got
+  // English back on the next page load, forever, in the primary market.
+  // `language` is what the detector actually sets, and it is set by now.
+  const detected = (i18n.language ?? "en").split("-")[0];
   const active: Language = (LANGUAGES as readonly string[]).includes(detected)
     ? (detected as Language)
     : "en";
   await loadLanguage(active);
+  // The catalogs are in the store now, so re-resolve: `resolvedLanguage` is
+  // still undefined until something recomputes it, and LanguageSwitch decides
+  // which way it points from exactly that property. Registering the
+  // languageChanged listener below rather than above keeps this from
+  // double-firing syncDocument.
+  await i18n.changeLanguage(active);
   // Hebrew falls back to English on any missing key (the catalogs are
   // parity-checked, so this is a safety net) — warm the fallback off the
   // critical path.
   if (active !== "en") void loadLanguage("en");
-  syncDocument(i18n.resolvedLanguage ?? "en");
+  syncDocument(active);
   i18n.on("languageChanged", syncDocument);
 }
 
