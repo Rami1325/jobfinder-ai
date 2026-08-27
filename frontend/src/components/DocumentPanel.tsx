@@ -1,4 +1,5 @@
 import { forwardRef } from "react";
+import type { InsertKind } from "../lib/resumeBlocks";
 import { useTranslation } from "react-i18next";
 import { Download, ExternalLink, FileText, Monitor, ScanEye } from "lucide-react";
 import ResumeView, { type BlockMark } from "./ResumeView";
@@ -29,6 +30,8 @@ interface Props {
    * a tailored draft is a review surface, not an editing one. */
   onEditBlock?: (path: string) => void;
   onInlineCommit?: (path: string, text: string) => void;
+  onAdd?: (kind: InsertKind) => void;
+  onAddBullet?: (entryPath: string) => void;
 }
 
 /**
@@ -49,7 +52,7 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit },
+  { resume, template, view, onView, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAdd, onAddBullet },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
@@ -100,6 +103,8 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           onSelectBlock={onSelectBlock}
           onEditBlock={onEditBlock}
           onInlineCommit={onInlineCommit}
+          onAdd={onAdd}
+          onAddBullet={onAddBullet}
         />
       </div>
 

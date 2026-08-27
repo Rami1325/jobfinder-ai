@@ -29,7 +29,15 @@ import ScoreCard from "../components/ScoreCard";
 import VoicePanel from "../components/VoicePanel";
 import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { blocksByEdit, mergeForReview } from "../lib/resumeDiff";
-import { inlineField, writeBlock } from "../lib/resumeBlocks";
+import {
+  inlineField,
+  insertBlock,
+  insertBullet,
+  readBlock,
+  removeBlock,
+  writeBlock,
+  type InsertKind,
+} from "../lib/resumeBlocks";
 import { resumeLanguage } from "../lib/lang";
 import { clearDraft, draftOver, offerDraft, readDraft, type ResumeDraft } from "../lib/draft";
 import { classifyEdit } from "../lib/editGroups";
@@ -170,8 +178,75 @@ export default function TailorPage() {
     if (!base) return;
     const field = inlineField(base, path);
     if (!field || field.value.trim() === text.trim()) return;
-    const res = writeBlock(base, path, { [field.key]: text });
+    // EMPTY MEANS REMOVE for a block that IS its own text. Both renderers draw
+    // a glyph for an empty list item, so there is no honest blank bullet to
+    // store — `readBlock`'s `removable` doc comment already says clearing has
+    // to mean removal, and nothing implemented it. This is also what makes an
+    // abandoned insert clean itself up: add a skill, type nothing, tap away,
+    // and it is gone, with no pending-insert state to keep in sync.
+    const res =
+      !text.trim() && readBlock(base, path)?.removable
+        ? removeBlock(base, path)
+        : writeBlock(base, path, { [field.key]: text });
     if (res.ok) applyBlockEdit(res.resume);
+  }
+
+  /** Add something and put the caret (or the panel) on it straight away. An
+   * added thing you then have to hunt for is not an add control. */
+  function addToResume(kind: InsertKind) {
+    const base = getTailorState().resume;
+    if (!base) return;
+    const res = insertBlock(base, kind);
+    if (!res.ok) return;
+    applyBlockEdit(res.resume);
+    // Compound kinds have no single field to type into, so they open the panel;
+    // the single-field kinds get a caret, on the next frame, once rendered.
+    if (inlineField(res.resume, res.path)) focusBlockSoon(res.path);
+    else {
+      setFreshEntry(res.path);
+      setEditPath(res.path);
+    }
+  }
+
+  /** Close the panel, and take an ADDED entry with it if it is still blank.
+   *
+   * The single-field kinds clean themselves up through the empty-means-remove
+   * rule in `commitInline`, but a compound entry has no such moment: cancel the
+   * form on a just-added project and an empty entry stays on the paper and
+   * prints an empty heading into the PDF. Scoped to the entry this session
+   * created — cancelling the form on a genuinely blank EXISTING entry must not
+   * delete it, which is the direction that loses the user's data.
+   */
+  function closeEditSheet() {
+    const path = editPath;
+    setEditPath(null);
+    if (!path || path !== freshEntry) return;
+    setFreshEntry(null);
+    const base = getTailorState().resume;
+    const draft = base ? readBlock(base, path) : null;
+    if (!draft || draft.fields.some((f) => f.value.trim())) return;
+    const res = removeBlock(base!, path);
+    if (res.ok) applyBlockEdit(res.resume);
+  }
+
+  function addBullet(entryPath: string) {
+    const base = getTailorState().resume;
+    if (!base) return;
+    const res = insertBullet(base, entryPath);
+    if (!res.ok) return;
+    applyBlockEdit(res.resume);
+    focusBlockSoon(res.path);
+  }
+
+  /** The node does not exist until React has rendered the new model. */
+  function focusBlockSoon(path: string) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = docRef.current?.querySelector<HTMLElement>(`[data-block="${CSS.escape(path)}"]`);
+        el?.focus();
+        el?.scrollIntoView({ block: "center", behavior: smooth() });
+      });
+    });
   }
 
   function discardDraft() {
@@ -225,6 +300,9 @@ export default function TailorPage() {
   const docRef = useRef<HTMLDivElement>(null);
   const [docView, setDocView] = useState<DocView>("screen");
   const [editPath, setEditPath] = useState<string | null>(null);
+  // The entry THIS session just added, so an abandoned add can be undone and a
+  // pre-existing blank entry cannot be deleted by accident.
+  const [freshEntry, setFreshEntry] = useState<string | null>(null);
   // The document is EDITABLE only when it is your master. With a tailor result
   // up, `shown` is a memo recomputed and thrown away on every accept/decline,
   // so writing into it would need an override layer that survives the re-merge
@@ -523,6 +601,8 @@ export default function TailorPage() {
           onSelectBlock={selectBlock}
           onEditBlock={editable ? setEditPath : undefined}
           onInlineCommit={editable ? commitInline : undefined}
+          onAdd={editable ? addToResume : undefined}
+          onAddBullet={editable ? addBullet : undefined}
         />
       ) : (
         <Card>
@@ -690,9 +770,10 @@ export default function TailorPage() {
           path={editPath}
           resume={shown}
           paperDir={paperDir}
-          onClose={() => setEditPath(null)}
+          onClose={closeEditSheet}
           onApply={(next, path) => {
             applyBlockEdit(next);
+            setFreshEntry(null); // it has content now; it is a normal entry
             setEditPath(null);
             if (path) markSpot(path);
           }}

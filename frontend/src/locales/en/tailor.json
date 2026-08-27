@@ -401,7 +401,18 @@
       "rank": "Rank",
       "bullet": "Bullet"
     },
-    "apply": "Apply"
+    "apply": "Apply",
+    "addTitle": "Add to your CV",
+    "addBullet": "Add a line",
+    "add": {
+      "experience": "Role",
+      "project": "Project",
+      "education": "Degree",
+      "military": "Military service",
+      "skill": "Skill",
+      "certification": "Certification",
+      "language": "Language"
+    }
   },
   "draft": {
     "title": "Unsaved changes from your last visit",

@@ -122,8 +122,12 @@ export interface BlockDraft {
    * single string (a skill, a certification, a bullet) or a small pair (a
    * language). It is not a bonus feature — both renderers draw a bullet glyph
    * for an empty list item, so there is no honest "blank bullet" to store, and
-   * clearing the field has to mean removal. Deleting a whole job or degree is
-   * structural and belongs to the builder.
+   * clearing the field has to mean removal.
+   *
+   * Since 23.2 an ENTRY is removable too — a job, a project, a degree, a
+   * service — but by a different gesture: the panel's Remove button, because
+   * there is no single field to clear. This flag stays FALSE for them so the
+   * empty-means-remove rule on the inline path cannot reach an entry.
    */
   removable: boolean;
 }
@@ -506,6 +510,103 @@ export function writeBlock(resume: ResumeModel, path: string, values: Values): W
 }
 
 /** Delete the item a block addresses. Only ever called for `removable` blocks. */
+/** What the foot control can add. Fixed and ordered — the list never changes
+ * shape between visits, so creating the FIRST project and the fourth are the
+ * same action and the user never learns a distinction that does not exist. */
+export const INSERT_KINDS = [
+  "experience",
+  "project",
+  "education",
+  "military",
+  "skill",
+  "certification",
+  "language",
+] as const;
+export type InsertKind = (typeof INSERT_KINDS)[number];
+
+/**
+ * Add an empty thing and return the path that now addresses it.
+ *
+ * Empty, not placeholder-filled: a placeholder is a fabricated claim the moment
+ * it reaches a renderer, and this codebase already refuses to print
+ * "School or University" into a downloaded file. The caller focuses the
+ * returned path — a caret for the single-field kinds, the panel for the
+ * compound ones — and an insert the user abandons is cleared by the
+ * empty-means-remove rule in `removeBlock`'s callers rather than by a
+ * pending-state machine here.
+ *
+ * APPENDS, never inserts mid-list. Every existing path stays valid, so an open
+ * editor cannot have an index shift out from under it — the failure `onGone`
+ * exists for.
+ */
+export function insertBlock(resume: ResumeModel, kind: InsertKind): WriteResult {
+  switch (kind) {
+    case "experience": {
+      const list = [...resume.experience, { company: "", title: "", location: "", start_date: "", end_date: "", bullets: [] }];
+      return { ok: true, path: `@exp.${list.length - 1}`, resume: { ...resume, experience: list } };
+    }
+    case "project": {
+      const list = [...resume.projects, { name: "", description: "", bullets: [] }];
+      return { ok: true, path: `@proj.${list.length - 1}`, resume: { ...resume, projects: list } };
+    }
+    case "education": {
+      const list = [...resume.education, { institution: "", degree: "", field: "", start_date: "", end_date: "", details: "" }];
+      return { ok: true, path: `@edu.${list.length - 1}`, resume: { ...resume, education: list } };
+    }
+    case "military": {
+      const list = [...(resume.military_service ?? []), { unit: "", role: "", rank: "", start_date: "", end_date: "", bullets: [] }];
+      return { ok: true, path: `@mil.${list.length - 1}`, resume: { ...resume, military_service: list } };
+    }
+    case "skill": {
+      // ONE field only. The flat `skills` list is what every scorer reads, and
+      // a new skill belongs to no group — `skillBlocksOf` renders it in the
+      // trailing unlabelled block, because nothing may be hidden.
+      const name = uniqueName(resume.skills, "New skill");
+      return { ok: true, path: `@skills.${dkey(name)}`, resume: { ...resume, skills: [...resume.skills, name] } };
+    }
+    case "certification": {
+      const name = uniqueName(resume.certifications, "New certification");
+      return { ok: true, path: `@cert.${dkey(name)}`, resume: { ...resume, certifications: [...resume.certifications, name] } };
+    }
+    case "language": {
+      const list = resume.languages ?? [];
+      const name = uniqueName(list.map((l) => l.language), "New language");
+      return { ok: true, path: `@lang.${dkey(name)}`, resume: { ...resume, languages: [...list, { language: name, level: "" }] } };
+    }
+  }
+}
+
+/** Add a bullet to an existing entry, returning the new bullet's path. */
+export function insertBullet(resume: ResumeModel, entryPath: string): WriteResult {
+  const entry = RE_ENTRY.exec(entryPath);
+  if (!entry) return { ok: false, reason: "unknown-path" };
+  const [, kind, idx] = entry;
+  const i = Number(idx);
+  const bullets = bulletsOf(resume, kind, i);
+  if (!bullets) return { ok: false, reason: "not-found" };
+  const next = [...bullets, ""];
+  const path = `@${kind}.${i}.b.${next.length - 1}`;
+  if (kind === "exp") {
+    return { ok: true, path, resume: { ...resume, experience: splice1(resume.experience, i, { ...resume.experience[i], bullets: next }) } };
+  }
+  if (kind === "proj") {
+    return { ok: true, path, resume: { ...resume, projects: splice1(resume.projects, i, { ...resume.projects[i], bullets: next }) } };
+  }
+  const mil = resume.military_service ?? [];
+  return { ok: true, path, resume: { ...resume, military_service: splice1(mil, i, { ...mil[i], bullets: next }) } };
+}
+
+/** A keyed block IS its own text, so a new one needs a name that does not
+ * collide — two items sharing a `dkey` would share a `data-block`. */
+function uniqueName(existing: string[], base: string): string {
+  const taken = new Set(existing.map((x) => dkey(x)));
+  if (!taken.has(dkey(base))) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base} ${n}`;
+    if (!taken.has(dkey(candidate))) return candidate;
+  }
+}
+
 export function removeBlock(resume: ResumeModel, path: string): WriteResult {
   const notFound = { ok: false, reason: "not-found" } as const;
 
@@ -525,6 +626,32 @@ export function removeBlock(resume: ResumeModel, path: string): WriteResult {
     }
     const mil = resume.military_service ?? [];
     return { ok: true, path, resume: { ...resume, military_service: splice1(mil, i, { ...mil[i], bullets: next }) } };
+  }
+
+  // A WHOLE ENTRY. This fell through to `unknown-path` until 23.2, so a job, a
+  // project, a degree or a service could not be removed from the document at
+  // all — the panel's trash was gated on a `removable` flag that is false for
+  // every one of them. The add control made the gap unmissable: create an
+  // entry, cancel the form, and the blank stayed on the paper forever.
+  const entryPath = RE_ENTRY.exec(path);
+  if (entryPath) {
+    const [, ekind, eidx] = entryPath;
+    const ei = Number(eidx);
+    if (ekind === "exp") {
+      if (!resume.experience[ei]) return notFound;
+      return { ok: true, path, resume: { ...resume, experience: splice1(resume.experience, ei, null) } };
+    }
+    if (ekind === "proj") {
+      if (!resume.projects[ei]) return notFound;
+      return { ok: true, path, resume: { ...resume, projects: splice1(resume.projects, ei, null) } };
+    }
+    if (ekind === "edu") {
+      if (!resume.education[ei]) return notFound;
+      return { ok: true, path, resume: { ...resume, education: splice1(resume.education, ei, null) } };
+    }
+    const milList = resume.military_service ?? [];
+    if (!milList[ei]) return notFound;
+    return { ok: true, path, resume: { ...resume, military_service: splice1(milList, ei, null) } };
   }
 
   const keyed = RE_KEYED.exec(path);

@@ -1,8 +1,10 @@
+import { useState } from "react";
+import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ResumeModel } from "../types";
 import { Badge } from "./ui";
 import { cn } from "../lib/cn";
-import { dkey, inlineField } from "../lib/resumeBlocks";
+import { dkey, inlineField, INSERT_KINDS, type InsertKind } from "../lib/resumeBlocks";
 import { resumeLanguage } from "../lib/lang";
 
 /**
@@ -60,6 +62,11 @@ interface Props {
    * trimmed and newline-free, and is guaranteed to DIFFER from what was
    * rendered — an unchanged edit never reaches here. */
   onInlineCommit?: (path: string, text: string) => void;
+  /** "+ Add to your CV" at the foot of the paper. Absent = no add control. */
+  onAdd?: (kind: InsertKind) => void;
+  /** Append a bullet to this entry. Rendered at the end of its own list, which
+   * is the only place a user looks for it. */
+  onAddBullet?: (entryPath: string) => void;
 }
 
 
@@ -203,6 +210,54 @@ function MetaLine({ lead = "", bits = [] }: { lead?: string; bits?: (string | un
   );
 }
 
+/**
+ * The one add control, at the foot of the paper.
+ *
+ * A FIXED list of seven rows, not "offered iff that section is empty":
+ * creating your first project and your fourth are the same action, so the list
+ * must not change shape between visits and the user never learns a distinction
+ * that does not exist. Sections appear and disappear on their own — ResumeView
+ * renders one only when it has content, exactly as both renderers do — so
+ * adding the first project IS creating the Projects section.
+ *
+ * A disclosure, not a modal: `Modal` binds ESC and backdrop on `window` and
+ * this sits inside a page that already has one, and a bottom sheet for seven
+ * words is the complication the owner asked to be rid of.
+ */
+function AddToResume({ onAdd }: { onAdd: (kind: InsertKind) => void }) {
+  const { t } = useTranslation("tailor");
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-6 border-t border-line pt-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-semibold text-accent-soft transition-colors hover:bg-accent/[0.07] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+      >
+        <Plus size={15} /> {t("edit.addTitle")}
+      </button>
+      {open && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {INSERT_KINDS.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onAdd(kind);
+              }}
+              className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:border-accent/50 hover:bg-accent/[0.07] hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+            >
+              {t(`edit.add.${kind}`)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ResumeView({
   resume,
   surface = "panel",
@@ -212,6 +267,8 @@ export default function ResumeView({
   onSelectBlock,
   onEditBlock,
   onInlineCommit,
+  onAdd,
+  onAddBullet,
 }: Props) {
   const { t } = useTranslation("tailor");
   const c = resume.contact;
@@ -469,6 +526,17 @@ export default function ResumeView({
                     {b}
                   </li>
                 ))}
+                {onAddBullet && (
+                  <li className="list-none">
+                    <button
+                      type="button"
+                      onClick={() => onAddBullet(`@exp.${i}`)}
+                      className="-ms-5 rounded px-1 py-0.5 text-xs font-medium text-accent-soft/80 transition-colors hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+                    >
+                      + {t("edit.addBullet")}
+                    </button>
+                  </li>
+                )}
               </ul>
             </div>
           ))}
@@ -490,6 +558,17 @@ export default function ResumeView({
                     {b}
                   </li>
                 ))}
+                {onAddBullet && (
+                  <li className="list-none">
+                    <button
+                      type="button"
+                      onClick={() => onAddBullet(`@proj.${i}`)}
+                      className="-ms-5 rounded px-1 py-0.5 text-xs font-medium text-accent-soft/80 transition-colors hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+                    >
+                      + {t("edit.addBullet")}
+                    </button>
+                  </li>
+                )}
               </ul>
             </div>
           ))}
@@ -542,6 +621,17 @@ export default function ResumeView({
                     {b}
                   </li>
                 ))}
+                {onAddBullet && (
+                  <li className="list-none">
+                    <button
+                      type="button"
+                      onClick={() => onAddBullet(`@mil.${i}`)}
+                      className="-ms-5 rounded px-1 py-0.5 text-xs font-medium text-accent-soft/80 transition-colors hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+                    >
+                      + {t("edit.addBullet")}
+                    </button>
+                  </li>
+                )}
               </ul>
             </div>
           ))}
@@ -616,6 +706,11 @@ export default function ResumeView({
       )}
 
       {sectionOrder(resume).map((key) => sections[key])}
+
+      {/* Outside every [data-block] on purpose: it emits no path, so
+          check-mirrors check 7 has nothing to validate and the add control can
+          never be mistaken for a part of the résumé. */}
+      {onAdd && <AddToResume onAdd={onAdd} />}
     </div>
   );
 }

@@ -417,7 +417,18 @@
       "rank": "דרגה",
       "bullet": "שורה"
     },
-    "apply": "להחיל"
+    "apply": "להחיל",
+    "addTitle": "הוסיפו לקורות החיים",
+    "addBullet": "הוסיפו שורה",
+    "add": {
+      "experience": "תפקיד",
+      "project": "פרויקט",
+      "education": "תואר",
+      "military": "שירות צבאי",
+      "skill": "מיומנות",
+      "certification": "הסמכה",
+      "language": "שפה"
+    }
   },
   "draft": {
     "title": "שינויים שלא נשמרו מהביקור הקודם",
