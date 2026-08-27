@@ -185,10 +185,36 @@ export default function ResumeView({
    * (`border-s`, `-ms`, `ps`) so RTL mirrors without a second rule. A bullet
    * marks its own glyph rather than growing a start-bar, which would collide
    * with the list's `ps-5` indent. */
+  // An editable block has to LOOK editable. Phase 22's whole premise is that
+  // the page IS the CV and you change it in place — and nothing on the paper
+  // said so: `blkProps` puts tabIndex={0} and role="button" on nearly every
+  // block whenever `onEditBlock` is set, while this file contained no hover,
+  // active or focus state at all. Invisible on a phone; a WCAG 2.4.7 failure
+  // (focusable control, no visible focus indicator) on a desktop.
+  //
+  // Two rules hold the shape of the fix:
+  //  * Colour and outline ONLY — never a border, padding or size change. This
+  //    sheet is measured against a real reportlab page count, and a block that
+  //    reflows under the reader's finger reads as a bug.
+  //  * `active:` is not a nicety on touch. A phone has no hover, and a tap
+  //    leaves `:hover` stuck on the last element tapped, so the press state is
+  //    the only honest feedback a thumb gets.
+  // The tint resolves through `.sheet`'s own --accent (the classic template's
+  // navy), so it belongs to the document rather than to the app chrome.
+  const editable = !!onEditBlock;
   const blk = (path: string, shape: "block" | "item" | "chip" = "block") => {
     const mark = marks?.get(path);
     return cn(
       onSelectBlock && "cursor-pointer",
+      editable && "transition-colors duration-150",
+      editable &&
+        shape !== "chip" &&
+        "rounded-[3px] hover:bg-accent/[0.06] active:bg-accent/[0.13]",
+      editable &&
+        shape === "chip" &&
+        "hover:ring-1 hover:ring-inset hover:ring-accent/40 active:ring-1 active:ring-inset active:ring-accent/70",
+      editable &&
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70",
       shape === "block" && mark === "changed" && "-ms-2 border-s-2 border-accent/50 ps-2",
       shape === "block" && mark === "restored" && "-ms-2 border-s-2 border-warn/60 ps-2",
       shape === "item" && mark === "changed" && "marker:text-accent",
