@@ -957,10 +957,21 @@ async def public_scan(
 # --------------------------------------------------------------------------- #
 # Standalone tools
 # --------------------------------------------------------------------------- #
+# Deterministic, and therefore uncapped — every check is pure Python and the
+# optional keyword pass takes an ALREADY-ANALYSED JD.
+#
+# It accepted raw `jd_text` and ran `analyze_jd` on it until 22.10, which is an
+# LLM call on a route carrying no Depends at all: a free door onto the model for
+# anyone past the shared access-code gate, with no per-user cap and no token
+# row. That is the exact thing `CoverageRequest`'s docstring, thirty lines below,
+# exists to forbid — the rule was written down and this route was the exception
+# nobody noticed. Its smoke pin sent `jd_text: ""`, the one value that never
+# enters the branch, under a label asserting the opposite; it is now pinned in
+# both directions with a real JD.
 @router.post("/tools/ats-scan", response_model=ATSScanResult)
 def tools_ats_scan(body: ATSScanRequest) -> ATSScanResult:
     try:
-        return scan_resume(body.resume, body.jd_text)
+        return scan_resume(body.resume, body.jd)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while scanning résumé: {e}")
 

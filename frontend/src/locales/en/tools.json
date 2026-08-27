@@ -86,7 +86,8 @@
     "scan": "Scan résumé",
     "scoreLabel": "ATS score",
     "coverage": "Keyword coverage vs. JD: <1>{{pct}}%</1>",
-    "missing": "Missing keywords"
+    "missing": "Missing keywords",
+    "error": "Couldn't scan your résumé. Please try again."
   },
   "xray": {
     "gateFeature": "the ATS X-ray",

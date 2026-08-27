@@ -952,8 +952,25 @@ class JobFetchResponse(BaseModel):
 # Standalone tools
 # --------------------------------------------------------------------------- #
 class ATSScanRequest(BaseModel):
+    """Deterministic format/content scan, plus optional keyword coverage.
+
+    Takes an ANALYSED `JDModel`, never raw `jd_text` — the same rule, and for
+    the same reason, as `CoverageRequest` below. `/tools/ats-scan` is uncapped
+    because it is deterministic; it accepted job-ad text until Phase 22.10 and
+    ran `analyze_jd` on it, which is an LLM call, which made the uncapped route
+    a free door onto the model for anyone past the shared access-code gate.
+    The caller analyses the posting once on the capped `/jd/analyze` and scans
+    against the result as often as it likes.
+    """
+
+    # `extra="forbid"` is the load-bearing half. Without it a caller still
+    # sending the old `jd_text` gets a silent format-only scan — a coverage
+    # number that quietly became zero is worse than an error, and it is what
+    # would let the old shape linger unnoticed in the extension or a script.
+    model_config = {"extra": "forbid"}
+
     resume: ResumeModel
-    jd_text: str = ""
+    jd: JDModel | None = None
 
 
 class ATSXrayRequest(BaseModel):

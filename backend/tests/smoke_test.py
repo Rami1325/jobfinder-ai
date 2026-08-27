@@ -330,7 +330,12 @@ check(
 )
 
 # 10. ATS scanner (deterministic checks + optional coverage)
-ats = scan_resume(resume, "Python, SQL, REST APIs required.")
+# It takes an ANALYSED JDModel and never job-ad text: /tools/ats-scan is
+# uncapped because nothing in it reaches the model, and accepting text would
+# force it to (see ATSScanRequest).
+from app.models import JDModel as _AtsJD  # noqa: E402
+
+ats = scan_resume(resume, _AtsJD(hard_skills=["Python", "SQL", "REST APIs"], keywords=["Python", "SQL"]))
 check("ats scan produced issues + score", len(ats.issues) > 0 and 0 <= ats.score <= 100, str(ats.score))
 
 # 10b. Deeper ATS checks (PLAN 17.4) — all deterministic, all explainable, and
@@ -5205,10 +5210,40 @@ with TestClient(_fastapi_app) as _tc:
         "admin stays exempt from the llm cap",
         all(_tc.post("/jd/analyze", json=_jd_body, headers=_ADMIN_H).status_code == 200 for _ in range(4)),
     )
+    # This pin used to send `jd_text: ""` — the ONE value that never enters the
+    # coverage branch — under a label asserting the route calls no model, while
+    # the route ran analyze_jd on any real posting. It could not fail in either
+    # direction: with text it spent silently (no Depends to 429 it), without it
+    # the branch was skipped. A check that passes by never firing, verbatim.
+    #
+    # Three pins now, each of which can actually go red. The behavioural one
+    # alone is still not enough — a re-introduced analyze_jd would return 200
+    # too, since there is no cap to trip — so the SHAPE and the SOURCE are
+    # pinned as well. Those are what make a regression impossible to miss.
+    _ats_jd = {"hard_skills": ["Python", "SQL"], "keywords": ["Python"]}
+    _ats_ok = _tc.post("/tools/ats-scan", json={"resume": _resume_json, "jd": _ats_jd}, headers=_CAP_H)
     check(
-        "deterministic tools are NOT charged (ats-scan calls no model)",
-        _tc.post("/tools/ats-scan", json={"resume": _resume_json, "jd_text": ""},
-                 headers=_CAP_H).status_code == 200,
+        "deterministic tools are NOT charged (ats-scan scores a REAL jd on an exhausted cap)",
+        _ats_ok.status_code == 200 and _ats_ok.json()["keyword_coverage"] > 0,
+        _ats_ok.text[:120],
+    )
+    check(
+        "ats-scan refuses raw job-ad text — an uncapped route may never reach the model",
+        _tc.post("/tools/ats-scan", json={"resume": _resume_json, "jd_text": "we need python"},
+                 headers=_CAP_H).status_code == 422,
+    )
+    import inspect as _inspect_ats  # noqa: E402
+
+    import app.core.ats_scan as _ats_mod  # noqa: E402
+
+    _ats_src = _inspect_ats.getsource(_ats_mod)
+    check(
+        "ats_scan's SOURCE reaches no model — the uncapped route's whole justification",
+        # Fail loudly rather than silently passing on an unreadable module.
+        len(_ats_src) > 2000
+        and "analyze_jd" not in _ats_src
+        and "get_llm_client" not in _ats_src,
+        f"{len(_ats_src)} chars scanned",
     )
     check(
         "deterministic tools are NOT charged (ats-xray renders + re-parses, no model)",

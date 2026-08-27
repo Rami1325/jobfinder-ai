@@ -9,9 +9,8 @@ from __future__ import annotations
 import re
 
 from app.core.dates import ats_form, is_current, years_of_experience
-from app.core.jd_analyzer import analyze_jd
 from app.core.scorer import keyword_analysis
-from app.models import ATSIssue, ATSScanResult, ResumeModel
+from app.models import ATSIssue, ATSScanResult, JDModel, ResumeModel
 
 # Terms an ATS matches literally: a résumé that only ever writes "CI/CD" misses
 # a JD asking for "continuous integration", and the reverse misses one asking
@@ -171,7 +170,18 @@ def _length_issue(resume: ResumeModel, text: str) -> ATSIssue:
     )
 
 
-def scan_resume(resume: ResumeModel, jd_text: str = "") -> ATSScanResult:
+def scan_resume(resume: ResumeModel, jd: JDModel | None = None) -> ATSScanResult:
+    """Deterministic scan. Takes an ALREADY-ANALYSED JD or none at all.
+
+    It must never read a posting itself. The route is uncapped precisely
+    because nothing in this module reaches the model, and analysing a JD right
+    here is what turned that exemption into a free door onto it. The caller
+    analyses once on a capped route. See `ATSScanRequest`.
+
+    A smoke check greps this module's source for the analyser and the client
+    factory, so re-importing either fails the build rather than quietly
+    re-opening the door.
+    """
     issues: list[ATSIssue] = []
     c = resume.contact
     text = _resume_text(resume)
@@ -229,12 +239,11 @@ def scan_resume(resume: ResumeModel, jd_text: str = "") -> ATSScanResult:
 
     coverage = 0.0
     gaps = []
-    if jd_text.strip():
-        jd = analyze_jd(jd_text)
+    if jd is not None:
         coverage, gaps = keyword_analysis(resume, jd)
 
     good = sum(1 for i in issues if i.severity == "good")
     format_health = round(100.0 * good / len(issues), 1) if issues else 0.0
-    score = round(0.5 * format_health + 0.5 * coverage, 1) if jd_text.strip() else format_health
+    score = round(0.5 * format_health + 0.5 * coverage, 1) if jd is not None else format_health
 
     return ATSScanResult(score=score, keyword_coverage=coverage, issues=issues, gaps=gaps)

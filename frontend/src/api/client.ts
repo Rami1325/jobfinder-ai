@@ -454,8 +454,12 @@ export async function freeScan(file: File, jdText: string): Promise<FreeScanResu
   return data;
 }
 
-export async function atsScan(resume: ResumeModel, jdText = ""): Promise<ATSScanResult> {
-  const { data } = await api.post<ATSScanResult>("/tools/ats-scan", { resume, jd_text: jdText });
+/** Deterministic format/content scan, plus keyword coverage when an ANALYSED
+ * JD is supplied. It takes `jd`, never `jd_text`: the route is uncapped, so a
+ * route that accepted job-ad text would have to reach the model to use it.
+ * Analyse the posting once with `analyzeJD` (capped) and scan against it. */
+export async function atsScan(resume: ResumeModel, jd?: JDModel | null): Promise<ATSScanResult> {
+  const { data } = await api.post<ATSScanResult>("/tools/ats-scan", { resume, jd: jd ?? null });
   return data;
 }
 
