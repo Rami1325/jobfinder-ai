@@ -358,7 +358,6 @@
     "langWarnConfirm": "Save anyway",
     "gone": "That part of your résumé is no longer there.",
     "remove": "Remove",
-    "addHint": "To add a section, use the résumé builder.",
     "blocks": {
       "name": "Your name",
       "contact": "Contact details",

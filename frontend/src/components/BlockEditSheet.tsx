@@ -24,13 +24,27 @@ interface Props {
 /**
  * Edit one block of the résumé.
  *
- * A SHEET, not a floating toolbar or a popover, and that is a measured choice
- * rather than a style one. At 390px an A4 page renders at about 45% scale, so
- * body text is roughly 6px — there is nothing to click accurately, there is no
- * hover at all, and a toolbar pinned near the block fights the on-screen
- * keyboard for the same space. A sheet puts the text at real size with labelled
- * fields, and the same component serves both geometries: a bottom sheet below
- * `lg`, a side panel above it.
+ * COMPOUND BLOCKS ONLY, since 23.1. A block that is ONE model field is typed
+ * on directly in the document; this panel is for the six that fuse several
+ * facts into a single printed line — the job header, a degree, the contact
+ * line, the project heading, a language. "Employer · Location · Dates" is five
+ * model fields in one text node, and a caret in it has nothing to write back
+ * to: splitting it needs a `dir` per fragment, which opens a bidi isolate and
+ * strands the separators.
+ *
+ * THE OLD JUSTIFICATION HERE WAS FALSE, and it is worth recording rather than
+ * quietly deleting. It read: "at 390px an A4 page renders at about 45% scale,
+ * so body text is roughly 6px — there is nothing to click accurately." That is
+ * true of the PDF <iframe> in DocumentPanel and was applied to the wrong
+ * surface. Measured on the running app at a 390px viewport: `.sheet` is
+ * `transform: none`, 347.3px wide, with 14px body text. ResumeView is a
+ * reflowing column at full readable size, which is why typing on it works.
+ * What DOES survive: there is no hover on a phone, and a toolbar pinned near
+ * the caret fights the on-screen keyboard — so this stayed a sheet rather than
+ * becoming a popover, and inline editing grew no toolbar at all.
+ *
+ * The same component serves both geometries: a bottom sheet below `lg`, a side
+ * panel above it.
  *
  * NOT built on `Modal`: that one is `items-start justify-center` with no
  * `max-h` and no internal scroller, so a long entry pushes its own Save button
@@ -167,7 +181,6 @@ export default function BlockEditSheet({ path, resume, paperDir, onClose, onAppl
                   )}
                 </label>
               ))}
-              <p className="pt-1 text-xs text-ink-faint">{t("edit.addHint")}</p>
             </div>
 
             {/* The safe-area padding is why Save clears the home indicator. */}
