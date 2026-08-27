@@ -40,3 +40,7 @@ Thumbs.db
 .agents/
 
 .vercel
+
+# Competitor UI reference captures (local only — screenshots of a third-party
+# product plus the user's own resume data; never push these to GitHub).
+reference-screenshots/
