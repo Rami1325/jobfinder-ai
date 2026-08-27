@@ -110,8 +110,18 @@ export default function ScoreCard({ coverage, coverageStale, fitScore, rationale
           </div>
           <p className="text-sm font-semibold text-ink">{t("fit.coverage")}</p>
           {coverage && (
+            // The partial count is not a detail. `scorer.keyword_analysis`
+            // credits a partial 0.5 toward coverage_pct while `covered` counts
+            // only status === "covered", so the ring and this line were two
+            // different arithmetics: 3 covered / 3 partial / 4 missing renders
+            // a 45% ring above "3 of 10". Stating all three is what makes the
+            // percentage above it add up.
             <p className="text-xs tabular-nums text-ink-muted">
-              {t("fit.coverageSub", { covered: coverage.covered, total: coverage.total })}
+              {t("fit.coverageSub", {
+                covered: coverage.covered,
+                total: coverage.total,
+                partial: coverage.partial,
+              })}
             </p>
           )}
           <p className="max-w-[30ch] text-center text-xs leading-snug text-ink-faint">{t("fit.coverageNote")}</p>

@@ -114,7 +114,12 @@
     "fetchCta": "Fetch description from link",
     "detected": "Detected a job link",
     "noText": "Couldn't read the description from that link (the site may require login or block bots). Paste the text instead.",
-    "fetchError": "Could not fetch that link."
+    "fetchError": "Could not fetch that link.",
+    "savedCta": "Use a job you saved",
+    "savedLoading": "Loading your saved jobs…",
+    "savedNone": "No saved jobs yet — anything you track shows up here.",
+    "savedEmpty": "That saved job has no description stored. Paste the text instead.",
+    "savedLoadError": "Couldn't load your saved jobs."
   },
   "score": {
     "guard": "Facts invented",
@@ -319,12 +324,13 @@
     "close": "Close",
     "needsJd": "Paste a job description first.",
     "failed": "Couldn't read that posting just now.",
-    "topMissing": "Most-wanted terms your CV doesn't say yet"
+    "topMissing": "Most-wanted terms your CV doesn't say yet",
+    "topPartial": "Close — but not in the posting's own words"
   },
   "fit": {
     "title": "How this CV matches the job",
     "coverage": "Keyword coverage",
-    "coverageSub": "{{covered}} of {{total}} key terms matched",
+    "coverageSub": "{{covered}} of {{total}} key terms matched, {{partial}} partial",
     "coverageNote": "Recomputed from your CV as it stands right now — every change you accept or decline is already in this number.",
     "recruiter": "Recruiter fit",
     "asOf": "One AI reading, taken {{time}}. It doesn't move as you edit: a second reading costs another model call, and part of any difference between two readings is sampling noise rather than progress.",

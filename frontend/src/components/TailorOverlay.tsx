@@ -81,6 +81,12 @@ export default function TailorOverlay({
   }
 
   const missing = (fit?.gaps ?? []).filter((g) => g.status === "missing").slice(0, TOP_MISSING);
+  // Partials were hidden here, which is backwards: a partial is the cheapest
+  // thing on the list to fix. The posting wants its own wording and the
+  // candidate already has the experience, so it costs one edit and no tailor
+  // credit -- and it is half a point of coverage each, which is exactly why
+  // the ring disagreed with the "N of M" line beneath it.
+  const partial = (fit?.gaps ?? []).filter((g) => g.status === "partial").slice(0, TOP_MISSING);
 
   return (
     <Modal
@@ -103,7 +109,7 @@ export default function TailorOverlay({
                 <ProgressRing value={fit.keyword_coverage} size={84} tone="accent" delay={0.1} />
                 <span className="text-xs font-semibold text-ink">{t("fit.coverage")}</span>
                 <span className="text-[11px] tabular-nums text-ink-muted">
-                  {t("fit.coverageSub", { covered: fit.covered, total: fit.total })}
+                  {t("fit.coverageSub", { covered: fit.covered, total: fit.total, partial: fit.partial })}
                 </span>
               </div>
               <div className="flex flex-col items-center gap-1.5">
@@ -118,6 +124,18 @@ export default function TailorOverlay({
                 <div className="flex flex-wrap gap-1.5">
                   {missing.map((g) => (
                     <Badge key={g.keyword} tone="missing">
+                      {g.keyword}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {partial.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs font-semibold text-ink">{t("overlay.topPartial")}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {partial.map((g) => (
+                    <Badge key={g.keyword} tone="partial">
                       {g.keyword}
                     </Badge>
                   ))}
