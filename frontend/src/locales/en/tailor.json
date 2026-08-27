@@ -402,5 +402,11 @@
       "bullet": "Bullet"
     },
     "apply": "Apply"
+  },
+  "draft": {
+    "title": "Unsaved changes from your last visit",
+    "body": "Edited {{when}} on this device, and never saved to your résumé.",
+    "keep": "Restore them",
+    "discard": "Discard"
   }
 }

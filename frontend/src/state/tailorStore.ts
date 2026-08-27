@@ -5,6 +5,7 @@
 import { analyzeJD, getMasterResume, saveMasterResume, tailor } from "../api/client";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
+import { clearDraft, writeDraft } from "../lib/draft";
 import { resumeLanguage } from "../lib/lang";
 import type { FactsLedger, FitCheckResult, JDModel, ResumeModel, TailorResult } from "../types";
 
@@ -219,12 +220,22 @@ export function applyBlockEdit(next: ResumeModel): void {
     tailoredFrom: null,
     rejectedEdits: [],
   });
+  // Mirror to this device. HERE rather than at the call sites so a future edit
+  // path cannot forget it — this function is the single writer of `resume`
+  // during editing, which is the same reason the invalidation above lives here.
+  writeDraft(next);
 }
 
 export function undoBlockEdit(): void {
   const stack = state.editUndo;
   if (stack.length === 0) return;
-  setTailorState({ resume: stack[stack.length - 1], editUndo: stack.slice(0, -1), editError: "" });
+  const back = stack[stack.length - 1];
+  setTailorState({ resume: back, editUndo: stack.slice(0, -1), editError: "" });
+  // Undo has to move the draft too, or closing the tab restores the very edit
+  // the user just took back. Undoing to the bottom of the stack means the
+  // document matches the saved master again, so there is nothing to restore.
+  if (stack.length === 1) clearDraft();
+  else writeDraft(back);
 }
 
 /** True when the document on screen differs from the last saved state. */
@@ -261,6 +272,9 @@ export async function commitResumeEdits(label: string, fallbackError: string): P
       editSaving: false,
       editError: "",
     });
+    // The draft has served its purpose the moment the server has the content.
+    // Leaving it would offer to "restore" the résumé the user just saved.
+    clearDraft();
     // `invalidateData` cannot reach useMasterResume's module-level cache, and
     // nine pages read the master from it — an X-ray run right after an edit
     // would otherwise scan the résumé that was just replaced.

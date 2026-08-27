@@ -15,6 +15,7 @@ import {
 } from "../api/client";
 import TemplatePicker, { isPdfOnlyTemplate } from "../components/TemplatePicker";
 import PageBadge from "../components/PageBadge";
+import DraftRestoreBar from "../components/DraftRestoreBar";
 import ChangeLog from "../components/ChangeLog";
 import DocumentPanel, { type DocView } from "../components/DocumentPanel";
 import TailorOverlay from "../components/TailorOverlay";
@@ -29,6 +30,7 @@ import VoicePanel from "../components/VoicePanel";
 import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { blocksByEdit, mergeForReview } from "../lib/resumeDiff";
 import { resumeLanguage } from "../lib/lang";
+import { clearDraft, draftOver, offerDraft, readDraft, type ResumeDraft } from "../lib/draft";
 import { classifyEdit } from "../lib/editGroups";
 import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
 import {
@@ -114,6 +116,10 @@ export default function TailorPage() {
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A draft written by a previous visit, once we have a master to judge it
+  // against. Offered, never applied — see DraftRestoreBar.
+  const [draft, setDraft] = useState<ResumeDraft | null>(null);
+
   useEffect(() => {
     if (getTailorState().resume) return; // already loaded (or uploaded) this session
     (async () => {
@@ -126,12 +132,30 @@ export default function TailorPage() {
             ledger: m.ledger ?? null,
             masterLabel: m.label,
           });
+          // Only now can a draft be judged: the language rule needs the
+          // master's language, and "differs" needs something to differ FROM.
+          const d = readDraft();
+          if (offerDraft(d, m.resume)) setDraft(d);
         }
       } catch {
         /* no saved résumé yet */
       }
     })();
   }, []);
+
+  /** Restore as a normal unsaved edit: the master goes on the undo stack, so
+   * ResumeEditBar immediately offers the same Undo and Save as any other edit
+   * and there is no way to be stuck with content you did not want. */
+  function keepDraft() {
+    const base = getTailorState().resume;
+    if (base && draft) applyBlockEdit(draftOver(base, draft));
+    setDraft(null);
+  }
+
+  function discardDraft() {
+    clearDraft();
+    setDraft(null);
+  }
 
   // The document is always on screen when a résumé exists, so there is no
   // stepper any more: `step` gated nothing and described a flow that no
@@ -401,6 +425,13 @@ export default function TailorPage() {
             {t(`langSwitch.${langSwitched}`, { label: masterLabel || t("langSwitch.fallbackLabel") })}
           </span>
         </div>
+      )}
+
+      {/* Gated on `editable` for the same reason onEditBlock is: with a tailor
+          result up the document is a memo recomputed on every accept/decline,
+          so restoring into it would be written over on the next click. */}
+      {draft && editable && (
+        <DraftRestoreBar savedAt={draft.savedAt} onKeep={keepDraft} onDiscard={discardDraft} />
       )}
 
       {/* One row of actions over the document. Tailoring is a thing you DO to
