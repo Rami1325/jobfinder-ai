@@ -29,6 +29,7 @@ import ScoreCard from "../components/ScoreCard";
 import VoicePanel from "../components/VoicePanel";
 import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { blocksByEdit, mergeForReview } from "../lib/resumeDiff";
+import { inlineField, writeBlock } from "../lib/resumeBlocks";
 import { resumeLanguage } from "../lib/lang";
 import { clearDraft, draftOver, offerDraft, readDraft, type ResumeDraft } from "../lib/draft";
 import { classifyEdit } from "../lib/editGroups";
@@ -150,6 +151,27 @@ export default function TailorPage() {
     const base = getTailorState().resume;
     if (base && draft) applyBlockEdit(draftOver(base, draft));
     setDraft(null);
+  }
+
+  /** A single-field block was typed on and the caret left it.
+   *
+   * The change guard is HERE, against the MODEL, not against the rendered text
+   * — ResumeView already refuses an unchanged edit, but the two are not the
+   * same string everywhere: a nameless CV renders the "Résumé" placeholder over
+   * an empty `contact.name`, so clearing that block would otherwise write ""
+   * over "" and burn an undo slot on nothing. Comparing to `field.value`
+   * catches every such case at once.
+   *
+   * `writeBlock` stays the only writer and `applyBlockEdit` the only way in, so
+   * the undo stack and the 22.11 local draft keep working untouched.
+   */
+  function commitInline(path: string, text: string) {
+    const base = getTailorState().resume;
+    if (!base) return;
+    const field = inlineField(base, path);
+    if (!field || field.value.trim() === text.trim()) return;
+    const res = writeBlock(base, path, { [field.key]: text });
+    if (res.ok) applyBlockEdit(res.resume);
   }
 
   function discardDraft() {
@@ -500,6 +522,7 @@ export default function TailorPage() {
           activeNonce={spot?.nonce}
           onSelectBlock={selectBlock}
           onEditBlock={editable ? setEditPath : undefined}
+          onInlineCommit={editable ? commitInline : undefined}
         />
       ) : (
         <Card>

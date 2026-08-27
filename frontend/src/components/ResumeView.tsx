@@ -2,7 +2,28 @@ import { useTranslation } from "react-i18next";
 import type { ResumeModel } from "../types";
 import { Badge } from "./ui";
 import { cn } from "../lib/cn";
-import { dkey } from "../lib/resumeBlocks";
+import { dkey, inlineField } from "../lib/resumeBlocks";
+import { resumeLanguage } from "../lib/lang";
+
+/**
+ * `plaintext-only` is what stops a paste putting markup into a `string[]`.
+ *
+ * Probed rather than assumed: the attribute's INVALID-VALUE DEFAULT is
+ * *inherit*, so a browser that does not know the keyword renders the block
+ * silently NOT editable — a blank failure, on the one interaction this
+ * document exists for. Falling back to plain `true` keeps it editable and the
+ * paste handler below sanitises regardless.
+ */
+const EDITABLE_MODE: "plaintext-only" | true = (() => {
+  if (typeof document === "undefined") return true;
+  const probe = document.createElement("div");
+  try {
+    probe.contentEditable = "plaintext-only";
+  } catch {
+    return true;
+  }
+  return probe.contentEditable === "plaintext-only" ? "plaintext-only" : true;
+})();
 
 /** How a block relates to the tailoring. `changed` = the AI touched it and you
  * kept the change; `restored` = every edit on it was declined, so what you are
@@ -29,8 +50,16 @@ interface Props {
   onSelectBlock?: (path: string) => void;
   /** Clicking a block opens it for editing. Takes precedence over
    * `onSelectBlock`: a tailored draft is a review surface, a master résumé is
-   * an editing one, and the page decides which by passing one or the other. */
+   * an editing one, and the page decides which by passing one or the other.
+   *
+   * Now COMPOUND blocks only — the six that fuse several model fields into one
+   * printed line. Single-field blocks are typed on directly; see
+   * `onInlineCommit`. */
   onEditBlock?: (path: string) => void;
+  /** A single-field block was typed in and the caret left it. `text` is already
+   * trimmed and newline-free, and is guaranteed to DIFFER from what was
+   * rendered — an unchanged edit never reaches here. */
+  onInlineCommit?: (path: string, text: string) => void;
 }
 
 
@@ -182,9 +211,22 @@ export default function ResumeView({
   activeNonce,
   onSelectBlock,
   onEditBlock,
+  onInlineCommit,
 }: Props) {
   const { t } = useTranslation("tailor");
   const c = resume.contact;
+
+  /** The paper's own direction, computed the way the RENDERERS compute it.
+   *
+   * This used to be `dir="auto"` on the root, which resolves from the first
+   * strong character in tree order — and that is `contact.name`, which
+   * `resumeLanguage` deliberately EXCLUDES (it mirrors app/core/lang.py, which
+   * both renderers use). So a Hebrew CV headed with a Latin-spelled name read
+   * left-to-right on screen and right-to-left in the downloaded file: the two
+   * surfaces disagreed about the same document. Reproduced in a browser before
+   * this line was written.
+   */
+  const paperDir: "rtl" | "ltr" = resumeLanguage(resume) === "he" ? "rtl" : "ltr";
 
   /** Marker + spotlight for one block. Every marker uses LOGICAL properties
    * (`border-s`, `-ms`, `ps`) so RTL mirrors without a second rule. A bullet
@@ -239,32 +281,122 @@ export default function ResumeView({
   const act = onEditBlock ?? onSelectBlock;
   const onClick = act
     ? (ev: React.MouseEvent) => {
+        // A block being TYPED IN is not a block being opened. Without this the
+        // first tap on a bullet would also fire the compound-block route.
+        if ((ev.target as HTMLElement).isContentEditable) return;
         const path = (ev.target as HTMLElement).closest<HTMLElement>("[data-block]")?.dataset.block;
         if (path) act(path);
       }
     : undefined;
-  // Keyboard reaches the same blocks, also delegated. Only EDITABLE blocks
-  // become focusable: a jump target is a convenience, an editor is an action.
-  const onKeyDown = onEditBlock
-    ? (ev: React.KeyboardEvent) => {
-        if (ev.key !== "Enter" && ev.key !== " ") return;
-        const path = (ev.target as HTMLElement).closest<HTMLElement>("[data-block]")?.dataset.block;
+
+  /** Snapshot the text as it stood when the caret arrived. Focus, not render:
+   * after the first keystroke the DOM no longer matches the model, and the
+   * comparison on commit has to be against what the user actually saw. */
+  const onFocus = onInlineCommit
+    ? (ev: React.FocusEvent) => {
+        const el = ev.target as HTMLElement;
+        if (el.isContentEditable) el.dataset.orig = el.innerText;
+      }
+    : undefined;
+
+  /** Commit on blur. While the caret is in the node NOTHING re-renders — the
+   * DOM node IS the draft — which is what keeps the caret alive: react-dom
+   * skips a text child whose string is unchanged, so an unrelated re-render
+   * (a coverage response, the spotlight timeout, a toast) cannot touch it. */
+  const onBlur = onInlineCommit
+    ? (ev: React.FocusEvent) => {
+        const el = ev.target as HTMLElement;
+        if (!el.isContentEditable) return;
+        const path = el.dataset.block;
         if (!path) return;
+        const original = el.dataset.orig ?? "";
+        // `innerText`, not `textContent`: a stray <br> has to become a space
+        // rather than fusing the words on either side of it.
+        const text = el.innerText.replace(/\s+/g, " ").trim();
+        if (text === original.trim()) {
+          // React does not repair a DOM the browser mutated when its own string
+          // is unchanged, so a whitespace-only edit would sit on the paper
+          // forever. Put the rendered text back by hand.
+          if (el.textContent !== original) el.textContent = original;
+          return;
+        }
+        onInlineCommit(path, text);
+      }
+    : undefined;
+
+  // Keyboard reaches the same blocks, also delegated.
+  const onKeyDown =
+    onEditBlock || onInlineCommit
+      ? (ev: React.KeyboardEvent) => {
+          const el = ev.target as HTMLElement;
+          if (el.isContentEditable) {
+            // THE SPACE BAR. The compound branch below preventDefaults on " ",
+            // which would make space un-typeable in every editable block, in
+            // both locales. Enter ends the edit instead of inserting a break —
+            // guarded on isComposing, because Gboard and dictation fire keydown
+            // mid-word and would commit a half-composed one.
+            if (ev.key === "Enter" && !ev.nativeEvent.isComposing) {
+              ev.preventDefault();
+              el.blur();
+            }
+            return;
+          }
+          if (!onEditBlock) return;
+          if (ev.key !== "Enter" && ev.key !== " ") return;
+          const path = el.closest<HTMLElement>("[data-block]")?.dataset.block;
+          if (!path) return;
+          ev.preventDefault();
+          onEditBlock(path);
+        }
+      : undefined;
+
+  /** Paste is plain text, always. A bullet is a `string` all the way through
+   * both renderers into `_wrap_lines`; pasted markup has nowhere to go and
+   * would be silently serialised into the model. */
+  const onPaste = onInlineCommit
+    ? (ev: React.ClipboardEvent) => {
+        if (!(ev.target as HTMLElement).isContentEditable) return;
         ev.preventDefault();
-        onEditBlock(path);
+        const text = ev.clipboardData.getData("text/plain").replace(/\s+/g, " ");
+        ev.currentTarget.ownerDocument.execCommand("insertText", false, text);
       }
     : undefined;
 
   /** Everything a block needs, from one path — so the path string is written
    * ONCE per block instead of twice (as `data-block` and again inside `blk`),
-   * which is a whole class of silent typo removed. */
-  const blkProps = (path: string, shape: "block" | "item" | "chip" = "block", extra?: string) => ({
-    "data-block": path,
-    className: cn(extra, blk(path, shape)),
-    // `role="button"` is deliberately omitted on list items: putting it on every
-    // <li> stops the list being a list for a screen reader.
-    ...(onEditBlock ? { tabIndex: 0, ...(shape !== "item" ? { role: "button" as const } : {}) } : {}),
-  });
+   * which is a whole class of silent typo removed.
+   *
+   * A block that is ONE model field gets a caret; the rest keep the panel. The
+   * split is `inlineField`, derived from `readBlock`, so it can never drift
+   * from the reader — add a second field to a block and it stops being typed
+   * on, by itself.
+   */
+  const blkProps = (path: string, shape: "block" | "item" | "chip" = "block", extra?: string) => {
+    const inline = !!onInlineCommit && !!inlineField(resume, path);
+    return {
+      "data-block": path,
+      className: cn(extra, blk(path, shape)),
+      ...(inline
+        ? {
+            contentEditable: EDITABLE_MODE,
+            suppressContentEditableWarning: true,
+            // The paper's direction, on every editable node. Never `dir="auto"`
+            // — it resolves from the first strong character, so a Hebrew bullet
+            // opening with "React…" would flip LTR under the caret.
+            dir: paperDir,
+            // iOS autocapitalises and autocorrects a contentEditable: "gRPC"
+            // becomes "GRPC" and "iOS" becomes "IOS", silently, in the one
+            // place a wrong string is a wrong claim.
+            spellCheck: false,
+            autoCapitalize: "off" as const,
+          }
+        : // `role="button"` is deliberately omitted on list items: putting it on
+          // every <li> stops the list being a list for a screen reader.
+          onEditBlock
+          ? { tabIndex: 0, ...(shape !== "item" ? { role: "button" as const } : {}) }
+          : {}),
+    };
+  };
   const contactBits = [c.email, c.phone, c.location, c.linkedin, c.website].filter(Boolean);
   const military = resume.military_service ?? [];
   const languages = resume.languages ?? [];
@@ -298,8 +430,12 @@ export default function ResumeView({
                   résumé, and both renderers print it as written. */}
               {label && <p className="mb-1 text-xs font-semibold text-accent">{label}</p>}
               <div className="flex flex-wrap gap-1.5">
-                {items.map((s) => (
-                  <Badge key={s} {...blkProps(`@skills.${dkey(s)}`, "chip")}>
+                {/* `key={i}`, not `key={s}`: two skills that differ only in
+                    case or punctuation share a `dkey`, so they would carry the
+                    SAME data-block and `readBlock`'s `.find()` would send both
+                    edits to the first one. */}
+                {items.map((s, i) => (
+                  <Badge key={i} {...blkProps(`@skills.${dkey(s)}`, "chip")}>
                     {s}
                   </Badge>
                 ))}
@@ -445,13 +581,12 @@ export default function ResumeView({
 
   return (
     <div
-      // `dir="auto"` must stay on the element that CONTAINS the text, or a
-      // Hebrew résumé stops resolving RTL. Per-block dir is deliberately not
-      // added: it would need the fused meta lines split first, and `dir` on an
-      // inline element opens a bidi isolate that strands the "·" separators.
-      dir="auto"
+      dir={paperDir}
       onClick={onClick}
       onKeyDown={onKeyDown}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onPaste={onPaste}
       className={cn(
         "text-ink [&_section]:mt-5",
         surface === "sheet"

@@ -28,6 +28,7 @@ interface Props {
   /** Tap a block to edit it. Passed only when the document is the MASTER —
    * a tailored draft is a review surface, not an editing one. */
   onEditBlock?: (path: string) => void;
+  onInlineCommit?: (path: string, text: string) => void;
 }
 
 /**
@@ -48,7 +49,7 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock },
+  { resume, template, view, onView, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
@@ -98,6 +99,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           activeNonce={activeNonce}
           onSelectBlock={onSelectBlock}
           onEditBlock={onEditBlock}
+          onInlineCommit={onInlineCommit}
         />
       </div>
 

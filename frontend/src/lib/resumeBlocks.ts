@@ -128,6 +128,25 @@ export interface BlockDraft {
   removable: boolean;
 }
 
+/**
+ * The one field of a block that can be edited with a caret, or null.
+ *
+ * DERIVED from `readBlock`, never a hand-kept list. A block is inline-editable
+ * exactly when it is ONE model field — the summary, a bullet, a skill, a
+ * certification, the headline, the name. The rest fuse five or six facts into
+ * one printed line ("Employer · Location · Dates"), and a caret in that line
+ * has nothing to write back to: splitting it needs a `dir` per fragment, which
+ * opens a bidi isolate and strands the separators.
+ *
+ * Because the split falls out of the reader, it cannot drift from it. Adding a
+ * second field to a block automatically stops it being typed on; reducing one
+ * to a single field automatically starts.
+ */
+export function inlineField(resume: ResumeModel, path: string): BlockField | null {
+  const draft = readBlock(resume, path);
+  return draft && draft.fields.length === 1 ? draft.fields[0] : null;
+}
+
 export type Values = Record<string, string>;
 
 export type WriteResult =
