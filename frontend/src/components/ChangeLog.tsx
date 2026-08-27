@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Crosshair, FileText, Scissors, ShieldAlert, ShieldCheck, X } from "lucide-react";
+import { Check, Crosshair, Scissors, ShieldAlert, ShieldCheck, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ChangeLogEntry, CVPlan, FabricationFlag, LengthReport, ResumeModel } from "../types";
 import type { ResumeTemplate } from "../api/client";
@@ -14,7 +14,7 @@ import {
   removedProjectName,
   type EditGroup,
 } from "../lib/editGroups";
-import { usePageCount } from "../hooks/usePageCount";
+import PageBadge from "./PageBadge";
 import { Badge, Card, CardTitle, DecryptText, Disclosure } from "./ui";
 import { cn } from "../lib/cn";
 
@@ -300,7 +300,6 @@ export default function ChangeLog({
   const allResolved = !clean && flagRows.every((r) => r.resolved);
 
   const acceptedCount = edits.filter((e) => !rejected.has(e.id)).length;
-  const pages = usePageCount(effective, template, !!effective);
 
   const setRejected = (id: string, isRejected: boolean) => {
     const next = new Set(rejected);
@@ -345,32 +344,6 @@ export default function ChangeLog({
   const curation = groups.find((g) => g.key === CURATION_KEY);
   const decided = groups.filter((g) => g.key !== CURATION_KEY);
 
-  // --- the live page badge ------------------------------------------------ //
-  const pageBadge = (() => {
-    if (pages.failed && !pages.data) return <span className="text-xs text-ink-faint">{t("pages.unavailable")}</span>;
-    if (!pages.data) return null;
-    const { pages: n, max_pages: max, hard_max_pages: hard } = pages.data;
-    const value = t("pages.value", { count: n });
-    const over = n > max;
-    const hardOver = n > hard;
-    return (
-      <span
-        className={cn(
-          "inline-flex items-center gap-1 text-xs transition-opacity",
-          pages.stale && "opacity-50",
-          hardOver ? "font-medium text-danger" : over ? "font-medium text-warn" : "text-ink-muted",
-        )}
-      >
-        <FileText size={12} aria-hidden />
-        {hardOver
-          ? t("pages.hardOver", { pages: value, hard })
-          : over
-            ? t("pages.over", { pages: value, max })
-            : t("pages.fits", { pages: value, max })}
-        {pages.stale && <span className="text-ink-faint">· {t("pages.measuring")}</span>}
-      </span>
-    );
-  })();
 
   return (
     <Card
@@ -451,7 +424,7 @@ export default function ChangeLog({
       {edits.length > 0 && (
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
           <p className="text-xs text-ink-faint">{t("review.note")}</p>
-          {pageBadge && <span className="ms-auto">{pageBadge}</span>}
+          <PageBadge resume={effective} template={template} className="ms-auto" />
         </div>
       )}
 
