@@ -8,3 +8,8 @@ frontend/dist
 *.db
 render.yaml
 CLAUDE.md
+
+# Competitor UI reference captures. .vercelignore SUPERSEDES .gitignore for CLI
+# uploads, so the .gitignore rule does not cover this path here -- without this
+# line a `vercel deploy` ships 65 screenshots of the owner`s resume to the build.
+reference-screenshots
