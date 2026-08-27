@@ -359,6 +359,68 @@ try {
   fail(`nav destination/label check could not run: ${e.message}`);
 }
 
+// ---- 10. the keyword matcher finds Hebrew behind a prefix ----------------- //
+// `countOccurrences("פייתון", "ניסיון רב בפייתון")` returned 0 while the
+// backend's `_keyword_present` reports the same text as covered — so a chip
+// rendered inside the green "Matched" group carrying "משרה 2 · אתם 0". Hebrew's
+// inseparable prefixes (ב/ל/ה/ו/מ/ש) glue straight onto the noun, and the
+// boundary lookbehind was counting them as word characters.
+//
+// Check 4 could never have caught this: it forbids computing a STATUS in
+// TypeScript and says nothing about a count.
+//
+// The false-positive half is pinned in the SAME table on purpose. "Make the
+// Hebrew case pass" is trivially satisfied by deleting the guards altogether,
+// which would silently start reporting "Java" inside "JavaScript" — a guard
+// that fires on legitimate input is worse than no guard.
+//
+// The classes and the boundary shape are parsed out of the shipped source
+// rather than restated here, so this cannot drift into testing its own copy.
+try {
+  const kwSrc = read("lib/keywords.ts");
+  const lead = kwSrc.match(/const LEAD_CLASS = "([^"]+)"/);
+  const word = kwSrc.match(/const WORD_CLASS = "([^"]+)"/);
+  const tpl = kwSrc.match(
+    /new RegExp\(\s*`\(\?<!\[\$\{(\w+)\}\]\)\$\{escaped\}\(\?!\[\$\{(\w+)\}\]\)`/,
+  );
+  if (!lead || !word) throw new Error("could not parse LEAD_CLASS / WORD_CLASS out of lib/keywords.ts");
+  if (!tpl) throw new Error("could not parse the keywordRegex boundary template — its shape changed");
+  // The captures are FILE text, so `\\u0590` is two characters; JSON.parse
+  // turns them back into the one-backslash string the module builds at runtime.
+  const classes = { LEAD_CLASS: JSON.parse(`"${lead[1]}"`), WORD_CLASS: JSON.parse(`"${word[1]}"`) };
+  const behind = classes[tpl[1]];
+  const ahead = classes[tpl[2]];
+  if (!behind || !ahead) throw new Error(`keywordRegex uses unknown classes ${tpl[1]} / ${tpl[2]}`);
+  const count = (k, text) => {
+    const esc = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return (text.match(new RegExp(`(?<![${behind}])${esc}(?![${ahead}])`, "gi")) ?? []).length;
+  };
+  const CASES = [
+    // must match — a Hebrew prefix is a prefix, not part of the word
+    ["פייתון", "עבודה עם פייתון", 1],
+    ["פייתון", "ניסיון רב בפייתון ובסיסי נתונים", 1],
+    ["ניהול", "אחראי לניהול צוות", 1],
+    ["React", "Built with React and Node", 1],
+    // must NOT match — the guards that make the matcher worth having
+    ["Java", "Strong JavaScript background", 0],
+    ["Script", "Strong JavaScript background", 0],
+    ["ניהו", "אחראי לניהול צוות", 0],
+  ];
+  for (const [k, text, want] of CASES) {
+    const got = count(k, text);
+    if (got !== want) {
+      fail(
+        `lib/keywords.ts: "${k}" in "${text}" counted ${got}, expected ${want}. ` +
+          (want === 1
+            ? "A keyword the backend reports as covered would show a résumé/JD count of zero beside it."
+            : "The boundary guard stopped firing — this matcher would report a substring as a match."),
+      );
+    }
+  }
+} catch (e) {
+  fail(`keyword matcher check could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

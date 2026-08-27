@@ -163,11 +163,11 @@
   "report": {
     "title": "Keyword match report",
     "summary": "{{missing}} of {{total}} key terms still missing. Only add terms that reflect real experience.",
-    "clickHint": "Click any keyword to see where the job description mentions it. Counts are verbatim mentions: job description × your tailored résumé.",
+    "clickHint": "Click any keyword to see where the job description mentions it. The count is verbatim mentions in the posting.",
     "matched": "Matched ({{count}})",
     "partial": "Partial ({{count}})",
     "missing": "Missing ({{count}})",
-    "counts": "JD {{jd}} · you {{resume}}",
+    "counts": "JD mentions: {{jd}}",
     "inJd": "“{{keyword}}” in the job description",
     "mentions_one": "{{count}} mention",
     "mentions_other": "{{count}} mentions",
@@ -352,7 +352,7 @@
     "langWarnConfirm": "Save anyway",
     "gone": "That part of your résumé is no longer there.",
     "remove": "Remove",
-    "addHint": "To add or reorder sections, use the résumé builder.",
+    "addHint": "To add a section, use the résumé builder.",
     "blocks": {
       "name": "Your name",
       "contact": "Contact details",

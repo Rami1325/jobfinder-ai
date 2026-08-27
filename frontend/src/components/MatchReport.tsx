@@ -2,15 +2,14 @@ import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, Minus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { GapItem, ResumeModel } from "../types";
+import type { GapItem } from "../types";
 import { Card, CardTitle, CountUp, SectionLabel } from "./ui";
 import { cn } from "../lib/cn";
-import { countOccurrences, keywordRegex, resumeSearchText } from "../lib/keywords";
+import { countOccurrences, keywordRegex } from "../lib/keywords";
 
 interface Props {
   gaps: GapItem[];
   jdText: string;
-  resume: ResumeModel; // the tailored résumé — counts reflect what you'd download
 }
 
 const groupMeta = {
@@ -47,23 +46,25 @@ function highlightNodes(text: string, keyword: string): (string | JSX.Element)[]
 }
 
 /**
- * Keyword report: matched / partial / missing chips with
- * "JD × résumé" mention counts; clicking a chip highlights the keyword
- * inside the job description text.
+ * Keyword report: matched / partial / missing chips, each with how often the
+ * POSTING mentions the term; clicking a chip highlights it inside the job
+ * description text.
+ *
+ * There is deliberately no résumé-side count. The chip's status is the
+ * backend's answer, and `_keyword_present` tries the verbatim phrase first —
+ * so a second count computed here could disagree with the word printed beside
+ * it, which is exactly how a chip in the green "Matched" group came to read
+ * "משרה 2 · אתם 0". The JD count survives because it is about the posting the
+ * user is looking at and can click to verify; a count about the résumé is a
+ * claim, and claims about the résumé are the server's to make.
  */
-export default function MatchReport({ gaps, jdText, resume }: Props) {
+export default function MatchReport({ gaps, jdText }: Props) {
   const { t } = useTranslation("tailor");
   const [selected, setSelected] = useState<string | null>(null);
 
-  const resumeText = useMemo(() => resumeSearchText(resume), [resume]);
   const rows = useMemo(
-    () =>
-      gaps.map((g) => ({
-        ...g,
-        jdCount: countOccurrences(g.keyword, jdText),
-        resumeCount: countOccurrences(g.keyword, resumeText),
-      })),
-    [gaps, jdText, resumeText],
+    () => gaps.map((g) => ({ ...g, jdCount: countOccurrences(g.keyword, jdText) })),
+    [gaps, jdText],
   );
 
   if (!gaps.length) return null;
@@ -121,7 +122,7 @@ export default function MatchReport({ gaps, jdText, resume }: Props) {
                       {groupMeta[status].icon}
                       <span>{r.keyword}</span>
                       <span className="border-s border-current ps-1.5 font-normal tabular-nums opacity-70">
-                        {t("report.counts", { jd: r.jdCount, resume: r.resumeCount })}
+                        {t("report.counts", { jd: r.jdCount })}
                       </span>
                     </button>
                   );

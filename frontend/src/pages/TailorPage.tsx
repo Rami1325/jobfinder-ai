@@ -499,7 +499,7 @@ export default function TailorPage() {
               plan={result.plan}
               credibility={result.credibility_flags ?? []}
             />
-            <MatchReport gaps={result.score_after.gaps} jdText={jdText} resume={effectiveResume} />
+            <MatchReport gaps={result.score_after.gaps} jdText={jdText} />
 
             <ChangeLog
               edits={edits}
