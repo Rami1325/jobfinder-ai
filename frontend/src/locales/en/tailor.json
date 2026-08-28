@@ -1,6 +1,4 @@
 {
-  "title": "Tailor your résumé",
-  "sub": "Rewrite for a specific job — checked against your real experience.",
   "breadcrumb": {
     "back": "Back to jobs",
     "thisJob": "this job",
@@ -293,7 +291,7 @@
     "unavailable": "Couldn't re-measure the page count."
   },
   "doc": {
-    "viewsLabel": "Document view",
+    "toolsLabel": "Document tools",
     "views": {
       "screen": "On screen",
       "file": "The real PDF",
@@ -348,6 +346,7 @@
     "local": "Changes are on this device until you save.",
     "undo": "Undo",
     "save": "Save résumé",
+    "saveShort": "Save",
     "saving": "Saving…",
     "saved": "Résumé saved",
     "saveErrorFallback": "Couldn't save your résumé. Your changes are still here — try again.",
@@ -403,6 +402,9 @@
     "apply": "Apply",
     "addTitle": "Add to your CV",
     "addBullet": "Add a line",
+    "addSkill": "Add skill",
+    "addSkillPlaceholder": "New skill",
+    "addSkillIn": "Add a skill to {{group}}",
     "add": {
       "experience": "Role",
       "project": "Project",

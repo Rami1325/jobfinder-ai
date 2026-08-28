@@ -105,6 +105,7 @@ from app.models import (
     CompanyBriefResult,
     CoverLetterRequest,
     CoverLetterResponse,
+    DeleteAccountResult,
     DeleteMyDataResult,
     FactsLedger,
     FeedbackIn,
@@ -147,6 +148,7 @@ from app.models import (
     MasterResumeIn,
     MasterResumeList,
     MasterResumeOut,
+    MeOut,
     PageCountRequest,
     PageCountResult,
     ResumeVersionList,
@@ -1502,17 +1504,37 @@ def send_feedback(
     )
 
 
-@router.delete("/profile/data", response_model=DeleteMyDataResult)
-def delete_my_data(
-    db: Session = Depends(get_db), user: User = Depends(current_user)
-) -> DeleteMyDataResult:
-    """Wipe everything the current user stored (PLAN 7.5) — résumés are PII
-    and testers must be able to leave cleanly. The user row itself stays so
-    the invite code keeps working."""
+def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
+    """Delete every row this user owns, and say how many per table.
+
+    Shared by BOTH destructive routes so the two can never drift: the day a
+    table is added, one edit here covers "Delete all my data" and "Close my
+    account" alike. This is the function CLAUDE.md's "anything holding user
+    content must be wiped by DELETE /profile/data" rule now points at — a new
+    table missed here leaves PII behind on two doors instead of one.
+
+    Does NOT commit: the account close needs the wipe and the deactivation to
+    land in one transaction, or a failure between them leaves a user with no
+    data and a code that still works.
+    """
     def _wipe(model) -> int:  # noqa: ANN001
         return db.execute(delete(model).where(model.user_id == user.id)).rowcount or 0
 
-    result = DeleteMyDataResult(
+    # The two user-content COLUMNS on the surviving `users` row. The rule this
+    # helper serves is about content, not about tables, and these two were the
+    # hole in it: `writing_prefs_json` holds up to 50 phrases quoted out of the
+    # user's OWN tailored bullets and `avoid_phrases()` feeds them straight
+    # back into the next TAILOR prompt, so a wipe that skipped them left
+    # résumé-derived text driving the model over a résumé that no longer
+    # exists — and the Jobs page went on prefilling the wiped user's job title
+    # and location from `search_prefs_json`. Cleared, not deleted: the row
+    # itself stays so the invite code keeps working, which is the promise the
+    # privacy copy makes verbatim. They are columns, not row counts, so
+    # `DeleteMyDataResult` is unchanged and both doors get this for free.
+    user.search_prefs_json = ""
+    user.writing_prefs_json = ""
+
+    return DeleteMyDataResult(
         resumes=_wipe(SavedResume),
         resume_versions=_wipe(SavedResumeVersion),
         applications=_wipe(Application),
@@ -1522,8 +1544,64 @@ def delete_my_data(
         feedback=_wipe(Feedback),
         kits=_wipe(TailorKit),
     )
+
+
+@router.get("/profile/me", response_model=MeOut)
+def get_me(user: User = Depends(current_user)) -> MeOut:
+    """Who this access code belongs to — the Settings page's Account section.
+
+    `current_user`, not `llm_user`: this route reads one already-loaded ORM row
+    and calls no model, so a cap here would charge a user's daily LLM budget
+    for opening a settings page. The rule cuts the other way too — see the
+    /tools/ats-scan cautionary tale in CLAUDE.md — so the thing that keeps this
+    honest is that nothing reachable from here can grow a model call: there is
+    no free-text input on this route to hand one.
+    """
+    return MeOut(name=user.name, email=user.email, is_admin=user.is_admin)
+
+
+@router.delete("/profile/data", response_model=DeleteMyDataResult)
+def delete_my_data(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> DeleteMyDataResult:
+    """Wipe everything the current user stored (PLAN 7.5) — résumés are PII
+    and testers must be able to leave cleanly. The user row itself stays so
+    the invite code keeps working."""
+    result = _wipe_user_rows(db, user)
     db.commit()
     return result
+
+
+@router.delete("/profile/account", response_model=DeleteAccountResult)
+def close_my_account(
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> DeleteAccountResult:
+    """The same wipe, and then the access code stops resolving (PLAN 23.5).
+
+    Two separate doors on purpose: "Delete all my data" is for a tester who
+    wants to keep using the app from clean, this one is for someone leaving.
+    Deactivating is what `resolve_user` filters on, so the code is dead the
+    moment this commits — every later request from that device 401s into the
+    AccessGate.
+
+    An ADMIN is refused, for the same reason `admin_update_user` refuses to
+    deactivate one: the admin code is the only way back into a deployed
+    instance, and there is no second admin to re-enable it. Worse locally —
+    with the gate OFF, `current_user` hands EVERY request the auto-created
+    admin, so a self-close would either do nothing (the fallback re-creates it)
+    or brick the dev instance. Pointing at Delete-all-my-data is the honest
+    answer: it is the half of this route an admin can actually have.
+    """
+    if user.is_admin:
+        raise HTTPException(
+            400,
+            "An admin account can't be closed — it's the only way back into "
+            "this instance. Use Delete all my data instead.",
+        )
+    result = _wipe_user_rows(db, user)
+    user.is_active = False
+    db.commit()  # one transaction: never wiped-but-still-open
+    return DeleteAccountResult(data=result, deactivated=True)
 
 
 def _user_out(u: User) -> UserOut:

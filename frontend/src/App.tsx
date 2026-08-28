@@ -28,6 +28,7 @@ const OutreachToolPage = lazy(() => import("./pages/tools/OutreachToolPage"));
 const ScreeningToolPage = lazy(() => import("./pages/tools/ScreeningToolPage"));
 const CompanyBriefToolPage = lazy(() => import("./pages/tools/CompanyBriefToolPage"));
 const ResumeHealthToolPage = lazy(() => import("./pages/tools/ResumeHealthToolPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 function RouteFallback() {
   return (
@@ -67,6 +68,12 @@ export default function App() {
             <Route path="/tools/company-brief" element={<CompanyBriefToolPage />} />
             <Route path="/tools/resume-health" element={<ResumeHealthToolPage />} />
             <Route path="/tracker" element={<TrackerPage />} />
+            {/* A real page INSIDE the layout group, not a redirect. The rule
+                only pushes redirects out (a <Navigate> under this route paints
+                the full-screen <Suspense> fallback, then an empty shell, then
+                the fallback again) — a page belongs here, and the account menu
+                links straight at it. */}
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
           {/* /home was the dashboard deleted in 22.9. It carries no query, hash
               or state, so a bare redirect loses nothing — and `replace` keeps

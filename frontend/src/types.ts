@@ -618,6 +618,24 @@ export interface FeedbackOut {
   created_at: string;
 }
 
+/** Who this device's access code belongs to (GET /profile/me).
+ * No `invite_code` by design — the backend omits it so the code the device
+ * already holds never lands in a screenshot of the settings page. `is_admin`
+ * is here for one reason: Close-my-account is refused for an admin, and the
+ * page disables that control rather than letting the user discover the 400. */
+export interface Me {
+  name: string;
+  email: string;
+  is_admin: boolean;
+}
+
+/** DELETE /profile/account — the same per-table wipe counts as
+ * `deleteMyData`, plus confirmation the code was switched off. */
+export interface DeleteAccountResult {
+  data: Record<string, number>;
+  deactivated: boolean;
+}
+
 /** ATS X-ray (21.7) — what a parser actually recovers from the rendered file. */
 export interface ATSXrayFact {
   kind: string;

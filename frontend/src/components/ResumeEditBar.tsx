@@ -33,6 +33,13 @@ interface Props {
  * Until those are fixed on the backend, a Save button is the honest interface.
  * (2) is guarded here, client-side, because it is the one that destroys the
  * other document rather than just this one.
+ *
+ * SHAPE: a FRAGMENT, not a bar. Every child is a flex item of the document
+ * toolbar's own wrapping row — the cluster rides at the end beside the verbs,
+ * and the panels that must not be missed are `w-full` siblings that break onto
+ * their own line of that same row. That is what keeps the save failure on
+ * screen: it is chrome over the document, not a toast, because "your work is
+ * not saved" must not disappear while the work is still not saved.
  */
 export default function ResumeEditBar({ resume, savedResume, masterLabel, unsaved, saving, error }: Props) {
   const { t } = useTranslation("tailor");
@@ -46,8 +53,7 @@ export default function ResumeEditBar({ resume, savedResume, masterLabel, unsave
     );
     setConfirmLang(null);
     if (ok) toast("success", t("edit.saved"));
-    // The failure is NOT a toast. "Your work is not saved" must not disappear
-    // while the work is still not saved — it stays in the bar, with Retry.
+    // The failure is NOT a toast — see the shape note above.
   }
 
   function save() {
@@ -59,55 +65,101 @@ export default function ResumeEditBar({ resume, savedResume, masterLabel, unsave
     void run();
   }
 
+  // Nothing to save and nothing broken: the slot teaches the one interaction
+  // the whole page is built on, and since the previous step it teaches strictly
+  // more than it says — contact details and skills are typed on directly too.
+  // `w-full` so it lands under the toolbar and immediately above the paper it
+  // is pointing at. `order-last` is what keeps that from costing a row: a
+  // full-width item breaks the flex line where it SITS, so without it the
+  // Tailor button that follows this fragment would be pushed onto a third row
+  // in the commonest state on the page. Order moves the paint, not the DOM, so
+  // the reading order for assistive tech is untouched.
   if (unsaved === 0 && !error) {
     return (
-      <p className="flex items-center gap-1.5 text-xs text-ink-faint">
-        <Pencil size={12} /> {t("edit.hint")}
+      <p className="order-last flex w-full items-center gap-1.5 text-xs text-ink-faint">
+        <Pencil size={12} aria-hidden /> {t("edit.hint")}
       </p>
     );
   }
 
+  const unsavedLabel = t("edit.unsaved", { count: unsaved });
+  // "Unsaved" is only half the truth — the other half is WHERE the work is
+  // until you save it. The device note is inline from `md`, and folded into
+  // the count's accessible name below that, so the fact never depends on a
+  // tooltip a touch screen cannot show.
+  const pending = `${unsavedLabel}. ${t("edit.local")}`;
+
   return (
-    <div className="rounded-xl border border-accent/40 bg-accent/5 px-3 py-2.5">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span className="text-sm font-semibold text-ink">{t("edit.unsaved", { count: unsaved })}</span>
-        <span className="text-xs text-ink-faint">{t("edit.local")}</span>
-        <span className="ms-auto flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="ghost" icon={<Undo2 size={14} />} disabled={unsaved === 0 || saving} onClick={undoBlockEdit}>
-            {t("edit.undo")}
-          </Button>
-          <Button size="sm" loading={saving} icon={<Save size={14} />} onClick={save}>
-            {saving ? t("edit.saving") : t("edit.save")}
-          </Button>
+    <>
+      {/* One flex item, so the three controls stay glued and wrap as a unit.
+          Width budget at 390px: 26px count + 38px Undo + 76px Save + gaps is
+          ~156px, which leaves the Tailor button beside it on a single tall row
+          instead of a second one. */}
+      <span className="inline-flex items-center gap-2">
+        {/* Below sm the sentence is what would cost that row, so the number
+            carries it and the sentence stays the tooltip and the accessible
+            name. Above sm there is room to just say it. */}
+        <span
+          title={pending}
+          className="inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-accent/40 bg-accent/10 px-1.5 text-xs font-semibold tabular-nums text-ink sm:hidden"
+        >
+          <span aria-hidden>{unsaved}</span>
+          <span className="sr-only">{pending}</span>
         </span>
-      </div>
+        <span title={pending} className="hidden text-xs font-semibold text-ink sm:inline">
+          {unsavedLabel}
+        </span>
+        <span className="hidden text-xs text-ink-faint md:inline">{t("edit.local")}</span>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<Undo2 size={14} />}
+          disabled={unsaved === 0 || saving}
+          onClick={undoBlockEdit}
+          aria-label={t("edit.undo")}
+          title={t("edit.undo")}
+        />
+        {/* "Save", not "Save résumé": the label sits inches from the CV and
+            next to its own unsaved count, and the long form is what pushes the
+            cluster onto its own row on a phone. The full wording stays as the
+            tooltip rather than as an aria-label, so the accessible name still
+            contains the visible one. */}
+        <Button size="sm" loading={saving} icon={<Save size={14} />} onClick={save} title={t("edit.save")}>
+          {saving ? t("edit.saving") : t("edit.saveShort")}
+        </Button>
+      </span>
 
-      {error && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-danger">
-          <AlertTriangle size={15} className="shrink-0" />
-          <span className="min-w-0">{error}</span>
-          <button type="button" onClick={save} className="font-medium underline underline-offset-2">
-            {t("edit.retry")}
-          </button>
+      {/* `order-last` for the same reason the hint carries it — see above. */}
+      {(error || confirmLang) && (
+        <div className="order-last w-full">
+          {error && (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-danger">
+              <AlertTriangle size={15} className="shrink-0" />
+              <span className="min-w-0">{error}</span>
+              <button type="button" onClick={save} className="font-medium underline underline-offset-2">
+                {t("edit.retry")}
+              </button>
+            </div>
+          )}
+
+          {confirmLang && (
+            <div className="mt-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2">
+              <p className="text-sm font-semibold text-ink">{t("edit.langWarnTitle")}</p>
+              <p className="mt-0.5 text-xs text-ink-muted">
+                {t("edit.langWarnBody", { lang: t(`langSwitch.name.${confirmLang}`) })}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setConfirmLang(null)}>
+                  {t("edit.cancel")}
+                </Button>
+                <Button size="sm" variant="danger" onClick={run}>
+                  {t("edit.langWarnConfirm")}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
-
-      {confirmLang && (
-        <div className="mt-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2">
-          <p className="text-sm font-semibold text-ink">{t("edit.langWarnTitle")}</p>
-          <p className="mt-0.5 text-xs text-ink-muted">
-            {t("edit.langWarnBody", { lang: t(`langSwitch.name.${confirmLang}`) })}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setConfirmLang(null)}>
-              {t("edit.cancel")}
-            </Button>
-            <Button size="sm" variant="danger" onClick={run}>
-              {t("edit.langWarnConfirm")}
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
+    </>
   );
 }

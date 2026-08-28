@@ -29,6 +29,19 @@ import type { Education, Experience, MilitaryService, Project, ResumeModel } fro
 export const dkey = (s: string): string => (s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 
 /**
+ * The contact bits that are each their OWN block on the paper.
+ *
+ * `name` is not here: it is the document's title line and already had
+ * `@contact.name`. These five printed as one fused "· · ·" string addressed by
+ * a single FIVE-field `@contact`, so `inlineField` sent them to the panel and
+ * phone and location were reachable no other way — the reported gap. One field
+ * each is all it takes to give each a caret, by derivation rather than by a new
+ * rule.
+ */
+export const CONTACT_FIELDS = ["email", "phone", "location", "linkedin", "website"] as const;
+export type ContactField = (typeof CONTACT_FIELDS)[number];
+
+/**
  * Every path shape the document emits; `*` stands for an index or a dkey.
  *
  * check-mirrors compares this against `ResumeView`'s own emit sites, because a
@@ -37,6 +50,11 @@ export const dkey = (s: string): string => (s ?? "").trim().replace(/\s+/g, " ")
  */
 export const BLOCK_PATTERNS = [
   "@contact.name",
+  // The five bits of the contact line, one block each — email, phone, location,
+  // linkedin, website (CONTACT_FIELDS). The STAR form is the one to write: the
+  // view emits them from a .map() over a template literal, and check-mirrors
+  // normalises every ${…} to a star before comparing.
+  "@contact.*",
   "@contact",
   "@headline",
   "@summary",
@@ -66,6 +84,18 @@ export type BlockKind =
   | "project"
   | "military"
   | "bullet";
+
+/**
+ * The four kinds `removeBlock`'s `RE_ENTRY` branch can delete.
+ *
+ * An entry has no single field to clear, so `removable` is false for all of
+ * them (see the flag's own note) — and the panel's Remove button was gated on
+ * that very flag, which meant NOTHING could reach the branch: a job, a project,
+ * a degree or a service could not be deleted from the document at all. This set
+ * is the second half of the gate.
+ */
+const ENTRY_KINDS = new Set<BlockKind>(["experience", "project", "education", "military"]);
+export const isEntryKind = (kind: BlockKind): boolean => ENTRY_KINDS.has(kind);
 
 /** Field labels resolve as `tailor:edit.fields.<key>`, both locales, pinned. */
 export const BLOCK_FIELD_KEYS = [
@@ -179,6 +209,12 @@ function splice1<T>(list: T[], i: number, next: T | null): T[] {
 
 const RE_BULLET = /^@(exp|proj|mil)\.(\d+)\.b\.(\d+)$/;
 const RE_ENTRY = /^@(exp|proj|edu|mil)\.(\d+)$/;
+// BUILT from CONTACT_FIELDS rather than spelled out beside it. The view mints
+// these paths off that array and this is what resolves them, so a hand-kept
+// twin drifting by one word ships a tappable block the reader returns null for
+// — and check-mirrors cannot see it, because it compares the star form.
+// `name` is excluded on purpose: it is its own block, on the title line.
+const RE_CONTACT = new RegExp(`^@contact\\.(${CONTACT_FIELDS.join("|")})$`);
 // `(.+)` is greedy on purpose: a dkey keeps dots, so "@skills.node.js" and
 // "@cert.aws certified solutions architect" are single whole keys.
 const RE_KEYED = /^@(skills|cert|lang)\.(.+)$/;
@@ -200,6 +236,20 @@ export function readBlock(resume: ResumeModel, path: string): BlockDraft | null 
 
   if (path === "@contact.name") {
     return { path, kind: "name", removable: false, fields: [f("name", c.name)] };
+  }
+  // One bit of the contact line. `kind` stays "contact" deliberately: a kind is
+  // only ever a SHEET TITLE, and a one-field block never opens the sheet — a
+  // new BlockKind here would be a locale key nothing can render, which
+  // check-mirrors' check 5 would then dutifully guard forever.
+  //
+  // `removable: false` matters. A contact field cleared to empty must be STORED
+  // empty, not deleted: it is not a list item, both renderers simply omit an
+  // empty contact bit, and `commitInline`'s empty-means-remove rule reads this
+  // flag to decide.
+  const contactBit = RE_CONTACT.exec(path);
+  if (contactBit) {
+    const key = contactBit[1] as ContactField;
+    return { path, kind: "contact", removable: false, fields: [f(key, c[key])] };
   }
   if (path === "@contact") {
     return {
@@ -375,6 +425,13 @@ export function writeBlock(resume: ResumeModel, path: string, values: Values): W
 
   if (path === "@contact.name") {
     return { ok: true, path, resume: { ...resume, contact: { ...resume.contact, name: clean(values.name) } } };
+  }
+  // The single-field twin. Emptying one writes "" rather than dropping the key,
+  // which is what `removable: false` on the read side promised.
+  const contactBit = RE_CONTACT.exec(path);
+  if (contactBit) {
+    const key = contactBit[1] as ContactField;
+    return { ok: true, path, resume: { ...resume, contact: { ...resume.contact, [key]: clean(values[key]) } } };
   }
   if (path === "@contact") {
     return {
@@ -574,6 +631,51 @@ export function insertBlock(resume: ResumeModel, kind: InsertKind): WriteResult 
       return { ok: true, path: `@lang.${dkey(name)}`, resume: { ...resume, languages: [...list, { language: name, level: "" }] } };
     }
   }
+}
+
+/**
+ * Add a NAMED skill, into the group the user was looking at when they typed it.
+ *
+ * The sibling of `insertBlock("skill")`, and the one the document itself uses:
+ * that one appends a placeholder and hands back a caret, this one takes the
+ * finished word straight off the chip row, which is what makes typing three
+ * skills in a row possible.
+ *
+ * THE TWO-FIELD WRITE (see `writeSkill`): `skills` is the flat surface every
+ * scorer, the ATS scan and the x-ray read, and `ResumeModel`'s validator only
+ * ever ADDS to it — so a skill written to `skills` alone is not wrong, it just
+ * lands in the trailing unlabelled block instead of the group the user was
+ * pointing at. Both, or the chip appears somewhere else on the page.
+ *
+ * A skill already present is NOT an edit: the same `resume` object comes back,
+ * so the caller can detect it by identity (`res.resume !== base`) and decline
+ * to burn an undo slot on nothing. It still returns `ok` with the existing
+ * path, so the caller can point at the chip that already says it.
+ */
+export function insertSkill(resume: ResumeModel, groupLabel: string, text: string): WriteResult {
+  const name = clean(text);
+  if (!name) return { ok: false, reason: "not-found" };
+  const key = dkey(name);
+  if (resume.skills.some((s) => dkey(s) === key)) return { ok: true, path: `@skills.${key}`, resume };
+
+  const label = clean(groupLabel);
+  // First match wins: `skillBlocksOf` renders one block per group in order, so
+  // two groups sharing a label are two blocks and the first is the one the
+  // user's chip row belongs to. An empty label is the trailing unlabelled
+  // block, which by definition claims nothing — flat list only.
+  const groups = resume.skill_groups ?? [];
+  const gi = label ? groups.findIndex((g) => (g.label || "").trim() === label) : -1;
+  const nextGroups =
+    gi < 0 ? groups : splice1(groups, gi, { ...groups[gi], items: [...groups[gi].items, name] });
+  return {
+    ok: true,
+    path: `@skills.${key}`,
+    resume: {
+      ...resume,
+      skills: [...resume.skills, name],
+      ...(resume.skill_groups ? { skill_groups: nextGroups } : {}),
+    },
+  };
 }
 
 /** Add a bullet to an existing entry, returning the new bullet's path. */

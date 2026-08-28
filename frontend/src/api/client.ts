@@ -1,6 +1,7 @@
 import axios from "axios";
 import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT } from "../lib/accessCode";
 import { cachedFetch, clearDataCache, invalidateData } from "../lib/dataCache";
+import { resetMasterCache } from "../hooks/useMasterResume";
 import type {
   AlertRunResult,
   AlertSettings,
@@ -32,6 +33,8 @@ import type {
   KitProcessResult,
   LinkedInResult,
   MasterResume,
+  Me,
+  DeleteAccountResult,
   OutreachResult,
   PageCountResult,
   RecruiterScreenResult,
@@ -542,12 +545,41 @@ export async function sendFeedback(page: string, text: string): Promise<Feedback
   return data;
 }
 
+/** Who this device's access code belongs to — the Settings Account section.
+ * Deliberately un-cached: it is one small row read once per page visit, and
+ * the alternative (a cache entry) would go stale against an admin rename with
+ * nothing to invalidate it. */
+export async function getMe(): Promise<Me> {
+  const { data } = await api.get<Me>("/profile/me");
+  return data;
+}
+
 /** Privacy wipe (PLAN 7.5): deletes everything the current user stored —
  * résumés, applications, history, alerts, usage, feedback, kits. The invite
  * code keeps working. Returns per-table deleted-row counts. */
 export async function deleteMyData(): Promise<Record<string, number>> {
   const { data } = await api.delete<Record<string, number>>("/profile/data");
   clearDataCache();
+  return data;
+}
+
+/** Close the account (PLAN 23.5): the same wipe, and then the access code
+ * stops resolving — every later request 401s into the AccessGate.
+ *
+ * Clears BOTH caches, and that is not belt-and-braces: `clearDataCache` only
+ * empties the `dataCache` Map, while `useMasterResume` keeps the master in a
+ * plain module-level binding that nothing else can reach — which is exactly
+ * why `resetMasterCache` exists. Skipping it leaves nine pages still painting
+ * the résumé of an account that no longer exists.
+ *
+ * (This import makes api/client ↔ hooks/useMasterResume a cycle. It is safe
+ * because both sides only ever call across it at runtime, never at module
+ * evaluation, and `resetMasterCache` is a hoisted function declaration.)
+ */
+export async function deleteAccount(): Promise<DeleteAccountResult> {
+  const { data } = await api.delete<DeleteAccountResult>("/profile/account");
+  clearDataCache();
+  resetMasterCache();
   return data;
 }
 

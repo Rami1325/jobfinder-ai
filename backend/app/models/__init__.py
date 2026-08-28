@@ -583,6 +583,35 @@ class DeleteMyDataResult(BaseModel):
     kits: int = 0
 
 
+class MeOut(BaseModel):
+    """Who the caller's access code resolves to (PLAN 23.5, Settings).
+
+    Deliberately NOT `UserOut`: that one carries `invite_code`, and echoing the
+    code back into a page body would put it in every screenshot and error
+    report. The device already has it in localStorage; nothing on the account
+    surface needs it re-sent.
+    """
+
+    name: str = ""
+    email: str = ""
+    # The Danger-zone "Close my account" is refused for an admin (see routes),
+    # so the page needs this to disable the control instead of letting the user
+    # discover the 400.
+    is_admin: bool = False
+
+
+class DeleteAccountResult(BaseModel):
+    """DELETE /profile/account = the same wipe, plus switching the code off.
+
+    The wipe counts are nested rather than flattened so the two routes can
+    never drift: `data` IS a `DeleteMyDataResult`, built by the one helper both
+    routes call.
+    """
+
+    data: DeleteMyDataResult
+    deactivated: bool = False
+
+
 # --------------------------------------------------------------------------- #
 # Application tracker
 # --------------------------------------------------------------------------- #

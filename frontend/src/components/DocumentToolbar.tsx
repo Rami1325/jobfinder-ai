@@ -1,0 +1,71 @@
+import type { ReactNode } from "react";
+
+interface Props {
+  /** The document's own name — this page's <h1>. */
+  title: string;
+  /** Measured, live readouts that sit beside the title. */
+  badges?: ReactNode;
+  /** Verbs and the save cluster, pushed to the far end. */
+  actions?: ReactNode;
+  /** Anything either side still has to say, on its own line. */
+  notes?: ReactNode;
+}
+
+/**
+ * One row of chrome directly over the document: identity and live metrics at
+ * the start, verbs and save at the end, and whatever will not fit on a line
+ * underneath.
+ *
+ * DUMB ON PURPOSE. Every prop is a slot, so the decisions about *which* badge
+ * and *which* verb belong to a document stay in `TailorPage` and only the
+ * geometry lives here. That is what lets the same bar carry a master résumé,
+ * a tailored draft and an empty page without a mode flag.
+ *
+ * The title IS the heading. `/app` used to open with "Tailor your résumé" over
+ * a one-line subtitle — two rows of chrome that between them said less than the
+ * document's own name does, on a page whose whole subject is the document under
+ * them. Naming the CV here let both strings go.
+ *
+ * ONE flex row, wrapping. `notes` is a `w-full` child of that row rather than a
+ * second container underneath, which is what lets a save failure or a language
+ * warning break onto its own line *and* stay inside the same sticky, blurred
+ * bar — a failure that scrolls away is the one that gets missed.
+ *
+ * Sticky under the app header (`h-14` / 3.5rem) and bled out to the main
+ * column's own padding with the negative margins, so content scrolling beneath
+ * it passes under the blur at the edges too instead of peeking around it.
+ */
+export default function DocumentToolbar({ title, badges, actions, notes }: Props) {
+  return (
+    <div className="sticky top-14 z-20 -mx-4 border-b border-line/70 bg-bg/85 px-4 py-2.5 backdrop-blur-xl lg:-mx-8 lg:px-8">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {/* `min-w-0` so a long name ellipsizes instead of shouldering the
+            badges onto a line of their own.
+
+            `dir="auto"` — the ONE place in this app it is right, and the paper
+            is the reason to spell that out. `ResumeView` bans it because the
+            document's direction has to match the file the renderers produce,
+            computed from the résumé's prose with the name deliberately
+            excluded. This is chrome, and its whole content IS the name. A
+            Hebrew name in an English UI is RTL text in an LTR block, so
+            `truncate` clips at the box's right edge — the LOGICAL START of the
+            name — and shows the tail with an ellipsis on the wrong side. */}
+        <h1 dir="auto" className="min-w-0 max-w-full truncate text-sm font-semibold text-ink">
+          {title}
+        </h1>
+        {badges}
+        {actions && (
+          <>
+            {/* An empty auto-margin item, NOT a wrapper around `actions`: the
+                save cluster ships a `w-full` sibling for its error and
+                language-warning panels, and a wrapper would make `w-full` mean
+                the wrapper's own shrink-to-fit width instead of the row's. */}
+            <span aria-hidden className="ms-auto" />
+            {actions}
+          </>
+        )}
+        {notes && <div className="w-full">{notes}</div>}
+      </div>
+    </div>
+  );
+}

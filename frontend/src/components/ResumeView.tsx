@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ResumeModel } from "../types";
 import { Badge } from "./ui";
 import { cn } from "../lib/cn";
-import { dkey, inlineField, INSERT_KINDS, type InsertKind } from "../lib/resumeBlocks";
+import { CONTACT_FIELDS, dkey, inlineField, INSERT_KINDS, type InsertKind } from "../lib/resumeBlocks";
 import { resumeLanguage } from "../lib/lang";
 
 /**
@@ -62,6 +62,10 @@ interface Props {
    * trimmed and newline-free, and is guaranteed to DIFFER from what was
    * rendered — an unchanged edit never reaches here. */
   onInlineCommit?: (path: string, text: string) => void;
+  /** Add a skill into a named group ("" = the trailing unlabelled block). The
+   * text is already trimmed and non-empty. Absent = no add affordance
+   * (read-only surfaces). */
+  onAddSkill?: (groupLabel: string, text: string) => void;
   /** "+ Add to your CV" at the foot of the paper. Absent = no add control. */
   onAdd?: (kind: InsertKind) => void;
   /** Append a bullet to this entry. Rendered at the end of its own list, which
@@ -258,6 +262,98 @@ function AddToResume({ onAdd }: { onAdd: (kind: InsertKind) => void }) {
   );
 }
 
+/**
+ * The last chip in a skills row: a dashed outline that becomes a field.
+ *
+ * A REAL `<input>`, never a contentEditable, and never carrying `data-block`.
+ * This file's five delegated root handlers all key off `el.isContentEditable`
+ * or `closest("[data-block]")`, so an input outside every block is invisible to
+ * all of them — including `onKeyDown`, whose `preventDefault()` on `" "` would
+ * otherwise eat the SPACE BAR in a two-word skill (it runs only AFTER the path
+ * lookup, which comes back empty here). No `data-block` is also the honest
+ * statement: this chip addresses nothing on the résumé yet.
+ *
+ * Enter commits, CLEARS and KEEPS focus. Adding one skill was never the ask —
+ * "I want to add another skill" is a run of them, and re-opening the chip
+ * between each is the friction that made the panel unusable for this.
+ */
+function AddSkillChip({
+  label,
+  dir,
+  onAdd,
+}: {
+  label: string;
+  dir: "ltr" | "rtl";
+  onAdd: (text: string) => void;
+}) {
+  const { t } = useTranslation("tailor");
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  // Escape must not be able to commit through the blur that closing MIGHT
+  // fire: browsers disagree about whether removing a focused node dispatches
+  // focusout, and the losing outcome writes a discarded word onto the CV.
+  const discarded = useRef(false);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          discarded.current = false;
+          setOpen(true);
+        }}
+        aria-label={t("edit.addSkillIn", { group: label })}
+        className="inline-flex items-center gap-1 rounded-full border border-dashed border-accent/45 px-2.5 py-0.5 text-xs font-medium text-accent-soft/90 transition-colors hover:border-accent/70 hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+      >
+        <Plus size={12} /> {t("edit.addSkill")}
+      </button>
+    );
+  }
+
+  const commit = () => {
+    const value = text.trim();
+    if (value) onAdd(value);
+    setText("");
+  };
+
+  return (
+    <input
+      autoFocus
+      value={text}
+      // The PAPER's direction, like every editable node on the sheet — never
+      // `dir="auto"`, which would flip the field under the caret the moment a
+      // Hebrew CV's next skill happens to be spelled "React".
+      dir={dir}
+      // iOS would rewrite "gRPC" to "GRPC" on the way in, silently, in the one
+      // place a wrong string is a wrong claim.
+      spellCheck={false}
+      autoCapitalize="off"
+      aria-label={t("edit.addSkillIn", { group: label })}
+      placeholder={t("edit.addSkillPlaceholder")}
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => {
+        // isComposing: Gboard and dictation fire keydown mid-word, so an
+        // unguarded Enter commits half a word.
+        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          commit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          discarded.current = true;
+          setText("");
+          setOpen(false);
+        }
+      }}
+      onBlur={() => {
+        if (!discarded.current) commit();
+        discarded.current = false;
+        setOpen(false);
+      }}
+      className="w-28 max-w-full rounded-full border border-accent/60 bg-transparent px-2.5 py-0.5 text-xs font-medium text-ink outline-none placeholder:text-ink-faint focus:border-accent"
+    />
+  );
+}
+
 export default function ResumeView({
   resume,
   surface = "panel",
@@ -267,6 +363,7 @@ export default function ResumeView({
   onSelectBlock,
   onEditBlock,
   onInlineCommit,
+  onAddSkill,
   onAdd,
   onAddBullet,
 }: Props) {
@@ -492,11 +589,16 @@ export default function ResumeView({
         </section>
       ) : null,
 
-    skills: skillBlocks.length > 0 ? (
+    // `|| onAddSkill`: a section that renders only when it has content cannot
+    // be the place you CREATE that content — the same trap the header blocks
+    // have, and the same fix. Without it a from-scratch résumé has no reachable
+    // way to add its first skill, and the empty synthetic block below is what
+    // gives the chip somewhere to live.
+    skills: skillBlocks.length > 0 || onAddSkill ? (
       <section key="skills">
         <SectionHead>{t("sections.skills")}</SectionHead>
         <div className="space-y-2">
-          {skillBlocks.map(([label, items], i) => (
+          {(skillBlocks.length ? skillBlocks : ([["", []]] as [string, string[]][])).map(([label, items], i) => (
             <div
               key={label || `unlabelled-${i}`}
               // The trailing unlabelled block (the skills no group claimed)
@@ -519,6 +621,18 @@ export default function ResumeView({
                     {s}
                   </Badge>
                 ))}
+                {/* At the END of the row it belongs to, so the group you type
+                    into is the group you were reading. The unlabelled block has
+                    no name of its own, so it borrows the section heading —
+                    "Add a skill to " with nothing after it is worse than
+                    slightly redundant. */}
+                {onAddSkill && (
+                  <AddSkillChip
+                    label={label || t("sections.skills")}
+                    dir={paperDir}
+                    onAdd={(text) => onAddSkill(label, text)}
+                  />
+                )}
               </div>
             </div>
           ))}
@@ -736,13 +850,49 @@ export default function ResumeView({
           {resume.headline}
         </div>
       )}
-      {(contactBits.length > 0 || editable) && (
-        <div
-          {...blkProps("@contact", "block", "mt-0.5 text-xs text-ink-muted")}
-          data-ph={editable ? t("edit.blocks.contact") : undefined}
-        >
-          {contactBits.join(" · ")}
+      {/* FIVE blocks while editing, one fused line when not.
+          The fused line was a single five-field block, so `inlineField` sent it
+          to the panel and phone and location were reachable no other way — the
+          reported gap. All five render even when empty, each showing its CSS
+          placeholder, which is the only thing that makes an absent phone number
+          discoverable at all.
+          The "·" sits OUTSIDE every [data-block], so tapping it does nothing,
+          and it TRAILS its own bit rather than leading the next one. That is the
+          opposite of MetaLine's rule, and deliberately so: MetaLine cannot wrap
+          mid-line, this row is `flex-wrap` and at 390px it breaks into four.
+          With a leading dot every wrapped line opened with "· ", which reads as
+          a bullet list rather than a separator — seen on the real document at a
+          390px viewport. Trailing it means a line can only ever END with the
+          dot, and `i < length - 1` keeps it off the last bit.
+          `min-w-0 break-words` is what keeps a long URL wrapping inside
+          the page instead of pushing the sheet wider.
+          `blkProps` puts the explicit `paperDir` on each editable node, which is
+          what keeps this split out of the bidi-isolate trap: the fragments never
+          resolve their own direction. */}
+      {editable ? (
+        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1 gap-y-0.5 text-xs text-ink-muted">
+          {CONTACT_FIELDS.map((k, i) => (
+            <span key={k} className="inline-flex min-w-0 items-baseline gap-1">
+              <span
+                {...blkProps(`@contact.${k}`, "block", "min-w-0 break-words")}
+                data-ph={t(`edit.fields.${k}`)}
+              >
+                {c[k]}
+              </span>
+              {i < CONTACT_FIELDS.length - 1 && (
+                <span aria-hidden="true" className="text-ink-faint">
+                  ·
+                </span>
+              )}
+            </span>
+          ))}
         </div>
+      ) : (
+        contactBits.length > 0 && (
+          <div {...blkProps("@contact", "block", "mt-0.5 text-xs text-ink-muted")}>
+            {contactBits.join(" · ")}
+          </div>
+        )
       )}
 
       {sectionOrder(resume).map((key) => sections[key])}

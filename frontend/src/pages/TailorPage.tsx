@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
-import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft, ScanEye } from "lucide-react";
+import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft, ScanEye, Target } from "lucide-react";
 import {
   downloadResume,
   resumeFilename,
@@ -13,8 +13,9 @@ import {
   saveApplication,
   updateApplication,
 } from "../api/client";
-import TemplatePicker, { isPdfOnlyTemplate } from "../components/TemplatePicker";
+import { isPdfOnlyTemplate } from "../components/TemplatePicker";
 import PageBadge from "../components/PageBadge";
+import DocumentToolbar from "../components/DocumentToolbar";
 import DraftRestoreBar from "../components/DraftRestoreBar";
 import ChangeLog from "../components/ChangeLog";
 import DocumentPanel, { type DocView } from "../components/DocumentPanel";
@@ -33,6 +34,7 @@ import {
   inlineField,
   insertBlock,
   insertBullet,
+  insertSkill,
   readBlock,
   removeBlock,
   writeBlock,
@@ -41,6 +43,7 @@ import {
 import { resumeLanguage } from "../lib/lang";
 import { clearDraft, draftOver, offerDraft, readDraft, type ResumeDraft } from "../lib/draft";
 import { classifyEdit } from "../lib/editGroups";
+import { cn } from "../lib/cn";
 import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
 import {
   applyBlockEdit,
@@ -208,6 +211,35 @@ export default function TailorPage() {
     }
   }
 
+  /** A finished skill, typed straight onto the chip row of the group the user
+   * was reading — no placeholder chip to rename, and the field stays open so
+   * the next one can follow. `insertSkill` writes BOTH `skills` and the group,
+   * for the reason `writeSkill` documents.
+   *
+   * A skill you already have is not an edit: `insertSkill` hands back the SAME
+   * résumé object, so the identity check keeps it off the undo stack. It is
+   * still worth spotlighting — the honest answer to "add Python" on a CV that
+   * already says Python is to show them where it already is.
+   *
+   * SHOWING is the load-bearing word, and `markSpot` alone does not do it: the
+   * chip clears the field either way, so a duplicate looked exactly like a
+   * successful add while the bloom fired on a chip that can be anywhere on the
+   * page — most likely in a different group, since the whole reason to retype
+   * a skill is not having spotted it. Scrolled, so the promise in
+   * `insertSkill`'s own doc comment is kept. Only on the no-op branch: an add
+   * that really happened lands on the row the caret is already sitting in, and
+   * scrolling the paper under a user mid-run of typing is motion they did not
+   * ask for. */
+  function addSkill(group: string, text: string) {
+    const base = getTailorState().resume;
+    if (!base) return;
+    const res = insertSkill(base, group, text);
+    if (!res.ok) return;
+    if (res.resume !== base) applyBlockEdit(res.resume);
+    else scrollToBlock(res.path);
+    markSpot(res.path);
+  }
+
   /** Close the panel, and take an ADDED entry with it if it is still blank.
    *
    * The single-field kinds clean themselves up through the empty-means-remove
@@ -301,6 +333,10 @@ export default function TailorPage() {
   // What the page shows: the tailored résumé once there is one, the master
   // before that. This one expression is the whole of "the page always has a CV".
   const shown = effectiveResume ?? resume;
+  // The document names its own page. The fallback is safe HERE and nowhere on
+  // the paper: a heading is not `contentEditable`, so unlike the sheet's
+  // placeholder it can never be committed into `contact.name` by a tap.
+  const docTitle = shown?.contact?.name?.trim() || t("sections.fallbackName");
 
   // The live, deterministic half of the match — recomputed from the document as
   // it stands, on every accept and decline. The other half cannot move without
@@ -359,6 +395,20 @@ export default function TailorPage() {
       ? ("auto" as const)
       : ("smooth" as const);
 
+  /** Bring one block into view. ONE implementation, shared by the review-row
+   * jump and by "you already have that skill", so the two can never disagree
+   * about where a pointed-at block lands. The rAF is for callers that have just
+   * changed what is rendered — the view switch below, or an accepted edit. */
+  function scrollToBlock(path: string) {
+    requestAnimationFrame(() => {
+      docRef.current
+        ?.querySelector<HTMLElement>(`[data-block="${CSS.escape(path)}"]`)
+        // `center`, not `start`: styles.css sets a global scroll-padding-top for
+        // the marketing header, and a small target reads better centred anyway.
+        ?.scrollIntoView({ block: "center", behavior: smooth() });
+    });
+  }
+
   /** Review row → document. */
   function showInDoc(id: string) {
     const path = editBlock[id];
@@ -367,13 +417,7 @@ export default function TailorPage() {
     // display:none node is a silent no-op — so select it before scrolling.
     setDocView("screen");
     markSpot(path);
-    requestAnimationFrame(() => {
-      docRef.current
-        ?.querySelector<HTMLElement>(`[data-block="${CSS.escape(path)}"]`)
-        // `center`, not `start`: styles.css sets a global scroll-padding-top for
-        // the marketing header, and a small target reads better centred anyway.
-        ?.scrollIntoView({ block: "center", behavior: smooth() });
-    });
+    scrollToBlock(path);
   }
 
   /** Document block → review row. */
@@ -488,34 +532,33 @@ export default function TailorPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        {(jobTitle || company) && (
-          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-            <Link
-              to="/jobs"
-              className="inline-flex items-center gap-1 text-accent-soft hover:underline"
-            >
-              <ArrowLeft size={14} className="rtl:-scale-x-100" /> {t("breadcrumb.back")}
-            </Link>
-            <span className="text-ink-faint">·</span>
-            <span className="min-w-0 truncate text-ink-muted">
-              <Trans
-                t={t}
-                i18nKey={company ? "breadcrumb.tailoringForAt" : "breadcrumb.tailoringFor"}
-                values={{ title: jobTitle || t("breadcrumb.thisJob"), company }}
-                components={[
-                  <span key="0" />,
-                  <span key="1" className="font-medium text-ink" />,
-                  <span key="2" />,
-                  <span key="3" className="font-medium text-ink" />,
-                ]}
-              />
-            </span>
-          </div>
-        )}
-        <h1 className="text-2xl font-bold text-ink">{t("title")}</h1>
-        <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("sub")}</p>
-      </div>
+      {/* No page heading and no subtitle any more: the document's own name is
+          the <h1>, up in DocumentToolbar. Two lines of chrome that said less
+          than the CV's name does were the cheapest thing on this page to cut. */}
+      {(jobTitle || company) && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          <Link
+            to="/jobs"
+            className="inline-flex items-center gap-1 text-accent-soft hover:underline"
+          >
+            <ArrowLeft size={14} className="rtl:-scale-x-100" /> {t("breadcrumb.back")}
+          </Link>
+          <span className="text-ink-faint">·</span>
+          <span className="min-w-0 truncate text-ink-muted">
+            <Trans
+              t={t}
+              i18nKey={company ? "breadcrumb.tailoringForAt" : "breadcrumb.tailoringFor"}
+              values={{ title: jobTitle || t("breadcrumb.thisJob"), company }}
+              components={[
+                <span key="0" />,
+                <span key="1" className="font-medium text-ink" />,
+                <span key="2" />,
+                <span key="3" className="font-medium text-ink" />,
+              ]}
+            />
+          </span>
+        </div>
+      )}
 
       {jobUrl && (
         <Card className="border-accent/40">
@@ -560,57 +603,99 @@ export default function TailorPage() {
         <DraftRestoreBar savedAt={draft.savedAt} onKeep={keepDraft} onDiscard={discardDraft} />
       )}
 
-      {/* One row of actions over the document. Tailoring is a thing you DO to
-          the CV on screen, not a stage you pass through. */}
-      <Card className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {resume && masterLabel && (
-          <span className="inline-flex items-center gap-1 text-xs text-mint">
-            <BadgeCheck size={13} /> {masterLabel}
-          </span>
-        )}
-        {/* The one number on this toolbar, and the only one that can be here
-            honestly: it is MEASURED, deterministic, uncapped and free. It also
-            answers the question at the moment it can still be acted on — the
-            count previously appeared only inside the review panel, so you
-            learned your CV was three pages after paying to tailor it.
-            `!result` because ChangeLog mounts the same badge while a result is
-            up, and two mounts would double every server render. */}
-        {!result && <PageBadge resume={shown} template={template} />}
-        {loading && <span className="text-sm text-ink-muted">{t("run.keepsRunning")}</span>}
-        {error && <span className="text-sm text-danger">{error}</span>}
-        {edits.length > 0 && (
-          <button
-            type="button"
-            onClick={() =>
-              document.getElementById("trust-panel")?.scrollIntoView({ behavior: smooth(), block: "start" })
-            }
-            className="text-xs font-medium text-accent-soft hover:underline"
-          >
-            {t("toolbar.review", { count: edits.length })}
-          </button>
-        )}
-        <Button
-          className="ms-auto"
-          loading={loading}
-          icon={<Wand2 size={17} />}
-          disabled={!canRun}
-          title={!resume ? t("run.uploadFirst") : undefined}
-          onClick={() => setTailorState({ overlayOpen: true })}
-        >
-          {jd?.job_title ? t("overlay.openFor", { title: jd.job_title }) : t("overlay.open")}
-        </Button>
-      </Card>
-
-      {editable && shown && (
-        <ResumeEditBar
-          resume={shown}
-          savedResume={savedResume}
-          masterLabel={masterLabel}
-          unsaved={editUndo.length}
-          saving={editSaving}
-          error={editError}
-        />
-      )}
+      {/* One row of chrome over the document: who this is, what has been
+          measured about it, and what you can do to it. Tailoring is a thing you
+          DO to the CV on screen, not a stage you pass through. */}
+      <DocumentToolbar
+        title={docTitle}
+        badges={
+          <>
+            {resume && masterLabel && (
+              <span className="inline-flex items-center gap-1 text-xs text-mint">
+                <BadgeCheck size={13} aria-hidden /> {masterLabel}
+              </span>
+            )}
+            {/* MEASURED, deterministic, uncapped and free — which is the whole
+                reason it can sit on a toolbar at all. It also answers the
+                question at the moment it can still be acted on: the count used
+                to appear only inside the review panel, so you learned your CV
+                was three pages after paying to tailor it. `!result` because
+                ChangeLog mounts the same badge while a result is up, and two
+                mounts would double every server render. */}
+            {!result && <PageBadge resume={shown} template={template} />}
+            {/* The other live, deterministic number, in ScoreCard's own words
+                rather than a second phrasing — the toolbar and the score card
+                must not be able to describe one measurement two ways, which is
+                exactly what PageBadge was extracted to prevent. A COUNT, never
+                a band and never `overall`: half of that blend is stale by
+                construction and it is off this surface on purpose. */}
+            {coverage.data && (
+              <span
+                title={t("fit.coverage")}
+                className={cn(
+                  "inline-flex items-center gap-1 text-xs tabular-nums text-ink-muted transition-opacity",
+                  coverage.stale && "opacity-50",
+                )}
+              >
+                <Target size={12} aria-hidden />
+                {t("fit.coverageSub", {
+                  covered: coverage.data.covered,
+                  total: coverage.data.total,
+                  partial: coverage.data.partial,
+                })}
+              </span>
+            )}
+          </>
+        }
+        actions={
+          <>
+            {editable && shown && (
+              <ResumeEditBar
+                resume={shown}
+                savedResume={savedResume}
+                masterLabel={masterLabel}
+                unsaved={editUndo.length}
+                saving={editSaving}
+                error={editError}
+              />
+            )}
+            <Button
+              loading={loading}
+              icon={<Wand2 size={17} />}
+              disabled={!canRun}
+              title={!resume ? t("run.uploadFirst") : undefined}
+              onClick={() => setTailorState({ overlayOpen: true })}
+            >
+              {/* The job title earns its place on a wide screen and costs a
+                  whole extra row on a 390px one, where the target card above
+                  already names the job. */}
+              <span className="sm:hidden">{t("overlay.open")}</span>
+              <span className="hidden sm:inline">
+                {jd?.job_title ? t("overlay.openFor", { title: jd.job_title }) : t("overlay.open")}
+              </span>
+            </Button>
+          </>
+        }
+        notes={
+          loading || error || edits.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {loading && <span className="text-xs text-ink-muted">{t("run.keepsRunning")}</span>}
+              {error && <span className="text-sm text-danger">{error}</span>}
+              {edits.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    document.getElementById("trust-panel")?.scrollIntoView({ behavior: smooth(), block: "start" })
+                  }
+                  className="text-xs font-medium text-accent-soft hover:underline"
+                >
+                  {t("toolbar.review", { count: edits.length })}
+                </button>
+              )}
+            </div>
+          ) : undefined
+        }
+      />
 
       {/* The document, or — with no résumé yet — the one thing there is to do. */}
       {shown ? (
@@ -620,6 +705,10 @@ export default function TailorPage() {
           template={template}
           view={docView}
           onView={setDocView}
+          // The rail owns the picker now, so the chosen template governs the
+          // on-screen preview, the real PDF, the x-ray AND the download at all
+          // times — not only once a tailor result exists.
+          onTemplate={setTemplate}
           company={jd?.company ?? company}
           marks={marks}
           activeBlock={spot?.path ?? null}
@@ -627,6 +716,7 @@ export default function TailorPage() {
           onSelectBlock={selectBlock}
           onEditBlock={editable ? setEditPath : undefined}
           onInlineCommit={editable ? commitInline : undefined}
+          onAddSkill={editable ? addSkill : undefined}
           onAdd={editable ? addToResume : undefined}
           onAddBullet={editable ? addBullet : undefined}
         />
@@ -704,16 +794,12 @@ export default function TailorPage() {
 
             <Card>
               <CardTitle>{t("download.title")}</CardTitle>
-              {/* Template picker (PLAN 6): every option is ATS-safe by
-                  construction — no tables, text boxes or images in any of them.
-                  The two-column designs are PDF-only; TemplatePicker badges
-                  them and the note under the buttons says what the .docx does. */}
-              <TemplatePicker
-                className="mt-2"
-                value={template}
-                onChange={setTemplate}
-                label={t("download.templateLabel")}
-              />
+              {/* The picker moved to the document's own tool rail (PLAN 6:
+                  every option is ATS-safe by construction — no tables, text
+                  boxes or images in any of them). It was locked in here, which
+                  meant the design could only be chosen after a tailor had been
+                  paid for and never governed the master document at all. The
+                  note under the buttons still says what the .docx does. */}
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <Button
                   icon={<Download size={16} />}

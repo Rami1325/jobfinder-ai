@@ -3276,6 +3276,91 @@ with TestClient(_fastapi_app) as _tc:
         and len(_tc.get("/applications", headers=_ADMIN_H).json()) >= 3,
     )
 
+    # /profile/me + close-my-account (PLAN 23.5 — the Settings account surface).
+    # Minted FRESH, not reusing the friend: the revoke check a few lines below
+    # deactivates that friend, so closing them here would leave that check
+    # passing for the wrong reason — the 21.7 failure mode.
+    _quit = _tc.post(
+        "/admin/users", json={"name": "Yael", "email": "yael@example.com"}, headers=_ADMIN_H
+    ).json()
+    _QUIT_H = {"X-App-Key": _quit["invite_code"]}
+    _me = _tc.get("/profile/me", headers=_QUIT_H)
+    check(
+        "/profile/me returns the caller, not the admin the gate falls back to",
+        _me.status_code == 200
+        and _me.json() == {"name": "Yael", "email": "yael@example.com", "is_admin": False},
+        _me.text[:200],
+    )
+    check(
+        "/profile/me flags an admin, so Settings can disable Close-my-account",
+        _tc.get("/profile/me", headers=_ADMIN_H).json().get("is_admin") is True,
+    )
+    check(
+        # MeOut is not UserOut for this reason: the code would land in every
+        # screenshot and error report of the settings page.
+        "/profile/me never echoes the invite code back into a page body",
+        "invite_code" not in _me.json(),
+        str(_me.json()),
+    )
+    _close_admin = _tc.request("DELETE", "/profile/account", headers=_ADMIN_H)
+    check(
+        "admin can't close their own account, and is told which door to use",
+        _close_admin.status_code == 400 and "Delete all my data" in _close_admin.text,
+        _close_admin.text[:200],
+    )
+    _tc.put("/profile/resume", json={"resume": _resume_json, "label": "Yael CV"}, headers=_QUIT_H)
+    _tc.post("/applications", json={"job_title": "SRE", "company": "QuitCo"}, headers=_QUIT_H)
+    _close = _tc.request("DELETE", "/profile/account", headers=_QUIT_H)
+    check(
+        "closing an account wipes the same rows AND reports the deactivation",
+        _close.status_code == 200
+        and _close.json()["deactivated"] is True
+        and _close.json()["data"]["resumes"] == 1
+        and _close.json()["data"]["applications"] == 1,
+        _close.text[:250],
+    )
+    check(
+        "a closed account's code stops opening the gate",
+        _tc.get("/applications", headers=_QUIT_H).status_code == 401,
+    )
+    check(
+        # The half that keeps the two doors genuinely different — and it is what
+        # the privacy copy promises verbatim ("Your access code keeps working").
+        "delete-my-data still leaves the code working",
+        _tc.request("DELETE", "/profile/data", headers=_FRIEND_H).status_code == 200
+        and _tc.get("/applications", headers=_FRIEND_H).status_code == 200,
+    )
+    # The user-content COLUMNS on the row the wipe deliberately keeps. Every
+    # other check above counts TABLES, and that is exactly how these two hid:
+    # `writing_prefs_json` is quoted out of the user's own tailored bullets and
+    # goes straight back into the next TAILOR prompt, `search_prefs_json`
+    # prefills the Jobs panel with their job title and location. Set FIRST and
+    # asserted set, then wiped: an "is empty" check alone passes on a user who
+    # never saved either, which is the 21.7 failure mode — a guard green
+    # because it never fired.
+    _tc.put(
+        "/jobs/search-prefs",
+        json={"context": {"job_title": "SRE", "location": "Tel Aviv"}},
+        headers=_FRIEND_H,
+    )
+    _tc.post(
+        "/profile/writing-prefs",
+        json={"rejected": ["spearheaded a paradigm shift"]},
+        headers=_FRIEND_H,
+    )
+    _prefs_armed = (
+        _tc.get("/jobs/search-prefs", headers=_FRIEND_H).json().get("context") is not None
+        and _tc.get("/profile/writing-prefs", headers=_FRIEND_H).json()["avoid"] != []
+    )
+    _tc.request("DELETE", "/profile/data", headers=_FRIEND_H)
+    check(
+        "the wipe clears the prefs columns on the surviving user row",
+        _prefs_armed
+        and _tc.get("/jobs/search-prefs", headers=_FRIEND_H).json().get("context") is None
+        and _tc.get("/profile/writing-prefs", headers=_FRIEND_H).json()["avoid"] == [],
+        f"armed={_prefs_armed}",
+    )
+
     # Revoke (deactivate): the code stops working; admins can't be deactivated.
     check(
         "admin account can't be deactivated",

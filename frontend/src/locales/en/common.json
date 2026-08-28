@@ -12,8 +12,12 @@
     "searching": "Searching…",
     "kitsAwaiting_one": "1 application kit awaiting your review",
     "kitsAwaiting_other": "{{count}} application kits awaiting your review",
-    "openMenu": "Open menu",
-    "closeMenu": "Close menu"
+    "menu": "Menu",
+    "account": "Account",
+    "signedInAs": "Signed in as {{name}}",
+    "settings": "Settings",
+    "closeAccount": "Close my account",
+    "signOut": "Sign out"
   },
   "header": {
     "how": "How it works",

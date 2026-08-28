@@ -1,0 +1,35 @@
+{
+  "title": "Settings",
+  "sub": "How the app looks, who you're signed in as, and how to leave.",
+  "appearance": {
+    "title": "Appearance",
+    "theme": "Theme",
+    "themeHint": "Light or dark. Remembered on this device.",
+    "language": "Language",
+    "languageHint": "English or Hebrew, across the whole app."
+  },
+  "account": {
+    "title": "Account",
+    "name": "Name",
+    "email": "Email",
+    "device": "You're signed in with an access code, remembered on this device.",
+    "signOut": "Sign out",
+    "signOutHint": "Forgets the code on this device only. Nothing on the server changes, and the code keeps working elsewhere."
+  },
+  "alerts": {
+    "title": "Job alerts",
+    "body": "Daily email alerts are set up on the Jobs page, next to your search.",
+    "cta": "Open Jobs"
+  },
+  "danger": {
+    "title": "Danger zone",
+    "sub": "Both of these are permanent.",
+    "closeCta": "Close my account",
+    "closeBody": "This deletes everything above and switches your access code off, so it stops working on every device. This can't be undone.",
+    "closeConfirm": "Yes, close my account",
+    "closeCancel": "Keep my account",
+    "closed": "Your account is closed.",
+    "closeError": "Couldn't close your account. Please try again.",
+    "closeAdminBlocked": "This is the admin account for this instance — closing it would lock everyone out, including you. Delete all my data does the same wipe."
+  }
+}

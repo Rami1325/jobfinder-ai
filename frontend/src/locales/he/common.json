@@ -13,8 +13,12 @@
     "kitsAwaiting_one": "ערכה אחת ממתינה לבדיקה שלכם",
     "kitsAwaiting_two": "{{count}} ערכות ממתינות לבדיקה שלכם",
     "kitsAwaiting_other": "{{count}} ערכות ממתינות לבדיקה שלכם",
-    "openMenu": "פתח תפריט",
-    "closeMenu": "סגור תפריט"
+    "menu": "תפריט",
+    "account": "חשבון",
+    "signedInAs": "מחוברים בתור {{name}}",
+    "settings": "הגדרות",
+    "closeAccount": "סגירת החשבון שלי",
+    "signOut": "התנתקות"
   },
   "header": {
     "how": "איך זה עובד",

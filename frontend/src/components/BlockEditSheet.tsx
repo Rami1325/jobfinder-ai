@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { Trash2, X } from "lucide-react";
-import { readBlock, removeBlock, writeBlock, type Values } from "../lib/resumeBlocks";
+import { isEntryKind, readBlock, removeBlock, writeBlock, type Values } from "../lib/resumeBlocks";
 import { Button } from "./ui";
 import { cn } from "../lib/cn";
 import type { ResumeModel } from "../types";
@@ -110,8 +110,15 @@ export default function BlockEditSheet({ path, resume, paperDir, onClose, onAppl
     <AnimatePresence>
       {open && draft && (
         <>
+          {/* z-50, the app's modal layer, NOT z-40. The scrim and the panel are
+              one dialog and must share a layer: at 40 the app header (sticky,
+              its own stacking context) painted over the dim, leaving a bright
+              and fully tappable 56px strip on top of an aria-modal dialog. The
+              panel below stays on top of the scrim by DOM order — it is the
+              later sibling at the same z — which is the same trick `Modal`
+              uses with its single z-50 wrapper. */}
           <motion.div
-            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
             onClick={onClose}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -185,7 +192,13 @@ export default function BlockEditSheet({ path, resume, paperDir, onClose, onAppl
 
             {/* The safe-area padding is why Save clears the home indicator. */}
             <footer className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
-              {draft.removable && (
+              {/* `removable` is FALSE for every entry, by design — it governs
+                  the inline empty-means-remove rule, which must never be able
+                  to delete a job by clearing one of its five fields. Gating the
+                  button on it alone meant `removeBlock`'s RE_ENTRY branch was
+                  unreachable and a role added by mistake could not be taken off
+                  the document at all. This is the gesture 23.2 said it had. */}
+              {(draft.removable || isEntryKind(draft.kind)) && (
                 <button
                   type="button"
                   onClick={remove}
