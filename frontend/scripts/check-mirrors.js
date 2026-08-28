@@ -442,6 +442,62 @@ try {
   fail(`keyword matcher check could not run: ${e.message}`);
 }
 
+// ---- 11. no reveal animates its own height -------------------------------- //
+// CLAUDE.md forbids animating `height: "auto"` on a click-to-open element, and
+// the reason is measured, not stylistic: framer-motion tweens height from 0 to
+// the measured value, and on a page that re-renders mid-tween (Jobs subscribes
+// to two external stores) the element is left frozen at the interpolated px
+// value with `overflow-hidden` clipping its content.
+//
+// This shipped SEVEN times. Disclosure documented the defect and was fixed;
+// the pattern then came back in JobsPage (the Replace panel froze at 80px over
+// a 287px dropzone, so the master résumé could not be changed at all, and the
+// Customize panel froze at 78px over 280px of fields, so the search settings
+// read as deleted), AlertsCard x2, TailorPage, MatchReport and marketing/FAQ.
+// tsc cannot see it — it is a string inside a prop object.
+//
+// Deliberately scoped to an `animate`/`exit`/`initial` prop: a CSS `height:
+// auto` in a className or a style object is ordinary layout and must not fire.
+try {
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith(".tsx")) files.push(full);
+    }
+  })(SRC);
+  if (files.length < 20) throw new Error(`only found ${files.length} .tsx files under src`);
+
+  // `animate={{ ... height: "auto" ... }}` — the motion prop, not a stylesheet.
+  const MOTION_HEIGHT = /\b(?:animate|initial|exit)\s*=\s*\{\{[^}]*\bheight\s*:\s*["']auto["']/;
+  let scanned = 0;
+  const offenders = [];
+  for (const f of files) {
+    const src = fs.readFileSync(f, "utf8");
+    scanned++;
+    if (MOTION_HEIGHT.test(src)) offenders.push(path.relative(SRC, f).split(path.sep).join("/"));
+  }
+  if (scanned === 0) throw new Error("scanned no files");
+  for (const o of offenders) {
+    fail(
+      `${o}: animates height:"auto" in a motion prop. This wedges — the element ` +
+        `freezes at an interpolated height with its content clipped, so the panel ` +
+        `never opens. Render conditionally and use the house \`animate-fade-up\` ` +
+        `(opacity + transform), the way ui/Disclosure.tsx does.`,
+    );
+  }
+
+  // Both directions: the detector must actually fire on the shape it forbids,
+  // or this check passes for ever by never matching anything.
+  const PROBE_BAD = `<motion.div animate={{ opacity: 1, height: "auto" }} />`;
+  const PROBE_OK = `<div className="h-auto" style={{ height: "auto" }} />`;
+  if (!MOTION_HEIGHT.test(PROBE_BAD)) fail("check 11 cannot detect its own defect shape");
+  if (MOTION_HEIGHT.test(PROBE_OK)) fail("check 11 fires on a plain CSS height:auto");
+} catch (e) {
+  fail(`height-animation check could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

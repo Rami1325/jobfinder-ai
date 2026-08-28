@@ -1,7 +1,6 @@
 // Email-alert settings card + the shared Customize-search fields
 // (split out of JobsPage.tsx — PLAN 12.5d).
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { Bell, X } from "lucide-react";
 import { getJobAlert, runJobAlert, searchContext, updateJobAlert } from "../../api/client";
@@ -177,13 +176,10 @@ export function CustomizeFields({
           The pass runs on LinkedIn (the only board with worldwide inventory), and
           the board checkboxes are authoritative (PLAN 15.9) — with LinkedIn
           unchecked the toggle is inert, so grey it out and say why. */}
-      <AnimatePresence initial={false}>
-        {(ctx?.work_mode === "remote" || ctx?.work_mode === "any") && (
-          <motion.label
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className={`mt-3 flex w-fit items-start gap-2 overflow-hidden text-sm text-ink ${
+      {/* Opacity/transform only — never height:auto on a reveal (see Disclosure). */}
+      {(ctx?.work_mode === "remote" || ctx?.work_mode === "any") && (
+          <label
+            className={`animate-fade-up mt-3 flex w-fit items-start gap-2 text-sm text-ink ${
               selectedSources.includes("linkedin") ? "cursor-pointer" : "opacity-50"
             }`}
           >
@@ -204,9 +200,8 @@ export function CustomizeFields({
                   : t("search.worldwideNeedsLinkedIn")}
               </span>
             </span>
-          </motion.label>
-        )}
-      </AnimatePresence>
+          </label>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
         <span className="font-semibold">{t("search.presetsLabel")}</span>
@@ -440,19 +435,12 @@ export function AlertsCard({
         {t("alerts.customize")}
       </label>
 
-      <AnimatePresence initial={false}>
-        {customOpen && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
+      {customOpen && (
+          <div className="animate-fade-up">
             <CustomizeFields ctx={ctx} setCtx={setCtx} prefilling={prefilling} />
             <p className="mt-3 text-xs text-ink-muted">{t("alerts.customizeHint")}</p>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+      )}
       {!customOpen && <p className="mt-1 text-xs text-ink-faint">{t("alerts.autoNote")}</p>}
 
       <div className="mt-3 space-y-1 text-xs text-ink-muted">

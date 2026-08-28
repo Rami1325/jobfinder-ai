@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { Check, Minus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { GapItem } from "../types";
@@ -133,16 +132,9 @@ export default function MatchReport({ gaps, jdText }: Props) {
         })}
       </div>
 
-      <AnimatePresence initial={false}>
+      <>
         {selectedRow && (
-          <motion.div
-            key={selectedRow.keyword}
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
-            className="overflow-hidden"
-          >
+          <div key={selectedRow.keyword} className="animate-fade-up">
             <div className="mt-4 rounded-lg border border-line bg-bg-soft">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-2">
                 <span className="text-sm font-semibold text-ink">
@@ -165,9 +157,9 @@ export default function MatchReport({ gaps, jdText }: Props) {
                 {highlightNodes(jdText, selectedRow.keyword)}
               </div>
             </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </>
     </Card>
   );
 }

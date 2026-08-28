@@ -28,6 +28,7 @@ import MatchReport from "../components/MatchReport";
 import ResumeUpload from "../components/ResumeUpload";
 import ScoreCard from "../components/ScoreCard";
 import VoicePanel from "../components/VoicePanel";
+import { resetMasterCache } from "../hooks/useMasterResume";
 import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { blocksByEdit, mergeForReview } from "../lib/resumeDiff";
 import {
@@ -430,7 +431,20 @@ export default function TailorPage() {
   async function onParsed(r: ResumeModel, l: FactsLedger) {
     setTailorState({ resume: r, savedResume: r, ledger: l, result: null, tailoredFrom: null, rejectedEdits: [], saved: false, langSwitched: null, editUndo: [], editError: "" });
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
-    if (m) setTailorState({ masterLabel: m.label });
+    // resetMasterCache() is NOT optional here, and leaving it out is why a
+    // freshly uploaded résumé "didn't take": saveMasterResume calls
+    // invalidateData("master","masters"), which clears the dataCache Map and
+    // CANNOT reach useMasterResume's module-level binding. Jobs, Interview and
+    // every tool read the master from that binding, so they kept painting AND
+    // SENDING the résumé this upload just replaced — until a full page reload.
+    if (m) {
+      resetMasterCache();
+      setTailorState({ masterLabel: m.label });
+    } else {
+      // Same reason as JobsPage: the hook only toasts on success, so a failed
+      // save would leave the page showing a résumé the server never stored.
+      toast("error", t("common:masterResume.saveFailed"));
+    }
   }
 
   // Feedback loop (§26): the AI wording the user rejected becomes a stored
@@ -508,14 +522,9 @@ export default function TailorPage() {
   }
 
   const appliedPrompt = (
-    <AnimatePresence initial={false}>
+    <>
       {applyClicked && !applied && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
-          exit={{ opacity: 0, height: 0 }}
-          className="overflow-hidden"
-        >
+        <div className="animate-fade-up">
           <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
             <span className="text-sm text-ink">{t("applyPrompt.question")}</span>
             <Button size="sm" onClick={markApplied}>
@@ -525,9 +534,9 @@ export default function TailorPage() {
               {t("applyPrompt.notYet")}
             </Button>
           </div>
-        </motion.div>
+        </div>
       )}
-    </AnimatePresence>
+    </>
   );
 
   return (

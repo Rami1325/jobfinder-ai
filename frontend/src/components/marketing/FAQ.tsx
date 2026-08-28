@@ -1,5 +1,4 @@
 import { useId, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Reveal from "./Reveal";
@@ -26,23 +25,19 @@ function Item({ q, a }: { q: string; a: string }) {
           className={`shrink-0 text-ink-faint transition-transform duration-200 ${open ? "rotate-180" : ""}`}
         />
       </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            key="panel"
-            id={`${id}-panel`}
-            role="region"
-            aria-labelledby={`${id}-button`}
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden"
-          >
-            <p className="px-5 pb-5 text-sm leading-relaxed text-ink-muted sm:px-6 sm:pb-6">{a}</p>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Opacity + transform only. This accordion is where the height:auto
+          tween came from — Disclosure copied it, wedged at height 0, and the
+          same pattern later froze the Replace and Customize panels on Jobs. */}
+      {open && (
+        <div
+          id={`${id}-panel`}
+          role="region"
+          aria-labelledby={`${id}-button`}
+          className="animate-fade-up"
+        >
+          <p className="px-5 pb-5 text-sm leading-relaxed text-ink-muted sm:px-6 sm:pb-6">{a}</p>
+        </div>
+      )}
     </div>
   );
 }

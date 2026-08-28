@@ -300,6 +300,11 @@ export default function JobsPage() {
   async function onResumeUploaded(r: ResumeModel, l: FactsLedger) {
     const firstUpload = !master?.resume;
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
+    // A silent failure here is the difference between "my new résumé isn't
+    // taking" and a message you can act on: persistMaster swallows every error
+    // and only toasts on SUCCESS, so without this the page shows the new résumé
+    // while the server still holds the old one, and the next reload reverts it.
+    if (!m) toast("error", t("common:masterResume.saveFailed"));
     setMaster(
       m ?? {
         resume: r,
@@ -310,7 +315,13 @@ export default function JobsPage() {
       },
     );
     setShowReplace(false);
-    setCtx(null); // search context derives from the résumé — drop stale prefill
+    // The customize picks SURVIVE a résumé swap. This used to `setCtx(null)`
+    // to drop a stale title prefill, but ctx also carries location, work mode,
+    // result count, boards, "posted within" and the worldwide opt-in — six
+    // settings that have nothing to do with which file was uploaded — and
+    // clearing them read, correctly, as "replacing my résumé deleted my search
+    // settings". A stale job title is one field the user can see and edit; the
+    // other six are not worth destroying to freshen it.
     if (firstUpload && !searching) {
       setAutoSearched(true);
       setMode("search");
@@ -478,26 +489,21 @@ export default function JobsPage() {
         onRestored={setMaster}
       />
 
-      <AnimatePresence initial={false}>
-        {showReplace && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
-            <Card>
-              <CardTitle>{t("replaceTitle")}</CardTitle>
-              <p className="mt-1 text-xs text-ink-muted">
-                {t("replaceBody")}
-              </p>
-              <div className="mt-3">
-                <ResumeUpload onParsed={onResumeUploaded} />
-              </div>
-            </Card>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* NOT height-animated. This wedges: measured on a clean load, the panel
+          froze at 80px with a 287px dropzone clipped inside it, so "Replace"
+          looked like it did nothing and the master résumé could not be changed
+          at all. Same defect Disclosure documents. Opacity + transform only. */}
+      {showReplace && (
+        <div className="animate-fade-up">
+          <Card>
+            <CardTitle>{t("replaceTitle")}</CardTitle>
+            <p className="mt-1 text-xs text-ink-muted">{t("replaceBody")}</p>
+            <div className="mt-3">
+              <ResumeUpload onParsed={onResumeUploaded} />
+            </div>
+          </Card>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
         {(
@@ -546,18 +552,14 @@ export default function JobsPage() {
               {t("search.customize")}
             </label>
 
-            <AnimatePresence initial={false}>
-              {customOpen && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden"
-                >
-                  <CustomizeFields ctx={ctx} setCtx={setCtx} prefilling={prefilling} />
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {/* Same wedge: frozen at 78px over 280px of fields, which is why
+                the search settings READ as deleted the moment anything on this
+                page re-rendered mid-animation. */}
+            {customOpen && (
+              <div className="animate-fade-up">
+                <CustomizeFields ctx={ctx} setCtx={setCtx} prefilling={prefilling} />
+              </div>
+            )}
 
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <Button

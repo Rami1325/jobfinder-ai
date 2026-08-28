@@ -69,7 +69,8 @@
     "chipFallback": "My resume",
     "replace": "Replace",
     "cancel": "Cancel",
-    "savedToast": "Saved as your master resume"
+    "savedToast": "Saved as your master resume",
+    "saveFailed": "Couldn't save that as your master resume — it wasn't replaced. Check your connection and try again."
   },
   "feedback": {
     "button": "Feedback",
