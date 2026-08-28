@@ -109,6 +109,8 @@ def build_alert_email(new: list[JobMatch], ctx: SearchContext) -> tuple[str, str
         bits.append(f"— fit {round(m.overall)}%")
         if m.stale and m.posted_at:
             bits.append(f"(older posting — {m.posted_at[:10]})")
+        if m.geo_restriction is not None:
+            bits.append("(states a location requirement)")
         lines.append("• " + " ".join(bits))
         if m.url:
             lines.append(f"  {m.url}")
@@ -181,6 +183,19 @@ def _job_card_html(m: JobMatch) -> str:
             f'border-radius:999px;background:#3a2f18;border:1px solid #6b5527;'
             f'color:#ffc96b;font:600 11px {_EM_FONT};letter-spacing:.4px;">'
             f"Older posting &#183; {esc(m.posted_at[:10])}</span>"
+        )
+    # Tier-2 geo note (PLAN geo): Tier-1 restrictions never reach an alert at
+    # all — they are filtered before a JobMatch exists, so the cron cannot email
+    # one or burn one of the newest-100 history slots on it. This chip carries
+    # the weaker signal, which is a label and never a filter. The email
+    # deliberately gets NO filtered COUNT: a number you cannot tap to reveal is
+    # a dead end in an inbox.
+    if m.geo_restriction is not None:
+        chips += (
+            f'{" " if chips else ""}<span style="display:inline-block;padding:3px 10px;'
+            f'border-radius:999px;background:#3a2f18;border:1px solid #6b5527;'
+            f'color:#ffc96b;font:600 11px {_EM_FONT};letter-spacing:.4px;">'
+            f"Location requirement</span>"
         )
     view = (
         f'<a href="{esc(m.url, quote=True)}" style="color:{_EM["accent_soft"]};'

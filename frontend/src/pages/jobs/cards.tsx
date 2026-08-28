@@ -6,16 +6,19 @@ import {
   ArrowRight,
   Building2,
   ExternalLink,
+  Globe,
   MessageCircle,
+  Bookmark,
+  BookmarkCheck,
   Send,
   Trash2,
   Wand2,
 } from "lucide-react";
-import { listKits } from "../../api/client";
+import { listKits, saveApplication } from "../../api/client";
 import { Badge, BorderGlow, Button, CountUp, ProgressRing, useToast } from "../../components/ui";
 import { fitReason } from "../../lib/fitReason";
 import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
-import type { JobMatch, JobSearchHit } from "../../types";
+import type { FilteredJob, GeoRestriction, JobMatch, JobSearchHit } from "../../types";
 import type { AlsoOn } from "../../types";
 import {
   avatarTone,
@@ -130,6 +133,91 @@ export function StaleBadge({ stale, postedAt }: { stale?: boolean; postedAt?: st
   );
 }
 
+/** A hiring restriction the posting STATES, quoted from the posting itself.
+ *
+ * A full-width line, not a badge: the badge row already carries up to seven
+ * shrink-0 children in ~264px at 390px, an eighth forces a wrap on exactly the
+ * users this is for, and a two-word badge cannot carry the evidence. The quote
+ * is what makes an occasionally-wrong detector usable — if we fire on an EEO
+ * paragraph, the sentence is instantly recognisable as a misfire and the user
+ * adjudicates instead of trusting us. It cannot live in `title`: there is no
+ * hover on a phone.
+ *
+ * `dir="auto"` is correct HERE (unlike on the résumé sheet, where it flips a
+ * whole document): the quote is in the POSTING's language, which need not be
+ * the UI locale. `break-words` is load-bearing — `raw` is untrusted third-party
+ * text. A Globe, never a warning triangle: at 12px in amber a triangle reads as
+ * an app error rather than a property of the job. */
+export function GeoNote({ geo }: { geo?: GeoRestriction | null }) {
+  const { t } = useTranslation("jobs");
+  if (!geo) return null;
+  const key = ["us", "uk", "eu", "il_excluded"].includes(geo.scope) ? geo.scope : "other";
+  return (
+    <p className="mt-2 flex items-start gap-1.5 text-xs text-warn">
+      <Globe size={12} className="mt-0.5 shrink-0" />
+      <span className="min-w-0 break-words">
+        {t(`card.geo.${key}`)}
+        {geo.raw ? (
+          // <bdi> + dir="auto" on the QUOTE, never on the paragraph: the
+          // paragraph's first strong character is the translated label, so a
+          // paragraph-level dir="auto" resolves from the UI locale and leaves
+          // the posting's own sentence unisolated — in Hebrew the quotes and
+          // the final period then reorder around the English run.
+          <bdi dir="auto" className="text-ink-faint">
+            {" · “"}
+            {geo.raw}
+            {"”"}
+          </bdi>
+        ) : null}
+      </span>
+    </p>
+  );
+}
+
+/** One posting the search dropped before scoring, shown when the user taps
+ * "Show them".
+ *
+ * Same card family as a real result so the revealed list reads as one list —
+ * but deliberately NO ProgressRing and no Tailor / Application-kit buttons: it
+ * was filtered before analyze_and_score ever ran, so a ring at 0 or "—" would
+ * read as a zero fit, which is a number we never computed. */
+export function RestrictedRow({ job }: { job: FilteredJob }) {
+  const { t } = useTranslation("jobs");
+  return (
+    <JobResultCard>
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <CompanyAvatar company={job.company} url={job.url} logoUrl={job.logo_url} />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="min-w-0 max-w-full truncate font-semibold text-ink">
+              {job.title || t("card.untitled")}
+            </p>
+            {job.source && <Badge className="shrink-0">{sourceLabel(job.source)}</Badge>}
+            <Badge tone="neutral" className="shrink-0">
+              {t("card.geoNotScored")}
+            </Badge>
+          </div>
+          <p className="text-sm text-ink-muted">
+            {job.company || "—"}
+            {job.location ? ` · ${job.location}` : ""}
+          </p>
+          <GeoNote geo={job.geo_restriction} />
+          {job.url && (
+            <a
+              href={job.url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-1 text-xs text-accent-soft hover:underline"
+            >
+              <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(job.source) || "LinkedIn" })}
+            </a>
+          )}
+        </div>
+      </div>
+    </JobResultCard>
+  );
+}
+
 
 
 // Tracker status shown on history rows (colors mirror the Tracker board).
@@ -191,6 +279,32 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
   const { t } = useTranslation("jobs");
   const toast = useToast();
   const { batching } = useSyncExternalStore(subscribeKits, getKitsState);
+  // The page's status map is rebuilt per SEARCH, not per click, so a freshly
+  // saved job would keep showing "Save" until the next search without a local
+  // override. `justSaved` wins over `appStatus` for exactly that window.
+  const [justSaved, setJustSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const status = justSaved ? "saved" : appStatus;
+
+  async function saveForLater() {
+    setSaving(true);
+    try {
+      await saveApplication({
+        job_title: m.title,
+        company: m.company,
+        jd_text: m.jd_text,
+        overall_score: m.overall,
+        job_url: m.url || undefined,
+        status: "saved",
+      });
+      setJustSaved(true);
+      toast("success", t("card.saveDone"));
+    } catch {
+      toast("error", t("card.saveFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   // Per-job application kit (PLAN 15.9): the auto-apply path for ONE job —
   // batch "Tailor my top matches" was the only way in, and users looking at a
@@ -241,7 +355,7 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
               </Badge>
             )}
             <AlsoOnLinks links={m.also_on} />
-            {appStatus && <AppStatusBadge status={appStatus} />}
+            {status && <AppStatusBadge status={status} />}
           </div>
           <p className="text-sm text-ink-muted">
             {m.company || "—"}
@@ -281,6 +395,7 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
             )}
             <WhatsAppShare title={m.title} company={m.company} url={m.url} />
           </div>
+          <GeoNote geo={m.geo_restriction} />
           {(() => {
             const reason = fitReason(m.top_matched, m.top_gaps, t);
             return reason ? (
@@ -317,6 +432,36 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
           >
             {t("card.kit")}
           </Button>
+        )}
+        {status ? (
+          // NOT disabled: it is the only route to the tracker the toast just
+          // named, and a disabled button dispatches no click at all.
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<BookmarkCheck size={14} />}
+            onClick={() => nav("/tracker")}
+          >
+            {t("card.savedGoTracker")}
+          </Button>
+        ) : (
+          // Only offered when the posting has a URL. A pasted listing has none
+          // (`match_jobs` builds JobMatch without one), so its tracker row
+          // could never be matched back by `appStatusByUrl` — the button would
+          // reappear on every render and write a duplicate row each time, with
+          // no way to reopen the posting from the tracker.
+          m.url && (
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={saving}
+              disabled={saving}
+              icon={<Bookmark size={14} />}
+              onClick={saveForLater}
+            >
+              {t("card.save")}
+            </Button>
+          )
         )}
         <Button
           variant="ghost"

@@ -202,7 +202,12 @@
     "eta": {
       "secondsLeft": "~{{n}}s left",
       "minutesLeft": "~{{n}} min left"
-    }
+    },
+    "geoFiltered_one": "{{count}} job states a hiring restriction abroad",
+    "geoFiltered_other": "{{count}} jobs state a hiring restriction abroad",
+    "geoShow": "Show them",
+    "geoHide": "Hide them",
+    "geoAllFiltered": "Every job we found states a hiring restriction abroad. Read what each one says before dismissing the search."
   },
   "workModes": {
     "any": "Any",
@@ -246,7 +251,20 @@
     "brief": "Company brief",
     "removeFromHistory": "Remove from history",
     "share": "Share",
-    "shareWhatsApp": "Share via WhatsApp"
+    "shareWhatsApp": "Share via WhatsApp",
+    "geo": {
+      "us": "Likely US-only",
+      "uk": "Likely UK-only",
+      "eu": "Likely EU-only",
+      "il_excluded": "Excludes Israel",
+      "other": "States a location requirement"
+    },
+    "geoNote": "Quoted from the posting — we report what it says, never whether you qualify.",
+    "geoNotScored": "Not scored",
+    "save": "Save for later",
+    "saveDone": "Saved — find it on the Tracker.",
+    "saveFailed": "Couldn't save that job. Try again.",
+    "savedGoTracker": "Saved · open Tracker"
   },
   "fit": {
     "strongOn": "Strong on {{skills}}",

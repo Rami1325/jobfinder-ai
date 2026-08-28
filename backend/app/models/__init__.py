@@ -821,6 +821,42 @@ class SalaryInfo(BaseModel):
     raw: str = ""
 
 
+class GeoRestriction(BaseModel):
+    """A geographic hiring restriction LITERALLY stated in the posting (the
+    worldwide-remote fix). Deterministic detection only — never an LLM, never
+    the network; see app/core/geo_restriction.py. `raw` is the verbatim
+    sentence the UI quotes.
+
+    This can say a posting STATES a restriction. It can never say the user can
+    or cannot work the role — the sponsorship question usually lives in the
+    application FORM, not the body. No `confidence` field: a confidence number
+    would be a second clock and an unearned one, since the module either
+    matched a sentence or it did not."""
+
+    kind: str = ""  # work_auth | citizenship | clearance | residency | title_tag | region | payroll | onsite | residency_state
+    scope: str = ""  # us | uk | eu | il_excluded | other
+    place: str = ""  # verbatim place fragment; "" when unnamed. NEVER render alone.
+    blocking: bool = False  # Tier 1 — filtered before the scoring LLM call
+    raw: str = ""  # the matched sentence, whitespace-normalised, <= 240 chars
+
+
+class FilteredJob(BaseModel):
+    """A posting removed before scoring because it states a Tier-1 restriction,
+    returned so the removal is VISIBLE and appealable rather than silent.
+
+    Deliberately carries no scores — it was never scored, and a zero would be a
+    fabricated number."""
+
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    url: str = ""
+    source: str = "linkedin"
+    posted_at: str = ""
+    logo_url: str = ""
+    geo_restriction: Optional[GeoRestriction] = None
+
+
 class JobMatch(BaseModel):
     title: str = ""
     company: str = ""
@@ -837,6 +873,11 @@ class JobMatch(BaseModel):
     logo_url: str = ""  # company logo from the board; empty when it has none
     also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards
     salary: Optional[SalaryInfo] = None  # only when literally stated in the posting
+    # A hiring restriction the posting STATES (see GeoRestriction). Derived on
+    # read from jd_text, never stored — so re-tuning the detector reclassifies
+    # every posting with no migration. None means "nothing stated", which is
+    # NOT the same as "open to you".
+    geo_restriction: Optional[GeoRestriction] = None
     # Posted before the search's max_age_days window but kept because the title
     # matches the searched keywords (PLAN 15.6). The UI shows an "Older" badge.
     stale: bool = False
@@ -901,6 +942,11 @@ class JobSearchResult(BaseModel):
     context: SearchContext = Field(default_factory=SearchContext)  # what was actually searched
     matches: list[JobMatch] = Field(default_factory=list)
     skipped: int = 0  # listings found but not fetchable/scorable
+    # Postings dropped BEFORE scoring because they state a Tier-1 hiring
+    # restriction abroad. Returned rather than silently discarded so the user
+    # can see the count, read the sentence we fired on, and reveal them. NOT
+    # part of `skipped`, whose user-facing string means "not fetchable/scorable".
+    filtered: list[FilteredJob] = Field(default_factory=list)
     # Provider name -> user-facing error for boards that FAILED (blocked,
     # unreachable, misconfigured) while others succeeded. Boards that answered
     # fine but had zero matching jobs land in `source_empty` instead — the UI

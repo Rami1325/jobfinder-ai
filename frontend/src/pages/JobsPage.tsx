@@ -5,6 +5,7 @@ import { Trans, useTranslation } from "react-i18next";
 import {
   BadgeCheck,
   Briefcase,
+  Globe,
   Link2,
   Loader2,
   Plus,
@@ -57,7 +58,7 @@ import type {
   SearchContext,
 } from "../types";
 import { AlertsCard, CustomizeFields } from "./jobs/AlertsCard";
-import { HistoryRow, MatchCard } from "./jobs/cards";
+import { HistoryRow, MatchCard, RestrictedRow } from "./jobs/cards";
 import { BatchTailorCard, KitRow } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
 import { VersionHistoryModal } from "./jobs/VersionHistory";
@@ -196,6 +197,11 @@ export default function JobsPage() {
   // `saved` is deliberately NOT one of them — saving is how you say "come back
   // to this", so hiding it would bury the shortlist.
   const [hideApplied, setHideApplied] = useState(false);
+  // A one-way "show me anyway", not a saved preference: tapping it reveals the
+  // postings we dropped for a stated hiring restriction and does NOT re-run the
+  // search. Reset per result below, or the previous search's reveal leaks into
+  // the next one's list.
+  const [showRestricted, setShowRestricted] = useState(false);
   const isDone = (m: JobMatch) => {
     const s = statusFor(m);
     return !!s && s !== "saved";
@@ -283,6 +289,7 @@ export default function JobsPage() {
     if (!searchResult) return;
     setCtx((p) => p ?? searchResult.context); // so opening Customize later starts from what was searched
     setSourceErrorsDismissed(false); // a fresh result gets a fresh warning
+    setShowRestricted(false); // a fresh result starts with the filtered set collapsed
     if (history !== null) loadHistory(); // backend saved the results — keep the History tab fresh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchResult]);
@@ -712,6 +719,26 @@ export default function JobsPage() {
                     </label>
                   </div>
                 </div>
+                {(searchResult.filtered?.length ?? 0) > 0 && (
+                  <p className="flex flex-wrap items-center gap-2 text-xs text-warn">
+                    <Globe size={13} className="shrink-0" />
+                    {/* "Every job" is only true when nothing was dropped for
+                        another reason — `skipped` counts postings that failed
+                        to fetch or score, and claiming they stated a
+                        restriction contradicts the "N skipped" line directly
+                        above. */}
+                    {searchResult.matches.length === 0 && searchResult.skipped === 0
+                      ? t("search.geoAllFiltered")
+                      : t("search.geoFiltered", { count: searchResult.filtered!.length })}
+                    <button
+                      type="button"
+                      onClick={() => setShowRestricted((v) => !v)}
+                      className="font-semibold underline underline-offset-2"
+                    >
+                      {t(showRestricted ? "search.geoHide" : "search.geoShow")}
+                    </button>
+                  </p>
+                )}
                 {sortedMatches.length > 0 && (
                   <BatchTailorCard
                     matches={searchResult.matches}
@@ -729,6 +756,10 @@ export default function JobsPage() {
                     <MatchCard m={m} best={m === bestMatch} appStatus={statusFor(m)} />
                   </motion.div>
                 ))}
+                {showRestricted &&
+                  (searchResult.filtered ?? []).map((job, i) => (
+                    <RestrictedRow key={job.url || `filtered-${i}`} job={job} />
+                  ))}
               </motion.div>
             )}
           </AnimatePresence>

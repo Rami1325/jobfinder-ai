@@ -26,12 +26,21 @@ from app.core.providers.linkedin import (  # noqa: F401 - re-exports
     _build_search_url,
     parse_search_results,
 )
+from app.core.geo_restriction import detect_geo_restriction
 from app.core.relevance import RELEVANT_MIN, title_relevance
 from app.core.salary import extract_salary
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
 from app.llm import prompts
 from app.llm.client import get_llm_client
-from app.models import AlsoOn, JobMatch, JobSearchResult, ResumeModel, SearchContext
+from app.models import (
+    AlsoOn,
+    FilteredJob,
+    GeoRestriction,
+    JobMatch,
+    JobSearchResult,
+    ResumeModel,
+    SearchContext,
+)
 
 # Progress events emitted during a search (consumed by the SSE endpoint, PLAN 9.2 + 12.2).
 # Boards and jobs run in PARALLEL, so events fire on COMPLETION and `index` is a
@@ -329,9 +338,10 @@ def select_hits(tiers: list[dict[str, list[JobHit]]], limit: int) -> list[JobHit
     return merged
 
 
-def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str]]:
-    """(job_title, location, work_mode) triples one board will be queried with —
-    normally every keyword against the context's own location and work mode.
+def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str, str]]:
+    """(job_title, location, work_mode, origin_market) tuples one board will be
+    queried with — normally every keyword against the context's own location
+    and work mode.
     The worldwide-remote opt-in (work_mode "remote"/"any" + include_worldwide)
     adds each high-earning market in WORLDWIDE_REMOTE_LOCATIONS, but ONLY on
     the board with global inventory — the local Israeli boards never see those
@@ -340,16 +350,24 @@ def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str]]:
     location keeps the user's mode. A board the user unchecked in `sources` is
     never queried AT ALL — not even by the worldwide pass (PLAN 15.9: the
     checkboxes are authoritative; the pass riding an unchecked LinkedIn read as
-    a bug to the actual user). Pure; pinned by the smoke test."""
+    a bug to the actual user). Pure; pinned by the smoke test.
+
+    The fourth element is the ORIGIN MARKET — "" for the context's own location,
+    the market name for each worldwide entry — and it is carried here rather
+    than inferred downstream on purpose. With multiple `job_titles` the local
+    location recurs at index 0, len(locations), 2*len(locations)…, so a
+    positional test is wrong; and a `location != ctx.location` test misfires the
+    moment a user literally types "United States" as their location. This
+    function already knows which pass produced each query, so it says so."""
     if name not in ctx.sources:
         return []
-    locations = [(ctx.location, ctx.work_mode)]
+    locations = [(ctx.location, ctx.work_mode, "")]
     if name == WORLDWIDE_BOARD and ctx.work_mode in ("remote", "any") and ctx.include_worldwide:
-        locations = locations + [(loc, "remote") for loc in WORLDWIDE_REMOTE_LOCATIONS]
+        locations = locations + [(loc, "remote", loc) for loc in WORLDWIDE_REMOTE_LOCATIONS]
     return [
-        (t, loc, mode)
+        (t, loc, mode, origin)
         for t in ctx.job_titles
-        for loc, mode in (locations or [(ctx.location, ctx.work_mode)])
+        for loc, mode, origin in (locations or [(ctx.location, ctx.work_mode, "")])
     ]
 
 
@@ -362,21 +380,61 @@ def _search_board(name: str, ctx: SearchContext) -> tuple[list[JobHit], list[str
     board_hits: list[JobHit] = []
     board_errors: list[str] = []
     board_empty: list[str] = []
-    for query_i, (title, location, work_mode) in enumerate(_board_queries(name, ctx)):
+    for query_i, (title, location, work_mode, origin) in enumerate(_board_queries(name, ctx)):
         if query_i:
             time.sleep(FETCH_DELAY_S)  # polite gap between queries to the same board
         query_ctx = ctx.model_copy(
             update={"job_title": title, "location": location, "work_mode": work_mode}
         )
         try:
-            board_hits.extend(PROVIDERS[name].search(query_ctx))
+            found = PROVIDERS[name].search(query_ctx)
         except NoResultsError as e:  # board worked, this query just matched nothing
             board_empty.append(str(e))
         except ValueError as e:  # board-level failure, user-facing message
             board_errors.append(str(e))
         except Exception:  # noqa: BLE001 - a buggy provider must not sink the rest
             board_errors.append(f"Searching {name} failed unexpectedly. Try again shortly.")
+        else:
+            for hit in found:
+                hit.origin_market = origin  # the fan-out stamps it; providers never do
+            board_hits.extend(found)
+    # Local wins: a posting the user's OWN location query also returned is
+    # visible from Israel by construction, so it must not be gated into the
+    # geo classifier just because a worldwide query found it too. Removes no
+    # hits and changes no counts — it only clears the stamp.
+    #
+    # Keyed by URL *and* by content, because `_interleave_into` dedupes by BOTH
+    # and the one it keeps is whichever sorted first (newest `posted_at`). A
+    # company that posts the same role twice — Tel Aviv and US-remote, different
+    # URLs, identical title+company — would otherwise have the worldwide twin
+    # win the merge, keep its stamp, get filtered, and take the Tel Aviv URL
+    # with it: `FilteredJob` carries no `also_on`, so the local posting the
+    # user's own query returned vanished from the response entirely.
+    local_urls = {h.url.rstrip("/") for h in board_hits if not h.origin_market and h.url}
+    local_content = {
+        content_key(h.title, h.company)
+        for h in board_hits
+        if not h.origin_market and content_key(h.title, h.company)
+    }
+    for hit in board_hits:
+        if not hit.origin_market:
+            continue
+        if hit.url.rstrip("/") in local_urls or content_key(hit.title, hit.company) in local_content:
+            hit.origin_market = ""
     return board_hits, board_errors, board_empty
+
+
+def _geo_for(hit: JobHit, jd_text: str, location: str) -> GeoRestriction | None:
+    """The geo gate: classify ONLY postings the worldwide pass produced.
+
+    `origin_market` is stamped by `_search_board` and is "" for everything the
+    user's own location query returned — so with `include_worldwide` off this
+    returns None without reading a character, and an Israeli-board posting is
+    structurally out of the classifier's reach rather than merely unlikely to
+    trip it. Pinned end to end by the smoke test."""
+    if not hit.origin_market:
+        return None
+    return detect_geo_restriction(jd_text, location, hit.title)
 
 
 def search_jobs(
@@ -460,6 +518,9 @@ def search_jobs(
     # pair. Detail fetches to the SAME board stay serialized and throttled via
     # a per-source lock; boards that inline the description never fetch at all.
     matches_by_hit: list[JobMatch | None] = [None] * len(hits)
+    # Index-addressed like matches_by_hit, and for the same reason: a shared
+    # list append would need progress_lock, which already holds an SSE queue put.
+    geo_by_hit: list[GeoRestriction | None] = [None] * len(hits)
     fetch_locks: dict[str, threading.Lock] = {h.source: threading.Lock() for h in hits}
     last_fetch: dict[str, float] = {}
     scored_done = 0
@@ -488,12 +549,14 @@ def search_jobs(
         what actually went wrong instead of blaming the boards for throttling.
         """
         nonlocal scored_done
+        geo: GeoRestriction | None = None
         try:
-            match = _build_match(hit)
+            match, geo = _build_match(hit)
         except Exception as e:  # noqa: BLE001 - one bad posting must not sink the search
             match = None
             with progress_lock:
                 score_errors.append(f"{hit.title or hit.url}: {e}")
+        geo_by_hit[hit_i] = geo
         if match is not None:
             matches_by_hit[hit_i] = match
         with progress_lock:
@@ -518,9 +581,14 @@ def search_jobs(
                     }
                 )
 
-    def _build_match(hit: JobHit) -> JobMatch | None:
+    def _build_match(hit: JobHit) -> tuple[JobMatch | None, GeoRestriction | None]:
+        """(match, geo_restriction). A blocking restriction returns (None, geo)
+        — a VALUE, never an exception: `_score_hit`'s contract turns a raise
+        into `score_errors`, which surfaces as "couldn't score any of them" and
+        would blame the boards for a posting we deliberately dropped."""
         cached = (cache or {}).get(hit.url.rstrip("/"))
         match: JobMatch | None = None
+        geo: GeoRestriction | None = None
         if cached is not None and cached.is_full_match:
             # Tier 1 (PLAN 12.4): this exact posting was scored against this
             # exact résumé within the TTL — rebuild the match from the history
@@ -528,6 +596,14 @@ def search_jobs(
             # card fields win where the board provided them (the board is
             # authoritative for title/company/location/posted_at/logo_url);
             # scores/keywords/jd_text come from the row.
+            #
+            # This branch skips the fetch AND the LLM, so nothing in it looks
+            # like work — which is exactly why the classifier has to run here
+            # too. Without it a posting scored last week launders straight
+            # through unclassified.
+            geo = _geo_for(hit, cached.jd_text, hit.location or cached.location)
+            if geo is not None and geo.blocking:
+                return None, geo
             match = JobMatch(
                 title=hit.title or cached.title,
                 company=hit.company or cached.company,
@@ -544,6 +620,7 @@ def search_jobs(
                 logo_url=hit.logo_url or cached.logo_url,
                 also_on=[AlsoOn(**a) for a in hit.also_on],
                 salary=extract_salary(cached.jd_text),
+                geo_restriction=geo,
                 stale=hit.stale,
             )
         else:
@@ -552,6 +629,12 @@ def search_jobs(
             # text hasn't changed; only the scoring must rerun.
             jd_text = hit.description or (cached.jd_text if cached else "") or _fetch_throttled(hit)
             if jd_text:
+                # Before analyze_and_score, never after: this is the only seam
+                # where every code path has the text in hand and no model call
+                # has been made, so a blocking posting costs zero tokens.
+                geo = _geo_for(hit, jd_text, hit.location)
+                if geo is not None and geo.blocking:
+                    return None, geo
                 jd, score = analyze_and_score(resume, jd_text)
                 top_matched, top_gaps = top_matched_and_gaps(score.gaps)
                 match = JobMatch(
@@ -572,9 +655,10 @@ def search_jobs(
                     logo_url=hit.logo_url,
                     also_on=[AlsoOn(**a) for a in hit.also_on],
                     salary=extract_salary(jd_text),
+                    geo_restriction=geo,
                     stale=hit.stale,
                 )
-        return match
+        return match, geo
 
     with ThreadPoolExecutor(max_workers=SCORE_WORKERS) as pool:
         # copy_context() per submit, not a bare submit: a pool worker starts
@@ -594,7 +678,51 @@ def search_jobs(
     # hits order survives (matches_by_hit is index-addressed), so the sort below
     # stays stable across ties exactly as the serial append-then-sort was.
     matches = [m for m in matches_by_hit if m is not None]
-    skipped = len(hits) - len(matches)
+    filtered = [
+        FilteredJob(
+            title=hits[i].title,
+            company=hits[i].company,
+            location=hits[i].location,
+            url=hits[i].url,
+            source=hits[i].source,
+            posted_at=hits[i].posted_at,
+            logo_url=hits[i].logo_url,
+            geo_restriction=geo,
+        )
+        for i, geo in enumerate(geo_by_hit)
+        if geo is not None and geo.blocking
+    ]
+    # `skipped` keeps its documented meaning — "listings found but not
+    # fetchable/scorable". A geo-filtered posting was perfectly fetchable; it
+    # gets its own list, and folding the two would make the UI's skipped string
+    # a lie.
+    skipped = len(hits) - len(matches) - len(filtered)
+
+    if not matches and filtered:
+        # Nothing ranked, but something was filtered. Return the 200 with the
+        # filtered list rather than raising: this is the maximum-suspicion case,
+        # the one where the user most needs to read what we fired on — and the
+        # throttling message below would send them to re-run a search that fails
+        # identically. The only existing contract this design changes.
+        #
+        # The guard is `filtered`, not "everything was filtered", so postings
+        # that genuinely broke can be in here too — and their diagnostic must
+        # not vanish with the raise we are skipping. Attribute each to the board
+        # it came from, which is where the UI already reports board trouble; a
+        # scoring failure blamed on nothing at all is how "0 ranked, 9 skipped"
+        # becomes an unexplained dead end.
+        if score_errors:
+            for i, m in enumerate(matches_by_hit):
+                if m is None and geo_by_hit[i] is None:
+                    source_errors.setdefault(hits[i].source, score_errors[0])
+        return JobSearchResult(
+            context=ctx,
+            matches=[],
+            skipped=skipped,
+            filtered=filtered,
+            source_errors=source_errors,
+            source_empty=source_empty,
+        )
 
     if not matches:
         if score_errors:
@@ -613,6 +741,7 @@ def search_jobs(
         context=ctx,
         matches=matches,
         skipped=skipped,
+        filtered=filtered,
         source_errors=source_errors,
         source_empty=source_empty,
     )

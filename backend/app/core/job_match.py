@@ -10,6 +10,7 @@ import json
 import re
 import urllib.request
 
+from app.core.geo_restriction import detect_geo_restriction
 from app.core.jd_analyzer import analyze_jd
 from app.core.net_guard import assert_fetchable, guarded_opener
 from app.core.salary import extract_salary
@@ -37,6 +38,12 @@ def match_jobs(resume: ResumeModel, listings: list[str]) -> JobMatchResult:
                 top_gaps=top_gaps,
                 jd_text=t,
                 salary=extract_salary(t),
+                # Text only — a pasted listing has no board, no location and no
+                # card title, and the detector must abstain on missing input
+                # rather than guess. It never FILTERS here: `blocking` is advice
+                # and only job_search acts on it, so /jobs/match and /jobs/search
+                # can never disagree about the same posting.
+                geo_restriction=detect_geo_restriction(t),
             )
         )
     matches.sort(key=lambda m: m.overall, reverse=True)

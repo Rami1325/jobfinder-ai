@@ -705,8 +705,12 @@ export async function saveApplication(payload: {
   job_title: string;
   company: string;
   jd_text: string;
-  tailored_resume: ResumeModel;
-  cover_letter: string;
+  // Both optional, matching ApplicationCreate (tailored_resume: Optional = None,
+  // cover_letter: str = ""). A job saved straight from search results has
+  // neither by definition — that is what "save it and come back later" MEANS —
+  // and the wrapper used to over-constrain the schema it wraps.
+  tailored_resume?: ResumeModel;
+  cover_letter?: string;
   overall_score: number;
   job_url?: string;
   status?: string;

@@ -901,13 +901,13 @@ _wctx = _resolve_context(
 check("customized include_worldwide is honored", _wctx.include_worldwide is True)
 check(
     "worldwide remote: global board queried with local + worldwide locations",
-    [(loc, mode) for _, loc, mode in _board_queries(WORLDWIDE_BOARD, _wctx)]
+    [(loc, mode) for _, loc, mode, _o in _board_queries(WORLDWIDE_BOARD, _wctx)]
     == [("Tel Aviv", "remote")] + [(loc, "remote") for loc in WORLDWIDE_REMOTE_LOCATIONS],
     str(_board_queries(WORLDWIDE_BOARD, _wctx)),
 )
 check(
     "worldwide remote: local boards never see worldwide locations",
-    [(loc, mode) for _, loc, mode in _board_queries("drushim", _wctx)]
+    [(loc, mode) for _, loc, mode, _o in _board_queries("drushim", _wctx)]
     == [("Tel Aviv", "remote")],
     str(_board_queries("drushim", _wctx)),
 )
@@ -917,7 +917,7 @@ _wctx_any = _resolve_context(
 )
 check(
     "worldwide with 'any': local location stays 'any', worldwide forced remote-only",
-    [(loc, mode) for _, loc, mode in _board_queries(WORLDWIDE_BOARD, _wctx_any)]
+    [(loc, mode) for _, loc, mode, _o in _board_queries(WORLDWIDE_BOARD, _wctx_any)]
     == [("Tel Aviv", "any")] + [(loc, "remote") for loc in WORLDWIDE_REMOTE_LOCATIONS],
     str(_board_queries(WORLDWIDE_BOARD, _wctx_any)),
 )
@@ -929,9 +929,29 @@ _wctx_onsite = _resolve_context(
 )
 check(
     "worldwide pass is inert for onsite work mode",
-    [(loc, mode) for _, loc, mode in _board_queries(WORLDWIDE_BOARD, _wctx_onsite)]
+    [(loc, mode) for _, loc, mode, _o in _board_queries(WORLDWIDE_BOARD, _wctx_onsite)]
     == [("Tel Aviv", "onsite")],
     str(_board_queries(WORLDWIDE_BOARD, _wctx_onsite)),
+)
+# The origin stamp (the geo-restriction gate's input): "" for the user's own
+# location, the market name for each worldwide query. Carried by _board_queries
+# rather than inferred downstream, because with several keywords the local
+# location recurs at index 0, len(locations), 2*len(locations)…
+check(
+    "worldwide queries stamp their origin market; the local query stamps nothing",
+    [o for _t, _l, _m, o in _board_queries(WORLDWIDE_BOARD, _wctx)]
+    == [""] + WORLDWIDE_REMOTE_LOCATIONS,
+    str([o for _t, _l, _m, o in _board_queries(WORLDWIDE_BOARD, _wctx)]),
+)
+check(
+    "a local board's every query stamps an empty origin market",
+    [o for _t, _l, _m, o in _board_queries("drushim", _wctx)] == [""],
+    str([o for _t, _l, _m, o in _board_queries("drushim", _wctx)]),
+)
+check(
+    "include_worldwide off: every stamp is empty, so the geo classifier is unreachable",
+    {o for _t, _l, _m, o in _board_queries(WORLDWIDE_BOARD, _resolve_context(resume, None))}
+    == {""},
 )
 _wctx_only = _resolve_context(
     resume,
@@ -1189,6 +1209,303 @@ check(
     _sal("Join a team of 15,000 people with 5 years experience") is None
     and _sal("You get a $5 gift card") is None
     and _sal("") is None,
+)
+
+# 14b-4. Geographic hiring restrictions (the worldwide-remote fix): a posting
+# that STATES it hires only in a country an Israeli cannot work is caught
+# deterministically, before the scoring LLM call. High precision, low recall by
+# design — under-flagging is the safe direction, and every catch is pinned next
+# to the legitimate input that must NOT trip it. See app/core/geo_restriction.py.
+import inspect as _geo_inspect  # noqa: E402
+
+from app.core import geo_restriction as _geo_mod  # noqa: E402
+from app.core.geo_restriction import (  # noqa: E402
+    BLOCKING_KINDS as _GEO_BLOCKING,
+    detect_geo_restriction as _geo,
+)
+from app.models import GeoRestriction as _GeoR  # noqa: E402
+
+_F = _GeoR()  # the "nothing stated" sentinel, so `(verdict or _F).kind` reads cleanly
+
+check(
+    "geo: US work-authorization requirement is caught, scoped and blocking",
+    (_g := _geo("Applicants must be legally authorized to work in the United States.")) is not None
+    and _g.kind == "work_auth" and _g.scope == "us" and _g.blocking is True,
+    str(_g),
+)
+check(
+    "geo: a refused UK visa route is scoped from the regime, not the document",
+    (_g := _geo("We are unable to offer Skilled Worker sponsorship for this role.")) is not None
+    and _g.kind == "work_auth" and _g.scope == "uk" and _g.blocking is True,
+    str(_g),
+)
+check(
+    "geo: citizenship, export control and in-country residency each caught",
+    (_geo("U.S. citizens only due to federal contract requirements.") or _F).kind == "citizenship"
+    and (_geo("Must qualify as a U.S. Person under ITAR.") or _F).kind == "clearance"
+    and (_geo("Candidates must reside in the United States.") or _F).kind == "residency"
+    and (_geo("This role is remote within Canada.") or _F).kind == "residency",
+)
+check(
+    "geo: a (Remote - UK) title tag is caught from the title alone",
+    (_g := _geo("", title="Backend Engineer (Remote - UK)")) is not None
+    and _g.kind == "title_tag" and _g.scope == "uk" and _g.blocking is True,
+    str(_g),
+)
+# ONE check, deliberately: split across several, "make the US case pass" is
+# trivially satisfied by over-matching. Every string here is legitimate input a
+# naive matcher fires on, and each one hides real jobs when it does.
+check(
+    "geo: business prose, common words, offered sponsorship and tautologies never fire",
+    _geo("Our customers are in the US and our team is US-based.") is None
+    and _geo("Please contact us - we would love to hear from you.") is None
+    and _geo("Compensation is paid in USD.") is None
+    and _geo("We are happy to sponsor visas for the right candidate.") is None
+    and _geo("Visa sponsorship is available for exceptional candidates.") is None
+    and _geo("Applicants must be authorized to work in the country where the role is based.") is None
+    and _geo("Relocation package offered.") is None
+    and _geo("Headquartered in the United States, with an office in New York.") is None
+    and _geo("", title="US Sales Manager") is None
+    and _geo("", location="Chicago, IL") is None
+    and _geo("", location="New York, NY") is None
+    and _geo("", location="London, England, United Kingdom") is None
+    and _geo("") is None,
+)
+# The polarity trap: "No visa sponsorship IS AVAILABLE" contains the allow
+# phrase verbatim. A suppressor that matches it reads the sentence backwards
+# and silently clears the commonest US-only phrasing there is.
+check(
+    "geo: a negated allow-phrase still fires; the un-negated one still suppresses",
+    (_geo("No visa sponsorship is available for this position.") or _F).blocking is True
+    and (_geo("Sponsorship is not available for this role.") or _F).blocking is True
+    and _geo("Sponsorship is available for this role.") is None,
+)
+# The trailing qualifier arrives AFTER the phrase, so a matcher that stops at
+# the phrase boundary inverts the highest-confidence positive in the catalogue.
+check(
+    "geo: 'work from anywhere' clears, 'work from anywhere in the US' blocks",
+    _geo("You can work from anywhere.") is None
+    and (_geo("You can work from anywhere in the US.") or _F).blocking is True,
+)
+# Israel-openness, incl. the Hebrew prefix defect (frontend check 10, in
+# Python): re.search(r"\bישראל\b", "…בישראל…") is False because ב/ל/ה/ו/מ/ש are
+# word characters, so the token test must be a bare SUBSTRING. The Latin half
+# sits in the same check on purpose — "make the Hebrew case pass" is otherwise
+# trivially satisfied by deleting every boundary guard.
+check(
+    "geo: Israel signals clear the posting; short Latin tokens keep their boundaries",
+    _geo("אזרחות ישראלית - חובה. סיווג ביטחוני נדרש.") is None
+    and _geo("מותר לעבוד בישראל בלבד") is None
+    and _geo("שכר 15,000-18,000 ₪ לחודש") is None
+    and _geo("Write to careers@acme.co.il. U.S. citizens only.") is None
+    and _geo("Offices: New York, London, Tel Aviv. Must reside in the United States.") is None
+    and _geo("Full remote. We hire globally - work from anywhere.") is None
+    and _geo("Please contact us.") is None
+    and (_geo("Must reside in the United States.") or _F).blocking is True,
+)
+# Both spellings of the gershayim are mutually invisible ('ארה"ב' != 'ארה״ב'),
+# so this is trivially satisfied by R1 matching any Hebrew — which is exactly
+# why it is pinned: it fails loudly if R1 is ever narrowed to a token list.
+check(
+    "geo: a Hebrew posting clears in either gershayim spelling",
+    _geo("משרה מרחוק עבור ארה\"ב") is None
+    and _geo("משרה מרחוק עבור ארה״ב") is None,
+)
+# Israel named inside an exclusion clause is the ONE case where naming Israel
+# blocks. The sanctions preamble never lists Israel, so it must not match.
+check(
+    "geo: 'excluding Israel' blocks; a sanctions country list does not",
+    (_g := _geo("We hire across EMEA, excluding Israel and Turkey.")) is not None
+    and _g.scope == "il_excluded" and _g.blocking is True
+    and _geo("We cannot hire in the following countries: Russia, Belarus, Iran, North Korea.") is None,
+    str(_g),
+)
+_GEO_EEO = (
+    "Equal Opportunity Employer. We do not discriminate on the basis of race, color, "
+    "religion, sex, national origin, citizenship status, veteran status, or disability."
+)
+_GEO_US = "Applicants must be authorized to work in the United States."
+# Both directions in one check: pinning only the suppression is satisfied by
+# truncating everything, pinning only the catch by never truncating at all.
+check(
+    "geo: the EEO block is cut, and the same sentence above it still fires",
+    _geo(_GEO_EEO) is None
+    and _geo(_GEO_EEO + "\n\n" + _GEO_US) is None
+    and (_geo(_GEO_US + "\n\n" + _GEO_EEO) or _F).blocking is True,
+)
+check(
+    "geo: pay-transparency states never fire; an actual state exclusion does",
+    _geo("The base salary range is $150,000 - $190,000. For Colorado-based roles it differs.") is None
+    and (_geo("This role is not available in Colorado.") or _F).kind == "residency_state",
+)
+# The same acronym means opposite things: only HIRING verbs bind it.
+check(
+    "geo: region words bind to hiring verbs only, and never to regions holding Israel",
+    (_g := _geo("We are hiring across APAC.")) is not None
+    and _g.kind == "region" and _g.blocking is False
+    and _geo("You will own the APAC market and support our APAC customers.") is None
+    and _geo("We are hiring across EMEA.") is None
+    and _geo("We are hiring across the Middle East.") is None
+    and _geo("We are hiring across MENA.") is None
+    and _geo("Open to applicants in the EU or an associated country.") is None
+    and _geo("We are hiring for ANZ Bank.") is None
+    and _geo("Firmware on Nordic Semiconductor nRF52.") is None
+    and _geo("Operations in the Gulf of Mexico.") is None,
+    str(_g),
+)
+check(
+    "geo: every Tier-1 kind blocks and every Tier-2 kind does not",
+    all(
+        (_geo(txt) or _F).blocking is (kind in _GEO_BLOCKING) and (_geo(txt) or _F).kind == kind
+        for kind, txt in (
+            ("work_auth", "Must be authorized to work in the United States."),
+            ("citizenship", "U.S. citizens only."),
+            ("residency", "Candidates must reside in the United States."),
+            ("region", "We are hiring across APAC."),
+            ("onsite", "Relocation is required for this position."),
+        )
+    ),
+)
+# A Tier-2 phrase must never mask a Tier-1 one — order is the algorithm.
+check(
+    "geo: a posting stating both a region and an authorization rule returns the blocking one",
+    (_g := _geo("We are hiring across APAC. Applicants must be authorized to work in the US.")) is not None
+    and _g.blocking is True and _g.kind == "work_auth",
+    str(_g),
+)
+_GEO_LONG = ("Lorem ipsum. " * 300) + _GEO_US
+check(
+    "geo: raw is the posting's own sentence, normalised and capped at 240 chars",
+    (_g := _geo(_GEO_LONG)) is not None
+    and _g.raw in " ".join(_GEO_LONG.split())
+    and len(_g.raw) <= 240 and "\n" not in _g.raw,
+    f"{len(_g.raw if _g else '')} chars",
+)
+# The 22.10 shape: behaviour alone cannot pin "this never reaches the model" —
+# an LLM-backed classifier also returns a verdict. The floor makes an
+# unreadable module go red instead of silently passing.
+_GEO_SRC = _geo_inspect.getsource(_geo_mod)
+check(
+    "geo: the classifier is source-pinned to no LLM and no network",
+    len(_GEO_SRC) > 2000
+    and "get_llm_client" not in _GEO_SRC
+    and "complete_json" not in _GEO_SRC
+    and "analyze_jd" not in _GEO_SRC
+    and "urllib" not in _GEO_SRC
+    and "requests" not in _GEO_SRC,
+    f"{len(_GEO_SRC)} chars scanned",
+)
+
+# 14b-5. The false-positive round. Every check below is a posting a NAIVE rule
+# hid, found by adversarial review after the first cut shipped green — the first
+# fixture set passed because each case was narrow enough to never fire. A guard
+# that deletes a real job is the worst failure this module has, so the positive
+# it must still catch sits in the SAME check as the prose it must not.
+check(
+    "geo: an Israel-ONLY posting is never read as excluding Israel",
+    _geo("We are unable to employ candidates outside of Israel.") is None
+    and _geo("We do not hire outside Israel at this time.") is None
+    and _geo("We cannot employ anyone who is not physically located in Israel.") is None
+    and _geo("Israel-based candidates only.") is None
+    # …while the genuine exclusion still blocks. R0 runs before R1, so R1 cannot
+    # rescue this one — the inversion had to be fixed inside R0 itself.
+    and (_geo("We hire across EMEA, excluding Israel and Turkey.") or _F).scope == "il_excluded",
+)
+check(
+    "geo: a NEGATED clearance requirement welcomes you, and must not block",
+    _geo("No security clearance is required for this role.") is None
+    and _geo("A security clearance is not required, and we welcome applicants from anywhere.") is None
+    and _geo("Top secret clearance preferred but not required.") is None
+    and _geo("This position does not require a security clearance.") is None
+    # …and a real one still blocks, in both word orders.
+    and (_geo("An active security clearance is required.") or _F).kind == "clearance"
+    and (_geo("You must hold a DoD clearance.") or _F).kind == "clearance"
+    and (_geo("Must qualify as a U.S. Person under ITAR.") or _F).kind == "clearance",
+)
+check(
+    "geo: clearance vocabulary that is also ordinary English never fires alone",
+    _geo("Our mission is to strengthen public trust in the financial system.") is None
+    and _geo("Federal contract experience preferred.") is None
+    and _geo("You will help our customers protect their top secret sauce.") is None,
+)
+check(
+    "geo: a US-benefits clause proves global hiring and must not be read as a restriction",
+    _geo(
+        "Acme is remote-first with teammates in 24 countries. US-based employees are "
+        "eligible for our 401(k) with a 4 percent match; employees elsewhere receive an "
+        "equivalent local pension contribution."
+    ) is None
+    and _geo("Our UK-based employees enjoy private medical cover.") is None
+    # …while the same shape aimed at the READER still blocks.
+    and (_geo("This position is open to US-based candidates.") or _F).blocking is True
+    and (_geo("We are considering UK-based applicants for this role.") or _F).blocking is True,
+)
+check(
+    "geo: an employer-of-record reach statement is openness, not a restriction",
+    _geo(
+        "Fully remote. Through our employer-of-record we are registered to employ in "
+        "more than 60 countries, so tell us where you are."
+    ) is None
+    and (_geo("You must reside in one of the following states: CA, NY, TX.") or _F).blocking is True,
+)
+check(
+    "geo: relocation assistance cannot cancel a sponsorship refusal",
+    (_geo("Relocation assistance is provided for the right person. Note: no visa sponsorship.")
+     or _F).blocking is True
+    # The negation can sit further left than a tight window sees.
+    and (_geo("There is no employment-based visa sponsorship available for this role.")
+         or _F).blocking is True
+    # …and an actual offer to sponsor still suppresses.
+    and _geo("We are happy to sponsor visas for the right candidate.") is None,
+)
+# `lod` (Lod, from HE_CITY_ALIASES) is a substring of ordinary English words, and
+# an Israel token clears the posting outright — so a US-only ad whose benefits
+# mention lodging was silently unclassifiable. Latin aliases need a boundary;
+# Hebrew must NOT have one (see the prefix pin above). Both halves in one check.
+check(
+    "geo: Latin city aliases need word boundaries, Hebrew ones must not have them",
+    (_geo("We cover travel and lodging. Applicants must be authorized to work in the "
+          "United States.") or _F).blocking is True
+    and (_geo("Our user base exploded last year. Applicants must be authorized to work "
+              "in the United States.") or _F).blocking is True
+    and _geo("Our office is in Haifa. Applicants must be authorized to work in the "
+             "United States.") is None
+    and _geo("מותר לעבוד בישראל בלבד") is None,
+)
+check(
+    "geo: region acronyms bind only to hiring verbs, and GCC is a compiler",
+    _geo("Build systems based on GCC, CMake and Bazel.") is None
+    and _geo("Embedded C firmware based on GCC and newlib for ARM targets.") is None
+    and _geo("The team is based in the Americas and works async.") is None
+    and (_geo("We are hiring across APAC.") or _F).kind == "region",
+)
+check(
+    "geo: scope comes from the matched SENTENCE, never a neighbouring one",
+    (_geo("We are a London fintech. Our biggest customers are in the United States and "
+          "Canada. Unfortunately we cannot offer visa sponsorship.") or _F).scope != "us",
+)
+# raw is what the card shows under "Quoted from the posting". A head slice drops
+# the evidence whenever the match sits past RAW_MAX inside its own sentence.
+_GEO_RUNON = (
+    "We are a fast growing team building developer tooling for large enterprises across "
+    "many industries and we care deeply about craft, ownership and shipping quickly with "
+    "a small senior team that values written communication over meetings, and applicants "
+    "must reside in the United States"
+)
+check(
+    "geo: the quote always contains the phrase that fired, even in a long sentence",
+    (_g := _geo(_GEO_RUNON)) is not None
+    and "United States" in _g.raw
+    and len(_g.raw) <= 240,
+    f"{len(_g.raw if _g else '')} chars: {(_g.raw if _g else '')[-60:]}",
+)
+# The fast path returns None when no rule's vocabulary is present. It is what
+# keeps the per-posting cost off the search hot path; if it ever drops a stem a
+# rule needs, that rule's own check above goes red.
+check(
+    "geo: a posting with none of the rule vocabulary is answered without scanning",
+    _geo("We build developer tools in Python and Go. Great team, strong craft culture.")
+    is None,
 )
 
 # 14c. Drushim provider: response parser pinned against a trimmed real fixture
@@ -3145,6 +3462,36 @@ with TestClient(_fastapi_app) as _tc:
         _tc.get(f"/applications/{_admin_apps[0]['id']}", headers=_FRIEND_H).status_code == 404,
     )
 
+    # "Save for later" from a search result: the shape the Jobs card posts. It
+    # has no tailored résumé and no cover letter BY DEFINITION — that is what
+    # saving a job you have not acted on yet means — and it must land as
+    # `saved`, the one status `hideApplied` deliberately does not hide. The
+    # frontend wrapper used to type both as required, over-constraining the
+    # schema it wraps; this pins the schema so it cannot drift back.
+    _saved_row = _tc.post(
+        "/applications",
+        json={
+            "job_title": "Saved For Later", "company": "LaterCo",
+            "jd_text": "Python and SQL work.", "overall_score": 76.0,
+            "job_url": "https://later.test/job-1",
+        },
+        headers=_ADMIN_H,
+    )
+    check(
+        "save for later: a job saves with no tailored résumé and defaults to 'saved'",
+        _saved_row.status_code == 200
+        and _saved_row.json()["status"] == "saved"
+        and _saved_row.json()["job_url"] == "https://later.test/job-1",
+        f"{_saved_row.status_code} {str(_saved_row.json())[:120]}",
+    )
+    check(
+        "save for later: the saved job comes back on the tracker to return to",
+        any(
+            r["job_title"] == "Saved For Later" and r["status"] == "saved"
+            for r in _tc.get("/applications", headers=_ADMIN_H).json()
+        ),
+    )
+
     # Outcome feedback loop (PLAN 17.3): the tracker records WHAT WAS SENT, so
     # the analytics can attribute replies to a résumé instead of guessing. The
     # unknown case is the one that matters — an old row must stay unknown, not
@@ -4020,6 +4367,166 @@ finally:
     _PROV.pop("fake_cache", None)
     _cache_db.close()
 
+# 21c. The geo gate END TO END. The pure-function block above proves the
+# classifier works and NOTHING about the verdict reaching the user, so this
+# drives a purpose-built board through the real fan-out. A purpose-built
+# fixture is mandatory rather than lazy: the shared job-search fakes produce no
+# restricted posting, so a check written against them would pass by never
+# firing (the x-ray lesson, twice over in this file).
+from app.core.job_search import (  # noqa: E402
+    CachedScore as _GeoCached,
+    WORLDWIDE_BOARD as _GEO_WW,
+    _geo_for,
+)
+
+_GEO_BLOCK_TXT = "Python and SQL. Applicants must be legally authorized to work in the United States."
+_GEO_REGION_TXT = "Python and SQL. We are hiring across APAC."
+_GEO_CLEAN_TXT = "Python and SQL work on a distributed backend."
+
+
+def _geo_hit(slug: str, text: str) -> "_FanHit":
+    # Distinct title AND company per posting: the fan-out ALSO dedupes by
+    # content (title|company, PLAN 15.1), so a fixture whose postings share
+    # both collapses into one row with the rest as also_on links — and the
+    # check then passes by never firing.
+    return _FanHit(
+        source=_GEO_WW, title=f"Python Developer {slug}", company=f"GeoCo {slug}",
+        description="" if _GEO_NEEDS_FETCH else text, url=f"https://geo.test/{slug}",
+    )
+
+
+_GEO_TEXTS = {
+    "restricted": _GEO_BLOCK_TXT, "both": _GEO_BLOCK_TXT, "local": _GEO_BLOCK_TXT,
+    "region": _GEO_REGION_TXT, "clean": _GEO_CLEAN_TXT,
+}
+# Flipped for the cache run below, so the descriptions stop being inline and a
+# skipped fetch becomes observable. With them inline, `fetches` is 0 either way
+# and the cache check would pass without the cache branch doing anything.
+_GEO_NEEDS_FETCH = False
+
+
+class _GeoBoard:
+    """Registered UNDER the worldwide board's name, because the origin stamp is
+    only ever applied to that board — a fake under any other name can never
+    reach the classifier, which is the gate this section exists to pin."""
+
+    name = _GEO_WW
+
+    def __init__(self, mode: str = "mixed"):
+        self.mode = mode
+        self.fetches = 0
+
+    def search(self, ctx):  # noqa: ANN001
+        if ctx.location == "United States":
+            if self.mode == "all_blocked":
+                return [_geo_hit("restricted", _GEO_BLOCK_TXT)]
+            return [
+                _geo_hit("restricted", _GEO_BLOCK_TXT),
+                _geo_hit("region", _GEO_REGION_TXT),
+                _geo_hit("clean", _GEO_CLEAN_TXT),
+                # Also returned by the LOCAL query below: visible from Israel,
+                # so its stamp is cleared and it is never classified.
+                _geo_hit("both", _GEO_BLOCK_TXT),
+            ]
+        if ctx.location == "Tel Aviv" and self.mode != "all_blocked":
+            # Same US-only text, no worldwide origin: the gate must skip it.
+            return [_geo_hit("local", _GEO_BLOCK_TXT), _geo_hit("both", _GEO_BLOCK_TXT)]
+        return []
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        self.fetches += 1
+        return hit.description or _GEO_TEXTS[hit.url.rsplit("/", 1)[-1]]
+
+
+check(
+    "geo gate: only a worldwide-origin hit is classified, identical text or not",
+    _geo_for(_FanHit(origin_market="", title="x"), _GEO_BLOCK_TXT, "United States") is None
+    and (_geo_for(_FanHit(origin_market="United States", title="x"), _GEO_BLOCK_TXT, "") or _F).blocking
+    is True,
+)
+
+_geo_ctx = _AlertCtx(
+    job_title="Python Developer", location="Tel Aviv", work_mode="remote",
+    include_worldwide=True, sources=[_GEO_WW], max_age_days=0,
+)
+_geo_real_board = _PROV.get(_GEO_WW)
+_geo_board = _GeoBoard()
+_PROV[_GEO_WW] = _geo_board
+try:
+    _gr = _fan_search(resume, _geo_ctx)
+    _gr_by_url = {m.url: m for m in _gr.matches}
+    check(
+        "geo search: the restricted posting is dropped, the other four are ranked",
+        len(_gr.matches) == 4
+        and [f.url for f in _gr.filtered] == ["https://geo.test/restricted"]
+        and (_gr.filtered[0].geo_restriction or _F).blocking is True
+        and "authorized to work in the United States" in (_gr.filtered[0].geo_restriction or _F).raw,
+        f"matched={sorted(_gr_by_url)} filtered={[f.url for f in _gr.filtered]}",
+    )
+    check(
+        "geo search: a filtered posting does NOT inflate `skipped` (its string means unfetchable)",
+        _gr.skipped == 0,
+        str(_gr.skipped),
+    )
+    check(
+        "geo search: the local hit carries the same US-only text and is NOT classified",
+        _gr_by_url["https://geo.test/local"].geo_restriction is None,
+    )
+    check(
+        "geo search: a posting the local query ALSO found keeps its stamp cleared",
+        _gr_by_url["https://geo.test/both"].geo_restriction is None,
+    )
+    check(
+        "geo search: a Tier-2 region note rides along on a ranked match, never filtered",
+        (_g2 := _gr_by_url["https://geo.test/region"].geo_restriction) is not None
+        and _g2.blocking is False and _g2.kind == "region"
+        and _gr_by_url["https://geo.test/clean"].geo_restriction is None,
+        str(_g2),
+    )
+    check(
+        "geo search: a filtered posting carries no score, because none was ever computed",
+        not hasattr(_gr.filtered[0], "overall")
+        and _gr.filtered[0].title == "Python Developer restricted",
+    )
+
+    # The cache branch skips BOTH the fetch and the LLM, so nothing in it looks
+    # like work — which is exactly why it is the branch that gets forgotten.
+    _GEO_NEEDS_FETCH = True  # descriptions stop being inline, so a skipped fetch shows
+    _geo_board.fetches = 0
+    _geo_cache = {
+        "https://geo.test/restricted": _GeoCached(
+            jd_text=_GEO_BLOCK_TXT, overall=80.0, keyword_coverage=70.0, fit_score=90.0,
+            top_matched=("Python",), top_gaps=(), title="Cached", company="GeoCo",
+            location="United States", posted_at="", logo_url="", is_full_match=True,
+        )
+    }
+    _gc = _fan_search(resume, _geo_ctx, cache=_geo_cache)
+    check(
+        "geo search: a full-match CACHED posting is still filtered (the branch is not a bypass)",
+        [f.url for f in _gc.filtered] == ["https://geo.test/restricted"]
+        and "https://geo.test/restricted" not in {m.url for m in _gc.matches}
+        and _geo_board.fetches == 4,  # the other four still fetched; the filtered one did not
+        f"filtered={[f.url for f in _gc.filtered]} fetches={_geo_board.fetches}",
+    )
+
+    # 100% filtered is the maximum-suspicion case and the one where the reveal
+    # must survive: raising here would destroy the list and send the user to
+    # re-run a search that fails identically.
+    _PROV[_GEO_WW] = _GeoBoard(mode="all_blocked")
+    _ga = _fan_search(resume, _geo_ctx)
+    check(
+        "geo search: an all-filtered search returns 200 with the list, and does not raise",
+        _ga.matches == [] and len(_ga.filtered) == 1
+        and (_ga.filtered[0].geo_restriction or _F).blocking is True,
+        f"matches={len(_ga.matches)} filtered={len(_ga.filtered)}",
+    )
+finally:
+    _GEO_NEEDS_FETCH = False
+    if _geo_real_board is not None:
+        _PROV[_GEO_WW] = _geo_real_board
+    else:
+        _PROV.pop(_GEO_WW, None)
+
 # 22. Batch auto-tailor kits (PLAN 8.1): enqueue high-fit jobs, drain the
 # queue one tailor per request (the serverless-safe loop), guard flags mark
 # kits never-auto-approvable, caps charged upfront, per-user isolation.
@@ -4027,6 +4534,7 @@ from datetime import datetime as _dt, timedelta as _td  # noqa: E402
 
 from sqlalchemy import select as _ksel  # noqa: E402
 
+from app.core import kits as _kits_mod  # noqa: E402
 from app.core.kits import (  # noqa: E402
     _sent_signals,
     enqueue_kits as _enqueue_kits,
@@ -4241,6 +4749,49 @@ with TestClient(_fastapi_app) as _tc:
             f"/kits/{_rb.json()['queued'][0]['id']}/reject", json={}, headers=_NOAM_H
         ).status_code == 400,
     )
+
+# Kits must NOT re-derive a geo verdict. A backstop here was written and
+# removed: it classified every job with no gate, while `search_jobs` gates on
+# `JobHit.origin_market` — so a LinkedIn posting the user's OWN location query
+# returned was ranked with no badge and then REFUSED by "Application kit" with a
+# 400 saying it states a hiring restriction abroad, and an Israeli-board job
+# needing an Israeli clearance failed the same way. Two surfaces contradicting
+# each other about one posting is the thing this codebase refuses.
+_geo_kit_db = SessionLocal()
+_geo_kit_user = _geo_kit_db.execute(_ksel(_KUser).where(_KUser.name == "Kim")).scalars().first()
+_geo_charges: list[int] = []
+try:
+    _geo_queued, _ = _enqueue_kits(
+        _geo_kit_db,
+        _geo_kit_user,
+        [
+            _KitJob(title="US Only", url="https://kit.test/geo-blocked",
+                    jd_text="Python work. Applicants must be authorized to work in the United States."),
+            _KitJob(title="Fine", url="https://kit.test/geo-ok", jd_text=_KIT_JD),
+        ],
+        charge=_geo_charges.append,
+    )
+    check(
+        "kits: a posting the search would rank is never refused for a geo reason here",
+        [k.url for k in _geo_queued]
+        == ["https://kit.test/geo-blocked", "https://kit.test/geo-ok"]
+        and _geo_charges == [2],
+        f"queued={[k.url for k in _geo_queued]} charges={_geo_charges}",
+    )
+    # Greps for an IMPORT or a CALL, not the bare name — the comment explaining
+    # why the backstop was removed names the function, and that comment is the
+    # thing most likely to stop someone re-adding it.
+    _kits_src = _geo_inspect.getsource(_kits_mod)
+    check(
+        "kits: the module neither imports nor calls the geo classifier",
+        len(_kits_src) > 2000
+        and "from app.core.geo_restriction import" not in _kits_src
+        and "detect_geo_restriction(" not in _kits_src,
+        f"{len(_kits_src)} chars scanned",
+    )
+finally:
+    _geo_kit_db.rollback()
+    _geo_kit_db.close()
 
 # Function level: a tailor that invents facts marks the kit flagged (never
 # auto-approvable), and a crashed "running" kit is requeued after the timeout.

@@ -127,6 +127,17 @@ def enqueue_kits(
     `charge` is called with the number of kits about to be queued BEFORE any
     row is written (the route passes the daily-cap check there): if it raises,
     nothing was queued, and its own commit can't flush half-built kit rows."""
+    # NO geo backstop here, deliberately — one was written and removed. It ran
+    # `detect_geo_restriction` on every job with no gate, while `search_jobs`
+    # gates on `JobHit.origin_market`. The two therefore disagreed about the
+    # SAME posting: a LinkedIn job returned by the user's own location query is
+    # ranked with no badge at all, and tapping "Application kit" on it returned
+    # a 400 saying it states a hiring restriction abroad. An Israeli-board job
+    # requiring an Israeli security clearance failed the same way. Two surfaces
+    # contradicting each other about one posting is worse than the cap it was
+    # protecting, and the protection was narrow anyway: the search path already
+    # filters blocking postings before they can be enqueued, and a history row
+    # only exists for a posting that was scored, i.e. never filtered.
     usable = [j for j in jobs if j.jd_text.strip() and j.url.strip()]
     if not usable:
         raise ValueError("No tailorable jobs in the batch (each needs a URL and JD text).")

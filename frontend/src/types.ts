@@ -345,6 +345,7 @@ export interface JobMatch {
   logo_url?: string; // company logo from the board; empty/absent when it has none
   also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
   salary?: SalaryInfo | null; // only when literally stated in the posting
+  geo_restriction?: GeoRestriction | null; // a hiring restriction the posting STATES
   stale?: boolean; // older than the search window, kept for keyword relevance (PLAN 15.6)
   // Tracker status when this posting is already in the tracker ("saved" |
   // "applied" | "interview" | "offer" | "rejected"); "" or absent when new.
@@ -361,6 +362,31 @@ export interface SalaryInfo {
   currency: string; // ILS | USD | EUR | ""
   period: string; // hour | month | year | ""
   raw: string; // the verbatim snippet from the posting
+}
+/** A geographic hiring restriction the posting LITERALLY states (never an LLM
+ * verdict, never an estimate). This says what the posting SAYS — it can never
+ * say whether the user qualifies, which is why the UI quotes `raw`.
+ * `kind` and `scope` are plain strings, not unions, so a newer backend value
+ * cannot break the build. */
+export interface GeoRestriction {
+  kind: string; // work_auth | citizenship | clearance | residency | title_tag | region | payroll | onsite | residency_state
+  scope: string; // us | uk | eu | il_excluded | other
+  place: string; // verbatim place fragment; "" when unnamed — never render alone
+  blocking: boolean; // true => the search dropped it before scoring
+  raw: string; // the posting's own sentence
+}
+/** A posting the search dropped BEFORE scoring because it states a blocking
+ * restriction. Carries no scores on purpose: it was never scored, and a zero
+ * would be a fabricated number. */
+export interface FilteredJob {
+  title: string;
+  company: string;
+  location: string;
+  url: string;
+  source: string;
+  posted_at: string;
+  logo_url: string;
+  geo_restriction?: GeoRestriction | null;
 }
 /** Multi-turn mock interview (PLAN 11.3) — stateless backend, the client
  * sends the whole transcript with every turn. */
@@ -417,6 +443,9 @@ export interface JobSearchResult {
   context: SearchContext;
   matches: JobMatch[];
   skipped: number;
+  // Postings dropped before scoring for a stated hiring restriction abroad.
+  // NOT part of `skipped`. Absent on older backends.
+  filtered?: FilteredJob[];
   source_errors?: Record<string, string>; // provider id → error when a source actually failed; absent on older backends
   source_empty?: Record<string, string>; // provider id → note when a source worked but matched nothing; absent on older backends
 }

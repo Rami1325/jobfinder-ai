@@ -55,6 +55,15 @@ class JobHit:
     # the searched keywords (PLAN 15.6 backfill). Set by the fan-out's tiering,
     # never by providers; the UI marks these with the post date.
     stale: bool = False
+    # The worldwide-remote market this hit came back from ("United States",
+    # "United Kingdom", "European Union"), or "" for the context's own
+    # location. Set by the fan-out's _search_board, NEVER by providers — the
+    # remote-ness and the market live in the QUERY (f_WT=2 + location) and
+    # nothing in a LinkedIn card echoes them back. This is the gate on the
+    # geo-restriction classifier: with include_worldwide off every stamp is ""
+    # and the classifier is never called, so a normal search and every
+    # Israeli-board posting are structurally out of its reach.
+    origin_market: str = ""
 
 
 @runtime_checkable
