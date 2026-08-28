@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { apiErrorMessage } from "../lib/apiError";
 import { Copy, RefreshCw, Wand2, Scissors } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { coverLetter } from "../api/client";
@@ -32,7 +33,7 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
       setText(letter);
       onGenerated?.(letter);
     } catch (e: any) {
-      setError(e?.response?.data?.detail || t("cover.error"));
+      setError(apiErrorMessage(e, t("cover.error")));
     } finally {
       setLoading(false);
     }

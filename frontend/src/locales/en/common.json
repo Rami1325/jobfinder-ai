@@ -134,5 +134,11 @@
     },
     "skip": "Skip",
     "start": "Let's go"
+  },
+  "sizeLimit": {
+    "resume": "That CV is too large to process ({{size}} KB; the limit is {{cap}} KB). It was NOT saved. Remove images or split it, then upload again.",
+    "jd": "That job description is too long ({{size}} KB; the limit is {{cap}} KB). Paste just the role and requirements.",
+    "context": "Your CV is too long for the AI to read in one go. Trim the oldest roles and try again — nothing was changed.",
+    "truncated": "The AI ran out of room before finishing. Try again, or shorten your CV a little first."
   }
 }

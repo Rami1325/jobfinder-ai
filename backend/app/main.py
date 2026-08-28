@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api.routes import router
 from app.config import get_settings
 from app.db.database import init_db
+from app.llm.limits import ContextWindowExceeded, InputTooLarge, OutputTruncated
 from app.llm.metering import meter
 
 
@@ -35,6 +36,49 @@ if settings.sentry_dsn:
         max_request_body_size="never",
         traces_sample_rate=0.0,
     )
+
+# Size limits, mapped once for the whole app rather than in each of the ~26
+# route bodies that wrap their model call in a bare `except Exception -> 502`.
+# 413 is deliberate on both counts: it is the status the upload cap already uses
+# (routes.py's _read_capped), and Sentry's Starlette integration captures only
+# 5xx — so a limit the user can act on stops generating issues, while a genuine
+# 500 still does. The detail is STRUCTURED, following the daily-cap precedent in
+# usage.py, so the sentence is composed client-side and can be translated;
+# `apiErrorMessage` already knows how to read one.
+@app.exception_handler(InputTooLarge)
+async def _input_too_large(request: Request, exc: InputTooLarge) -> JSONResponse:
+    return JSONResponse(
+        status_code=413,
+        content={
+            "detail": {
+                "code": "input_too_large",
+                "kind": exc.kind,
+                "size_kb": exc.size_kb,
+                "cap_kb": exc.cap_kb,
+            }
+        },
+    )
+
+
+@app.exception_handler(ContextWindowExceeded)
+async def _context_exceeded(request: Request, exc: ContextWindowExceeded) -> JSONResponse:
+    # Survived our caps and the model still refused it — the honest "your CV is
+    # legitimately enormous" case.
+    return JSONResponse(
+        status_code=413, content={"detail": {"code": "context_exceeded"}}
+    )
+
+
+@app.exception_handler(OutputTruncated)
+async def _output_truncated(request: Request, exc: OutputTruncated) -> JSONResponse:
+    # 503, not 413: nothing about the REQUEST was too big — the answer was. A
+    # retry or a shorter résumé is the action, and it is our ceiling that was
+    # hit, so this one SHOULD stay visible in Sentry.
+    return JSONResponse(
+        status_code=503, content={"detail": {"code": "output_truncated"}}
+    )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,

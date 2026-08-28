@@ -1,4 +1,60 @@
 """All LLM prompt templates live here so they're easy to tune in one place."""
+from __future__ import annotations
+
+import functools
+import inspect
+from typing import Any, Callable
+
+from app.config import get_settings
+from app.llm.limits import require_within
+
+# THE INPUT BOUNDARY IS HERE, and that is a measured choice. Every one of the 22
+# `complete_json`/`complete_text` calls in app/core and app/parsers builds its
+# user message with one of the `*_user(...)` builders below — no exceptions — so
+# this file is the single place unbounded text becomes prompt text.
+#
+# It is NOT enough to guard the stored master résumé: 25 request models take a
+# `resume: ResumeModel` straight from the client body (tailor, cover letter,
+# every interview route, LinkedIn, résumé health…), so the stored row is one of
+# twenty-six doors. Guarding the builders covers all of them at once.
+#
+# It is also NOT done in `client._create`: that sees the assembled string and
+# would slice a résumé's JSON mid-object, handing the model a truncated document
+# at the one boundary the fabrication guard cannot see.
+#
+# Argument NAME is the discriminator, which is why these names must stay
+# consistent across builders — a new builder calling its parameter something
+# else is silently unguarded.
+_RESUME_ARGS = frozenset({"resume_json", "raw_text"})
+_JD_ARGS = frozenset({"jd_text"})
+
+
+def _bounded(fn: Callable[..., str]) -> Callable[..., str]:
+    """Refuse an oversize document before it becomes prompt text.
+
+    Refuse, never truncate: these are the user's own documents (see
+    app/llm/limits.py rule 1). Machine-scraped text is clipped at its source
+    instead, so by the time it arrives here it is already under cap and this
+    guard never fires on it.
+    """
+    signature = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> str:
+        bound = signature.bind(*args, **kwargs)
+        settings = get_settings()  # at call time, so tests can env-override
+        for name, value in bound.arguments.items():
+            if not isinstance(value, str):
+                continue
+            if name in _RESUME_ARGS:
+                require_within(value, settings.max_resume_kb, "resume")
+            elif name in _JD_ARGS:
+                require_within(value, settings.max_jd_kb, "jd")
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 
 STRUCTURE_RESUME_SYSTEM = """Task: STRUCTURE_RESUME.
 You structure resume text into JSON. Extract the content \
@@ -692,14 +748,17 @@ def cover_letter_system(resume_lang: str, jd_lang: str) -> str:
     return system + (_ISRAELI_COVER_NOTE if jd_lang == "he" else "")
 
 
+@_bounded
 def structure_resume_user(raw_text: str) -> str:
     return f"Resume text to structure:\n\n{raw_text}"
 
 
+@_bounded
 def interview_questions_user(resume_json: str, jd_json: str) -> str:
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nTARGET JOB (JSON):\n{jd_json}"
 
 
+@_bounded
 def recruiter_screen_user(resume_json: str, jd_text: str) -> str:
     return (
         f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
@@ -708,6 +767,7 @@ def recruiter_screen_user(resume_json: str, jd_text: str) -> str:
     )
 
 
+@_bounded
 def interview_answer_user(resume_json: str, jd_json: str, question: str) -> str:
     return (
         f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nTARGET JOB (JSON):\n{jd_json}\n\n"
@@ -715,6 +775,7 @@ def interview_answer_user(resume_json: str, jd_json: str, question: str) -> str:
     )
 
 
+@_bounded
 def interview_feedback_user(resume_json: str, question: str, answer: str) -> str:
     return (
         f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nQUESTION: {question}\n\n"
@@ -729,6 +790,7 @@ def _format_transcript(transcript: list[tuple[str, str]]) -> str:
     return "\n".join(f"{role.upper()}: {text}" for role, text in transcript)
 
 
+@_bounded
 def interview_chat_user(resume_json: str, jd_text: str, transcript: list[tuple[str, str]]) -> str:
     return (
         f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
@@ -738,6 +800,7 @@ def interview_chat_user(resume_json: str, jd_text: str, transcript: list[tuple[s
     )
 
 
+@_bounded
 def interview_scorecard_user(resume_json: str, jd_text: str, transcript: list[tuple[str, str]]) -> str:
     return (
         f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
@@ -747,10 +810,12 @@ def interview_scorecard_user(resume_json: str, jd_text: str, transcript: list[tu
     )
 
 
+@_bounded
 def linkedin_user(resume_json: str) -> str:
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nProduce the optimized LinkedIn content."
 
 
+@_bounded
 def search_context_user(resume_json: str) -> str:
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nDerive the search query."
 
@@ -762,6 +827,7 @@ def follow_up_user(company: str, role: str, stage: str, extra: str) -> str:
     )
 
 
+@_bounded
 def outreach_user(
     resume_json: str,
     jd_text: str,
@@ -781,6 +847,7 @@ def outreach_user(
     )
 
 
+@_bounded
 def company_brief_user(resume_json: str, company: str, page_text: str, jd_text: str, job_title: str) -> str:
     return (
         f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
@@ -793,10 +860,12 @@ def company_brief_user(resume_json: str, company: str, page_text: str, jd_text: 
     )
 
 
+@_bounded
 def resume_health_user(resume_json: str) -> str:
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nProduce the health critique."
 
 
+@_bounded
 def screening_user(resume_json: str, jd_text: str, question: str) -> str:
     return (
         f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
@@ -805,14 +874,17 @@ def screening_user(resume_json: str, jd_text: str, question: str) -> str:
     )
 
 
+@_bounded
 def analyze_jd_user(jd_text: str) -> str:
     return f"Job description:\n\n{jd_text}"
 
 
+@_bounded
 def fit_score_user(resume_json: str, jd_json: str) -> str:
     return f"RESUME (JSON):\n{resume_json}\n\nJOB DESCRIPTION (JSON):\n{jd_json}"
 
 
+@_bounded
 def jd_fit_user(resume_json: str, jd_text: str) -> str:
     # RÉSUMÉ FIRST, JD SECOND — do not swap. One search scores up to 25 postings
     # against the SAME résumé, so the résumé is a shared prefix across all 25
@@ -822,6 +894,7 @@ def jd_fit_user(resume_json: str, jd_text: str) -> str:
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nJOB DESCRIPTION:\n{jd_text}"
 
 
+@_bounded
 def humanize_user(resume_json: str, issues_text: str, keep_keywords: list[str]) -> str:
     """The RESUME TO EDIT / END RESUME markers are load-bearing: the offline
     StubClient extracts the resume JSON between them to echo a deterministic,
@@ -835,6 +908,7 @@ def humanize_user(resume_json: str, issues_text: str, keep_keywords: list[str]) 
     )
 
 
+@_bounded
 def plan_cv_user(resume_json: str, jd_json: str) -> str:
     return (
         f"CANDIDATE RESUME (JSON):\n{resume_json}\n\n"
@@ -843,6 +917,7 @@ def plan_cv_user(resume_json: str, jd_json: str) -> str:
     )
 
 
+@_bounded
 def credibility_user(resume_json: str, jd_json: str) -> str:
     """RESUME TO REVIEW / END RESUME markers are load-bearing: the offline
     StubClient scans between them for exaggeration markers."""
@@ -853,6 +928,7 @@ def credibility_user(resume_json: str, jd_json: str) -> str:
     )
 
 
+@_bounded
 def tailor_user(
     resume_json: str,
     jd_json: str,
@@ -902,6 +978,7 @@ def tailor_user(
     return "".join(parts)
 
 
+@_bounded
 def cover_letter_user(resume_json: str, jd_json: str, tone: str) -> str:
     return (
         f"RESUME (JSON):\n{resume_json}\n\nJOB (JSON):\n{jd_json}\n\n"

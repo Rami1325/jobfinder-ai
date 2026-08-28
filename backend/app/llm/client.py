@@ -11,6 +11,7 @@ from functools import lru_cache
 from typing import Any, Protocol
 
 from app.config import get_settings
+from app.llm.limits import ContextWindowExceeded, OutputTruncated
 from app.llm.metering import record
 
 
@@ -24,6 +25,43 @@ class LLMClient(Protocol):
         ...
 
 
+def _is_context_overflow(e: Exception) -> bool:
+    """True only for a genuine context-window rejection.
+
+    Keys on `code`, not the exception type: every malformed-parameter bug is
+    also a BadRequestError, and reporting those to the user as "your résumé is
+    too long" would be a guard that fires on legitimate input. The message
+    fallback covers providers whose error body omits `code`."""
+    if getattr(e, "code", None) == "context_length_exceeded":
+        return True
+    text = str(e).lower()
+    return "context length" in text or "maximum context" in text
+
+
+def _rejected_param(e: Exception, kwargs: dict[str, Any]) -> str | None:
+    """Which optional parameter this 400 is complaining about, if any."""
+    text = str(e).lower()
+    for name in ("temperature", "max_completion_tokens", "max_tokens"):
+        if name in kwargs and name.lower() in text:
+            return name
+    return None
+
+
+def _guard_finish_reason(resp: Any) -> None:
+    """Raise if the model stopped because it ran out of output budget.
+
+    Hand-written because `chat.completions.create` NEVER raises on truncation —
+    it returns a normal response with partial content. The SDK's own
+    LengthFinishReasonError is reachable only through `.parse()` and
+    `.stream()`. Without this, an output cap silently converts a working tailor
+    into a JSONDecodeError, and a cover letter into a letter that just stops."""
+    choices = getattr(resp, "choices", None) or []
+    if choices and getattr(choices[0], "finish_reason", None) == "length":
+        raise OutputTruncated(
+            "the model hit its output limit before finishing this response"
+        )
+
+
 class OpenAIClient:
     """OpenAI implementation using the Chat Completions API with JSON mode."""
 
@@ -35,27 +73,55 @@ class OpenAIClient:
         # once — one hung call must not stall a whole search (PLAN 12.1).
         self._client = OpenAI(api_key=api_key, timeout=90, max_retries=2)
         self._model = model_id
-        # Some newer models (e.g. gpt-5.x) reject any non-default temperature.
-        # Start by trying a low temperature for deterministic output, and turn
-        # this off permanently the first time the API rejects it.
-        self._send_temperature = True
+        # Optional request parameters this model might reject, each dropped
+        # permanently the first time the API refuses it:
+        #   temperature            — newer models (gpt-5.x) allow only the default.
+        #   max_completion_tokens  — the modern output-cap name.
+        #   max_tokens             — the legacy one; models accept one or the other.
+        # A SET, not a pair of booleans, because the retry below strips one
+        # parameter per attempt and loops. The previous single-shot version
+        # retried exactly ONCE and stripped exactly ONE kwarg, so a call the API
+        # rejected for two reasons at once died on the second — which is what
+        # adding a second probe to it would have caused.
+        self._unsupported: set[str] = set()
+        # Output-cap parameter name, resolved on first rejection.
+        self._cap_param = "max_completion_tokens"
+
+    def _optional_kwargs(self, temperature: float) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if "temperature" not in self._unsupported:
+            out["temperature"] = temperature
+        cap = get_settings().llm_max_output_tokens
+        if cap > 0 and self._cap_param not in self._unsupported:
+            out[self._cap_param] = cap
+        return out
 
     def _create(self, messages: list[dict[str, str]], json_mode: bool, temperature: float):
-        kwargs: dict[str, Any] = {"model": self._model, "messages": messages}
+        # Resolved here, not at import: `openai` is imported lazily so the stub
+        # path never requires the package (get_llm_client returns StubClient
+        # without an API key), and a module-level import would break that.
+        from openai import BadRequestError
+
+        base: dict[str, Any] = {"model": self._model, "messages": messages}
         if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
-        if self._send_temperature:
-            kwargs["temperature"] = temperature
-        try:
-            return self._metered(kwargs)
-        except Exception as e:  # noqa: BLE001 - inspect message for the temperature restriction
-            if self._send_temperature and "temperature" in str(e).lower():
-                # Model only supports the default temperature: retry without it
-                # and stop sending it for the rest of this client's life.
-                self._send_temperature = False
-                kwargs.pop("temperature", None)
+            base["response_format"] = {"type": "json_object"}
+        # At most one attempt per optional parameter, plus the bare call.
+        for _ in range(3):
+            kwargs = {**base, **self._optional_kwargs(temperature)}
+            try:
                 return self._metered(kwargs)
-            raise
+            except BadRequestError as e:
+                # A context overflow is NOT a capability problem — surface it.
+                if _is_context_overflow(e):
+                    raise ContextWindowExceeded(str(e)) from e
+                rejected = _rejected_param(e, kwargs)
+                if rejected is None:
+                    raise
+                if rejected == "max_completion_tokens" and "max_tokens" not in self._unsupported:
+                    # Legacy model: same intent, older parameter name.
+                    self._cap_param = "max_tokens"
+                self._unsupported.add(rejected)
+        return self._metered({**base, **self._optional_kwargs(temperature)})
 
     def _metered(self, kwargs: dict[str, Any]):
         """One API call, with its token usage reported to the request's tally
@@ -80,6 +146,7 @@ class OpenAIClient:
             json_mode=True,
             temperature=0.3,
         )
+        _guard_finish_reason(resp)  # before json.loads — see OutputTruncated
         content = resp.choices[0].message.content or "{}"
         return json.loads(content)
 
@@ -92,6 +159,9 @@ class OpenAIClient:
             json_mode=False,
             temperature=0.5,
         )
+        # No parse step here to fail loudly, so without this a capped cover
+        # letter would simply stop mid-sentence with no error at all.
+        _guard_finish_reason(resp)
         return resp.choices[0].message.content or ""
 
 

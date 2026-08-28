@@ -25,6 +25,20 @@ from app.core.company_brief import build_company_brief
 from app.core.cover_letter import generate_cover_letter
 from app.core.resume_health import check_resume_health
 from app.core.salary import extract_salary
+from app.llm.limits import (
+    ContextWindowExceeded,
+    InputTooLarge,
+    OutputTruncated,
+    require_within,
+    utf8_bytes,
+)
+
+# Re-raised past every generic `except Exception -> 502` wrapper below so the
+# app-level handlers in main.py can map them to 413/503 with a structured,
+# translatable detail. Without this a size limit reaches the user as
+# "LLM error while structuring résumé: resume is 317 KB…" — a 5xx, which also
+# means Sentry keeps filing it.
+_SIZE_ERRORS = (InputTooLarge, ContextWindowExceeded, OutputTruncated)
 from app.core.mailer import smtp_configured
 from app.core.follow_up import write_follow_up
 from app.core.free_scan import free_scan, free_scan_limiter
@@ -225,6 +239,8 @@ async def upload_resume(file: UploadFile = File(...), _u: User = Depends(llm_use
         raise HTTPException(422, "Could not extract any text from the file.")
     try:
         resume = structure_resume(raw)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001 - surface the real LLM error to the UI
         raise HTTPException(502, f"LLM error while structuring résumé: {e}")
     ledger = build_facts_ledger(resume)
@@ -237,6 +253,8 @@ def jd_analyze(body: JDAnalyzeRequest, _u: User = Depends(llm_user)) -> JDModel:
         raise HTTPException(400, "Job description text is empty.")
     try:
         return analyze_jd(body.jd_text)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while analyzing job description: {e}")
 
@@ -253,6 +271,8 @@ def tailor(
             body.resume, body.jd,
             avoid_phrases=writing_prefs_core.avoid_phrases(user),
         )
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while tailoring résumé: {e}")
 
@@ -277,6 +297,8 @@ def add_writing_prefs(
 def cover_letter(body: CoverLetterRequest, _u: User = Depends(llm_user)) -> CoverLetterResponse:
     try:
         text = generate_cover_letter(body.resume, body.jd, body.tone)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while writing cover letter: {e}")
     return CoverLetterResponse(cover_letter=text)
@@ -309,6 +331,8 @@ def render(body: RenderRequest):
 def interview_questions(body: InterviewQuestionsRequest, _u: User = Depends(llm_user)) -> InterviewQuestionsResult:
     try:
         return generate_questions(body.resume, body.jd)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while generating interview questions: {e}")
 
@@ -319,6 +343,8 @@ def interview_answer(body: InterviewAnswerRequest, _u: User = Depends(llm_user))
         raise HTTPException(400, "Question is empty.")
     try:
         return model_answer(body.resume, body.jd, body.question)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while writing the model answer: {e}")
 
@@ -329,6 +355,8 @@ def interview_feedback(body: InterviewFeedbackRequest, _u: User = Depends(llm_us
         raise HTTPException(400, "Answer is empty.")
     try:
         return answer_feedback(body.resume, body.question, body.answer)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while evaluating the answer: {e}")
 
@@ -339,6 +367,8 @@ def interview_recruiter_screen(body: RecruiterScreenRequest, _u: User = Depends(
     questions with grounded talking points, and honest salary-range framing."""
     try:
         return recruiter_screen(body.resume, body.jd_text)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while building the recruiter-screen prep: {e}")
 
@@ -349,6 +379,8 @@ def interview_chat(body: InterviewChatRequest, _u: User = Depends(llm_user)) -> 
     whole transcript; the model returns the interviewer's next message."""
     try:
         return chat_turn(body.resume, body.jd_text, body.transcript)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error during the mock interview: {e}")
 
@@ -360,6 +392,8 @@ def interview_scorecard(body: InterviewChatRequest, _u: User = Depends(llm_user)
         raise HTTPException(400, "Answer at least one question before ending the session.")
     try:
         return session_scorecard(body.resume, body.jd_text, body.transcript)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while writing the scorecard: {e}")
 
@@ -373,6 +407,8 @@ def jobs_match(body: JobMatchRequest, _u: User = Depends(llm_user)) -> JobMatchR
         raise HTTPException(400, "Provide at least one job listing.")
     try:
         return match_jobs(body.resume, body.listings)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while matching jobs: {e}")
 
@@ -393,6 +429,8 @@ def jobs_fit(body: FitCheckRequest, _u: User = Depends(llm_user)) -> FitCheckRes
         raise HTTPException(400, "Job description text is empty.")
     try:
         jd, score = analyze_and_score(body.resume, body.jd_text)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while reading the job description: {e}")
     return FitCheckResult(
@@ -424,6 +462,8 @@ def jobs_search_context(body: SearchContextRequest, _u: User = Depends(llm_user)
     'Customize search' fields before any scrape runs."""
     try:
         return derive_search_context(body.resume)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error deriving search context: {e}")
 
@@ -469,6 +509,8 @@ def jobs_search(
         result = search_jobs(body.resume, body.customize, cache=cache)
     except ValueError as e:  # user-facing scrape/search problems
         raise HTTPException(400, str(e))
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while searching jobs: {e}")
     try:  # history persistence is best-effort — never fail the search because of it
@@ -896,6 +938,8 @@ def comeet_add_company(
         c = register_comeet_company(db, body.url)
     except ValueError as e:  # bad URL / not a Comeet page — user-facing
         raise HTTPException(400, str(e))
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while adding that company: {e}")
     return ComeetCompanyOut(slug=c.slug, name=c.name, careers_url=c.careers_url)
@@ -922,6 +966,8 @@ def greenhouse_add_company(
         c = register_greenhouse_company(db, body.board)
     except ValueError as e:  # bad slug / no such board — user-facing
         raise HTTPException(400, str(e))
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while adding that company: {e}")
     return GreenhouseCompanyOut(slug=c.slug, name=c.name, board_url=greenhouse_board_url(c.slug))
@@ -974,6 +1020,8 @@ async def public_scan(
 def tools_ats_scan(body: ATSScanRequest) -> ATSScanResult:
     try:
         return scan_resume(body.resume, body.jd)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while scanning résumé: {e}")
 
@@ -986,6 +1034,8 @@ def tools_ats_xray(body: ATSXrayRequest) -> ATSXrayResult:
         return xray(body.resume, template=body.template, fmt=body.fmt)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while x-raying résumé: {e}")
 
@@ -1006,6 +1056,8 @@ def tools_ats_xray(body: ATSXrayRequest) -> ATSXrayResult:
 def tools_coverage(body: CoverageRequest) -> CoverageResult:
     try:
         pct, gaps = keyword_analysis(body.resume, body.jd)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while scoring keyword coverage: {e}")
     return CoverageResult(
@@ -1031,6 +1083,8 @@ def tools_page_count(body: PageCountRequest) -> PageCountResult:
     s = get_settings()
     try:
         pages = page_count(body.resume, template=spec.id)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error while measuring page count: {e}")
     return PageCountResult(
@@ -1045,6 +1099,8 @@ def tools_page_count(body: PageCountRequest) -> PageCountResult:
 def tools_linkedin(body: LinkedInRequest, _u: User = Depends(llm_user)) -> LinkedInResult:
     try:
         return optimize_linkedin(body.resume)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while optimizing LinkedIn profile: {e}")
 
@@ -1053,6 +1109,8 @@ def tools_linkedin(body: LinkedInRequest, _u: User = Depends(llm_user)) -> Linke
 def tools_follow_up(body: FollowUpRequest, _u: User = Depends(llm_user)) -> FollowUpResult:
     try:
         return write_follow_up(body.company, body.role, body.stage, body.context)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while writing the follow-up email: {e}")
 
@@ -1071,6 +1129,8 @@ def outreach(body: OutreachRequest, _u: User = Depends(llm_user)) -> OutreachRes
             body.contact_name,
             body.contact_role,
         )
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while writing outreach messages: {e}")
 
@@ -1083,6 +1143,8 @@ def tools_screening_answer(body: ScreeningRequest, _u: User = Depends(llm_user))
         raise HTTPException(400, "Question is empty.")
     try:
         return answer_screening_question(body.resume, body.jd_text, body.question)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while drafting the answer: {e}")
 
@@ -1099,6 +1161,8 @@ def tools_company_brief(body: CompanyBriefRequest, _u: User = Depends(llm_user))
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while building the company brief: {e}")
 
@@ -1109,6 +1173,8 @@ def tools_resume_health(body: ResumeHealthRequest, _u: User = Depends(llm_user))
     the score; the LLM adds critique text (strengths/improvements/rewrites)."""
     try:
         return check_resume_health(body.resume)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while checking the résumé: {e}")
 
@@ -1221,6 +1287,21 @@ def save_master_resume(
     row = next(
         (r for r in _master_rows(db, user.id) if (r.language or "en") == language), None
     )
+    # The master résumé is embedded whole into ~20 downstream prompts, so this
+    # is the door that bounds all of them at once — and it is a REAL door: since
+    # Phase 23 the document is typed on directly, so a ResumeModel arrives here
+    # with no file and no parser behind it. Guarded here rather than at each
+    # prompt so the size is refused once, before anything is persisted.
+    #
+    # THE CARVE-OUT IS LOAD-BEARING: a save that SHRINKS an already-oversize
+    # master is always allowed. Without it, anyone whose master predates this
+    # cap is locked out of their own résumé — every save refused, including the
+    # trim that would fix it. That is a guard firing on the one action the user
+    # must be able to take.
+    incoming = body.resume.model_dump_json()
+    stored_bytes = utf8_bytes(row.resume_json or "") if row is not None else 0
+    if utf8_bytes(incoming) > stored_bytes:
+        require_within(incoming, get_settings().max_resume_kb, "resume")
     if row is None:
         row = SavedResume(language=language, user_id=user.id)
         db.add(row)

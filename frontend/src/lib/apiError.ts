@@ -24,6 +24,32 @@ const LIMIT_KEYS: Record<LimitAction, string> = {
   submit: "dailyLimit.submit",
 };
 
+// Prompt-size limits (backend app/llm/limits.py). Same structured-detail shape
+// as the daily cap and for the same reason: the sentence is composed here so it
+// can be translated, instead of shipping an English string from the server.
+interface SizeLimitDetail {
+  code: "input_too_large";
+  kind: "resume" | "jd";
+  size_kb: number;
+  cap_kb: number;
+}
+
+function isSizeLimit(detail: unknown): detail is SizeLimitDetail {
+  return (
+    typeof detail === "object" &&
+    detail !== null &&
+    (detail as { code?: unknown }).code === "input_too_large"
+  );
+}
+
+function codeOf(detail: unknown): string | null {
+  if (typeof detail === "object" && detail !== null) {
+    const c = (detail as { code?: unknown }).code;
+    if (typeof c === "string") return c;
+  }
+  return null;
+}
+
 function isDailyLimit(detail: unknown): detail is DailyLimitDetail {
   return (
     typeof detail === "object" &&
@@ -41,6 +67,18 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     const key = LIMIT_KEYS[detail.action] ?? "dailyLimit.generic";
     return i18n.t(key, { ns: "common", cap: detail.cap });
   }
+  if (isSizeLimit(detail)) {
+    // Keyed per kind: a résumé that is too big and a job ad that is too big
+    // need different advice (trim the CV vs paste less of the posting).
+    return i18n.t(`sizeLimit.${detail.kind === "jd" ? "jd" : "resume"}`, {
+      ns: "common",
+      cap: detail.cap_kb,
+      size: detail.size_kb,
+    });
+  }
+  const code = codeOf(detail);
+  if (code === "context_exceeded") return i18n.t("sizeLimit.context", { ns: "common" });
+  if (code === "output_truncated") return i18n.t("sizeLimit.truncated", { ns: "common" });
   if (typeof detail === "string" && detail.trim()) return detail;
   return fallback;
 }

@@ -12,7 +12,9 @@ import urllib.request
 
 from app.core.geo_restriction import detect_geo_restriction
 from app.core.jd_analyzer import analyze_jd
+from app.config import get_settings
 from app.core.net_guard import assert_fetchable, guarded_opener
+from app.llm.limits import clip_utf8
 from app.core.salary import extract_salary
 from app.core.scorer import score_resume, top_matched_and_gaps
 from app.models import JobMatch, JobMatchResult, ResumeModel
@@ -186,6 +188,23 @@ def _extract_linkedin(url: str) -> str:
     return (f"{header}\n\n{body}" if header else body).strip()
 
 
+def _clip_jd(text: str) -> str:
+    """Bound scraped posting text before it can reach a prompt.
+
+    CLIPPED, not refused, and silently — the opposite of the résumé rule, and
+    for the reason that rule is about ownership: this text is a page WE fetched,
+    the user never saw it, and the tail past a job ad is nav, footer and
+    related-jobs boilerplate. Nothing of theirs is lost, so no notice is owed.
+
+    This is the single choke point: `_http_get` reads up to 3 MB and the
+    whole-page `_html_to_text` fallback runs whenever schema.org extraction
+    finds nothing, so a JS-heavy careers site delivered megabytes of nav text
+    into every prompt downstream — job match, job search, kits and the company
+    brief all obtain their text through here."""
+    clipped, _ = clip_utf8(text, get_settings().max_jd_kb)
+    return clipped
+
+
 def fetch_job_text(url: str) -> str:
     """Fetch a job posting URL and return readable text.
 
@@ -206,7 +225,7 @@ def fetch_job_text(url: str) -> str:
     if "linkedin.com" in u.lower():
         text = _extract_linkedin(u)
         if text and not _looks_like_login_wall(text):
-            return text
+            return _clip_jd(text)
         raise ValueError(
             "LinkedIn didn't return the public description for this posting (it may be "
             "closed, region-locked, or login-only). Open the job, copy the description, "
@@ -220,4 +239,4 @@ def fetch_job_text(url: str) -> str:
             "That page needs a login or blocked the fetch, so only its sign-in text came "
             "back. Open the posting, copy the job description, and paste it here instead."
         )
-    return text
+    return _clip_jd(text)

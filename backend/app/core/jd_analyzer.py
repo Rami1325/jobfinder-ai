@@ -1,13 +1,16 @@
 """Analyze a pasted job description into structured requirements."""
 from __future__ import annotations
 
+from app.config import get_settings
 from app.core.lang import detect_language
 from app.llm.client import get_llm_client
 from app.llm import prompts
+from app.llm.limits import require_within
 from app.models import JDModel
 
 
 def analyze_jd(jd_text: str) -> JDModel:
+    require_within(jd_text, get_settings().max_jd_kb, "jd")
     # Detected deterministically (Hebrew-block regex), never by the LLM: it
     # drives prompt language notes and must be reproducible offline.
     language = detect_language(jd_text)

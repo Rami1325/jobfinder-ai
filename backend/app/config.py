@@ -51,6 +51,31 @@ class Settings(BaseSettings):
     # than gut the CV, but never go past it.
     resume_max_pages: int = 2
     resume_hard_max_pages: int = 3
+    # Prompt input ceilings, in UTF-8 KB (see app/llm/limits.py for why bytes
+    # and not characters — Hebrew costs ~1.83 bytes/char, so a character cap
+    # silently grants the primary market ~2x the tokens).
+    #
+    # These are GUARD RAILS, not budgets: they must fire on a 500-page PDF and
+    # never on a real CV. 256 KB is ~256k English or ~140k Hebrew characters,
+    # comfortably past the ~30 rendered pages a master résumé can legitimately
+    # run (see resume_max_pages above). 32 KB is ~10x a long job ad and ~2.5x
+    # company_brief's existing _PAGE_TEXT_CAP of 12,000. A legitimate document
+    # that is still too big for the model is caught by ContextWindowExceeded
+    # instead, which can say something actionable.
+    max_resume_kb: int = 256
+    max_jd_kb: int = 32
+    # Runaway-generation stop, NOT a budget — and it may only ship alongside the
+    # finish_reason check in llm/client.py, or a truncated completion becomes a
+    # JSONDecodeError blamed on us. Arithmetic: the largest legitimate output is
+    # a TAILOR at resume_hard_max_pages (3), which the prompt's own budget puts
+    # at ~1,650 body words — measured at ~31.8k chars in English (~7,950 tokens)
+    # and ~23.3k chars in Hebrew, where a character can cost a whole token. So
+    # 16,000 sits at 2x the English worst case, and BELOW the pessimistic Hebrew
+    # one: a very long Hebrew tailor can hit it, and the finish_reason check is
+    # what turns that into an honest message. It is not raised further because
+    # 16,384 is the max-output ceiling on current mid-tier models and asking for
+    # more risks a 400 on every call.
+    llm_max_output_tokens: int = 16000
     model_id: str = "gpt-4o-mini"
     use_stub_llm: bool = False
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 
+from app.config import get_settings
 from app.llm.client import get_llm_client
 from app.llm import prompts
+from app.llm.limits import require_within
 from app.models import Education, Experience, FactsLedger, ResumeModel
 
 # Matches things like "20%", "$1.2M", "3+ years", "1,000", "10x"
@@ -13,6 +15,11 @@ _NUMBER_RE = re.compile(r"\$?\d[\d,.]*\s*(?:%|x|\+|k|m|bn|b|years?|yrs?)?", re.I
 
 
 def structure_resume(raw_text: str) -> ResumeModel:
+    # Refused, not truncated: this text becomes the user's master résumé, and a
+    # silently shortened CV is data loss they would discover from a recruiter.
+    # Checked BEFORE the call so an oversize upload costs nothing. Read at call
+    # time so the smoke test can env-override it (the max_upload_mb precedent).
+    require_within(raw_text, get_settings().max_resume_kb, "resume")
     client = get_llm_client()
     data = client.complete_json(
         prompts.STRUCTURE_RESUME_SYSTEM,

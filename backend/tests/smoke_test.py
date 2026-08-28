@@ -1508,6 +1508,279 @@ check(
     is None,
 )
 
+# 14b-6. Prompt input bounds, output cap, and honest size errors.
+# A production Sentry issue was a token-limit failure on a large master résumé.
+# Nothing in the backend bounded prompt input: the only ceiling was a 10 MB FILE
+# cap, and a 10 MB PDF extracts to megabytes that went into the prompt whole.
+import inspect as _lim_inspect  # noqa: E402
+
+from app.core import jd_analyzer as _jd_analyzer_mod  # noqa: E402
+from app.llm import client as _lim_client_mod  # noqa: E402
+from app.parsers import structurer as _structure_resume_mod  # noqa: E402
+from app.llm.limits import (  # noqa: E402
+    ContextWindowExceeded,
+    InputTooLarge,
+    OutputTruncated,
+    clip_utf8,
+    require_within,
+    utf8_bytes,
+)
+
+# BYTES, NOT CHARACTERS. Hebrew costs ~1.9 bytes/char, so a character cap
+# silently grants the primary market roughly twice the tokens for the same
+# number. Both halves in one check: the ratio must be real AND the cap must
+# actually charge for it.
+_HE = "ניהול מערכות"
+check(
+    "limits: sized in UTF-8 bytes, so Hebrew is not granted a bigger budget",
+    utf8_bytes(_HE) > len(_HE) and utf8_bytes("systems management") == 18,
+    f"he {len(_HE)} chars / {utf8_bytes(_HE)} bytes",
+)
+
+# A cap is a GUARD RAIL, not a budget: it must fire on the pathological input
+# and never on a real CV. The false-positive half is the point — CLAUDE.md's
+# rule is that a guard which also fires on legitimate input is worse than none.
+_lim_real_cv = "Senior Engineer\n" + ("Built and shipped backend services. " * 1200)
+check(
+    "limits: a realistic long CV passes the cap, a pathological one does not",
+    (require_within(_lim_real_cv, 256, "resume") is None)
+    and utf8_bytes(_lim_real_cv) < 256 * 1024,
+)
+try:
+    require_within("x" * (300 * 1024), 256, "resume")
+    check("limits: an oversize résumé raises InputTooLarge", False, "did not raise")
+except InputTooLarge as _e:
+    check(
+        "limits: an oversize résumé raises InputTooLarge carrying both numbers",
+        _e.kind == "resume" and _e.size_kb == 300 and _e.cap_kb == 256,
+        f"{_e.kind} {_e.size_kb}/{_e.cap_kb}",
+    )
+
+# clip_utf8 is for SCRAPED text only. It must cut on a character boundary (a raw
+# byte slice mid-character yields U+FFFD) and back off to whitespace, because a
+# shortened Hebrew word can BE a different real word (בנק -> נק) — a term the
+# candidate never wrote, in the section the fabrication guard does not cover.
+_lim_long_he = (_HE + " ") * 200
+_lim_cut, _lim_flag = clip_utf8(_lim_long_he, 1)
+check(
+    "limits: clip cuts on a character boundary and never mid-word",
+    _lim_flag is True
+    and "�" not in _lim_cut
+    and _lim_long_he.startswith(_lim_cut)
+    and _lim_long_he[len(_lim_cut) : len(_lim_cut) + 1].isspace()
+    and _lim_cut.split()[-1] in _HE.split(),
+    f"{utf8_bytes(_lim_cut)} bytes, last word {_lim_cut.split()[-1]!r}",
+)
+check(
+    "limits: text under the cap is returned untouched, and a word-less blob is not emptied",
+    clip_utf8("short text", 256) == ("short text", False)
+    and len(clip_utf8("A" * 5000, 1)[0]) == 1024,
+)
+
+# The classifier for a context overflow keys on `code`, never on the exception
+# type: every malformed-parameter bug is also a BadRequestError, and reporting
+# those as "your résumé is too long" is a guard firing on legitimate input.
+import httpx as _lim_httpx  # noqa: E402
+from openai import BadRequestError as _LimBadRequest  # noqa: E402
+
+
+def _lim_err(msg: str, code: str) -> _LimBadRequest:
+    return _LimBadRequest(
+        msg,
+        response=_lim_httpx.Response(400, request=_lim_httpx.Request("POST", "http://x")),
+        body={"code": code},
+    )
+
+
+check(
+    "limits: only a context_length_exceeded 400 is treated as a size problem",
+    _lim_client_mod._is_context_overflow(
+        _lim_err("maximum context length is 128000 tokens", "context_length_exceeded")
+    )
+    is True
+    and _lim_client_mod._is_context_overflow(
+        _lim_err("Unsupported parameter: 'foo'", "unsupported_parameter")
+    )
+    is False,
+)
+
+# THE JSON TRUNCATION TRAP. chat.completions.create NEVER raises on
+# finish_reason == "length" — it returns partial content, which json.loads then
+# fails on, and the user is shown a parse error that reads as our bug. The
+# SDK's own LengthFinishReasonError is reachable only via .parse()/.stream().
+from types import SimpleNamespace as _LimNS  # noqa: E402
+
+check(
+    "limits: a truncated completion raises OutputTruncated instead of a parse error",
+    _lim_client_mod._guard_finish_reason(
+        _LimNS(choices=[_LimNS(finish_reason="stop")])
+    )
+    is None,
+)
+try:
+    _lim_client_mod._guard_finish_reason(_LimNS(choices=[_LimNS(finish_reason="length")]))
+    check("limits: finish_reason=length is detected", False, "did not raise")
+except OutputTruncated:
+    check("limits: finish_reason=length is detected", True)
+
+# ...and it must be WIRED IN, not merely defined. Driving the real
+# complete_json/complete_text is the only thing that catches the guard being
+# deleted from the call path: a check that calls _guard_finish_reason directly
+# still passes with the call site gone. Both entry points, because complete_text
+# (the cover letter) has no parse step to fail loudly on its own — the letter
+# would simply stop mid-sentence.
+def _lim_truncating_metered(kwargs):
+    return _LimNS(
+        choices=[_LimNS(finish_reason="length", message=_LimNS(content='{"partial":'))]
+    )
+
+
+_lim_c_json = _lim_client_mod.OpenAIClient.__new__(_lim_client_mod.OpenAIClient)
+_lim_c_json._model, _lim_c_json._unsupported, _lim_c_json._cap_param = "m", set(), "max_completion_tokens"
+_lim_c_json._metered = _lim_truncating_metered
+_lim_json_raised = ""
+try:
+    _lim_c_json.complete_json("sys", "user")
+except OutputTruncated:
+    _lim_json_raised = "typed"
+except Exception as _e:  # noqa: BLE001 - a JSONDecodeError here is the defect
+    _lim_json_raised = type(_e).__name__
+
+_lim_c_text = _lim_client_mod.OpenAIClient.__new__(_lim_client_mod.OpenAIClient)
+_lim_c_text._model, _lim_c_text._unsupported, _lim_c_text._cap_param = "m", set(), "max_completion_tokens"
+_lim_c_text._metered = _lim_truncating_metered
+_lim_text_raised = ""
+try:
+    _lim_c_text.complete_text("sys", "user")
+except OutputTruncated:
+    _lim_text_raised = "typed"
+except Exception as _e:  # noqa: BLE001
+    _lim_text_raised = type(_e).__name__
+
+check(
+    "limits: a truncated response raises through complete_json AND complete_text",
+    _lim_json_raised == "typed" and _lim_text_raised == "typed",
+    f"json={_lim_json_raised or 'no raise (JSONDecodeError would reach the user)'} "
+    f"text={_lim_text_raised or 'no raise (letter silently cut short)'}",
+)
+
+# The output cap must actually reach the wire, and the capability probe must
+# survive a model that rejects BOTH temperature and the modern cap name. The
+# previous single-shot retry stripped exactly ONE kwarg, so such a call died on
+# the second — which is what adding a second probe to it would have caused.
+_lim_sent: list[dict] = []
+
+
+def _lim_fake_metered(reject: tuple[str, ...]):
+    def _run(kwargs):
+        _lim_sent.append(dict(kwargs))
+        for name in reject:
+            if name in kwargs:
+                raise _lim_err(f"Unsupported parameter: '{name}'", "unsupported_parameter")
+        return _LimNS(
+            choices=[_LimNS(finish_reason="stop", message=_LimNS(content='{"ok":1}'))]
+        )
+
+    return _run
+
+
+_lim_c = _lim_client_mod.OpenAIClient.__new__(_lim_client_mod.OpenAIClient)
+_lim_c._model, _lim_c._unsupported, _lim_c._cap_param = "m", set(), "max_completion_tokens"
+_lim_c._metered = _lim_fake_metered(())
+_lim_c.complete_json("sys", "user")
+check(
+    "limits: an explicit output cap is sent on every call",
+    _lim_sent[-1].get("max_completion_tokens") == get_settings().llm_max_output_tokens,
+    str(_lim_sent[-1].get("max_completion_tokens")),
+)
+
+_lim_sent.clear()
+_lim_c2 = _lim_client_mod.OpenAIClient.__new__(_lim_client_mod.OpenAIClient)
+_lim_c2._model, _lim_c2._unsupported, _lim_c2._cap_param = "m", set(), "max_completion_tokens"
+_lim_c2._metered = _lim_fake_metered(("temperature", "max_completion_tokens"))
+check(
+    "limits: the probe survives a model rejecting temperature AND the cap name",
+    _lim_c2.complete_json("sys", "user") == {"ok": 1}
+    and _lim_c2._cap_param == "max_tokens"
+    and "max_tokens" in _lim_sent[-1],
+    f"attempts={len(_lim_sent)} final={sorted(k for k in _lim_sent[-1] if k not in ('model','messages','response_format'))}",
+)
+
+# A context overflow must NOT be mistaken for a capability problem and retried
+# away — it has to surface as the typed error the route maps to 413.
+_lim_c3 = _lim_client_mod.OpenAIClient.__new__(_lim_client_mod.OpenAIClient)
+_lim_c3._model, _lim_c3._unsupported, _lim_c3._cap_param = "m", set(), "max_completion_tokens"
+
+
+def _lim_ctx_metered(kwargs):
+    raise _lim_err("maximum context length is 128000 tokens", "context_length_exceeded")
+
+
+_lim_c3._metered = _lim_ctx_metered
+try:
+    _lim_c3.complete_json("sys", "user")
+    check("limits: a context overflow surfaces as ContextWindowExceeded", False, "no raise")
+except ContextWindowExceeded:
+    check("limits: a context overflow surfaces as ContextWindowExceeded", True)
+
+# The call sites that must refuse rather than truncate — the résumé is the
+# user's own document, and a silently shortened one is data loss they would
+# discover from a recruiter.
+# THE BOUNDARY PIN. Guarding the stored master résumé is NOT enough: 25 request
+# models take a `resume: ResumeModel` straight from the client body, so the
+# stored row is one of twenty-six doors. Every model call builds its user
+# message with a prompts.*_user builder, so that is where the bound lives — and
+# every builder taking a guarded argument must actually carry the decorator, or
+# it is a door standing open.
+from app.llm import prompts as _lim_prompts  # noqa: E402
+
+import re as _lim_re  # noqa: E402
+
+_lim_src = _lim_inspect.getsource(_lim_prompts)
+_lim_decorator = "@_bounded" + chr(10) + "def "
+_lim_undecorated = [
+    name
+    for name, params in _lim_re.findall(r"^def (\w+_user)\(([^)]*)\)", _lim_src, _lim_re.M)
+    if any(a in params for a in ("resume_json", "raw_text", "jd_text"))
+    and (_lim_decorator + name + "(") not in _lim_src
+]
+check(
+    "limits: every prompt builder taking a résumé or JD argument is bounded",
+    len(_lim_src) > 2000 and not _lim_undecorated,
+    f"unbounded: {_lim_undecorated}" if _lim_undecorated else "all bounded",
+)
+
+_lim_big_resume = '{"x":"' + "y" * (300 * 1024) + '"}'
+_lim_fired = []
+for _lim_name, _lim_call in (
+    ("cover_letter", lambda: _lim_prompts.cover_letter_user(_lim_big_resume, "{}", "warm")),
+    ("jd_fit", lambda: _lim_prompts.jd_fit_user(_lim_big_resume, "jd")),
+    ("interview_chat", lambda: _lim_prompts.interview_chat_user(_lim_big_resume, "jd", [])),
+    ("linkedin", lambda: _lim_prompts.linkedin_user(_lim_big_resume)),
+):
+    try:
+        _lim_call()
+    except InputTooLarge:
+        _lim_fired.append(_lim_name)
+check(
+    "limits: the bound reaches the routes that bypass the stored résumé entirely",
+    _lim_fired == ["cover_letter", "jd_fit", "interview_chat", "linkedin"],
+    str(_lim_fired),
+)
+# The false-positive half, in the same block: an ordinary résumé and job ad must
+# sail through every one of them, or the guard is worse than no guard.
+check(
+    "limits: ordinary inputs are untouched by the bound",
+    bool(_lim_prompts.jd_fit_user('{"name":"Jane"}', "We need a Python developer."))
+    and bool(_lim_prompts.structure_resume_user("Jane Doe\nEngineer at Acme")),
+)
+
+check(
+    "limits: structure_resume and analyze_jd guard their input before the model",
+    "require_within" in _lim_inspect.getsource(_structure_resume_mod)
+    and "require_within" in _lim_inspect.getsource(_jd_analyzer_mod),
+)
+
 # 14c. Drushim provider: response parser pinned against a trimmed real fixture
 import json as _json  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -5752,6 +6025,36 @@ with TestClient(_fastapi_app) as _tc:
             files={"file": ("big.txt", _too_big, "text/plain")},
             data={"jd_text": "Python developer"},
         ).status_code == 413,
+    )
+    # A prompt-size limit must reach the user as a 413 carrying a STRUCTURED
+    # detail, not as the generic 502 the 26 route wrappers produce. Both halves
+    # matter: 502 is a 5xx, so Sentry keeps filing an issue the user could have
+    # acted on, and the sentence would be an untranslatable English string.
+    # This is the one check that covers the `except _SIZE_ERRORS: raise`
+    # clauses — deleting them makes the guard fire and the response still wrong.
+    _size_resp = _tc.post(
+        "/resume/upload",
+        files={"file": ("huge.txt", ("Jane Doe\n" + "Built services. " * 22000).encode(), "text/plain")},
+        headers=_ADMIN_H,
+    )
+    _size_detail = _size_resp.json().get("detail")
+    check(
+        "an oversize résumé is a 413 with a structured detail, not an 'LLM error' 502",
+        _size_resp.status_code == 413
+        and isinstance(_size_detail, dict)
+        and _size_detail.get("code") == "input_too_large"
+        and _size_detail.get("kind") == "resume"
+        and _size_detail.get("cap_kb") == get_settings().max_resume_kb,
+        f"{_size_resp.status_code} {_size_detail}",
+    )
+    _jd_resp = _tc.post(
+        "/jd/analyze", json={"jd_text": "x" * (40 * 1024)}, headers=_ADMIN_H
+    )
+    check(
+        "an oversize pasted JD is a 413 naming the JD, not the résumé",
+        _jd_resp.status_code == 413
+        and (_jd_resp.json().get("detail") or {}).get("kind") == "jd",
+        f"{_jd_resp.status_code} {_jd_resp.json().get('detail')}",
     )
     check(
         "an under-cap upload still goes through",

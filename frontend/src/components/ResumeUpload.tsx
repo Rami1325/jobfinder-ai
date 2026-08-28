@@ -3,6 +3,7 @@ import { UploadCloud, FileCheck2, Loader2, Import, ChevronDown, ExternalLink } f
 import { useTranslation } from "react-i18next";
 import { uploadResume } from "../api/client";
 import type { FactsLedger, ResumeModel } from "../types";
+import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
 
 interface Props {
@@ -28,7 +29,7 @@ export default function ResumeUpload({ onParsed, savedLabel }: Props) {
       const res = await uploadResume(file);
       onParsed(res.resume, res.ledger);
     } catch (e: any) {
-      setError(e?.response?.data?.detail || t("resumeUpload.error"));
+      setError(apiErrorMessage(e, t("resumeUpload.error")));
       setFileName("");
     } finally {
       setLoading(false);
