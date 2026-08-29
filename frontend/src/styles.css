@@ -520,3 +520,18 @@ select {
   color: rgb(var(--ink-faint));
   pointer-events: none;
 }
+
+/* The bullet's colour and size, from the template (TemplateSpec bullet_scale /
+   bullet_accent), through two custom properties ResumeView sets on the sheet
+   root. It lives here rather than in a class because ::marker cannot be styled
+   inline and cannot be an element: that <li> IS the contentEditable node for
+   `@exp.i.b.j`, so a glyph <span> inside it would be typed over or deleted by
+   the first edit.
+
+   `:where()` keeps the whole selector at ZERO specificity, so a bullet the
+   tailor touched still wins with its own `marker:text-accent` from `blk()`.
+   The var fallbacks mean nothing depends on the root having been styled. */
+:where(.sheet li)::marker {
+  color: rgb(var(--doc-bullet, var(--ink-muted)));
+  font-size: var(--doc-bullet-size, 1em);
+}

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { ChangeLogEntry, CVPlan, FabricationFlag, LengthReport, ResumeModel } from "../types";
 import type { ResumeTemplate } from "../api/client";
 import type { DiffSeg, EditSection, ResumeEdit } from "../lib/resumeDiff";
-import { editContainsValue, keywordsServed, wordDiff } from "../lib/resumeDiff";
+import { blockSubtreeContainsValue, editContainsValue, keywordsServed, wordDiff } from "../lib/resumeDiff";
 import {
   CURATION_KEY,
   curationCause,
@@ -41,6 +41,39 @@ interface Props {
   /** The reverse jump — the document asking for an edit to be shown. The nonce
    * makes clicking the same block twice re-fire. */
   focusEdit?: { id: string; nonce: number } | null;
+  /**
+   * Edit id → the state of the user's OWN wording on the block that edit
+   * describes. `"yours"` = it is on the page right now and neither string in
+   * this row is; `"hidden"` = it is kept but not applied, because a decision
+   * elsewhere took the line it was on off the document; `"removed"` = the USER
+   * cleared the line and it is gone from this application's CV.
+   *
+   * The third state is not a nicety. Until 23.8 an anchor with no path was
+   * `"hidden"` whatever put it there, so clearing a line — the user's own
+   * deletion — was reported as "a declined change removed the line it was on",
+   * kept a mint "Yours" badge on a line that no longer exists, and offered two
+   * buttons that both silently PUT THE LINE BACK under labels about choosing
+   * between two wordings.
+   *
+   * A hand-edit OUTRANKS the accept/decline decision for its block, so these
+   * rows swap their Accept/Reject control for controls that each say what they
+   * do. Silently letting a later Decline overwrite text the user typed is the
+   * data loss this exists to prevent; silently letting the override win while
+   * Accept/Reject stayed live would leave a control that does nothing, which is
+   * the other thing this panel refuses to ship.
+   */
+  overridden?: Record<string, "yours" | "hidden" | "removed">;
+  /** How many blocks of the document the user wrote themselves — including ones
+   * no row here describes. The clean body copy names them, because the guard
+   * never read a word of them. */
+  overrideCount?: number;
+  /** Accept this edit AND drop the user's wording, in one tap. */
+  onUseAi?: (id: string) => void;
+  /** Reject this edit AND drop the user's wording, in one tap. */
+  onUseOriginal?: (id: string) => void;
+  /** Undo the user's own DELETION, leaving the accept/decline decision alone —
+   * neither of the two above describes putting a deleted line back. */
+  onRestoreMine?: (id: string) => void;
 }
 
 const CURATION_SECTION_ORDER: EditSection[] = [
@@ -150,24 +183,43 @@ function EditRow({
   flags,
   jdKeywords,
   isRejected,
+  flagOnDoc,
   onDecide,
   decryptDelay,
   onShowInDoc,
+  override,
+  onUseAi,
+  onUseOriginal,
+  onRestoreMine,
 }: {
   edit: ResumeEdit;
   flags: FabricationFlag[];
   jdKeywords: string[];
   isRejected: boolean;
+  /** Whether a flagged value this edit introduced is STILL on the document. The
+   * row cannot answer this itself — it holds a wording, not the block that
+   * wording landed in — and answering it from `isRejected` is the inference the
+   * override layer broke. */
+  flagOnDoc: boolean;
   onDecide: (rejected: boolean) => void;
   decryptDelay: number;
   onShowInDoc?: () => void;
+  override?: "yours" | "hidden" | "removed";
+  onUseAi?: () => void;
+  onUseOriginal?: () => void;
+  onRestoreMine?: () => void;
 }) {
   const { t } = useTranslation("tailor");
   const d = useMemo(
     () => (edit.kind === "edited" ? wordDiff(edit.before, edit.after) : null),
     [edit.kind, edit.before, edit.after],
   );
-  const serves = keywordsServed(edit, jdKeywords);
+  // The keywords this WORDING serves, and only while that wording is what the
+  // block says. `edit.after` is what the badges read, so with a hand-edit over
+  // the block they credit the AI's sentence for terms the user may have just
+  // typed away — the same "describes the decision, not the document" error the
+  // flag rows carried, one line down.
+  const serves = override ? [] : keywordsServed(edit, jdKeywords);
   const editFlags = flags.filter((f) => editContainsValue(edit, f.value));
 
   return (
@@ -183,12 +235,16 @@ function EditRow({
           </span>
         )}
         {editFlags.length > 0 ? (
-          <Badge tone={isRejected ? "mint" : "danger"}>
+          <Badge tone={flagOnDoc ? "danger" : "mint"}>
             <ShieldAlert size={11} />
-            {isRejected ? t("review.flagResolved") : t("review.guardFlagged", { category: editFlags[0].category })}
+            {flagOnDoc ? t("review.guardFlagged", { category: editFlags[0].category }) : t("review.flagResolved")}
           </Badge>
         ) : (
-          edit.kind !== "removed" && (
+          // "Nothing new" is the GUARD's verdict on the AI's wording, and it has
+          // no verdict at all on a sentence the user typed after the fact — so
+          // the badge goes with the wording it describes.
+          edit.kind !== "removed" &&
+          !override && (
             <Badge tone="mint">
               <ShieldCheck size={11} /> {t("review.guardOk")}
             </Badge>
@@ -208,14 +264,86 @@ function EditRow({
               <Crosshair size={13} />
             </button>
           )}
-          <Decide
-            isRejected={isRejected}
-            onDecide={onDecide}
-            acceptLabel={t("review.accept")}
-            rejectLabel={t("review.reject")}
-          />
+          {/* The third state. Accept/Reject is REPLACED, not disabled: while an
+              override stands, neither of those two words describes what is on
+              the paper, and a segmented control that silently loses to
+              something else is the "button that does nothing" this panel is
+              built to avoid. */}
+          {override ? (
+            // A deleted line is not "Yours" in the mint sense — the mint badge on
+            // a line the user had removed said the opposite of what happened.
+            <Badge tone={override === "removed" ? "danger" : "mint"}>
+              {override === "removed" ? t("review.yoursDeleted") : t("review.yours")}
+            </Badge>
+          ) : (
+            <Decide
+              isRejected={isRejected}
+              onDecide={onDecide}
+              acceptLabel={t("review.accept")}
+              rejectLabel={t("review.reject")}
+            />
+          )}
         </span>
       </div>
+
+      {/* Above the diff, not below it: the reader has to know that neither
+          string underneath is on their CV BEFORE they read them. */}
+      {override && (
+        <div
+          className={cn(
+            "mt-2 space-y-2 rounded-lg border px-2.5 py-2",
+            override === "removed" ? "border-warn/30 bg-warn/5" : "border-mint/30 bg-mint/5",
+          )}
+        >
+          <p className="text-xs leading-relaxed text-ink-muted">
+            {override === "removed"
+              ? t("review.yoursRemoved")
+              : override === "hidden"
+                ? t("review.yoursHidden")
+                : t("review.yoursNote")}
+          </p>
+          {override === "removed" ? (
+            // ONE control, because there is only one thing to offer. The two
+            // below are a choice between two WORDINGS, and both of them would
+            // put the line back — under labels that never say so.
+            <button
+              type="button"
+              onClick={onRestoreMine}
+              className="rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+            >
+              {t("review.yoursRestore")}
+            </button>
+          ) : (
+            <>
+              {/* Each is one tap and each says which wording it takes: "use the
+                  AI's" IS accept + clear, "use my original" IS reject + clear.
+                  On an ADDITION there is no original to use — declining takes
+                  the line off the CV and the user's text with it — so that
+                  button says what it actually does. */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={onUseAi}
+                  className="rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+                >
+                  {t("review.useAi")}
+                </button>
+                <button
+                  type="button"
+                  onClick={onUseOriginal}
+                  className="rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+                >
+                  {edit.kind === "added" ? t("review.dontAdd") : t("review.useOriginal")}
+                </button>
+              </div>
+              {/* VISIBLE, not a `title`. The warning that both of these discard
+                  what was typed used to live in a tooltip, and the primary
+                  device here has no hover at all — on a phone it did not exist. */}
+              <p className="text-[11px] leading-relaxed text-ink-faint">{t("review.yoursDiscard")}</p>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="mt-2 space-y-1 text-sm leading-relaxed">
         {edit.kind === "edited" && d && (
@@ -277,6 +405,11 @@ export default function ChangeLog({
   onShowInDoc,
   anchoredEdits,
   focusEdit,
+  overridden,
+  overrideCount = 0,
+  onUseAi,
+  onUseOriginal,
+  onRestoreMine,
 }: Props) {
   const { t } = useTranslation("tailor");
 
@@ -291,10 +424,43 @@ export default function ChangeLog({
   );
   const groups = useMemo(() => groupEdits(edits, isFlagged), [edits, isFlagged]);
 
-  // A flag is resolved when every edit that introduced its value is rejected.
+  /**
+   * Is a flagged value still on the DOCUMENT, on the block this edit landed in?
+   *
+   * THIS USED TO BE `rejected.has(e.id)`, and that inference was sound for
+   * exactly as long as rejecting was the only way to change a line: the guard
+   * flags a value BECAUSE it is not in the original, so putting the original
+   * back removes it. Since the tailored document is typed on, a rejection and a
+   * hand-edit can stand on the same block at once and `applyOverrides` runs
+   * LAST — the override wins the paper while the rejection won the flag row.
+   * Reject the flagged edit (panel goes mint, "All flagged claims resolved"),
+   * then type over the same bullet keeping the invented number: the mint stayed
+   * and the number shipped. Reproduced by execution, not reasoned about.
+   *
+   * No path means the edit's block is not in the document at all — a declined
+   * addition, an accepted removal — so its value is not on the page. No
+   * `effective` means we cannot read the document, and "we cannot check" may
+   * never render as "resolved".
+   *
+   * IT SEARCHES THE BLOCK'S SUBTREE, not the block. An added or removed ENTRY
+   * anchors to its META path, whose fields are title/employer/dates, while the
+   * edit's text folds the entry's BULLETS in — so a flagged number living in a
+   * bullet was matched by `editContainsValue` and then looked for only in the
+   * meta line, which cleared the flag and printed "Nothing flagged is on your CV
+   * any more" over a CV that still carried it.
+   */
+  const onDocument = (e: ResumeEdit, value: string): boolean => {
+    const path = anchoredEdits?.[e.id];
+    if (!path) return false;
+    if (!effective) return true;
+    return blockSubtreeContainsValue(effective, path, value);
+  };
+  /** A flag is resolved when nothing on the document still carries its value. */
   const flagRows = flags.map((f) => {
     const carriers = edits.filter((e) => editContainsValue(e, f.value));
-    return { flag: f, resolved: carriers.length > 0 && carriers.every((e) => rejected.has(e.id)) };
+    // Zero carriers stays UNRESOLVED, as it always has: a flag no edit accounts
+    // for is one we cannot say anything about, and silence is not a clearance.
+    return { flag: f, resolved: carriers.length > 0 && carriers.every((e) => !onDocument(e, f.value)) };
   });
   const clean = flags.length === 0;
   const allResolved = !clean && flagRows.every((r) => r.resolved);
@@ -363,8 +529,15 @@ export default function ChangeLog({
         <div>
           <CardTitle>{clean ? t("changelog.cleanTitle") : t("changelog.flaggedTitle")}</CardTitle>
           <p className="mt-0.5 text-sm text-ink-muted">
+            {/* The clean body is the one sentence here that makes a claim about
+                the WHOLE document ("every employer, title, date, credential and
+                number… also appears in your original"), and the guard read only
+                the AI's rewrite. Anything the user typed afterwards it has never
+                seen, so the count is named rather than quietly folded in. */}
             {clean
-              ? t("changelog.cleanBody")
+              ? overrideCount > 0
+                ? t("changelog.cleanBodyEdited", { count: overrideCount })
+                : t("changelog.cleanBody")
               : allResolved
                 ? t("review.resolvedBody")
                 : t("changelog.flagged", { count: flags.length })}
@@ -498,11 +671,19 @@ export default function ChangeLog({
                       flags={flags}
                       jdKeywords={jdKeywords}
                       isRejected={rejected.has(edit.id)}
+                      // The same document reading the flag rows use, so the row
+                      // badge and the row above it can never disagree about one
+                      // value.
+                      flagOnDoc={flags.some((f) => editContainsValue(edit, f.value) && onDocument(edit, f.value))}
                       onDecide={(r) => setRejected(edit.id, r)}
                       decryptDelay={Math.min(i, 15) * 40}
                       onShowInDoc={
                         onShowInDoc && anchoredEdits?.[edit.id] ? () => onShowInDoc(edit.id) : undefined
                       }
+                      override={overridden?.[edit.id]}
+                      onUseAi={onUseAi && (() => onUseAi(edit.id))}
+                      onUseOriginal={onUseOriginal && (() => onUseOriginal(edit.id))}
+                      onRestoreMine={onRestoreMine && (() => onRestoreMine(edit.id))}
                     />
                   ))}
                 </div>
@@ -521,6 +702,7 @@ export default function ChangeLog({
               rejected={rejected}
               onRestore={setRejected}
               onRestoreAll={(ids) => setManyRejected(ids, true)}
+              overridden={overridden}
             />
           )}
         </div>
@@ -573,6 +755,7 @@ function CurationCard({
   rejected,
   onRestore,
   onRestoreAll,
+  overridden,
 }: {
   group: EditGroup;
   open: boolean;
@@ -583,6 +766,13 @@ function CurationCard({
   rejected: ReadonlySet<string>;
   onRestore: (id: string, rejectedNow: boolean) => void;
   onRestoreAll: (ids: string[]) => void;
+  /** Every removal lands in THIS card rather than in an `EditRow`, so the
+   * vanish rule's "its row says so" has to be answerable here too: restore a
+   * cut bullet, rewrite it, un-restore, and the user's text is kept but not on
+   * the page. No two-button treatment is needed — the Restore toggle is already
+   * the decision, and un-restoring discards nothing — but the retention has to
+   * be VISIBLE or it is a surprise on the next toggle. */
+  overridden?: Record<string, "yours" | "hidden" | "removed">;
 }) {
   const { t } = useTranslation("tailor");
   const ids = group.edits.map((e) => e.id);
@@ -665,6 +855,11 @@ function CurationCard({
                     {cause !== "unknown" && (
                       <Badge tone="accent">{cause === "budget" ? t("curation.byBudget") : t("curation.byPlan")}</Badge>
                     )}
+                    {overridden?.[e.id] && (
+                      <Badge tone={overridden[e.id] === "removed" ? "danger" : "mint"}>
+                        {overridden[e.id] === "removed" ? t("review.yoursDeleted") : t("review.yours")}
+                      </Badge>
+                    )}
                     <button
                       type="button"
                       aria-pressed={isRestored}
@@ -678,6 +873,20 @@ function CurationCard({
                     >
                       {isRestored ? t("curation.restored") : t("curation.restore")}
                     </button>
+                    {/* VISIBLE, on its own line — this said the same thing in a
+                        `title`, which on the phone this app is built for does
+                        not exist at all. Three states, because a line the user
+                        DELETED and a line a decision hid are not the same fact
+                        about the same row. */}
+                    {overridden?.[e.id] && (
+                      <span className="w-full text-[11px] leading-relaxed text-ink-faint">
+                        {overridden[e.id] === "removed"
+                          ? t("review.yoursRemoved")
+                          : overridden[e.id] === "hidden"
+                            ? t("review.yoursHidden")
+                            : t("review.yoursHere")}
+                      </span>
+                    )}
                   </div>
                 );
               })}

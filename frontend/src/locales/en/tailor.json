@@ -126,8 +126,11 @@
     "guardFlags_other": "{{count}} claims to review",
     "guardDetail": "See the full fabrication check below",
     "stampVerified": "Checked · Facts ledger",
+    "stampPartial": "Checked · AI rewrite",
     "stampReview": "Needs review",
     "guardNoteClean": "We checked every name, date, credential and number against your original. Nothing new turned up.",
+    "guardNoteCleanEdited_one": "Nothing new turned up in the AI's rewrite. The line you rewrote yourself wasn't checked.",
+    "guardNoteCleanEdited_other": "Nothing new turned up in the AI's rewrite. The {{count}} lines you rewrote yourself weren't checked.",
     "guardNoteFlags_one": "{{count}} claim we couldn't find in your résumé. It doesn't ship until you approve it.",
     "guardNoteFlags_other": "{{count}} claims we couldn't find in your résumé. They don't ship until you approve them."
   },
@@ -181,6 +184,8 @@
     "cleanTitle": "No new claims detected",
     "flaggedTitle": "Fabrication check — review these",
     "cleanBody": "Every employer, title, date, credential and number in the rewrite also appears in your original. It is a detector, not a proof — give anything that matters a second look.",
+    "cleanBodyEdited_one": "Every employer, title, date, credential and number in the AI's rewrite also appears in your original. It is a detector, not a proof — and the line you rewrote yourself was never checked.",
+    "cleanBodyEdited_other": "Every employer, title, date, credential and number in the AI's rewrite also appears in your original. It is a detector, not a proof — and the {{count}} lines you rewrote yourself were never checked.",
     "flagged_one": "{{count}} item may not be supported by your résumé.",
     "flagged_other": "{{count}} items may not be supported by your résumé.",
     "editsMade": "Edits made",
@@ -209,9 +214,25 @@
       "removed": "Will stay in your résumé"
     },
     "aiNotes": "The AI's own change notes",
-    "flagResolved": "Resolved — edit rejected",
-    "resolvedBody": "All flagged claims resolved — you rejected every flagged edit.",
-    "showInDoc": "Show this on the CV"
+    "flagResolved": "Resolved — not on your CV",
+    "resolvedBody": "Nothing flagged is on your CV any more.",
+    "showInDoc": "Show this on the CV",
+    "mark": {
+      "changed": "The AI's wording",
+      "restored": "Your original wording",
+      "yours": "Your wording"
+    },
+    "yours": "Yours",
+    "yoursNote": "You rewrote this yourself. Neither wording below is on your CV any more.",
+    "yoursHere": "You rewrote this line yourself.",
+    "useAi": "Use the AI's wording",
+    "useOriginal": "Use my original",
+    "dontAdd": "Don't add this line",
+    "yoursDiscard": "Both of these replace what you typed.",
+    "yoursHidden": "Your wording isn't in this version — a declined change removed the line it was on.",
+    "yoursRemoved": "You deleted this line from this application's CV.",
+    "yoursDeleted": "You deleted this",
+    "yoursRestore": "Put the line back"
   },
   "cover": {
     "title": "Cover letter",
@@ -308,6 +329,11 @@
       "note": "We render that PDF, then read it back with the same parser we run on résumés people upload. What follows is the file's own text — not a text version of the page above.",
       "failed": "Couldn't read the file back just now."
     },
+    "screen": {
+      "note": "This page is drawn in the template you picked — its colours, headings, header, entry layout and bullets. What it can't copy is the typeface: the file carries its own, so you get the same serif or sans here, not the exact letters.",
+      "icons": "This one also draws small marks beside your contact details in the PDF; the page above leaves them out.",
+      "twoColumn": "This template also prints as two columns, with a rail beside the main story. Which sections land in that rail is decided while the file is built, so the page above shows one column rather than guessing wrong."
+    },
     "replace": {
       "tool": "Replace résumé",
       "title": "Replace your résumé",
@@ -317,6 +343,14 @@
   "overlay": {
     "open": "Tailor for a job",
     "openFor": "Tailor for {{title}}",
+    "openDifferent": "Tailor for a different job",
+    "retailor": "Tailor for this job instead",
+    "replaces": "This starts again from your master résumé. The review on screen is replaced; your saved master is not changed.",
+    "replacesEdited_one": "This starts again from your master résumé — and deletes the 1 line you typed onto this CV. Those edits live only in this browser tab, so there is no way to get them back. Your saved master is not changed either way.",
+    "replacesEdited_other": "This starts again from your master résumé — and deletes the {{count}} lines you typed onto this CV. Those edits live only in this browser tab, so there is no way to get them back. Your saved master is not changed either way.",
+    "retailorDiscard_one": "Discard my 1 edit and tailor",
+    "retailorDiscard_other": "Discard my {{count}} edits and tailor",
+    "keepEdits": "Keep my edits",
     "title": "Tailor for a job",
     "hint": "Paste the posting, or drop in its link and we'll fetch it.",
     "checkFit": "Check fit",
@@ -330,11 +364,20 @@
     "topMissing": "Most-wanted terms your CV doesn't say yet",
     "topPartial": "Close — but not in the posting's own words"
   },
+  "discard": {
+    "cta": "Back to my résumé",
+    "title": "Close this review and edit your master résumé again",
+    "edited_one": "Leaving takes the 1 line you typed onto this CV with it. Your master résumé is unchanged either way.",
+    "edited_other": "Leaving takes the {{count}} lines you typed onto this CV with it. Your master résumé is unchanged either way.",
+    "confirm_one": "Discard my 1 edit and leave",
+    "confirm_other": "Discard my {{count}} edits and leave",
+    "keep": "Stay here"
+  },
   "fit": {
     "title": "How this CV matches the job",
     "coverage": "Keyword coverage",
     "coverageSub": "{{covered}} of {{total}} key terms matched, {{partial}} partial",
-    "coverageNote": "Recomputed from your CV as it stands right now — every change you accept or decline is already in this number.",
+    "coverageNote": "Recomputed from your CV as it stands right now — every change you accept or decline, and every word you type in yourself, is already in this number.",
     "recruiter": "Recruiter fit",
     "asOf": "One AI reading, taken {{time}}. It doesn't move as you edit: a second reading costs another model call, and part of any difference between two readings is sampling noise rather than progress.",
     "notMeasured": "Not measured yet",
@@ -346,6 +389,20 @@
   },
   "edit": {
     "hint": "Tap anything on your résumé to edit it.",
+    "tailoredHint": "Type anywhere to change this application's CV. Your master résumé is untouched — and these edits live only for this visit, in this tab.",
+    "tailoredNoAdd": "To add something new, edit your master résumé and tailor again.",
+    "tailoredNoBlankEntry": "Emptying every field would leave a blank entry on the CV, not remove it — and it would print that way. To take a whole role, project, degree or service out, edit your master résumé and tailor again.",
+    "yours_one": "1 edit of your own",
+    "yours_other": "{{count}} edits of your own",
+    "yoursClear": "Clear my edits",
+    "yoursRestoreCleared_one": "Put back the 1 edit I cleared",
+    "yoursRestoreCleared_other": "Put back the {{count}} edits I cleared",
+    "yoursOn": "On your CV",
+    "yoursOff": "Not in this version",
+    "yoursDeletedLine": "You deleted this",
+    "yoursUndoOne": "Undo my edit",
+    "yoursWas": "Undo puts back: {{text}}",
+    "yoursPutBack": "Put it back",
     "unsaved_one": "1 unsaved change",
     "unsaved_other": "{{count}} unsaved changes",
     "local": "Changes are on this device until you save.",

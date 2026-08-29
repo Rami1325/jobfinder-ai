@@ -41,6 +41,14 @@ _PRONOUNS = re.compile(r"(?<!\w)(i|i'm|i've|my|me|myself|אני|שלי)(?!\w)", 
 
 _LONG_BULLET_WORDS = 34
 _SHORT_BULLET_WORDS = 4
+# A skill is a TERM an ATS matches ("PostgreSQL", "prompt engineering"), not a
+# sentence. Six words is the floor because the longest entries on a real résumé
+# here run to four ("evaluation and fallback handling", "prompt and system
+# design"), and the longest phrase a job ad genuinely names tops out around five
+# ("continuous integration and continuous delivery"). Above that it is prose, and
+# prose in the skills list scores as one keyword however much it says.
+_LONG_SKILL_WORDS = 6
+_LONG_SKILL_REPORT_CAP = 2
 # Roughly what one page holds in our renderers (see app/render/templates.py).
 _ONE_PAGE_WORDS = 650
 _ONE_PAGE_MAX_YEARS = 10
@@ -157,6 +165,31 @@ def _bullet_length_issue(bullets: list[str]) -> ATSIssue:
     )
 
 
+def _skill_length_issue(skills: list[str]) -> ATSIssue:
+    """Report a skill written as a sentence. Never rewrite one.
+
+    This is the honest home for "a skill is a sentence": the route is
+    deterministic and uncapped, this module reaches no model, and the fix is a
+    judgement call about words the user chose. `structure_resume` splits the
+    entries a CV *punctuated* as a list; a sentence carries no separator, so
+    nothing may split it and nothing may shorten it — that would be truncating
+    the user's own document. The scanner shows the count and quotes the entry,
+    exactly as the ATS x-ray shows rather than asserts.
+    """
+    long_ones = [s for s in skills if len(s.split()) > _LONG_SKILL_WORDS]
+    if not long_ones:
+        return ATSIssue(label="Skills read as terms, not sentences", severity="good")
+    verb = "runs" if len(long_ones) == 1 else "run"
+    return ATSIssue(
+        label="Some skills are written as sentences",
+        severity="warn",
+        detail=f"{len(long_ones)} {verb} past {_LONG_SKILL_WORDS} words: "
+        + "; ".join(f"'{s}'" for s in long_ones[:_LONG_SKILL_REPORT_CAP])
+        + ". An ATS matches the term, so a whole sentence scores as one keyword — "
+        "list the terms a job ad would name instead.",
+    )
+
+
 def _length_issue(resume: ResumeModel, text: str) -> ATSIssue:
     words = len(text.split())
     years = years_of_experience(resume)
@@ -207,6 +240,12 @@ def scan_resume(resume: ResumeModel, jd: JDModel | None = None) -> ATSScanResult
         if len(resume.skills) >= 5
         else ATSIssue(label="Few skills listed", severity="warn", detail="List more of your real, relevant hard skills.")
     )
+    # Gated the way `_bullet_length_issue` is gated on `bullets`: a résumé with
+    # no skills at all already carries "Few skills listed", and handing the
+    # emptiest possible CV a free "good" would inflate `format_health` on the
+    # one document that deserves it least.
+    if resume.skills:
+        issues.append(_skill_length_issue(resume.skills))
 
     if resume.experience:
         if bullets:

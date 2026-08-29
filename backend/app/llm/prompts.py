@@ -249,8 +249,15 @@ professional typed it themselves. This outranks sounding "polished".
    using the JD's exact wording. Merge duplicates; drop irrelevant noise. Every entry in
    the output skills list must trace back to the original resume — never add an unowned
    skill (or an unowned tool inside a rephrase) to close a gap.
+   NEVER DROP A SKILL THIS JOB ASKS FOR. The closed-set rule above runs one way; this
+   one runs the other. If a term in the job's hard_skills, keywords or preferred_skills
+   appears ANYWHERE in the ORIGINAL resume — the skills list, the summary, a bullet, a
+   project — it MUST appear in your tailored skills list. This OUTRANKS the shortlist
+   length below: 26 skills that all matter beats 20 that dropped one the job named.
+   "Irrelevant noise" means a skill THIS job never mentions. It never means one it does.
    KEEP IT SHORT AND FLAT — this section is skimmed in about three seconds, so it is a
-   shortlist, not an inventory. Output roughly 15-25 INDIVIDUAL skills, most job-relevant
+   shortlist, not an inventory. Output roughly 15-25 INDIVIDUAL skills — plus however many
+   more it takes to satisfy the rule above — most job-relevant
    first, each a short term ("PostgreSQL", "prompt engineering") rather than a sentence.
    A master resume often groups its skills under category labels ("Backend & Data: Python,
    PostgreSQL, ...", "GTM & Marketing Operations: ..."). The master resume keeps that
@@ -307,6 +314,11 @@ professional typed it themselves. This outranks sounding "polished".
 ================ SELF-CHECK BEFORE RETURNING (do this silently) ================
 Re-read your tailored_resume and verify:
   (a) EVERY skill/tool/technology you list also appears in the ORIGINAL resume;
+  (a2) THE REVERSE SCAN — the single most common way this task goes wrong. Walk the job's
+      hard_skills, keywords and preferred_skills ONE TERM AT A TIME. For each, ask: does
+      this term appear anywhere in the ORIGINAL resume? If yes, it must also appear in your
+      tailored_resume — normally in the skills list. Any term that fails this is a keyword
+      you deleted from a candidate who genuinely has it. Put it back before you return.
   (b) all employers, titles, dates, numbers, and military details are unchanged from the
       original, and the headline claims no rank that the Experience section cannot show;
   (c) every PROTECTED entry survived (rule 5: contact, every role, every degree, every

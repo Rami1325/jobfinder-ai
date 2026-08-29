@@ -419,6 +419,34 @@ check(
         _tidy.model_copy(update={"summary": "Migrated it, improved it, integrated it."})
     ),
 )
+# 10b-bis (PLAN 07/9). A SKILL WRITTEN AS A SENTENCE. `structure_resume` splits
+# the entries a CV PUNCTUATED as a list (see the normalisation checks in 18e); a
+# sentence carries no separator, so nothing may split it and nothing may shorten
+# it — that would be truncating the user's own document. This is where that case
+# belongs instead: the route is uncapped and this module reaches no model, so it
+# can report what it cannot fix. The false-positive half matters most — the
+# user's own longest real entries run to FOUR words and their CV must stay green,
+# or a warning that always fires teaches them to ignore the panel.
+_sentence_skill_cv = _tidy.model_copy(update={"skills": [
+    "Designing and operating distributed backend systems at scale", *_tidy.skills,
+]})
+_real_skill_cv = _tidy.model_copy(update={"skills": [
+    "CI/CD", "prompt and system design", "evaluation and fallback handling",
+    "RTL and i18n", "Python",
+]})
+_sentence_skills_before = list(_sentence_skill_cv.skills)
+_sentence_labels = _ats_labels(_sentence_skill_cv)
+check(
+    "ats: a skill written as a sentence is REPORTED and left untouched, while "
+    "four-word entries from a real résumé stay green",
+    "Some skills are written as sentences" in _sentence_labels
+    and "Skills read as terms, not sentences" in _ats_labels(_real_skill_cv, "good")
+    and "Some skills are written as sentences" not in _ats_labels(_real_skill_cv)
+    # The scanner reports; it never rewrites. Pinned because "fix the sentence"
+    # is the tempting next step and it is data loss in the user's own words.
+    and _sentence_skill_cv.skills == _sentence_skills_before,
+    str(sorted(_sentence_labels)),
+)
 
 # 10c. Section order by profile (PLAN 17.5): education outranks experience for
 # an early-career résumé, and both renderers follow the same rule.
@@ -2210,6 +2238,23 @@ def _docx_xml(b: bytes) -> str:
         return z.read("word/document.xml").decode("utf-8")
 
 
+def _docx_parts(b: bytes) -> dict[str, bytes]:
+    """Every part of the .docx, keyed by name — the file's CONTENT with the zip
+    container's clock left out.
+
+    `render_docx(a) == render_docx(b)` looked like the strongest possible
+    "same document" assertion and was in fact a wall-clock race: python-docx
+    hands `writestr` a plain name, so each entry is stamped with the current
+    time at 2-second DOS granularity, and two renders either side of that
+    boundary differ in bytes while being the same file. Observed red on a clean
+    tree with identical lengths (36951 == 36951). Comparing parts keeps the
+    byte-for-byte claim over everything the renderer actually writes and drops
+    only the timestamp it does not control.
+    """
+    with _zipfile.ZipFile(_io.BytesIO(b)) as z:
+        return {name: z.read(name) for name in sorted(z.namelist())}
+
+
 def _pdf_text(b: bytes) -> str:
     with _pdfplumber.open(_io.BytesIO(b)) as pdf:
         return "\n".join(p.extract_text() or "" for p in pdf.pages)
@@ -3018,6 +3063,60 @@ check(
     "unknown/empty template names fall back to the default (old clients unaffected)",
     get_template("no-such-template").id == DEFAULT_TEMPLATE and get_template(None).id == DEFAULT_TEMPLATE,
 )
+# Three BOOLEANS used to stand beside the enums that already said the same
+# thing, and they are how the renderers drifted from the declaration:
+# `header_rule` / `heading_rule` are what the hairlines actually keyed off while
+# `header="plain"` and `heading="plain"` sat there meaning nothing, and
+# `accent_name` was a live branch in BOTH renderers that no spec ever reached.
+# Source-pinned as well as behaviour-pinned, the shape the geo-restriction work
+# settled on: behaviour alone cannot catch a re-added flag that happens to
+# default to today's look. The word boundary is load-bearing — `header_rule_pt`
+# and `heading_rule_color` are real, live fields and must not match.
+import ast as _tspec_ast  # noqa: E402
+import inspect as _tspec_inspect  # noqa: E402
+
+from app.render import docx_renderer as _docx_mod  # noqa: E402
+from app.render import pdf_renderer as _pdf_mod  # noqa: E402
+from app.render import templates as _tpl_mod  # noqa: E402
+
+_DEAD_FLAGS = ("accent_name", "header_rule", "heading_rule")
+_LIVE_FLAGS = ("header_rule_pt", "header_rule_accent", "heading_rule_pt", "heading_rule_color")
+
+
+def _spec_refs(mod, names: tuple[str, ...]) -> set[str]:
+    """Which of `names` the module actually REFERENCES — an attribute read, a
+    dataclass field declaration, or a constructor keyword. Walked as an AST
+    rather than grepped, so a comment recording what the flag used to do (this
+    file's own habit, and the reason the deletions are understandable a year
+    from now) is not mistaken for a live reference."""
+    found: set[str] = set()
+    for node in _tspec_ast.walk(_tspec_ast.parse(_tspec_inspect.getsource(mod))):
+        if isinstance(node, _tspec_ast.Attribute) and node.attr in names:
+            found.add(node.attr)
+        elif (isinstance(node, _tspec_ast.AnnAssign)
+              and isinstance(node.target, _tspec_ast.Name) and node.target.id in names):
+            found.add(node.target.id)
+        elif isinstance(node, _tspec_ast.keyword) and node.arg in names:
+            found.add(node.arg)
+    return found
+
+
+_render_mods = (_tpl_mod, _pdf_mod, _docx_mod)
+_dead_src = {m.__name__.rsplit(".", 1)[-1]: sorted(_spec_refs(m, _DEAD_FLAGS)) for m in _render_mods}
+# The positive control: the same walker must find the live fields that share
+# those prefixes, or "no references anywhere" is satisfied by a walker that
+# never matches anything.
+_live_src = set().union(*(_spec_refs(m, _LIVE_FLAGS) for m in _render_mods))
+check(
+    "a presentation flag no template sets, standing beside the enum that already "
+    "says the same thing, is DELETED rather than left for the next reader to "
+    "believe — and the live *_pt / *_accent / *_color fields that share its "
+    "prefix are all still read",
+    not any(_dead_src.values())
+    and not any(hasattr(t, n) for t in TEMPLATES.values() for n in _DEAD_FLAGS)
+    and _live_src == set(_LIVE_FLAGS),
+    f"dead={ {k: v for k, v in _dead_src.items() if v} } live_found={sorted(_live_src)}",
+)
 
 # 18a. A run taller than one frame must SPLIT, not raise. reportlab cannot place
 # a bare Flowable that does not implement split(), so before this a résumé with a
@@ -3076,8 +3175,28 @@ check(
     and resume.contact.name in _li_extract_text("resume.docx", render_docx(resume, template="split")),
     str(_re.findall(r"<w:cols[^>]*>", _split_docx_xml)),
 )
-from app.render.pdf_renderer import _Chips, _column_widths  # noqa: E402
+from app.render.labels import labels_for as _labels_for  # noqa: E402
+from app.render.pdf_renderer import (  # noqa: E402
+    _Chips, _Cols, _Segments, _Sheet, _adv, _band_metrics, _column_widths, _flow,
+)
 from reportlab.lib.colors import HexColor as _HexColor  # noqa: E402
+
+
+def _below_header(res, spec, rtl: bool) -> float:
+    """Distance from the page top to the first row of body content.
+
+    Shared by 18f and 18h. Both need to ignore the HEADER, which spans the full
+    text width by design — the name and the headline are drawn across both
+    columns, so a word from either legitimately sits left of the rail edge and
+    legitimately straddles the sidebar gutter. Computed with the renderer's own
+    `_band_metrics`, so if the band's geometry changes the cut follows it
+    instead of going stale.
+    """
+    _hdr, _m, _s = _flow(res, _Sheet(spec, rtl), _labels_for("he" if rtl else "en"))
+    _hh, _pt, _pb = _band_metrics(_hdr, spec)
+    _band = (_hh + _pt + _pb) if _hh else 0.0
+    return (_band + 4.0) if _band else spec.margin_tb_pt
+
 
 # 18f. A dense résumé must not push main-column content into the rail. The
 # sidebar frame is 660pt and a 138-skill résumé's rail content measured 2,453pt;
@@ -3086,20 +3205,40 @@ from reportlab.lib.colors import HexColor as _HexColor  # noqa: E402
 # main content onto page 2, INTO page 2's side frame. Summary and Experience
 # rendered inside a 30%-wide rail. Shipped, and found by the owner's first real
 # tailor. Page 1 is the only page that has a rail, so that is where to look.
+#
+# TWO CARVE-OUTS, both of which this check went RED without on a CORRECT render
+# — a guard that fires on legitimate input is worse than no guard.
+#   * The HEADER band spans the full text width, so a probe word appearing in
+#     the name or the headline is drawn left of the rail edge by design. The
+#     scan therefore starts below the header (`_below_header`, computed with the
+#     renderer's own `_band_metrics` so it follows the band rather than going
+#     stale), and any word the header could also contain is dropped from the
+#     probe set outright — belt and braces, since a headline is one line and the
+#     band's height is measured, not assumed.
+#   * The probe words have to be unique to the MAIN column. A word that also
+#     appears in a sidebar section would be "found" in the rail on a perfectly
+#     demoted render.
 _dense = resume.model_copy(deep=True)
 _dense.skills = [f"Skill {chr(65 + i % 26)}{i} platform" for i in range(140)]
+_dense_header_words = set((_dense.contact.name or "").split()) | set(
+    (_dense.headline or "").split())
+_dense_side_words = {w for s in _dense.skills for w in s.split()}
 for _tpl in (t for t, sp in TEMPLATES.items() if sp.layout == "sidebar"):
     _sp = get_template(_tpl)
     _rail_right = _sp.margin_lr_pt + _column_widths(_sp)[0]
-    _probe = _dense.summary.split()[:6]
+    _probe = [w for w in _dense.summary.split()
+              if w not in _dense_header_words and w not in _dense_side_words][:6]
+    _cut = _below_header(_dense, _sp, False)
     with _pdfplumber.open(_io.BytesIO(render_pdf(_dense, template=_tpl))) as _pdf:
         _p1 = _pdf.pages[0]
         _intruders = [(w["text"], round(w["x0"], 1)) for w in _p1.extract_words()
-                      if w["text"] in _probe and w["x0"] < _rail_right]
+                      if w["text"] in _probe and w["top"] >= _cut and w["x0"] < _rail_right]
     check(
         f"pdf[{_tpl}]: a dense résumé keeps main-column content OUT of the rail "
         f"on page 1 (the sidebar demotes what will not fit instead of spilling)",
-        not _intruders, str(_intruders),
+        # `_probe` is asserted non-empty: with every summary word filtered out
+        # the scan would have nothing to look for and pass by never firing.
+        bool(_probe) and not _intruders, f"probe={_probe} intruders={_intruders}",
     )
 check(
     "pdf: a page-sized chip run splits instead of jumping whole to the next "
@@ -3110,10 +3249,432 @@ check(
            border=_HexColor("#cccccc")).split(300.0, 200.0).__len__() == 2,
 )
 
+# 18a-4. `_Cols` and `_Segments` were the two bare Flowables still missing the
+# `split()` the invariant requires, and it was a LIVE 500: `POST /render` raised
+# LayoutError at 107 certifications on classic/minimal, 109 on executive, 113 on
+# timeline and 133 on compact (every list_cols>1 template, which is nine of the
+# eleven), and at 160 languages on minimal, 163 on executive and 169 on
+# timeline. Template-dependent, which is the worst shape this bug takes: the
+# same résumé rendered on `classic` and 500'd on `executive`, because chips route
+# through `_Chips` and it already had one.
+#
+# The existing per-template split check (18a) could not see any of this — its
+# `_huge` fixture is a long summary and a long bullet, i.e. only `_Text`, the one
+# flowable that already split. It is the shape of check that passes by never
+# firing, so this one drives the other two DIRECTLY as well as through a render.
+#
+# The `KeepTogether` around both is not a fix and must not be reached for:
+# reportlab answers one it cannot place by RELEASING its children into the flow,
+# so the bare flowable is asked to split anyway — the traceback named `_Cols`,
+# not the wrapper.
+_ov_certs = [f"Certificate{i:03d}" for i in range(150)]
+_ov_langs = [LanguageSkill(language=f"Language{i:03d}", level="Fluent") for i in range(250)]
+# Short items on purpose. A certification long enough to WRAP inside its column
+# is legitimately interleaved by two-column extraction ("…number 100 from a •
+# …number 101 from a recognised body recognised body"), which is the documented
+# property of `list_cols` and would make this check red on a correct render.
+_ov_bad: list = []
+for _tpl in TEMPLATES:
+    for _label, _mutate, _want in (
+        ("certifications", lambda r: setattr(r, "certifications", _ov_certs), _ov_certs),
+        ("languages", lambda r: setattr(r, "languages", _ov_langs),
+         [f"Language{i:03d}" for i in range(250)]),
+    ):
+        _r = resume.model_copy(deep=True)
+        _mutate(_r)
+        try:
+            _txt = _re.sub(r"\s+", " ", _pdf_text(render_pdf(_r, template=_tpl)))
+            _lost = [v for v in _want if v not in _txt]
+        except Exception as _e:  # LayoutError or anything else = the 500 is back
+            _lost = [f"{type(_e).__name__}: {_e}"]
+        if _lost:
+            _ov_bad.append((_tpl, _label, len(_lost), _lost[:1]))
 check(
-    "docx[split] renders the SAME bytes as its declared fallback — one code path, "
-    "so the Word file can never silently drift from the sibling the UI names",
-    render_docx(resume, template="split") == render_docx(resume, template=get_template("split").docx_fallback),
+    "pdf: 150 certifications and 250 languages render on EVERY template instead "
+    "of raising LayoutError, and not one item is lost in the split",
+    not _ov_bad, str(_ov_bad[:3]),
+)
+# …and the same shape as the `_Chips.split` probe above, for the same reason it
+# exists: a wrapper can make `split` never be called at all, so the method is
+# also driven on its own — two parts for a block taller than the frame, and an
+# empty list (move me whole) for one that fits.
+_ov_sheet = _Sheet(get_template("classic"), False)
+_ov_cols = _Cols(_ov_certs, font=_ov_sheet.reg, size=10, color=_HexColor("#000000"),
+                 glyph_color=_HexColor("#000000"), leading=13, cols=2)
+_ov_segs = [(f"Language{i:03d} – Fluent", _ov_sheet.reg, 10, _HexColor("#000000"), "")
+            for i in range(250)]
+_ov_seg = _Segments(_ov_segs, sep=" · ", sep_color=_HexColor("#cccccc"), leading=13)
+_ov_seg_halves = _ov_seg.split(400.0, 200.0)
+_ov_rtl_halves = _Segments(_ov_segs, sep=" · ", sep_color=_HexColor("#cccccc"),
+                           leading=13, rtl=True).split(400.0, 200.0)
+check(
+    "pdf: _Cols.split and _Segments.split return exactly two parts for a block "
+    "taller than the frame and none for one that fits, and neither half loses or "
+    "duplicates an item — in both directions",
+    len(_ov_cols.split(400.0, 200.0)) == 2
+    and _ov_cols.split(400.0, 200.0)[0].items + _ov_cols.split(400.0, 200.0)[1].items == _ov_certs
+    and _Cols(_ov_certs[:2], font=_ov_sheet.reg, size=10, color=_HexColor("#000000"),
+              glyph_color=_HexColor("#000000"), leading=13, cols=2).split(400.0, 500.0) == []
+    and len(_ov_seg_halves) == 2
+    and sorted(s[0] for h in _ov_seg_halves for s in h.segments) == sorted(s[0] for s in _ov_segs)
+    and _Segments(_ov_segs[:2], sep=" · ", sep_color=_HexColor("#cccccc"),
+                  leading=13).split(400.0, 500.0) == []
+    and len(_ov_rtl_halves) == 2
+    and sorted(s[0] for h in _ov_rtl_halves for s in h.segments) == sorted(s[0] for s in _ov_segs),
+    f"cols={len(_ov_cols.split(400.0, 200.0))} segs={len(_ov_seg_halves)} rtl={len(_ov_rtl_halves)}",
+)
+
+# --------------------------------------------------------------------------- #
+# 18g. A CHIP MAY NOT BE WIDER THAN ITS COLUMN.
+#
+# 18f above aims INWARD (main-column content must stay out of the rail). This
+# aims the other way, at the axis nobody guarded: `_Chips._pack` broke to a new
+# row only when the current one already held something (`if cur and cw + gap + w
+# > avail_w`), so a single item wider than the whole column was appended to an
+# EMPTY row unconditionally. `wrap()` then reported `avail_w` regardless of what
+# it had packed, so reportlab believed the flowable fitted, and nothing clips.
+#
+# Measured on `split` before the fix: one 60-character skill packed a 253.00pt
+# row into the 148.58pt rail and was DRAWN from x=48.0 to x=301.0, straight
+# across the main column (which starts at 216.6). The 147-character sentence
+# below packed 616.13pt into the same rail. And the damage is not cosmetic: the
+# chip overprints the main column at the same y, pdfminer y-sorts, and the
+# extracted text came back as "Designing and operating distributed backeEnXd
+# PsyEstRemIEs NatC scEale" -- the chip interleaved character-by-character with
+# the EXPERIENCE heading, which stopped being extractable at all (18j below pins
+# exactly that).
+#
+# Direction-blind, per template, at BOTH the rail width and the full text width:
+# a sidebar template's skills block can be DEMOTED into the main column by the
+# height pass in `_flow`, so it has to be safe in either place.
+_LONG_SKILL = ("Designing and operating distributed backend systems at massive scale across "
+               "many regions, many teams and many time zones worldwide every single day")
+# An unbreakable token is the case only `_wrap_lines`' hard-break loop can
+# place. It is why every `inline`-skills template stayed clean through all of
+# this: `_Text` already goes through that loop, and `_Chips` simply did not.
+_LONG_TOKEN = "A" * 80
+_HE_LONG_SKILL = ("תכנון והפעלה של מערכות מבוזרות בקנה מידה גדול מאוד באזורים רבים "
+                  "ובצוותים רבים ובאזורי זמן רבים בכל יום ויום")
+_HE_LONG_TOKEN = "א" * 80
+# The false-positive fixture: ordinary short skills, the shape 99% of résumés
+# have. Nothing here may move.
+_NORMAL_SKILLS = ["Python", "SQL", "Go", "Machine Learning", "Distributed Systems", "CI/CD"]
+
+_chip_over: list = []
+_chip_drift: list = []
+_chip_probed = 0
+# Derived from TEMPLATES rather than hard-coded, so the check fails loudly if
+# the loop ever stops running (a check that passes by never firing is the 21.7
+# failure mode). Two directions x four over-long inputs x one column, or two
+# columns when the template has a rail.
+_chip_expected = sum(2 * 4 * (2 if _sp.layout == "sidebar" else 1)
+                     for _sp in TEMPLATES.values() if _sp.skills == "chips")
+for _tpl, _sp in TEMPLATES.items():
+    if _sp.skills != "chips":
+        continue
+    _size = _sp.meta_size + 0.4          # what build_skills() passes to _Chips
+    _cols = [_sp.page_w_pt - 2 * _sp.margin_lr_pt]
+    if _sp.layout == "sidebar":
+        _cols.append(_column_widths(_sp)[0])
+    for _rtl in (False, True):
+        _sh = _Sheet(_sp, _rtl)
+
+        def _chips(items, rtl=_rtl, sheet=_sh, size=_size):
+            return _Chips(items, font=sheet.reg, size=size, ink=_HexColor("#000000"),
+                          border=_HexColor("#cccccc"), rtl=rtl)
+
+        for _item in (_LONG_SKILL, _LONG_TOKEN, _HE_LONG_SKILL, _HE_LONG_TOKEN):
+            for _w in _cols:
+                _c = _chips([_item])
+                _rows = _c._pack(_w)
+                _chip_probed += 1
+                _widest_row = max(sum(_e[1] for _e in _ents) + _c.gap * (len(_ents) - 1)
+                                  for _ents, _h in _rows)
+                _widest_line = max(_adv(_ln, _sh.reg, _size) + 2 * _c.pad
+                                   for _ents, _h in _rows for _e in _ents for _ln in _e[2])
+                if _widest_row > _w + 1e-6 or _widest_line > _w + 1e-6:
+                    _chip_over.append((_tpl, _rtl, round(_w, 2),
+                                       round(_widest_row, 2), round(_widest_line, 2)))
+        # THE FALSE-POSITIVE HALF, in the same check on purpose: "make the long
+        # skill fit" is trivially satisfied by wrapping EVERY chip, which would
+        # re-lay-out every résumé that never had a problem. A normal skills list
+        # must still pack exactly what it packed before -- one line per chip,
+        # every row exactly `chip_h`, every box `_adv(label) + 2*pad` wide, and
+        # `wrap()` returning the pre-fix `n*(chip_h+gap) - gap`. Measured
+        # separately: with this true, all 11 templates x 2 languages render
+        # byte-identically before and after the fix (modulo reportlab's
+        # per-render /ID digest, the only non-deterministic bytes in the file).
+        for _w in _cols:
+            _c = _chips(_NORMAL_SKILLS)
+            _rows = _c._pack(_w)
+            _pre_fix_h = len(_rows) * (_c.chip_h + _c.gap) - _c.gap
+            if (not _rows
+                    or any(_h != _c.chip_h for _ents, _h in _rows)
+                    or any(_lines != [_lbl] for _ents, _h in _rows for _lbl, _bw, _lines in _ents)
+                    or any(abs(_bw - (_adv(_lbl, _sh.reg, _size) + 2 * _c.pad)) > 1e-9
+                           for _ents, _h in _rows for _lbl, _bw, _lines in _ents)
+                    or abs(_c.wrap(_w, 10_000.0)[1] - _pre_fix_h) > 1e-9):
+                _chip_drift.append((_tpl, _rtl, round(_w, 2),
+                                    [(len(_e), round(_h, 2)) for _e, _h in _rows]))
+check(
+    "pdf: no chip row and no wrapped chip line may exceed its column, at the "
+    "rail width AND the full text width, in both directions -- and a NORMAL "
+    "skills list still packs at the pre-fix geometry (without that half, "
+    "'make the long skill fit' is satisfied by wrapping every chip)",
+    _chip_probed == _chip_expected and not _chip_over and not _chip_drift,
+    f"probed={_chip_probed}/{_chip_expected} over={_chip_over[:3]} drift={_chip_drift[:3]}",
+)
+
+
+# 18h. The same invariant at RENDER level, where the user meets it.
+#
+# ASSERT ON GEOMETRY, NOT ON TEXT. pdfplumber returns Hebrew already
+# bidi-reordered, so a check matching `w["text"]` against `resume.skills` finds
+# nothing in RTL and passes by never firing -- probed: the text form catches 2
+# escaping words on split/panel in LTR and 0 in RTL, while the geometry form
+# fires on the chip rectangle in both.
+#
+# The header is excluded because it LEGITIMATELY spans both columns (the name is
+# drawn across the full text width, so "Candidate" straddles the gutter on every
+# two-column render). Same carve-out `ats_xray._collision` makes, for the same
+# reason. `body_top` is computed with the renderer's own `_band_metrics`, so if
+# the band's geometry changes the cut follows it instead of going stale.
+# (`_below_header` is defined above 18f, which needs the same cut for the same
+# reason — a probe word inside the full-width band is not an intruder.)
+def _chip_escapes(res, tpl: str, rtl: bool) -> tuple[list, list]:
+    """(straddles the sidebar gutter, leaves the text column) for everything
+    drawn below the header on page 1 -- extracted words UNION drawn curves, the
+    latter being where a chip's own rounded rectangle shows up."""
+    _spec = get_template(tpl)
+    _cut = _below_header(res, _spec, rtl)
+    _lo, _hi = _spec.margin_lr_pt, _spec.page_w_pt - _spec.margin_lr_pt
+    _g0 = _g1 = None
+    if _spec.layout == "sidebar":
+        _side_w, _main_w = _column_widths(_spec)
+        # In RTL the rail is on the RIGHT, so the gutter sits between the main
+        # column's right edge and the rail's left edge.
+        _g0 = (_lo + _main_w) if rtl else (_lo + _side_w)
+        _g1 = _g0 + _spec.sidebar_gutter
+    _straddle: list = []
+    _escape: list = []
+    with _pdfplumber.open(_io.BytesIO(render_pdf(res, template=tpl))) as _pdf:
+        _pg = _pdf.pages[0]
+        _boxes = [(w["text"], w["x0"], w["x1"], w["top"]) for w in _pg.extract_words()]
+        _boxes += [("<chip>", c["x0"], c["x1"], c["top"]) for c in _pg.curves]
+    for _t, _a, _b, _top in _boxes:
+        if _top < _cut:
+            continue
+        if _g0 is not None and _a < _g0 - 0.05 and _b > _g1 + 0.05:
+            _straddle.append((_t[:24], round(_a, 1), round(_b, 1)))
+        if _a < _lo - 0.05 or _b > _hi + 0.05:
+            _escape.append((_t[:24], round(_a, 1), round(_b, 1)))
+    return _straddle, _escape
+
+
+_esc_long: list = []
+_esc_clean: list = []
+_esc_seen: list = []
+for _tpl, _sp in TEMPLATES.items():
+    if _sp.skills != "chips":
+        continue
+    for _base, _item, _rtl in ((resume, _LONG_SKILL, False), (_he_full, _HE_LONG_SKILL, True),
+                               (resume, _LONG_TOKEN, False), (_he_full, _HE_LONG_TOKEN, True)):
+        _r = _base.model_copy(deep=True)
+        _r.skills = ["Python", "SQL", _item]
+        _r.skill_groups = []
+        _s1, _e1 = _chip_escapes(_r, _tpl, _rtl)
+        _esc_seen.append((_tpl, _rtl))
+        if _s1 or _e1:
+            _esc_long.append((_tpl, _rtl, _s1[:2], _e1[:2]))
+    # The clean control: an ordinary résumé must be clean too, or the check is
+    # passing because extraction broke rather than because the chip stayed home.
+    for _base, _rtl in ((resume, False), (_he_full, True)):
+        _s2, _e2 = _chip_escapes(_base, _tpl, _rtl)
+        if _s2 or _e2:
+            _esc_clean.append((_tpl, _rtl, _s2[:2], _e2[:2]))
+check(
+    "pdf: with one over-long skill, nothing drawn below the header straddles "
+    "the sidebar gutter or leaves the text column -- every chips template, both "
+    "directions, sentence and unbreakable token (geometry, not text: pdfplumber "
+    "hands back Hebrew already reordered, so a text match never fires in RTL)",
+    len(_esc_seen) == 4 * sum(1 for _sp in TEMPLATES.values() if _sp.skills == "chips")
+    and not _esc_long and not _esc_clean,
+    f"seen={len(_esc_seen)} long={_esc_long[:2]} clean={_esc_clean[:2]}",
+)
+
+
+# 18i. …and the wrap must happen ONLY to the chip that needs it.
+#
+# 18g pins that at `_pack` level; this pins it on the rendered file, which is
+# the artefact the user sends. Every chip is one drawn rounded rectangle, and
+# the only other curves in the document are the contact/date icons, which are
+# 1.6-4.4pt tall against a 15.5-15.8pt chip -- so "the tallest curve on the page
+# equals chip_h" is a language-blind way to say "no chip was wrapped into extra
+# lines". That alone is not enough, and the probe proved it: routing EVERY chip
+# through the over-wide branch gives each one a full-width row of a SINGLE line,
+# so every box is still exactly chip_h and the height test stays green while the
+# section has been completely re-laid-out. So the second half asserts that
+# ordinary chips still SHARE rows -- more chip rectangles than distinct row
+# tops. The positive half is in the same check: with a skill too wide for the
+# column, one rectangle MUST be taller, or nothing wrapped and 18g is passing on
+# an input the renderer never sees.
+def _over_wide_skill(word: str, spec, rtl: bool) -> str:
+    """A skill guaranteed wider than this template's FULL text column, grown
+    from real font metrics rather than guessed at a character count -- 27
+    lowercase Latin characters fit the `split` rail but only 16 capital Ms, and
+    28 Hebrew characters, so any fixed length is wrong for someone."""
+    _sh = _Sheet(spec, rtl)
+    _size = spec.meta_size + 0.4
+    _pad = _Chips([], font=_sh.reg, size=_size, ink=None, border=None).pad
+    _col = spec.page_w_pt - 2 * spec.margin_lr_pt
+    _text = word
+    while _adv(_text, _sh.reg, _size) + 2 * _pad <= _col and len(_text) < 600:
+        _text += " " + word
+    return _text
+
+
+def _chip_boxes(res, tpl: str) -> list:
+    """(height, top) of every drawn rounded rectangle on the rendered file."""
+    with _pdfplumber.open(_io.BytesIO(render_pdf(res, template=tpl))) as _pdf:
+        return [(c["bottom"] - c["top"], round(c["top"], 1)) for p in _pdf.pages for c in p.curves]
+
+
+_tall_normal: list = []
+_lonely_normal: list = []
+_tall_missing: list = []
+for _tpl, _sp in TEMPLATES.items():
+    if _sp.skills != "chips":
+        continue
+    _chip_h = (_sp.meta_size + 0.4) * 1.72
+    for _base, _word, _rtl in ((resume, "distributed", False), (_he_full, "מבוזרות", True)):
+        _boxes = _chip_boxes(_base, _tpl)
+        if not _boxes or max(_h for _h, _t in _boxes) > _chip_h + 0.5:
+            _tall_normal.append((_tpl, _rtl, round(max(_h for _h, _t in _boxes), 2) if _boxes else None,
+                                 round(_chip_h, 2)))
+        # Chips of chip_h height only — the icons are 1.6-4.4pt and would
+        # otherwise each contribute a row top of their own.
+        _chips_only = [_t for _h, _t in _boxes if abs(_h - _chip_h) <= 0.5]
+        if len(_chips_only) <= len(set(_chips_only)):
+            _lonely_normal.append((_tpl, _rtl, len(_chips_only), len(set(_chips_only))))
+        _wide = _base.model_copy(deep=True)
+        _wide.skills = list(_base.skills) + [_over_wide_skill(_word, _sp, _rtl)]
+        _wide.skill_groups = []
+        _boxes2 = _chip_boxes(_wide, _tpl)
+        if not _boxes2 or max(_h for _h, _t in _boxes2) <= _chip_h + 0.5:
+            _tall_missing.append((_tpl, _rtl, round(max(_h for _h, _t in _boxes2), 2) if _boxes2 else None,
+                                  round(_chip_h, 2)))
+check(
+    "pdf: an ordinary skills list draws every chip exactly chip_h tall AND still "
+    "packs several of them per row (nothing wrapped or exiled to its own row "
+    "that did not have to be), while an over-wide skill draws a taller box -- "
+    "both halves, every chips template, both directions",
+    not _tall_normal and not _lonely_normal and not _tall_missing,
+    f"grew_taller={_tall_normal[:3]} one_per_row={_lonely_normal[:3]} did_not_wrap={_tall_missing[:3]}",
+)
+
+
+# 18j. The honest assertion: one long skill used to DELETE a standard section
+# name from the file we tell the user is ATS-safe.
+#
+# The fixture is tuned so the over-wide chip lands at the EXPERIENCE heading's y
+# (a two-line summary and five short skills ahead of the long one); the guard
+# below asserts it STILL lands there, so the check cannot quietly stop
+# exercising the collision if the vertical rhythm ever shifts. Before the fix
+# `"EXPERIENCE" in extract_text(...)` was False on both split and panel and the
+# extracted line read "…backeEnXd PsyEstRemIEs NatC scEale". The clean twin is
+# pinned beside it so the check cannot be satisfied by breaking extraction
+# generally.
+def _exp_fixture(skill: str):
+    _r = resume.model_copy(deep=True)
+    _r.summary = " ".join(["Experienced backend professional building reliable services."] * 2)
+    _r.skills = [f"Skill{i}" for i in range(5)] + [skill]
+    _r.skill_groups = []
+    return _r
+
+
+_exp_bad: list = []
+for _tpl in ("split", "panel"):
+    _long_pdf = render_pdf(_exp_fixture("Designing and operating distributed backend systems at scale"),
+                           template=_tpl)
+    _clean_pdf = render_pdf(_exp_fixture("Distributed systems"), template=_tpl)
+    with _pdfplumber.open(_io.BytesIO(_long_pdf)) as _pdf:
+        _chip_tops = [w["top"] for w in _pdf.pages[0].extract_words() if w["text"].startswith("Design")]
+    with _pdfplumber.open(_io.BytesIO(_clean_pdf)) as _pdf:
+        _head_tops = [w["top"] for w in _pdf.pages[0].extract_words() if w["text"] == "EXPERIENCE"]
+    _aligned = bool(_chip_tops) and bool(_head_tops) and abs(_chip_tops[0] - _head_tops[0]) < 6.0
+    if not (_aligned
+            and "EXPERIENCE" in _li_extract_text("resume.pdf", _long_pdf)
+            and "EXPERIENCE" in _li_extract_text("resume.pdf", _clean_pdf)):
+        _exp_bad.append((_tpl, _aligned, [round(t, 1) for t in _chip_tops[:1]],
+                         [round(t, 1) for t in _head_tops[:1]]))
+check(
+    "pdf[split,panel]: a long skill no longer deletes the EXPERIENCE heading -- "
+    "and the fixture still puts the chip at the heading's y, so the check "
+    "cannot pass by no longer exercising the collision",
+    not _exp_bad, str(_exp_bad),
+)
+
+
+# 18k. LANGUAGES, not just skills. `build_languages` builds a `_Chips` too, so a
+# `LanguageSkill` level string like "Native / full professional working
+# proficiency, written and spoken" hit exactly the same defect -- it overran the
+# `split` rail by 158.3pt with no skill involved at all.
+_lang_bad: list = []
+for _tpl in ("split", "panel"):
+    _lr = resume.model_copy(deep=True)
+    _lr.languages = [LanguageSkill(
+        language="English",
+        level="Native / full professional working proficiency, written and spoken")]
+    _ls, _le = _chip_escapes(_lr, _tpl, False)
+    if _ls or _le:
+        _lang_bad.append((_tpl, _ls[:2], _le[:2]))
+check(
+    "pdf[split,panel]: a long LANGUAGES proficiency string stays in its column "
+    "too -- `_Chips` draws both sections, so the fix cannot be skills-only",
+    not _lang_bad, str(_lang_bad),
+)
+
+
+# 18l. `split()` now ACCUMULATES per-row heights instead of dividing the room by
+# a fixed `chip_h + gap` step, because rows are no longer all one line tall. For
+# a block of uniform rows the two agree exactly -- which is why the 200-item pin
+# above still returns 2 -- so the arithmetic needs its own case: a block mixing
+# normal rows with one wrapped chip, at a height where the old formula counted
+# the two-line row as one line and would hand the frame a head TALLER than the
+# room it was given. Measured: at avail_h=80 the old formula takes 4 rows for
+# 87.42pt of content; the accumulator takes 3 for 67.34pt.
+_mix_items = ([f"Skill{i}" for i in range(8)]
+              + ["a single skill written out as a whole long sentence that cannot fit"]
+              + [f"More{i}" for i in range(8)])
+_mix = _Chips(_mix_items, font="Helvetica", size=9, ink=_HexColor("#000000"),
+              border=_HexColor("#cccccc"))
+_mix_rows = _mix._pack(160.0)
+_mix_halves = _mix.split(160.0, 80.0)
+_mix_head_h = _mix_halves[0].wrap(160.0, 80.0)[1] if len(_mix_halves) == 2 else None
+check(
+    "pdf: a chip block mixing normal rows with a WRAPPED chip splits at a row "
+    "boundary, never inside a chip, and its head actually fits the room it was "
+    "offered (the fixture must really contain a multi-line row, or this passes "
+    "by never firing)",
+    any(_h > _mix.chip_h + 1e-9 for _ents, _h in _mix_rows)      # the fixture is real
+    and len(_mix_halves) == 2
+    and _mix_halves[0].items + _mix_halves[1].items == _mix_items  # nothing lost or duplicated
+    and _mix_head_h is not None and _mix_head_h <= 80.0,
+    f"rows={[round(_h, 2) for _e, _h in _mix_rows]} head_h={_mix_head_h}",
+)
+
+check(
+    "docx[split] renders the SAME document as its declared fallback, part for part "
+    "— one code path, so the Word file can never silently drift from the sibling "
+    "the UI names",
+    # PARTS, not raw bytes, for the reason `_docx_parts` documents: python-docx
+    # stamps every zip entry with the current time at 2-second DOS granularity,
+    # so two renders either side of that boundary differ in bytes while being the
+    # same file. This is the check behind the "one smoke test flakes, just re-run
+    # it" folklore — it was never same-second ORDERING, it was the clock inside
+    # the container, and the fix is to compare what the renderer actually writes.
+    _docx_parts(render_docx(resume, template="split"))
+    == _docx_parts(render_docx(resume, template=get_template("split").docx_fallback)),
 )
 
 # 18c. ATS X-ray (21.7). We render the file and read it back with our OWN parser
@@ -3330,14 +3891,568 @@ check(
     and not any(tok in _dsg_band_xml for tok in _ATS_FORBIDDEN),
 )
 _dsg_bar_xml = _docx_xml(render_docx(resume, template="compact"))
+# The literal this used to assert ('w:sz="18"') was the RENDERER's hard-coded
+# 2.25pt, not compact's declared 2.4 — so it pinned the bug rather than the
+# spec, and honouring `heading_bar_w` turned it red. Derived from the
+# declaration now, which is the repair the rule asks for: fix the assertion, do
+# not weaken it.
+_dsg_bar_sz = int(round(get_template("compact").heading_bar_w * 8))
 check(
-    "docx: the accent bar beside a heading is a left paragraph border",
-    'w:sz="18"' in _dsg_bar_xml and "<w:tbl" not in _dsg_bar_xml,
+    "docx: the accent bar beside a heading is a left paragraph border, at the "
+    "WIDTH the template declares",
+    f'<w:left w:val="single" w:sz="{_dsg_bar_sz}"' in _dsg_bar_xml
+    and "<w:tbl" not in _dsg_bar_xml,
+    f"want sz={_dsg_bar_sz}, found {sorted(set(_re.findall(r'<w:left [^>]*>', _dsg_bar_xml)))[:2]}",
 )
 _dsg_he_xml = _docx_xml(render_docx(_he_full))
 check(
     "docx he: bold/size mirrored onto the complex-script twins (Word ignores w:b for Hebrew)",
     "<w:bCs" in _dsg_he_xml and "<w:szCs" in _dsg_he_xml,
+)
+
+# --------------------------------------------------------------------------- #
+# 18m. THE SPEC IS THE CONTRACT, AND BOTH RENDERERS HAVE TO KEEP IT.
+#
+# "A template must differ from the others in SHAPE, not in hue... every option
+# in it is reproducible in BOTH renderers, so the two downloads can never
+# disagree about what the document SAYS."  The PDF honoured essentially the
+# whole presentation vocabulary; the DOCX read a subset and hard-coded the rest.
+# Fifteen spec fields with a visible consequence were never referenced by
+# `docx_renderer` at all — `heading_case`, the heading rule's predicate, weight,
+# colour, short width and hang, `heading_bar_w`, `header_rule_pt`,
+# `header_rule_accent`, `bullet_glyph`, `bullet_scale`, `bullet_accent`,
+# `page_bg`, `rail`, `list_cols` — so per template the Word file contradicted
+# its own PDF: Title Case in the PDF and UPPERCASE in Word, a 26-32pt accent
+# underline in the PDF and a full-width grey hairline in Word, `minimal` drawing
+# nine heading rules in Word and none at all in its PDF.
+#
+# NONE of that was catchable by the checks that existed, and the reason is worth
+# stating: they rendered every template in every format and language and then
+# asserted only that the file opened and the words came back. Nothing looked at
+# what either file CONTAINED. That is the same gap CLAUDE.md records for the
+# sidebar overflow ("the old checks rendered every template but never asserted
+# WHERE content landed"), so the checks below are positional and derived from
+# the spec wherever a number is involved — never restated literals, which is how
+# the `w:sz="18"` assertion above came to pin the renderer's hard-coded value
+# against the template's declared one.
+from docx import Document as _Document  # noqa: E402
+from docx.enum.text import WD_ALIGN_PARAGRAPH as _WD_ALIGN  # noqa: E402
+
+# One fixture with all eight sections populated, a project DESCRIPTION (the
+# timeline rail broke across exactly that line and no existing fixture had one)
+# and three certifications with unique leading tokens, so `list_cols` can be
+# read positionally out of the PDF.
+_tf = ResumeModel(
+    contact=Contact(name="Tamar Fidelity", email="tamar@example.com", phone="+972-52-000-0000",
+                    location="Tel Aviv", linkedin="linkedin.com/in/tamar"),
+    headline="Platform Engineer",
+    summary="Platform engineer with nine years across payments and data infrastructure.",
+    skills=["Python", "Go", "PostgreSQL", "Kubernetes"],
+    experience=[Experience(company="Acme Systems", title="Staff Engineer", location="Tel Aviv",
+                           start_date="2016", end_date="Present",
+                           bullets=["Ran the platform team.", "Shipped the payments migration."])],
+    projects=[Project(name="Ziko", bullets=["Built the dispatch service."],
+                      # Every word here is unique in this résumé on purpose: the
+                      # rail check below locates the description POSITIONALLY by
+                      # its words, and a token that also appears in the summary
+                      # would be looked for in a section that has no rail.
+                      description="Guides couriers through Jaffa alleyways nightly.")],
+    education=[Education(institution="Technion", degree="B.Sc.", field="Computer Science",
+                         start_date="2010", end_date="2014")],
+    military_service=[MilitaryService(unit="8200", role="Analyst",
+                                      start_date="2006", end_date="2009")],
+    certifications=["Certalpha Solutions Architect", "Certbravo Kubernetes Admin",
+                    "Certcharlie Terraform Associate"],
+    languages=[LanguageSkill(language="Hebrew", level="Native"),
+               LanguageSkill(language="English", level="Fluent")],
+)
+_TF_LABELS = _labels_for("en")
+
+
+def _eff(tpl: str):
+    """The spec the DOCX actually renders. A two-column template has no Word
+    file of its own — it falls back to the single-column sibling — so every
+    DOCX assertion below has to be made against the sibling's declaration, not
+    against the one the user picked."""
+    _s = get_template(tpl)
+    return get_template(_s.docx_fallback) if _s.docx_fallback else _s
+
+
+def _cased(label: str, spec) -> str:
+    """pdf_renderer's own expression for a section heading's case."""
+    return label.title() if spec.heading_case == "title" else label.upper()
+
+
+def _heading_words(spec) -> set[str]:
+    return {_cased(v, spec) for v in _TF_LABELS.values()}
+
+
+# 18m-1. THE STRUCTURAL-DISTINCTNESS PIN — the one that would have caught this
+# whole class at once.
+#
+# The existing diversity check (18, above) reads the SPEC tuple, so all fifteen
+# ignored fields stayed green: eleven declarations that differ, rendering into
+# far fewer documents. This reads the RENDERED file instead. Every colour and
+# every type size / weight / spacing value is blinded, so what is left is the
+# document's SHAPE — which paragraphs carry a border and on which edge, which
+# carry an indent, an alignment, a tab stop, a numbering reference, and what the
+# bullet level actually says.
+#
+# The section properties are deliberately NOT blinded: the page size and the
+# margins are the text column's geometry, which is layout rather than hue —
+# `minimal`'s 84pt side margin is documented as load-bearing, being the gutter
+# its hung headings live in.
+#
+# The bar is DERIVED, not a number: two templates may render the same Word
+# document only when one names the other as its `docx_fallback`, which is the
+# one collapse the design intends. Measured before this work: 8 groups, with
+# classic == modern == split == panel — i.e. `classic == modern` on top of the
+# two declared pairs, the exact "one document in N colours" failure Phase 21
+# existed to kill. After: 9, each group exactly one fallback class.
+_STRUCT_ATTR = _re.compile(r'(w:[A-Za-z]+)="([^"]*)"')
+_STRUCT_BLIND = _re.compile(r"^(-?\d+|[0-9A-Fa-f]{6}|auto)$")
+
+
+def _blind(xml: str) -> str:
+    return _STRUCT_ATTR.sub(
+        lambda m: f'{m.group(1)}="#"' if _STRUCT_BLIND.match(m.group(2)) else m.group(0), xml)
+
+
+def _docx_structure(blob: bytes) -> str:
+    with _zipfile.ZipFile(_io.BytesIO(blob)) as z:
+        doc = z.read("word/document.xml").decode("utf-8")
+        # numbering.xml carries the bullet LEVEL, so the glyph is part of the
+        # structure rather than something only the eye can see.
+        num = z.read("word/numbering.xml").decode("utf-8")
+    head, sep, tail = doc.partition("<w:sectPr")
+    if not sep:  # fail loudly: a document with no section properties means the
+        raise AssertionError("no <w:sectPr> in word/document.xml")  # partition silently kept everything
+    return _blind(head) + sep + tail + "\n@@\n" + _blind(num)
+
+
+_struct: dict[str, list[str]] = {}
+for _tpl in TEMPLATES:
+    _struct.setdefault(_docx_structure(render_docx(_tf, template=_tpl)), []).append(_tpl)
+_struct_want = len({(t.docx_fallback or t.id) for t in TEMPLATES.values()})
+# The blinding has to actually blind, or every template is "distinct" because
+# its accent colour is still in the signature — a check that passes by never
+# firing, which is the failure mode this suite exists to prevent.
+_struct_raw = _docx_xml(render_docx(_tf))
+check(
+    "docx: eleven templates render as many DISTINCT DOCUMENTS as the design "
+    "declares — with every colour and every size/spacing value blinded, two "
+    "templates may share a structure ONLY when one names the other as its "
+    "docx_fallback (8 before this work: classic == modern == split == panel)",
+    bool(_re.search(r'w:val="[0-9A-F]{6}"', _struct_raw)) and 'w:val="#"' in _blind(_struct_raw)
+    and len(_struct) == _struct_want
+    and all(len({get_template(t).docx_fallback or t for t in g}) == 1 for g in _struct.values()),
+    f"groups={len(_struct)}/{_struct_want} " + str(sorted(_struct.values(), key=len, reverse=True)[:3]),
+)
+
+# 18m-2. The heading TEXT is the same in both downloads, derived from
+# `heading_case`. The wrong case must be ABSENT as well as the right one
+# present, or "upper() is always applied" satisfies half the check.
+_hc_bad: list = []
+for _tpl in TEMPLATES:
+    for _fmt, _spec, _txt in (
+        ("pdf", get_template(_tpl), _pdf_text(render_pdf(_tf, template=_tpl))),
+        ("docx", _eff(_tpl), _li_extract_text("resume.docx", render_docx(_tf, template=_tpl))),
+    ):
+        _raw = _TF_LABELS["experience"]
+        _want = _cased(_raw, _spec)
+        _other = _raw.upper() if _spec.heading_case == "title" else _raw.title()
+        if _want not in _txt or _other in _txt:
+            _hc_bad.append((_tpl, _fmt, _spec.heading_case, _want in _txt, _other in _txt))
+check(
+    "heading_case reaches BOTH renderers: executive and ivy print Title Case and "
+    "the other nine print CAPS, in the PDF and in the Word file alike (the DOCX "
+    "never read the field — both printed SUMMARY/EXPERIENCE in Word)",
+    not _hc_bad and any(t.heading_case == "title" for t in TEMPLATES.values()),
+    str(_hc_bad[:4]),
+)
+
+# 18m-3. The NUMBER of heading rules in the Word file is `pdf_renderer`'s own
+# predicate applied to the same headings — never a count and never a literal.
+# `minimal` drew nine bottom borders in Word (one header + eight headings) where
+# its PDF draws none at all, because the two used different predicates.
+_hr_bad: list = []
+for _tpl in TEMPLATES:
+    _spec = _eff(_tpl)
+    _blob = render_docx(_tf, template=_tpl)
+    _heads = [p for p in _Document(_io.BytesIO(_blob)).paragraphs
+              if p.text.strip() in _heading_words(_spec)]
+    _want = (len(_heads) * (1 if _spec.heading in ("rule", "short", "centered") else 0)
+             + (1 if _spec.header == "rule" else 0))
+    _got = _docx_xml(_blob).count('<w:bottom w:val="single"')
+    # A fixture that stopped producing headings would make every count 0 == 0.
+    if len(_heads) != len(_TF_LABELS) or _got != _want:
+        _hr_bad.append((_tpl, f"heads={len(_heads)}", f"got={_got}", f"want={_want}"))
+check(
+    "docx: a section heading carries a rule exactly when pdf_renderer draws one "
+    "— heading in (rule, short, centered) — plus one for a header='rule' "
+    "template, and the fixture really has all eight sections",
+    not _hr_bad, str(_hr_bad[:4]),
+)
+
+# 18m-4. …and every one of those rules has the WEIGHT and COLOUR its template
+# declares. Asserted as a SET over the whole document so the header rule and the
+# heading rule are both covered and neither can borrow the other's value:
+# `ledger` must show 2.0pt rust for its header and 2.0pt near-black for its
+# headings, where both used to print as a 0.5pt D8D8D8 hairline.
+_BORDER_RE = _re.compile(
+    r'<w:bottom w:val="single" w:sz="(\d+)" w:space="\d+" w:color="([0-9A-Fa-f]{6})"/>')
+_rw_bad: list = []
+_rw_expected = 0
+for _tpl in TEMPLATES:
+    _spec = _eff(_tpl)
+    _want = set()
+    if _spec.header == "rule":
+        _want.add((str(int(round(_spec.header_rule_pt * 8))),
+                   _spec.accent if _spec.header_rule_accent else _spec.rule))
+    if _spec.heading in ("rule", "short", "centered"):
+        _want.add((str(int(round(_spec.heading_rule_pt * 8))), _spec.head_rule_fill))
+    _rw_expected += len(_want)
+    _got = set(_BORDER_RE.findall(_docx_xml(render_docx(_tf, template=_tpl))))
+    if _got != _want:
+        _rw_bad.append((_tpl, sorted(_got), sorted(_want)))
+check(
+    "docx: every hairline is drawn at the weight and in the colour its template "
+    "declares — header_rule_pt / header_rule_accent for the header, "
+    "heading_rule_pt / head_rule_fill for the headings (this file hard-coded "
+    "0.5pt grey for all of them)",
+    not _rw_bad and _rw_expected >= len(TEMPLATES),
+    f"expected_pairs={_rw_expected} " + str(_rw_bad[:3]),
+)
+
+# 18m-5. A "short" underline is `heading_short_pt` WIDE — assert the twips, not
+# merely that an indent exists. It cannot be a border on the heading paragraph
+# itself: a paragraph border spans its paragraph, so a 32pt rule would mean a
+# 32pt-wide paragraph and "EXPERIENCE" at 11pt bold measures ~70pt, wrapping the
+# heading to about one character per line. So it is an empty paragraph indented
+# to leave exactly that width, carrying the border on its bottom.
+_su_bad: list = []
+_su_seen = 0
+for _tpl in TEMPLATES:
+    _spec = _eff(_tpl)
+    if _spec.heading != "short":
+        continue
+    _su_seen += 1
+    _want = int(round((_spec.page_w_pt - 2 * _spec.margin_lr_pt - _spec.heading_short_pt) * 20))
+    _xml = _docx_xml(render_docx(_tf, template=_tpl))
+    if f'<w:ind w:right="{_want}"/>' not in _xml:
+        _su_bad.append((_tpl, _want, sorted(set(_re.findall(r'<w:ind [^>]*>', _xml)))[:3]))
+check(
+    "docx: a heading='short' template's accent underline is exactly "
+    "heading_short_pt wide — asserted in twips, on every template that declares "
+    "one",
+    not _su_bad and _su_seen == sum(1 for t in TEMPLATES if _eff(t).heading == "short"),
+    f"seen={_su_seen} " + str(_su_bad[:3]),
+)
+
+# 18m-6. The heading WORD is the same colour in both downloads. pdf_renderer
+# colours it `ink` for the treatments that carry their own accent mark (a bar, a
+# coloured underline, a hang) and `accent` where the word is the only colour on
+# the line; the DOCX used `ink if bar else accent`, a different predicate, and
+# wrote 0E7A5F / 15476B / 2E6B4F / 374151 where the PDF drew 14181F / 111827 /
+# 121A16 / 111827. Read out of the RENDERED PDF, not out of the spec, so it is
+# the drawn colour that is compared.
+def _pdf_word_color(blob: bytes, word: str):
+    with _pdfplumber.open(_io.BytesIO(blob)) as pdf:
+        for page in pdf.pages:
+            for w in page.extract_words():
+                if w["text"] != word:
+                    continue
+                for ch in page.chars:
+                    if (w["x0"] - 0.5 <= ch["x0"] and ch["x1"] <= w["x1"] + 0.5
+                            and abs(ch["top"] - w["top"]) < 1.5):
+                        return ch.get("non_stroking_color")
+    return None
+
+
+def _hex_rgb(value: str) -> tuple:
+    return tuple(int(value[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+_col_bad: list = []
+for _tpl, _sp in TEMPLATES.items():
+    # A fallback template's Word file IS the sibling's, so comparing its PDF
+    # with it would be comparing two different templates on purpose.
+    if _sp.docx_fallback:
+        continue
+    _word = _cased(_TF_LABELS["experience"], _sp)
+    _drawn = _pdf_word_color(render_pdf(_tf, template=_tpl), _word)
+    _want = _sp.ink if _sp.heading in ("bar", "short", "hung") else _sp.accent
+    _para = next((p for p in _Document(_io.BytesIO(render_docx(_tf, template=_tpl))).paragraphs
+                  if p.text.strip() == _word), None)
+    _in_docx = str(_para.runs[0].font.color.rgb) if (_para and _para.runs) else None
+    if (_drawn is None or _in_docx is None
+            or _in_docx != _want
+            or max(abs(a - b) for a, b in zip(tuple(_drawn), _hex_rgb(_want))) > 1 / 255.0):
+        _col_bad.append((_tpl, _sp.heading, _drawn, _in_docx, _want))
+check(
+    "the section heading is the same colour in the PDF and in the Word file — "
+    "ink where the treatment carries its own accent mark, accent otherwise, one "
+    "predicate for both renderers (they used different ones on four templates)",
+    not _col_bad, str(_col_bad[:3]),
+)
+
+# 18m-7. POSITIONAL, both directions in one check: where the heading actually
+# LANDS. This is the class of assertion the old template checks lacked — they
+# rendered every template and never asserted where content went.
+#   centered -> the PDF word's midpoint is on the page centre AND the Word
+#               paragraph carries <w:jc w:val="center"/>
+#   hung     -> the PDF word ends LEFT of the text column AND the Word paragraph
+#               carries a negative left indent
+# The other nine templates must satisfy NEITHER, or "centre everything" and
+# "hang everything" pass.
+_pos_bad: list = []
+for _tpl, _sp in TEMPLATES.items():
+    if _sp.docx_fallback:
+        continue
+    _word = _cased(_TF_LABELS["experience"], _sp)
+    with _pdfplumber.open(_io.BytesIO(render_pdf(_tf, template=_tpl))) as _pdf:
+        _hits = [w for p in _pdf.pages for w in p.extract_words() if w["text"] == _word]
+    _para = next((p for p in _Document(_io.BytesIO(render_docx(_tf, template=_tpl))).paragraphs
+                  if p.text.strip() == _word), None)
+    if not _hits or _para is None:
+        _pos_bad.append((_tpl, "heading not found", bool(_hits), _para is not None))
+        continue
+    _mid = (_hits[0]["x0"] + _hits[0]["x1"]) / 2
+    _pdf_centered = abs(_mid - _sp.page_w_pt / 2) <= 2.0
+    _pdf_hung = _hits[0]["x1"] < _sp.margin_lr_pt - 0.5
+    _ind = _para.paragraph_format.left_indent
+    _docx_centered = _para.alignment == _WD_ALIGN.CENTER
+    _docx_hung = _ind is not None and _ind.pt < 0
+    if ((_pdf_centered, _docx_centered) != (_sp.heading == "centered",) * 2
+            or (_pdf_hung, _docx_hung) != (_sp.heading == "hung",) * 2):
+        _pos_bad.append((_tpl, _sp.heading, f"pdf_c={_pdf_centered} docx_c={_docx_centered}",
+                         f"pdf_h={_pdf_hung} docx_h={_docx_hung}"))
+check(
+    "heading POSITION agrees between the two renderers and with the spec: ivy's "
+    "centred headings land on the page centre and carry w:jc center; minimal's "
+    "hung ones sit out in the start margin and carry a negative w:ind; the other "
+    "seven do neither",
+    not _pos_bad
+    and any(t.heading == "centered" for t in TEMPLATES.values())
+    and any(t.heading == "hung" for t in TEMPLATES.values()),
+    str(_pos_bad[:3]),
+)
+
+# 18m-8. THE HEADER HAIRLINE, and the deliberate visual change. `header` is now
+# authoritative in both renderers, so `header="plain"` finally means what
+# templates.py has always said it means: ivy and minimal stop drawing a rule
+# they never declared (measured before: ivy 0.8pt C9CED6, minimal 0.8pt E4E7EB,
+# in BOTH formats, while both picker thumbnails correctly drew none).
+#
+# Pinned in BOTH directions inside one check, because "suppress the rule" is
+# trivially satisfied by suppressing every rule: the four header="rule"
+# templates must still draw exactly one, and the band templates — whose header
+# is a painted rectangle, not a line — must draw none either.
+_hdr_bad: list = []
+for _tpl, _sp in TEMPLATES.items():
+    _spec_d = _eff(_tpl)
+    _word_p = _cased(_TF_LABELS["summary"], _sp)
+    _text_w = _sp.page_w_pt - 2 * _sp.margin_lr_pt
+    with _pdfplumber.open(_io.BytesIO(render_pdf(_tf, template=_tpl))) as _pdf:
+        _page = _pdf.pages[0]
+        _tops = [w["top"] for w in _page.extract_words() if w["text"] == _word_p]
+        _cut = min(_tops) if _tops else _page.height
+        # Only a rule spanning most of the column counts; the heading rules all
+        # sit BELOW the first heading's top, and a short accent underline is
+        # under it too.
+        _rules = [ln for ln in _page.lines
+                  if ln["top"] < _cut - 0.5 and (ln["x1"] - ln["x0"]) > _text_w / 2]
+    _paras = _Document(_io.BytesIO(render_docx(_tf, template=_tpl))).paragraphs
+    _first_head = next((i for i, p in enumerate(_paras)
+                        if p.text.strip() in _heading_words(_spec_d)), len(_paras))
+    _hdr_borders = sum(1 for p in _paras[:_first_head] if "<w:bottom " in p._p.xml)
+    _want_rule = 1 if _sp.header == "rule" else 0
+    _want_docx = 1 if _spec_d.header == "rule" else 0
+    if not _tops or len(_rules) != _want_rule or _hdr_borders != _want_docx:
+        _hdr_bad.append((_tpl, _sp.header, f"pdf={len(_rules)}/{_want_rule}",
+                         f"docx={_hdr_borders}/{_want_docx}", f"heading_found={bool(_tops)}"))
+check(
+    "header='plain' means NO hairline in either renderer (ivy, minimal), "
+    "header='band' paints a rectangle instead of one, and the four header='rule' "
+    "templates still draw exactly one — the bool the hairline used to key off "
+    "was never set False by anybody",
+    not _hdr_bad
+    and {t.header for t in TEMPLATES.values()} == {"rule", "plain", "band"},
+    str(_hdr_bad[:3]),
+)
+
+# 18m-9. THE BULLET IS THE TEMPLATE'S OWN GLYPH, and it is still a REAL WORD
+# LIST. `doc.add_paragraph(item, style="List Bullet")` borrowed python-docx's
+# stock numId 1, whose level text is a Symbol-font private-use codepoint — so
+# `bullet_glyph`, `bullet_scale` and `bullet_accent` were all unreachable and
+# executive's em dash and minimal's en dash, both drawn correctly in the PDF,
+# printed as Word's generic dot. Resolved the way Word resolves it: paragraph
+# numPr -> w:num -> w:abstractNum -> the level.
+_NUMPR_RE = _re.compile(r"<w:numPr>.*?<w:numId w:val=\"(\d+)\"/>.*?</w:numPr>", _re.S)
+
+
+def _bullet_level(blob: bytes) -> tuple:
+    """(lvlText, sz, szCs, colour, w:cs font) of the level the bullets point at."""
+    with _zipfile.ZipFile(_io.BytesIO(blob)) as z:
+        doc = z.read("word/document.xml").decode("utf-8")
+        num = z.read("word/numbering.xml").decode("utf-8")
+    used = set(_NUMPR_RE.findall(doc))
+    if len(used) != 1:
+        return ("<%d numIds>" % len(used), "", "", "", "")
+    abstract = _re.search(rf'<w:num w:numId="{used.pop()}">\s*<w:abstractNumId w:val="(\d+)"/>', num)
+    if not abstract:
+        return ("<no w:num>", "", "", "", "")
+    block = _re.search(rf'<w:abstractNum w:abstractNumId="{abstract.group(1)}">.*?</w:abstractNum>',
+                       num, _re.S)
+    if not block:
+        return ("<no w:abstractNum>", "", "", "", "")
+    body = block.group(0)
+
+    def _one(pattern: str) -> str:
+        m = _re.search(pattern, body)
+        return m.group(1) if m else ""
+
+    return (_one(r'<w:lvlText w:val="([^"]*)"'), _one(r'<w:sz w:val="(\d+)"'),
+            _one(r'<w:szCs w:val="(\d+)"'), _one(r'<w:color w:val="([0-9A-Fa-f]{6})"'),
+            _one(r'<w:rFonts[^>]*w:cs="([^"]*)"'))
+
+
+_bl_bad: list = []
+for _tpl in TEMPLATES:
+    _spec = _eff(_tpl)
+    _half_pt = str(int(round(_spec.body_size * _spec.bullet_scale * 2)))
+    _want = (_spec.bullet_glyph, _half_pt, _half_pt,
+             _spec.accent if _spec.bullet_accent else _spec.muted, _spec.docx_font_he)
+    _got = _bullet_level(render_docx(_tf, template=_tpl))
+    if _got != _want:
+        _bl_bad.append((_tpl, _got, _want))
+check(
+    "docx: the bullet paragraphs point at THIS template's numbering level — its "
+    "own glyph, its own scaled size (with the w:szCs twin _set_rtl's sweep can "
+    "never reach, because a numbering level is not a paragraph), its own colour, "
+    "and w:cs on docx_font_he so Word does not substitute a face for Hebrew",
+    not _bl_bad
+    # …and the eleven really do declare more than one glyph, or "always the dot"
+    # satisfies this by accident.
+    and len({_eff(t).bullet_glyph for t in TEMPLATES}) >= 2,
+    str(_bl_bad[:3]),
+)
+
+# 18m-10. `list_cols` reaches both renderers. Nine templates declare 2 and the
+# DOCX rendered 1, wasting the right half of the page on a handful of short
+# items. Positional on the PDF side (the SET of x0 values the certifications are
+# placed at) and structural on the Word side (ceil(n/2) rows, each carrying a
+# left tab stop and a real tab in its text — never a table and never w:cols,
+# which is the snaking layout that made split and panel PDF-only).
+#
+# `split` and `panel` declare list_cols=1, so they are the PDF's own
+# false-positive control: their certifications must sit at ONE x. Nothing
+# declares 1 on the DOCX side, so that half borrows the icons check's technique
+# and registers a one-column twin of classic for the length of the check.
+import dataclasses as _tf_dc  # noqa: E402
+
+_CERT_HEADS = [c.split()[0] for c in _tf.certifications]
+TEMPLATES["_cols1"] = _tf_dc.replace(TEMPLATES["classic"], id="_cols1", list_cols=1)
+try:
+    _lc_bad: list = []
+    for _tpl in list(TEMPLATES):
+        _spec = _eff(_tpl)
+        _cols = min(2, _spec.list_cols)
+        # PDF: read where the certifications landed.
+        _pspec = get_template(_tpl)
+        _pcols = min(2, _pspec.list_cols)
+        with _pdfplumber.open(_io.BytesIO(render_pdf(_tf, template=_tpl))) as _pdf:
+            _xs = {round(w["x0"], 1) for p in _pdf.pages for w in p.extract_words()
+                   if w["text"] in _CERT_HEADS}
+        # DOCX: the rows between the certifications heading and the next heading.
+        _paras = [p for p in _Document(_io.BytesIO(render_docx(_tf, template=_tpl))).paragraphs
+                  if p.text.strip()]
+        _hw = _heading_words(_spec)
+        _start = next((i for i, p in enumerate(_paras)
+                       if p.text.strip() == _cased(_TF_LABELS["certifications"], _spec)), -1)
+        _rows = []
+        for _p in _paras[_start + 1:] if _start >= 0 else []:
+            if _p.text.strip() in _hw:
+                break
+            _rows.append(_p)
+        _want_rows = -(-len(_tf.certifications) // _cols)
+        _tabbed = sum(1 for _p in _rows
+                      if any(t.alignment == _WD_ALIGN.LEFT for t in _p.paragraph_format.tab_stops))
+        if (len(_xs) != _pcols or len(_rows) != _want_rows
+                or _tabbed != (len(_rows) if _cols > 1 else 0)
+                or sum(1 for _p in _rows if "\t" in _p.text) != (_cols > 1)):
+            _lc_bad.append((_tpl, f"pdf_x={sorted(_xs)}/{_pcols}",
+                            f"rows={len(_rows)}/{_want_rows}", f"tabbed={_tabbed}"))
+    check(
+        "list_cols reaches both renderers: the PDF places certifications at "
+        "exactly that many x positions and the Word file emits ceil(n/cols) rows "
+        "delimited by a TAB STOP — with split/panel (declared 1) and a "
+        "one-column twin of classic as the false-positive halves",
+        not _lc_bad and any(get_template(t).list_cols == 1 for t in TEMPLATES),
+        str(_lc_bad[:3]),
+    )
+finally:
+    del TEMPLATES["_cols1"]
+
+# 18m-11. THE TIMELINE RAIL, and the hole nothing was looking at. The rail is
+# drawn per FLOWABLE over that flowable's own height, so consecutive flowables
+# tile into one line and a flowable that does not draw it leaves a gap —
+# `build_projects` built the description `_Text` without `rail=`, so the rail
+# broke across every project description (measured: a 15.2pt hole containing the
+# description text) on the one template whose picker copy promises "one
+# continuous line". No existing fixture even had a project description.
+#
+# Both directions in the same check: the description must be covered, and the
+# section HEADING must NOT be — the rail belongs to the entries, so "draw a rail
+# down the whole page" has to fail too.
+_rail_sp = get_template("timeline")
+_rail_x = _rail_sp.margin_lr_pt - 13.0  # `_Sheet.rail`'s gutter offset
+_rail_desc = _tf.projects[0].description.split()
+with _pdfplumber.open(_io.BytesIO(render_pdf(_tf, template="timeline"))) as _pdf:
+    _page1 = _pdf.pages[0]
+    _segs = [(ln["top"], ln["bottom"]) for ln in _page1.lines
+             if abs(ln["x0"] - _rail_x) < 0.6 and abs(ln["x1"] - _rail_x) < 0.6]
+    _dw = [w for w in _page1.extract_words() if w["text"] in _rail_desc]
+    _hw_words = [w for w in _page1.extract_words()
+                 if w["text"] == _cased(_TF_LABELS["projects"], _rail_sp)]
+# Fail loudly if a probe word stopped being unique to the description: it would
+# then be located in a section that legitimately has no rail, and the check
+# would go red on a correct render — a guard firing on legitimate input.
+_rail_unique = len(_dw) == len(_rail_desc)
+
+
+def _covered(word) -> bool:
+    return any(t <= word["top"] + 0.5 and b >= word["bottom"] - 0.5 for t, b in _segs)
+
+
+_rail_gap = [w["text"] for w in _dw if not _covered(w)]
+check(
+    "pdf[timeline]: the rail runs unbroken THROUGH a project description — the "
+    "line is per-flowable, so a flowable built without rail= punches a hole in "
+    "it — while a section heading, which sits between entries, is still outside "
+    "the rail",
+    bool(_segs) and _rail_unique and bool(_hw_words)
+    and not _rail_gap and not any(_covered(w) for w in _hw_words),
+    f"segments={len(_segs)} desc_words={len(_dw)}/{len(_rail_desc)} uncovered={_rail_gap[:4]}",
+)
+
+_rail_docx_bad: list = []
+for _tpl in TEMPLATES:
+    _spec = _eff(_tpl)
+    _paras = _Document(_io.BytesIO(render_docx(_tf, template=_tpl))).paragraphs
+    _hw = _heading_words(_spec)
+    # A heading's own left border is the accent BAR (compact, panel->modern), a
+    # different device; the rail is what runs down the entry's paragraphs.
+    _left = sum(1 for p in _paras if "<w:left " in p._p.xml and p.text.strip() not in _hw)
+    if bool(_left) != _spec.rail:
+        _rail_docx_bad.append((_tpl, _spec.rail, _left))
+check(
+    "docx: `rail` is a left paragraph border tiled down the entry's paragraphs "
+    "for the template that declares it and for NO other — the same mechanism as "
+    "the accent bar, so still no table (the per-role dot is a documented "
+    "ornament carve-out and has no Word twin)",
+    not _rail_docx_bad and any(_eff(t).rail for t in TEMPLATES),
+    str(_rail_docx_bad[:3]),
 )
 
 # 18d. VECTOR ICONS on the contact row (21.8). Small drawn marks — envelope,
@@ -3415,7 +4530,7 @@ try:
     check(
         "docx: an icon template renders the SAME document as its icons-off twin, "
         "byte for byte — the icons are the only difference and the DOCX drops them",
-        render_docx(resume, "classic") == render_docx(resume, "_icons_off"),
+        _docx_parts(render_docx(resume, "classic")) == _docx_parts(render_docx(resume, "_icons_off")),
     )
     check(
         "docx: no drawing object ever appears for an icon template (en + he)",
@@ -3526,6 +4641,175 @@ check(
     "unlabelled block",
     _skill_blocks(_sg_partial) == [("Backend", ["python", "FastAPI"]), ("", ["Hebrew keyboarding"])],
     str(_skill_blocks(_sg_partial)),
+)
+
+# 18e-bis (PLAN 07). NORMALISING A MULTI-SKILL ENTRY. A CV that writes
+# "Python, SQL, Go" on one line arrives from the structurer as a SINGLE skill:
+# one chip on the page, one keyword to the scorer, one fact to the ATS x-ray.
+# Splitting it changes what the document says, so it is a fix, not tidying.
+from app.core.skills import normalize_resume_skills as _norm_resume  # noqa: E402
+from app.core.skills import normalize_skills as _norm_skills  # noqa: E402
+
+# THE FALSE-POSITIVE HALF SITS IN THE SAME CHECK AS THE POSITIVE, deliberately:
+# "split multi-skill entries" is trivially satisfied by splitting on everything,
+# and every entry below is legitimate. The first three are literally in this
+# user's stored master (`/`); the next three are their own words (` and `); then
+# three of ordinary Hebrew, where ו is an INSEPARABLE PREFIX orthographically
+# identical to a word-initial vav — the Hebrew twin of check-mirrors 10.
+#
+# The last four are the BRACKET case, and it was a live defect rather than a
+# hypothetical: a comma inside `()` is not a separator, and splitting on it wrote
+# `Cloud (AWS` and `GCP)` — two fragments the user never typed, with unbalanced
+# delimiters — into the master résumé and the downloaded PDF, at the one door
+# that parses the user's own CV. The apostrophe entry is the guard on the guard:
+# `'` may NOT be read as a quote delimiter, or `Bachelor's` opens a run that
+# never closes and swallows every separator after it in the same entry.
+_NS_ONE_SKILL_EACH = [
+    "CI/CD", "TCP/IP", "A/B testing",
+    "prompt and system design", "evaluation and fallback handling", "RTL and i18n",
+    "פיתוח ווב", "עריכת וידאו", "ולידציה של נתונים",
+    "Cloud (AWS, GCP, Azure)", "מסדי נתונים (פוסטגרס, מונגו)",
+    "Data [ETL, ELT] pipelines", 'Testing "unit, e2e" suites',
+]
+_ns_kept, _ = _norm_skills(_NS_ONE_SKILL_EACH, [])
+_ns_split, _ = _norm_skills(
+    ["Python, SQL; Go", "Machine Learning | Deep Learning",
+     "Docker · Kubernetes", "React\tVue\nSvelte",
+     # A bracket that CLOSES still separates outside itself, and an apostrophe
+     # never suppresses anything: the depth counter is not allowed to become a
+     # blanket "stop splitting" rule.
+     "Cloud (AWS, GCP), Redis", "Bachelor's, Statistics"],
+    [],
+)
+check(
+    "normalize_skills splits a punctuated list and NOTHING else — '/', ' and ', "
+    "Hebrew's vav prefix and a separator inside brackets or quotes are all left whole",
+    _ns_kept == _NS_ONE_SKILL_EACH
+    and _ns_split == ["Python", "SQL", "Go", "Machine Learning", "Deep Learning",
+                      "Docker", "Kubernetes", "React", "Vue", "Svelte",
+                      "Cloud (AWS, GCP)", "Redis", "Bachelor's", "Statistics"],
+    f"kept={_ns_kept} split={_ns_split}",
+)
+# NO CAP, in characters or in bytes. A skill is the user's own text, so "never
+# truncate the user's own document" applies to it verbatim: a separator-free
+# entry comes back whole however long it is. `_Chips` wraps it inside its own
+# box and `ats_scan` reports it — neither of them shortens it.
+_NS_SENTENCE = "Designing and operating distributed backend systems at scale"
+_ns_long, _ = _norm_skills([_NS_SENTENCE], [])
+check(
+    "normalize_skills never truncates: a long separator-free entry passes "
+    "through unchanged",
+    _ns_long == [_NS_SENTENCE],
+    str(_ns_long),
+)
+# THE TWO-FIELD WRITE, with the naive one-field form pinned beside it so the
+# check documents why both fields are written. `_sync_skill_groups` only ever
+# ADDS, so normalising the flat list ALONE lets the un-split entry resurrect out
+# of its group on the very next construction — where it then coexists with its
+# own fragments and that skill renders twice and scores twice.
+_ns_raw = ResumeModel(
+    skills=["Python, SQL", "Go"],
+    skill_groups=[_SkillGroup(label="Backend", items=["Python, SQL", "Go"])],
+)
+_ns_fixed = _norm_resume(_ns_raw)
+_ns_round = ResumeModel.model_validate(_json.loads(_ns_fixed.model_dump_json()))
+# `model_copy` skips validation on purpose, so this is the un-split GROUP meeting
+# the validator for the first time on the JSON round trip — exactly what a
+# flat-only normaliser would ship.
+_ns_naive = ResumeModel.model_validate(_json.loads(
+    _ns_raw.model_copy(update={"skills": _norm_skills(_ns_raw.skills, [])[0]}).model_dump_json()
+))
+check(
+    "normalising skills is a TWO-FIELD write: both fields survive the JSON round "
+    "trip, while the flat-list-only form resurrects the un-split entry",
+    _ns_fixed.skills == ["Python", "SQL", "Go"]
+    and _ns_round.skills == _ns_fixed.skills
+    and _ns_round.skill_groups[0].items == ["Python", "SQL", "Go"]
+    and _ns_naive.skills == ["Python", "SQL", "Go", "Python, SQL"],
+    f"fixed={_ns_fixed.skills} round={_ns_round.skills} naive={_ns_naive.skills}",
+)
+# SOURCE-PINNED, because behaviour alone cannot tell the two placements apart —
+# a splitting `model_validator` produces split skills too. The whole risk here is
+# someone tidying the normaliser into `ResumeModel`, where it would run on every
+# CONSTRUCTION, i.e. every READ of every stored master, tracker résumé, saved kit
+# and version snapshot: rewriting all of them without any of them being a write,
+# bypassing `resume_versions.snapshot` (which only fires on a write) and breaking
+# its byte-identical dedupe, so the first save after deploy burns one of 20 undo
+# slots on a no-op. Same shape as the 22.10 /tools/ats-scan source pin. The
+# behavioural twin — a stored résumé PUT and read back verbatim — is in section
+# 27, and it is what catches an inline COPY of the splitter that this grep would
+# not see.
+import inspect as _ns_inspect  # noqa: E402
+
+import app.models as _ns_models_mod  # noqa: E402
+
+_ns_models_src = _ns_inspect.getsource(_ns_models_mod)
+check(
+    "skill normalisation is NOT a model_validator — `app/models` neither imports "
+    "nor calls it, so no stored row is rewritten on READ",
+    # Fail loudly rather than passing on a module we failed to read.
+    len(_ns_models_src) > 2000
+    and "normalize_skills" not in _ns_models_src
+    and "app.core.skills" not in _ns_models_src,
+    f"{len(_ns_models_src)} chars scanned",
+)
+# THE DOOR ITSELF, driven end to end rather than called directly — a check that
+# calls the normaliser still passes with the call site deleted. The stub echoes
+# the raw text's own grouping (`StubClient._stub_skill_groups`), so a semicolon
+# inside a grouped item reaches `structure_resume` exactly as a real CV's would.
+# The false-positive half rides in the same check: `CI/CD` goes through the same
+# door and must come out whole.
+_ns_imported = structure_resume(
+    "Dana Levi\nSkills\nAI & LLMs: OpenAI API; LangChain, RAG pipelines\n"
+    "Backend & Data: Python, CI/CD\n"
+)
+_ns_imported_items = [g.items for g in _ns_imported.skill_groups]
+check(
+    "structure_resume is the ONE server-side door: a multi-skill entry is split "
+    "on import in both fields, and CI/CD survives the same door intact",
+    _ns_imported_items == [["OpenAI API", "LangChain", "RAG pipelines"], ["Python", "CI/CD"]]
+    and {"OpenAI API", "LangChain", "RAG pipelines", "CI/CD"} <= set(_ns_imported.skills)
+    and not any(";" in s for s in _ns_imported.skills),
+    str(_ns_imported_items),
+)
+# THE BRACKET CASE, through the same door. It cannot ride the raw-text path: the
+# stub derives its groups by splitting the line on commas ITSELF (it stands in
+# for the model), so a bracketed item is shredded before `normalize_skills` ever
+# sees it. The STRUCTURE response is therefore canned with the exact group-item
+# shape the prompt asks a real model for, and the door is driven from there. The
+# entry beside it is a genuine two-skill line, so "stop splitting inside
+# brackets" cannot be satisfied by not splitting.
+from app.llm.client import get_llm_client as _ns_client  # noqa: E402
+
+_ns_stub = _ns_client()
+_ns_orig_cjson = _ns_stub.complete_json
+_NS_CANNED_DOC = {
+    "contact": {"name": "Dana Levi", "email": "dana@example.com"},
+    "skills": [],
+    "skill_groups": [{"label": "Cloud",
+                      "items": ["Cloud (AWS, GCP, Azure)", "Terraform, Pulumi"]}],
+}
+
+
+def _ns_canned(system, user, **kw):
+    if "STRUCTURE_RESUME" in system[:40]:
+        return _NS_CANNED_DOC
+    return _ns_orig_cjson(system, user, **kw)
+
+
+_ns_stub.complete_json = _ns_canned
+try:
+    _ns_brackets = structure_resume("Dana Levi\nSkills\nCloud: Cloud (AWS, GCP, Azure)\n")
+finally:
+    _ns_stub.complete_json = _ns_orig_cjson
+check(
+    "structure_resume: a comma inside brackets is not a separator — the entry lands "
+    "whole in both fields, with no unbalanced fragment the user never typed",
+    [g.items for g in _ns_brackets.skill_groups]
+        == [["Cloud (AWS, GCP, Azure)", "Terraform", "Pulumi"]]
+    and "Cloud (AWS, GCP, Azure)" in _ns_brackets.skills
+    and not any(s.count("(") != s.count(")") for s in _ns_brackets.skills),
+    str([g.items for g in _ns_brackets.skill_groups]) + " / " + str(_ns_brackets.skills),
 )
 
 _grouped = resume.model_copy(deep=True)
@@ -5878,6 +7162,1140 @@ check("tailored résumé is within the hard page limit",
       page_count(_e2e.tailored_resume) <= 3, f"{page_count(_e2e.tailored_resume)} pages")
 
 # ---------------------------------------------------------------------------
+# 18b. KEYWORD PRESERVATION. "Tailoring sometimes deletes keywords the job asks
+# for" was the report, and it is not one bug: the TAILOR prompt orders curation
+# with no rule against dropping a term the JD names, the page budget removes the
+# prose that carried the only occurrence, the planner drops the project first,
+# `drop_invented_roles` cuts a promoted row, and the humanizer's acceptance gate
+# weighed fabrication, voice and pages — never coverage. `score_after` MEASURED
+# the drop and nothing repaired it.
+#
+# `app/core/keyword_guard.py` is the floor. It lives beside the page budget here
+# because it has to COMPOSE with it — a restore adds render height — and the
+# fixtures (`_master_resume`, `_jd_b`, `page_count`) are already in scope.
+# ---------------------------------------------------------------------------
+import inspect as _kg_inspect  # noqa: E402
+import json as _json_kg  # noqa: E402
+from pathlib import Path as _Path_kg  # noqa: E402
+
+import app.core.humanizer as _kg_humanizer_mod  # noqa: E402
+from app.core.keyword_guard import (  # noqa: E402
+    MAX_RESTORED as _KG_MAX,
+    LostKeyword as _LostKeyword,
+    lost_keywords as _lost_keywords,
+    preserve_keywords as _preserve,
+    report_restore as _report_restore,
+    shed_restored as _shed_restored,
+)
+from app.core.scorer import _resume_text as _kg_resume_text  # noqa: E402
+from app.models import SkillGroup as _SkillGroup_b  # noqa: E402
+
+# Two blocks below can the LLM client's TAILOR (and one its HUMANIZE) branch, on
+# the singleton, the way section 21b already cans `complete_json`. Both restore
+# it in a `finally`: a leaked patch would silently re-route every later section.
+_kg_stub = _get_client()
+_kg_orig_cjson = _kg_stub.complete_json
+
+_kg_orig = _Resume_b(
+    contact=_Contact_b(name="Keyword Guard", email="kg@example.com"),
+    summary="Engineer.",
+    skills=["Python", "Kubernetes", "Terraform", "Communication"],
+    experience=[_Experience_b(company="Acme", title="Engineer", start_date="2021",
+                              end_date="Present", bullets=["Built services."])],
+)
+_kg_jd = _JDModel_b(
+    job_title="Backend Engineer",
+    hard_skills=["Python", "Kubernetes", "REST APIs"],
+    keywords=["Python", "Terraform", "CI/CD"],
+)
+
+# THE CATCH, driven end to end. `_stub_tailor` hard-codes
+# skills=["Python","REST APIs","SQL","Project Management"] regardless of input,
+# which is exactly mechanism 1 made deterministic: Kubernetes and Terraform are
+# deleted from a candidate who lists both, and coverage falls 60.0 -> 40.0.
+# Measured with the guard removed, so this check is red before the change.
+_kg_res = _tailor_b(_kg_orig, _kg_jd)
+check(
+    "a JD keyword the candidate HAS is put back after the tailor deleted it",
+    "Kubernetes" in _kg_res.tailored_resume.skills
+    and "Terraform" in _kg_res.tailored_resume.skills
+    and _kg_res.score_after.keyword_coverage >= _kg_res.score_before.keyword_coverage,
+    f"skills={_kg_res.tailored_resume.skills} "
+    f"{_kg_res.score_before.keyword_coverage} -> {_kg_res.score_after.keyword_coverage}",
+)
+# ...and REPORTED, pinned separately so deleting the changelog write goes red on
+# its own rather than hiding behind the résumé mutation.
+_kg_put_back = [c for c in _kg_res.changelog if c.section == "skills" and "Put back" in c.change]
+check(
+    "the restore says what it did, in the changelog",
+    len(_kg_put_back) == 1
+    and "Kubernetes" in _kg_put_back[0].change
+    and "Terraform" in _kg_put_back[0].change,
+    str([c.change for c in _kg_res.changelog]),
+)
+# ...and it names THE ENTRIES IT WROTE, with the job's terms in the reason. The
+# two are the same string in the fixture above, which is why this one spells them
+# differently: "Put back: REST APIs" named the JD's phrase, and the entries
+# behind it were `['REST', 'APIs']` — a sentence naming a string that appears
+# nowhere in the shipped CV, on a restore that worked perfectly.
+_kg_name_o = _Resume_b(
+    contact=_Contact_b(name="Naming", email="na@example.com"),
+    skills=["Python", "Kubernetes (K8s) administration", "Terraform Cloud"],
+)
+_kg_name_jd = _JDModel_b(job_title="Platform Engineer", hard_skills=["Kubernetes", "Terraform"])
+_kg_name_payload = _kg_name_o.model_dump()
+_kg_name_payload["skills"] = ["Python"]
+
+
+def _kg_name_canned(system, user, **kw):
+    if "TAILOR" in system[:40]:
+        return {"tailored_resume": _kg_name_payload, "changelog": [], "covered_keywords": []}
+    return _kg_orig_cjson(system, user, **kw)
+
+
+_kg_stub.complete_json = _kg_name_canned
+try:
+    _kg_name_res = _tailor_b(_kg_name_o, _kg_name_jd)
+finally:
+    _kg_stub.complete_json = _kg_orig_cjson
+_kg_name_entry = next((c for c in _kg_name_res.changelog
+                       if c.section == "skills" and c.change.startswith("Put back")), None)
+check(
+    "'Put back' names the entries that are on the CV, and the job's own phrasing goes "
+    "in the reason where it belongs",
+    _kg_name_entry is not None
+    and _kg_name_entry.change[len("Put back: "):].split(", ")
+        == ["Kubernetes (K8s) administration", "Terraform Cloud"]
+    and all(e in _kg_name_res.tailored_resume.skills
+            for e in _kg_name_entry.change[len("Put back: "):].split(", "))
+    and "Kubernetes" in _kg_name_entry.reason and "Terraform" in _kg_name_entry.reason,
+    "" if _kg_name_entry is None else f"{_kg_name_entry.change} | {_kg_name_entry.reason}",
+)
+# The copy may never claim more than it did. CLAUDE.md's fabrication-guard rule
+# ("can say 'no new claims detected'. It can never say 'verified'") applies to
+# every report this pipeline emits, not only that one's.
+_kg_all_copy = " ".join(c.change + " " + c.reason for c in _kg_res.changelog).lower()
+check(
+    "the guard's copy never claims a guarantee it cannot make",
+    "guaranteed" not in _kg_all_copy
+    and "verified" not in _kg_all_copy
+    and "all keywords" not in _kg_all_copy,
+    _kg_all_copy[:160],
+)
+
+# THE FALSE-POSITIVE PIN, next to the catch. A guard that fires on legitimate
+# input teaches users to ignore it — and here "fires" is observable as a deep
+# copy: the caller keys the refit, the voice re-audit and the changelog entry
+# off a non-empty `restored`, so an identity check pins all four at once.
+_kg_clean_t = _kg_orig.model_copy(deep=True)
+_kg_clean_t.skills = ["Python", "Kubernetes", "Terraform"]
+_kg_out, _kg_r, _kg_k = _preserve(_kg_orig, _kg_clean_t, _kg_jd)
+check(
+    "an unharmed tailored résumé is returned untouched — the SAME object, no copy",
+    _kg_out is _kg_clean_t and _kg_r == [] and _kg_k == [],
+    f"same={_kg_out is _kg_clean_t} restored={_kg_r} kept={_kg_k}",
+)
+
+# NEVER INVENTS, direction 1: a keyword the ORIGINAL never covered is never
+# written, however loudly the JD asks for it.
+_kg_none = _Resume_b(contact=_Contact_b(name="No Rust", email="n@example.com"), skills=["Python"])
+_kg_inv_out, _kg_inv_r, _kg_inv_k = _preserve(
+    _kg_none, _kg_none.model_copy(deep=True), _JDModel_b(hard_skills=["Rust", "Erlang"])
+)
+check(
+    "a JD keyword the candidate never had is never invented",
+    _kg_inv_r == []
+    and "rust" not in _kg_resume_text(_kg_inv_out)
+    and "erlang" not in _kg_resume_text(_kg_inv_out),
+    f"restored={_kg_inv_r} skills={_kg_inv_out.skills}",
+)
+# NEVER INVENTS, direction 2 — the half that will still be true in a year.
+# COMPUTED from the two lists rather than restated, so it survives any refactor
+# of the carrier search: every string the guard appends must already exist
+# verbatim in `original.skills`.
+# Every entry is spelled DIFFERENTLY from the JD term it satisfies. That is what
+# makes this check discriminate: with identical spellings, a guard that wrote the
+# JD's own word instead of the candidate's entry would still satisfy
+# `set(added) <= set(original.skills)` and the check would pass on a fabrication.
+_kg_wide_orig = _Resume_b(
+    contact=_Contact_b(name="Wide", email="w@example.com"),
+    skill_groups=[
+        _SkillGroup_b(label="Backend & Data",
+                      items=["Python", "Kubernetes (K8s) administration", "Apache Kafka Streams"]),
+        _SkillGroup_b(label="Platform", items=["Terraform Cloud", "gRPC services"]),
+        _SkillGroup_b(label="Other", items=["Communication"]),
+    ],
+)
+_kg_wide_t = _kg_wide_orig.model_copy(deep=True)
+_kg_wide_t.skills = ["Python"]
+# A tailored CV is deliberately FLAT — the TAILOR prompt returns skill_groups: []
+# because the grouping is the master's taxonomy and one job's CV is a shortlist.
+_kg_wide_t.skill_groups = []
+_kg_wide_out, _kg_wide_r, _ = _preserve(
+    _kg_wide_orig, _kg_wide_t,
+    _JDModel_b(hard_skills=["Kubernetes", "Apache Kafka"], keywords=["Terraform", "gRPC"]),
+)
+_kg_added = [s for s in _kg_wide_out.skills if s not in _kg_wide_t.skills]
+check(
+    "every string the guard writes already existed verbatim in the original's skills",
+    _kg_added and set(_kg_added) <= set(_kg_wide_orig.skills)
+    # ...and it is the CANDIDATE's wording that landed, not the job ad's.
+    and "Kubernetes" not in _kg_added and "Terraform" not in _kg_added,
+    f"added={_kg_added}",
+)
+check(
+    "the restore is FLAT ONLY — it never imports the master's grouping",
+    _kg_wide_orig.skill_groups and _kg_wide_out.skill_groups == [],
+    str(_kg_wide_out.skill_groups),
+)
+
+# PROSE CLASS IS REPORTED, NEVER REPAIRED. Re-inserting a sentence into a
+# rewritten résumé either duplicates a claim or grafts a token into the model's
+# own prose — new writing the fabrication guard structurally cannot see.
+_kg_prose_o = _Resume_b(
+    contact=_Contact_b(name="Prose", email="p@example.com"),
+    skills=["Python"],
+    experience=[_Experience_b(company="Acme", title="Engineer", start_date="2021",
+                              end_date="Present", bullets=["Ran the Kafka ingest path."])],
+)
+_kg_prose_t = _kg_prose_o.model_copy(deep=True)
+_kg_prose_t.experience[0].bullets = ["Ran the event ingest path."]
+_kg_prose_out, _kg_prose_r, _kg_prose_k = _preserve(
+    _kg_prose_o, _kg_prose_t, _JDModel_b(hard_skills=["Kafka"])
+)
+check(
+    "a keyword that lived only in prose is reported, not written back",
+    _kg_prose_r == []
+    and [k.keyword for k in _kg_prose_k] == ["Kafka"]
+    and _kg_prose_k[0].reason == "prose"
+    and _kg_prose_k[0].where == "experience"
+    and _kg_prose_out is _kg_prose_t
+    and _kg_prose_out.skills == _kg_prose_t.skills
+    and _kg_prose_out.experience[0].bullets == ["Ran the event ingest path."],
+    f"restored={_kg_prose_r} kept={_kg_prose_k}",
+)
+# ...and it reaches the user, in the changelog, with its own sentence. Driven
+# end to end so a report written but never appended goes red.
+_kg_prose_res = _tailor_b(_kg_prose_o, _JDModel_b(hard_skills=["Kafka"], keywords=["Python"]))
+check(
+    "a prose-class loss is disclosed in the changelog under its own section",
+    any(c.section == "keywords" and "Kafka" in c.change for c in _kg_prose_res.changelog),
+    str([(c.section, c.change) for c in _kg_prose_res.changelog]),
+)
+
+# THE UNION CASE, which is why the carrier search is INCREMENTAL rather than one
+# probe per entry: "REST APIs" is covered by ['REST', 'APIs'] together and by
+# neither alone, so a per-entry probe abandons it as prose.
+_kg_union_o = _Resume_b(contact=_Contact_b(name="U", email="u@example.com"),
+                        skills=["REST", "APIs", "Python"])
+_kg_union_t = _kg_union_o.model_copy(deep=True)
+_kg_union_t.skills = ["Python"]
+_, _kg_union_r, _ = _preserve(_kg_union_o, _kg_union_t, _JDModel_b(hard_skills=["REST APIs"]))
+check(
+    "a keyword carried by the UNION of two skill entries is still restored",
+    _kg_union_r == ["REST APIs"],
+    str(_kg_union_r),
+)
+
+# PARTIAL BEATS MISSING, and the report has to say which of the two happened.
+# The carrier search can reach `partial` and never the original's `covered` —
+# the job asks for "REST APIs", the skills list holds `REST`, and the phrase
+# itself lived in a sentence. The restore used to be ALL-OR-NOTHING there: it
+# threw away the carriers it had found and reported the keyword as "prose",
+# which contradicts itself about an entry sitting in the skills list — `where`
+# names that section in the same breath. The entries are kept now (the
+# candidate's own text, same byte-for-byte rule as any other write, and partial
+# outranks missing on the ATS surface) and the keyword is still reported.
+#
+# The FALSE-POSITIVE half is in the same check, because "keep what was found" is
+# trivially satisfied by appending the whole skills list: `Basket weaving` must
+# not come along, since only an entry that strictly RAISED the rank is a carrier.
+_kg_part_o = _Resume_b(
+    contact=_Contact_b(name="Partial", email="pa@example.com"),
+    summary="Built REST APIs for internal teams.",
+    skills=["REST", "Basket weaving", "Python"],
+)
+_kg_part_t = _kg_part_o.model_copy(deep=True)
+_kg_part_t.skills = ["Python"]
+_kg_part_t.summary = "Built internal services."   # the phrase's only home, rewritten
+_kg_part_out, _kg_part_r, _kg_part_k = _preserve(
+    _kg_part_o, _kg_part_t, _JDModel_b(hard_skills=["REST APIs"])
+)
+check(
+    "a keyword the skills list only PARTLY carries keeps the entries it does have, "
+    "and is reported as partial rather than as prose",
+    _kg_part_out.skills == ["Python", "REST"]
+    and _kg_part_r == []
+    and [(k.keyword, k.reason, k.where) for k in _kg_part_k]
+        == [("REST APIs", "partial", "skills")],
+    f"skills={_kg_part_out.skills} restored={_kg_part_r} "
+    f"kept={[(k.keyword, k.reason, k.where) for k in _kg_part_k]}",
+)
+# ...and its own sentence reaches the user. Driven end to end, because the prose
+# copy is what a partial loss used to be printed under and the two sentences are
+# three lines apart in `tailor.py`.
+_kg_part_payload = _kg_part_t.model_dump()
+
+
+def _kg_part_canned(system, user, **kw):
+    if "TAILOR" in system[:40]:
+        return {"tailored_resume": _kg_part_payload, "changelog": [], "covered_keywords": []}
+    return _kg_orig_cjson(system, user, **kw)
+
+
+_kg_stub.complete_json = _kg_part_canned
+try:
+    _kg_part_res = _tailor_b(_kg_part_o, _JDModel_b(hard_skills=["REST APIs"]))
+finally:
+    _kg_stub.complete_json = _kg_orig_cjson
+_kg_part_log = [(c.section, c.change, c.reason) for c in _kg_part_res.changelog]
+check(
+    "a partial restore is disclosed as partial, and never under the 'only inside "
+    "wording' sentence that would be false about a skills entry",
+    "REST" in _kg_part_res.tailored_resume.skills
+    and any(sec == "keywords" and ch.startswith("Partly carried over") and "REST APIs" in ch
+            for sec, ch, _ in _kg_part_log)
+    and not any("only inside wording" in reason for _, _, reason in _kg_part_log),
+    str(_kg_part_log),
+)
+
+# PREFERRED SKILLS ARE IN SCOPE, and deliberately wider than the coverage
+# percentage: `scorer.keyword_analysis` reads keywords + hard_skills only, so a
+# preferred skill the candidate HAS and we deleted raises no visible number —
+# but it is still a deletion. Widening `keyword_analysis` instead would change
+# every coverage figure in the app, a behaviour change with no defect behind it.
+_kg_pref_o = _Resume_b(contact=_Contact_b(name="P", email="pr@example.com"), skills=["Docker", "Python"])
+_kg_pref_t = _kg_pref_o.model_copy(deep=True)
+_kg_pref_t.skills = ["Python"]
+_kg_pref_jd = _JDModel_b(preferred_skills=["Docker"])
+_, _kg_pref_r, _ = _preserve(_kg_pref_o, _kg_pref_t, _kg_pref_jd)
+from app.core.scorer import keyword_analysis as _kg_cov  # noqa: E402
+check(
+    "a preferred_skill is preserved even though coverage never counts it",
+    _kg_pref_r == ["Docker"] and _kg_cov(_kg_pref_t, _kg_pref_jd) == (0.0, []),
+    f"restored={_kg_pref_r} coverage={_kg_cov(_kg_pref_t, _kg_pref_jd)}",
+)
+
+# HEBREW, and this is the check that pins the guard to `scorer._keyword_present`
+# rather than to a second matcher. Hebrew's inseparable prefixes (ב/ל/ה/ו/מ/ש)
+# are word characters, so `פייתון` has to match INSIDE `בפייתון` — the verbatim-
+# phrase-first branch is the only thing that makes it. A boundary-anchored
+# re-implementation reads the ORIGINAL as not covering the term at all, sees no
+# loss, and goes red here and only here (check-mirrors 10 is its TS twin).
+_kg_he_o = _Resume_b(
+    contact=_Contact_b(name="דנה לוי", email="dana@example.com"),
+    summary="מהנדסת נתונים עם ניסיון בעיבוד נתונים בענן.",
+    skills=["פיתוח בפייתון", "עיבוד נתונים", "SQL"],
+)
+_kg_he_t = _kg_he_o.model_copy(deep=True)
+_kg_he_t.skills = ["SQL"]
+_kg_he_t.summary = "מהנדסת נתונים."  # the rewrite dropped the prose copy too
+_, _kg_he_r, _ = _preserve(
+    _kg_he_o, _kg_he_t, _JDModel_b(language="he", hard_skills=["פייתון"], keywords=["עיבוד נתונים"])
+)
+check(
+    "a Hebrew skill is restored, including behind an inseparable prefix",
+    _kg_he_r == ["פייתון", "עיבוד נתונים"],
+    str(_kg_he_r),
+)
+# The false-positive half of the same property, in the same fixture family, and
+# the shape of it is worth stating: the guard is EXACTLY as permissive as
+# `_keyword_present` and not one character more. That matcher is substring-FIRST
+# on purpose, so it genuinely reads `Java` as covered by `JavaScript` — adding a
+# boundary here to "fix" that is re-implementing the matcher, which is the one
+# thing this module may not do (it would then disagree with the coverage number
+# on screen). What the guard must never do is restore a term the original does
+# NOT cover under that matcher, in Hebrew as in English.
+_kg_he_fp_t2 = _kg_he_o.model_copy(deep=True)
+_kg_he_fp_t2.skills = []
+_kg_he_fp_out, _kg_he_fp_r, _ = _preserve(
+    _kg_he_o, _kg_he_fp_t2,
+    _JDModel_b(language="he", hard_skills=["קוברנטיס"], keywords=["פייתון"]),
+)
+check(
+    "a Hebrew term the résumé never claimed is never written in",
+    _kg_he_fp_r == ["פייתון"]
+    and "קוברנטיס" not in _kg_resume_text(_kg_he_fp_out),
+    f"restored={_kg_he_fp_r} skills={_kg_he_fp_out.skills}",
+)
+
+# NO FABRICATION FLAG FROM A RESTORE — and the REASON, pinned separately.
+# Pinning only the flag count passes by coincidence on a fixture whose skills
+# happen not to collide with the ledger.
+_kg_led_o = _Resume_b(
+    contact=_Contact_b(name="Ledger", email="l@example.com"),
+    skills=["Kubernetes", "Terraform", "Python"],
+    experience=[_Experience_b(company="Acme", title="Engineer", start_date="2021",
+                              end_date="Present", bullets=["Built services for 40 teams."])],
+    education=[_Education_b(institution="State University", degree="BSc", field="CS")],
+    certifications=["AI Engineering Certification"],
+)
+_kg_led = _build_ledger(_kg_led_o)
+_kg_led_t = _kg_led_o.model_copy(deep=True)
+_kg_led_t.skills = ["Python"]
+_kg_led_out, _kg_led_r, _ = _preserve(_kg_led_o, _kg_led_t, _JDModel_b(hard_skills=["Kubernetes", "Terraform"]))
+from app.core.fabrication_guard import check_fabrication as _kg_check_fab  # noqa: E402
+check(
+    "restoring a skill creates no fabrication flag",
+    _kg_led_r == ["Kubernetes", "Terraform"]
+    and len(_kg_check_fab(_kg_led_out, _kg_led)) == len(_kg_check_fab(_kg_led_t, _kg_led)),
+    f"restored={_kg_led_r} before={len(_kg_check_fab(_kg_led_t, _kg_led))} "
+    f"after={len(_kg_check_fab(_kg_led_out, _kg_led))}",
+)
+_kg_led_strings = {
+    s.casefold()
+    for field in ("employers", "titles", "dates", "institutions", "degrees",
+                  "certifications", "military", "numbers", "headlines")
+    for s in getattr(_kg_led, field)
+}
+check(
+    "...and the reason it holds: the ledger holds no string from `skills`",
+    not (_kg_led_strings & {s.casefold() for s in _kg_led_o.skills}),
+    f"ledger={sorted(_kg_led_strings)}",
+)
+
+# VOICE REPORT DESCRIBES WHAT SHIPPED. `voice_audit` scans the skills list for
+# banned phrases, so a restored entry can add an issue the pre-restore audit
+# never saw — and the re-audit must carry the humanizer's own bookkeeping
+# across. Both halves in one check: "re-audit" alone is trivially satisfied by
+# throwing `revised`/`fixed` away.
+from app.core.voice_audit import audit_voice as _kg_audit  # noqa: E402
+_kg_voice_o = _Resume_b(
+    contact=_Contact_b(name="Voice", email="v@example.com"),
+    skills=["Python", "Cutting-edge ML tooling"],
+)
+_kg_voice_t = _kg_voice_o.model_copy(deep=True)
+_kg_voice_t.skills = ["Python"]
+_kg_voice_out, _kg_voice_r, _ = _preserve(
+    _kg_voice_o, _kg_voice_t, _JDModel_b(hard_skills=["Cutting-edge ML tooling"])
+)
+_kg_pre_issues = {(i.category, i.value) for i in _kg_audit(_kg_voice_t, None).issues}
+_kg_post_issues = {(i.category, i.value) for i in _kg_audit(_kg_voice_out, None).issues}
+check(
+    "a restored skill can carry a banned phrase, so the voice report has to be recomputed",
+    _kg_voice_r == ["Cutting-edge ML tooling"] and _kg_post_issues > _kg_pre_issues,
+    f"pre={sorted(_kg_pre_issues)} post={sorted(_kg_post_issues)}",
+)
+# ...and END TO END, where the second half of the rule bites: the humanizer's own
+# bookkeeping has to survive the re-audit. A fresh `audit_voice` knows nothing
+# about a revision that was accepted, so zeroing `revised`/`fixed` silently
+# erases the record of the only stage that rewrote anything — and "we re-audited"
+# is trivially satisfied by doing exactly that. Both halves live in ONE check.
+#
+# TAILOR and HUMANIZE are canned so the humanizer branch genuinely runs AND a
+# restore genuinely happens in the same pass; the default stub tailor audits
+# clean, so neither would.
+_kg_vh_o = _Resume_b(
+    contact=_Contact_b(name="Voice Bookkeeping", email="vb@example.com"),
+    summary="Engineer.",
+    skills=["Python", "Cutting-edge Kubernetes tooling"],
+    experience=[_Experience_b(company="Acme", title="Engineer", start_date="2021",
+                              end_date="Present",
+                              bullets=["Spearheaded the platform migration.",
+                                       "Wrote Python services."])],
+)
+_kg_vh_jd = _JDModel_b(job_title="Platform Engineer", hard_skills=["Kubernetes"], keywords=["Python"])
+_kg_vh_tailored = _kg_vh_o.model_dump()
+_kg_vh_tailored["skills"] = ["Python"]          # the shortlist dropped the Kubernetes entry
+_kg_vh_revised = _json_kg.loads(_json_kg.dumps(_kg_vh_tailored))
+# Fixes the banned verb and drops no keyword, so the gate accepts it.
+_kg_vh_revised["experience"][0]["bullets"] = ["Led the platform migration.",
+                                              "Wrote Python services."]
+
+
+def _kg_vh_canned(system, user, **kw):
+    head = system[:40]
+    if "TAILOR" in head:
+        return {"tailored_resume": _kg_vh_tailored, "changelog": [], "covered_keywords": []}
+    if "HUMANIZE" in head:
+        return {"revised_resume": _kg_vh_revised}
+    return _kg_orig_cjson(system, user, **kw)
+
+
+_kg_stub.complete_json = _kg_vh_canned
+try:
+    _kg_voice_res = _tailor_b(_kg_vh_o, _kg_vh_jd)
+finally:
+    _kg_stub.complete_json = _kg_orig_cjson
+check(
+    "the returned voice report describes the RESTORED résumé, and still records the "
+    "humanizer revision that produced it",
+    "Cutting-edge Kubernetes tooling" in _kg_voice_res.tailored_resume.skills
+    and any(i.category == "banned_phrase" and "utting-edge" in i.value
+            for i in _kg_voice_res.voice_report.issues)
+    and _kg_voice_res.voice_report.revised is True
+    and any(i.value.lower().startswith("spearhead") for i in _kg_voice_res.voice_report.fixed),
+    f"skills={_kg_voice_res.tailored_resume.skills} "
+    f"revised={_kg_voice_res.voice_report.revised} "
+    f"fixed={[i.value for i in _kg_voice_res.voice_report.fixed]} "
+    f"issues={[(i.category, i.value) for i in _kg_voice_res.voice_report.issues]}",
+)
+
+# THE COMPOSITION PROPERTY, pinned on its own line rather than only through the
+# end-to-end path. The last-resort skills trim is the one thing that can undo a
+# restore, and it must protect an entry in the SAME TERMS the carrier search
+# picks it with — `scorer._keyword_present`, phrase-first — or the two disagree
+# about the same entry.
+#
+# The old protection was whole-token overlap (`if tokens & jd_tokens: continue`)
+# and the check under it used a token-identical fixture, so it was true only for
+# the easy half. Every carrier matched through the SUBSTRING branch shared no
+# token with the JD and was fully eligible for a trim that picks the LONGEST
+# unmatched entry: the guard restored 10 carriers on a Hebrew master and this
+# removed 9 of them under "dropped skills the job never asked for", while the
+# changelog still said it had put them back.
+#
+# The table is check-mirrors 10's shape: the Hebrew case sits beside the Latin
+# one, and the throwaway in each row is the FALSE-POSITIVE half — protecting
+# every entry is the trivial way to make the first column pass, and a widened
+# guard that did that would leave the trim unable to remove anything at all.
+from app.core.length_budget import _drop_unmatched_skill as _kg_drop  # noqa: E402
+# The protected entry is deliberately the LONGEST in each row: this trim picks
+# the longest candidate, so with a shorter one the check passes whether or not
+# the guard is there, and pins nothing.
+_KG_PROTECT_CASES = (
+    # (JD keyword, the entry it must protect, the entry that must go instead)
+    # whole-token — true before this change and after it
+    ("Kubernetes", "Kubernetes cluster operations and multi-region failover automation",
+     "Basket weaving"),
+    # substring, Latin — `Postgres` ⊂ `PostgreSQL`, no shared token
+    ("Postgres", "PostgreSQL administration and replication tuning at scale",
+     "Basket weaving"),
+    # substring, Hebrew — ב/ל/ה/ו/מ/ש glue onto the noun, so `פייתון` lives
+    # inside the token `בפייתון` and the token rule read the entry as unmatched
+    ("פייתון", "פיתוח בפייתון ואוטומציה של תהליכי נתונים בענן", "סריגה ואריגה כתחביב"),
+)
+_kg_protect = []
+for _kw_p, _keep_p, _go_p in _KG_PROTECT_CASES:
+    _kg_dropped = _kg_drop(
+        _Resume_b(contact=_Contact_b(name="Compose", email="c@example.com"),
+                  skills=[_keep_p, _go_p]),
+        _JDModel_b(hard_skills=[_kw_p]),
+    )
+    _kg_protect.append(_kg_dropped is not None and _kg_dropped.skills == [_keep_p])
+check(
+    "the last-resort skills trim can never remove a JD-matched (i.e. restored) entry, "
+    "even when it is the longest line on the page and the match is a substring — "
+    "and it still drops the entry that carries nothing",
+    all(_kg_protect) and len(_kg_protect) == 3,
+    str(_kg_protect),
+)
+
+# COMPOSES WITH THE PAGE BUDGET, end to end on a master-shaped fixture. The
+# restore ADDS render height, so this is the assertion most likely to catch a
+# mistake here — and (iii) is what proves the pair CONVERGES rather than the
+# refit quietly undoing the restore one entry at a time.
+_kg_big = _master_resume(14)
+_kg_big.skills = [f"tool{i}" for i in range(60)] + ["Kubernetes", "Terraform"]
+_kg_big_jd = _JDModel_b(
+    job_title="Backend Engineer",
+    hard_skills=["Python", "PostgreSQL", "Kubernetes"],
+    keywords=["Python", "Terraform", "retries"],
+)
+# A tailored shortlist that dropped both, put through the budget exactly as the
+# pipeline does before the guard runs.
+_kg_big_t = _kg_big.model_copy(deep=True)
+_kg_big_t.skills = ["Python", "PostgreSQL", "SQL"]
+_kg_big_t, _kg_big_rep = fit_to_pages(_kg_big_t, _kg_big_jd, None, max_pages=2, hard_max_pages=3)
+_kg_big_out, _kg_big_r, _ = _preserve(_kg_big, _kg_big_t, _kg_big_jd)
+if page_count(_kg_big_out) > max(_kg_big_rep.pages_after, 2):
+    _kg_big_out, _ = fit_to_pages(_kg_big_out, _kg_big_jd, None, max_pages=2, hard_max_pages=3)
+_, _kg_big_r2, _kg_big_k2 = _preserve(_kg_big, _kg_big_out, _kg_big_jd)
+check(
+    "restore + refit: both entries survive, the page limit holds, and a second pass "
+    "finds nothing newly lost",
+    "Kubernetes" in _kg_big_out.skills
+    and "Terraform" in _kg_big_out.skills
+    and page_count(_kg_big_out) <= 3
+    and _kg_big_r2 == [] and _kg_big_k2 == [],
+    f"restored={_kg_big_r} pages={page_count(_kg_big_out)} "
+    f"second_pass=({_kg_big_r2}, {_kg_big_k2})",
+)
+
+# ...and the same composition THROUGH `tailor_resume`, because the refit sits in
+# a branch nothing else reaches: `if page_count(...) > max(pages_after, max_pages)`.
+# The default stub tailor is a one-pager, so a fixture built on it would never
+# enter that branch and would pass by never firing — the 21.7 failure mode. TAILOR
+# is therefore canned with a 2-page résumé whose restore genuinely spills onto a
+# third page, and THAT is asserted first: a render change that stops the fixture
+# crossing the boundary must go red as "stale fixture", never quietly green.
+_kg_e2e_blurb = (
+    "Built the ingestion service that reads inbound events, normalizes them and writes "
+    "structured records downstream, with retries, deduplication and a fallback path. "
+)
+# Distinct leading token per entry on purpose: with a shared vocabulary
+# `_keyword_present` covers the later terms out of the earlier ones' tokens and
+# the restore stops after five, which is correct behaviour and a useless fixture.
+_kg_e2e_kw = [f"Zephyr{i} orchestration, telemetry and capacity planning tooling" for i in range(25)]
+# The LAST bullet carries a term that lives nowhere else, and the refit is what
+# trims it — which is the whole reason the report is recomputed AFTER the refit
+# rather than before. Judged on the pre-refit résumé this keyword was present, so
+# a single-pass report would say nothing about a loss that shipped.
+_kg_e2e_master = _Resume_b(
+    contact=_Contact_b(name="Refit", email="refit@example.com"),
+    summary=_kg_e2e_blurb,
+    skills=["Python", "PostgreSQL"] + _kg_e2e_kw,
+    experience=[_Experience_b(company="Acme", title="Engineer", start_date="2021",
+                              end_date="Present",
+                              bullets=[f"{_kg_e2e_blurb} (item {b})" for b in range(21)]
+                                       + ["Ran the Quicksilver replay tool."])],
+    projects=[_Project_b(name="Alpha", description=_kg_e2e_blurb, bullets=[])],
+)
+_kg_e2e_tailored = _kg_e2e_master.model_dump()
+_kg_e2e_tailored["skills"] = ["Python", "PostgreSQL"]   # the shortlist that dropped all 25
+_kg_e2e_tailored["skill_groups"] = []
+_kg_e2e_jd = _JDModel_b(job_title="Backend Engineer",
+                        hard_skills=["Python", "PostgreSQL"] + _kg_e2e_kw,
+                        keywords=["Quicksilver"])
+_kg_e2e_pre = _Resume_b.model_validate(_kg_e2e_tailored)
+_kg_e2e_spill, _, _ = _preserve(_kg_e2e_master, _kg_e2e_pre, _kg_e2e_jd)
+
+
+def _kg_e2e_canned(system, user, **kw):
+    if "TAILOR" in system[:40]:
+        return {"tailored_resume": _kg_e2e_tailored, "changelog": [], "covered_keywords": []}
+    return _kg_orig_cjson(system, user, **kw)
+
+
+_kg_stub.complete_json = _kg_e2e_canned
+try:
+    _kg_e2e_res = _tailor_b(_kg_e2e_master, _kg_e2e_jd)
+finally:
+    _kg_stub.complete_json = _kg_orig_cjson
+_kg_e2e_final = _kg_e2e_res.tailored_resume
+_kg_e2e_budget = max(page_count(_kg_e2e_pre), get_settings().resume_max_pages)
+check(
+    "tailor_resume: a restore that spills onto another page is refitted back inside "
+    "the budget, every restored entry survives it, and length_report describes what shipped",
+    page_count(_kg_e2e_spill) > page_count(_kg_e2e_pre)          # fixture still bites
+    and all(k in _kg_e2e_final.skills for k in _kg_e2e_kw)       # the refit undid nothing
+    # The promise the pipeline already made about size is the one it has to keep.
+    # `<= hard_max` would pass on a résumé that quietly grew a page, which is the
+    # whole thing the refit exists to prevent.
+    and page_count(_kg_e2e_final) <= _kg_e2e_budget
+    and _kg_e2e_res.length_report.pages_after == page_count(_kg_e2e_final)
+    and _kg_e2e_res.length_report.pages_before == page_count(_kg_e2e_pre)
+    # CONVERGENCE: a second pass over the shipped résumé finds no SKILL-class
+    # loss, i.e. the refit undid none of the restore. (Its prose-class finding is
+    # the deliberate "Quicksilver" trim below; the pure form — both lists empty —
+    # is pinned on the component-level fixture above.)
+    and _preserve(_kg_e2e_master, _kg_e2e_final, _kg_e2e_jd)[1] == [],
+    f"{page_count(_kg_e2e_pre)} -> {page_count(_kg_e2e_spill)} -> {page_count(_kg_e2e_final)} pages "
+    f"(budget {_kg_e2e_budget}), kept {sum(1 for k in _kg_e2e_kw if k in _kg_e2e_final.skills)}/25, "
+    f"report={_kg_e2e_res.length_report.pages_before}->{_kg_e2e_res.length_report.pages_after}, "
+    f"notes={_kg_e2e_res.length_report.notes}",
+)
+# THE SECOND PASS, pinned behaviourally. The refit trimmed the bullet carrying
+# "Quicksilver", so the honest report has to be recomputed against what shipped:
+# the FIRST `preserve_keywords` saw that bullet intact and had nothing to say.
+check(
+    "a keyword the REFIT trimmed away is reported, so the changelog describes what shipped",
+    "quicksilver" not in _kg_resume_text(_kg_e2e_final)
+    and any(c.section == "keywords" and "Quicksilver" in c.change
+            for c in _kg_e2e_res.changelog),
+    f"bullets={len(_kg_e2e_final.experience[0].bullets)} "
+    f"changelog={[(c.section, c.change[:60]) for c in _kg_e2e_res.changelog]}",
+)
+
+# A REPAIR IS NOT A MEASUREMENT, and using one as the other is how a keyword
+# shipped missing, unrepaired AND unreported — in the one code path this module
+# creates. `preserve_keywords` answers with the losses IT COULD NOT REPAIR, in a
+# copy it then discards, on a fresh `MAX_RESTORED` budget. Point it at the
+# résumé that SHIPPED and it says "nothing was lost" about a keyword the refit
+# has just deleted: it restores it into the copy, files it under `restored`, and
+# throws the copy away. Meanwhile the caller's own `restored` list was computed
+# BEFORE the refit and still reads "Put back: X". Neither list names it.
+#
+# The old answer is asserted beside the new one on purpose: this cannot be
+# "fixed" by going back to the wrapper, and a reader can see exactly what the
+# repairer says when it is asked a question it does not answer.
+_kg_meas_o = _Resume_b(
+    contact=_Contact_b(name="Measure", email="me@example.com"),
+    skills=["Python", "Kubernetes (K8s) administration", "Terraform Cloud"],
+)
+_kg_meas_before = _kg_meas_o.model_copy(deep=True)
+_kg_meas_before.skills = ["Python"]
+_kg_meas_jd = _JDModel_b(hard_skills=["Kubernetes", "Terraform"])
+_kg_meas_guarded, _kg_meas_claim, _kg_meas_att = _preserve(
+    _kg_meas_o, _kg_meas_before, _kg_meas_jd
+)
+# What ships: the page budget gave one of the two entries back — which is
+# exactly what `shed_restored` does below — so the claim is now false about half
+# of itself.
+_kg_meas_ship = _kg_meas_guarded.model_copy(deep=True)
+_kg_meas_ship.skills = [s for s in _kg_meas_ship.skills if s != "Terraform Cloud"]
+_kg_meas_repair = _preserve(_kg_meas_o, _kg_meas_ship, _kg_meas_jd)
+_kg_meas_restored, _kg_meas_kept = _report_restore(
+    _kg_meas_o, _kg_meas_before, _kg_meas_ship, _kg_meas_jd, _kg_meas_att
+)
+check(
+    "a repair is not a measurement: the repairer reports NO loss for a keyword the "
+    "shipped CV is missing, while lost_keywords names it and the report files it "
+    "under its own reason",
+    _kg_meas_claim == ["Kubernetes", "Terraform"]        # the pre-refit claim
+    and _kg_meas_repair[2] == []                         # the old detector: "nothing lost"
+    and _lost_keywords(_kg_meas_o, _kg_meas_ship, _kg_meas_jd) == ["Terraform"]
+    and _kg_meas_restored == ["Kubernetes"]              # only what SHIPPED at target
+    and [(k.keyword, k.reason) for k in _kg_meas_kept] == [("Terraform", "trimmed")],
+    f"claim={_kg_meas_claim} repair_kept={_kg_meas_repair[2]} "
+    f"restored={_kg_meas_restored} kept={[(k.keyword, k.reason) for k in _kg_meas_kept]}",
+)
+# ...and a reason the restore already established is CARRIED, never recomputed:
+# "only in prose" is a fact about the ORIGINAL's wording and no later trim
+# changes it. Only a loss that was NOT there when the restore ran is ours, and
+# only that one gets `trimmed`. Both directions in one check — reading every
+# loss as "trimmed" is the trivial way to make the check above pass.
+_kg_carry_r, _kg_carry_k = _report_restore(
+    _kg_meas_o, _kg_meas_before, _kg_meas_before, _kg_meas_jd,
+    [_LostKeyword("Kubernetes", "prose", "experience")],
+)
+check(
+    "report_restore carries the restore's own reasons and invents 'trimmed' only for "
+    "a loss that appeared after it",
+    _kg_carry_r == []
+    and [(k.keyword, k.reason) for k in _kg_carry_k]
+        == [("Kubernetes", "prose"), ("Terraform", "trimmed")],
+    str([(k.keyword, k.reason) for k in _kg_carry_k]),
+)
+# THE DETECTOR'S OWN FALSE NEGATIVE, which the wrapper inherited: it early-
+# returned on `not original.skills`, so "nothing to repair from" was
+# indistinguishable from "nothing was lost" — and the humanizer gate ACCEPTED a
+# revision that deleted the JD's hard skills from a bullet. A rank comparison
+# has no such door. The second half is the false-positive pin: an untouched pair
+# must still measure as no loss.
+_kg_ns_before = _Resume_b(contact=_Contact_b(name="No Skills", email="ns@example.com"),
+                          experience=[_Experience_b(company="Acme", title="Engineer",
+                                                    start_date="2021", end_date="Present",
+                                                    bullets=["Ran the Kafka and Spark path."])])
+_kg_ns_after = _kg_ns_before.model_copy(deep=True)
+_kg_ns_after.experience[0].bullets = ["Ran the data path."]
+check(
+    "lost_keywords measures a résumé with an empty skills list — 'nothing to repair "
+    "from' is not 'nothing was lost'",
+    _kg_ns_before.skills == []
+    and _lost_keywords(_kg_ns_before, _kg_ns_after,
+                       _JDModel_b(hard_skills=["Kafka", "Spark"])) == ["Kafka", "Spark"]
+    and _lost_keywords(_kg_ns_before, _kg_ns_before,
+                       _JDModel_b(hard_skills=["Kafka", "Spark"])) == [],
+    str(_lost_keywords(_kg_ns_before, _kg_ns_after, _JDModel_b(hard_skills=["Kafka", "Spark"]))),
+)
+
+# THE BACK-OFF (component level). The refit cannot always give the height back —
+# everything trimmable can be at its floor and the skills trim is forbidden from
+# touching a restored entry — so the guard hands entries back itself, LONGEST
+# first, and stops the moment the budget holds rather than giving everything up.
+# The identity half is the false-positive pin: a résumé that already fits is
+# returned as the SAME object, so nothing is ever traded for nothing.
+_kg_shed_src = _Resume_b(
+    contact=_Contact_b(name="Shed", email="sh@example.com"),
+    skills=["Python", "A very long restored entry indeed", "Short one"],
+)
+_kg_shed_out, _kg_shed_gone = _shed_restored(
+    _kg_shed_src, ["A very long restored entry indeed", "Short one"],
+    lambda r: len(" ".join(r.skills)) <= 30,
+)
+_kg_shed_same, _kg_shed_nothing = _shed_restored(
+    _kg_shed_src, ["Short one"], lambda r: True
+)
+check(
+    "the back-off gives restored entries back longest-first, stops as soon as it fits, "
+    "and touches nothing at all when the résumé already fits",
+    _kg_shed_out.skills == ["Python", "Short one"]
+    and _kg_shed_gone == ["A very long restored entry indeed"]
+    and _kg_shed_same is _kg_shed_src and _kg_shed_nothing == [],
+    f"skills={_kg_shed_out.skills} shed={_kg_shed_gone}",
+)
+
+# ...and THROUGH `tailor_resume`, which is the only place the two gates that make
+# it correct actually meet. The fixture puts the bulk of the CV in the SUMMARY —
+# protected content the budget may not touch at all — so the refit genuinely
+# cannot fit the restore, exactly as reproduced: 4 pages against a hard max of 3,
+# with `fit_to_pages` writing "could not get below 3 pages" into its notes and
+# nothing acting on it.
+#
+# Three things are asserted about the fixture itself before anything is asserted
+# about the fix, because each one silently stops biting on a render change and a
+# check that passes by never firing is the 21.7 failure mode: the pre-restore CV
+# is INSIDE the limit, the restored one is OVER it, and `fit_to_pages` really
+# cannot get it back.
+from app.core.length_budget import OVERFLOW_NOTE as _KG_OVERFLOW  # noqa: E402
+
+_kg_bo_master = _Resume_b(
+    contact=_Contact_b(name="Backoff", email="bo@example.com"),
+    summary=_kg_e2e_blurb * 44,
+    skills=["Python"] + _kg_e2e_kw,
+    experience=[_Experience_b(company="Acme", title="Engineer", start_date="2021",
+                              end_date="Present", bullets=["Ran the platform."])],
+)
+_kg_bo_jd = _JDModel_b(job_title="Backend Engineer", hard_skills=["Python"] + _kg_e2e_kw)
+_kg_bo_tailored = _kg_bo_master.model_dump()
+_kg_bo_tailored["skills"] = ["Python"]
+_kg_bo_tailored["skill_groups"] = []
+_kg_bo_pre = _Resume_b.model_validate(_kg_bo_tailored)
+_kg_bo_spill, _, _ = _preserve(_kg_bo_master, _kg_bo_pre, _kg_bo_jd)
+_, _kg_bo_refit_rep = fit_to_pages(_kg_bo_spill, _kg_bo_jd, None, max_pages=2, hard_max_pages=3)
+
+
+def _kg_bo_canned(system, user, **kw):
+    head = system[:40]
+    if "TAILOR" in head:
+        return {"tailored_resume": _kg_bo_tailored, "changelog": [], "covered_keywords": []}
+    # Echoing the input makes the voice gate reject it (the score cannot rise),
+    # so the humanizer cannot quietly become the thing that changed the page count.
+    if "HUMANIZE" in head:
+        return {"revised_resume": _kg_bo_tailored}
+    return _kg_orig_cjson(system, user, **kw)
+
+
+_kg_stub.complete_json = _kg_bo_canned
+try:
+    _kg_bo_res = _tailor_b(_kg_bo_master, _kg_bo_jd)
+finally:
+    _kg_stub.complete_json = _kg_orig_cjson
+_kg_bo_final = _kg_bo_res.tailored_resume
+_kg_bo_kept = [k for k in _kg_e2e_kw if k in _kg_bo_final.skills]
+_kg_bo_put = next((c.change for c in _kg_bo_res.changelog
+                   if c.section == "skills" and c.change.startswith("Put back")), "")
+_kg_bo_dropped = " | ".join(c.change for c in _kg_bo_res.changelog if c.section == "keywords")
+check(
+    "tailor_resume: a restore the refit cannot fit is handed back until the hard page "
+    "limit holds — and the CV ships inside it",
+    page_count(_kg_bo_pre) <= 3                       # fixture: started inside the limit
+    and page_count(_kg_bo_spill) > 3                  # fixture: the restore broke it
+    and any(n.startswith(_KG_OVERFLOW) for n in _kg_bo_refit_rep.notes)  # fixture: unfittable
+    and page_count(_kg_bo_final) <= 3                 # ...and this is the fix
+    and 0 < len(_kg_bo_kept) < len(_kg_e2e_kw),       # some given back, not all
+    f"{page_count(_kg_bo_pre)} -> {page_count(_kg_bo_spill)} -> {page_count(_kg_bo_final)} pages, "
+    f"kept {len(_kg_bo_kept)}/{len(_kg_e2e_kw)}, refit notes={_kg_bo_refit_rep.notes}",
+)
+check(
+    "...and the changelog describes THAT résumé: every entry it says it put back is on "
+    "the CV, every entry given back is reported as not carried over, and the budget's "
+    "'could not get below' note is retracted because it stopped being true",
+    # NAMED ⟺ SHIPPED, both directions, entry by entry. Splitting the sentence on
+    # ", " would not do it — these entries contain a comma of their own.
+    bool(_kg_bo_put)
+    and all((e in _kg_bo_put) == (e in _kg_bo_final.skills) for e in _kg_e2e_kw)
+    and all((e in _kg_bo_dropped) == (e not in _kg_bo_final.skills) for e in _kg_e2e_kw)
+    and not any(n.startswith(_KG_OVERFLOW) for n in _kg_bo_res.length_report.notes)
+    and any("gave back" in n for n in _kg_bo_res.length_report.notes)
+    and _kg_bo_res.length_report.pages_after == page_count(_kg_bo_final),
+    f"put_back={_kg_bo_put[:80]} notes={_kg_bo_res.length_report.notes}",
+)
+
+# THE RESTORE CAN GROW THE CV WITHOUT ANY TRIM RUNNING, and the report has to
+# have a word for it. Under `max_pages=2` a 1-page CV that the restore takes to
+# 2 never enters the refit branch at all, so the report read pages_before=1,
+# pages_after=2, trimmed=False, notes=[] — a document that grew a page with no
+# vocabulary anywhere for why. The false-positive half is the second conjunct:
+# the note is only appended when the size actually CHANGED, so the earlier
+# restore-on-a-one-pager fixture must not carry it.
+_kg_grow_master = _Resume_b(
+    contact=_Contact_b(name="Grow", email="gr@example.com"),
+    summary=_kg_e2e_blurb * 14,
+    skills=["Python"] + _kg_e2e_kw,
+    experience=[_Experience_b(company="Acme", title="Engineer", start_date="2021",
+                              end_date="Present", bullets=["Ran the platform."])],
+)
+_kg_grow_tailored = _kg_grow_master.model_dump()
+_kg_grow_tailored["skills"] = ["Python"]
+_kg_grow_tailored["skill_groups"] = []
+
+
+def _kg_grow_canned(system, user, **kw):
+    head = system[:40]
+    if "TAILOR" in head:
+        return {"tailored_resume": _kg_grow_tailored, "changelog": [], "covered_keywords": []}
+    if "HUMANIZE" in head:
+        return {"revised_resume": _kg_grow_tailored}
+    return _kg_orig_cjson(system, user, **kw)
+
+
+_kg_stub.complete_json = _kg_grow_canned
+try:
+    _kg_grow_res = _tailor_b(_kg_grow_master,
+                             _JDModel_b(job_title="Backend Engineer",
+                                        hard_skills=["Python"] + _kg_e2e_kw))
+finally:
+    _kg_stub.complete_json = _kg_orig_cjson
+check(
+    "a restore that grows the CV with no trim in sight says so in the length report",
+    _kg_grow_res.length_report.pages_before == 1
+    and _kg_grow_res.length_report.pages_after == 2
+    and page_count(_kg_grow_res.tailored_resume) == 2
+    and any("putting back skills" in n for n in _kg_grow_res.length_report.notes)
+    and not any("putting back skills" in n for n in _kg_res.length_report.notes),
+    f"{_kg_grow_res.length_report.pages_before} -> {_kg_grow_res.length_report.pages_after} "
+    f"notes={_kg_grow_res.length_report.notes}",
+)
+
+# THE CAP IS A REAL TRADE, not a formality, and it reports itself. A restored
+# entry is immune to `_drop_unmatched_skill`, so an uncapped restore is paid for
+# by the refit out of PROJECTS and BULLETS — losing prose keywords to save skill
+# keywords. Overflow is disclosed as `reason="cap"`, which is the only class a
+# bigger number would fix.
+_kg_cap_o = _Resume_b(
+    contact=_Contact_b(name="Cap", email="cap@example.com"),
+    skills=[f"skill{i}" for i in range(_KG_MAX + 5)],
+)
+_kg_cap_t = _kg_cap_o.model_copy(deep=True)
+_kg_cap_t.skills = []
+_kg_cap_out, _kg_cap_r, _kg_cap_k = _preserve(
+    _kg_cap_o, _kg_cap_t, _JDModel_b(hard_skills=[f"skill{i}" for i in range(_KG_MAX + 5)])
+)
+check(
+    "the restore is capped, and the overflow is reported as a cap rather than as prose",
+    len(_kg_cap_r) == _KG_MAX
+    and len(_kg_cap_out.skills) == _KG_MAX
+    and [k.reason for k in _kg_cap_k] == ["cap"] * 5,
+    f"restored={len(_kg_cap_r)} kept={[(k.keyword, k.reason) for k in _kg_cap_k]}",
+)
+
+# THE HUMANIZER GATE (mechanism 5). DRIVEN through `tailor_resume`, never by
+# calling the predicate — a check that calls the gate helper directly still
+# passes with the call site deleted, which is the reasoning CLAUDE.md records for
+# the `finish_reason == "length"` pins.
+#
+# The default stub tailor audits CLEAN, so the humanizer branch never runs on it
+# and a fixture built on it would pass by never firing (21.7's failure mode). So
+# TAILOR and HUMANIZE are canned for this one block, on the singleton client, the
+# way section 21b already cans `complete_json` — everything else delegates.
+#
+# The revision deletes "Kubernetes" from the one bullet that carries it, which is
+# PROSE: the guard reports that class and never repairs it, so rejecting the
+# revision is the only thing standing between the user and a permanently lost
+# keyword. And it must be rejected FOR THAT REASON — the second check proves the
+# three pre-existing conjuncts would all have accepted it, so nothing else can be
+# doing the work.
+_kg_hum_o = _Resume_b(
+    contact=_Contact_b(name="Humanize Gate", email="hg@example.com"),
+    summary="Engineer.",
+    skills=["Python"],
+    experience=[_Experience_b(company="Acme", title="Engineer", start_date="2021",
+                              end_date="Present",
+                              bullets=["Spearheaded the Kubernetes migration.",
+                                       "Wrote Python services."])],
+)
+_kg_hum_jd = _JDModel_b(job_title="Platform Engineer", hard_skills=["Kubernetes"],
+                        keywords=["Python"])
+_kg_hum_tailored = _kg_hum_o.model_dump()
+_kg_hum_revised = _json_kg.loads(_json_kg.dumps(_kg_hum_tailored))
+# Banned verb gone (the voice score genuinely rises) — and Kubernetes with it.
+_kg_hum_revised["experience"][0]["bullets"] = ["Led the container migration.",
+                                               "Wrote Python services."]
+def _kg_canned(system, user, **kw):
+    head = system[:40]
+    if "TAILOR" in head:
+        return {"tailored_resume": _kg_hum_tailored, "changelog": [], "covered_keywords": []}
+    if "HUMANIZE" in head:
+        return {"revised_resume": _kg_hum_revised}
+    return _kg_orig_cjson(system, user, **kw)
+
+
+_kg_stub.complete_json = _kg_canned
+try:
+    _kg_hum_res = _tailor_b(_kg_hum_o, _kg_hum_jd)
+finally:
+    _kg_stub.complete_json = _kg_orig_cjson
+check(
+    "a humanizer revision that deletes a JD keyword is refused, and the keyword ships",
+    "Kubernetes" in _kg_hum_res.tailored_resume.experience[0].bullets[0]
+    and _kg_hum_res.voice_report.revised is False
+    and _lost_keywords(_kg_hum_o, _kg_hum_res.tailored_resume, _kg_hum_jd) == [],
+    f"bullets={_kg_hum_res.tailored_resume.experience[0].bullets} "
+    f"revised={_kg_hum_res.voice_report.revised}",
+)
+_kg_hum_t_model = _Resume_b.model_validate(_kg_hum_tailored)
+_kg_hum_r_model = _Resume_b.model_validate(_kg_hum_revised)
+check(
+    "...and it was refused for THAT reason: every pre-existing conjunct accepted it",
+    _kg_check_fab(_kg_hum_r_model, _build_ledger(_kg_hum_o)) == []
+    and _kg_audit(_kg_hum_r_model, _kg_hum_jd).human_voice_score
+    > _kg_audit(_kg_hum_t_model, _kg_hum_jd).human_voice_score
+    and page_count(_kg_hum_r_model) <= page_count(_kg_hum_t_model),
+    f"voice {_kg_audit(_kg_hum_t_model, _kg_hum_jd).human_voice_score} -> "
+    f"{_kg_audit(_kg_hum_r_model, _kg_hum_jd).human_voice_score} "
+    f"flags={_kg_check_fab(_kg_hum_r_model, _build_ledger(_kg_hum_o))}",
+)
+# The humanizer's keep-list ("Keep the listed ATS keywords present") now carries
+# `preferred_skills` too. Pinned by CAPTURING the prompt the humanizer actually
+# builds, not by grepping its source: the source also carries a comment saying
+# `preferred_skills`, so a grep stays green with the term deleted from the code.
+_kg_keep_seen: list[str] = []
+
+
+def _kg_keep_capture(system, user, **kw):
+    if "HUMANIZE" in system[:40]:
+        _kg_keep_seen.append(user)
+    return _kg_orig_cjson(system, user, **kw)
+
+
+_kg_stub.complete_json = _kg_keep_capture
+try:
+    _kg_humanizer_mod.humanize_resume(
+        _kg_vh_o,
+        _kg_audit(_kg_vh_o, None).issues,
+        _JDModel_b(hard_skills=["Python"], preferred_skills=["Kubernetes Operators"]),
+    )
+finally:
+    _kg_stub.complete_json = _kg_orig_cjson
+check(
+    "the humanizer's keep-list carries preferred_skills too",
+    _kg_keep_seen and "Kubernetes Operators" in _kg_keep_seen[0],
+    f"prompts captured={len(_kg_keep_seen)}",
+)
+
+# DETERMINISM, SOURCE-PINNED — the 22.10 / geo shape. Behaviour alone cannot pin
+# this: an LLM-backed restorer returns a résumé and two lists exactly like this
+# one, passes every check above, and puts a temperature=0.3 sample in charge of
+# what the CV says. The length floor makes an unreadable module go red instead
+# of passing by never firing.
+import app.core.keyword_guard as _kg_mod  # noqa: E402
+import app.core.tailor as _kg_tailor_mod  # noqa: E402
+_KG_SRC = _kg_inspect.getsource(_kg_mod)
+# Flattened so a check can read the SENTENCE the user is shown rather than the
+# source lines it happens to be split across: collapse whitespace, then close the
+# `" "` seam Python's implicit string concatenation leaves behind. Without this a
+# re-wrap of the same literal — which changes nothing a user can see — turns a
+# copy assertion red, and the tempting fix is to weaken it to a fragment.
+_KG_TAILOR_FLAT = " ".join(_kg_inspect.getsource(_kg_tailor_mod).split()).replace('" "', "")
+check(
+    "keyword guard: source-pinned to no LLM and no network",
+    len(_KG_SRC) > 2000
+    and "get_llm_client" not in _KG_SRC
+    and "complete_json" not in _KG_SRC
+    and "complete_text" not in _KG_SRC
+    and "import openai" not in _KG_SRC
+    and "urllib" not in _KG_SRC
+    and "requests" not in _KG_SRC,
+    f"{len(_KG_SRC)} chars scanned",
+)
+# ...and it imports the ONE true matcher rather than carrying its own. A second
+# matcher would disagree with the coverage number the user can see, in Hebrew,
+# in the primary market — the Python twin of check-mirrors check 4.
+#
+# PARSED, NOT GREPPED, because the substring form did not fire on the likeliest
+# defect there is here: this module already imports from `app.core.scorer`, and
+# `scorer` itself imports `get_llm_client`. Append `fit_score` to that existing
+# import line and the guard reaches the model — while the check above still finds
+# no "get_llm_client"/"complete_json" anywhere in this source, and a check
+# asserting the import LINE is a substring still finds it verbatim. Reading the
+# ImportFrom node and demanding the set be EXACTLY the three matcher helpers is
+# the only form that goes red on it. Probed with that exact line.
+import ast as _kg_ast  # noqa: E402
+
+_KG_SCORER_IMPORTS = {
+    _kg_alias.name
+    for _kg_node in _kg_ast.walk(_kg_ast.parse(_KG_SRC))
+    if isinstance(_kg_node, _kg_ast.ImportFrom) and _kg_node.module == "app.core.scorer"
+    for _kg_alias in _kg_node.names
+}
+check(
+    "keyword guard: imports EXACTLY the scorer's three matcher helpers — never a "
+    "second matcher, and never a fourth name off the module that reaches the LLM",
+    _KG_SCORER_IMPORTS == {"_keyword_present", "_resume_text", "_tokens"}
+    and "def _keyword_present" not in _KG_SRC
+    and "def _resume_text" not in _KG_SRC,
+    str(sorted(_KG_SCORER_IMPORTS)),
+)
+# This is NOT an LLM task, so CLAUDE.md's "any new LLM task must add a stub
+# branch" rule deliberately does not apply — and a future reader must not add
+# one. Pinned by comparing the client's branch count against the tasks that
+# genuinely exist.
+import app.llm.client as _kg_client_mod  # noqa: E402
+_KG_CLIENT_SRC = _kg_inspect.getsource(_kg_client_mod)
+check(
+    "keyword guard: app/llm/client.py gained no stub branch for it",
+    "KEYWORD_GUARD" not in _KG_CLIENT_SRC and "PRESERVE_KEYWORD" not in _KG_CLIENT_SRC,
+)
+# ONE CALL SITE, inside `tailor_resume`. Not `routes.py` ("thin FastAPI
+# handlers... No business logic here"), not `kits.py` (which reaches the same
+# function through `tailor_fn`). A second site would classify on a DIFFERENT gate
+# and contradict this one about the same résumé — the geo-restriction correction,
+# which CLAUDE.md records as the one that mattered most.
+#
+# The importer set is COMPUTED by walking every module the app ships rather than
+# by naming the two files that got it wrong last time: `routes.py` and `kits.py`
+# are where a second site would go TODAY, and a scan finds tomorrow's too.
+#
+# PARSED, not grepped, for the same reason the matcher pin above is: a text
+# search cannot tell an IMPORT from a MENTION. The two modules that have to
+# agree about the matcher now cross-reference each other in their comments —
+# `length_budget` records which matcher it protects an entry with and why it is
+# that one — and a grep read that documentation as a second call site. Every
+# import spelling is read (`from app.core.keyword_guard import x`, `from
+# app.core import keyword_guard`, `import app.core.keyword_guard`, and the
+# relative forms), so the check cannot be dodged by writing it differently, and
+# the scanned count keeps a broken glob from passing on an empty walk.
+_KG_APP_DIR = _Path_kg(_kg_humanizer_mod.__file__).parents[1]   # …/app, never cwd
+_KG_IMPORTERS: list[str] = []
+_KG_SCANNED = 0
+for _kg_py in sorted(_KG_APP_DIR.rglob("*.py")):
+    _KG_SCANNED += 1
+    for _kg_n in _kg_ast.walk(_kg_ast.parse(_kg_py.read_text(encoding="utf-8"))):
+        if isinstance(_kg_n, _kg_ast.ImportFrom):
+            _kg_hit = ((_kg_n.module or "").split(".")[-1] == "keyword_guard"
+                       or any(a.name == "keyword_guard" for a in _kg_n.names))
+        elif isinstance(_kg_n, _kg_ast.Import):
+            _kg_hit = any(a.name.split(".")[-1] == "keyword_guard" for a in _kg_n.names)
+        else:
+            continue
+        if _kg_hit:
+            _KG_IMPORTERS.append(str(_kg_py.relative_to(_KG_APP_DIR)).replace("\\", "/"))
+            break
+check(
+    "keyword guard: exactly one importer in the whole app — core/tailor.py",
+    _KG_IMPORTERS == ["core/tailor.py"] and _KG_SCANNED > 40,
+    f"{_KG_IMPORTERS} ({_KG_SCANNED} modules scanned)",
+)
+
+# STEP 5: the prompt is the first line of defence and the guard is the floor
+# under it — the same relationship `length_budget`'s docstring describes ("the
+# LLM is *asked* to curate... but asked is not guaranteed"). Both halves of the
+# prompt change are pinned, because a self-check the model never reads is not a
+# defence.
+check(
+    "TAILOR rule 2 forbids dropping a skill the job asks for",
+    "NEVER DROP A SKILL THIS JOB ASKS FOR" in _prompts.TAILOR_SYSTEM
+    and "It never means one it does." in _prompts.TAILOR_SYSTEM
+    and "plus however many" in _prompts.TAILOR_SYSTEM,
+)
+check(
+    "TAILOR's self-check runs the REVERSE scan, not only output ⊆ original",
+    "THE REVERSE SCAN" in _prompts.TAILOR_SYSTEM
+    and "ONE TERM AT A TIME" in _prompts.TAILOR_SYSTEM,
+)
+
+# STEP 6 (option ii): `drop_invented_roles` filters `tailored.experience` and
+# appends NOTHING to `projects`, so the old reason string — "Kept in Projects
+# where they belong" — asserted a preservation the code does not perform
+# whenever the model moved a project up rather than copying it. Reproduced: a
+# promoted row carrying "Go" and "delivery platform" was cut while the changelog
+# claimed the content survived. Fixed by making the sentence true, not by
+# re-homing the row: that would take content the ledger could not verify and
+# move it into the section the fabrication guard checks least.
+_kg_promo = _Resume_b(
+    contact=_Contact_b(name="Promoted", email="pm@example.com"),
+    experience=[_Experience_b(company="Fixr Solutions", title="Engineer", start_date="2021",
+                              end_date="Present", bullets=["Built things."])],
+)
+_kg_promo_led = _build_ledger(_kg_promo)
+_kg_promo_t = _kg_promo.model_copy(deep=True)
+_kg_promo_t.experience.append(
+    _Experience_b(company="Ziko", title="Founder", start_date="2024", end_date="Present",
+                  bullets=["Built a Go delivery platform."])
+)
+_kg_promo_out, _kg_promo_removed = _drop_roles(_kg_promo_t, _kg_promo_led)
+check(
+    "the invented-role changelog no longer claims a preservation the code does not perform",
+    _kg_promo_removed == ["Ziko"]
+    and _kg_promo_out.projects == []          # nothing was re-homed — the claim was false
+    and "Kept in Projects where they belong" not in _KG_TAILOR_FLAT
+    and "it is in Projects only if the rewrite kept it there" in _KG_TAILOR_FLAT,
+    f"projects={_kg_promo_out.projects}",
+)
+
+# ---------------------------------------------------------------------------
 # 24b. One bad posting must not sink a whole search (PLAN 20.5 / C3). A search
 # fires up to 25 concurrent LLM calls, so a single 500 or a mangled JSON body is
 # not a rare event — it used to propagate through future.result() and turn 24
@@ -6478,6 +8896,31 @@ with TestClient(_fastapi_app) as _tc:
         and _wiped.json()["resume_versions"] >= _MAX_VERSIONS
         and _versions() == [],
         _wiped.text[:120],
+    )
+
+    # PLAN 07/7: the user's STORED document is never rewritten. Skill
+    # normalisation lives at exactly one door — `structure_resume`, on the LLM's
+    # fresh output — and a `model_validator` would have made every read of this
+    # row a silent rewrite. The behavioural twin of the source pin in 18e, and
+    # the half that catches an inline COPY of the splitter, which the grep
+    # cannot see. Both halves here: what comes back is what went in, AND the
+    # byte-identical dedupe still recognises the re-save, so an unchanged save
+    # burns none of the 20 undo slots.
+    _ns_user = _tc.post("/admin/users", json={"name": "Skill Saver"}, headers=_ADMIN_H).json()
+    _NSH = {"X-App-Key": _ns_user["invite_code"]}
+    _ns_stored = resume.model_copy(deep=True)
+    _ns_stored.skills = ["Python, SQL", "Go"]
+    _ns_stored.skill_groups = []
+    _ns_body = {"resume": _ns_stored.model_dump(), "label": "S"}
+    _tc.put("/profile/resume", json=_ns_body, headers=_NSH)
+    _ns_back = _tc.get("/profile/resume", headers=_NSH).json()["resume"]["skills"]
+    _tc.put("/profile/resume", json=_ns_body, headers=_NSH)  # byte-identical re-save
+    check(
+        "a STORED résumé is never re-written: the un-split entry comes back "
+        "verbatim and the identical re-save still burns no undo slot",
+        _ns_back == ["Python, SQL", "Go"]
+        and _tc.get("/profile/resume/versions", headers=_NSH).json()["versions"] == [],
+        str(_ns_back),
     )
 
 print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))

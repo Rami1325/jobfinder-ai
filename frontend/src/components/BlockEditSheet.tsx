@@ -17,6 +17,17 @@ interface Props {
   onClose: () => void;
   /** The edited résumé, plus the path to re-anchor to (a keyed rename moves it). */
   onApply: (next: ResumeModel, path: string) => void;
+  /**
+   * The TAILORED document: hand back the raw VALUES for this block instead of a
+   * whole résumé, because the page stores them as an override keyed by the
+   * block's source anchor rather than writing them into a résumé that is
+   * recomputed on every accept and decline. Entry granularity is exactly what
+   * this sheet already edits ("the sheet edits an ENTRY, not a field"), so the
+   * override grain and the panel's grain are the same thing.
+   *
+   * When given it REPLACES `onApply` — `onApply` writes the master.
+   */
+  onApplyValues?: (values: Values, path: string) => void;
   /** The block no longer resolves — an index shifted under us. */
   onGone: () => void;
 }
@@ -55,7 +66,15 @@ interface Props {
  * its content present underneath, and the fixed `max-h` plus an inner
  * `overflow-y-auto` is the layout anyway.
  */
-export default function BlockEditSheet({ path, resume, paperDir, onClose, onApply, onGone }: Props) {
+export default function BlockEditSheet({
+  path,
+  resume,
+  paperDir,
+  onClose,
+  onApply,
+  onApplyValues,
+  onGone,
+}: Props) {
   const { t } = useTranslation("tailor");
   const titleId = useId();
   const open = path !== null;
@@ -92,8 +111,54 @@ export default function BlockEditSheet({ path, resume, paperDir, onClose, onAppl
   const wide = typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
   const hidden = wide ? { x: rtlChrome ? "-100%" : "100%" } : { y: "100%" };
 
+  /**
+   * On the TAILORED document an entry can be blanked but not removed, and the
+   * blanked husk ships. This is the gap that closes it.
+   *
+   * The trash is correctly hidden on the override path (see the footer's note),
+   * but Apply was not: `applyOverrides` decides write-vs-remove with the same
+   * `readBlock(...).removable` rule the inline path uses, and `removable` is
+   * FALSE for every entry — so an all-blank entry override fell through to the
+   * WRITE branch. Executed, that produces
+   * `{"company":"","title":"","location":"","start_date":"","end_date":"","bullets":["…","…"]}`
+   * — a nameless job with two bullets under it, printed into both downloads and
+   * stored on the tracker row as what was sent.
+   *
+   * REFUSED, rather than taught to mean removal, and the choice is the same one
+   * the trash's own note already made: an anchor names a coordinate in the
+   * original/tailored résumé, where "not present" is ALREADY what a declined
+   * addition and an accepted removal mean, so a removal override would be a
+   * second grammar for an idea the anchor space can already express — two
+   * mechanisms answering "is this entry on the page", free to disagree. The
+   * fallthrough had to go either way: silently meaning "keep an empty one" is
+   * the worst of the three.
+   *
+   * Live, not on tap. The consequence is stated while it is still true and
+   * clears itself the moment any field has a character in it, which is the same
+   * order the danger zone uses — say what will happen before the press, not
+   * after it.
+   */
+  // `values` starts `{}` and is filled by a passive effect keyed on the draft's
+  // path, so on the first render after the panel opens EVERY field reads empty —
+  // and without this guard the refusal painted itself, disabled Apply included,
+  // over fields that were about to be populated. `seeded` asks whether the
+  // effect has run, not whether the fields are blank: a key is PRESENT once
+  // seeded even when its value is "", which is exactly the distinction between
+  // "the user emptied this" and "we have not looked yet".
+  const seeded = !!draft && draft.fields.some((f) => f.key in values);
+  const blankEntry =
+    !!onApplyValues &&
+    !!draft &&
+    seeded &&
+    isEntryKind(draft.kind) &&
+    draft.fields.every((f) => !(values[f.key] ?? "").trim());
+
   function save() {
-    if (!draft) return;
+    if (!draft || blankEntry) return;
+    // The tailored path never builds a résumé here: the page applies these
+    // values over a merge it recomputes itself, so handing it a finished résumé
+    // would be handing it something the next accept/decline throws away.
+    if (onApplyValues) return onApplyValues(values, draft.path);
     const r = writeBlock(resume, draft.path, values);
     if (!r.ok) return onGone();
     onApply(r.resume, r.path);
@@ -101,6 +166,12 @@ export default function BlockEditSheet({ path, resume, paperDir, onClose, onAppl
 
   function remove() {
     if (!draft) return;
+    // On the tailored document a removal IS an override whose values are all
+    // blank — the same empty-means-remove rule the inline path uses, which is
+    // why the button below is offered only for `removable` blocks there.
+    if (onApplyValues) {
+      return onApplyValues(Object.fromEntries(draft.fields.map((f) => [f.key, ""])), draft.path);
+    }
     const r = removeBlock(resume, draft.path);
     if (!r.ok) return onGone();
     onApply(r.resume, "");
@@ -192,13 +263,32 @@ export default function BlockEditSheet({ path, resume, paperDir, onClose, onAppl
 
             {/* The safe-area padding is why Save clears the home indicator. */}
             <footer className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+              {/* `w-full` so it takes a line of its own above the buttons, and
+                  real text rather than a `title` on the disabled Apply: a
+                  tooltip does not exist on the phone this document is read on.
+                  Static markup, no reveal — a height tween on a conditional
+                  inside a flex footer is check 11's defect one more time. */}
+              {blankEntry && (
+                <p className="w-full text-xs leading-relaxed text-danger">
+                  {t("edit.tailoredNoBlankEntry")}
+                </p>
+              )}
               {/* `removable` is FALSE for every entry, by design — it governs
                   the inline empty-means-remove rule, which must never be able
                   to delete a job by clearing one of its five fields. Gating the
                   button on it alone meant `removeBlock`'s RE_ENTRY branch was
                   unreachable and a role added by mistake could not be taken off
                   the document at all. This is the gesture 23.2 said it had. */}
-              {(draft.removable || isEntryKind(draft.kind)) && (
+              {/* `!onApplyValues` on the entry half, and it is not caution.
+                  `removable` is false for every entry, so an entry deletion has
+                  to go through `removeBlock` — and an override cannot express
+                  it: the anchor names a coordinate in the original/tailored
+                  résumé, where "not present" is already what a declined
+                  addition and an accepted removal mean. Offering it on the
+                  per-application overlay would need a second, contradictory
+                  grammar for the same idea. On the tailored document the trash
+                  therefore appears only where empty-means-remove can say it. */}
+              {(draft.removable || (!onApplyValues && isEntryKind(draft.kind))) && (
                 <button
                   type="button"
                   onClick={remove}
@@ -210,7 +300,9 @@ export default function BlockEditSheet({ path, resume, paperDir, onClose, onAppl
               <Button variant="ghost" className="ms-auto" onClick={onClose}>
                 {t("edit.cancel")}
               </Button>
-              <Button onClick={save}>{t("edit.apply")}</Button>
+              <Button onClick={save} disabled={blankEntry}>
+                {t("edit.apply")}
+              </Button>
             </footer>
           </motion.div>
         </>

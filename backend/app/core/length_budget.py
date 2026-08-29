@@ -19,17 +19,26 @@ Two properties make it safe to run after the fabrication guard:
 What it will trim, in order of increasing reluctance: whole projects (least
 JD-relevant first), project descriptions, project bullets, then trailing
 experience bullets from the oldest roles. Skills are trimmed only as a last
-resort and only entries with zero JD overlap, because the skills list is the
-ATS keyword surface.
+resort and only entries that carry nothing the JD named — judged by the
+SCORER's own matcher, not by token overlap, so this module and `keyword_guard`
+can never disagree about whether one entry carries one keyword.
 """
 from __future__ import annotations
 
 import re
 
-from app.core.scorer import _WORD_RE
+from app.core.scorer import _WORD_RE, _keyword_present, _tokens
 from app.models import CVPlan, JDModel, LengthReport, Project, ResumeModel
 from app.render.pdf_renderer import page_count
 from app.render.templates import DEFAULT_TEMPLATE
+
+# The note this module writes when it runs out of things to trim. Public because
+# `tailor` has to be able to RETRACT it: the keyword guard's back-off can get
+# under the limit after this was written, and a report carrying both "could not
+# get below 3 pages" and a 3-page CV is worse than either of them alone. The
+# constant is imported rather than the sentence restated — the
+# `geo_restriction.BLOCKING_KINDS` convention.
+OVERFLOW_NOTE = "could not get below"
 
 # Soft floors: what the budget refuses to go below while it is merely aiming
 # for the target page count. A CV with one project and one bullet per role
@@ -249,25 +258,62 @@ def _trim_experience_bullets(resume: ResumeModel, recent_floor: int, older_floor
     return None
 
 
+def _jd_terms(jd: JDModel) -> list[str]:
+    """Every term the job names, lowercased and deduped — the three groups the
+    keyword guard reads, in the JD's own order.
+
+    Written here rather than imported from `keyword_guard`, deliberately: that
+    module has exactly one importer in the whole app (`core/tailor.py`, pinned
+    by the smoke test), and the dependency would run the wrong way anyway — the
+    budget is a floor the guard composes with, not a client of it. What IS
+    shared is the matcher, which is the part that has to agree.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for group in (jd.hard_skills, jd.keywords, jd.preferred_skills):
+        for kw in group:
+            k = (kw or "").strip().lower()
+            if k and k not in seen:
+                seen.add(k)
+                out.append(k)
+    return out
+
+
 def _drop_unmatched_skill(resume: ResumeModel, jd: JDModel) -> ResumeModel | None:
-    """Last resort: drop the longest skills entry that shares nothing with the
-    JD. Skills are the ATS keyword surface, so anything the JD asked for stays
-    regardless of how long the line is.
+    """Last resort: drop the longest skills entry that carries nothing this job
+    asked for. Skills are the ATS keyword surface, so anything the JD named
+    stays regardless of how long the line is.
+
+    **The protection is expressed in the SCORER's terms, and that is
+    load-bearing.** It used to be whole-token overlap (`tokens & jd_tokens`)
+    while `keyword_guard` chooses the entries it puts back with
+    `scorer._keyword_present`, which tries the verbatim phrase FIRST. So every
+    carrier matched through that substring branch shared no token with the JD
+    and was fully eligible for this drop — which picks the LONGEST unmatched
+    entry, i.e. exactly the descriptive ones a carrier tends to be. Two cases,
+    both real: `פיתוח בפייתון` for `פייתון` (Hebrew's inseparable prefixes are
+    word characters, so the substring branch is the only thing that matches it —
+    our primary market) and `PostgreSQL administration` for `Postgres`.
+    Reproduced end to end: the guard restored 10 carriers and this trim removed
+    9 of them under "dropped skills the job never asked for", while the changelog
+    still said it had put them back. One matcher, one answer.
+
+    It is strictly WIDER than the token rule it replaces — a shared token is a
+    `partial` hit, which is already not `missing` — so nothing that used to be
+    protected stopped being.
 
     Removes the entry from its skill GROUP as well — the flat list and the
     groups are one fact in two shapes, and a trim that touched only one of them
     would either come back or render a skill the scorer no longer counts."""
-    jd_tokens: set[str] = set()
-    for group in (jd.hard_skills, jd.keywords, jd.preferred_skills):
-        for kw in group:
-            jd_tokens.update(_WORD_RE.findall((kw or "").lower()))
-    if not jd_tokens:
+    terms = _jd_terms(jd)
+    if not terms:
         return None
 
     worst_i, worst_len = -1, 0
     for i, entry in enumerate(resume.skills):
-        tokens = set(_WORD_RE.findall(entry.lower()))
-        if tokens & jd_tokens:
+        text = entry.lower()
+        tokens = _tokens(entry)
+        if any(_keyword_present(kw, text, tokens) != "missing" for kw in terms):
             continue
         if len(entry) > worst_len:
             worst_i, worst_len = i, len(entry)
@@ -425,7 +471,7 @@ def fit_to_pages(
     # shipped seven pages without anyone noticing.
     if pages > hard_max_pages:
         report.notes.append(
-            f"could not get below {hard_max_pages} pages — still {pages}; "
+            f"{OVERFLOW_NOTE} {hard_max_pages} pages — still {pages}; "
             "everything trimmable is already at its floor"
         )
     return current, report

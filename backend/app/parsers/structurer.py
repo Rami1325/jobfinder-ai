@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from app.config import get_settings
+from app.core.skills import normalize_resume_skills
 from app.llm.client import get_llm_client
 from app.llm import prompts
 from app.llm.limits import require_within
@@ -25,7 +26,23 @@ def structure_resume(raw_text: str) -> ResumeModel:
         prompts.STRUCTURE_RESUME_SYSTEM,
         prompts.structure_resume_user(raw_text),
     )
-    return ResumeModel.model_validate(data)
+    # THE ONE SERVER-SIDE DOOR for skill normalisation, and the placement is the
+    # whole of the decision. This is the LLM's fresh output — a CV that listed
+    # "Python, SQL, Go" on one line arrives here as a single skill, and nothing
+    # downstream can tell that apart from a genuinely long skill. It is also the
+    # last moment the résumé is not yet anything the user owns.
+    #
+    # NOT a `model_validator` on `ResumeModel`, which is where it would look
+    # tidiest. A validator runs on every construction — i.e. every READ of every
+    # stored master, tracker résumé, saved kit and version snapshot — so it would
+    # silently rewrite all of them without any of them being a write: bypassing
+    # `resume_versions.snapshot` (which only fires on a write) and breaking its
+    # byte-identical dedupe, so the first save after deploy burns one of 20 undo
+    # slots on a no-op. It would also fire between `original` and `tailored`
+    # inside `TailorResult`, orphaning the frontend's text-derived
+    # `@skills.<key>` tailoring anchors. A smoke check greps `app/models` to keep
+    # it out, because behaviour alone cannot tell the two placements apart.
+    return normalize_resume_skills(ResumeModel.model_validate(data))
 
 
 def build_facts_ledger(resume: ResumeModel) -> FactsLedger:

@@ -3,7 +3,8 @@ import { ArrowRight, Columns2, Languages, ScanLine } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button, WeightedCard } from "../ui";
 import Reveal from "./Reveal";
-import ResumeMiniature, { MINIATURE_TEMPLATES, PDF_ONLY_TEMPLATES } from "./ResumeMiniature";
+import ResumeMiniature from "./ResumeMiniature";
+import { PDF_ONLY, TEMPLATE_IDS } from "../../lib/templateSpecs";
 
 const PROOF = [
   { icon: ScanLine, key: "ats" },
@@ -17,8 +18,10 @@ const PROOF = [
  * This is the section the whole landing was rebuilt around: the product is a
  * rendered page, so the page is what the marketing site has to show. The
  * miniatures are drawn from the real TemplateSpec values — see
- * ResumeMiniature.tsx. Adding a template to the backend means adding it to
- * MINIATURE_TEMPLATES and adding its two locale strings.
+ * lib/templateSpecs.ts, which is also where the id list and the PDF-only test
+ * come from, so a template added to the backend appears here the moment its
+ * spec is mirrored. What it still needs by hand is its two locale strings, and
+ * check-mirrors 23 fails the build until both locales have them.
  */
 export default function TemplateShowcase() {
   const { t } = useTranslation("marketing");
@@ -37,7 +40,7 @@ export default function TemplateShowcase() {
       </Reveal>
 
       <ul className="mt-12 grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-6 lg:grid-cols-4">
-        {MINIATURE_TEMPLATES.map((id, i) => (
+        {TEMPLATE_IDS.map((id, i) => (
           <li key={id}>
             <Reveal delay={(i % 4) * 0.07}>
               {/* Weighted hover: the cursor presses the sheet into the page and
@@ -52,7 +55,7 @@ export default function TemplateShowcase() {
                 {/* Two-column layouts render in the PDF only — the DOCX falls
                     back to a single-column sibling. Saying so on the thumbnail
                     is cheaper than a surprise at download time. */}
-                {PDF_ONLY_TEMPLATES.includes(id) && (
+                {PDF_ONLY(id) && (
                   <span className="absolute end-2 top-2 rounded-full bg-ink/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white backdrop-blur-sm">
                     {t("templates.pdfOnly")}
                   </span>

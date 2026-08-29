@@ -7,8 +7,15 @@ from app.core.credibility import review_credibility
 from app.core.cv_planner import plan_cv
 from app.core.fabrication_guard import check_fabrication, drop_invented_roles
 from app.core.humanizer import humanize_resume
+from app.core.keyword_guard import (
+    MAX_RESTORED,
+    lost_keywords,
+    preserve_keywords,
+    report_restore,
+    shed_restored,
+)
 from app.core.lang import resume_language
-from app.core.length_budget import fit_to_pages
+from app.core.length_budget import OVERFLOW_NOTE, fit_to_pages
 from app.core.scorer import score_resume
 from app.core.voice_audit import audit_voice
 from app.llm.client import get_llm_client
@@ -79,8 +86,23 @@ def tailor_resume(
             ChangeLogEntry(
                 section="experience",
                 change="Removed " + ", ".join(invented_roles) + " from Experience",
+                # This used to close by asserting the row had been kept in
+                # Projects — a preservation the code does not perform.
+                # `drop_invented_roles` filters `tailored.experience` and appends
+                # nothing to `projects`, so whenever the model MOVED a project up
+                # rather than copying it, the row and everything in it was gone
+                # and the changelog said otherwise. Reproduced — a promoted "Ziko"
+                # row carrying "Go" and "delivery platform" was cut while this
+                # sentence claimed the content survived.
+                #
+                # The fix is the sentence, not a re-home. Re-inserting the row
+                # into `projects` would take content the ledger could NOT verify
+                # and move it to the section the fabrication guard checks least
+                # (projects contribute numbers only), which is the opposite of
+                # what this repair exists to do.
                 reason="Not employers in your résumé — they were projects promoted into "
-                "job entries. Kept in Projects where they belong.",
+                "job entries. If this was a project, it is in Projects only if the "
+                "rewrite kept it there.",
             )
         )
 
@@ -111,11 +133,228 @@ def tailor_resume(
                 len(revised_flags) <= len(flags)
                 and post.human_voice_score > report.human_voice_score
                 and page_count(revised, template) <= max(length_report.pages_after, max_pages)
+                # ...and it may not cost keyword coverage either. HUMANIZE's
+                # `keyword_stuffing` rule explicitly tells the model to "drop the
+                # other occurrences", and its keep-list is prose in a prompt, so
+                # an accepted revision could and did delete a JD keyword outright.
+                # The baseline is `tailored`, NOT `resume`: the humanizer answers
+                # only for what IT deleted, and measuring against the master would
+                # reject every revision of an already-lossy tailor. Last conjunct
+                # so `and` short-circuits past it whenever a cheaper term already
+                # failed.
+                and not lost_keywords(tailored, revised, jd)
             ):
                 remaining = {(i.category, i.value) for i in post.issues}
                 post.fixed = [i for i in report.issues if (i.category, i.value) not in remaining]
                 post.revised = True
                 tailored, flags, report = revised, revised_flags, post
+
+    # Keyword preservation: a term THIS JOB asks for, which the candidate's own
+    # skills list already carried, must not have been deleted by the rewrite.
+    # Deterministic, no LLM, and it may only ever write a string that exists
+    # byte-for-byte in `resume.skills` — see `keyword_guard`'s docstring.
+    #
+    # ONE CALL SITE, and here rather than in `routes.py` or `kits.py`. Both of
+    # those reach the pipeline through this function (kits pass it as
+    # `tailor_fn`), so a second site would only add a second gate to disagree
+    # with this one — the geo-restriction correction, in a new costume.
+    #
+    # AFTER the humanizer, not before `fit_to_pages`: the humanizer is the last
+    # stage that can delete a keyword, and the conjunct above narrows that but
+    # cannot close it (a gate is a comparison, not a constraint). A guard placed
+    # earlier would leave the restore un-guaranteed. Before credibility and
+    # `score_after`, so both describe the résumé that actually ships.
+    pre_restore = tailored
+    tailored, _, attempted = preserve_keywords(resume, tailored, jd)
+    # THE GUARD'S OWN `restored` LIST IS DROPPED ON THE FLOOR HERE, deliberately.
+    # It describes the résumé `preserve_keywords` returned, and every line below
+    # can still take an entry out of that — so quoting it produced "Put back: X"
+    # in the changelog for keywords the refit had removed again, a sentence about
+    # a document that no longer existed. What the user is told is MEASURED at the
+    # end, on what ships (`report_restore`). `attempted` survives because a
+    # reason ("only in prose", "the budget was spent") is a fact about the
+    # ORIGINAL's wording, which no later trim changes.
+    #
+    # The gate below is IDENTITY, not a non-empty list. `preserve_keywords`
+    # returns the same object when it had nothing to say (smoke-pinned), and it
+    # can also write carriers that repair a keyword only partway — those add
+    # render height too, and the old `if restored:` gate skipped the re-measure
+    # for them entirely.
+    pre_skills = set(pre_restore.skills)
+
+    def restored_entries() -> list[str]:
+        """The candidate's own skill entries this restore put on the page, as
+        they stand RIGHT NOW. Recomputed rather than remembered, so it can never
+        name one a later trim has removed — the same bug as `restored`, one
+        level down."""
+        return [s for s in tailored.skills if s not in pre_skills]
+
+    if tailored is not pre_restore:
+        pages_pre = page_count(pre_restore, template)
+        shed: list[str] = []
+        # A restore adds skill entries, so it can add render height, and the page
+        # budget is the authority on size. Re-measure against the SAME gate the
+        # humanizer's own acceptance test uses.
+        if page_count(tailored, template) > max(pages_pre, max_pages):
+            tailored, refit = fit_to_pages(
+                tailored, jd, plan, template=template,
+                max_pages=max_pages, hard_max_pages=hard_max_pages,
+            )
+            # `pages_before` is deliberately left alone: it describes what the
+            # MODEL returned — the "we started at N pages" number — and the
+            # restore did not change that. `pages_after` is set once, at the
+            # bottom, from a measurement of whatever survives all of this.
+            length_report.trimmed = length_report.trimmed or refit.trimmed
+            for note in refit.notes:
+                if note not in length_report.notes:
+                    length_report.notes.append(note)
+            for name in refit.dropped_projects:
+                if name not in length_report.dropped_projects:
+                    length_report.dropped_projects.append(name)
+            # THE BACK-OFF. The refit cannot always give the height back:
+            # everything trimmable can already be at its floor, and the
+            # last-resort skills trim refuses to remove a restored entry — the
+            # matcher that chose it as a carrier is the one that protects it.
+            # Reproduced at 4 pages against a
+            # hard max of 3, with `fit_to_pages` writing "could not get below 3
+            # pages" into its notes and nothing acting on it. A CV over the
+            # stated hard limit has traded a keyword for the one thing the page
+            # budget exists to guarantee, so the guard retreats instead — and
+            # what it gives back is reported, because the report is measured on
+            # what ships. Gated on the restore being what caused it: a résumé
+            # already over the limit is not something giving skills back fixes.
+            if page_count(tailored, template) > hard_max_pages >= pages_pre:
+                tailored, shed = shed_restored(
+                    tailored, restored_entries(),
+                    lambda r: page_count(r, template) <= hard_max_pages,
+                )
+            # The restore itself adds nothing the ledger tracks (it never reads
+            # `skills`), so it cannot create a flag. The REFIT is why this runs
+            # anyway: it REMOVES content, and a flag still pointing at a bullet
+            # that no longer ships is a warning about a document that does not
+            # exist. Removal-only means the count can never rise, so re-running
+            # here can only ever make the warnings truer.
+            flags = check_fabrication(tailored, ledger)
+
+        pages_now = page_count(tailored, template)
+        length_report.pages_after = pages_now
+        # A note the budget wrote can stop being TRUE: the back-off gets under
+        # the limit after `fit_to_pages` has already recorded that it could not,
+        # and a report carrying both "could not get below 3 pages" and a 3-page
+        # CV is worse than either. Retracted by measurement, and the sentence is
+        # imported from the module that writes it rather than restated here.
+        if pages_now <= hard_max_pages:
+            length_report.notes = [n for n in length_report.notes
+                                   if not n.startswith(OVERFLOW_NOTE)]
+        if shed:
+            # A count, not the entries: the changelog names every one of them
+            # under "Not carried over", and a note listing 15 long skill lines is
+            # a paragraph where the others are a phrase.
+            length_report.notes.append(
+                f"gave back {len(shed)} of the put-back skills to stay inside "
+                f"{hard_max_pages} pages"
+            )
+        # Say so when the restore changed the size. Without this the report can
+        # read pages_before=1, pages_after=2, trimmed=False, notes=[] — a CV that
+        # grew a page with no vocabulary anywhere for why.
+        if pages_now != pages_pre:
+            length_report.notes.append(
+                f"putting back skills the job asks for took the CV from {pages_pre} "
+                f"to {pages_now} pages"
+            )
+        # `voice_audit` scans the skills list for banned phrases, so a restored
+        # entry like "Cutting-edge ML tooling" adds an issue the pre-restore
+        # audit never saw, and `voice_report` is supposed to describe what
+        # shipped. Deterministic, no LLM. The humanizer's own bookkeeping is
+        # carried across by hand — a fresh audit knows nothing about a revision
+        # that was accepted, and silently zeroing `revised`/`fixed` erases the
+        # record of the only stage that rewrote anything.
+        was_revised, was_fixed = report.revised, report.fixed
+        report = audit_voice(tailored, jd)
+        report.revised, report.fixed = was_revised, was_fixed
+
+    # BOTH LISTS ARE MEASURED HERE, after every stage that can change what the CV
+    # says has finished. `restored` is "was lost before the restore and is at
+    # target on the shipped document"; anything still lost is named with the
+    # reason that is true of it. Nothing between the two ends ADDS content, so a
+    # restored keyword always has a surviving entry behind it to name.
+    restored, kept_back = report_restore(resume, pre_restore, tailored, jd, attempted)
+    if restored:
+        changelog.append(
+            ChangeLogEntry(
+                section="skills",
+                # THE ENTRIES, and then the terms they answer. "Put back: REST
+                # APIs" named the JD's phrase, which can appear nowhere in the
+                # shipped CV even when the restore worked perfectly — the entries
+                # behind it were ['REST', 'APIs'].
+                change="Put back: " + ", ".join(restored_entries()),
+                reason="This job asks for " + ", ".join(restored)
+                + ". Those entries are your own wording, from your own résumé, and "
+                "the rewrite had dropped them.",
+            )
+        )
+
+    # Reported whether or not anything was restored: "this went missing and we
+    # did not put it back" is the half that keeps the entry above honest. Split
+    # by reason so each sentence can be true of its own class — a bigger number
+    # fixes only the cap, and only `trimmed` is a loss WE caused rather than one
+    # the user's own wording produced.
+    #
+    # THROUGH THE CHANGELOG, deliberately, and not through a new `TailorResult`
+    # field. A changelog is a log of ACTIONS TAKEN, so its absence on a stored
+    # kit or tracker row written before this guard existed means "no such
+    # action", which is TRUE. A `kept_back: []` field would mean "nothing was
+    # lost" on every one of those rows, which is false — the trap CLAUDE.md
+    # names twice ("a row that predates the field means unknown, never zero").
+    prose_losses = [k for k in kept_back if k.reason == "prose"]
+    partial_losses = [k for k in kept_back if k.reason == "partial"]
+    capped_losses = [k for k in kept_back if k.reason == "cap"]
+    trimmed_losses = [k for k in kept_back if k.reason == "trimmed"]
+    if prose_losses:
+        where = ", ".join(dict.fromkeys(k.where for k in prose_losses if k.where))
+        changelog.append(
+            ChangeLogEntry(
+                section="keywords",
+                change="Not carried over: " + ", ".join(k.keyword for k in prose_losses),
+                reason="Your résumé shows these only inside wording that was rewritten or "
+                + (f"trimmed ({where}). " if where else "trimmed. ")
+                + "We did not put them back: re-writing a sentence you did not write is "
+                "how a CV grows a claim you cannot defend.",
+            )
+        )
+    if partial_losses:
+        changelog.append(
+            ChangeLogEntry(
+                section="keywords",
+                change="Partly carried over: " + ", ".join(k.keyword for k in partial_losses),
+                # This class used to be reported as "prose", which contradicted
+                # itself: the carriers are sitting in the skills list, so the
+                # sentence above ("only inside wording") was false about them.
+                reason="Your skills list holds part of each of these, and those entries are "
+                "on the CV — but not the phrase this job uses. Writing the phrase itself "
+                "would be putting wording in your résumé that you never used.",
+            )
+        )
+    if capped_losses:
+        changelog.append(
+            ChangeLogEntry(
+                section="keywords",
+                change="Not carried over: " + ", ".join(k.keyword for k in capped_losses),
+                reason=f"The skills list was already at its limit of {MAX_RESTORED} put-back "
+                "entries. Past that the space comes out of your projects and bullets, "
+                "which costs more than it buys.",
+            )
+        )
+    if trimmed_losses:
+        changelog.append(
+            ChangeLogEntry(
+                section="keywords",
+                change="Not carried over: " + ", ".join(k.keyword for k in trimmed_losses),
+                reason="Putting your skills back cost more room than the page budget had, "
+                f"and the trim that followed removed these to hold {hard_max_pages} pages. "
+                "Your master résumé still has them.",
+            )
+        )
 
     # Stage 11 (credibility): true-but-overstated wording the candidate may
     # struggle to defend in an interview. Advisory flags, never auto-removal.

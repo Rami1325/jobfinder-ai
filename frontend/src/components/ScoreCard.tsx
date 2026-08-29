@@ -8,10 +8,24 @@ import { cn } from "../lib/cn";
 /**
  * The fabrication guard surfaced as a first-class number next to the match —
  * no competitor can show this. Clicking scrolls to the trust panel.
+ *
+ * `overrides` is what keeps the clean face honest since the tailored document
+ * became typeable (23.7). The guard ran against `result.tailored_resume`; the
+ * document beside this tile is `effectiveResume`, with the user's own sentences
+ * written over it — and that same object is what the PDF preview, the x-ray, both
+ * downloads and the tracker row use. Type "Grew ARR 300% as engineering lead"
+ * onto the paper and a mint ring under the stamp "Checked · Facts ledger" over
+ * "We checked every name, date, credential and number against your original"
+ * becomes false without moving. The count does not make the guard's reading wrong
+ * — nothing new turned up IN THE REWRITE — so the number and the ring stand, and
+ * the words name the exception instead.
  */
-function GuardTile({ flags }: { flags: FabricationFlag[] }) {
+function GuardTile({ flags, overrides }: { flags: FabricationFlag[]; overrides: number }) {
   const { t } = useTranslation("tailor");
   const clean = flags.length === 0;
+  // Only the CLEAN face makes a claim about the whole document. The flagged one
+  // says "N claims we couldn't find in your résumé", which stays true either way.
+  const edited = clean && overrides > 0;
   return (
     <button
       type="button"
@@ -30,8 +44,14 @@ function GuardTile({ flags }: { flags: FabricationFlag[] }) {
           <span className="mt-0.5 text-2xl font-bold tabular-nums text-ink">{flags.length}</span>
         </div>
         <span className="pointer-events-none absolute inset-x-0 -bottom-2 flex justify-center">
-          <Stamp tone={clean ? "mint" : "danger"} delay={1.4}>
-            {clean ? t("score.stampVerified") : t("score.stampReview")}
+          {/* `accent` because `Stamp` has three tones and none of them is grey:
+              mint is the verdict this stamp can no longer make about the whole
+              document, danger would claim something was found, and accent is
+              this app's informational colour. The STRING is the real fix — a
+              rubber stamp reading "Checked" over a partly unchecked document is
+              the thing being removed, not its hue. */}
+          <Stamp tone={edited ? "accent" : clean ? "mint" : "danger"} delay={1.4}>
+            {edited ? t("score.stampPartial") : clean ? t("score.stampVerified") : t("score.stampReview")}
           </Stamp>
         </span>
       </div>
@@ -53,7 +73,11 @@ function GuardTile({ flags }: { flags: FabricationFlag[] }) {
         transition={{ delay: 1.2, duration: 0.35 }}
         className="max-w-[26ch] text-center text-xs leading-snug text-ink-faint"
       >
-        {clean ? t("score.guardNoteClean") : t("score.guardNoteFlags", { count: flags.length })}
+        {edited
+          ? t("score.guardNoteCleanEdited", { count: overrides })
+          : clean
+            ? t("score.guardNoteClean")
+            : t("score.guardNoteFlags", { count: flags.length })}
       </motion.p>
     </button>
   );
@@ -70,6 +94,9 @@ interface Props {
   /** When the fit reading was taken, epoch ms. */
   scoredAt: number | null;
   flags: FabricationFlag[];
+  /** How many blocks of the document the user wrote themselves. The guard never
+   * saw those, and the tile may not imply otherwise — see `GuardTile`. */
+  overrideCount?: number;
 }
 
 /**
@@ -92,7 +119,15 @@ interface Props {
  * taken and no delta. The guard is unchanged — it was always live and always
  * deterministic.
  */
-export default function ScoreCard({ coverage, coverageStale, fitScore, rationale, scoredAt, flags }: Props) {
+export default function ScoreCard({
+  coverage,
+  coverageStale,
+  fitScore,
+  rationale,
+  scoredAt,
+  flags,
+  overrideCount = 0,
+}: Props) {
   const { t, i18n } = useTranslation("tailor");
   const time =
     scoredAt !== null
@@ -144,7 +179,7 @@ export default function ScoreCard({ coverage, coverageStale, fitScore, rationale
           </p>
         </div>
 
-        <GuardTile flags={flags} />
+        <GuardTile flags={flags} overrides={overrideCount} />
       </div>
       {rationale && fitScore !== null && (
         <p className="mt-6 text-sm leading-relaxed text-ink-muted">{rationale}</p>

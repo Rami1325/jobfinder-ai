@@ -19,6 +19,27 @@ interface Props {
   onChecked: (jdText: string, fit: FitCheckResult) => void;
   onTailor: (jdText: string) => void;
   tailoring: boolean;
+  /**
+   * A tailor result is on screen; this dialog is now for aiming at a DIFFERENT
+   * posting, not for re-reading this one. It re-labels the dialog and — the
+   * part that matters — makes the cached fit panel unreachable: that reading
+   * was taken against the MASTER, while `ScoreCard` on the page below is
+   * showing the TAILORED document's, and two unlabelled recruiter-fit rings
+   * with different numbers for different documents is precisely what "two
+   * numbers on two clocks, never a blended one" forbids.
+   */
+  hasResult: boolean;
+  /**
+   * How many blocks of the document on the page below the user typed themselves.
+   *
+   * The Tailor button here calls `startTailor`, which resets `tailorOverrides`
+   * to `{}` — so above zero this dialog's primary action DELETES the user's own
+   * sentences, and there is nothing to recover them from: they are mirrored
+   * nowhere, and a second tailor of the same posting comes back as different
+   * text at `temperature=0.3`. Above zero the button arms first and the note
+   * names the count at rest.
+   */
+  overrideCount?: number;
 }
 
 const TOP_MISSING = 8;
@@ -49,23 +70,43 @@ export default function TailorOverlay({
   onChecked,
   onTailor,
   tailoring,
+  hasResult,
+  overrideCount = 0,
 }: Props) {
   const { t } = useTranslation("tailor");
   const [draft, setDraft] = useState(jdText);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Tailoring would throw away hand-edits, so the button asks once first.
+  const [armed, setArmed] = useState(false);
+  const guarded = hasResult && overrideCount > 0;
 
   // Reseed on open only — reseeding on every render would fight typing.
+  //
+  // With a result up the box opens EMPTY: "tailor for a different job" prefilled
+  // with the previous job's text is a contradiction, and the blank draft is also
+  // what makes the stale fit panel below structurally unreachable.
   useEffect(() => {
     if (!open) return;
-    setDraft(jdText);
+    setDraft(hasResult ? "" : jdText);
     setErr("");
+    // Re-opening is a fresh decision. A dialog that opens already armed puts a
+    // red "discard my edits" button under the user's thumb before they have
+    // read anything.
+    setArmed(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ready = draft.trim().length > 30;
   // Already read this exact posting: the result on screen is about this text,
   // so re-checking would spend a credit to learn nothing.
-  const cached = !!fit && checkedFor !== null && checkedFor === draft.trim();
+  //
+  // `!hasResult` is belt as well as braces. `checkedFor` is never "" (a check
+  // only fires when `ready`, i.e. over 30 characters), so the empty draft above
+  // already makes this false — but the panel it gates paints a reading taken
+  // against the MASTER while ScoreCard on the page paints the TAILORED
+  // document's, and that contradiction is worth being able to SEE in one
+  // expression rather than deducing from two files. check-mirrors 15 reads it.
+  const cached = !hasResult && !!fit && checkedFor !== null && checkedFor === draft.trim();
 
   async function run() {
     if (!ready || busy) return;
@@ -95,7 +136,8 @@ export default function TailorOverlay({
       // unconditionally, and losing a half-pasted posting mid-request is the
       // one thing this dialog must not do.
       onClose={() => !busy && !tailoring && onClose()}
-      title={t("overlay.title")}
+      // The dialog's heading echoes the control that opened it, word for word.
+      title={hasResult ? t("overlay.openDifferent") : t("overlay.title")}
       maxWidth="max-w-2xl"
     >
       <div className="space-y-4">
@@ -153,6 +195,27 @@ export default function TailorOverlay({
           {cached ? t("overlay.cached") : t("overlay.cost")}
         </p>
 
+        {/* The thing the app never said out loud: a second tailor starts again
+            from the MASTER, and what it replaces is the review on screen — not
+            the saved résumé. Plain static markup, no reveal and no `animate`
+            prop: a height tween here is check 11's defect in its eighth
+            costume.
+            IT REASSURED ABOUT THE WRONG THING while hand-edits existed. "Your
+            saved master is not changed" is true and beside the point: what this
+            button actually deletes is the sentences the user typed onto the CV
+            on the page below, and the note said nothing about them. The counted
+            variant names them, and is keyed so the sentence cannot appear at
+            zero. */}
+        {hasResult && (
+          <p
+            className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${
+              armed ? "border-danger/40 bg-danger/10 text-danger" : "border-line bg-bg-soft text-ink-muted"
+            }`}
+          >
+            {guarded ? t("overlay.replacesEdited", { count: overrideCount }) : t("overlay.replaces")}
+          </p>
+        )}
+
         <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" onClick={onClose} disabled={busy || tailoring}>
             {t("overlay.close")}
@@ -162,14 +225,37 @@ export default function TailorOverlay({
               {busy ? t("overlay.checking") : t("overlay.checkFit")}
             </Button>
           )}
-          <Button
-            loading={tailoring}
-            disabled={!ready || busy}
-            icon={<Wand2 size={16} />}
-            onClick={() => onTailor(draft.trim())}
-          >
-            {t("overlay.tailor")}
-          </Button>
+          {/* ARM, THEN CONFIRM — the Settings danger-zone shape, because above
+              zero this button is destructive and was one tap. The consequence is
+              already stated at rest in the note above (it names the count
+              whether or not anything is armed), so arming reveals no new fact;
+              it only separates the intent from the act. */}
+          {guarded && !armed ? (
+            <Button disabled={!ready || busy} icon={<Wand2 size={16} />} onClick={() => setArmed(true)}>
+              {t("overlay.retailor")}
+            </Button>
+          ) : (
+            <>
+              {guarded && (
+                <Button variant="secondary" onClick={() => setArmed(false)} disabled={tailoring}>
+                  {t("overlay.keepEdits")}
+                </Button>
+              )}
+              <Button
+                variant={guarded ? "danger" : "primary"}
+                loading={tailoring}
+                disabled={!ready || busy}
+                icon={<Wand2 size={16} />}
+                onClick={() => onTailor(draft.trim())}
+              >
+                {guarded
+                  ? t("overlay.retailorDiscard", { count: overrideCount })
+                  : hasResult
+                    ? t("overlay.retailor")
+                    : t("overlay.tailor")}
+              </Button>
+            </>
+          )}
         </div>
         {!ready && <p className="text-end text-xs text-ink-muted">{t("overlay.needsJd")}</p>}
       </div>

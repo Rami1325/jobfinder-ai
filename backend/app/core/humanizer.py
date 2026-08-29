@@ -29,7 +29,13 @@ def humanize_resume(tailored: ResumeModel, issues: list[VoiceIssue], jd: JDModel
     the caller treats None as 'keep the tailored resume as-is'."""
     if not issues:
         return None
-    keep = list(dict.fromkeys([*jd.keywords, *jd.hard_skills]))
+    # `preferred_skills` are in the keep-list too. They were excluded, which read
+    # as symmetry with `scorer.keyword_analysis` (keywords + hard_skills) but is
+    # not the same question: coverage is a PERCENTAGE and widening its
+    # denominator would change every visible number, while this list is prose in
+    # a prompt ("Keep the listed ATS keywords present"). A wider list is strictly
+    # more protective and costs only prompt bytes, which `@_bounded` already caps.
+    keep = list(dict.fromkeys([*jd.keywords, *jd.hard_skills, *jd.preferred_skills]))
     client = get_llm_client()
     try:
         data = client.complete_json(

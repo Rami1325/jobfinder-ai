@@ -12,6 +12,7 @@ import type {
   ResumeModel,
 } from "../types";
 import { countOccurrences } from "./keywords";
+import { CONTACT_FIELDS, readBlock, type ContactField } from "./resumeBlocks";
 
 export type EditKind = "edited" | "added" | "removed";
 
@@ -34,6 +35,32 @@ export type EditKind = "edited" | "added" | "removed";
  * skill's rendered position is not its index here.
  */
 export type BlockAnchors = Record<string, string[]>;
+
+/**
+ * Block path → SOURCE ANCHOR: where that block came from in the ORIGINAL or
+ * TAILORED résumé, rather than where it landed on screen.
+ *
+ * **Paths are not stable across accept/decline, and anchors are.** A rejected
+ * removal is spliced back at `k = Math.min(oi, list.length)`, so every later
+ * entry in that section shifts — proven by executing this module: with a
+ * tailored résumé that drops `experience[0]`, `@exp.1` is "Gamma" with nothing
+ * rejected and "Beta" with `exp.rm.0` rejected. The same splice runs for
+ * projects, education, military and, one level down, bullets. So anything the
+ * USER writes over the merged document has to be stored against this
+ * coordinate; keyed by path it would land on a different bullet the first time
+ * any add or removal in that section is toggled.
+ *
+ * The grammar is the EDIT-ID grammar, extended to blocks no edit touched
+ * (`pick` returns early for an unchanged field and `mergeBullets` mints no id
+ * for an unchanged bullet, so ids alone cannot key every block). It carries NO
+ * `@` prefix, and that is the correct side of the boundary `BlockAnchors`
+ * documents: an anchor names an original coordinate, a path names a rendered
+ * one, and the two must never be silently swappable.
+ *
+ * Unlike `blocks`, this is emitted for EVERY block the walk produces — touched
+ * or not. `anchor()` skips the empty ones; `src()` never does.
+ */
+export type BlockSources = Record<string, string>;
 
 export type EditSection =
   | "headline"
@@ -159,12 +186,36 @@ function mergeResumes(
   original: ResumeModel,
   tailored: ResumeModel,
   isRejected: (id: string) => boolean,
-): { edits: ResumeEdit[]; resume: ResumeModel; blocks: BlockAnchors } {
+): {
+  edits: ResumeEdit[];
+  resume: ResumeModel;
+  blocks: BlockAnchors;
+  sources: BlockSources;
+  editAnchors: Record<string, string>;
+} {
   const edits: ResumeEdit[] = [];
   const blocks: BlockAnchors = {};
+  const sources: BlockSources = {};
+  const editAnchors: Record<string, string> = {};
   /** Record `ids` against an OUTPUT block path, skipping empty ones. */
   const anchor = (path: string, ids: string[]) => {
     if (ids.length) blocks[path] = ids;
+  };
+  /** Record the SOURCE ANCHOR of an output block path. The sibling of
+   * `anchor()`, and the difference is the whole point: this one NEVER skips.
+   * An untouched block still needs a stable coordinate, because the user can
+   * type on it too. */
+  const src = (path: string, from: string) => {
+    sources[path] = from;
+  };
+  /** The anchor of an edit whose block may not be in the output AT ALL — a
+   * declined addition, an accepted removal. `blocks` only names blocks that
+   * exist, so it cannot answer "where did the hand-edit on the thing this
+   * review row describes go?" for exactly the two cases the vanish rule is
+   * about. Every other edit's anchor falls out of `blocks` + `sources` for
+   * free, in the fill-in pass at the end of the walk. */
+  const editSrc = (id: string, from: string) => {
+    editAnchors[id] = from;
   };
 
   /** Scalar field: record an edit when changed, return the effective value.
@@ -185,40 +236,49 @@ function mergeResumes(
   }
 
   /** Unordered string list (skills, certifications): per-item add/remove.
-   * `ids` is index-aligned with `out` — see `mergeBullets` for why. */
+   * `ids` is index-aligned with `out` — see `mergeBullets` for why. `src` is
+   * kept in the same lockstep: the item's own KEY, taken from the list it came
+   * from (which is frozen while a result is up), so a later hand-rename of the
+   * chip does not move the anchor out from under the text that renamed it. */
   function mergeStringList(
     idBase: string,
     section: EditSection,
     orig: string[],
     tail: string[],
-  ): { out: string[]; ids: string[][] } {
+  ): { out: string[]; ids: string[][]; src: string[] } {
     const okeys = orig.map(lkey);
     const tkeys = tail.map(lkey);
     const out: string[] = [];
     const ids: string[][] = [];
+    const srcs: string[] = [];
     tail.forEach((s, ti) => {
       if (okeys.includes(tkeys[ti])) {
         out.push(s);
         ids.push([]);
+        srcs.push(`${idBase}.item.${tkeys[ti]}`);
         return;
       }
       const id = `${idBase}.add.${tkeys[ti]}`;
       edits.push({ id, section, context: "", kind: "added", before: "", after: s });
+      editSrc(id, `${idBase}.item.${tkeys[ti]}`);
       if (!isRejected(id)) {
         out.push(s);
         ids.push([id]);
+        srcs.push(`${idBase}.item.${tkeys[ti]}`);
       }
     });
     orig.forEach((s, oi) => {
       if (tkeys.includes(okeys[oi])) return;
       const id = `${idBase}.rm.${okeys[oi]}`;
       edits.push({ id, section, context: "", kind: "removed", before: s, after: "" });
+      editSrc(id, `${idBase}.item.${okeys[oi]}`);
       if (isRejected(id)) {
         out.push(s);
         ids.push([id]);
+        srcs.push(`${idBase}.item.${okeys[oi]}`);
       }
     });
-    return { out, ids };
+    return { out, ids, src: srcs };
   }
 
   /** Bullet list inside a matched entry: pair by similarity, then merge.
@@ -236,48 +296,67 @@ function mergeResumes(
     context: string,
     orig: string[],
     tail: string[],
-  ): { out: string[]; ids: string[][] } {
+  ): { out: string[]; ids: string[][]; src: string[] } {
     const { tailMatch, removed } = pairEntries(orig, tail, bulletScore, 0.3);
     const out: string[] = [];
     const ids: string[][] = [];
+    // Third array, same lockstep, and it is the one that is filled for the
+    // UNCHANGED case too — the branch that mints no id at all. A bullet nobody
+    // touched is still a bullet the user can type on.
+    const srcs: string[] = [];
     tail.forEach((t, ti) => {
       const oi = tailMatch[ti];
       if (oi === null) {
         const id = `${idBase}.b.add.${ti}`;
         edits.push({ id, section, context, kind: "added", before: "", after: t });
+        editSrc(id, id);
         if (!isRejected(id)) {
           out.push(t);
           ids.push([id]);
+          srcs.push(id);
         }
       } else if (same(orig[oi], t)) {
         out.push(t);
         ids.push([]);
+        srcs.push(`${idBase}.b.${oi}`);
       } else {
         const id = `${idBase}.b.${oi}`;
         edits.push({ id, section, context, kind: "edited", before: orig[oi], after: t });
         out.push(isRejected(id) ? orig[oi] : t);
         ids.push([id]);
+        srcs.push(id);
       }
     });
     for (const oi of removed) {
       const id = `${idBase}.b.rm.${oi}`;
       edits.push({ id, section, context, kind: "removed", before: orig[oi], after: "" });
+      editSrc(id, id);
       if (isRejected(id)) {
         const k = Math.min(oi, out.length);
         out.splice(k, 0, orig[oi]);
         ids.splice(k, 0, [id]);
+        srcs.splice(k, 0, id);
       }
     }
-    return { out, ids };
+    return { out, ids, src: srcs };
   }
 
   /** Entry sections share one shape: a parallel id array per output entry, and
-   * a parallel bullet-id array per output entry. Emitting the paths is the same
-   * loop every time, so it lives here rather than four times below. */
-  function anchorEntries(prefix: string, entryIds: string[][], bulletIds: string[][][] = []) {
+   * a parallel bullet-id array per output entry — plus the two SOURCE ANCHOR
+   * twins of each. Emitting the paths is the same loop every time, so it lives
+   * here rather than four times below. */
+  function anchorEntries(
+    prefix: string,
+    entryIds: string[][],
+    bulletIds: string[][][] = [],
+    entrySrc: string[] = [],
+    bulletSrc: string[][] = [],
+  ) {
     entryIds.forEach((ids, k) => {
       anchor(`${prefix}.${k}`, ids);
+      if (entrySrc[k]) src(`${prefix}.${k}`, entrySrc[k]);
       (bulletIds[k] ?? []).forEach((bids, j) => anchor(`${prefix}.${k}.b.${j}`, bids));
+      (bulletSrc[k] ?? []).forEach((from, j) => src(`${prefix}.${k}.b.${j}`, from));
     });
   }
 
@@ -290,16 +369,21 @@ function mergeResumes(
   const headlineIds: string[] = [];
   const headline = pick("headline", "headline", "", original.headline ?? "", tailored.headline ?? "", headlineIds);
   anchor("@headline", headlineIds);
+  src("@headline", "headline");
 
   // --- summary --------------------------------------------------------- //
   const summaryIds: string[] = [];
   const summary = pick("summary", "summary", "", original.summary, tailored.summary, summaryIds);
   anchor("@summary", summaryIds);
+  src("@summary", "summary");
 
   // --- skills ---------------------------------------------------------- //
   const skillsMerged = mergeStringList("skills", "skills", original.skills, tailored.skills);
   const skills = skillsMerged.out;
-  skillsMerged.out.forEach((s, k) => anchor(`@skills.${lkey(s)}`, skillsMerged.ids[k] ?? []));
+  skillsMerged.out.forEach((s, k) => {
+    anchor(`@skills.${lkey(s)}`, skillsMerged.ids[k] ?? []);
+    src(`@skills.${lkey(s)}`, skillsMerged.src[k]);
+  });
 
   // Groups are presentation, so there is nothing here to accept or reject —
   // but they may never claim a skill the merge dropped: the backend's
@@ -316,6 +400,8 @@ function mergeResumes(
   const experience: Experience[] = [];
   const expIds: string[][] = [];
   const expBulletIds: string[][][] = [];
+  const expSrc: string[] = [];
+  const expBulletSrc: string[][] = [];
   {
     const orig = original.experience;
     const tail = tailored.experience;
@@ -325,10 +411,13 @@ function mergeResumes(
       if (oi === null) {
         const id = `exp.add.${ti}`;
         edits.push({ id, section: "experience", context: "", kind: "added", before: "", after: formatExperience(t) });
+        editSrc(id, id);
         if (!isRejected(id)) {
           experience.push(t);
           expIds.push([id]);
           expBulletIds.push(t.bullets.map(() => []));
+          expSrc.push(id);
+          expBulletSrc.push(t.bullets.map((_, j) => `${id}.b.${j}`));
         }
         return;
       }
@@ -350,24 +439,31 @@ function mergeResumes(
       experience.push(entry);
       expIds.push(sink);
       expBulletIds.push(b.ids);
+      expSrc.push(`exp.${oi}`);
+      expBulletSrc.push(b.src);
     });
     for (const oi of removed) {
       const id = `exp.rm.${oi}`;
       edits.push({ id, section: "experience", context: "", kind: "removed", before: formatExperience(orig[oi]), after: "" });
+      editSrc(id, id);
       if (isRejected(id)) {
         const k = Math.min(oi, experience.length);
         experience.splice(k, 0, orig[oi]);
         expIds.splice(k, 0, [id]);
         expBulletIds.splice(k, 0, orig[oi].bullets.map(() => []));
+        expSrc.splice(k, 0, id);
+        expBulletSrc.splice(k, 0, orig[oi].bullets.map((_, j) => `${id}.b.${j}`));
       }
     }
-    anchorEntries("@exp", expIds, expBulletIds);
+    anchorEntries("@exp", expIds, expBulletIds, expSrc, expBulletSrc);
   }
 
   // --- projects -------------------------------------------------------- //
   const projects: Project[] = [];
   const projIds: string[][] = [];
   const projBulletIds: string[][][] = [];
+  const projSrc: string[] = [];
+  const projBulletSrc: string[][] = [];
   {
     const orig = original.projects;
     const tail = tailored.projects;
@@ -377,10 +473,13 @@ function mergeResumes(
       if (oi === null) {
         const id = `proj.add.${ti}`;
         edits.push({ id, section: "projects", context: "", kind: "added", before: "", after: formatProject(t) });
+        editSrc(id, id);
         if (!isRejected(id)) {
           projects.push(t);
           projIds.push([id]);
           projBulletIds.push(t.bullets.map(() => []));
+          projSrc.push(id);
+          projBulletSrc.push(t.bullets.map((_, j) => `${id}.b.${j}`));
         }
         return;
       }
@@ -397,23 +496,29 @@ function mergeResumes(
       projects.push(entry);
       projIds.push(sink);
       projBulletIds.push(b.ids);
+      projSrc.push(`proj.${oi}`);
+      projBulletSrc.push(b.src);
     });
     for (const oi of removed) {
       const id = `proj.rm.${oi}`;
       edits.push({ id, section: "projects", context: "", kind: "removed", before: formatProject(orig[oi]), after: "" });
+      editSrc(id, id);
       if (isRejected(id)) {
         const k = Math.min(oi, projects.length);
         projects.splice(k, 0, orig[oi]);
         projIds.splice(k, 0, [id]);
         projBulletIds.splice(k, 0, orig[oi].bullets.map(() => []));
+        projSrc.splice(k, 0, id);
+        projBulletSrc.splice(k, 0, orig[oi].bullets.map((_, j) => `${id}.b.${j}`));
       }
     }
-    anchorEntries("@proj", projIds, projBulletIds);
+    anchorEntries("@proj", projIds, projBulletIds, projSrc, projBulletSrc);
   }
 
   // --- education ------------------------------------------------------- //
   const education: Education[] = [];
   const eduIds: string[][] = [];
+  const eduSrc: string[] = [];
   {
     const orig = original.education;
     const tail = tailored.education;
@@ -423,9 +528,11 @@ function mergeResumes(
       if (oi === null) {
         const id = `edu.add.${ti}`;
         edits.push({ id, section: "education", context: "", kind: "added", before: "", after: formatEducation(t) });
+        editSrc(id, id);
         if (!isRejected(id)) {
           education.push(t);
           eduIds.push([id]);
+          eduSrc.push(id);
         }
         return;
       }
@@ -441,28 +548,36 @@ function mergeResumes(
         details: pick(`edu.${oi}.details`, "education", ctx, o.details, t.details, sink),
       });
       eduIds.push(sink);
+      eduSrc.push(`edu.${oi}`);
     });
     for (const oi of removed) {
       const id = `edu.rm.${oi}`;
       edits.push({ id, section: "education", context: "", kind: "removed", before: formatEducation(orig[oi]), after: "" });
+      editSrc(id, id);
       if (isRejected(id)) {
         const k = Math.min(oi, education.length);
         education.splice(k, 0, orig[oi]);
         eduIds.splice(k, 0, [id]);
+        eduSrc.splice(k, 0, id);
       }
     }
-    anchorEntries("@edu", eduIds);
+    anchorEntries("@edu", eduIds, [], eduSrc);
   }
 
   // --- certifications -------------------------------------------------- //
   const certsMerged = mergeStringList("cert", "certifications", original.certifications, tailored.certifications);
   const certifications = certsMerged.out;
-  certsMerged.out.forEach((c, k) => anchor(`@cert.${lkey(c)}`, certsMerged.ids[k] ?? []));
+  certsMerged.out.forEach((c, k) => {
+    anchor(`@cert.${lkey(c)}`, certsMerged.ids[k] ?? []);
+    src(`@cert.${lkey(c)}`, certsMerged.src[k]);
+  });
 
   // --- military service ------------------------------------------------ //
   const military: MilitaryService[] = [];
   const milIds: string[][] = [];
   const milBulletIds: string[][][] = [];
+  const milSrc: string[] = [];
+  const milBulletSrc: string[][] = [];
   {
     const orig = original.military_service ?? [];
     const tail = tailored.military_service ?? [];
@@ -472,10 +587,13 @@ function mergeResumes(
       if (oi === null) {
         const id = `mil.add.${ti}`;
         edits.push({ id, section: "militaryService", context: "", kind: "added", before: "", after: formatMilitary(t) });
+        editSrc(id, id);
         if (!isRejected(id)) {
           military.push(t);
           milIds.push([id]);
           milBulletIds.push(t.bullets.map(() => []));
+          milSrc.push(id);
+          milBulletSrc.push(t.bullets.map((_, j) => `${id}.b.${j}`));
         }
         return;
       }
@@ -495,18 +613,23 @@ function mergeResumes(
       military.push(entry);
       milIds.push(sink);
       milBulletIds.push(b.ids);
+      milSrc.push(`mil.${oi}`);
+      milBulletSrc.push(b.src);
     });
     for (const oi of removed) {
       const id = `mil.rm.${oi}`;
       edits.push({ id, section: "militaryService", context: "", kind: "removed", before: formatMilitary(orig[oi]), after: "" });
+      editSrc(id, id);
       if (isRejected(id)) {
         const k = Math.min(oi, military.length);
         military.splice(k, 0, orig[oi]);
         milIds.splice(k, 0, [id]);
         milBulletIds.splice(k, 0, orig[oi].bullets.map(() => []));
+        milSrc.splice(k, 0, id);
+        milBulletSrc.splice(k, 0, orig[oi].bullets.map((_, j) => `${id}.b.${j}`));
       }
     }
-    anchorEntries("@mil", milIds, milBulletIds);
+    anchorEntries("@mil", milIds, milBulletIds, milSrc, milBulletSrc);
   }
 
   // --- languages ------------------------------------------------------- //
@@ -521,6 +644,7 @@ function mergeResumes(
       if (oi === -1) {
         const id = `lang.add.${lkey(t.language)}`;
         edits.push({ id, section: "languages", context: "", kind: "added", before: "", after: formatLanguage(t) });
+        editSrc(id, `lang.item.${lkey(t.language)}`);
         if (!isRejected(id)) {
           languages.push(t);
           langIds.push([id]);
@@ -543,25 +667,67 @@ function mergeResumes(
       if (usedO.has(oi)) return;
       const id = `lang.rm.${lkey(o.language)}`;
       edits.push({ id, section: "languages", context: "", kind: "removed", before: formatLanguage(o), after: "" });
+      editSrc(id, `lang.item.${lkey(o.language)}`);
       if (isRejected(id)) {
         languages.push(o);
         langIds.push([id]);
       }
     });
-    languages.forEach((l, k) => anchor(`@lang.${lkey(l.language)}`, langIds[k] ?? []));
+    // Keyed, never indexed — a restored removal is APPENDED, so the anchor has
+    // to be the language's own key rather than its slot.
+    languages.forEach((l, k) => {
+      anchor(`@lang.${lkey(l.language)}`, langIds[k] ?? []);
+      src(`@lang.${lkey(l.language)}`, `lang.item.${lkey(l.language)}`);
+    });
   }
 
   // --- contact (the AI must never touch it — surface it loudly if it did) //
+  //
+  // TWO anchorings per bit, and the order between them is load-bearing.
+  // `ResumeView` renders the fused `@contact` line only when the document is
+  // NOT editable; when it IS, it emits five separate `@contact.<field>` blocks.
+  // This walk used to anchor all five non-name edits to the fused path alone,
+  // so the moment editing was switched on for a tailored document a contact
+  // mark pointed at a node that does not exist — and ChangeLog still rendered
+  // its Crosshair, because that button gates on the id having ANY anchor. A
+  // visible button that silently does nothing is the one thing ChangeLog's own
+  // doc comment forbids. `blocksByEdit` is FIRST-wins, so emitting the
+  // per-field path first is what makes the id resolve to the block that exists.
+  //
+  // The field list is DERIVED from `CONTACT_FIELDS` — the same array
+  // `RE_CONTACT` is built from — so the paths this mints and the paths
+  // `readBlock` resolves cannot drift by one word. `name` is prepended because
+  // it is its own block on the title line, which is why that array excludes it.
   const contact = { ...tailored.contact };
-  (["name", "email", "phone", "location", "linkedin", "website"] as const).forEach((f) => {
+  const contactSink: string[] = [];
+  (["name", ...CONTACT_FIELDS] as ("name" | ContactField)[]).forEach((f) => {
     const sink: string[] = [];
     contact[f] = pick(`contact.${f}`, "contact", "", original.contact[f], tailored.contact[f], sink);
-    anchor(f === "name" ? "@contact.name" : "@contact", sink);
+    src(`@contact.${f}`, `contact.${f}`);
+    anchor(`@contact.${f}`, sink);
+    // The fused line carries the UNION of the five, not whichever one changed
+    // last: the old code re-assigned `blocks["@contact"]` once per field, so
+    // with two contact bits rewritten only the second was reachable from it.
+    if (f !== "name") contactSink.push(...sink);
   });
+  src("@contact", "contact");
+  anchor("@contact", contactSink);
+
+  // Every edit that is NOT an add or a remove has a block in the output, so its
+  // anchor falls out of the two maps above for nothing. First-wins, for
+  // `blocksByEdit`'s reason: the per-field contact block is emitted before the
+  // fused one and is the one an editable sheet actually renders.
+  for (const [path, ids] of Object.entries(blocks)) {
+    const from = sources[path];
+    if (!from) continue;
+    for (const id of ids) if (!(id in editAnchors)) editAnchors[id] = from;
+  }
 
   return {
     edits,
     blocks,
+    sources,
+    editAnchors,
     resume: {
       contact,
       headline,
@@ -605,19 +771,39 @@ export function applyEditDecisions(
  * An edit with no entry here has no block in the document — a removal that
  * stayed removed is the common case, and it is correct that it cannot be
  * anchored: it is not on the page.
+ *
+ * `sources` is the same map read the other way: OUTPUT path → the coordinate
+ * that block came FROM. It is what makes the document editable while a result
+ * is up, because a per-application edit stored against a path lands on the
+ * wrong bullet the moment a decision shifts an index. `editAnchors` is its
+ * companion for the review panel — edit id → the anchor of the block that edit
+ * describes, filled even when that block is not in the output at all.
  */
 export function mergeForReview(
   original: ResumeModel,
   tailored: ResumeModel,
   rejected: ReadonlySet<string>,
-): { resume: ResumeModel; edits: ResumeEdit[]; blocks: BlockAnchors } {
+): {
+  resume: ResumeModel;
+  edits: ResumeEdit[];
+  blocks: BlockAnchors;
+  sources: BlockSources;
+  editAnchors: Record<string, string>;
+} {
   return mergeResumes(original, tailored, (id) => rejected.has(id));
 }
 
-/** The reverse index: edit id → the block path it lands in. */
+/** The reverse index: edit id → the block path it lands in.
+ *
+ * FIRST-wins, deliberately. One id can now be anchored to two paths: the
+ * contact walk emits `@contact.<field>` and then the fused `@contact`, because
+ * the document renders one or the other depending on whether it is editable.
+ * The per-field block is emitted first and is the one an editable sheet has, so
+ * first-wins is what stops the review jump pointing at a node that is not
+ * there. Nothing else emits two anchors for one id. */
 export function blocksByEdit(blocks: BlockAnchors): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [path, ids] of Object.entries(blocks)) for (const id of ids) out[id] = path;
+  for (const [path, ids] of Object.entries(blocks)) for (const id of ids) if (!(id in out)) out[id] = path;
   return out;
 }
 
@@ -680,7 +866,79 @@ export function keywordsServed(edit: ResumeEdit, jdKeywords: string[]): string[]
   );
 }
 
+/**
+ * The containment test, in ONE place.
+ *
+ * `editContainsValue` asks it about a wording the AI PROPOSED; `blockContainsValue`
+ * asks it about the document that wording landed in. They are two readings of the
+ * same string and they may never disagree — a flag row that reads "resolved" off
+ * the proposal while the value is still on the paper is precisely the lie below.
+ */
+const holds = (text: string, value: string): boolean => !!text && lkey(text).includes(lkey(value));
+
 /** Whether a fabrication flag's value lives inside this edit's new text. */
 export function editContainsValue(edit: ResumeEdit, value: string): boolean {
-  return !!edit.after && lkey(edit.after).includes(lkey(value));
+  return holds(edit.after, value);
+}
+
+/**
+ * Whether a flagged value is still in ONE block of the document as it now stands.
+ *
+ * THE DOCUMENT, NOT THE DECISION. A flag used to count as resolved when every
+ * edit carrying its value was rejected, and that inference was sound for exactly
+ * as long as rejecting was the only way to change a line: the guard flags a value
+ * *because* it is not in the original, so putting the original back removes it.
+ * Since the tailored document is typed on (23.7) a rejection and a hand-edit can
+ * stand on the same block at once, and `applyOverrides` runs LAST — so the
+ * override wins the PAPER while the rejection wins the FLAG ROW. Reject the
+ * flagged edit, then type over the same bullet keeping the invented number, and
+ * the whole trust panel went mint while the number shipped.
+ *
+ * Asking the block is what closes that: green now means "the value is not on the
+ * line it was on", which is a statement about the file the user is about to send.
+ *
+ * PER BLOCK rather than over the whole résumé, and that is a false-positive
+ * guard, not an economy. A `number` flag can be a bare "12" (`_NUMBER_RE` takes
+ * digits on their own) and a `date` flag can be "2019" — both are substrings of
+ * text that has nothing to do with them ("2012", another role's dates), so a
+ * whole-document scan would leave those rows red forever no matter what the user
+ * did. The line the value came from is the honest haystack. Per FIELD inside it
+ * for the same reason: joining an entry's five fields lets a value straddle two
+ * of them and match something nobody wrote.
+ */
+export function blockContainsValue(resume: ResumeModel, path: string, value: string): boolean {
+  const draft = readBlock(resume, path);
+  return !!draft && draft.fields.some((f) => holds(f.value, value));
+}
+
+/**
+ * The same containment, over the block AND everything nested inside it.
+ *
+ * AN ENTRY EDIT IS NOT AN ENTRY BLOCK, and conflating the two falsely CLEARED a
+ * fabrication flag. `blocksByEdit` resolves an added or removed entry to its
+ * META path (`@exp.2`), whose `readBlock` fields are title/employer/location/
+ * dates — but the edit's own text comes from `formatExperience`, which folds the
+ * entry's BULLETS in. So the guard flagged an invented number that lives in a
+ * bullet, `editContainsValue` matched it there, and `blockContainsValue` then
+ * looked for it in the meta line alone, found nothing, and reported the flag
+ * resolved: "Nothing flagged is on your CV any more", printed over a CV that
+ * still carried it. Reproduced by executing the shipped modules.
+ *
+ * The bullet walk is DERIVED from `readBlock` rather than from the model: it
+ * increments until the reader says there is no such bullet, so it cannot drift
+ * from what the document actually addresses, and a kind with no bullets (an
+ * education entry) stops at the first probe. `@…b.<j>` is `RE_BULLET`'s own
+ * grammar — the reader is the only thing that decides whether a path exists.
+ */
+export function blockSubtreeContainsValue(
+  resume: ResumeModel,
+  path: string,
+  value: string,
+): boolean {
+  if (blockContainsValue(resume, path, value)) return true;
+  for (let j = 0; ; j++) {
+    const bullet = readBlock(resume, `${path}.b.${j}`);
+    if (!bullet) return false;
+    if (bullet.fields.some((f) => holds(f.value, value))) return true;
+  }
 }

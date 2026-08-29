@@ -455,15 +455,25 @@ class _Segments(Flowable):
         order = list(reversed(self.segments)) if self.rtl else list(self.segments)
         rows: list[tuple[list[tuple], float]] = []
         row: list[tuple] = []
+        # Where each row begins, as an index into `order`. `split()` needs to cut
+        # at a row boundary in ITEM terms, and it cannot recover that from
+        # `self._rows`: those hold the drawn tuples, which include the separators
+        # this loop invents and (in RTL) sit in reverse order.
+        starts: list[int] = []
+        row_start = 0
         x = 0.0
-        for text, font, size, color, url, icon in order:
+        for i, (text, font, size, color, url, icon) in enumerate(order):
             shown = _visual(text) if self.rtl else text
             w = _adv(shown, font, size) + _icon_w(icon, size)
             if row:
                 sep_w = _adv(self.sep, font, size)
                 if x + sep_w + w > avail_w:
                     rows.append((row, x))
+                    starts.append(row_start)
                     row, x = [], 0.0
+                    # The item that FORCED the break opens the new row, so the
+                    # start is recorded here and not on the next iteration.
+                    row_start = i
                 else:
                     row.append((self.sep, font, size, self.sep_color, "", "", x))
                     x += sep_w
@@ -471,10 +481,62 @@ class _Segments(Flowable):
             x += w
         if row:
             rows.append((row, x))
+            starts.append(row_start)
         self._rows = rows
+        self._row_starts = starts
         self.width = avail_w
         self.height = self.space_before + max(len(rows), 1) * self.leading + self.space_after
         return self.width, self.height
+
+    def split(self, avail_w, avail_h):
+        """Break a long inline list at a WRAPPED-ROW boundary.
+
+        A bare Flowable that cannot split is all-or-nothing: reportlab refuses to
+        place one taller than the frame and raises `LayoutError`, which reaches
+        the user as a 500 from `POST /render`. That is not hypothetical here —
+        `_Segments` carries the LANGUAGES section on every `skills="inline"`
+        template, and 160 languages 500'd on `minimal`, 163 on `executive` and
+        169 on `timeline` while the same résumé rendered fine on `classic`,
+        because chips route through `_Chips`, which already had a `split()`. A
+        crash that depends on which template you picked is the worst shape this
+        bug can take.
+
+        `KeepTogether` around it does not help and must not be reached for:
+        `build_languages` already wraps this in one, and reportlab answers a
+        KeepTogether it cannot place by RELEASING its children into the flow —
+        so the bare flowable is asked to split anyway. The traceback names
+        `_Segments`, not the wrapper.
+
+        The halves are rebuilt from whole SEGMENTS and re-pack themselves, the
+        way `_Chips.split` does. `_Text.split` pins its lines instead because it
+        re-JOINS them into one string and a second wrap of that string can break
+        differently; nothing here is re-joined, so a re-pack at the same width is
+        the same packing and a re-pack at a different one is the correct answer
+        for that width.
+        """
+        self.wrap(avail_w, avail_h)
+        rows = self._rows
+        room = avail_h - self.space_before
+        fit = int(room // self.leading) if self.leading > 0 else 0
+        # A single stranded row reads worse than moving the whole run, and a
+        # one-row widow at the top of the next frame is no better.
+        if fit < 1 or len(rows) - fit < 1:
+            return []
+        order = list(reversed(self.segments)) if self.rtl else list(self.segments)
+        cut = self._row_starts[fit]
+        head, tail = order[:cut], order[cut:]
+        if self.rtl:
+            # `wrap` reverses again, so hand each half back in LOGICAL order or
+            # the continuation reads backwards.
+            head, tail = list(reversed(head)), list(reversed(tail))
+
+        def clone(segments, *, before, after):
+            return _Segments(segments, sep=self.sep, sep_color=self.sep_color,
+                             leading=self.leading, align=self.align, rtl=self.rtl,
+                             rail=self.rail, space_before=before, space_after=after)
+
+        return [clone(head, before=self.space_before, after=0.0),
+                clone(tail, before=0.0, after=self.space_after)]
 
     def draw(self):
         if self.rail:
@@ -621,7 +683,39 @@ class _Chips(Flowable):
 
     RTL CONTRACT: this draws with a raw `canv.drawString`, so it MUST apply
     `_visual()` itself (the opposite of `_BarHeading`, which goes via
-    `_draw_line`).
+    `_draw_line`) — and it must do it PER LINE, after `_wrap_lines` has broken
+    LOGICAL text. Reordering the whole label first would break it in visual
+    order and stack the lines backwards.
+
+    A CHIP MAY NOT BE WIDER THAN ITS COLUMN. Not "is unlikely to be" — cannot
+    be. Until this was fixed a single item wider than `avail_w` was appended to
+    an empty row unconditionally (the `cur and` guard below only breaks a row
+    that already holds something), `wrap()` reported `avail_w` regardless of
+    what it had packed, so reportlab believed the flowable fitted, and nothing
+    clips. Measured on `split`, whose rail is 148.58pt at [48.0, 196.6]: one
+    60-character skill packed a 253.00pt row and was DRAWN from x=48.0 to
+    x=301.0, 84.4pt past the gutter that ends at 216.6 and straight into the
+    main column; a 147-character one packed 616.13pt.
+
+    The damage is not cosmetic. The chip overprints the main column at the same
+    y and pdfminer y-sorts, so the extracted text came back as "Designing and
+    operating distributed backeEnXd PsyEstRemIEs NatC scEale" — the chip
+    interleaved character by character with the EXPERIENCE heading, which
+    stopped being extractable at all. One long skill DELETED a standard section
+    name from the file we tell the user is ATS-safe.
+
+    The over-wide item therefore takes a row of its own and is line-broken by
+    `_wrap_lines`, whose hard-break loop already survives a single token longer
+    than the column — which is exactly why every `inline`-skills template stayed
+    clean under an 80-character unbreakable skill. The correct behaviour already
+    existed in this file; `_Chips` simply did not use it.
+
+    This is also NOT a second place to decide what fits. `_flow`'s sidebar
+    demotion pass measures HEIGHT only, and it stays that way: with an over-wide
+    chip now wrapping, the block it measures is genuinely taller and the
+    existing height trigger sees it. A width gate there would be a second
+    classifier answering the same question from a different gate — the mistake
+    the geo-restriction work already paid for once.
     """
 
     def __init__(self, items, *, font, size, ink, border, rtl=False, fill=None,
@@ -636,19 +730,49 @@ class _Chips(Flowable):
         self.sep, self.sep_color = sep, sep_color or border
         self.space_before, self.space_after = space_before, space_after
         self.chip_h = size * 1.72
+        # Leading INSIDE an over-wide chip. Tighter than the body leading on
+        # purpose: the wrapped lines are one label, and a body-sized gap would
+        # read as two chips sharing a border.
+        self.line_lead = size * 1.30
         self.rows: list = []
 
     def _pack(self, avail_w):
-        rows, cur, cw = [], [], 0.0
+        """Break the items into rows: `[(entries, row_h)]`, an entry being
+        `(label, box_width, lines)`.
+
+        `lines` is what makes the flowable total rather than best-effort. A
+        normal item is one line and one shared row, exactly as before. An item
+        whose box would be wider than the whole column gets a row to itself at
+        the column's own width, with its label line-broken to fit INSIDE the
+        padding — so `box_width` is `avail_w` by construction and no row can
+        exceed the column no matter what a single skill contains.
+        """
+        # `max(..., size)` is a floor, not a guess: `_wrap_lines` hard-breaks
+        # down to one character but no further, so handing it a non-positive
+        # width would loop on a label it can never fit.
+        inner = max(avail_w - 2 * self.pad, self.size)
+        rows: list = []
+        cur: list = []
+        cw = 0.0
         for item in self.items:
             w = _adv(item, self.font, self.size) + 2 * self.pad
+            if w > avail_w:
+                # Flush first: an over-wide chip owns its row, so anything
+                # already packed keeps the row it was packed into.
+                if cur:
+                    rows.append((cur, self.chip_h))
+                    cur, cw = [], 0.0
+                lines = _wrap_lines(item, self.font, self.size, inner)
+                rows.append(([(item, avail_w, lines)],
+                             self.chip_h + (len(lines) - 1) * self.line_lead))
+                continue
             if cur and cw + self.gap + w > avail_w:
-                rows.append(cur)
+                rows.append((cur, self.chip_h))
                 cur, cw = [], 0.0
-            cur.append((item, w))
+            cur.append((item, w, [item]))
             cw += (self.gap if cw else 0.0) + w
         if cur:
-            rows.append(cur)
+            rows.append((cur, self.chip_h))
         return rows
 
     def split(self, avail_w, avail_h):
@@ -659,17 +783,29 @@ class _Chips(Flowable):
         cannot place it at all — it jumps whole to the next frame and leaves the
         column it came from empty. That is exactly what a two-column render of a
         dense résumé looked like: a page-1 main column holding only the summary.
+
+        The room is ACCUMULATED per row rather than divided by a fixed step:
+        rows are no longer all `chip_h` tall (an over-wide chip wraps), and the
+        old `(room + gap) // (chip_h + gap)` would count a two-line row as one
+        line and hand the frame a head taller than the room it was given. For a
+        block of uniform rows the two agree exactly, which is why the 200-item
+        pin still returns the same 2 halves.
         """
         self.wrap(avail_w, avail_h)
         room = avail_h - self.space_before
-        step = self.chip_h + self.gap
-        fit = int((room + self.gap) // step) if step > 0 else 0
+        used, fit = 0.0, 0
+        for _entries, row_h in self.rows:
+            step = row_h if fit == 0 else self.gap + row_h
+            if used + step > room:
+                break
+            used += step
+            fit += 1
         # A single stranded row reads worse than moving the whole block, and a
         # one-row widow on the next frame is no better.
         if fit < 1 or len(self.rows) - fit < 1:
             return []
-        head_items = [label for row in self.rows[:fit] for label, _w in row]
-        tail_items = [label for row in self.rows[fit:] for label, _w in row]
+        head_items = [label for entries, _h in self.rows[:fit] for label, _w, _ln in entries]
+        tail_items = [label for entries, _h in self.rows[fit:] for label, _w, _ln in entries]
 
         def clone(items, *, before, after):
             return _Chips(items, font=self.font, size=self.size, ink=self.ink,
@@ -684,7 +820,7 @@ class _Chips(Flowable):
     def wrap(self, avail_w, avail_h):
         self.width = avail_w
         self.rows = self._pack(avail_w)
-        body = len(self.rows) * (self.chip_h + self.gap) - self.gap if self.rows else 0.0
+        body = (sum(h for _entries, h in self.rows) + self.gap * (len(self.rows) - 1)) if self.rows else 0.0
         self.height = body + self.space_before + self.space_after
         return self.width, self.height
 
@@ -692,27 +828,45 @@ class _Chips(Flowable):
         if not self.rows:
             return
         canv = self.canv
-        y = self.space_after + len(self.rows) * (self.chip_h + self.gap) - self.gap - self.chip_h
-        for row in self.rows:
-            row_w = sum(w for _, w in row) + self.gap * (len(row) - 1)
+        body = sum(h for _entries, h in self.rows) + self.gap * (len(self.rows) - 1)
+        y = self.space_after + body
+        for entries, row_h in self.rows:
+            y -= row_h
+            row_w = sum(w for _l, w, _ln in entries) + self.gap * (len(entries) - 1)
             x = (self.width - row_w) if self.rtl else 0.0
-            for i, (label, w) in enumerate(row):
+            for i, (label, w, lines) in enumerate(entries):
                 if self.fill is not None:
                     canv.setFillColor(self.fill)
                 canv.setStrokeColor(self.border)
                 canv.setLineWidth(0.6)
-                canv.roundRect(x, y, w, self.chip_h, self.radius,
+                canv.roundRect(x, y, w, row_h, self.radius,
                                stroke=1, fill=1 if self.fill is not None else 0)
                 canv.setFont(self.font, self.size)
                 canv.setFillColor(self.ink)
-                canv.drawString(x + self.pad, y + self.chip_h * 0.31,
-                                _visual(label) if self.rtl else label)
+                last = len(lines) - 1
+                for k, line in enumerate(lines):
+                    shown = _visual(line) if self.rtl else line
+                    # `_place`, not `x + pad`: a single-line chip only
+                    # right-aligns in RTL by accident, because its box width is
+                    # derived from its own advance. Wrapped lines have differing
+                    # widths, so they need the real direction-aware helper — and
+                    # for the single-line case `_place` returns exactly `x + pad`
+                    # either way, which is what keeps an unchanged résumé
+                    # rendering byte-identically.
+                    canv.drawString(
+                        _place(x + self.pad, x + w - self.pad,
+                               _adv(shown, self.font, self.size), "start", self.rtl),
+                        y + self.chip_h * 0.31 + (last - k) * self.line_lead,
+                        shown,
+                    )
                 x += w
-                if self.sep and i < len(row) - 1:
+                # The separator sits on the LAST line's baseline, which is the
+                # one that keeps its fixed relation to the box bottom.
+                if self.sep and i < len(entries) - 1:
                     canv.setFillColor(self.sep_color)
                     canv.drawString(x + self.gap * 0.2, y + self.chip_h * 0.31, self.sep)
                 x += self.gap
-            y -= self.chip_h + self.gap
+            y -= self.gap
 
 
 class _Cols(Flowable):
@@ -748,6 +902,49 @@ class _Cols(Flowable):
         self.height = (sum(self.row_lines) * self.leading
                        + self.space_before + self.space_after)
         return self.width, self.height
+
+    def split(self, avail_w, avail_h):
+        """Break the grid at a ROW boundary.
+
+        Same rule, same crash as `_Segments.split` above: without this,
+        `POST /render` raised `LayoutError` and returned a 500 at 107
+        certifications on `classic` and `minimal`, 109 on `executive`, 113 on
+        `timeline` and 133 on `compact` — every `list_cols > 1` template, which
+        is nine of the eleven. The `KeepTogether` `build_certifications` puts
+        around it does not save it: reportlab releases the wrapper's children
+        and then cannot place this flowable, which is why the traceback names
+        `_Cols`.
+
+        Rows are ACCUMULATED rather than divided by a fixed step, because a row
+        is as tall as its TALLEST cell — one certification that wraps to three
+        lines makes its row three lines tall, and `len(rows) * leading` would
+        hand the frame a head taller than the room it was given.
+
+        The halves carry whole ITEMS and re-wrap themselves; see
+        `_Segments.split` for why pinning the cell breaks would be wrong rather
+        than merely unnecessary.
+        """
+        self.wrap(avail_w, avail_h)
+        room = avail_h - self.space_before
+        used, fit = 0.0, 0
+        for lines in self.row_lines:
+            step = lines * self.leading
+            if used + step > room:
+                break
+            used += step
+            fit += 1
+        if fit < 1 or len(self.row_lines) - fit < 1:
+            return []
+        cut = fit * self.cols
+
+        def clone(items, *, before, after):
+            return _Cols(items, font=self.font, size=self.size, color=self.color,
+                         glyph_color=self.glyph_color, leading=self.leading,
+                         rtl=self.rtl, cols=self.cols, gap=self.gap, glyph=self.glyph,
+                         space_before=before, space_after=after)
+
+        return [clone(self.items[:cut], before=self.space_before, after=0.0),
+                clone(self.items[cut:], before=0.0, after=self.space_after)]
 
     def draw(self):
         canv = self.canv
@@ -1076,7 +1273,7 @@ def page_count(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> int:
     return _render(resume, template)[1]
 
 
-def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list, int]:
+def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list, list, list]:
     """Build the document flow.
 
     Returns `(header, main, side)`.
@@ -1101,7 +1298,7 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
     c = resume.contact
     flow.append(_Text(
         c.name or "Name", font=s.bold, size=spec.name_size,
-        color=s.band_ink if band else (s.accent if spec.accent_name else s.ink),
+        color=s.band_ink if band else s.ink,
         leading=spec.name_size * 1.18, tracking=s.track_name,
         align=name_align, rtl=s.rtl, space_after=1.0,
     ))
@@ -1111,7 +1308,7 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
         # opposite the name so the two never flatten into one block.
         flow.append(_Text(
             resume.headline, font=s.reg, size=s.body + (1.2 if band else 0.8),
-            color=s.band_sub if band else (s.ink if spec.accent_name else s.accent),
+            color=s.band_sub if band else s.accent,
             leading=(s.body + 0.8) * 1.35, tracking=0.3 * (0.5 if s.rtl else 1.0),
             align=name_align, rtl=s.rtl, space_before=1.0, space_after=1.0,
         ))
@@ -1133,9 +1330,13 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
             leading=spec.meta_size * (1.5 if band else 1.45),
             align=name_align, rtl=s.rtl,
             # Without a rule to separate it, the header needs the air itself.
-            space_after=0.0 if (spec.header_rule and not band) else (0.0 if band else 5.0),
+            space_after=0.0 if spec.header != "plain" else 5.0,
         ))
-    if spec.header_rule and not band:
+    # `header` is the only thing consulted here, and that is the fix: the
+    # hairline used to key off a `header_rule` bool no template set False, so
+    # `header="plain"` was indistinguishable from `header="rule"` and ivy and
+    # minimal drew a rule their own specs forbid. See TemplateSpec.header.
+    if spec.header == "rule":
         flow.append(_Rule(s.accent if spec.header_rule_accent else s.rule,
                           thickness=spec.header_rule_pt, space_before=6.0, space_after=0.0))
 
@@ -1331,8 +1532,17 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
         def project(proj, first: bool):
             opening, trailing = entry(proj.name, "", [], proj.bullets, first=first)
             if proj.description:
+                # `rail=s.rail` (None for the ten templates without one) is what
+                # keeps the line continuous. The rail is drawn PER FLOWABLE over
+                # that flowable's own height, so consecutive flowables tile into
+                # one line and a flowable that does not draw it leaves a HOLE —
+                # measured at 15.2pt on `timeline`, containing the description
+                # text, on the template whose picker copy promises "one
+                # continuous line". `rail_dot` stays off: the dot marks the role,
+                # and a second one on the description would say there are two.
                 desc = _Text(proj.description, font=s.reg, size=s.body, color=s.muted,
-                             leading=s.lead, rtl=s.rtl, space_after=s.bullet_after)
+                             leading=s.lead, rtl=s.rtl, space_after=s.bullet_after,
+                             rail=s.rail)
                 opening = opening[:1] + [desc] + opening[1:]
             return opening, trailing
 
@@ -1426,6 +1636,18 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
     # placed, and any section that would not fit is demoted to the main column
     # at its natural position in `section_order`. A section is the unit because
     # splitting one across the two columns is worse than moving it.
+    #
+    # HEIGHT ONLY, DELIBERATELY. This pass used to have no width half at all,
+    # and that is how an over-wide chip — one line tall, so it always "fitted" —
+    # crossed the gutter and overprinted the main column. The fix went into
+    # `_Chips._pack` instead, which makes horizontal overflow impossible rather
+    # than detectable: a wrapped chip is genuinely taller, so `_content_height`
+    # already sees it and demotes on it. Do not add a width gate here. It would
+    # be a second classifier answering the same question from a different gate,
+    # able to disagree with the flowable about the same section — the correction
+    # the geo-restriction work paid for once (`kits.enqueue_kits` and
+    # `GET /jobs/history` each re-derived a verdict and each contradicted the
+    # search about the same posting).
     side_cap = 0.0
     side_w = 0.0
     if side_keys:

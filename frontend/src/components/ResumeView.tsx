@@ -1,11 +1,13 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ResumeModel } from "../types";
+import type { ResumeTemplate } from "../api/client";
 import { Badge } from "./ui";
 import { cn } from "../lib/cn";
 import { CONTACT_FIELDS, dkey, inlineField, INSERT_KINDS, type InsertKind } from "../lib/resumeBlocks";
 import { resumeLanguage } from "../lib/lang";
+import { TEMPLATE_SPECS, bandFill, headingRuleFill, type TemplateSpec } from "../lib/templateSpecs";
 
 /**
  * `plaintext-only` is what stops a paste putting markup into a `string[]`.
@@ -27,10 +29,12 @@ const EDITABLE_MODE: "plaintext-only" | true = (() => {
   return probe.contentEditable === "plaintext-only" ? "plaintext-only" : true;
 })();
 
-/** How a block relates to the tailoring. `changed` = the AI touched it and you
- * kept the change; `restored` = every edit on it was declined, so what you are
- * reading is your original wording. */
-export type BlockMark = "changed" | "restored";
+/** How a block relates to the tailoring — who last spoke on this line.
+ * `changed` = the AI touched it and you kept the change; `restored` = every
+ * edit on it was declined, so what you are reading is your original wording;
+ * `yours` = you typed this yourself over the tailored draft, so it is neither
+ * the AI's wording nor your original, and it outranks both. */
+export type BlockMark = "changed" | "restored" | "yours";
 
 interface Props {
   resume: ResumeModel;
@@ -39,6 +43,22 @@ interface Props {
    * `"sheet"` is the résumé as a page — white ground, page margins, a lift.
    */
   surface?: "panel" | "sheet";
+  /**
+   * The template the FILE will be rendered with — and therefore the one this
+   * page has to be drawn in.
+   *
+   * It was missing, and that was the whole defect: `DocumentPanel` held the
+   * choice and handed it to the PDF preview, the x-ray and both downloads, but
+   * not to the page the user edits on. So picking Executive gave you a serif,
+   * cream, centred-name, split-entry PDF while the document on screen stayed
+   * sans, white, left-aligned and ruled. Every other surface honoured the
+   * choice; the one you work on did not.
+   *
+   * Only `surface="sheet"` reads it. The détail modal is a card inside the app
+   * chrome, not a preview of a download, so it keeps the one look it has always
+   * had and passes nothing.
+   */
+  template?: ResumeTemplate;
   /** Block path → how it relates to the tailoring. Paths come from
    * `resumeDiff.mergeForReview`'s `blocks`, and must use the same grammar. */
   marks?: Map<string, BlockMark>;
@@ -71,6 +91,13 @@ interface Props {
   /** Append a bullet to this entry. Rendered at the end of its own list, which
    * is the only place a user looks for it. */
   onAddBullet?: (entryPath: string) => void;
+  /** One quiet line where the add control would be, for a surface that cannot
+   * add. It sits there and nowhere else because that is where the question is
+   * asked: the foot of the paper is the only place a user looks for "+ Add to
+   * your CV", so its absence is answered in the same spot rather than left to
+   * read as a missing feature. Ignored when `onAdd` is given — the control
+   * itself is the better answer. */
+  footNote?: string;
 }
 
 
@@ -183,12 +210,150 @@ function sectionOrder(resume: ResumeModel): readonly string[] {
     : EXPERIENCED_ORDER;
 }
 
-/** Section heading — small uppercase accent label with a hairline underline,
- * matching the premium surfaces (replaces the old `.resume-view h4`). */
-function SectionHead({ children }: { children: React.ReactNode }) {
+/* ===========================================================================
+   The template, on the paper.
+   ===========================================================================
+   This page is the THIRD renderer of `TemplateSpec`'s presentation vocabulary,
+   after `pdf_renderer` and `docx_renderer`, and it reads the same table they do
+   (`lib/templateSpecs.ts`, pinned against templates.py by check-mirrors 23).
+
+   What it reproduces: the palette, the serif/sans category, the heading
+   grammar, the header band, the entry grammar, the rail, the skills treatment,
+   the bullet glyph and the column count.
+
+   What it does NOT, each for a stated reason and each said out loud under the
+   document (`doc.screen.note` / `doc.screen.twoColumn` in DocumentPanel):
+     * the exact typeface — Lato and Spectral are PDF-EMBEDDED, not web-loaded,
+       and fonts.css deliberately ships only the Inter/Heebo subsets;
+     * `layout="sidebar"` — which sections land in the rail is a reportlab
+       MEASUREMENT with a demote pass and an early-career carve-out, so a DOM
+       guess would show sections in the rail that the real file moved out. That
+       is a new lie in the same class as the one this code exists to fix;
+     * `contact_icons` / `date_icon` / the rail's dot in the DOCX — the 21.8
+       ORNAMENT carve-out, on the same recorded reasoning, plus one specific to
+       this surface: an icon element inside a contentEditable contact block
+       would be typed over or deleted by the first edit.
+   =========================================================================== */
+
+/** A CSS hex ("#1F3A5F") as the space-separated RGB triplet the design tokens
+ * are declared in. That form is not decoration: `rgb(var(--accent) /
+ * <alpha-value>)` is what lets every `bg-accent/[0.06]` and `outline-accent/70`
+ * in this file compose an alpha against the template's own colour. */
+function channels(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) || 0) as [number, number, number];
+}
+const triplet = (hex: string) => channels(hex).join(" ");
+
+/** `pdf_renderer._mix` — `a` moved `t` of the way to `b`, as a token triplet.
+ * Mixing is how a "reduced alpha" is expressed here: a token is three channels
+ * with no alpha of its own, so the honest twin of "40% of this over that" is
+ * the mix. */
+function mixed(a: string, b: string, t: number): string {
+  const [ar, ag, ab] = channels(a);
+  const [br, bg, bb] = channels(b);
+  return [ar + (br - ar) * t, ag + (bg - ag) * t, ab + (bb - ab) * t]
+    .map((v) => Math.round(v))
+    .join(" ");
+}
+
+/** Points → CSS pixels at 96dpi, floored at a hairline. Rule weights are
+ * declared in points because the file is, and a 0.5pt hairline still has to be
+ * one real pixel here. */
+const rulePx = (pt: number) => `${Math.max(1, Math.round((pt * 4) / 3))}px`;
+
+/** A4, the page size of every template — which is why the mirror does not carry
+ * `page_w_pt`. Used only to turn a width in points into a share of the text
+ * column, so the "short" heading mark keeps its proportion at 390px instead of
+ * being a fixed 42px on a 336px page. */
+const PAGE_W_PT = 595.276;
+
+/**
+ * Section heading, in the six shapes `TemplateSpec.heading` names — rule,
+ * short, bar, plain, centered, hung.
+ *
+ * `spec` is absent on `surface="panel"`, which keeps the original treatment
+ * (tracked caps over a hairline = `heading="rule"`, which is also what classic
+ * declares, so the default template is unchanged on both surfaces).
+ *
+ * No `data-block` and no `blkProps`: a heading is a label the renderers print
+ * from `labels.py`, not a part of the résumé, so nothing here is reachable by
+ * the delegated editing handlers.
+ */
+function SectionHead({
+  spec,
+  dir,
+  children,
+}: {
+  spec?: TemplateSpec;
+  dir: "ltr" | "rtl";
+  children: React.ReactNode;
+}) {
+  // `heading_case` is a NO-OP in Hebrew, and both renderers branch on direction
+  // BEFORE they look at it: .upper() on Hebrew is wasted work and .title()
+  // mangles a mixed he/en label.
+  const cased = !spec
+    ? "uppercase"
+    : dir === "rtl"
+      ? ""
+      : spec.headingCase === "title"
+        ? "capitalize"
+        : "uppercase";
+  // Every per-template number arrives as an inline style, never as a computed
+  // class: Tailwind generates utilities by SCANNING THE SOURCE, so a class name
+  // assembled at runtime resolves to nothing at all.
+  const style: CSSProperties = {};
+  let shape = "border-b border-line pb-1";
+  let tone = "text-accent-soft";
+  if (spec) {
+    // `color=s.ink if style in ("short", "hung") else s.accent` — the two
+    // treatments that carry their own accent mark set the label in ink.
+    tone = spec.heading === "short" || spec.heading === "hung" ? "text-ink" : "text-accent-soft";
+    shape = "";
+    if (spec.heading === "rule" || spec.heading === "centered") {
+      shape = spec.heading === "centered" ? "border-b pb-1 text-center" : "border-b pb-1";
+      style.borderBottomWidth = rulePx(spec.headingRulePt);
+      style.borderBottomColor = headingRuleFill(spec);
+    } else if (spec.heading === "bar") {
+      // A logical border, so the bar lands at the text start in both directions
+      // with no second rule — the same free mirroring `_BarHeading` gets.
+      shape = "border-s ps-2";
+      style.borderInlineStartWidth = rulePx(spec.headingBarW);
+      style.borderInlineStartColor = spec.accent;
+    }
+    // "plain" and "hung" draw no rule at all. A hung heading is PLACED by the
+    // sheet root's own `sm:[&_section]:grid`: at 390px the sheet's gutter is
+    // ~27px against the PDF's 84pt margin, so below `sm` there is nothing to
+    // hang into and it degrades to plain, which is what it looks like anyway.
+  }
   return (
-    <h4 className="mb-1.5 border-b border-line pb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-accent-soft">
+    <h4
+      className={cn(
+        "mb-1.5 text-[11px] font-semibold",
+        cased,
+        tone,
+        shape,
+        spec ? "tracking-[var(--doc-head-tracking)]" : "tracking-[0.08em]",
+        spec?.heading === "hung" && "sm:mb-0 sm:text-end",
+      )}
+      style={style}
+    >
       {children}
+      {spec?.heading === "short" && (
+        // The short accent mark, as a real child rather than an `::after`: its
+        // width is a SHARE of the text column (heading_short_pt over the page's
+        // own text width), which an `::after` could only carry as another
+        // runtime class Tailwind would never generate.
+        <span
+          aria-hidden="true"
+          className="mt-1 block"
+          style={{
+            height: rulePx(spec.headingRulePt),
+            width: `${((spec.headingShortPt / (PAGE_W_PT - 2 * spec.mx)) * 100).toFixed(1)}%`,
+            background: headingRuleFill(spec),
+          }}
+        />
+      )}
     </h4>
   );
 }
@@ -357,6 +522,7 @@ function AddSkillChip({
 export default function ResumeView({
   resume,
   surface = "panel",
+  template = "classic",
   marks,
   activeBlock,
   activeNonce,
@@ -366,6 +532,7 @@ export default function ResumeView({
   onAddSkill,
   onAdd,
   onAddBullet,
+  footNote,
 }: Props) {
   const { t, i18n } = useTranslation("tailor");
   const c = resume.contact;
@@ -401,6 +568,127 @@ export default function ResumeView({
     : i18n.dir() === "rtl"
       ? "rtl"
       : "ltr";
+
+  /* --- the template ------------------------------------------------------ */
+  // `?? classic` is `get_template`'s own fallback: an unknown name renders the
+  // default rather than nothing, so an old client or a stale stored row cannot
+  // produce a blank page.
+  const spec = TEMPLATE_SPECS[template] ?? TEMPLATE_SPECS.classic;
+  /** Only the sheet is a preview of a file. The détail modal keeps its look. */
+  const styled = surface === "sheet";
+  const headSpec = styled ? spec : undefined;
+  const band = styled && spec.header === "band";
+  // A band anchors the name hard to the top-start corner; centring inside it
+  // reads like a certificate (`_flow`'s `name_align`).
+  const centred = styled && !band && spec.nameCentered;
+  const railed = styled && spec.rail;
+  const splitEntry = styled && spec.entry === "split";
+  const inlineSkills = styled && spec.skills === "inline";
+  /** Body copy. Both renderers set prose in `ink` and keep `muted` for META —
+   * dates, locations, the contact line, a project's description — while this
+   * sheet used ONE token for both, so the two PDF colours could not be told
+   * apart here. `surface="panel"` keeps the softer prose it has always had. */
+  const prose = styled ? "text-ink" : "text-ink-muted";
+
+  /**
+   * The template's palette and type, as an inline override of the tokens
+   * `.sheet` declares.
+   *
+   * INLINE, never an edit to `.sheet` in styles.css: that block is one palette
+   * for every template, and it also has to keep `color-scheme`, the scrollbar
+   * thumb and `--shadow-doc`, none of which has a TemplateSpec twin. Re-
+   * declaring the tokens on this element is the same mechanism `.paper` and
+   * `.sheet` themselves use — every `text-ink-muted` / `border-line` /
+   * `bg-accent/[0.06]` underneath re-resolves by inheritance, so not one
+   * utility class in this file has to know a template exists.
+   *
+   * Mapped from `_Sheet` (pdf_renderer), field for field.
+   */
+  const sheetVars: CSSProperties | undefined = styled
+    ? ({
+        "--accent": triplet(spec.accent),
+        // The sheet declares accent-soft as the accent already; the renderers
+        // have no second accent at all.
+        "--accent-soft": triplet(spec.accent),
+        "--line": triplet(spec.rule),
+        "--ink": triplet(spec.ink),
+        "--ink-muted": triplet(spec.muted),
+        // `s.sep` — separators sit between the hairline and the body grey so
+        // they read as punctuation rather than as content.
+        "--ink-faint": mixed(spec.muted, spec.rule, 0.55),
+        // `page_bg` is the second ORNAMENT carve-out in templates.py: the PDF
+        // paints executive's cream and the DOCX prints white. The screen is a
+        // preview of the PDF, so it paints it.
+        "--panel": triplet(spec.pageBg || "#FFFFFF"),
+        // Chip fill. `accent_soft: ""` mixes in `_Sheet` at accent @ 12% over
+        // white, and folding that here keeps the fallback in one place.
+        "--panel-2": spec.accentSoft ? triplet(spec.accentSoft) : mixed("#FFFFFF", spec.accent, 0.12),
+        // Tracking is declared in POINTS against a point type size, so it
+        // travels as an em and lands correctly at any screen size. Hebrew takes
+        // half of it in both renderers — it is unicase and its letterforms are
+        // already open — so the same halving happens here.
+        "--doc-head-tracking": `${((spec.tracking / spec.head) * (paperDir === "rtl" ? 0.5 : 1)).toFixed(3)}em`,
+        "--doc-name-tracking": `${((spec.nameTracking / spec.name) * (paperDir === "rtl" ? 0.5 : 1)).toFixed(3)}em`,
+        // Read by ONE zero-specificity `::marker` rule in styles.css — see
+        // `listStyle` below for why the glyph may not be an element.
+        "--doc-bullet": triplet(spec.bulletAccent ? spec.accent : spec.muted),
+        "--doc-bullet-size": `${spec.bulletScale}em`,
+      } as CSSProperties)
+    : undefined;
+
+  /**
+   * The reversed-out palette for a filled header band, on the wrapper only.
+   *
+   * The blocks inside keep their exact className strings and their exact
+   * `blkProps` calls — the colour arrives through tokens, so no block markup
+   * changes at all. `--accent` is the one that is easy to miss: `blk()`'s
+   * `hover:bg-accent/[0.06]` and its focus outline are the only thing that says
+   * a block is editable, and on modern's and panel's dark navy the sheet's own
+   * navy accent is invisible.
+   */
+  const bandVars: CSSProperties | undefined = band
+    ? ({
+        "--ink": triplet(spec.bandInk),
+        "--ink-muted": triplet(spec.bandMeta),
+        // The `·` separators AND `[data-ph]:empty::before`, which is the only
+        // thing that makes an absent phone number discoverable — so it has to
+        // stay legible on the band rather than merely dimmer than it.
+        "--ink-faint": mixed(spec.bandMeta, bandFill(spec), 0.45),
+        "--accent": triplet(spec.bandSub),
+        "--accent-soft": triplet(spec.bandSub),
+      } as CSSProperties)
+    : undefined;
+
+  /**
+   * `TemplateSpec.bullet_glyph`, as `list-style-type` — NEVER an in-flow glyph
+   * span inside the `<li>`, because that `<li>` IS the contentEditable node for
+   * `@exp.i.b.j` and a child element in it would be typed over or deleted by
+   * the first edit. Colour and size ride `--doc-bullet` / `--doc-bullet-size`
+   * through one `::marker` rule for the same reason.
+   *
+   * Only set when the glyph is not the default disc: a browser that does not
+   * know the string form of `list-style-type` falls back to `disc`, which is
+   * what nine of the eleven templates draw anyway, so the two remaining
+   * templates degrade to a dot rather than to nothing.
+   */
+  const listStyle: CSSProperties | undefined =
+    styled && spec.bulletGlyph !== "•"
+      ? // The trailing space is load-bearing. A STRING marker is drawn exactly
+        // as written, with none of the gap `disc` gets for free, so an em dash
+        // butts straight against the first word ("—Rebuilt the settlement…").
+        // The PDF puts `indent=body*1.05` between the glyph and the text; this
+        // is the same gap, in the only place a string marker can carry one.
+        { listStyleType: `"${spec.bulletGlyph} "` }
+      : undefined;
+
+  /** `TemplateSpec.rail` — a hairline down the entries with a dot per ROLE (per
+   * entry head, `rail_dot`), not per heading. In the PDF it lives in the margin
+   * and costs the text column nothing; here it costs `ps-4`. The colour is
+   * `_mix(accent, white, 0.45)`, which over white paper IS `accent/55`.
+   * Logical properties throughout, so it mirrors in RTL with no second rule. */
+  const RAIL = "border-s border-accent/55 ps-4";
+  const RAIL_DOT =
+    "relative before:absolute before:-start-[19px] before:top-[7px] before:h-[5px] before:w-[5px] before:rounded-full before:bg-accent/55 before:content-['']";
 
   /** Marker + spotlight for one block. Every marker uses LOGICAL properties
    * (`border-s`, `-ms`, `ps`) so RTL mirrors without a second rule. A bullet
@@ -441,6 +729,16 @@ export default function ResumeView({
       shape === "item" && mark === "restored" && "marker:text-warn",
       shape === "chip" && mark === "changed" && "ring-1 ring-inset ring-accent/45",
       shape === "chip" && mark === "restored" && "ring-1 ring-inset ring-warn/55",
+      // `yours` is COLOUR ONLY — the same geometry as the other two, in the
+      // mint this app already uses for "you settled this". A block that
+      // reflowed under the reader's finger would read as a bug on a sheet
+      // measured against a real page count, and it is a resting state rather
+      // than a fade, because `prefers-reduced-motion` parks an animation at its
+      // `to` value and a highlight that faded out would leave those users with
+      // no indication at all.
+      shape === "block" && mark === "yours" && "-ms-2 border-s-2 border-mint/60 ps-2",
+      shape === "item" && mark === "yours" && "marker:text-mint",
+      shape === "chip" && mark === "yours" && "ring-1 ring-inset ring-mint/55",
       // The resting highlight stays a plain class so it survives the whole
       // spotlight window; the animation only governs how it ARRIVES.
       activeBlock === path && "rounded-[3px] bg-accent/10 outline outline-2 outline-offset-2 outline-accent/60",
@@ -451,16 +749,46 @@ export default function ResumeView({
 
   // ONE delegated handler rather than a handler, a role and a tabIndex on every
   // <strong>, <li> and <span> in the document.
-  const act = onEditBlock ?? onSelectBlock;
-  const onClick = act
-    ? (ev: React.MouseEvent) => {
-        // A block being TYPED IN is not a block being opened. Without this the
-        // first tap on a bullet would also fire the compound-block route.
-        if ((ev.target as HTMLElement).isContentEditable) return;
-        const path = (ev.target as HTMLElement).closest<HTMLElement>("[data-block]")?.dataset.block;
-        if (path) act(path);
-      }
-    : undefined;
+  //
+  // EXACTLY ONE OF THE TWO, and never both. Firing both was tried and REVERTED,
+  // because the two handlers move the same page in opposite directions at the
+  // same moment: `onEditBlock` opens `BlockEditSheet`, which is `aria-modal`
+  // with `document.body.style.overflow = "hidden"`, while `onSelectBlock` ends
+  // in `scrollIntoView` on a review row in a panel BELOW the document. Measured
+  // in Chrome on the real page: one tap on a compound block moved `scrollTop`
+  // from 0 to 246.7 *while the body was locked*, so closing the sheet dropped
+  // the user into the review list, nowhere near the block they had tapped.
+  //
+  // It also put the pointer and the keyboard on two different behaviours for
+  // one element: `onKeyDown` below has always called `onEditBlock` alone, so
+  // Enter and a tap did different things to the same block. They agree again.
+  //
+  // What is traded away: the document→review jump for COMPOUND blocks on a
+  // surface that can also edit them (on `/app` that is every surface, since
+  // `canEditDoc` is just "there is a document"). It is a real loss and a
+  // deliberate one — a tap that opens a form must not also scroll the page
+  // behind that form's own scrim. `onSelectBlock` still runs on a surface with
+  // no editor, the Crosshair still jumps review→document, and every marked block
+  // still names its author through the mark's own `title`.
+  //
+  // A block being TYPED IN gets neither, and the caret is why: `onSelectBlock`
+  // would smooth-scroll the paper out of view at the exact moment the caret
+  // lands and the on-screen keyboard starts opening — the tap said "type here"
+  // and the page answers by leaving.
+  const onClick =
+    onEditBlock || onSelectBlock
+      ? (ev: React.MouseEvent) => {
+          const el = ev.target as HTMLElement;
+          if (el.isContentEditable) return;
+          const path = el.closest<HTMLElement>("[data-block]")?.dataset.block;
+          if (!path) return;
+          // Both callees early-return on their own for a block they have nothing
+          // to say about, so this is safe whenever the tap was not a caret
+          // placement.
+          if (onEditBlock) onEditBlock(path);
+          else onSelectBlock?.(path);
+        }
+      : undefined;
 
   /** Snapshot the text as it stood when the caret arrived. Focus, not render:
    * after the first keystroke the DOM no longer matches the model, and the
@@ -546,9 +874,15 @@ export default function ResumeView({
    */
   const blkProps = (path: string, shape: "block" | "item" | "chip" = "block", extra?: string) => {
     const inline = !!onInlineCommit && !!inlineField(resume, path);
+    const mark = marks?.get(path);
     return {
       "data-block": path,
       className: cn(extra, blk(path, shape)),
+      // A marked block is a coloured bar and nothing else, which says "this is
+      // different" without saying HOW. The title is the difference, and it is
+      // also the block's accessible name for a screen reader that gets no
+      // colour at all.
+      title: mark ? t(`review.mark.${mark}`) : undefined,
       ...(inline
         ? {
             contentEditable: EDITABLE_MODE,
@@ -579,9 +913,13 @@ export default function ResumeView({
     summary:
       resume.summary || editable ? (
         <section key="summary">
-          <SectionHead>{t("sections.summary")}</SectionHead>
+          <SectionHead spec={headSpec} dir={paperDir}>{t("sections.summary")}</SectionHead>
           <p
-            {...blkProps("@summary", "block", "text-sm leading-relaxed text-ink-muted")}
+            {...blkProps(
+              "@summary",
+              "block",
+              cn("text-sm", styled && spec.tight ? "leading-snug" : "leading-relaxed", prose),
+            )}
             data-ph={editable ? t("edit.fields.summary") : undefined}
           >
             {resume.summary}
@@ -596,7 +934,7 @@ export default function ResumeView({
     // gives the chip somewhere to live.
     skills: skillBlocks.length > 0 || onAddSkill ? (
       <section key="skills">
-        <SectionHead>{t("sections.skills")}</SectionHead>
+        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.skills")}</SectionHead>
         <div className="space-y-2">
           {(skillBlocks.length ? skillBlocks : ([["", []]] as [string, string[]][])).map(([label, items], i) => (
             <div
@@ -611,29 +949,58 @@ export default function ResumeView({
                   label is the user's own taxonomy, copied verbatim from their
                   résumé, and both renderers print it as written. */}
               {label && <p className="mb-1 text-xs font-semibold text-accent">{label}</p>}
-              <div className="flex flex-wrap gap-1.5">
-                {/* `key={i}`, not `key={s}`: two skills that differ only in
-                    case or punctuation share a `dkey`, so they would carry the
-                    SAME data-block and `readBlock`'s `.find()` would send both
-                    edits to the first one. */}
-                {items.map((s, i) => (
-                  <Badge key={i} {...blkProps(`@skills.${dkey(s)}`, "chip")}>
-                    {s}
-                  </Badge>
-                ))}
-                {/* At the END of the row it belongs to, so the group you type
-                    into is the group you were reading. The unlabelled block has
-                    no name of its own, so it borrows the section heading —
-                    "Add a skill to " with nothing after it is worse than
-                    slightly redundant. */}
-                {onAddSkill && (
-                  <AddSkillChip
-                    label={label || t("sections.skills")}
-                    dir={paperDir}
-                    onAdd={(text) => onAddSkill(label, text)}
-                  />
-                )}
-              </div>
+              {/* `skills="inline"` is a comma-joined RUN, which is also exactly
+                  what an ATS keyword parser splits on; `skills="chips"` is the
+                  bordered row. Five templates carry the first and six the
+                  second, and this page drew chips for all eleven.
+                  The separator sits OUTSIDE every [data-block] and TRAILS its
+                  own value — the pattern and the reasoning of the five-block
+                  contact line below: a leading comma would open a wrapped line
+                  with punctuation. */}
+              {inlineSkills ? (
+                <p className={cn("text-sm", prose)}>
+                  {/* `key={i}`, not `key={s}`: two skills that differ only in
+                      case or punctuation share a `dkey`, so they would carry
+                      the SAME data-block and `readBlock`'s `.find()` would send
+                      both edits to the first one. */}
+                  {items.map((s, j) => (
+                    <span key={j}>
+                      <span {...blkProps(`@skills.${dkey(s)}`, "chip")}>{s}</span>
+                      {j < items.length - 1 && <span aria-hidden="true">, </span>}
+                    </span>
+                  ))}
+                  {onAddSkill && (
+                    <>
+                      {items.length > 0 && " "}
+                      <AddSkillChip
+                        label={label || t("sections.skills")}
+                        dir={paperDir}
+                        onAdd={(text) => onAddSkill(label, text)}
+                      />
+                    </>
+                  )}
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {items.map((s, j) => (
+                    <Badge key={j} {...blkProps(`@skills.${dkey(s)}`, "chip")}>
+                      {s}
+                    </Badge>
+                  ))}
+                  {/* At the END of the row it belongs to, so the group you type
+                      into is the group you were reading. The unlabelled block
+                      has no name of its own, so it borrows the section heading
+                      — "Add a skill to " with nothing after it is worse than
+                      slightly redundant. */}
+                  {onAddSkill && (
+                    <AddSkillChip
+                      label={label || t("sections.skills")}
+                      dir={paperDir}
+                      onAdd={(text) => onAddSkill(label, text)}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -642,22 +1009,38 @@ export default function ResumeView({
 
     experience: resume.experience.length > 0 ? (
       <section key="experience">
-        <SectionHead>{t("sections.experience")}</SectionHead>
-        <div className="space-y-3">
-          {/* Mirrors the renderers' stacked entry (TemplateSpec.entry="stack",
-              the default in 9 of the 11 templates): the title on its own line,
-              then one meta line reading "Employer · Location · Dates". The old
-              preview joined "title — company" and pushed "location | dates"
-              flush right, which is a layout no download has produced since the
-              entry grammar changed. */}
-          {resume.experience.map((e, i) => (
-            <div key={i} {...blkProps(`@exp.${i}`, "block")}>
-              <strong className="block text-sm font-semibold text-ink">{e.title || e.company}</strong>
-              <MetaLine
-                lead={e.title ? e.company : ""}
-                bits={[e.location, [e.start_date, e.end_date].filter(Boolean).join(" – ")]}
-              />
-              <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
+        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.experience")}</SectionHead>
+        <div className={cn("space-y-3", railed && RAIL)}>
+          {/* The two entry grammars, both from `_flow.entry`:
+              "stack" (9 of the 11 templates) puts the title on its own line and
+              reads "Employer · Location · Dates" underneath; "split"
+              (executive, ivy) keeps the title and the date range on one row with
+              the dates flush to the far margin, and drops them from the meta
+              line. The dates move to a SIBLING SPAN INSIDE THE SAME
+              [data-block] — no field gains a data-block of its own, so
+              `readBlock("@exp.i")` still returns five fields, `inlineField`
+              still returns null and the entry still routes to BlockEditSheet.
+              Splitting MetaLine per field is the thing that must not happen:
+              it re-opens the bidi-isolate problem and buys nothing. */}
+          {resume.experience.map((e, i) => {
+            const dates = [e.start_date, e.end_date].filter(Boolean).join(" – ");
+            return (
+            <div key={i} {...blkProps(`@exp.${i}`, "block", railed ? RAIL_DOT : undefined)}>
+              {splitEntry ? (
+                <>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <strong className="text-sm font-semibold text-ink">{e.title || e.company}</strong>
+                    {dates && <span className="shrink-0 text-xs text-ink-muted">{dates}</span>}
+                  </div>
+                  <MetaLine lead={e.title ? e.company : ""} bits={[e.location]} />
+                </>
+              ) : (
+                <>
+                  <strong className="block text-sm font-semibold text-ink">{e.title || e.company}</strong>
+                  <MetaLine lead={e.title ? e.company : ""} bits={[e.location, dates]} />
+                </>
+              )}
+              <ul className={cn("mt-1 list-disc space-y-0.5 ps-5 text-sm", prose)} style={listStyle}>
                 {e.bullets.map((b, j) => (
                   <li key={j} {...blkProps(`@exp.${i}.b.${j}`, "item")}>
                     {b}
@@ -676,20 +1059,23 @@ export default function ResumeView({
                 )}
               </ul>
             </div>
-          ))}
+            );
+          })}
         </div>
       </section>
     ) : null,
 
     projects: resume.projects.length > 0 ? (
       <section key="projects">
-        <SectionHead>{t("sections.projects")}</SectionHead>
-        <div className="space-y-3">
+        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.projects")}</SectionHead>
+        <div className={cn("space-y-3", railed && RAIL)}>
           {resume.projects.map((p, i) => (
-            <div key={i} {...blkProps(`@proj.${i}`, "block")}>
+            <div key={i} {...blkProps(`@proj.${i}`, "block", railed ? RAIL_DOT : undefined)}>
               <strong className="text-sm font-semibold text-ink">{p.name}</strong>
+              {/* A project's description stays MUTED in both renderers — it is
+                  the one piece of body copy `_flow` colours `s.muted`. */}
               {p.description && <span className="text-sm text-ink-muted"> — {p.description}</span>}
-              <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
+              <ul className={cn("mt-1 list-disc space-y-0.5 ps-5 text-sm", prose)} style={listStyle}>
                 {p.bullets.map((b, j) => (
                   <li key={j} {...blkProps(`@proj.${i}.b.${j}`, "item")}>
                     {b}
@@ -715,10 +1101,10 @@ export default function ResumeView({
 
     education: resume.education.length > 0 ? (
       <section key="education">
-        <SectionHead>{t("sections.education")}</SectionHead>
-        <div className="space-y-2">
+        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.education")}</SectionHead>
+        <div className={cn("space-y-2", railed && RAIL)}>
           {resume.education.map((e, i) => (
-            <div key={i} {...blkProps(`@edu.${i}`, "block", "text-sm")}>
+            <div key={i} {...blkProps(`@edu.${i}`, "block", cn("text-sm", railed && RAIL_DOT))}>
               <strong className="font-semibold text-ink">
                 {[e.degree, e.field].filter(Boolean).join(", ") || e.institution}
               </strong>
@@ -738,10 +1124,10 @@ export default function ResumeView({
     military: military.length > 0 ? (
       <section key="military">
         {/* defaultValue fallbacks: catalog keys pending (locale files owned by the frontend pass) */}
-        <SectionHead>{t("sections.militaryService", "Military Service")}</SectionHead>
-        <div className="space-y-3">
+        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.militaryService", "Military Service")}</SectionHead>
+        <div className={cn("space-y-3", railed && RAIL)}>
           {military.map((m, i) => (
-            <div key={i} {...blkProps(`@mil.${i}`, "block")}>
+            <div key={i} {...blkProps(`@mil.${i}`, "block", railed ? RAIL_DOT : undefined)}>
               <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                 <strong className="text-sm font-semibold text-ink">
                   {[m.role, m.unit].filter(Boolean).join(" — ")}
@@ -752,7 +1138,7 @@ export default function ResumeView({
                     .join(" | ")}
                 </span>
               </div>
-              <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
+              <ul className={cn("mt-1 list-disc space-y-0.5 ps-5 text-sm", prose)} style={listStyle}>
                 {m.bullets.map((b, j) => (
                   <li key={j} {...blkProps(`@mil.${i}.b.${j}`, "item")}>
                     {b}
@@ -778,8 +1164,18 @@ export default function ResumeView({
 
     certifications: resume.certifications.length > 0 ? (
       <section key="certifications">
-        <SectionHead>{t("sections.certifications")}</SectionHead>
-        <ul className="list-disc space-y-0.5 ps-5 text-sm text-ink-muted">
+        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.certifications")}</SectionHead>
+        {/* `list_cols` reaches CERTIFICATIONS and nothing else in the PDF
+            (`build_certifications`), and it is capped at 2 there because wider
+            grids interleave badly on text extraction. Two columns of short
+            items at 390px would be four words a line, so it starts at `sm`. */}
+        <ul
+          className={cn(
+            "list-disc space-y-0.5 ps-5 text-sm text-ink-muted",
+            styled && spec.listCols === 2 && "sm:columns-2",
+          )}
+          style={listStyle}
+        >
           {resume.certifications.map((cert, i) => (
             <li key={i} {...blkProps(`@cert.${dkey(cert)}`, "item")}>
               {cert}
@@ -791,17 +1187,38 @@ export default function ResumeView({
 
     languages: languages.length > 0 ? (
       <section key="languages">
-        <SectionHead>{t("sections.languages", "Languages")}</SectionHead>
-        <div className="flex flex-wrap gap-1.5">
-          {languages.map((l, i) => (
-            <Badge
-              key={i}
-              {...blkProps(`@lang.${dkey(l.language)}`, "chip")}
-            >
-              {[l.language, l.level].filter(Boolean).join(" – ")}
-            </Badge>
-          ))}
-        </div>
+        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.languages", "Languages")}</SectionHead>
+        {/* "Languages ride the skills treatment" — `build_languages` draws
+            chips exactly when the skills block does, and a `·`-joined line
+            otherwise. Same separator rule as everywhere else on this page: it
+            sits OUTSIDE every [data-block] and trails its own value. */}
+        {inlineSkills ? (
+          <p className={cn("text-sm", prose)}>
+            {languages.map((l, i) => (
+              <span key={i}>
+                <span {...blkProps(`@lang.${dkey(l.language)}`, "chip")}>
+                  {[l.language, l.level].filter(Boolean).join(" – ")}
+                </span>
+                {i < languages.length - 1 && (
+                  <span aria-hidden="true" className="mx-1.5 text-ink-faint">
+                    ·
+                  </span>
+                )}
+              </span>
+            ))}
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {languages.map((l, i) => (
+              <Badge
+                key={i}
+                {...blkProps(`@lang.${dkey(l.language)}`, "chip")}
+              >
+                {[l.language, l.level].filter(Boolean).join(" – ")}
+              </Badge>
+            ))}
+          </div>
+        )}
       </section>
     ) : null,
   };
@@ -809,13 +1226,31 @@ export default function ResumeView({
   return (
     <div
       dir={paperDir}
+      style={sheetVars}
       onClick={onClick}
       onKeyDown={onKeyDown}
       onFocus={onFocus}
       onBlur={onBlur}
       onPaste={onPaste}
       className={cn(
-        "text-ink [&_section]:mt-5",
+        "text-ink",
+        // `tight` is the Israeli one-pager convention: `_Sheet` drops
+        // sec_before from 12pt to 8pt and the leading from 1.36 to 1.26.
+        styled && spec.tight ? "[&_section]:mt-3.5" : "[&_section]:mt-5",
+        // The serif/sans CATEGORY only. Lato and Spectral are PDF-EMBEDDED and
+        // fonts.css deliberately ships nothing but the Inter/Heebo subsets, so
+        // the exact face belongs to the file and the note under the document
+        // says so rather than pretending otherwise.
+        styled && spec.serif && "font-serif",
+        // `heading="hung"` (minimal) sets its headings BESIDE the body instead
+        // of above it. It is placed here, on the sections, rather than in
+        // SectionHead: the sheet's own gutter is ~27px at 390px against the
+        // PDF's 84pt margin, so below `sm` there is nothing to hang into and
+        // the heading degrades to `plain`. Grid columns follow the writing
+        // direction, so RTL mirrors with no second rule.
+        styled &&
+          spec.heading === "hung" &&
+          "sm:[&_section]:grid sm:[&_section]:grid-cols-[5.5rem_1fr] sm:[&_section]:items-baseline sm:[&_section]:gap-x-3",
         surface === "sheet"
           ? // A page, not a card: white ground, near-square corners, proportional
             // margins (~the renderers' 9.7% / 5.5%), and a measure near 65-70
@@ -826,6 +1261,25 @@ export default function ResumeView({
           : "rounded-xl border border-line bg-bg-soft p-5",
       )}
     >
+      {/* `header="band"`: the name, headline and contact reversed out of a
+          filled rectangle that BLEEDS to the page edges — the single biggest
+          visual difference between the eleven templates, and the one the screen
+          had no version of at all. The negative margins are the sheet's own
+          padding, spelled the same way, so the two cancel exactly; the corners
+          take the sheet's own radius so the fill cannot poke past its ring.
+          The blocks inside are UNTOUCHED — same classNames, same blkProps, same
+          paths. The reversed-out palette arrives entirely through `bandVars`,
+          which is what keeps a colour change out of the block markup. */}
+      <div
+        style={band ? { ...bandVars, background: bandFill(spec) } : undefined}
+        className={
+          cn(
+            centred && "text-center",
+            band &&
+              "-mx-[clamp(20px,7%,56px)] -mt-[clamp(22px,5.5%,46px)] rounded-t-[3px] px-[clamp(20px,7%,56px)] pb-[clamp(18px,4.7%,39px)] pt-[clamp(22px,5.5%,46px)]",
+          ) || undefined
+        }
+      >
       {/* On an EDITABLE document the empty state is a real placeholder — an
           empty node plus `data-ph`, drawn by CSS — never the fallback string as
           text. As text it is committable: tapping the largest target on a
@@ -834,7 +1288,13 @@ export default function ResumeView({
           Read-only surfaces (the tracker's détail modal, a tailored draft)
           still get the words, because they have no caret to protect. */}
       <div
-        {...blkProps("@contact.name", "block", "text-xl font-bold text-ink")}
+        {...blkProps(
+          "@contact.name",
+          "block",
+          // `name_tracking` is negative on every template — names are set tight
+          // — and it is halved in Hebrew exactly as the renderers halve it.
+          cn("text-xl font-bold text-ink", styled && "tracking-[var(--doc-name-tracking)]"),
+        )}
         data-ph={editable ? t("sections.fallbackName") : undefined}
       >
         {editable ? c.name : c.name || t("sections.fallbackName")}
@@ -870,7 +1330,12 @@ export default function ResumeView({
           what keeps this split out of the bidi-isolate trap: the fragments never
           resolve their own direction. */}
       {editable ? (
-        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1 gap-y-0.5 text-xs text-ink-muted">
+        <div
+          className={cn(
+            "mt-0.5 flex flex-wrap items-baseline gap-x-1 gap-y-0.5 text-xs text-ink-muted",
+            centred && "justify-center",
+          )}
+        >
           {CONTACT_FIELDS.map((k, i) => (
             <span key={k} className="inline-flex min-w-0 items-baseline gap-1">
               <span
@@ -894,13 +1359,37 @@ export default function ResumeView({
           </div>
         )
       )}
+      </div>
+
+      {/* `header="rule"` — ONE hairline under the contact block, in the accent
+          when the template asks for it. `header` is authoritative in both
+          renderers and "plain" (ivy, minimal) draws none; this page drew none
+          for anybody, so timeline, ledger and compact were missing the 1.6-2pt
+          accent rule that is most of their character. */}
+      {styled && spec.header === "rule" && (
+        <div
+          aria-hidden="true"
+          className="mt-2"
+          style={{
+            borderBottomStyle: "solid",
+            borderBottomWidth: rulePx(spec.headerRulePt),
+            borderBottomColor: spec.headerRuleAccent ? spec.accent : spec.rule,
+          }}
+        />
+      )}
 
       {sectionOrder(resume).map((key) => sections[key])}
 
       {/* Outside every [data-block] on purpose: it emits no path, so
           check-mirrors check 7 has nothing to validate and the add control can
           never be mistaken for a part of the résumé. */}
-      {onAdd && <AddToResume onAdd={onAdd} />}
+      {onAdd ? (
+        <AddToResume onAdd={onAdd} />
+      ) : (
+        footNote && (
+          <p className="mt-6 border-t border-line pt-4 text-xs leading-relaxed text-ink-faint">{footNote}</p>
+        )
+      )}
     </div>
   );
 }

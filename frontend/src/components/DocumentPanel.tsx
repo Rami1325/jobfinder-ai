@@ -17,6 +17,7 @@ import ResumeUpload from "./ResumeUpload";
 import XrayResult from "./XrayResult";
 import { usePdfPreview, useXray } from "../hooks/useFilePreview";
 import { downloadResume, resumeFilename, type ResumeTemplate } from "../api/client";
+import { PDF_ONLY, TEMPLATE_SPECS } from "../lib/templateSpecs";
 import { Button, Card, CardTitle, Skeleton } from "./ui";
 import { cn } from "../lib/cn";
 import type { FactsLedger, ResumeModel } from "../types";
@@ -89,6 +90,9 @@ interface Props {
   onAddSkill?: (groupLabel: string, text: string) => void;
   onAdd?: (kind: InsertKind) => void;
   onAddBullet?: (entryPath: string) => void;
+  /** Passed straight through to ResumeView — one line at the foot of the paper
+   * for a surface that cannot add. */
+  footNote?: string;
   /** Swap the master résumé for a newly uploaded file. Given only when the
    * document IS the master — replacing the file under a tailor review would be
    * replacing the thing being reviewed. Its absence hides the tool entirely,
@@ -115,7 +119,7 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, onTemplate, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddBullet, onReplace },
+  { resume, template, view, onView, onTemplate, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddBullet, footNote, onReplace },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
@@ -123,6 +127,9 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   const xray = useXray(resume, template, view === "ats");
   const [tplOpen, setTplOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
+  // Read for the note under the screen view only — ResumeView resolves its own
+  // spec from the same table. `?? classic` is `get_template`'s own fallback.
+  const spec = TEMPLATE_SPECS[template] ?? TEMPLATE_SPECS.classic;
 
   /* Defined once, mounted twice — the same arrangement `SidebarBody` uses for
      the rail and the drawer, and for the same reason: a tool that exists in one
@@ -233,6 +240,13 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           <ResumeView
             resume={resume}
             surface="sheet"
+            // The whole point of the picker beside the paper. `template` was in
+            // scope here and went to the PDF preview, the x-ray and both
+            // downloads but not to the document itself, so picking Executive
+            // gave you a serif, cream, centred-name PDF while the page you edit
+            // on stayed sans, white and left-aligned. Every other surface
+            // honoured the choice; the one the user works on did not.
+            template={template}
             marks={marks}
             activeBlock={activeBlock}
             activeNonce={activeNonce}
@@ -242,7 +256,30 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
             onAddSkill={onAddSkill}
             onAdd={onAdd}
             onAddBullet={onAddBullet}
+            footNote={footNote}
           />
+          {/* What the page above deliberately does NOT reproduce, said out loud
+              — the same shape as the download's own docxFallback note. The
+              screen draws the template's palette, heading grammar, header band,
+              entry grammar, bullet glyph and column count; it cannot load Lato
+              or Spectral (both are PDF-EMBEDDED, and fonts.css ships only the
+              Inter/Heebo subsets), and it does not guess a sidebar, because
+              which sections land in the rail is a reportlab MEASUREMENT with a
+              demote pass — a DOM guess would show sections in the rail that the
+              real file moved out, which is a new lie in the same class as the
+              one this note exists beneath.
+              A plain conditional <p>, never a reveal: it must not acquire a
+              motion wrapper, and nothing here animates a height. */}
+          <p className="mt-3 text-xs leading-relaxed text-ink-faint">
+            {t("doc.screen.note")}
+            {/* Each sentence appears only where it is TRUE of this template.
+                Six of the eleven draw no contact marks at all, and a note that
+                admits to a difference that is not there is the same defect as
+                one that hides a difference that is — just pointing the other
+                way. */}
+            {(spec.contactIcons || spec.dateIcon) && ` ${t("doc.screen.icons")}`}
+            {PDF_ONLY(template) && ` ${t("doc.screen.twoColumn")}`}
+          </p>
         </div>
 
         {view === "file" && (

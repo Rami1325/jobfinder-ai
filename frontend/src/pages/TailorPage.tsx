@@ -31,6 +31,7 @@ import VoicePanel from "../components/VoicePanel";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { blocksByEdit, mergeForReview } from "../lib/resumeDiff";
+import { applyOverrides, blockText, movedPath } from "../lib/resumeOverrides";
 import {
   inlineField,
   insertBlock,
@@ -40,7 +41,9 @@ import {
   removeBlock,
   writeBlock,
   type InsertKind,
+  type Values,
 } from "../lib/resumeBlocks";
+import type { BlockMark } from "../components/ResumeView";
 import { resumeLanguage } from "../lib/lang";
 import { clearDraft, draftOver, offerDraft, readDraft, type ResumeDraft } from "../lib/draft";
 import { classifyEdit } from "../lib/editGroups";
@@ -49,13 +52,51 @@ import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../component
 import {
   adoptMaster,
   applyBlockEdit,
+  clearAllBlockOverrides,
+  clearBlockOverride,
+  discardTailorResult,
   getTailorState,
+  restoreClearedOverrides,
+  setBlockOverride,
   setTailorState,
   setTargetJob,
   startTailor,
   subscribeTailor,
 } from "../state/tailorStore";
 import type { FactsLedger, ResumeModel } from "../types";
+
+/**
+ * Does a review row's edit own this hand-edit?
+ *
+ * TRUE for the edit's own anchor, and — only for a WHOLE-ENTRY edit — for
+ * anything inside it. Both halves are load-bearing, and each of them fixed a
+ * defect the other caused.
+ *
+ * The subtree half: `editSrc(id, id)` registers an ADDED or REMOVED entry under
+ * the entry's own anchor (`exp.add.1`), while its bullets get anchors one level
+ * deeper (`exp.add.1.b.0`) that no edit id points at — so a hand-edit on a bullet
+ * of an AI-added job was invisible to the row above it. The row kept a live
+ * Accept/Reject, and declining it silently discarded the user's text with no
+ * "Yours" badge and no note, while the toolbar went on counting it.
+ *
+ * THE GATE is the correction. An entry-level SCALAR edit (`exp.0.title`) is
+ * anchored to the ENTRY, `exp.0` — so an ungated prefix walk made the row about
+ * a job TITLE own every hand-edit on that job's bullets: the AI's title change
+ * became undecidable behind a "Yours" badge, the row printed "Neither wording
+ * below is on your CV any more" while the AI's wording was plainly on the paper,
+ * and both of its buttons cleared the bullet override, so one tap on a row about
+ * the job title silently deleted a sentence the user had typed on a different
+ * line. Reproduced by executing the shipped merge.
+ *
+ * `editAnchors[id] === id` is exactly the discriminator, DERIVED rather than
+ * pattern-matched: only `editSrc(id, id)` — the add/remove sites — registers an
+ * edit under its own id, so that identity IS "this edit is the whole entry", and
+ * it stays true if the id grammar is ever renamed.
+ *
+ * The trailing dot is load-bearing: without it `exp.1` would own `exp.10`.
+ */
+const ownsAnchor = (editAnchor: string, overrideAnchor: string, whole: boolean): boolean =>
+  overrideAnchor === editAnchor || (whole && overrideAnchor.startsWith(`${editAnchor}.`));
 
 export default function TailorPage() {
   const { t } = useTranslation("tailor");
@@ -78,6 +119,8 @@ export default function TailorPage() {
     result,
     tailoredFrom,
     rejectedEdits,
+    tailorOverrides,
+    clearedOverrides,
     loading,
     error,
     saved,
@@ -88,6 +131,7 @@ export default function TailorPage() {
     langSwitched,
     fit,
     checkedFor,
+    fitScoredAt,
     scoredAt,
     overlayOpen,
     savedResume,
@@ -175,10 +219,50 @@ export default function TailorPage() {
    * over "" and burn an undo slot on nothing. Comparing to `field.value`
    * catches every such case at once.
    *
-   * `writeBlock` stays the only writer and `applyBlockEdit` the only way in, so
-   * the undo stack and the 22.11 local draft keep working untouched.
+   * `writeBlock` stays the only writer and `applyBlockEdit` the only way into
+   * the MASTER, so the undo stack and the 22.11 local draft keep working
+   * untouched. The tailored branch below reaches neither — see its own note.
    */
   function commitInline(path: string, text: string) {
+    // THE TAILORED PATH. It must never reach `applyBlockEdit` below:
+    // that one sets `result: null, tailoredFrom: null, rejectedEdits: []` and
+    // mirrors to the master's local draft, so a single keystroke would collapse
+    // the review being edited AND leave DraftRestoreBar offering the flattened
+    // tailored CV back as the user's real résumé on their next visit.
+    //
+    // Stored against the block's SOURCE ANCHOR, never its path. Committed on
+    // BLUR, like the master path, and that is what keeps the caret alive: the
+    // merged memo now depends on `tailorOverrides`, so a commit produces a new
+    // résumé object and re-renders the sheet. On input it would kill the caret
+    // on the first keystroke.
+    //
+    // `if (result)` FIRST, then the null check INSIDE it, and the nesting is the
+    // point. As `if (result && merged)` the fallthrough was the MASTER writer:
+    // with a result up and `merged` somehow null, a keystroke on the tailored
+    // document would resolve a TAILORED path against the master résumé, call
+    // `applyBlockEdit`, write the master, mirror it into the master's local
+    // draft and null the review — four wrong documents from one guard reading
+    // false. Unreachable today (`merged` is non-null whenever `result` and
+    // `original` are), and pinned by nothing, which is exactly why it is worth
+    // one line: this changes the failure from "write the wrong document" to
+    // "refuse the edit", the direction the anchor check three lines below
+    // already chose.
+    if (result) {
+      if (!merged) return;
+      const field = inlineField(merged.resume, path);
+      if (!field || field.value.trim() === text.trim()) return;
+      const anchor = merged.sources[path];
+      // No anchor means no stable coordinate to hang this on, and a path-keyed
+      // override lands on a DIFFERENT bullet the first time any add or removal
+      // in that section is toggled. Refuse rather than corrupt.
+      if (!anchor) return;
+      // Empty stays empty here: `applyOverrides` reads the same
+      // `readBlock(...).removable` rule as the branch below and turns a blank
+      // value on a removable block into a removal, so there is one definition
+      // of empty-means-remove rather than two.
+      setBlockOverride(anchor, { [field.key]: text });
+      return;
+    }
     const base = getTailorState().resume;
     if (!base) return;
     const field = inlineField(base, path);
@@ -250,10 +334,22 @@ export default function TailorPage() {
    * prints an empty heading into the PDF. Scoped to the entry this session
    * created — cancelling the form on a genuinely blank EXISTING entry must not
    * delete it, which is the direction that loses the user's data.
+   *
+   * MASTER ONLY, and the early return is not caution. Everything below reads and
+   * writes `getTailorState().resume` — the MASTER — while a `path` arriving here
+   * with a result up came from the TAILORED coordinate space: string-identical
+   * grammar, different document. Adding is `isMaster`-gated so `freshEntry` can
+   * only ever be minted against the master, but nothing used to CLEAR it when a
+   * review arrived, and one stale value is all it takes: `@exp.2` in the master
+   * and `@exp.2` in the tailored merge are different jobs, and cancelling that
+   * panel would delete a role from the saved résumé and take the review with it
+   * (`applyBlockEdit` nulls `result`). `onGone` clears it too, for the same
+   * reason — it was the one dismissal path that left the flag set.
    */
   function closeEditSheet() {
     const path = editPath;
     setEditPath(null);
+    if (result) return;
     if (!path || path !== freshEntry) return;
     setFreshEntry(null);
     const base = getTailorState().resume;
@@ -261,6 +357,56 @@ export default function TailorPage() {
     if (!draft || draft.fields.some((f) => f.value.trim())) return;
     const res = removeBlock(base!, path);
     if (res.ok) applyBlockEdit(res.resume);
+  }
+
+  /** The panel's tailored twin: store the ENTRY's values as one override.
+   *
+   * Entry granularity is what the sheet already edits ("the sheet edits an
+   * ENTRY, not a field"), so the override grain and the panel's grain are the
+   * same thing and nothing has to be diffed back apart. */
+  function commitBlockValues(values: Values, path: string) {
+    setEditPath(null);
+    setFreshEntry(null);
+    const anchor = merged?.sources[path];
+    if (!anchor) return; // same refusal as the inline path
+    setBlockOverride(anchor, values);
+    // The path the write LANDS on, not the one it left. A keyed rename moves its
+    // own block — `@lang.hebrew` stops existing the instant it becomes Arabic — so
+    // spotlighting the pre-write path names a node that is no longer in the DOM
+    // and the confirmation bloom silently does not play. The master twin below
+    // takes the post-write path from `writeBlock` for exactly this reason;
+    // `movedPath` asks the same writer the same question.
+    markSpot(merged ? movedPath(merged.resume, path, values) : path);
+  }
+
+  /** The two exits from a hand-edited review row, and the ONLY things that
+   * discard what the user typed.
+   *
+   * An override outranks the accept/decline decision for its block, so the
+   * decision control is replaced rather than left live. Each of these is one
+   * tap that both clears the override and sets the decision, under a label that
+   * says which wording it is choosing: a later Decline that silently replaced
+   * typed text with the original wording would be deleting the user's own
+   * writing with no notice. */
+  function resolveOverride(id: string, useOriginal: boolean) {
+    // Every anchor this row owns, not just the edit's own: a hand-edit on a bullet
+    // INSIDE an AI-added job hangs one level deeper, and clearing only the entry's
+    // anchor would leave the row's two buttons doing nothing to the text they name.
+    for (const anchor of anchorsForEdit(id)) clearBlockOverride(anchor);
+    const next = new Set(rejectedEdits);
+    if (useOriginal) next.add(id);
+    else next.delete(id);
+    setTailorState({ rejectedEdits: [...next] });
+  }
+
+  /** Put back a line the USER deleted, and touch nothing else.
+   *
+   * The third exit, and it is deliberately not one of the two above: neither
+   * "use the AI's wording" nor "use my original" describes undoing a deletion,
+   * and the accept/decline decision on this row is not what removed the line —
+   * so changing it here would be answering a question nobody asked. */
+  function restoreOverride(id: string) {
+    for (const anchor of anchorsForEdit(id)) clearBlockOverride(anchor);
   }
 
   function addBullet(entryPath: string) {
@@ -325,10 +471,40 @@ export default function TailorPage() {
   const rejectedSet = useMemo(() => new Set(rejectedEdits), [rejectedEdits]);
   // ONE walk for all three: the edit list, the résumé the user ships, and where
   // each edit lands in it. Computing them separately is how they drift.
-  const merged = useMemo(
-    () => (result && original ? mergeForReview(original, result.tailored_resume, rejectedSet) : null),
-    [original, result, rejectedSet],
-  );
+  //
+  // The user's OWN edits ride on top, in a second pass rather than inside the
+  // walk, because they are not a decision about the AI's work — they replace
+  // its answer entirely. `applyOverrides` resolves each one through the source
+  // anchors this walk emits, which is what makes a typed sentence survive every
+  // later accept and decline: `@exp.1` is a different job in the two decision
+  // states, and `exp.2` is the same one in both. Every consumer of `shown` /
+  // `effectiveResume` below — both downloads, the PDF preview, the x-ray, the
+  // page count, coverage, the tracker row, the cover letter — gets it for free.
+  const merged = useMemo(() => {
+    if (!result || !original) return null;
+    const m = mergeForReview(original, result.tailored_resume, rejectedSet);
+    const o = applyOverrides(m.resume, m.sources, tailorOverrides, m.blocks);
+    // `removed` is carried out with the other three: it is the ONLY record that a
+    // blank value was a deletion the user made rather than a block a decision took
+    // away, and everything below that tells those two apart reads it.
+    //
+    // `base` / `baseSources` are the merge BEFORE the user's own text went over
+    // it — the last place the pre-edit wording exists. Nothing else on the page
+    // holds it: `original` is the untailored master and `o.resume` is the
+    // document with the override already applied, so without this pair "Undo my
+    // edit" is a button whose outcome cannot be read anywhere on screen. Carried
+    // out of the same memo rather than recomputed, because a second
+    // `mergeForReview` call is a second answer to the same question.
+    return {
+      ...m,
+      base: m.resume,
+      baseSources: m.sources,
+      resume: o.resume,
+      sources: o.sources,
+      blocks: o.blocks,
+      removed: o.removed,
+    };
+  }, [original, result, rejectedSet, tailorOverrides]);
   const edits = merged?.edits ?? [];
   const effectiveResume = merged?.resume ?? result?.tailored_resume ?? null;
   const editBlock = useMemo(() => (merged ? blocksByEdit(merged.blocks) : {}), [merged]);
@@ -348,31 +524,163 @@ export default function TailorPage() {
   /** How each block on the page relates to the tailoring. There is no
    * "undecided" state in this flow — every edit is accepted until rejected — so
    * a block is either showing the AI's wording or, if every edit on it was
-   * declined, the user's original. The second is the one worth seeing. */
+   * declined, the user's original. The second is the one worth seeing.
+   *
+   * A hand-edit is the third answer and OUTRANKS both, which is why it is
+   * written last: with an override on a block, neither "the AI's wording" nor
+   * "your original" is the text on the paper, and saying either would be
+   * false. */
   const marks = useMemo(() => {
-    const m = new Map<string, "changed" | "restored">();
+    const m = new Map<string, BlockMark>();
     if (merged) {
       for (const [path, ids] of Object.entries(merged.blocks)) {
         m.set(path, ids.every((id) => rejectedSet.has(id)) ? "restored" : "changed");
       }
+      for (const [path, anchor] of Object.entries(merged.sources)) {
+        if (anchor in tailorOverrides) m.set(path, "yours");
+      }
     }
     return m;
-  }, [merged, rejectedSet]);
+  }, [merged, rejectedSet, tailorOverrides]);
+
+  /** Every hand-edit that belongs to one review row: the block the edit
+   * describes, and anything INSIDE it. `ownsAnchor` is defined once, at module
+   * scope, because the classifier below and the two exits that CLEAR these
+   * anchors have to agree — a row that says "Yours" over a hand-edit its own
+   * buttons cannot reach is the shipped defect wearing a different hat. */
+  const anchorsForEdit = (id: string): string[] => {
+    const a = merged?.editAnchors[id];
+    if (!a) return [];
+    return Object.keys(tailorOverrides).filter((k) => ownsAnchor(a, k, a === id));
+  };
+
+  /** Edit id → what the user's own wording is doing on the block that edit
+   * describes.
+   *
+   * THREE states, and the third was a lie until 23.8. An override whose anchor is
+   * on no path is `"hidden"` ONLY when a decision took its block away — a
+   * declined addition, a re-accepted removal — because dropping typed text on a
+   * reversible toggle is the data loss the vanish rule exists to avoid, and
+   * undoing the toggle brings it back. A block the USER cleared is off the page
+   * for the opposite reason and needs the opposite offer: `applyOverrides` is the
+   * only thing that knows which, so `merged.removed` is what separates them.
+   * Without it, clearing a line reported "a declined change removed the line it
+   * was on" and offered two buttons that both silently put the line back.
+   *
+   * Precedence is `yours` → `removed` → `hidden`, because those are three
+   * statements of decreasing strength about the same block: text of the user's
+   * own on the page outranks a deletion inside the same entry, which outranks
+   * "kept but not applied". */
+  const overriddenEdits = useMemo(() => {
+    const out: Record<string, "yours" | "hidden" | "removed"> = {};
+    if (!merged) return out;
+    const onPage = new Set(Object.values(merged.sources));
+    const deleted = new Set(merged.removed.map((r) => r.anchor));
+    for (const [id, a] of Object.entries(merged.editAnchors)) {
+      const mine = Object.keys(tailorOverrides).filter((k) => ownsAnchor(a, k, a === id));
+      if (mine.length === 0) continue;
+      out[id] = mine.some((k) => onPage.has(k))
+        ? "yours"
+        : mine.some((k) => deleted.has(k))
+          ? "removed"
+          : "hidden";
+    }
+    return out;
+  }, [merged, tailorOverrides]);
+  const overrideCount = Object.keys(tailorOverrides).length;
+
+  /** Every hand-edit, and what each one is doing to the document right now.
+   *
+   * THE COUNT HAS TO BE ANSWERABLE. "3 edits of your own" beside one marked block
+   * and one review badge is a number whose members cannot be found: an override
+   * that DELETED a block has nothing to mark (it is off the paper) and no review
+   * row (an untouched bullet or skill has no edit id), and so did an override on a
+   * block a later decision took away. The only recovery on offer was "Clear my
+   * edits", which reverts all three. This list is the enumeration — one row per
+   * override, named by its own words, each with the one control that undoes it. */
+  const myEdits = useMemo(() => {
+    const out: { anchor: string; state: "yours" | "removed" | "hidden"; text: string; was: string }[] = [];
+    if (!merged) return out;
+    const byAnchor: Record<string, string> = {};
+    for (const [path, a] of Object.entries(merged.sources)) if (!(a in byAnchor)) byAnchor[a] = path;
+    // The SAME inversion against the pre-override merge. `applyOverrides` only
+    // moves a path on a keyed rename, so for almost every row these two agree —
+    // but "almost" is what silently prints the wrong line under a rename, which
+    // is precisely the class of bug the anchor keying exists to kill.
+    const wasByAnchor: Record<string, string> = {};
+    for (const [path, a] of Object.entries(merged.baseSources)) if (!(a in wasByAnchor)) wasByAnchor[a] = path;
+    const deleted = new Map(merged.removed.map((r) => [r.anchor, r.text]));
+    for (const [anchor, values] of Object.entries(tailorOverrides)) {
+      // WHAT UNDO PUTS BACK, read rather than guessed: the anchor already names
+      // a coordinate, and `readBlock` on the pre-override merge is that
+      // coordinate's own words. Without it the row shows what the user typed and
+      // the button underneath promises to replace it with something that appears
+      // nowhere on the page — the whole objection to a one-tap discard, one
+      // scale down. Empty for the two states that have no pre-edit block to
+      // read: a deletion already IS the pre-edit text, and a hand-edit the
+      // vanish rule is holding has no path in either map.
+      const wasPath = wasByAnchor[anchor];
+      const was = wasPath ? blockText(readBlock(merged.base, wasPath)?.fields) : "";
+      const gone = deleted.get(anchor);
+      if (gone !== undefined) {
+        out.push({ anchor, state: "removed", text: gone, was: "" });
+        continue;
+      }
+      const path = byAnchor[anchor];
+      const draft = path ? readBlock(merged.resume, path) : null;
+      // No block to read means the vanish rule is holding this one: the words the
+      // user typed are all there is left to name it by.
+      out.push(
+        draft
+          ? { anchor, state: "yours", text: blockText(draft.fields), was }
+          : {
+              anchor,
+              state: "hidden",
+              text: blockText(Object.values(values).map((value) => ({ value }))),
+              was: "",
+            },
+      );
+    }
+    return out;
+  }, [merged, tailorOverrides]);
+  const clearedCount = Object.keys(clearedOverrides ?? {}).length;
 
   // The document ↔ review jump. `spot` is the block lit up right now; `focusEdit`
   // carries a nonce so clicking the same block twice re-fires the effect.
   const docRef = useRef<HTMLDivElement>(null);
   const [docView, setDocView] = useState<DocView>("screen");
+  // Ephemeral, per session: the enumeration of the user's own edits is an answer
+  // to a question they just asked, not a preference to remember. It needs no
+  // reset either — the list is gated on `overrideCount`, so clearing the edits
+  // takes the panel with them.
+  const [yoursOpen, setYoursOpen] = useState(false);
+  // "Back to my résumé" is armed, having been tapped once while there were
+  // hand-edits to lose. State on THIS page and not shared with the overlay's own
+  // arming, for the Settings danger zone's reason: two destructive controls
+  // sharing one flag lets a user who armed one confirm under the other — and
+  // here the two sit side by side in the same toolbar row.
+  const [discardArmed, setDiscardArmed] = useState(false);
   const [editPath, setEditPath] = useState<string | null>(null);
   // The entry THIS session just added, so an abandoned add can be undone and a
   // pre-existing blank entry cannot be deleted by accident.
   const [freshEntry, setFreshEntry] = useState<string | null>(null);
-  // The document is EDITABLE only when it is your master. With a tailor result
-  // up, `shown` is a memo recomputed and thrown away on every accept/decline,
-  // so writing into it would need an override layer that survives the re-merge
-  // — and the decision was that tailoring is a review layer that never writes
-  // back to the master. So: master => edit, tailored => review.
-  const editable = !result && !!resume;
+  // TWO FLAGS, and the split is the whole of 23.7.
+  //
+  // `isMaster` is the old `editable`, unchanged: the document on screen IS the
+  // saved master résumé, so a write here changes the file the user keeps. It
+  // still gates everything that touches the master — the draft restore bar, the
+  // save/undo cluster, Replace — and everything that ADDS a claim, because a
+  // claim typed after the tailor ran carries no fabrication-guard verdict while
+  // ScoreCard below keeps rendering `result.fabrication_flags` beside it.
+  //
+  // `canEditDoc` is new and is simply "there is a document": the paper is typed
+  // on either way. With a result up the writes do not go into `resume` at all —
+  // they become per-application overrides resolved through the merge's source
+  // anchors, which is the override layer the old comment here said would be
+  // needed. So: master ⇒ edit the document; tailored ⇒ edit an overlay that is
+  // discarded with the result.
+  const isMaster = !result && !!resume;
+  const canEditDoc = !!shown;
   // The paper's own direction, frozen from the résumé rather than the UI: the
   // chrome follows the locale, the document follows its own language.
   const paperDir = shown && resumeLanguage(shown) === "he" ? ("rtl" as const) : ("ltr" as const);
@@ -391,6 +699,52 @@ export default function TailorPage() {
     // Depends on the OBJECT, not the path: a fresh nonce is a fresh identity,
     // which is what restarts the window on a repeat spotlight.
   }, [spot]);
+
+  // Close the panel whenever a decision changes while a result is up. A toggle
+  // can shift an index UNDER an open sheet — `@exp.1` is Beta in one decision
+  // state and Gamma in the other — and `onGone` cannot see it: the path still
+  // resolves, just to a different job, so the sheet would quietly apply the
+  // user's edits to the wrong entry.
+  useEffect(() => {
+    if (getTailorState().result) setEditPath(null);
+  }, [rejectedSet]);
+
+  // Disarm the moment there is nothing left to warn about. Without it, undoing
+  // the last hand-edit from the list while the exit is armed leaves a red
+  // "Discard my 1 edit and leave" standing over a document with none — a confirm
+  // whose sentence is false, which is worse than no confirm at all.
+  useEffect(() => {
+    if (!result || overrideCount === 0) setDiscardArmed(false);
+  }, [result, overrideCount]);
+
+  /**
+   * Warn before the tab closes, for exactly as long as there is something to
+   * lose.
+   *
+   * `tailorOverrides` lives in module memory and nowhere else — no draft mirror
+   * (correct: the 22.11 draft is the MASTER's) and no sessionStorage — and iOS
+   * discards a backgrounded tab routinely. Re-tailoring the same posting is not
+   * a recovery either: `temperature=0.3` returns different text, so the
+   * sentences are gone for good.
+   *
+   * REGISTERED CONDITIONALLY, never once for the page. A permanent
+   * `beforeunload` makes every reload of an untouched document ask a question
+   * with no stakes, and a browser that sees the prompt abused stops honouring
+   * it. The string is the browser's own — none of them has let a page choose it
+   * for years — so the honest copy has to live where the user can read it before
+   * that moment, which is `edit.tailoredHint` on the toolbar.
+   */
+  useEffect(() => {
+    if (!result || overrideCount === 0) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Still required by Chrome and Safari to show the prompt at all, despite
+      // being deprecated in the spec; `preventDefault()` alone is Firefox-only.
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [result, overrideCount]);
 
   const smooth = () =>
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -478,7 +832,13 @@ export default function TailorPage() {
     return {
       template,
       voice_score: result?.voice_report?.human_voice_score,
-      fabrication_flag_count: result?.fabrication_flags.length,
+      // UNKNOWN, not a number, once the user has written into the document. The
+      // guard ran against `result.tailored_resume`; what this row records is
+      // `effectiveResume`, which has their own text over it — text no guard has
+      // ever seen. A row that predates the field means unknown and the analytics
+      // drops it from that dimension, which is exactly the right treatment here;
+      // storing 0 would let a hand-typed claim be counted as guard-clean forever.
+      fabrication_flag_count: overrideCount > 0 ? undefined : result?.fabrication_flags.length,
     };
   }
 
@@ -616,10 +976,9 @@ export default function TailorPage() {
         </div>
       )}
 
-      {/* Gated on `editable` for the same reason onEditBlock is: with a tailor
-          result up the document is a memo recomputed on every accept/decline,
-          so restoring into it would be written over on the next click. */}
-      {draft && editable && (
+      {/* Gated on the MASTER: this restores a draft OF the master, and with a
+          tailor result up the document on screen is not it. */}
+      {draft && isMaster && (
         <DraftRestoreBar savedAt={draft.savedAt} onKeep={keepDraft} onDiscard={discardDraft} />
       )}
 
@@ -669,7 +1028,10 @@ export default function TailorPage() {
         }
         actions={
           <>
-            {editable && shown && (
+            {/* MASTER only, and it must stay that way. Its `edit.hint` says
+                "your résumé", and its Save writes `state.resume` — a different
+                document from the one on screen while a result is up. */}
+            {isMaster && shown && (
               <ResumeEditBar
                 resume={shown}
                 savedResume={savedResume}
@@ -679,25 +1041,88 @@ export default function TailorPage() {
                 error={editError}
               />
             )}
+            {/* THE EXIT FROM REVIEW MODE, and until 23.7 there was none:
+                `editable` is `!result`, so a tailor result made the document
+                non-editable AND took the Replace tool with it, and nothing on
+                this page ever set `result` back to null. Tailoring once locked
+                /app into review for the rest of the session, short of a full
+                reload — which is also why "just hide Tailor while a result is
+                up" was the wrong answer to the confusing affordance. */}
+            {/* ARMED ONLY WHEN THERE IS SOMETHING TO LOSE. With no hand-edits
+                this discards a memo and one tap is right; with hand-edits it
+                deletes every sentence the user typed on this CV, with no undo
+                and no mirror anywhere — and it sits directly beside "Tailor for
+                a different job", which destroys the same map. Two adjacent
+                one-tap buttons that both silently delete the user's own writing
+                is the shape this splits up. The consequence is stated AT REST in
+                the notes row below (23.5's rule: what an irreversible action
+                admits to may not be held back until it is armed), never in a
+                `title` — a tooltip does not exist on the phone this is used
+                on. */}
+            {result && overrideCount > 0 && discardArmed ? (
+              <>
+                <Button
+                  variant="danger"
+                  icon={<ArrowLeft size={16} className="rtl:-scale-x-100" />}
+                  onClick={() => {
+                    setDiscardArmed(false);
+                    discardTailorResult();
+                  }}
+                >
+                  {t("discard.confirm", { count: overrideCount })}
+                </Button>
+                <Button variant="secondary" onClick={() => setDiscardArmed(false)}>
+                  {t("discard.keep")}
+                </Button>
+              </>
+            ) : (
+              result && (
+                <Button
+                  variant="ghost"
+                  icon={<ArrowLeft size={16} className="rtl:-scale-x-100" />}
+                  onClick={() => (overrideCount > 0 ? setDiscardArmed(true) : discardTailorResult())}
+                  // Only on the harmless branch, and only because it is a
+                  // DESCRIPTION there rather than a warning.
+                  title={overrideCount > 0 ? undefined : t("discard.title")}
+                >
+                  {t("discard.cta")}
+                </Button>
+              )
+            )}
             <Button
+              // With a result up the loudest control on the page belongs to
+              // review + download below, not to starting over. Same button,
+              // demoted — a re-aim is a secondary action here.
+              variant={result ? "secondary" : "primary"}
               loading={loading}
               icon={<Wand2 size={17} />}
               disabled={!canRun}
               title={!resume ? t("run.uploadFirst") : undefined}
               onClick={() => setTailorState({ overlayOpen: true })}
             >
-              {/* The job title earns its place on a wide screen and costs a
-                  whole extra row on a 390px one, where the target card above
-                  already names the job. */}
-              <span className="sm:hidden">{t("overlay.open")}</span>
-              <span className="hidden sm:inline">
-                {jd?.job_title ? t("overlay.openFor", { title: jd.job_title }) : t("overlay.open")}
-              </span>
+              {result ? (
+                // No sm/lg split here: there is no title to interpolate, so the
+                // one label fits a 390px row beside the ghost exit above.
+                // Naming the job ALREADY tailored for is what read as "tailor
+                // the tailored one again" — the complaint this replaces.
+                t("overlay.openDifferent")
+              ) : (
+                <>
+                  {/* The job title earns its place on a wide screen and costs a
+                      whole extra row on a 390px one, where the target card above
+                      already names the job. */}
+                  <span className="sm:hidden">{t("overlay.open")}</span>
+                  <span className="hidden sm:inline">
+                    {jd?.job_title ? t("overlay.openFor", { title: jd.job_title }) : t("overlay.open")}
+                  </span>
+                </>
+              )}
             </Button>
           </>
         }
         notes={
-          loading || error || edits.length > 0 ? (
+          loading || error || edits.length > 0 || result ? (
+            <>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {loading && <span className="text-xs text-ink-muted">{t("run.keepsRunning")}</span>}
               {error && <span className="text-sm text-danger">{error}</span>}
@@ -712,7 +1137,123 @@ export default function TailorPage() {
                   {t("toolbar.review", { count: edits.length })}
                 </button>
               )}
+              {/* The tailored document is typed on and nothing said so. It
+                  cannot ride ResumeEditBar's `edit.hint`: that bar stays
+                  master-only, and its "your résumé" plus a Save button would
+                  both be about a different document from the one on screen. */}
+              {result && <span className="text-xs text-ink-muted">{t("edit.tailoredHint")}</span>}
+              {result && overrideCount > 0 && (
+                <>
+                  {/* The count IS the reveal. It was a plain span, and a number
+                      whose members cannot be found is worse than no number: an
+                      override that DELETED a block has nothing to mark on the
+                      paper and no review row to sit in, so "3 edits of your own"
+                      could stand beside one mint bar and one badge with the only
+                      recovery being "Clear my edits" — which reverts all three. */}
+                  <button
+                    type="button"
+                    aria-expanded={yoursOpen}
+                    onClick={() => setYoursOpen((o) => !o)}
+                    className="text-xs font-medium text-mint hover:underline"
+                  >
+                    {t("edit.yours", { count: overrideCount })}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearAllBlockOverrides}
+                    className="text-xs font-medium text-accent-soft hover:underline"
+                  >
+                    {t("edit.yoursClear")}
+                  </button>
+                  {/* THE CONSEQUENCE, AT REST. It says what leaving this review
+                      costs before the button beside it is touched, which is the
+                      order 23.5 settled for the danger zone: "read what it
+                      admits to once armed" is the wrong order for something
+                      irreversible. It turns danger-coloured once armed, so
+                      arming still changes something visible. */}
+                  <span
+                    className={cn(
+                      "basis-full text-xs leading-relaxed sm:basis-auto",
+                      discardArmed ? "text-danger" : "text-ink-muted",
+                    )}
+                  >
+                    {t("discard.edited", { count: overrideCount })}
+                  </span>
+                </>
+              )}
+              {/* The one-step undo for "Clear my edits", and it is deliberately
+                  OUTSIDE the block above: clearing takes `overrideCount` to zero
+                  and that block with it, so an offer rendered inside would
+                  vanish in the same frame as the thing it undoes. Restoring
+                  MERGES, so anything typed since the clear survives it. */}
+              {result && clearedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={restoreClearedOverrides}
+                  className="text-xs font-medium text-mint hover:underline"
+                >
+                  {t("edit.yoursRestoreCleared", { count: clearedCount })}
+                </button>
+              )}
             </div>
+            {/* A conditional render with `animate-fade-up`, never a height tween:
+                this bar re-renders on every keystroke and every coverage
+                response, and an element mid-tween is left frozen at its
+                interpolated px with `overflow-hidden` clipping it (check 11,
+                seven shipped instances). Capped and scrollable because it sits
+                inside a sticky bar — a long list would push the document off the
+                screen it is stuck to. */}
+            {result && yoursOpen && overrideCount > 0 && (
+              <div className="animate-fade-up mt-2 max-h-40 overflow-y-auto rounded-lg border border-line bg-panel-2/60 p-2">
+                <ul className="space-y-1">
+                  {myEdits.map((e) => (
+                    <li key={e.anchor} className="space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                      <span dir="auto" className="min-w-0 flex-1 truncate text-ink-muted">
+                        {e.text || "—"}
+                      </span>
+                      <span
+                        className={cn(
+                          "shrink-0 font-medium",
+                          e.state === "removed"
+                            ? "text-warn"
+                            : e.state === "hidden"
+                              ? "text-ink-faint"
+                              : "text-mint",
+                        )}
+                      >
+                        {e.state === "removed"
+                          ? t("edit.yoursDeletedLine")
+                          : e.state === "hidden"
+                            ? t("edit.yoursOff")
+                            : t("edit.yoursOn")}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => clearBlockOverride(e.anchor)}
+                        className="shrink-0 rounded-md border border-line px-2 py-0.5 font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+                      >
+                        {e.state === "removed" ? t("edit.yoursPutBack") : t("edit.yoursUndoOne")}
+                      </button>
+                    </div>
+                    {/* WHAT THE BUTTON ABOVE WILL PUT BACK. Read off the
+                        pre-override merge through the row's own anchor, so it is
+                        the block's real previous wording rather than a guess —
+                        and without it the undo replaces the text on this line
+                        with something that appears nowhere on the page. Its own
+                        line, not a fourth item in the flex row: at 390px in
+                        Hebrew that row already wraps. */}
+                    {e.was && e.was !== e.text && (
+                      <p dir="auto" className="truncate text-[11px] text-ink-faint">
+                        {t("edit.yoursWas", { text: e.was })}
+                      </p>
+                    )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            </>
           ) : undefined
         }
       />
@@ -734,15 +1275,29 @@ export default function TailorPage() {
           activeBlock={spot?.path ?? null}
           activeNonce={spot?.nonce}
           onSelectBlock={selectBlock}
-          onEditBlock={editable ? setEditPath : undefined}
-          onInlineCommit={editable ? commitInline : undefined}
-          onAddSkill={editable ? addSkill : undefined}
-          onAdd={editable ? addToResume : undefined}
-          onAddBullet={editable ? addBullet : undefined}
-          // Same gate as every other write on this surface: master ⇒ change it,
-          // tailored ⇒ review it. `onParsed` is the SAME handler the empty
-          // state uses, so the cold start and the replacement are one path.
-          onReplace={editable ? onParsed : undefined}
+          // The paper is typed on in both modes; `commitInline` is what routes
+          // a tailored edit into the override layer instead of the master.
+          onEditBlock={canEditDoc ? setEditPath : undefined}
+          onInlineCommit={canEditDoc ? commitInline : undefined}
+          // ADDING stays master-only, and the reason is the fabrication guard,
+          // not caution. It ran against `result.tailored_resume`; a claim typed
+          // in afterwards carries no verdict at all, while ScoreCard below goes
+          // on rendering `result.fabrication_flags` as though it described the
+          // document on screen. An added block also exists in neither the
+          // original nor the tailored résumé, so it has no source anchor to be
+          // stored against. Adds belong in their own change, with their own
+          // guard story.
+          onAddSkill={isMaster ? addSkill : undefined}
+          onAdd={isMaster ? addToResume : undefined}
+          onAddBullet={isMaster ? addBullet : undefined}
+          // In the add control's own place, so its absence is answered where
+          // the question gets asked rather than in a toolbar three scrolls up.
+          footNote={result ? t("edit.tailoredNoAdd") : undefined}
+          // Master only: replacing the file under a tailor review would be
+          // replacing the thing being reviewed. `onParsed` is the SAME handler
+          // the empty state uses, so the cold start and the replacement are one
+          // path.
+          onReplace={isMaster ? onParsed : undefined}
         />
       ) : (
         <Card>
@@ -772,8 +1327,20 @@ export default function TailorPage() {
           coverageStale={coverage.stale}
           fitScore={result ? result.score_after.fit_score : (fit?.fit_score ?? null)}
           rationale={result ? result.score_after.rationale : fit?.rationale}
-          scoredAt={scoredAt}
+          // THE STAMP THAT BELONGS TO THE NUMBER ABOVE IT, picked by the same
+          // condition and on the same line as the number, so the two cannot
+          // drift. One field served both readings until 23.8: the tailor's
+          // success branch re-stamped it, so after "Back to my résumé" the tile
+          // paired the PRE-tailor fit reading with the TAILOR's clock — and the
+          // timestamp is the entire honesty mechanism of that tile, which
+          // deliberately shows one reading with no before/after and no delta.
+          scoredAt={result ? scoredAt : fitScoredAt}
           flags={result?.fabrication_flags ?? []}
+          // The guard ran on the AI's rewrite; the document beside this tile —
+          // and in the PDF preview, the x-ray, both downloads and the tracker row
+          // — is `effectiveResume`, with the user's own sentences over it. The
+          // count is how the tile says which of the two it is describing.
+          overrideCount={overrideCount}
         />
       )}
 
@@ -814,6 +1381,11 @@ export default function TailorPage() {
               onShowInDoc={showInDoc}
               anchoredEdits={editBlock}
               focusEdit={focusEdit}
+              overridden={overriddenEdits}
+              overrideCount={overrideCount}
+              onUseAi={(id) => resolveOverride(id, false)}
+              onUseOriginal={(id) => resolveOverride(id, true)}
+              onRestoreMine={restoreOverride}
             />
 
             <Card>
@@ -908,12 +1480,16 @@ export default function TailorPage() {
         )}
       </AnimatePresence>
 
-      {editable && shown && (
+      {shown && (
         <BlockEditSheet
           path={editPath}
           resume={shown}
           paperDir={paperDir}
           onClose={closeEditSheet}
+          // Exactly one of these two ever fires. With a result up the sheet
+          // hands back raw VALUES and they become an override; without one it
+          // hands back a résumé and that résumé becomes the master.
+          onApplyValues={result ? commitBlockValues : undefined}
           onApply={(next, path) => {
             applyBlockEdit(next);
             setFreshEntry(null); // it has content now; it is a normal entry
@@ -922,6 +1498,11 @@ export default function TailorPage() {
           }}
           onGone={() => {
             setEditPath(null);
+            // The dismissal path that used to leave `freshEntry` set. It is a
+            // coordinate in the MASTER, and a stale one becomes a coordinate in
+            // the WRONG document the moment a tailor result arrives — see
+            // `closeEditSheet`, which is the function that would act on it.
+            setFreshEntry(null);
             toast("info", t("edit.gone"));
           }}
         />
@@ -936,11 +1517,42 @@ export default function TailorPage() {
           checkedFor={checkedFor}
           fit={fit}
           tailoring={loading}
+          hasResult={!!result}
+          // The overlay's Tailor button destroys these, so it is the overlay
+          // that has to arm-then-confirm and to name the count in its own
+          // "this starts again from your master résumé" note.
+          overrideCount={overrideCount}
           onChecked={(text, f) =>
-            setTailorState({ jdText: text, jd: f.jd, fit: f, checkedFor: text, scoredAt: Date.now() })
+            // `fitScoredAt`, never `scoredAt`: this stamp belongs to THIS
+            // reading. `scoredAt` is the tailor's, written by `startTailor`'s
+            // success branch beside `result.score_after`.
+            setTailorState({ jdText: text, jd: f.jd, fit: f, checkedFor: text, fitScoredAt: Date.now() })
           }
           onTailor={(text) => {
-            setTailorState({ jdText: text, overlayOpen: false });
+            // The Jobs-page handoff (`setTargetJob`) sets jobUrl/jobTitle/company
+            // alongside jdText. Tailoring for a DIFFERENT posting must not leave
+            // the breadcrumb, the target card and `save()`'s `job_url` naming the
+            // old one. This is the ONE place the rule inverts `adoptMaster`'s
+            // ("the target job survives — which posting you are aiming at has
+            // nothing to do with which file your résumé is in"): here the posting
+            // is precisely what changed.
+            //
+            // Trimmed on BOTH sides: `setTargetJob` stores the JD untrimmed and
+            // the overlay hands back `draft.trim()`, so a bare comparison would
+            // wipe a correct target on a trailing newline — a guard firing on
+            // legitimate input.
+            const changed = text !== jdText.trim();
+            setTailorState(
+              changed
+                ? {
+                    jdText: text,
+                    overlayOpen: false,
+                    jobUrl: undefined,
+                    jobTitle: undefined,
+                    company: undefined,
+                  }
+                : { jdText: text, overlayOpen: false },
+            );
             startTailor();
           }}
         />

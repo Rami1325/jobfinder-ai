@@ -1,6 +1,8 @@
 import { useId, useMemo, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
+import type { ResumeTemplate } from "../../api/client";
+import { TEMPLATE_SPECS, bandFill, headingRuleFill } from "../../lib/templateSpecs";
 
 /**
  * Hand-drawn résumé thumbnails — the landing's most important asset.
@@ -12,15 +14,17 @@ import { useTranslation } from "react-i18next";
  * network requests, nothing to 404, no build step to keep in sync), and
  * vectors stay crisp at any thumbnail size.
  *
- * They are also HONEST miniatures, not decoration. Every geometric fact in
- * SPECS below — page size, margins, type sizes, palette, header treatment,
- * heading treatment, entry grammar, column count, bullet glyph — is
- * transcribed from the real `TemplateSpec` values in
- * `backend/app/render/templates.py`, and the vertical rhythm, the section
+ * They are also HONEST miniatures, not decoration. Every geometric fact they
+ * draw — page size, margins, type sizes, palette, header treatment, heading
+ * treatment, entry grammar, column count, bullet glyph — comes from
+ * `lib/templateSpecs.ts`, the ONE frontend mirror of the real `TemplateSpec`
+ * values in `backend/app/render/templates.py`, and check-mirrors 23 fails the
+ * build when the two drift. The table used to live in this file and had
+ * already drifted (`classic` drew an inline skills run against the file's
+ * chips): a thumbnail that lies about the download is worse than no thumbnail
+ * on a page whose entire pitch is honesty. The vertical rhythm, the section
  * order and the entry grammar come from `pdf_renderer.py` itself (`_Sheet`,
- * `entry()`, `section_order()`). When a template changes there, or one is
- * added, update SPECS to match: a thumbnail that lies about the download is
- * worse than no thumbnail on a page whose entire pitch is honesty.
+ * `entry()`, `section_order()`) and are still transcribed by hand below.
  *
  * WHAT IS DRAWN. Real `<text>`, not grey bars — one fixed, invented demo CV
  * (see DEMO) laid out by a miniature version of the PDF engine: measure, wrap,
@@ -45,37 +49,6 @@ import { useTranslation } from "react-i18next";
  * chrome, and it must be identical in all eleven tiles to be a fair
  * comparison. The only localized strings here are the accessibility ones.
  */
-
-export type MiniatureTemplate =
-  | "classic"
-  | "modern"
-  | "split"
-  | "panel"
-  | "timeline"
-  | "executive"
-  | "ivy"
-  | "ledger"
-  | "student"
-  | "compact"
-  | "minimal";
-
-/** Same ids and same order as `RESUME_TEMPLATES` in api/client.ts. */
-export const MINIATURE_TEMPLATES: readonly MiniatureTemplate[] = [
-  "classic",
-  "modern",
-  "split",
-  "panel",
-  "timeline",
-  "executive",
-  "ivy",
-  "ledger",
-  "student",
-  "compact",
-  "minimal",
-] as const;
-
-/** Templates whose sidebar is PDF-only (the DOCX renders a single-column sibling). */
-export const PDF_ONLY_TEMPLATES: readonly MiniatureTemplate[] = ["split", "panel"] as const;
 
 /* -------------------------------------------------------------------------- */
 /* The demo résumé                                                             */
@@ -185,166 +158,13 @@ const LABEL = {
 } as const;
 
 /* -------------------------------------------------------------------------- */
-/* Template specs                                                              */
+/* The page                                                                    */
 /* -------------------------------------------------------------------------- */
 
-interface Spec {
-  accent: string;
-  ink: string;
-  muted: string;
-  rule: string;
-  accentSoft: string;
-  /** Points, straight from TemplateSpec. */
-  mx: number;
-  my: number;
-  body: number;
-  head: number;
-  name: number;
-  meta: number;
-  nameCentered: boolean;
-  /** heading_tracking, pt. */
-  tracking: number;
-  /** name_tracking, pt — negative on every template, names are set tight. */
-  nameTracking: number;
-  /** True where pdf_family is a serif (Spectral / Georgia). */
-  serif: boolean;
-  header: "rule" | "plain" | "band";
-  headerRulePt: number;
-  headerRuleAccent: boolean;
-  bandBg?: string;
-  bandInk?: string;
-  bandSub?: string;
-  bandMeta?: string;
-  heading: "rule" | "short" | "bar" | "plain" | "hung" | "centered";
-  headingBump: number;
-  headingRulePt: number;
-  headingRuleColor?: string;
-  headingShortPt: number;
-  headingBarW: number;
-  headingHangPt: number;
-  headingCase: "upper" | "title";
-  entry: "split" | "stack";
-  skills: "inline" | "chips";
-  listCols: 1 | 2;
-  layout: "single" | "sidebar";
-  sidebarRatio: number;
-  sidebarGutter: number;
-  sidebarPanel: boolean;
-  rail: boolean;
-  bulletGlyph: string;
-  bulletScale: number;
-  bulletAccent: boolean;
-  pageBg: string;
-  tight: boolean;
-}
-
+// A4 at 1pt = 1 SVG unit, rounded — the sheet is scaled by the viewBox, so the
+// fractions templates.py carries (595.276 x 841.890) buy nothing here.
 const A4_W = 596;
 const A4_H = 842;
-
-const BASE = {
-  headerRulePt: 0.8,
-  headerRuleAccent: false,
-  headingBump: 0,
-  headingRulePt: 0.6,
-  headingShortPt: 32,
-  headingBarW: 3,
-  headingHangPt: 44,
-  headingCase: "upper",
-  entry: "stack",
-  skills: "inline",
-  listCols: 2,
-  layout: "single",
-  sidebarRatio: 0.31,
-  sidebarGutter: 20,
-  sidebarPanel: false,
-  rail: false,
-  bulletGlyph: "•",
-  bulletScale: 1.0,
-  bulletAccent: false,
-  pageBg: "#ffffff",
-  tight: false,
-  nameCentered: false,
-  serif: false,
-} as const;
-
-const SPECS: Record<MiniatureTemplate, Spec> = {
-  classic: {
-    ...BASE, accent: "#1F3A5F", ink: "#111827", muted: "#5C6470", rule: "#DFE3E9", accentSoft: "#E9EEF4",
-    mx: 58, my: 46, body: 10.4, head: 11.0, name: 27, meta: 8.8, tracking: 0.8, nameTracking: -0.3,
-    header: "band", bandBg: "#EDF1F6", bandInk: "#14243A", bandSub: "#1F3A5F", bandMeta: "#4A5A72",
-    heading: "rule", headingRulePt: 0.5, listCols: 2, bulletAccent: true, bulletScale: 0.62,
-  },
-  modern: {
-    ...BASE, accent: "#0E7A5F", ink: "#14181F", muted: "#59616E", rule: "#D9E2DE", accentSoft: "#E4F1EC",
-    mx: 58, my: 46, body: 10.4, head: 11.0, name: 28, meta: 8.8, tracking: 0.8, nameTracking: -0.4,
-    header: "band", bandBg: "#0B5344", bandInk: "#FFFFFF", bandSub: "#BFDDD2", bandMeta: "#9CC6B9",
-    heading: "short", headingRulePt: 1.4, headingRuleColor: "#0E7A5F", headingShortPt: 32,
-    skills: "chips", listCols: 2, bulletAccent: true, bulletScale: 0.62,
-  },
-  split: {
-    ...BASE, accent: "#15476B", ink: "#111827", muted: "#59616E", rule: "#DCE2E8", accentSoft: "#E7EEF4",
-    mx: 48, my: 44, body: 10.1, head: 10.8, name: 27, meta: 8.6, tracking: 0.7, nameTracking: -0.3,
-    header: "band", bandBg: "#EBF0F5", bandInk: "#10283D", bandSub: "#15476B", bandMeta: "#4C5F73",
-    heading: "short", headingRulePt: 1.3, headingRuleColor: "#15476B", headingShortPt: 26,
-    skills: "chips", listCols: 1, bulletAccent: true, bulletScale: 0.6,
-    layout: "sidebar", sidebarRatio: 0.31, sidebarGutter: 20,
-  },
-  panel: {
-    ...BASE, accent: "#15476B", ink: "#111827", muted: "#59616E", rule: "#C3D4E1", accentSoft: "#DCE8F1",
-    mx: 48, my: 44, body: 10.1, head: 10.6, name: 27, meta: 8.6, tracking: 0.7, nameTracking: -0.3,
-    header: "band", bandBg: "#123C5C", bandInk: "#FFFFFF", bandSub: "#BBD3E4", bandMeta: "#94B2C9",
-    heading: "bar", headingBump: 0.6, headingBarW: 2.6, headingRulePt: 0.6,
-    skills: "chips", listCols: 1, bulletAccent: true, bulletScale: 0.6,
-    layout: "sidebar", sidebarRatio: 0.3, sidebarGutter: 22, sidebarPanel: true,
-  },
-  timeline: {
-    ...BASE, accent: "#2A5D7C", ink: "#121821", muted: "#5A626E", rule: "#D9E0E6", accentSoft: "#E8EFF4",
-    mx: 56, my: 46, body: 10.3, head: 11.0, name: 27, meta: 8.6, tracking: 0.9, nameTracking: -0.3,
-    header: "rule", headerRulePt: 1.6, headerRuleAccent: true,
-    heading: "plain", headingRulePt: 0.6, rail: true, listCols: 2, bulletAccent: true, bulletScale: 0.6,
-  },
-  executive: {
-    ...BASE, accent: "#16304B", ink: "#1B1B18", muted: "#5A5F6A", rule: "#D8D0C2", accentSoft: "#EFE9DE",
-    mx: 70, my: 54, body: 10.4, head: 11.4, name: 29, meta: 8.8, tracking: 0.4, nameTracking: -0.2,
-    serif: true, nameCentered: true, header: "rule", headerRulePt: 1.5,
-    heading: "plain", headingRulePt: 0.6, headingCase: "title",
-    entry: "split", listCols: 2, bulletGlyph: "—", bulletScale: 0.58, pageBg: "#FDFBF4",
-  },
-  ivy: {
-    ...BASE, accent: "#1B2430", ink: "#121820", muted: "#6A717B", rule: "#C9CED6", accentSoft: "#ECEEF1",
-    mx: 64, my: 50, body: 10.3, head: 11.6, name: 26, meta: 8.8, tracking: 0.3, nameTracking: -0.2,
-    serif: true, nameCentered: true, header: "plain",
-    heading: "centered", headingRulePt: 0.6, headingCase: "title",
-    entry: "split", listCols: 2, bulletScale: 0.58,
-  },
-  ledger: {
-    ...BASE, accent: "#B4451F", ink: "#151515", muted: "#6A6A6A", rule: "#D8D8D8", accentSoft: "#F6E9E2",
-    mx: 50, my: 42, body: 10.0, head: 11.2, name: 26, meta: 8.6, tracking: 0.6, nameTracking: -0.2,
-    header: "rule", headerRulePt: 2.0, headerRuleAccent: true,
-    heading: "rule", headingRulePt: 2.0, headingRuleColor: "#1A1A1A",
-    skills: "chips", listCols: 2, bulletAccent: true, bulletScale: 0.55,
-  },
-  student: {
-    ...BASE, accent: "#2E6B4F", ink: "#121A16", muted: "#5B6560", rule: "#D9E4DD", accentSoft: "#E8F1EC",
-    mx: 62, my: 50, body: 10.6, head: 11.2, name: 27, meta: 8.8, tracking: 0.8, nameTracking: -0.3,
-    header: "band", bandBg: "#E8F1EC", bandInk: "#14301F", bandSub: "#2E6B4F", bandMeta: "#47604F",
-    heading: "short", headingRulePt: 1.4, headingRuleColor: "#2E6B4F", headingShortPt: 30,
-    skills: "chips", listCols: 2, bulletAccent: true, bulletScale: 0.62,
-  },
-  compact: {
-    ...BASE, accent: "#27405C", ink: "#141922", muted: "#5A626E", rule: "#DCE0E6", accentSoft: "#E7ECF2",
-    mx: 46, my: 34, body: 9.9, head: 10.4, name: 22, meta: 8.4, tracking: 0.6, nameTracking: -0.2,
-    header: "rule", headerRulePt: 1.6, headerRuleAccent: true,
-    heading: "bar", headingBarW: 2.4, headingRulePt: 0.6,
-    listCols: 2, bulletAccent: true, bulletScale: 0.58, tight: true,
-  },
-  minimal: {
-    ...BASE, accent: "#374151", ink: "#111827", muted: "#6B7280", rule: "#E4E7EB", accentSoft: "#EDEFF2",
-    mx: 84, my: 54, body: 10.6, head: 10.6, name: 30, meta: 8.8, tracking: 1.0, nameTracking: -0.5,
-    header: "plain", heading: "hung", headingHangPt: 58, headingRulePt: 0.6,
-    listCols: 2, bulletGlyph: "–", bulletScale: 0.8,
-  },
-};
 
 /* -------------------------------------------------------------------------- */
 /* Type metrics                                                                */
@@ -443,7 +263,7 @@ export default function ResumeMiniature({
   flagBullet = false,
   struck = false,
 }: {
-  template: MiniatureTemplate;
+  template: ResumeTemplate;
   /** Accessible name. Decorative-only usage should pass nothing. */
   label?: string;
   className?: string;
@@ -457,7 +277,7 @@ export default function ResumeMiniature({
   const reduce = useReducedMotion();
   const { t, i18n } = useTranslation("marketing");
   const uid = useId();
-  const s = SPECS[template];
+  const s = TEMPLATE_SPECS[template];
   // The callers mirror the sheet with `rtl:-scale-x-100`, which fires off the
   // document `dir` i18n sets for Hebrew. `put` reads this to flip each run
   // back, so the two must agree on what "RTL" means.
@@ -577,13 +397,13 @@ export default function ResumeMiniature({
     const headH = nameLead + 1 + 1 + headlineLead + 1 + metaLead;
     const bandH = band ? headH + s.my * 0.72 + s.my * 0.62 : 0;
 
-    if (band) rect(0, 0, A4_W, bandH, s.bandBg!, 1, 0);
+    if (band) rect(0, 0, A4_W, bandH, bandFill(s), 1, 0);
 
     let hy = band ? s.my * 0.72 : s.my;
     const place = (w: number) => (centred ? s.mx + (cw - w) / 2 : s.mx);
 
     const nameW = measure(DEMO.name, s.name, true, s.nameTracking);
-    put(DEMO.name, place(nameW), hy + ascent(s.name), s.name, band ? s.bandInk! : s.ink, {
+    put(DEMO.name, place(nameW), hy + ascent(s.name), s.name, band ? s.bandInk : s.ink, {
       bold: true,
       tracking: s.nameTracking,
       maxW: cw,
@@ -591,7 +411,7 @@ export default function ResumeMiniature({
     hy += nameLead + 2;
 
     const headlineW = measure(DEMO.headline, headlineSize, false, 0.3);
-    put(DEMO.headline, place(headlineW), hy + ascent(headlineSize), headlineSize, band ? s.bandSub! : s.accent, {
+    put(DEMO.headline, place(headlineW), hy + ascent(headlineSize), headlineSize, band ? s.bandSub : s.accent, {
       tracking: 0.3,
       maxW: cw,
     });
@@ -599,7 +419,7 @@ export default function ResumeMiniature({
 
     const contactW = measure(contactLine, s.meta);
     putSegments(
-      DEMO.contact.map((t) => ({ t, size: s.meta, fill: band ? s.bandMeta! : s.muted })),
+      DEMO.contact.map((t) => ({ t, size: s.meta, fill: band ? s.bandMeta : s.muted })),
       place(Math.min(contactW, cw)),
       hy + ascent(s.meta),
     );
@@ -627,7 +447,7 @@ export default function ResumeMiniature({
       const after = secAfter + (bar ? 1 : 0);
       const h = (bar ? size * 1.34 : size * 1.15 + gap) + after;
       const text = s.headingCase === "title" ? LABEL[labelKey] : LABEL[labelKey].toUpperCase();
-      const ruleColor = s.headingRuleColor ?? s.rule;
+      const ruleColor = headingRuleFill(s);
       // `short` and `hung` set the label in ink and let the accent live in the
       // mark beside it; every other shape colours the label itself.
       const color = bar || s.heading === "short" || s.heading === "hung" ? s.ink : s.accent;
@@ -1058,7 +878,7 @@ export default function ResumeMiniature({
     >
       <title id={`${uid}-t`}>{title}</title>
       <desc id={`${uid}-d`}>{note}</desc>
-      <rect x={0} y={0} width={A4_W} height={A4_H} fill={s.pageBg} />
+      <rect x={0} y={0} width={A4_W} height={A4_H} fill={s.pageBg || "#FFFFFF"} />
       {nodes}
       {strike && (
         <motion.rect

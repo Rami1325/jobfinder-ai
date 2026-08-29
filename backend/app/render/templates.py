@@ -6,10 +6,13 @@ palette, the vertical rhythm, and — since Phase 21 — the presentation vocabu
 contains layout code. Every LAYOUT option is reproducible in BOTH renderers, so
 the PDF and the DOCX can never disagree about what a template SAYS.
 
-`contact_icons` / `date_icon` are the one carve-out, and they are ornament
-rather than layout: the icons are drawn vector paths that emit no text, and the
-DOCX renders the same document without them. See the field for why a drawing
-object and a dingbat are both worse than the omission.
+Three fields are ORNAMENT rather than layout and render in the PDF only:
+`contact_icons` / `date_icon`, `page_bg`, and the per-role dot on `rail`. Each
+passes the same test — it carries no text, and its absence changes nothing the
+document SAYS — and each names, at its own field, why the DOCX alternative is
+worse than the omission rather than merely harder. Nothing with a LAYOUT
+consequence may join them: a heading shape, a bullet glyph, a column count or a
+rule weight changes what the document says, so those are reproduced in both.
 
 Everything here stays ATS-safe: real selectable text, zero tables / text boxes /
 images / headers / footers, standard section names. The DOCX twin of a filled
@@ -76,11 +79,15 @@ class TemplateSpec:
 
     # --- layout -----------------------------------------------------------
     name_centered: bool = True  # False = name sits at the text start (right in RTL)
-    accent_name: bool = False  # print the name in the accent colour
     name_tracking: float = 1.0  # extra letter-spacing, pt
     heading_tracking: float = 1.0
-    header_rule: bool = True  # hairline under the contact block
-    heading_rule: bool = True  # hairline under every section heading
+    # `accent_name`, `header_rule` and `heading_rule` used to live here. All
+    # three were BOOLEANS standing beside a live enum (`header` / `heading`) that
+    # already said the same thing, and that is exactly how the two renderers
+    # drifted: nothing set `accent_name`, yet both renderers carried a branch for
+    # it, and the hairlines keyed off the bools while the docstring below
+    # described the enum. A dead flag next to a live one is not harmless — it is
+    # the thing the next reader believes. Add a VALUE to the enum instead.
     margin_tb_pt: float = 46.0
     margin_lr_pt: float = 54.0
     page_w_pt: float = A4_W
@@ -95,13 +102,25 @@ class TemplateSpec:
     # paragraph border (w:pBdr), and of a chip a shaded run — so no option here
     # can make the two downloads disagree, and none of them needs a table.
     #
-    # "header": how the name/headline/contact block is presented.
+    # "header": how the name/headline/contact block is presented. THIS FIELD IS
+    # AUTHORITATIVE IN BOTH RENDERERS — it is the only thing either of them asks
+    # about the hairline.
     #   "rule"  — name, headline, contact, hairline under (the original)
     #   "plain" — same, no hairline
     #   "band"  — reversed out of a filled rectangle that bleeds to the page
     #             edges. The single biggest visual upgrade available, and the
     #             one thing that stops the page reading as typed rather than
     #             designed.
+    #
+    # Until this was fixed both renderers read `header` only as `== "band"` and
+    # keyed the hairline off a separate `header_rule: bool = True` that no
+    # template ever set False — so `ivy` and `minimal`, whose specs say "plain",
+    # drew one anyway (measured: ivy 0.8pt C9CED6, minimal 0.8pt E4E7EB) in BOTH
+    # downloads. The picker thumbnails already drew none for either, so the
+    # declaration, the docstring and the UI all agreed and only the renderers
+    # disagreed. Moving the renderers to the declaration is what makes the field
+    # mean something; rewriting this comment so "plain" was a synonym for "rule"
+    # would have documented the bug and left the thumbnails wrong.
     header: str = "rule"
     band_bg: str = ""  # band fill; "" = use `accent`
     band_ink: str = "FFFFFF"  # the name, on the band
@@ -156,7 +175,19 @@ class TemplateSpec:
     contact_icons: bool = False
     date_icon: bool = False  # a small calendar on the entry meta line
 
-    page_bg: str = ""  # full-bleed paper tint, e.g. warm cream for `executive`
+    # A full-bleed paper tint, e.g. the warm cream `executive` prints on.
+    #
+    # THE SECOND ORNAMENT CARVE-OUT (see `contact_icons` above): the PDF paints
+    # it and the DOCX renders the same document on white. It passes the same test
+    # the icons pass — a page tint carries no text, and its absence changes
+    # nothing the document SAYS — and the alternative is worse than the omission
+    # rather than merely harder. Word's only twin is `w:background` +
+    # `w:displayBackgroundShape`, which Word shows on SCREEN but does not print
+    # and does not carry into its own PDF export unless the reader turns the
+    # option on. So implementing it would make the Word file disagree with its
+    # own print-out — a divergence between one document and itself, which is a
+    # new class of problem and strictly worse than the honest white page.
+    page_bg: str = ""
 
     # --- two-column (PDF only) -------------------------------------------
     # A sidebar renders ONLY in the PDF. Text extraction y-sorts across the full
@@ -171,7 +202,21 @@ class TemplateSpec:
     sidebar_keys: tuple[str, ...] = ("skills", "education", "certifications", "languages")
     docx_fallback: str = ""  # id the DOCX renders instead; "" = render as-is
 
-    rail: bool = False  # vertical hairline + a dot per role down the experience
+    # A vertical hairline down the entries, with a dot per role in the PDF.
+    #
+    # The LINE reproduces in both renderers — it is a left `w:pBdr` tiled down
+    # the paragraphs of one entry, the same mechanism the accent bar beside a
+    # heading already uses, so no table and nothing an ATS has to un-pick.
+    #
+    # THE DOT IS THE THIRD ORNAMENT CARVE-OUT (see `contact_icons` and
+    # `page_bg`). Word has no way to put a filled circle on a paragraph border:
+    # every candidate — `w:drawing`, `w:pict`, a VML shape — is one of the
+    # drawing objects the ATS rules forbid, and a unicode dingbat would print at
+    # whatever the reader's font substitutes AND land in the extracted text at
+    # the head of the job title. It passes the carve-out's own test: the dot
+    # carries no text, and its absence changes nothing the document says — the
+    # rail still reads as one continuous line down the roles.
+    rail: bool = False
 
     @property
     def pdf_only(self) -> bool:

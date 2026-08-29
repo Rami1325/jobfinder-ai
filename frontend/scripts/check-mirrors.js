@@ -25,6 +25,7 @@
 // running).
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -69,6 +70,27 @@ function topLevelKeys(block) {
   }
   return keys;
 }
+
+/**
+ * Top-level keys of the `setTailorState({...})` reset inside a named
+ * `state/tailorStore.ts` function.
+ *
+ * ONE definition, shared by checks 12 and 13, for check 6's reason: all three
+ * functions it is pointed at (`applyBlockEdit`, `adoptMaster`, `startTailor`)
+ * answer the same question — "the document or the review just changed, so what
+ * on screen now describes something that no longer exists?" — and two copies of
+ * the parser could disagree about the same source while both stayed green.
+ * `read` is called lazily so a missing file lands in a check's own try/catch as
+ * a loud `fail`, not as an unhandled throw at import time.
+ */
+const resetKeys = (fn, what) =>
+  topLevelKeys(
+    blockAfter(
+      blockAfter(read("state/tailorStore.ts"), `export function ${fn}`, what),
+      "setTailorState(",
+      `${fn} reset`,
+    ),
+  );
 
 // ---- 1. mergeResumes rebuilds every ResumeModel field --------------------- //
 try {
@@ -268,6 +290,30 @@ function flatKeys(obj, prefix = "", out = new Set()) {
   }
   return out;
 }
+
+/**
+ * Does a dotted `key` resolve in a parsed locale bundle?
+ *
+ * A COUNTED label exists ONLY under its plural suffixes, so a plain path lookup
+ * would report a correctly-translated key as missing. Restricted to the real
+ * i18next suffixes so `nav.more` cannot be satisfied by an unrelated
+ * `nav.more_menu`.
+ *
+ * ONE definition, shared by checks 9 and 16: two scrapes of two different files
+ * against two different namespaces, but the same question about the same
+ * lookup rules — and two copies of this would be free to disagree about the
+ * same bundle while both stayed green.
+ */
+function resolvesIn(bundle, key) {
+  const parts = key.split(".");
+  const leaf = parts.pop();
+  const parent = parts.reduce((o, k) => (o == null ? o : o[k]), bundle);
+  if (parent == null || typeof parent !== "object") return false;
+  return (
+    parent[leaf] !== undefined ||
+    Object.keys(parent).some((k) => k.startsWith(`${leaf}_`) && PLURAL.test(k))
+  );
+}
 try {
   const dir = (loc) => path.join(SRC, "locales", loc);
   // Union of BOTH directories, not readdir("en") alone: driving the loop off
@@ -359,20 +405,10 @@ try {
   for (const loc of ["en", "he"]) {
     const common = JSON.parse(read(`locales/${loc}/common.json`));
     for (const key of new Set(labels)) {
-      const parts = key.split(".");
-      const leaf = parts.pop();
-      const parent = parts.reduce((o, k) => (o == null ? o : o[k]), common);
-      // A counted label exists ONLY under its plural suffixes, so a plain path
-      // lookup would report a correctly-translated key as missing. Restricted
-      // to the real i18next suffixes so `nav.more` cannot be satisfied by some
-      // unrelated `nav.more_menu`.
-      const present =
-        parent != null &&
-        (parent[leaf] !== undefined ||
-          Object.keys(parent).some(
-            (k) => k.startsWith(`${leaf}_`) && /_(zero|one|two|few|many|other)$/.test(k),
-          ));
-      if (!present)
+      // `resolvesIn` handles the counted-label case: a plural key exists only
+      // under its suffixes, so a plain path lookup calls a translated string
+      // missing.
+      if (!resolvesIn(common, key))
         fail(`locales/${loc}/common.json is missing "${key}" — the nav would render the raw key.`);
     }
   }
@@ -543,10 +579,6 @@ try {
     );
   }
 
-  const resetKeys = (fn, what) =>
-    topLevelKeys(
-      blockAfter(blockAfter(store, `export function ${fn}`, what), "setTailorState(", `${fn} reset`),
-    );
   const edited = resetKeys("applyBlockEdit", "applyBlockEdit");
   const adopted = resetKeys("adoptMaster", "adoptMaster");
   if (edited.length < 6) throw new Error(`parsed only ${edited.length} applyBlockEdit reset fields`);
@@ -575,10 +607,1457 @@ try {
   fail(`master-résumé adoption check could not run: ${e.message}`);
 }
 
+// ---- 13. a re-tailor clears everything describing the PREVIOUS run -------- //
+// `startTailor` runs on the MASTER every time — it never reads
+// `result.tailored_resume` — so pressing Tailor again is a fresh run, not a
+// compounding one. What it did NOT do was clear the state describing the run it
+// replaces. Five keys survived: `savedAppId`, `applyClicked`, `applied`, `fit`
+// and `checkedFor`.
+//
+// The sharpest of them shipped: with `savedAppId` still set, `save()` takes its
+// `savedAppId !== null` short-circuit and toasts "Already in your tracker"
+// while writing NOTHING — so the tracker row keeps the PREVIOUS tailored
+// résumé, for the PREVIOUS job, and the green toast says it worked.
+//
+// DERIVED from `adoptMaster`, never restated. Both functions answer the same
+// question — "what on screen now describes something that no longer exists?" —
+// and the only difference is that a résumé swap also replaces the master while
+// a tailor replaces only the review. So the expected list is adoptMaster's
+// minus the six master-identity keys, and a field added to adoptMaster forces a
+// decision here instead of quietly going stale. Same shape as check 12; `tsc`
+// sees none of it, because every key is correctly typed and correctly optional.
+try {
+  // The six keys that identify the MASTER RÉSUMÉ. `adoptMaster` clears them
+  // because the file itself was replaced; `startTailor` must NOT, because
+  // tailoring never writes the master (Phase 22: master ⇒ edit, tailored ⇒
+  // review). Everything else adoptMaster clears is a statement about a finished
+  // run, and startTailor owes it exactly the same treatment.
+  const MASTER_ONLY = ["resume", "savedResume", "ledger", "masterLabel", "editUndo", "editError"];
+  const adopted = resetKeys("adoptMaster", "adoptMaster");
+  const started = resetKeys("startTailor", "startTailor");
+  if (adopted.length < 12) throw new Error(`parsed only ${adopted.length} adoptMaster reset fields`);
+  if (started.length < 10) throw new Error(`parsed only ${started.length} startTailor reset fields`);
+
+  const stale = adopted.filter((k) => !MASTER_ONLY.includes(k) && !started.includes(k));
+  if (stale.length) {
+    fail(
+      `state/tailorStore.ts: startTailor leaves ${stale.map((k) => `\`${k}\``).join(", ")} ` +
+        "describing the PREVIOUS tailor run, while adoptMaster clears " +
+        `${stale.length > 1 ? "them" : "it"} for the same reason. This is the shipped ` +
+        'defect: with `savedAppId` still set, save() short-circuits and toasts "Already ' +
+        'in your tracker" while writing NOTHING — the tracker row keeps the previous ' +
+        "tailored résumé, for the previous job.",
+    );
+  }
+
+  // The five that actually shipped stale, pinned by name as well as by
+  // derivation. Deliberately redundant with the subset above: that one goes
+  // green the moment a key leaves BOTH functions, and these five are the ones
+  // whose removal has to be a decision somebody makes on purpose.
+  const SHIPPED_STALE = ["savedAppId", "applyClicked", "applied", "fit", "checkedFor"];
+  const regressed = SHIPPED_STALE.filter((k) => !started.includes(k));
+  if (regressed.length) {
+    fail(
+      `state/tailorStore.ts: startTailor no longer resets ${regressed.map((k) => `\`${k}\``).join(", ")}. ` +
+        'These five are the shipped defect — a re-tailor that toasts "Already in your ' +
+        "tracker\" and writes nothing, and a fit reading and 'applied' badge belonging to " +
+        "the job the user just stopped aiming at.",
+    );
+  }
+
+  // Both directions, in this file's own literal-array style: the subset
+  // comparison must catch an omission and must NOT report one when there is
+  // none, or it passes for ever by comparing two lists it failed to parse.
+  if (["savedAppId", "fit"].filter((k) => !["savedAppId"].includes(k)).length !== 1) {
+    fail("check 13 cannot detect a reset field startTailor forgot");
+  }
+  if (["savedAppId"].filter((k) => !["savedAppId", "fit"].includes(k)).length !== 0) {
+    fail("check 13 reports a forgotten reset field when none is missing");
+  }
+} catch (e) {
+  fail(`re-tailor reset check could not run: ${e.message}`);
+}
+
+// ---- 14. the analysed-JD reuse is captured BEFORE the reset --------------- //
+// Check 13 forces `checkedFor: null` into `startTailor`'s reset, and that
+// creates an ordering trap directly underneath it. The reuse lookup — "have we
+// already paid to read this exact posting?" — used to live inside the async
+// IIFE, i.e. AFTER the reset, reading `state.checkedFor` from the module
+// binding. Leave it there and it reads the value this very call just nulled,
+// always misses, and re-spends a credit on `analyzeJD` — while the overlay's
+// own cost line promises "tailoring afterwards doesn't charge again".
+//
+// Nothing else can see this. Both orderings compile, both type-check, and the
+// symptom is a silent extra model call, not an error.
+try {
+  const body = blockAfter(
+    read("state/tailorStore.ts"),
+    "export function startTailor",
+    "startTailor body",
+  );
+  // ONE index comparison, used for the real assertion AND for both probes, so
+  // the probes cannot certify a matcher the assertion does not use.
+  const order = (src) => {
+    const capture = src.indexOf("const sameJd");
+    const reset = src.indexOf("setTailorState(");
+    return { capture, reset, ok: capture !== -1 && reset !== -1 && capture < reset };
+  };
+  const got = order(body);
+  if (got.capture === -1)
+    throw new Error("no `const sameJd` in startTailor — the capture this check guards is gone");
+  if (got.reset === -1)
+    throw new Error("no `setTailorState(` in startTailor — its reset is gone");
+  if (!got.ok) {
+    fail(
+      "state/tailorStore.ts: startTailor reads the analysed-JD reuse AFTER its own " +
+        "reset. The reset nulls `checkedFor`, so the lookup reads the value this call " +
+        "just cleared, never reuses the posting it already paid to read, and spends a " +
+        "second credit on analyzeJD — contradicting the overlay's cost line.",
+    );
+  }
+  if (order("setTailorState({ checkedFor: null });\nconst sameJd = state.checkedFor === x;").ok) {
+    fail("check 14 cannot detect the reversed order — its index comparison is broken");
+  }
+  if (!order("const sameJd = state.checkedFor === x;\nsetTailorState({ checkedFor: null });").ok) {
+    fail("check 14 fires on the correct order");
+  }
+} catch (e) {
+  fail(`analysed-JD reuse ordering check could not run: ${e.message}`);
+}
+
+// ---- 15. the overlay never shows a fit reading over a tailored document --- //
+// The overlay reseeds its draft from `jdText` on open, so after a tailor
+// `cached` was TRUE and the panel painted `fit.fit_score` — a reading taken
+// against the MASTER (TailorPage passes `resume={resume}`). Directly below it
+// on the page, `ScoreCard` was painting `result.score_after.fit_score` for the
+// TAILORED document. Two unlabelled "Recruiter fit" rings, different numbers,
+// different documents — the exact thing "two numbers on two clocks, never a
+// blended one" exists to prevent, and a comparison the invariant refuses to
+// dress up as improvement (two samples at temperature 0.3 are not a
+// measurement).
+//
+// `tsc` is quiet: both readings are correctly typed `FitCheckResult` numbers.
+try {
+  const overlay = read("components/TailorOverlay.tsx");
+  const sliced = decomment(overlay).match(/\bconst cached\s*=([^;]*);/);
+  if (!sliced)
+    throw new Error("could not slice the `const cached =` binding out of TailorOverlay.tsx");
+  // POLARITY, not presence. `/\bhasResult\b/` pinned only that the identifier
+  // APPEARS, and `const cached = hasResult && …` — one deleted character —
+  // sailed past it while producing the exact two-unlabelled-rings state this
+  // check's own message describes, inverted: cached is true only once a result
+  // is up, which is precisely when the reading belongs to the other document.
+  // The guard has to be a NEGATION of the flag, so that is what is matched.
+  const GUARDED = /(^|[^A-Za-z0-9_$])!\s*hasResult\b/;
+  if (!GUARDED.test(sliced[1])) {
+    fail(
+      "components/TailorOverlay.tsx: `cached` is not guarded on `!hasResult`, so the " +
+        "overlay can paint a fit reading taken against the MASTER while ScoreCard " +
+        "below paints the TAILORED document's — two unlabelled recruiter-fit rings, " +
+        "different numbers, different documents.",
+    );
+  }
+  // The same defect one file over, and a presence test cannot see it either:
+  // `hasResult={false}` passes `includes("hasResult={")` while hard-wiring the
+  // overlay into believing a result is never up — which re-opens the two-rings
+  // state from the other end. The prop has to be DERIVED from `result`, the one
+  // binding that actually knows.
+  const DERIVED = /\bresult\b/;
+  const page = decomment(read("pages/TailorPage.tsx"));
+  const passed = /\bhasResult=\{([^}]*)\}/.exec(page);
+  if (!passed) {
+    fail(
+      "pages/TailorPage.tsx: <TailorOverlay> is not passed `hasResult`, so the overlay " +
+        "cannot tell that a tailor result is on screen and re-aims at the posting it " +
+        "already tailored for.",
+    );
+  } else if (!DERIVED.test(passed[1])) {
+    fail(
+      `pages/TailorPage.tsx: hasResult={${passed[1].trim()}} is not derived from \`result\`. ` +
+        "A constant satisfies the prop and tells the overlay a lie: it goes on painting the " +
+        "master's fit reading over a tailored document, beside ScoreCard's reading of the " +
+        "tailored one.",
+    );
+  }
+
+  // Both directions on a fixture — INCLUDING the inverted one, so the detector
+  // cannot silently stop matching its own defect shape and cannot quietly go
+  // back to accepting the polarity it exists to forbid.
+  const PROBE_UNGUARDED = " !!fit && checkedFor !== null && checkedFor === draft.trim()";
+  const PROBE_INVERTED = " hasResult && !!fit && checkedFor === draft.trim()";
+  const PROBE_GUARDED = " !hasResult && !!fit && checkedFor === draft.trim()";
+  if (GUARDED.test(PROBE_UNGUARDED)) fail("check 15 accepts an unguarded `cached` expression");
+  if (GUARDED.test(PROBE_INVERTED))
+    fail("check 15 accepts an INVERTED `cached` guard — it is pinning the identifier, not the polarity");
+  if (!GUARDED.test(PROBE_GUARDED)) fail("check 15 cannot recognise the guard it requires");
+  if (DERIVED.test("false")) fail("check 15 accepts a hard-wired `hasResult={false}`");
+  if (!DERIVED.test("!!result")) fail("check 15 cannot recognise the derived `hasResult` it requires");
+} catch (e) {
+  fail(`overlay fit-reading check could not run: ${e.message}`);
+}
+
+// ---- 16. the tailor overlay's own locale keys resolve in both locales ----- //
+// Nothing covered these. Check 8 is parity-only, so a key missing from en AND
+// he alike is green; check 9 is deliberately scoped to AppLayout.tsx. So a
+// typo'd `overlay.openDifferent` renders the raw key at 12px, in Hebrew, on the
+// primary control of the primary page, with a green build behind it — the same
+// failure shape check 9 was written for, one file over.
+//
+// PER-FILE FLOORS, not one on the sum — check 22's shape, for the reason check
+// 22 records and this check then repeated. `TailorOverlay.tsx` alone supplies
+// 15 of the 19 keys, so `TailorPage.tsx`'s six calls could go COMPLETELY dark
+// and a floor of 10 on the total still cleared. Proven: with TailorPage's calls
+// renamed to `tx(`, deleting `discard.cta` AND `discard.title` from BOTH
+// locales left the build green — and `discard.title` is the heading of the
+// confirm dialog standing between the user and throwing a finished review away.
+// That is check 9's lesson (guard each scrape separately) arriving a third time.
+try {
+  // Floors set just under what each file carries today (6 and 15), so a
+  // legitimately added or removed string does not trip them but a call shape
+  // going dark does.
+  const files = [
+    ["pages/TailorPage.tsx", 4],
+    ["components/TailorOverlay.tsx", 12],
+  ];
+  // `[,)]`, not just `)`, for check 9's reason: t("overlay.openFor", { title })
+  // takes an interpolation object, and a `)`-only matcher is blind to exactly
+  // the calls most likely to be renamed.
+  const CALL = /\bt\("((?:overlay|discard)\.[^"]+)"\s*[,)]/g;
+  const keys = new Set();
+  for (const [f, floor] of files) {
+    const here = [...decomment(read(f)).matchAll(CALL)].map((m) => m[1]);
+    if (here.length < floor)
+      throw new Error(
+        `scraped only ${here.length} literal t("overlay.*")/t("discard.*") keys from ${f} (expected at least ${floor}) — the call shape changed`,
+      );
+    for (const k of here) keys.add(k);
+  }
+
+  for (const loc of ["en", "he"]) {
+    const ns = JSON.parse(read(`locales/${loc}/tailor.json`));
+    for (const key of keys) {
+      if (!resolvesIn(ns, key))
+        fail(
+          `locales/${loc}/tailor.json is missing "${key}" — the tailor overlay renders ` +
+            "the raw key. Check 8 stays green while both locales are equally wrong.",
+        );
+    }
+  }
+} catch (e) {
+  fail(`tailor overlay label check could not run: ${e.message}`);
+}
+
+// ---- 17. an override survives a decision toggle (EXECUTED, not parsed) ---- //
+// The one check in this file that RUNS the shipped code, because the property
+// it pins cannot be seen by reading either module.
+//
+// `mergeForReview` rebuilds the effective résumé on every accept and decline,
+// and a rejected removal is spliced back at `k = Math.min(oi, list.length)` —
+// so every later entry in that section shifts. With a tailored résumé that
+// drops experience[0]:
+//     nothing rejected   →  resume.experience[1].company === "Gamma"
+//     exp.rm.0 rejected  →  resume.experience[1].company === "Beta"
+// `@exp.1` is a DIFFERENT JOB in the two states. So a per-application edit
+// stored against a block PATH writes the user's own sentence onto someone
+// else's bullet the first time any add or removal in that section is toggled —
+// silent corruption of the most valuable object they own. Storing it against
+// the SOURCE ANCHOR the same walk emits is what fixes it.
+//
+// BOTH HALVES ARE ASSERTED, and the second is the one that makes the first
+// worth having: an override keyed by anchor must land on the same CONTENT in
+// both decision states, AND an override keyed by the raw path must land on
+// different content. Without the false-positive half, "make the anchor case
+// pass" is trivially satisfied by deleting the anchors and keying by path
+// again, because with nothing rejected the two are the same string.
+//
+// esbuild is what compiles this project already; a bundle + run measures ~60 ms.
+// If it ever stops resolving, this check fails LOUDLY rather than quietly
+// skipping — that is the whole file's rule.
+//
+// It is a DECLARED devDependency, and that declaration is load-bearing. This
+// `require` used to resolve only because npm hoisted vite's transitive copy into
+// the top-level `node_modules`: nothing in package.json asked for esbuild, so a
+// vite bump that nested or renamed its copy would take this check offline on
+// CI — where the loud failure is a red build nobody asked for, on a file nobody
+// touched. Pinned to the version already installed; there is nothing to install.
+try {
+  const esbuild = createRequire(import.meta.url)("esbuild");
+  const built = esbuild.buildSync({
+    // A virtual entry, so ONE bundle carries both modules' runtime exports.
+    stdin: {
+      contents:
+        `export { mergeForReview, blocksByEdit, blockContainsValue, blockSubtreeContainsValue } from "./lib/resumeDiff";\n` +
+        `export { applyOverrides } from "./lib/resumeOverrides";\n`,
+      resolveDir: SRC,
+      sourcefile: "check-mirrors-probe.ts",
+      loader: "ts",
+    },
+    bundle: true,
+    write: false,
+    format: "cjs",
+    platform: "node",
+    target: "node18",
+    logLevel: "silent",
+  });
+  const mod = { exports: {} };
+  new Function("module", "exports", "require", built.outputFiles[0].text)(
+    mod,
+    mod.exports,
+    createRequire(import.meta.url),
+  );
+  const { mergeForReview, applyOverrides, blocksByEdit, blockContainsValue, blockSubtreeContainsValue } =
+    mod.exports;
+  for (const [name, fn] of Object.entries({
+    mergeForReview,
+    applyOverrides,
+    blocksByEdit,
+    blockContainsValue,
+    blockSubtreeContainsValue,
+  })) {
+    if (typeof fn !== "function") throw new Error(`the bundle did not export ${name}`);
+  }
+
+  const R = (over) => ({
+    contact: { name: "A B", email: "", phone: "", location: "", linkedin: "", website: "" },
+    headline: "",
+    summary: "",
+    skills: [],
+    skill_groups: [],
+    experience: [],
+    education: [],
+    projects: [],
+    certifications: [],
+    languages: [],
+    military_service: [],
+    ...over,
+  });
+  const job = (company, bullets) => ({
+    company,
+    title: "Engineer",
+    location: "",
+    start_date: "2020",
+    end_date: "2021",
+    bullets,
+  });
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const gamma = (r) => r.experience.find((e) => e.company === "Gamma");
+  const beta = (r) => r.experience.find((e) => e.company === "Beta");
+
+  const original = R({
+    experience: [job("Acme", ["acme one"]), job("Beta", ["beta one"]), job("Gamma", ["gamma one"])],
+  });
+  const tailored = R({
+    experience: [job("Beta", ["beta one"]), job("Gamma", ["gamma one, rewritten by the AI"])],
+  });
+  const A = mergeForReview(original, tailored, new Set()); // nothing rejected
+  const B = mergeForReview(original, tailored, new Set(["exp.rm.0"])); // the removal put back
+
+  // The premise. If these ever stop differing the merge has changed shape and
+  // everything below is measuring nothing.
+  if (A.resume.experience[1].company !== "Gamma" || B.resume.experience[1].company !== "Beta")
+    throw new Error("the index-shift fixture no longer shifts — this check's premise is gone");
+  if (A.sources["@exp.1"] === B.sources["@exp.1"])
+    throw new Error("`sources` does not re-resolve across decision states — nothing here is being tested");
+
+  const MINE = "a sentence I typed myself";
+  const byAnchor = { "exp.2.b.0": { bullet: MINE } };
+  const oa = applyOverrides(A.resume, A.sources, byAnchor, A.blocks);
+  const ob = applyOverrides(B.resume, B.sources, byAnchor, B.blocks);
+  if (!eq(gamma(oa.resume).bullets, [MINE]) || !eq(gamma(ob.resume).bullets, [MINE])) {
+    fail(
+      "lib/resumeOverrides.ts: an override keyed by SOURCE ANCHOR did not land on the same " +
+        "bullet in both decision states. A hand-edit on the tailored document is supposed to " +
+        "survive every later accept and decline; this is the merge's index shift reaching the " +
+        "user's own text.",
+    );
+  }
+  if (!eq(beta(ob.resume).bullets, ["beta one"])) {
+    fail(
+      "lib/resumeOverrides.ts: applying one override also rewrote a DIFFERENT job's bullet. " +
+        "The anchor resolved to the wrong path.",
+    );
+  }
+
+  // The false-positive half: the naive design, keyed by the rendered path.
+  const ident = (s) => Object.fromEntries(Object.keys(s).map((p) => [p, p]));
+  const byPath = { "@exp.1.b.0": { bullet: MINE } };
+  const pa = applyOverrides(A.resume, ident(A.sources), byPath, A.blocks);
+  const pb = applyOverrides(B.resume, ident(B.sources), byPath, B.blocks);
+  if (eq(pa.resume.experience[1], pb.resume.experience[1])) {
+    fail(
+      "check 17's false-positive half stopped firing: an override keyed by the raw PATH " +
+        "`@exp.1.b.0` now lands on the same content in both decision states, which means the " +
+        "fixture no longer reproduces the index shift and the anchor half proves nothing.",
+    );
+  }
+
+  // Idempotent: applying the same map twice is the same document. The page
+  // re-runs this on every render of a merged résumé.
+  const twice = applyOverrides(oa.resume, oa.sources, byAnchor, oa.blocks);
+  if (!eq(twice.resume, oa.resume))
+    fail("lib/resumeOverrides.ts: applyOverrides is not idempotent — a re-render would keep changing the document.");
+
+  // A keyed rename MOVES its own path, so the map has to follow it or the mark
+  // and the review jump are left pointing at a chip that no longer exists.
+  const S = mergeForReview(R({ skills: ["Python", "Go"] }), R({ skills: ["Python", "Go"] }), new Set());
+  if (S.sources["@skills.go"] !== "skills.item.go")
+    throw new Error(`a skill's source anchor is ${S.sources["@skills.go"]}, not skills.item.go`);
+  const ren = applyOverrides(S.resume, S.sources, { "skills.item.go": { skill: "Golang" } }, S.blocks);
+  if (!ren.resume.skills.includes("Golang"))
+    fail("lib/resumeOverrides.ts: renaming a skill through an override did not reach `skills`.");
+  if (ren.sources["@skills.golang"] !== "skills.item.go" || "@skills.go" in ren.sources) {
+    fail(
+      "lib/resumeOverrides.ts: a keyed rename left `sources` pointing at the old path " +
+        "(`@skills.python` stops existing the instant it becomes `Python 3`), so the mark and the " +
+        "review jump would follow a chip that is no longer there.",
+    );
+  }
+
+  // Empty means remove, and the bullets after it shift — so every path-keyed
+  // map has to be re-indexed or the NEXT override is stored under its
+  // neighbour's anchor, which is this module's own defect in miniature.
+  const E = mergeForReview(
+    R({ experience: [job("Acme", ["b0", "b1", "b2"])] }),
+    R({ experience: [job("Acme", ["b0", "b1", "b2"])] }),
+    new Set(),
+  );
+  const rem = applyOverrides(E.resume, E.sources, { "exp.0.b.1": { bullet: "   " } }, E.blocks);
+  if (!eq(rem.resume.experience[0].bullets, ["b0", "b2"]))
+    fail("lib/resumeOverrides.ts: clearing a bullet through an override did not remove it (empty-means-remove).");
+  if (rem.sources["@exp.0.b.1"] !== "exp.0.b.2") {
+    fail(
+      "lib/resumeOverrides.ts: `sources` was not re-indexed after a bullet removal. The bullet " +
+        "that slid up one slot still carries its old neighbour's anchor, so the next hand-edit on " +
+        "it is stored against the wrong coordinate.",
+    );
+  }
+  // TWO removals in one entry, which is the only thing that can see the
+  // descending sort. Ascending, removing `@exp.0.b.0` first slides b1 and b2
+  // down, so the second removal deletes b2 and the survivor is the wrong one.
+  const rem2 = applyOverrides(
+    E.resume,
+    E.sources,
+    { "exp.0.b.0": { bullet: "" }, "exp.0.b.1": { bullet: "" } },
+    E.blocks,
+  );
+  if (!eq(rem2.resume.experience[0].bullets, ["b2"])) {
+    fail(
+      "lib/resumeOverrides.ts: two removals in one entry left " +
+        `${JSON.stringify(rem2.resume.experience[0].bullets)} instead of ["b2"]. Removing a bullet ` +
+        "shifts the ones after it, so removals have to run LAST and in descending index order — " +
+        "otherwise the second one deletes whichever line slid into that slot.",
+    );
+  }
+
+  // THE VANISH RULE: an anchor with nowhere to land is skipped, never applied
+  // somewhere else and never deleted.
+  const van = applyOverrides(A.resume, A.sources, { "exp.9.b.9": { bullet: MINE } }, A.blocks);
+  if (!eq(van.resume, A.resume))
+    fail("lib/resumeOverrides.ts: an override whose anchor resolves to nothing changed the document anyway.");
+
+  // A FLAGGED VALUE IN A BULLET OF AN ADDED ENTRY IS STILL ON THE DOCUMENT.
+  //
+  // `blocksByEdit` resolves an added entry to its META path (`@exp.1`), whose
+  // readable fields are title/employer/location/dates — while the edit's own
+  // text folds the entry's BULLETS in. So a fabrication flag on a number living
+  // in a bullet was matched against the edit and then looked for in the meta
+  // line alone, found nothing, and rendered "Nothing flagged is on your CV any
+  // more" over a CV that still carried it. Both halves are asserted here,
+  // because the fix is only meaningful as the DIFFERENCE between them.
+  const ADD = mergeForReview(
+    R({ experience: [job("Alpha", ["a1"])] }),
+    R({ experience: [job("Alpha", ["a1"]), job("Beta", ["Grew ARR 300% as lead"])] }),
+    new Set(),
+  );
+  const added = ADD.edits.find((e) => e.kind === "added");
+  const addedPath = blocksByEdit(ADD.blocks)[added?.id];
+  if (!added || !addedPath) throw new Error("the added-entry fixture produced no added edit with a block");
+  if (!added.after.includes("300%"))
+    throw new Error("the added-entry fixture's edit text does not fold its bullets in — it cannot exercise this");
+  if (blockContainsValue(ADD.resume, addedPath, "300%")) {
+    throw new Error(
+      "blockContainsValue now reads an entry's bullets, so this check no longer measures anything. " +
+        "It exists to prove the SUBTREE reader is what finds them.",
+    );
+  }
+  if (!blockSubtreeContainsValue(ADD.resume, addedPath, "300%")) {
+    fail(
+      "lib/resumeDiff.ts: blockSubtreeContainsValue misses a value in a BULLET of an added entry. " +
+        "ChangeLog resolves a fabrication flag with it, so the trust panel would go mint and say " +
+        '"Nothing flagged is on your CV any more" while the invented number is still on the page.',
+    );
+  }
+  // The false-positive half, in the same check: a value that is genuinely absent
+  // must stay absent, or "find the bullet" is satisfied by answering true.
+  if (blockSubtreeContainsValue(ADD.resume, addedPath, "999 unrelated"))
+    fail("lib/resumeDiff.ts: blockSubtreeContainsValue reports a value the entry does not contain.");
+
+  // AN ENTRY-LEVEL SCALAR EDIT MUST NOT OWN ITS ENTRY'S BULLETS.
+  //
+  // `exp.0.title` anchors to the ENTRY, `exp.0`, so an ungated prefix walk made
+  // the review row about a job TITLE own every hand-edit on that job's bullets:
+  // the title change became undecidable behind a "Yours" badge, and both of that
+  // row's buttons cleared the bullet override — one tap silently deleting a
+  // sentence typed on a different line. Only a WHOLE-ENTRY edit owns a subtree,
+  // and `editAnchors[id] === id` is the discriminator, because `editSrc(id, id)`
+  // at the add/remove sites is the only thing that registers an edit under its
+  // own id. Asserted here as a property of the MERGE, so TailorPage's gate keeps
+  // a fact to stand on.
+  const SC = mergeForReview(
+    R({ experience: [job("Alpha", ["a1", "a2"])] }),
+    R({ experience: [{ ...job("Alpha", ["a1", "a2"]), title: "Senior Engineer" }] }),
+    new Set(),
+  );
+  const scalar = Object.entries(SC.editAnchors).find(([id]) => id.endsWith(".title"));
+  if (!scalar) throw new Error("the scalar-edit fixture produced no `*.title` edit to measure");
+  if (scalar[0] === scalar[1]) {
+    fail(
+      "lib/resumeDiff.ts: an entry-level SCALAR edit is now anchored under its own id, which is the " +
+        "signal TailorPage's `ownsAnchor` uses to mean 'this edit is the whole entry'. That row would " +
+        "take ownership of every hand-edit on the entry's bullets, and its buttons would delete them.",
+    );
+  }
+  const wholeEntry = Object.entries(ADD.editAnchors).find(([id, a]) => id === a);
+  if (!wholeEntry) {
+    fail(
+      "lib/resumeDiff.ts: an ADDED entry is no longer anchored under its own id, so a hand-edit on one " +
+        "of its bullets belongs to no review row — the row keeps a live Accept/Reject and declining it " +
+        "discards the user's text with no badge and no note.",
+    );
+  }
+} catch (e) {
+  fail(`override anchor-stability check could not run: ${e.message}`);
+}
+
+// ---- 18. every BlockMark has a name in both locales ----------------------- //
+// `blkProps` renders t(`review.mark.<mark>`) as the marked block's title — its
+// accessible name, and the only thing that says what a coloured bar MEANS to a
+// reader who cannot see the colour. A member added to the union without a label
+// prints the raw key as a tooltip, in Hebrew. Check 8 stays green: en and he
+// are still in parity with each other.
+try {
+  const view = read("components/ResumeView.tsx");
+  const at = view.indexOf("export type BlockMark =");
+  if (at === -1) throw new Error("could not find the BlockMark union");
+  const marks = [...view.slice(at, view.indexOf(";", at)).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  if (marks.length < 3) throw new Error(`parsed only ${marks.length} BlockMark members`);
+  if (!/title:\s*mark\s*\?\s*t\(`review\.mark\.\$\{mark\}`\)/.test(view))
+    throw new Error("ResumeView no longer names a marked block with t(`review.mark.${mark}`)");
+
+  for (const loc of ["en", "he"]) {
+    const ns = JSON.parse(read(`locales/${loc}/tailor.json`));
+    const missing = marks.filter((m) => !resolvesIn(ns, `review.mark.${m}`));
+    if (missing.length)
+      fail(
+        `locales/${loc}/tailor.json: review.mark.{${missing.join(", ")}} missing — a marked block on ` +
+          "the document would carry the raw key as its accessible name.",
+      );
+  }
+} catch (e) {
+  fail(`block-mark label check could not run: ${e.message}`);
+}
+
+// ---- 19. the merge anchors each contact bit to its OWN block -------------- //
+// `mergeResumes` used to anchor all five non-name contact edits to the fused
+// `@contact` path — the only @contact literal in the file. But `ResumeView`
+// renders that fused line ONLY when the document is not editable; when it IS,
+// it emits five separate `@contact.<field>` blocks. So the moment editing was
+// switched on for a tailored document (23.7), a contact mark pointed at a node
+// that does not exist and `showInDoc` scrolled to a selector matching nothing —
+// while ChangeLog still drew its Crosshair, because that button gates on the id
+// having ANY anchor. A visible button that silently does nothing is the one
+// thing ChangeLog's own doc comment forbids.
+//
+// Check 7 cannot see this: the path is emitted by resumeDiff.ts, not by the
+// view, and check 7 compares the STAR form anyway.
+//
+// DERIVED, not restated: the merge must build its loop from `CONTACT_FIELDS`,
+// the same array `RE_CONTACT` is built from, so the paths it mints and the
+// paths `readBlock` resolves cannot drift by one word.
+try {
+  const blocks = read("lib/resumeBlocks.ts");
+  const ca = blocks.indexOf("export const CONTACT_FIELDS = [");
+  if (ca === -1) throw new Error("could not find CONTACT_FIELDS");
+  const fields = [...blocks.slice(ca, blocks.indexOf("]", ca)).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  if (fields.length < 5) throw new Error(`CONTACT_FIELDS parsed as ${fields.length} entries`);
+
+  const diff = decomment(read("lib/resumeDiff.ts"));
+  if (!/import\s*\{[^}]*\bCONTACT_FIELDS\b[^}]*\}\s*from\s*"\.\/resumeBlocks"/.test(diff))
+    fail(
+      "lib/resumeDiff.ts must import CONTACT_FIELDS from ./resumeBlocks — a hand-kept twin of the " +
+        "contact field list drifts, and the symptom is a review jump to a block that is not there.",
+    );
+  if (!/\.\.\.CONTACT_FIELDS/.test(diff))
+    fail("lib/resumeDiff.ts no longer builds its contact loop from CONTACT_FIELDS.");
+  // The template is CLOSED — the trailing backtick, not just the `${` prefix.
+  // Matching the prefix only accepted `@contact.${f}zzz`, a path `readBlock`
+  // cannot resolve, which is the very failure this check exists to catch: the
+  // Crosshair renders and scrolls to nothing.
+  if (!/anchor\(\s*`@contact\.\$\{\w+\}`/.test(diff))
+    fail(
+      "lib/resumeDiff.ts does not anchor each contact bit to its own `@contact.<field>` block. On an " +
+        "editable document those five blocks are what exists, and ChangeLog's Crosshair would " +
+        "scroll to nothing while still rendering.",
+    );
+  if (!/src\(\s*`@contact\.\$\{\w+\}`/.test(diff))
+    fail(
+      "lib/resumeDiff.ts emits no SOURCE ANCHOR for the per-field contact blocks, so typing in the " +
+        "phone number on a tailored document has no stable coordinate to be stored against.",
+    );
+
+  // One id is now anchored to TWO paths (per-field, then the fused line), so
+  // the reverse index has to keep the FIRST — the one an editable sheet has.
+  const firstWins = (src) => /for\s*\(const id of ids\)\s*if\s*\(!\(id in out\)\)/.test(src);
+  if (!firstWins(diff))
+    fail(
+      "lib/resumeDiff.ts: blocksByEdit is last-wins again. The fused `@contact` anchor is emitted " +
+        "after the per-field ones, so it would overwrite them and the review jump would target a " +
+        "node that only exists on a read-only document.",
+    );
+  // Both directions, on the two shapes it has to tell apart.
+  if (firstWins("for (const id of ids) out[id] = path;"))
+    fail("check 19 accepts a last-wins blocksByEdit");
+  if (!firstWins("for (const id of ids) if (!(id in out)) out[id] = path;"))
+    fail("check 19 cannot recognise the first-wins form it requires");
+} catch (e) {
+  fail(`contact anchor check could not run: ${e.message}`);
+}
+
+// ---- 20. the override store stays an OVERLAY ----------------------------- //
+// (a) `tailorOverrides` is derived from the `rejectedEdits` reset list rather
+//     than a hand-kept set of call sites: both answer the same question ("the
+//     diff changed — what on screen now describes something that no longer
+//     exists?"), so a fifth reset added for one and not the other leaves a
+//     hand-edit anchored into a diff that is gone.
+// (b) `setBlockOverride` sets `tailorOverrides` and NOTHING else. `writeDraft`
+//     mirrors the MASTER's local draft and `draftOver` spreads that draft over
+//     the master, so a per-application edit reaching it would have
+//     DraftRestoreBar offer to restore a tailored CV as the user's real résumé.
+//     `applyBlockEdit` is worse still: it nulls result/tailoredFrom/
+//     rejectedEdits, so one keystroke through it destroys the review.
+//
+// BOTH HALVES READ THE PATCH WITH `patchKeys`, NOT `topLevelKeys`, and that is
+// the correction that matters. `topLevelKeys` is strictly LINE-oriented, so a
+// patch folded onto one line contributes only its FIRST key and every key after
+// it is invisible — which took both halves of this check offline in the same
+// way, and both were proven green with the defect in:
+//   (a) `discardTailorResult` and `setTargetJob`, each folded to one line with
+//       `tailorOverrides: {}` deleted. The reset drops out of `clearing`
+//       entirely and is then free to stop clearing the overrides.
+//   (b) `setTailorState({ tailorOverrides: {…}, editUndo: null });` on one
+//       line — exactly, and only, the write (b) exists to forbid.
+// A floor on the count cannot see either: four of five resets still clears any
+// floor of four. Raising the floor would not help and a count-based completeness
+// guard is WORSE than useless here — it fires on correct code the moment
+// `rejectedEdits` is the first key on a folded line, and a guard that fires on
+// legitimate input is worse than no guard.
+try {
+  const store = read("state/tailorStore.ts");
+  const fnAt = (i) => {
+    const m = [...store.slice(0, i).matchAll(/export function (\w+)/g)].pop();
+    return m ? m[1] : "(module scope)";
+  };
+  /**
+   * Depth-0 keys of an object-literal body, INDEPENDENT OF THE NEWLINES.
+   *
+   * Strip every nested {…}/[…]/(…) innermost-first, then read the keys off
+   * whatever commas survive at depth 0. `decomment` runs first and is not
+   * optional: a full-line comment inside a reset ("…typed into. They are an
+   * overlay on a diff, and the diff is…") carries commas, and the fragment after
+   * one swallows the key that follows it.
+   *
+   * Deliberately NOT folded into `topLevelKeys`. That one also parses a TS
+   * interface body for check 1, where members are separated by `;` rather than
+   * `,` — splitting on commas would report `ResumeModel` as a single field and
+   * check 1 would pass by never firing, which is the 21.7 failure mode with a
+   * fix attached.
+   */
+  const patchKeys = (inner) => {
+    let flat = decomment(inner);
+    let prev;
+    do {
+      prev = flat;
+      flat = flat.replace(/\{[^{}[\]()]*\}|\[[^{}[\]()]*\]|\([^{}[\]()]*\)/g, "");
+    } while (flat !== prev);
+    return flat
+      .split(",")
+      .map((s) => /^\s*([A-Za-z_$][\w$]*)\s*:/.exec(s))
+      .filter(Boolean)
+      .map((m) => m[1]);
+  };
+  const resets = [];
+  for (let i = store.indexOf("setTailorState("); i !== -1; i = store.indexOf("setTailorState(", i + 1)) {
+    // The raw slice is kept alongside the parsed keys for the completeness
+    // cross-check below — the parser and the text have to agree about the file.
+    const src = blockAfter(store.slice(i), "setTailorState(", "a setTailorState call");
+    resets.push({ fn: fnAt(i), src, keys: patchKeys(src) });
+  }
+  const clearing = resets.filter((r) => r.keys.includes("rejectedEdits"));
+  // TWO guards, and they catch different things.
+  //
+  // The floor is only the "the scrape went dark entirely" alarm: rename
+  // `setTailorState` and `resets` is empty, `clearing` is empty, and every
+  // comparison below is vacuously true.
+  if (clearing.length < 4)
+    throw new Error(`found only ${clearing.length} setTailorState resets that clear rejectedEdits`);
+  // The second is the SCAN'S OWN COMPLETENESS: every reset whose TEXT mentions
+  // `rejectedEdits` must be one the PARSER also read it out of. The two now
+  // agree by construction, which is the point — this is the assertion that says
+  // so, and it is what turns a future parser regression into a loud failure
+  // instead of a check that quietly stops covering a reset. `mentions` counts
+  // reset SLICES, never the file, so the state interface's own
+  // `rejectedEdits: string[]` and the initial-state literal cannot inflate it.
+  const mentions = resets.filter((r) => /\brejectedEdits\s*:/.test(r.src));
+  if (clearing.length !== mentions.length)
+    throw new Error(
+      `${mentions.length} setTailorState resets mention \`rejectedEdits\` but ${clearing.length} parsed as ` +
+        `clearing it — the patch parser has stopped agreeing with the file it reads (${mentions
+          .filter((r) => !r.keys.includes("rejectedEdits"))
+          .map((r) => `\`${r.fn}\``)
+          .join(", ") || "no named function"})`,
+    );
+  const missed = clearing.filter((r) => !r.keys.includes("tailorOverrides")).map((r) => r.fn);
+  if (missed.length) {
+    fail(
+      `state/tailorStore.ts: ${[...new Set(missed)].map((f) => `\`${f}\``).join(", ")} clears ` +
+        "`rejectedEdits` but not `tailorOverrides`. Both describe the same diff, so the hand-edits " +
+        "would outlive the review they were typed into and re-apply against a different one.",
+    );
+  }
+
+  const body = blockAfter(store, "export function setBlockOverride", "setBlockOverride body");
+  // ONE predicate, used by the assertion and by both probes, so the probes
+  // cannot certify a matcher the assertion does not use.
+  const taints = (src) => ["writeDraft(", "applyBlockEdit("].filter((c) => src.includes(c));
+  const found = taints(body);
+  if (found.length)
+    fail(
+      `state/tailorStore.ts: setBlockOverride calls ${found.join(" and ")}. An application-only edit ` +
+        "must not reach the master's local draft (DraftRestoreBar would offer to restore a tailored " +
+        "CV as the real résumé) and must never reach applyBlockEdit (which nulls `result` and " +
+        "destroys the review being edited).",
+    );
+  const patch = patchKeys(blockAfter(body, "setTailorState(", "setBlockOverride patch"));
+  if (!patch.includes("tailorOverrides"))
+    throw new Error(
+      "setBlockOverride does not set tailorOverrides — this check is pointed at the wrong function. " +
+        "(A spread argument lands here too, and it hides what is being set.)",
+    );
+  const extra = patch.filter((k) => k !== "tailorOverrides");
+  if (extra.length)
+    fail(
+      `state/tailorStore.ts: setBlockOverride also sets ${extra.map((k) => `\`${k}\``).join(", ")}. ` +
+        "It may set `tailorOverrides` and nothing else — writing `resume` would copy the flattened " +
+        "tailored CV over the master (a tailored résumé carries no skill_groups), and touching " +
+        "`editUndo` would put an application-only edit on the master's undo stack.",
+    );
+  if (taints("setTailorState({ tailorOverrides: next }); writeDraft(next);").length !== 1)
+    fail("check 20 cannot detect a setBlockOverride that writes the master draft");
+  if (taints("setTailorState({ tailorOverrides: next });").length !== 0)
+    fail("check 20 fires on a clean setBlockOverride");
+  // The flattener, in both directions, on the ONE-LINE shape the line-oriented
+  // parser was blind to — the probe that would have caught both holes.
+  const ONE_LINE_OK = " tailorOverrides: { ...state.tailorOverrides, [anchor]: values } ";
+  const ONE_LINE_BAD = " tailorOverrides: { ...state.tailorOverrides, [anchor]: values }, editUndo: null ";
+  if (patchKeys(ONE_LINE_OK).join() !== "tailorOverrides")
+    fail("check 20 cannot read a one-line setBlockOverride patch that is legitimately clean");
+  if (patchKeys(ONE_LINE_BAD).join() !== "tailorOverrides,editUndo")
+    fail("check 20 cannot see a second key folded onto the same line — the write it exists to forbid");
+  // …and the same, on (a)'s shape: a folded RESET must still be read key by key,
+  // in both directions, or the fold silently un-covers it again.
+  const FOLDED = ' result: null, rejectedEdits: [], coverLetterText: "" ';
+  if (!patchKeys(FOLDED).includes("rejectedEdits"))
+    fail("check 20 cannot read a reset folded onto one line — the shape that hid the defect");
+  if (patchKeys(FOLDED).includes("tailorOverrides"))
+    fail("check 20 reports a key a folded reset does not set — it would fire on correct code");
+  // A comment inside a patch carries commas, and the fragment after one used to
+  // swallow the key that followed it. Pinned because `decomment` looks removable.
+  if (!patchKeys(" rejectedEdits: [],\n // an overlay on a diff, and the diff is what this discards\n tailorOverrides: {},").includes("tailorOverrides"))
+    fail("check 20 loses a key that follows a comma inside a comment — decomment is load-bearing");
+  // …and the nested-group stripping, which the two ONE_LINE fixtures above pass
+  // either way and therefore do not pin. A NESTED key read as a top-level one is
+  // this check's own false-positive shape: it invents an "also sets `keep`" out
+  // of a value nobody wrote at depth 0.
+  if (patchKeys(" tailorOverrides: { ...o, [anchor]: values, keep: 1 } ").join() !== "tailorOverrides")
+    fail("check 20 reads a NESTED key as a top-level one — its {…}/[…]/(…) stripping has stopped working");
+} catch (e) {
+  fail(`override store check could not run: ${e.message}`);
+}
+
+// ---- 21. adding stays MASTER-only on the document ------------------------- //
+// 23.7 split `editable` into `isMaster` (this document IS the saved résumé) and
+// `canEditDoc` (there is a document at all). Typing on the paper moved to the
+// second; ADDING must stay on the first, and the reason is the fabrication
+// guard rather than caution: it ran against `result.tailored_resume`, so a
+// claim typed in afterwards carries no verdict at all while ScoreCard goes on
+// rendering `result.fabrication_flags` beside it. An added block also exists in
+// neither the original nor the tailored résumé, so it has no source anchor to
+// be stored against.
+//
+// `tsc` sees nothing here: both flags are booleans and every prop is optional.
+try {
+  const page = decomment(read("pages/TailorPage.tsx"));
+  const gate = (src, prop) => {
+    const m = new RegExp(`\\b${prop}=\\{([^}]*)\\}`).exec(src);
+    return m ? m[1] : null;
+  };
+  if (!/const isMaster\s*=/.test(page)) throw new Error("pages/TailorPage.tsx no longer declares `isMaster`");
+  if (!/const canEditDoc\s*=/.test(page)) throw new Error("pages/TailorPage.tsx no longer declares `canEditDoc`");
+
+  // POLARITY, not presence. `/\bisMaster\b/` pinned only that the flag is
+  // MENTIONED, so `onAdd={!isMaster ? addToResume : undefined}` — one character —
+  // passed green while putting the add controls on the tailored document ONLY:
+  // exactly, and only, where a newly typed claim carries no fabrication verdict
+  // and has no source anchor to be stored against. So the gate must OPEN with
+  // its flag, which is also the one shape every one of these props uses today.
+  const opensWith = (flag) => new RegExp(`^\\s*${flag}\\s*\\?`);
+  const MASTER_ONLY = opensWith("isMaster");
+  const DOC_EDITABLE = opensWith("canEditDoc");
+
+  for (const prop of ["onAdd", "onAddSkill", "onAddBullet", "onReplace"]) {
+    const g = gate(page, prop);
+    if (g === null) throw new Error(`could not find ${prop}={…} in TailorPage.tsx`);
+    if (!MASTER_ONLY.test(g) || /\bcanEditDoc\b/.test(g))
+      fail(
+        `pages/TailorPage.tsx: ${prop}={${g.trim()}} is not gated on \`isMaster ? …\`. On a tailored ` +
+          "document that adds a claim the fabrication guard never saw, directly above a panel still " +
+          "reporting the guard's verdict on a different set of words — and an added block has no " +
+          "source anchor, so the edit could not be stored anywhere stable either.",
+      );
+  }
+  // The other half, or "make it pass" is satisfied by never letting the
+  // document be edited at all.
+  for (const prop of ["onInlineCommit", "onEditBlock"]) {
+    const g = gate(page, prop);
+    if (g === null) throw new Error(`could not find ${prop}={…} in TailorPage.tsx`);
+    if (!DOC_EDITABLE.test(g))
+      fail(
+        `pages/TailorPage.tsx: ${prop}={${g.trim()}} is no longer gated on \`canEditDoc ? …\`, so the ` +
+          "tailored document is read-only again and 23.7's whole point is gone.",
+      );
+  }
+  // The extractor, in both directions, on the two shapes it has to tell apart.
+  if (gate('<X onAdd={isMaster ? add : undefined} />', "onAdd") !== "isMaster ? add : undefined")
+    fail("check 21's gate extractor cannot read a prop it is pointed at");
+  if (gate('<X onAddSkill={isMaster ? s : undefined} />', "onAdd") !== null)
+    fail("check 21's gate extractor matches onAddSkill when asked for onAdd");
+  // …and the POLARITY, in both directions, on the same two predicates the
+  // assertions use — so neither can quietly go back to pinning the identifier.
+  if (!MASTER_ONLY.test("isMaster ? add : undefined"))
+    fail("check 21 cannot recognise the master-only gate it requires");
+  if (MASTER_ONLY.test("!isMaster ? add : undefined"))
+    fail("check 21 accepts an INVERTED add gate — it is pinning the identifier, not the polarity");
+  if (!DOC_EDITABLE.test("canEditDoc ? commit : undefined"))
+    fail("check 21 cannot recognise the editable gate it requires");
+  if (DOC_EDITABLE.test("!canEditDoc ? commit : undefined"))
+    fail("check 21 accepts an INVERTED editing gate — the same one-character inversion, one flag over");
+} catch (e) {
+  fail(`add-control gating check could not run: ${e.message}`);
+}
+
+// ---- 22. the review + document-editing vocabulary resolves --------------- //
+// The same gap check 16 was written for, one namespace over, and 23.7 widened
+// it by a dozen keys: the third review-row state (`review.yours*`,
+// `review.useAi`, `review.useOriginal`) and the tailored document's own copy
+// (`edit.tailoredHint`, `edit.tailoredNoAdd`, `edit.yours*`). Check 8 is
+// parity-only, so a key renamed in code and in NEITHER locale is green; checks
+// 2/3/5 read only the derived vocabularies (sections, groups, block kinds and
+// field keys) and none of these is derived from anything.
+//
+// Separate from check 16 rather than folded into it, deliberately: that one is
+// scoped to the overlay's two files and has its own floor.
+//
+// PER-FILE FLOORS, not one on the sum. A floor on the total is not a fail-loud
+// guard — this check was written with one and its own probe walked straight
+// past it: changing ChangeLog's call shape so that NONE of its 26 keys were
+// scraped still left 15 from the other two files, and the build stayed green
+// while the whole review panel went unguarded. That is check 9's lesson
+// (guard each scrape separately) arriving a second time.
+//
+// Literal calls only. `t(\`review.kind.${edit.kind}\`)` and
+// `t(\`edit.fields.${key}\`)` are template literals with no fixed key to look
+// up, and both are already pinned by checks 2 and 5.
+//
+// EVERY file that renders one of these keys has to be in the list, and two were
+// missing. `ResumeEditBar.tsx` carries fourteen of them and `BlockEditSheet.tsx`
+// three, and nothing scanned either: deleting `edit.langWarnTitle` from BOTH
+// locales left the build green — and that key is the TITLE of the confirm
+// dialog standing between the user and overwriting the wrong-language master
+// résumé, so the dialog would ask for that decision under the string
+// "edit.langWarnTitle", at 12px, in Hebrew. `edit.apply` and `edit.remove` — the
+// sheet's two verbs, one of them destructive — were green as well. A per-file
+// floor is no protection when the file is not in the list at all.
+try {
+  // Floors set just under what each file carries today, so a legitimately
+  // added or removed string does not trip them but a call shape going dark does.
+  const files = [
+    ["pages/TailorPage.tsx", 4],
+    ["components/ChangeLog.tsx", 15],
+    ["components/ResumeView.tsx", 6],
+    ["components/ResumeEditBar.tsx", 12],
+    ["components/BlockEditSheet.tsx", 3],
+  ];
+  // `[,)]` for check 9's reason: a counted or interpolated label —
+  // t("edit.yours", { count }) — is exactly the kind most likely to be renamed,
+  // and a `)`-only matcher is blind to it.
+  const CALL = /\bt\("((?:review|edit)\.[^"]+)"\s*[,)]/g;
+  const keys = new Set();
+  for (const [f, floor] of files) {
+    const here = [...decomment(read(f)).matchAll(CALL)].map((m) => m[1]);
+    if (here.length < floor)
+      throw new Error(
+        `scraped only ${here.length} literal t("review.*")/t("edit.*") keys from ${f} (expected at least ${floor}) — the call shape changed`,
+      );
+    for (const k of here) keys.add(k);
+  }
+
+  for (const loc of ["en", "he"]) {
+    const ns = JSON.parse(read(`locales/${loc}/tailor.json`));
+    for (const key of keys) {
+      if (!resolvesIn(ns, key))
+        fail(
+          `locales/${loc}/tailor.json is missing "${key}" — the review panel or the document would ` +
+            "render the raw key. Check 8 stays green while both locales are equally wrong.",
+        );
+    }
+  }
+} catch (e) {
+  fail(`review/edit label check could not run: ${e.message}`);
+}
+
+// ---- 23. the eleven template specs still match templates.py -------------- //
+// "Some templates aren't right like it's shown in the example; in the example
+// there's a format and in real it gives another format." Three surfaces have to
+// know what a template looks like BEFORE the backend renders anything — the
+// landing's miniatures, the picker's thumbnails and the document on /app — and
+// each grew its own hand-copy of
+// `backend/app/render/templates.py::TemplateSpec`. Two had already drifted: the
+// miniature's `classic` drew skills as an inline comma run against the file's
+// chips, and TemplateThumb's `modern` band meta is #9EC4B8 against
+// band_meta="9CC6B9". `tsc` sees none of it — both sides are correctly typed
+// strings and numbers describing different documents.
+//
+// SCOPE. This reads `lib/templateSpecs.ts`, the one mirror the miniatures now
+// draw from. `TemplateThumb.tsx` still carries its own constants and is NOT
+// read here, so the picker's eleven thumbnails are still guarded by nothing;
+// point that file at TEMPLATE_SPECS and it comes under this check for free,
+// which is the whole reason the mirror is a module and not a local table.
+//
+// PURE NODE, no interpreter, deliberately. check-mirrors runs FIRST in
+// `npm run build` and on every Vercel CI build, where there is no Python venv,
+// so shelling out to the interpreter would be a check that cannot run in CI —
+// i.e. one that has stopped firing, the 21.7 failure mode this file exists for.
+// templates.py is parsed as a literal instead: `#` comments stripped without
+// touching a `#` inside a string, `name: type = default` read out of the
+// dataclass body, `TEMPLATES` brace-matched and each entry's kwargs read, then
+// the defaults folded under the overrides exactly as the dataclass folds them.
+// That fold is the point rather than a detail: `entry` defaults to "split" and
+// `list_cols` to 1 while nine and eleven templates respectively override them,
+// so a mirror carrying defaults of its own is wrong on precisely the fields
+// nobody wrote down.
+//
+// DEGRADES LOUDLY, and only on ENOENT. `vercel.json` roots the frontend service
+// at `frontend/`; if `../backend` is not in that build's context the Python half
+// prints a skip naming the path it looked for, and the frontend-only half — the
+// three id lists, the picker's PDF-only list, both locales — still runs. Every
+// other failure, a parse that comes up short included, is a red build. GitHub
+// Actions checks the whole repo out and runs `npm run build` from frontend/ on
+// every push and PR, so the comparison has a home that does not depend on how
+// Vercel packages a service.
+const TEMPLATES_PY = path.join(HERE, "..", "..", "backend", "app", "render", "templates.py");
+// Set when the Python half is skipped, so the summary line admits it too — a
+// warning above a final "mirrors ok" is a warning somebody reads as noise.
+let templateSkip = null;
+try {
+  // --- the TS mirror, EXECUTED rather than parsed (check 17's mechanism) ----
+  // Parsing it would have to re-implement the `...TEMPLATE_SPEC_DEFAULTS`
+  // spread, which is the exact fold this check exists to compare. Running it
+  // gives the object the app itself renders from. `ResumeTemplate` is a TYPE
+  // import there, so the bundle pulls in neither axios nor `import.meta.env`.
+  const esbuild = createRequire(import.meta.url)("esbuild");
+  const built = esbuild.buildSync({
+    stdin: {
+      contents: `export { TEMPLATE_SPECS, TEMPLATE_IDS, PDF_ONLY } from "./lib/templateSpecs";\n`,
+      resolveDir: SRC,
+      sourcefile: "check-mirrors-templates.ts",
+      loader: "ts",
+    },
+    bundle: true,
+    write: false,
+    format: "cjs",
+    platform: "node",
+    target: "node18",
+    logLevel: "silent",
+  });
+  const mod = { exports: {} };
+  new Function("module", "exports", "require", built.outputFiles[0].text)(
+    mod,
+    mod.exports,
+    createRequire(import.meta.url),
+  );
+  const { TEMPLATE_SPECS, TEMPLATE_IDS, PDF_ONLY } = mod.exports;
+  if (!TEMPLATE_SPECS || typeof TEMPLATE_SPECS !== "object")
+    throw new Error("lib/templateSpecs.ts did not export TEMPLATE_SPECS");
+  if (typeof PDF_ONLY !== "function") throw new Error("lib/templateSpecs.ts did not export PDF_ONLY");
+  if (!Array.isArray(TEMPLATE_IDS)) throw new Error("lib/templateSpecs.ts did not export TEMPLATE_IDS");
+  const ids = Object.keys(TEMPLATE_SPECS);
+  if (ids.length < 11) throw new Error(`TEMPLATE_SPECS carries only ${ids.length} templates`);
+  if (Object.keys(TEMPLATE_SPECS[ids[0]]).length < 30)
+    throw new Error(`TEMPLATE_SPECS["${ids[0]}"] carries only ${Object.keys(TEMPLATE_SPECS[ids[0]]).length} fields`);
+
+  const missingFrom = (a, b) => a.filter((x) => !b.includes(x));
+
+  // --- (b) one id set, three places ---------------------------------------
+  // An id in RESUME_TEMPLATES with no spec is a thumbnail that cannot be drawn;
+  // an id in the mirror the backend has never heard of sends a template name
+  // `get_template` silently falls back to DEFAULT_TEMPLATE for. (The `Record<
+  // ResumeTemplate, TemplateSpec>` annotation makes tsc agree about the first
+  // two; the Python leg below is the one nothing else can see.)
+  const client = /export const RESUME_TEMPLATES = \[([\s\S]*?)\]/.exec(read("api/client.ts"));
+  if (!client) throw new Error("could not find RESUME_TEMPLATES in api/client.ts");
+  const picker = [...client[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  if (picker.length < 11) throw new Error(`parsed only ${picker.length} RESUME_TEMPLATES ids`);
+  for (const [what, gone] of [
+    ["lib/templateSpecs.ts has no spec for", missingFrom(picker, ids)],
+    ["api/client.ts's RESUME_TEMPLATES does not list", missingFrom(ids, picker)],
+  ]) {
+    if (gone.length)
+      fail(
+        `${what} ${gone.map((i) => `\`${i}\``).join(", ")}. The picker, the landing and the ` +
+          "renderers have to agree on one id set — an unlisted id is unpickable, and an " +
+          "unmirrored one draws no thumbnail.",
+      );
+  }
+  // TEMPLATE_IDS is what the landing maps over, so its ORDER is the display
+  // order the picker also claims to use. Compared as a sequence, not a set.
+  if (TEMPLATE_IDS.join() !== picker.join())
+    fail(
+      `lib/templateSpecs.ts: TEMPLATE_IDS is [${TEMPLATE_IDS.join(", ")}] but RESUME_TEMPLATES is ` +
+        `[${picker.join(", ")}] — the landing and the picker would show the same eleven templates ` +
+        "in two different orders.",
+    );
+
+  // --- (e) the picker's PDF-only list -------------------------------------
+  // A third sidebar template added to the backend would otherwise ship with no
+  // "PDF only" badge, no picker desc warning, no TailorPage docxFallback note
+  // and no XrayResult docxDiffers line — four warnings failing silently at
+  // once. The Python leg of this is the `layout` row of the field comparison
+  // below, so this stays honest even when the Python half is skipped.
+  const pickerSrc = read("components/TemplatePicker.tsx");
+  const pdfOnly = /PDF_ONLY_TEMPLATES[^=]*=\s*\[([^\]]*)\]/.exec(pickerSrc);
+  if (!pdfOnly) throw new Error("could not find PDF_ONLY_TEMPLATES in components/TemplatePicker.tsx");
+  const declared = [...pdfOnly[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  if (!declared.length) throw new Error("PDF_ONLY_TEMPLATES parsed as empty");
+  const twoColumn = ids.filter((id) => PDF_ONLY(id));
+  if (declared.join() !== twoColumn.join())
+    fail(
+      `components/TemplatePicker.tsx: PDF_ONLY_TEMPLATES is [${declared.join(", ")}] but the specs ` +
+        `say [${twoColumn.join(", ")}] render two columns. Every surface that offers a .docx warns ` +
+        "off this one list, so a missing id silently drops four warnings at once.",
+    );
+
+  // --- (f) both locales name every template -------------------------------
+  // Check 8 only proves en and he agree WITH EACH OTHER, so a template added to
+  // neither renders "download.templates.x.name" as its own label, at 12px, in
+  // both languages.
+  for (const loc of ["en", "he"]) {
+    const tailor = JSON.parse(read(`locales/${loc}/tailor.json`));
+    const marketing = JSON.parse(read(`locales/${loc}/marketing.json`));
+    for (const id of ids) {
+      for (const key of [`download.templates.${id}.name`, `download.templates.${id}.desc`]) {
+        if (!resolvesIn(tailor, key))
+          fail(`locales/${loc}/tailor.json is missing "${key}" — the picker would render the raw key.`);
+      }
+      for (const key of [`templates.${id}.name`, `templates.${id}.desc`]) {
+        if (!resolvesIn(marketing, key))
+          fail(`locales/${loc}/marketing.json is missing "${key}" — the landing would render the raw key.`);
+      }
+    }
+  }
+
+  // --- templates.py, parsed as a literal -----------------------------------
+  let raw = null;
+  try {
+    raw = fs.readFileSync(TEMPLATES_PY, "utf8");
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+    templateSkip = `${TEMPLATES_PY} not readable`;
+    console.warn(
+      `\n  ! check 23 DEGRADED: ${TEMPLATES_PY} is not readable from this build, so the eleven\n` +
+        `    template specs in lib/templateSpecs.ts were NOT compared against the renderers'\n` +
+        `    source. The id sets, the PDF-only list and both locales were still checked.\n` +
+        `    This is expected only where the frontend is built without the repo around it;\n` +
+        `    CI (.github/workflows/ci.yml) checks the whole repo out, so the comparison runs there.\n`,
+    );
+  }
+
+  if (raw !== null) {
+    /** Python `#` comments, stripped without touching a `#` inside a string. */
+    const decommentPy = (src) => {
+      let out = "";
+      let i = 0;
+      let quote = null;
+      while (i < src.length) {
+        const c = src[i];
+        if (quote) {
+          if (c === "\\" && quote.length === 1) {
+            out += src.slice(i, i + 2);
+            i += 2;
+            continue;
+          }
+          if (src.startsWith(quote, i)) {
+            out += quote;
+            i += quote.length;
+            quote = null;
+            continue;
+          }
+          out += c;
+          i++;
+          continue;
+        }
+        if (c === '"' || c === "'") {
+          const triple = src.slice(i, i + 3);
+          quote = triple === '"""' || triple === "'''" ? triple : c;
+          out += quote;
+          i += quote.length;
+          continue;
+        }
+        if (c === "#") {
+          while (i < src.length && src[i] !== "\n") i++;
+          continue;
+        }
+        out += c;
+        i++;
+      }
+      return out;
+    };
+
+    /** The balanced block that opens at `src[open]` — `{`, `(` or `[`. */
+    const balanced = (src, open) => {
+      const close = { "{": "}", "(": ")", "[": "]" }[src[open]];
+      if (!close) throw new Error(`templates.py: expected a bracket at offset ${open}`);
+      let depth = 0;
+      for (let i = open; i < src.length; i++) {
+        if (src[i] === src[open]) depth++;
+        else if (src[i] === close) {
+          depth--;
+          if (depth === 0) return src.slice(open + 1, i);
+        }
+      }
+      throw new Error(`templates.py: unbalanced ${src[open]} at offset ${open}`);
+    };
+
+    /** Split on top-level commas — a tuple default and a kwargs list both need it. */
+    const splitTop = (src) => {
+      const out = [];
+      let depth = 0;
+      let quote = null;
+      let cur = "";
+      for (const c of src) {
+        if (quote) {
+          cur += c;
+          if (c === quote) quote = null;
+          continue;
+        }
+        if (c === '"' || c === "'") {
+          quote = c;
+          cur += c;
+          continue;
+        }
+        if ("([{".includes(c)) depth++;
+        else if (")]}".includes(c)) depth--;
+        if (c === "," && depth === 0) {
+          out.push(cur);
+          cur = "";
+          continue;
+        }
+        cur += c;
+      }
+      out.push(cur);
+      return out.map((s) => s.trim()).filter(Boolean);
+    };
+
+    // Two sentinels rather than `undefined`, so "templates.py gives this no
+    // default" and "this parser cannot read that literal" stay distinguishable
+    // from "the value is absent" all the way to the comparison.
+    const NO_DEFAULT = Symbol("no default");
+    const UNREAD = Symbol("unread literal");
+    const literal = (text) => {
+      const s = text.trim();
+      if (/^"[^"]*"$/.test(s) || /^'[^']*'$/.test(s)) return s.slice(1, -1);
+      if (/^-?\d+(?:\.\d+)?$/.test(s)) return Number(s);
+      if (s === "True") return true;
+      if (s === "False") return false;
+      if (s.startsWith("(") && s.endsWith(")")) {
+        const items = splitTop(s.slice(1, -1)).map(literal);
+        return items.some((v) => v === UNREAD) ? UNREAD : items;
+      }
+      return UNREAD; // `A4_W`, and anything else this parser deliberately does not read
+    };
+
+    const py = decommentPy(raw);
+    const classAt = py.indexOf("class TemplateSpec:");
+    const dictAt = py.search(/^TEMPLATES\s*:\s*dict\[[^\]]*\]\s*=\s*\{/m);
+    if (classAt === -1) throw new Error("templates.py has no `class TemplateSpec:`");
+    if (dictAt === -1) throw new Error("templates.py has no `TEMPLATES: dict[...] = {`");
+
+    // (a) fail-loud floors. A parser that quietly reads two fields and reports
+    // no drift is the 21.7 defect, not a passing check.
+    const fields = new Map();
+    for (const line of py.slice(classAt, dictAt).split("\n")) {
+      const m = /^ {4}([a-z_][a-z0-9_]*)\s*:\s*([^=\n]+?)(?:\s*=\s*(.*?))?\s*$/.exec(line);
+      if (m) fields.set(m[1], m[3] === undefined ? NO_DEFAULT : literal(m[3]));
+    }
+    const defaults = [...fields].filter(([, v]) => v !== NO_DEFAULT).length;
+    if (fields.size < 40 || defaults < 30)
+      throw new Error(
+        `parsed only ${fields.size} TemplateSpec fields (${defaults} with defaults) out of templates.py — ` +
+          "the dataclass body has stopped matching this parser",
+      );
+
+    const overrides = {};
+    const dict = balanced(py, py.indexOf("{", dictAt));
+    for (const m of dict.matchAll(/"([a-z0-9_]+)"\s*:\s*TemplateSpec\(/g)) {
+      const kw = {};
+      for (const arg of splitTop(balanced(dict, m.index + m[0].length - 1))) {
+        const a = /^([a-z_][a-z0-9_]*)\s*=\s*([\s\S]+)$/.exec(arg);
+        if (!a) throw new Error(`templates.py: could not read \`${arg}\` in TemplateSpec("${m[1]}")`);
+        kw[a[1]] = literal(a[2]);
+      }
+      if (kw.id !== m[1])
+        throw new Error(`templates.py: TEMPLATES["${m[1]}"] carries id=${JSON.stringify(kw.id)}`);
+      overrides[m[1]] = kw;
+    }
+    const pyIds = Object.keys(overrides);
+    if (pyIds.length < 11)
+      throw new Error(`parsed only ${pyIds.length} entries out of templates.py's TEMPLATES dict`);
+
+    for (const [what, gone] of [
+      ["lib/templateSpecs.ts has no spec for", missingFrom(pyIds, ids)],
+      ["templates.py does not define", missingFrom(ids, pyIds)],
+    ]) {
+      if (gone.length)
+        fail(
+          `${what} ${gone.map((i) => `\`${i}\``).join(", ")}. An id the backend has and the frontend ` +
+            "does not is unpickable; an id only the frontend has sends a name `get_template` " +
+            "silently falls back to DEFAULT_TEMPLATE for.",
+        );
+    }
+
+    // (c)/(d) the field map, declared ONCE. Only the irregular names are listed;
+    // every other field is the snake_case of its own name, and a name that does
+    // not resolve to a real field is REPORTED — that is what a rename in
+    // templates.py looks like from here, and it would otherwise compare as
+    // trivially absent on both sides.
+    const FIELD = {
+      mx: "margin_lr_pt",
+      my: "margin_tb_pt",
+      body: "body_size",
+      head: "heading_size",
+      name: "name_size",
+      meta: "meta_size",
+      tracking: "heading_tracking",
+      serif: "pdf_family",
+    };
+    const pyName = (k) => FIELD[k] ?? k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+
+    // `serif` is the one mirrored field that is not a copy: no face templates.py
+    // names can be web-loaded here (fonts.css ships Inter + Heebo only, and Lato
+    // and Spectral are PDF-EMBEDDED), so the screen reproduces the CATEGORY.
+    // Both sets are listed so a family the frontend has never heard of throws
+    // instead of being silently sorted into sans.
+    const SERIF_FAMILIES = new Set(["Spectral"]);
+    const SANS_FAMILIES = new Set(["Lato"]);
+    const DERIVE = { serif: (v) => SERIF_FAMILIES.has(v) };
+    for (const id of pyIds) {
+      const family = overrides[id].pdf_family ?? fields.get("pdf_family");
+      if (!SERIF_FAMILIES.has(family) && !SANS_FAMILIES.has(family))
+        throw new Error(
+          `templates.py: ${id} sets pdf_family=${JSON.stringify(family)}, which this check cannot ` +
+            "classify as serif or sans — add it to SERIF_FAMILIES / SANS_FAMILIES after deciding " +
+            "which one the miniatures should draw",
+        );
+    }
+
+    // templates.py stores colours bare, these are CSS values, and both sides
+    // spell the same number in different ways (0.60 vs 0.6).
+    const norm = (v) =>
+      typeof v === "string" && /^#?[0-9a-f]{6}$/i.test(v) ? v.replace(/^#/, "").toUpperCase() : v;
+    const same = (a, b) => {
+      if (Array.isArray(a) || Array.isArray(b))
+        return (
+          Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => same(x, b[i]))
+        );
+      return norm(a) === norm(b);
+    };
+
+    // The comparator folds defaults under overrides on every call, so the probe
+    // below can mutate the parsed source in memory and see the difference.
+    const show = (v) => (Array.isArray(v) ? `[${v.join(", ")}]` : JSON.stringify(v));
+    const compare = () => {
+      const out = [];
+      for (const id of ids) {
+        if (!overrides[id]) continue; // already reported as a missing id
+        const effective = { ...Object.fromEntries(fields), ...overrides[id] };
+        for (const [key, mine] of Object.entries(TEMPLATE_SPECS[id])) {
+          const field = pyName(key);
+          if (!fields.has(field)) {
+            out.push(`${id}.${key} mirrors \`${field}\`, which templates.py no longer has`);
+            continue;
+          }
+          const theirs = effective[field];
+          if (theirs === UNREAD)
+            throw new Error(`templates.py: this check cannot read the value of \`${field}\``);
+          if (theirs === NO_DEFAULT) {
+            out.push(`${id} does not set \`${field}\`, and templates.py gives it no default`);
+            continue;
+          }
+          const want = DERIVE[key] ? DERIVE[key](theirs) : theirs;
+          if (!same(mine, want))
+            out.push(
+              `${id}.${key} is ${show(mine)}, templates.py says ${field}=${show(theirs)}` +
+                (DERIVE[key] ? ` (⇒ ${show(want)})` : ""),
+            );
+        }
+      }
+      return out;
+    };
+
+    const drift = compare();
+    for (const d of drift) {
+      fail(
+        `lib/templateSpecs.ts: ${d}. The mirror is what the landing's miniatures, the picker's ` +
+          "thumbnails and the document draw from, so this is a preview that lies about the file " +
+          "the user downloads.",
+      );
+    }
+
+    // Both directions, on the comparator the assertion actually uses: mutate one
+    // parsed value in memory, expect exactly that one extra mismatch, restore,
+    // expect the original count back. A comparator that cannot fire on its own
+    // defect shape passes for ever.
+    const probeId = ids.find((id) => overrides[id] && typeof overrides[id].accent === "string");
+    if (!probeId) throw new Error("no template sets `accent` — this probe has nothing to mutate");
+    const keep = overrides[probeId].accent;
+    overrides[probeId].accent = keep === "000000" ? "FFFFFF" : "000000";
+    const probed = compare();
+    overrides[probeId].accent = keep;
+    if (probed.length !== drift.length + 1 || !probed.some((p) => p.startsWith(`${probeId}.accent `)))
+      fail("check 23's comparator cannot see a drifted value — changing templates.py's accent in memory changed nothing it reports");
+    if (compare().length !== drift.length)
+      fail("check 23's comparator does not fold the defaults fresh — it is reading state left over from the probe");
+    // …and the two helpers the comparison rests on, in both directions.
+    if (!same("#1F3A5F", "1f3a5f")) fail("check 23 cannot see through a leading `#` on a colour");
+    if (same("#1F3A5F", "1F3A60")) fail("check 23 calls two different colours equal");
+    if (!same(0.6, 0.6) || same(0.6, 0.62)) fail("check 23 cannot compare two numbers");
+    if (!same(["a", "b"], ["a", "b"]) || same(["a"], ["a", "b"]))
+      fail("check 23 cannot compare `sidebar_keys` element by element");
+    if (!fields.has(pyName("headingShortPt")))
+      fail("check 23's camelCase → snake_case map no longer resolves a field it is pointed at");
+    if (fields.has(pyName("headingShortPtz")))
+      fail("check 23 resolves a field templates.py does not have — a rename would compare as absent on both sides");
+  }
+} catch (e) {
+  fail(`template spec mirror check could not run: ${e.message}`);
+}
+
+// ---- 24. the document is drawn in the template it will be downloaded as ---- //
+// "In the example there's a format and in real it gives another format."
+// `DocumentPanel` holds the template choice and hands it to `usePdfPreview`,
+// `useXray`, both `downloadResume` calls and `XrayResult` — and did not hand it
+// to `<ResumeView>`. So the sheet was hard-wired to ONE look for all eleven
+// templates: `.sheet` re-declares the palette with the classic navy, skills were
+// always chips, entries always stacked, headings always tracked caps over a
+// hairline. Pick Executive and you got a serif, cream, centred-name,
+// split-entry, no-heading-rule PDF while the page you EDIT ON stayed sans,
+// white, left-aligned, chipped and ruled. Every other surface honoured the
+// choice; the one the user works on did not.
+//
+// `tsc` cannot see any of it: `template` is an OPTIONAL prop, so the omission
+// compiles, renders and silently defaults to classic. That is the same shape as
+// check 12 — both sides correctly typed, one of them simply never written.
+try {
+  const panel = decomment(read("components/DocumentPanel.tsx"));
+  const view = decomment(read("components/ResumeView.tsx"));
+
+  // (a) the mount itself. Sliced to the element so a `template={template}`
+  // anywhere else in the file — the download call, the x-ray — cannot stand in
+  // for it.
+  const mount = (src) => {
+    const at = src.indexOf("<ResumeView");
+    if (at === -1) throw new Error("could not find the <ResumeView> mount in DocumentPanel.tsx");
+    const end = src.indexOf("/>", at);
+    if (end === -1) throw new Error("the <ResumeView> mount in DocumentPanel.tsx never closes");
+    return src.slice(at, end);
+  };
+  const PASSES = /\btemplate\s*=\s*\{\s*template\s*\}/;
+  if (!PASSES.test(mount(panel)))
+    fail(
+      "components/DocumentPanel.tsx: <ResumeView> is not given `template={template}`, so the page " +
+        "the user edits on renders as `classic` whatever the picker, the PDF preview, the ATS " +
+        "x-ray and the Download button are using. Pass it — the prop is optional, so nothing else " +
+        "will tell you.",
+    );
+
+  // (b) …and the view has somewhere to put it, from the ONE mirror. A palette
+  // hand-copied back into this file is how the three previews drifted apart in
+  // the first place (check 6's single-definition rule, applied to colours).
+  const props = topLevelKeys(blockAfter(view, "interface Props", "ResumeView Props"));
+  if (props.length < 8) throw new Error(`parsed only ${props.length} ResumeView props`);
+  if (!props.includes("template"))
+    fail("components/ResumeView.tsx: Props declares no `template`, so the document cannot honour one.");
+  if (!/from\s+"\.\.\/lib\/templateSpecs"/.test(view) || !view.includes("TEMPLATE_SPECS"))
+    fail(
+      "components/ResumeView.tsx does not read TEMPLATE_SPECS from lib/templateSpecs — the document " +
+        "would be drawing from something check 23 does not compare against templates.py.",
+    );
+  const OWN_PALETTE = /\b[A-Za-z_$][\w$]*\s*:\s*"#[0-9a-fA-F]{3,8}"/;
+  if (OWN_PALETTE.test(view))
+    fail(
+      "components/ResumeView.tsx hard-codes a colour as a `field: \"#hex\"` pair. Every colour on " +
+        "the document comes from lib/templateSpecs (check 23 pins that against templates.py); a " +
+        "local one is a fourth hand-copy waiting to drift.",
+    );
+
+  // (c) the abstention. The page reproduces the template but NOT the embedded
+  // typeface and NOT `layout="sidebar"` (which sections land in the rail is a
+  // reportlab measurement with a demote pass, so a DOM guess would show
+  // sections the real file moved out). Check 8 only proves en and he agree WITH
+  // EACH OTHER, so a note dropped from both files turns the preview back into
+  // an unqualified claim in both languages at once.
+  for (const loc of ["en", "he"]) {
+    const tailor = JSON.parse(read(`locales/${loc}/tailor.json`));
+    for (const key of ["doc.screen.note", "doc.screen.icons", "doc.screen.twoColumn"]) {
+      if (!resolvesIn(tailor, key))
+        fail(
+          `locales/${loc}/tailor.json is missing "${key}" — the document would claim to be the ` +
+            "file without naming what it cannot reproduce.",
+        );
+    }
+  }
+
+  // Both directions, on the real matchers: strip the prop out of a copy of the
+  // source and the check must fire; a detector that cannot match its own defect
+  // shape passes for ever.
+  if (PASSES.test(mount(panel.replace(/\btemplate=\{template\}/, ""))))
+    fail("check 24 cannot see a <ResumeView> mount that was never given a template");
+  if (!PASSES.test('<ResumeView resume={r} template={template} surface="sheet" />'))
+    fail("check 24 does not recognise a mount that DOES pass the template");
+  if (!OWN_PALETTE.test('const T = { accent: "#1F3A5F" };'))
+    fail("check 24 cannot detect a hand-copied palette");
+  if (OWN_PALETTE.test('mixed("#FFFFFF", spec.accent, 0.12)'))
+    fail("check 24 fires on a colour that is an ARGUMENT, not a table entry");
+} catch (e) {
+  fail(`document-template check could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
   for (const p of problems) console.error(`  ✗ ${p}\n`);
   process.exit(1);
 }
-console.log(`mirrors ok — ${sectionKeys.length} edit sections, en/he parity across all namespaces`);
+console.log(
+  `mirrors ok — ${sectionKeys.length} edit sections, en/he parity across all namespaces` +
+    (templateSkip ? ` — but the template specs were NOT compared (${templateSkip})` : ""),
+);
