@@ -7,7 +7,14 @@ import { resetMasterCache } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { clearDraft, writeDraft } from "../lib/draft";
 import { resumeLanguage } from "../lib/lang";
-import type { FactsLedger, FitCheckResult, JDModel, ResumeModel, TailorResult } from "../types";
+import type {
+  FactsLedger,
+  FitCheckResult,
+  JDModel,
+  MasterResume,
+  ResumeModel,
+  TailorResult,
+} from "../types";
 
 export type TailorState = {
   resume: ResumeModel | null;
@@ -191,6 +198,70 @@ export function startTailor(): void {
   });
 }
 
+// --------------------------------------------------------------------------- //
+// A master résumé replaced somewhere else (23.6)
+// --------------------------------------------------------------------------- //
+
+/**
+ * The STORED master résumé was replaced by another surface — a file dropped on
+ * the Jobs page's Replace panel, a version restored from history, the skills
+ * editor saving — and the document must BECOME it.
+ *
+ * This store is the app's second module-level copy of the master (the first is
+ * `useMasterResume`'s cache), and nothing outside this file could reach it:
+ * `TailorPage`'s loader early-returns the moment `resume` is set, so a résumé
+ * replaced anywhere else never arrived. The document surface kept painting the
+ * old file, TAILORED it, and downloaded it — until a full page reload. That is
+ * the same defect `resetMasterCache` exists for, one cache further along, and
+ * it is why the call to this lives inside `useMasterResume`'s `setMaster`
+ * rather than at each of its call sites.
+ *
+ * Everything cleared below describes the résumé being replaced: a fit reading,
+ * a tailor diff, a fabrication warning and a tracker row all say something
+ * about a document that no longer exists. `checkedFor` has to go with `fit` or
+ * the overlay suppresses the re-check that would fix it as "already read this
+ * posting" — the same pairing `applyBlockEdit` documents. The `seq` bump is the
+ * same argument applied to a tailor that is still running: its base is gone, so
+ * its answer would describe nothing.
+ *
+ * The TARGET JOB survives on purpose — `jdText`, `jd`, `jobUrl`, `jobTitle`,
+ * `company`. Which posting the user is aiming at has nothing to do with which
+ * file their résumé is in, and pressing Tailor straight afterwards using the
+ * NEW résumé is the whole point.
+ */
+export function adoptMaster(m: MasterResume): void {
+  seq++; // cancel an in-flight tailor — it is about the résumé that just went
+  setTailorState({
+    resume: m.resume,
+    // The dirty baseline is the incoming copy, never the document on screen:
+    // seeding it from what was there leaves the new résumé reading dirty.
+    savedResume: m.resume,
+    ledger: m.ledger ?? null,
+    masterLabel: m.label,
+    editUndo: [],
+    editError: "",
+    loading: false,
+    error: "",
+    result: null,
+    tailoredFrom: null,
+    rejectedEdits: [],
+    saved: false,
+    savedAppId: null,
+    applyClicked: false,
+    applied: false,
+    coverLetterText: "",
+    langSwitched: null,
+    fit: null,
+    checkedFor: null,
+    scoredAt: null,
+  });
+  // The 22.11 draft mirrors the document that was just replaced. Leaving it
+  // would have DraftRestoreBar offer to "restore unsaved changes" that are in
+  // fact the whole of the PREVIOUS résumé, pasted over the new one — and
+  // `draftOver` spreads the draft over the master, so accepting would undo the
+  // replacement the user just made.
+  clearDraft();
+}
 
 // --------------------------------------------------------------------------- //
 // Block editing (22.8)

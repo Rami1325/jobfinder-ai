@@ -3,6 +3,7 @@ import type { InsertKind } from "../lib/resumeBlocks";
 import { useTranslation } from "react-i18next";
 import {
   Download,
+  FileUp,
   ExternalLink,
   FileText,
   LayoutTemplate,
@@ -12,12 +13,13 @@ import {
 } from "lucide-react";
 import ResumeView, { type BlockMark } from "./ResumeView";
 import TemplatePicker from "./TemplatePicker";
+import ResumeUpload from "./ResumeUpload";
 import XrayResult from "./XrayResult";
 import { usePdfPreview, useXray } from "../hooks/useFilePreview";
 import { downloadResume, resumeFilename, type ResumeTemplate } from "../api/client";
-import { Button, Card, Skeleton } from "./ui";
+import { Button, Card, CardTitle, Skeleton } from "./ui";
 import { cn } from "../lib/cn";
-import type { ResumeModel } from "../types";
+import type { FactsLedger, ResumeModel } from "../types";
 
 export type DocView = "screen" | "file" | "ats";
 const VIEWS: DocView[] = ["screen", "file", "ats"];
@@ -87,6 +89,11 @@ interface Props {
   onAddSkill?: (groupLabel: string, text: string) => void;
   onAdd?: (kind: InsertKind) => void;
   onAddBullet?: (entryPath: string) => void;
+  /** Swap the master résumé for a newly uploaded file. Given only when the
+   * document IS the master — replacing the file under a tailor review would be
+   * replacing the thing being reviewed. Its absence hides the tool entirely,
+   * the same way `onTemplate` gates the picker. */
+  onReplace?: (resume: ResumeModel, ledger: FactsLedger) => void;
 }
 
 /**
@@ -108,13 +115,14 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, onTemplate, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddBullet },
+  { resume, template, view, onView, onTemplate, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddBullet, onReplace },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
   const pdf = usePdfPreview(resume, template, view === "file");
   const xray = useXray(resume, template, view === "ats");
   const [tplOpen, setTplOpen] = useState(false);
+  const [replaceOpen, setReplaceOpen] = useState(false);
 
   /* Defined once, mounted twice — the same arrangement `SidebarBody` uses for
      the rail and the drawer, and for the same reason: a tool that exists in one
@@ -152,6 +160,23 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
       onClick: () =>
         downloadResume(resume, "pdf", resumeFilename(resume.contact?.name ?? "", company), template),
     },
+    // Replacing the file used to be possible ONLY from the Jobs page, because
+    // /app offers the dropzone in its empty state and nowhere else — so the
+    // one page that IS the résumé was the one page that could not change it.
+    // It rides the shared tool list rather than the toolbar for the reason the
+    // list exists: a control defined once is mounted in both the phone row and
+    // the desktop rail, and cannot exist in one viewport only.
+    ...(onReplace
+      ? [
+          {
+            key: "replace",
+            Icon: FileUp,
+            label: t("doc.replace.tool"),
+            active: replaceOpen,
+            onClick: () => setReplaceOpen((o) => !o),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -180,6 +205,26 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
         {onTemplate && tplOpen && (
           <Card className="animate-fade-up">
             <TemplatePicker value={template} onChange={onTemplate} label={t("download.templateLabel")} />
+          </Card>
+        )}
+
+        {/* Same shape and the same reasons as the template panel above: an
+            inline Card, opacity + transform only. The panel closes itself on a
+            successful parse — the new document appears directly beneath it, so
+            leaving the dropzone open would sit between the user and the thing
+            they just uploaded. */}
+        {onReplace && replaceOpen && (
+          <Card className="animate-fade-up">
+            <CardTitle>{t("doc.replace.title")}</CardTitle>
+            <p className="mt-1 text-xs text-ink-muted">{t("doc.replace.body")}</p>
+            <div className="mt-3">
+              <ResumeUpload
+                onParsed={(r, l) => {
+                  setReplaceOpen(false);
+                  onReplace(r, l);
+                }}
+              />
+            </div>
           </Card>
         )}
 

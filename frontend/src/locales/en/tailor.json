@@ -307,6 +307,11 @@
     "ats": {
       "note": "We render that PDF, then read it back with the same parser we run on résumés people upload. What follows is the file's own text — not a text version of the page above.",
       "failed": "Couldn't read the file back just now."
+    },
+    "replace": {
+      "tool": "Replace résumé",
+      "title": "Replace your résumé",
+      "body": "Upload a new file and it becomes your master résumé everywhere — this page, job matching, interview prep and every tool."
     }
   },
   "overlay": {

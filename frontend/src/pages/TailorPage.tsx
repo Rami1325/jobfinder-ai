@@ -29,7 +29,7 @@ import ResumeUpload from "../components/ResumeUpload";
 import ScoreCard from "../components/ScoreCard";
 import VoicePanel from "../components/VoicePanel";
 import { resetMasterCache } from "../hooks/useMasterResume";
-import { useSaveMasterResume } from "../hooks/useSaveMasterResume";
+import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { blocksByEdit, mergeForReview } from "../lib/resumeDiff";
 import {
   inlineField,
@@ -47,6 +47,7 @@ import { classifyEdit } from "../lib/editGroups";
 import { cn } from "../lib/cn";
 import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
 import {
+  adoptMaster,
   applyBlockEdit,
   getTailorState,
   setTailorState,
@@ -429,7 +430,17 @@ export default function TailorPage() {
   }
 
   async function onParsed(r: ResumeModel, l: FactsLedger) {
-    setTailorState({ resume: r, savedResume: r, ledger: l, result: null, tailoredFrom: null, rejectedEdits: [], saved: false, langSwitched: null, editUndo: [], editError: "" });
+    // ONE definition of "a new master arrived", shared with the Jobs page's
+    // replace and restore paths. It used to be a hand-written reset here and
+    // nothing at all there, which is precisely how the two drifted: this copy
+    // never cleared `fit` / `checkedFor` / `scoredAt` either.
+    adoptMaster({
+      resume: r,
+      ledger: l,
+      label: masterResumeLabel(r),
+      language: resumeLanguage(r),
+      updated_at: new Date().toISOString(),
+    });
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
     // resetMasterCache() is NOT optional here, and leaving it out is why a
     // freshly uploaded résumé "didn't take": saveMasterResume calls
@@ -728,6 +739,10 @@ export default function TailorPage() {
           onAddSkill={editable ? addSkill : undefined}
           onAdd={editable ? addToResume : undefined}
           onAddBullet={editable ? addBullet : undefined}
+          // Same gate as every other write on this surface: master ⇒ change it,
+          // tailored ⇒ review it. `onParsed` is the SAME handler the empty
+          // state uses, so the cold start and the replacement are one path.
+          onReplace={editable ? onParsed : undefined}
         />
       ) : (
         <Card>

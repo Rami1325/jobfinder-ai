@@ -498,6 +498,83 @@ try {
   fail(`height-animation check could not run: ${e.message}`);
 }
 
+// ---- 12. a replaced master résumé reaches the document -------------------- //
+// The master résumé is cached in TWO module-level bindings: `useMasterResume`'s
+// `cache` and `tailorStore`'s `resume`. Only the first had a way in from
+// outside, and `TailorPage`'s loader early-returns the moment the second is
+// set — so uploading a new CV on the Jobs page (Replace), restoring a version
+// or saving from the skills editor left /app painting, TAILORING and
+// downloading the file that had just been replaced, until a full page reload.
+// The user's report was exactly that: "I add a new resume, the Resume page
+// still shows the old one, and Tailor uses the old one." Reproduced in the
+// browser with a no-reload sentinel before it was fixed.
+//
+// `tsc` cannot see any of it — both caches are correctly typed and correctly
+// written; the defect is that one of them is never written at all.
+//
+// The third assertion is the one that will still be true in a year: the reset
+// list is DERIVED from `applyBlockEdit`, not restated here. Both functions
+// answer the same question ("the document changed — what on screen is now
+// describing a résumé that no longer exists?"), so a field added to one and
+// forgotten in the other is the next `mergeResumes` bug in a new costume.
+try {
+  const store = read("state/tailorStore.ts");
+  const hook = read("hooks/useMasterResume.ts");
+
+  if (!/export function adoptMaster\s*\(/.test(store)) {
+    fail(
+      "state/tailorStore.ts: no exported `adoptMaster` — the document surface has " +
+        "no way to be told the stored master résumé was replaced.",
+    );
+  }
+
+  // The call belongs INSIDE setMaster, not at its call sites: every caller of
+  // setMaster is by definition a replacement of the stored master.
+  const setMasterBody = blockAfter(hook, "const setMaster = useCallback", "setMaster body");
+  if (!/\bsetMasters\s*\(/.test(setMasterBody)) {
+    throw new Error("parsed something that is not setMaster (no setMasters call in it)");
+  }
+  if (!/\badoptMaster\s*\(/.test(setMasterBody)) {
+    fail(
+      "hooks/useMasterResume.ts: setMaster does not call adoptMaster. A résumé " +
+        "replaced anywhere but /app (upload / version restore / skills editor) will " +
+        "not reach the document — it keeps painting, tailoring and downloading the " +
+        "old file until a full page reload.",
+    );
+  }
+
+  const resetKeys = (fn, what) =>
+    topLevelKeys(
+      blockAfter(blockAfter(store, `export function ${fn}`, what), "setTailorState(", `${fn} reset`),
+    );
+  const edited = resetKeys("applyBlockEdit", "applyBlockEdit");
+  const adopted = resetKeys("adoptMaster", "adoptMaster");
+  if (edited.length < 6) throw new Error(`parsed only ${edited.length} applyBlockEdit reset fields`);
+  if (adopted.length < 12) throw new Error(`parsed only ${adopted.length} adoptMaster reset fields`);
+
+  const missed = edited.filter((k) => !adopted.includes(k));
+  if (missed.length) {
+    fail(
+      `state/tailorStore.ts: adoptMaster leaves ${missed.map((k) => `\`${k}\``).join(", ")} ` +
+        "set from the résumé it just replaced, while applyBlockEdit clears " +
+        `${missed.length > 1 ? "them" : "it"} for the same reason. A fit score, a tailor ` +
+        "diff or a fabrication warning would stay on screen describing a document that " +
+        "no longer exists.",
+    );
+  }
+
+  // Both directions: the subset comparison must actually catch an omission, or
+  // this passes for ever by comparing two lists it failed to parse.
+  if (["result", "fit"].filter((k) => !["result"].includes(k)).length !== 1) {
+    fail("check 12 cannot detect a missing reset field");
+  }
+  if (["result"].filter((k) => !["result", "fit"].includes(k)).length !== 0) {
+    fail("check 12 reports a missing reset field when none is missing");
+  }
+} catch (e) {
+  fail(`master-résumé adoption check could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
