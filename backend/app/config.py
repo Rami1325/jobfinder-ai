@@ -61,7 +61,27 @@ class Settings(BaseSettings):
     # It is a CEILING FOR THE TAIL, not a hard truncation: an entry the job
     # actually names is never dropped, so a broad posting legitimately lands
     # above this number and a narrow one below it. <= 0 disables the trim.
-    resume_max_skills: int = 20
+    #
+    # RAISED 20 -> 30 (2026-08-30), and the reason matters more than the number.
+    # At 20 the list filled with the model's JD-shaped PARAPHRASE -- "orchestration
+    # patterns", "tool use", "feedback loops" -- and cut the candidate's actual
+    # toolchain: FastAPI, PostgreSQL, pgvector, RAG, embeddings, n8n, Vapi all
+    # gone from an AI-engineering application. Found by rendering the document and
+    # reading it, not by any metric: `skills_precision` scores an entry as GOOD
+    # when a JD term matches it, so it REWARDED paraphrase and marked the real
+    # stack as noise. It read 18.6% -> 55% while the CV got worse.
+    #
+    # THE RAISE IS FREE, which is why it is the fix rather than a prompt change.
+    # Simulated against eighteen real 52-74 entry model outputs: JD coverage of
+    # the shipped list is CONSTANT at 55.1 for every cap from 20 to 40, because
+    # `shortlist_skills` never drops an entry the job named -- so a bigger cap can
+    # only add. Measured 20 -> 30: the candidate's own wording 72% -> 82%, concrete
+    # tools 9.0 -> 15.5, page count unchanged at 2. Re-ranking was tried first and
+    # is DEAD: three rank rules gave byte-identical output, because the model
+    # front-ranks its own paraphrases, so no reordering of its list can recover
+    # the toolchain. A prompt arm was tried too and rejected -- where it worked it
+    # cost 30 coverage points, and on the job that motivated it, it did nothing.
+    resume_max_skills: int = 30
     # Prompt input ceilings, in UTF-8 KB (see app/llm/limits.py for why bytes
     # and not characters — Hebrew costs ~1.83 bytes/char, so a character cap
     # silently grants the primary market ~2x the tokens).

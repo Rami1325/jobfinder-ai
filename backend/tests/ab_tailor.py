@@ -442,6 +442,7 @@ def score_run(
     # the whole master, so `JavaScript` (in a bullet, not in the skills array)
     # scores as owned.
     master_entries = {s.strip().casefold() for s in master.skills}
+    master_entries_exact = {s.strip() for s in master.skills}
     relocated = [
         s
         for s, o in zip(t.skills, own)
@@ -461,6 +462,17 @@ def score_run(
         "skills_unowned": len(unowned),
         "skills_unowned_list": unowned,
         "skills_relocated": len(relocated),
+        # WHOSE WORDS ARE ON THE PAGE. Added after looking at a rendered CV and
+        # finding 12 of 20 entries were JD-shaped paraphrase -- "orchestration
+        # patterns", "tool use", "feedback loops" -- while FastAPI, PostgreSQL,
+        # pgvector, RAG, n8n and Vapi had been cut. No existing metric could see
+        # it: `skills_precision` scores an entry as GOOD when a JD term matches
+        # it, so it rewards paraphrase and marks the candidate's real stack as
+        # noise. Precision went 18.6% -> 55% while the document got worse.
+        "skills_own": sum(1 for s in t.skills if s.strip() in master_entries_exact),
+        "skills_own_pct": round(
+            100.0 * sum(1 for s in t.skills if s.strip() in master_entries_exact) / len(t.skills), 1
+        ) if t.skills else 0.0,
         "skills_relocated_list": relocated,
         "skills_not_verbatim": sum(1 for o in own if o != "covered"),
         # --- the counterweights: cutting must not cost coverage ------------ #
@@ -703,6 +715,7 @@ SUMMARY_COLS = [
     ("n_skills", "skills"),
     ("skills_unasked", "unasked"),
     ("skills_unowned", "unowned"),
+    ("skills_own_pct", "yours%"),
     ("skills_precision", "prec%"),
     ("coverage_after", "cov"),
     ("coverage_delta", "d-cov"),
@@ -790,7 +803,7 @@ def report(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-PAIRED_COLS = ["n_skills", "skills_unasked", "skills_unowned", "skills_relocated",
+PAIRED_COLS = ["n_skills", "skills_own_pct", "skills_unowned", "skills_relocated",
                "coverage_after", "lost_keywords_n", "n_projects", "voice_score", "pages"]
 
 
