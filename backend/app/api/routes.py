@@ -6,7 +6,7 @@ import io
 import json
 import queue
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -1316,6 +1316,34 @@ def save_master_resume(
     row.label = body.label
     row.resume_json = body.resume.model_dump_json()
     row.ledger_json = ledger.model_dump_json()
+    # "MOST RECENTLY UPDATED" HAS TO BE A TOTAL ORDER, AND THE CLOCK DOES NOT
+    # GIVE ONE. `_master_rows` sorts on `updated_at` alone, and the column's
+    # `onupdate` reads the system clock — which on Windows ticks about every
+    # 15.6 ms, so three consecutive `datetime.now()` calls return the IDENTICAL
+    # value. Two saves inside one tick therefore tie, and SQLite is free to
+    # return them in either order: `GET /profile/resume` with no `lang` answers
+    # with whichever it feels like, and the paired he/en master the user just
+    # wrote is not necessarily the one they get back. Observed as an
+    # intermittently red smoke check that passed on the next run — the shape of
+    # thing this repo's own note says never to re-run away.
+    #
+    # A tiebreak in the ORDER BY cannot fix it: `id` is creation order, and the
+    # row being written here is often the OLDER one (an upsert by language), so
+    # `id DESC` would break the tie deterministically WRONG. The order has to be
+    # made real at the point of writing instead — one microsecond past the
+    # newest row this user has. Nothing else reads `updated_at` as a wall-clock
+    # instant, and a save is not a measurement of time.
+    now = datetime.now(timezone.utc)
+    newest = max(
+        (r.updated_at for r in _master_rows(db, user.id) if r is not row and r.updated_at),
+        default=None,
+    )
+    if newest is not None:
+        if newest.tzinfo is None:
+            newest = newest.replace(tzinfo=timezone.utc)
+        if now <= newest:
+            now = newest + timedelta(microseconds=1)
+    row.updated_at = now
     db.commit()
     db.refresh(row)
     return MasterResumeOut(

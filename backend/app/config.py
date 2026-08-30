@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     # than gut the CV, but never go past it.
     resume_max_pages: int = 2
     resume_hard_max_pages: int = 3
+    # Tailored skills-section ceiling, guaranteed by `core/skills_shortlist.py`
+    # the same way the page count is guaranteed by `core/length_budget.py`. 20 is
+    # the middle of the range the TAILOR prompt has always asked for ("roughly
+    # 15-25") and the value the real-key A/B measured; the prompt asking for it
+    # was not enough on its own, which is the whole reason the module exists —
+    # measured median 66 shipped skills against a 66-skill master.
+    #
+    # It is a CEILING FOR THE TAIL, not a hard truncation: an entry the job
+    # actually names is never dropped, so a broad posting legitimately lands
+    # above this number and a narrow one below it. <= 0 disables the trim.
+    resume_max_skills: int = 20
     # Prompt input ceilings, in UTF-8 KB (see app/llm/limits.py for why bytes
     # and not characters — Hebrew costs ~1.83 bytes/char, so a character cap
     # silently grants the primary market ~2x the tokens).

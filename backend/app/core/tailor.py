@@ -17,6 +17,7 @@ from app.core.keyword_guard import (
 from app.core.lang import resume_language
 from app.core.length_budget import OVERFLOW_NOTE, fit_to_pages
 from app.core.scorer import score_resume
+from app.core.skills_shortlist import shortlist_skills
 from app.core.voice_audit import audit_voice
 from app.llm.client import get_llm_client
 from app.llm import prompts
@@ -71,7 +72,26 @@ def tailor_resume(
         ),
     )
 
-    tailored = ResumeModel.model_validate(data.get("tailored_resume", resume.model_dump()))
+    # A TAILORED CV IS FLAT, AND THE VALIDATOR HAS TO BE TOLD SO BEFORE IT RUNS.
+    # `ResumeModel` keeps `skills` as the flat union of every `skill_groups`
+    # entry — correct for a master, where the taxonomy IS the document, and it
+    # only ever ADDS. So a model that returns a curated 20-entry `skills` list
+    # and *also* echoes the master's five groups has its shortlist silently
+    # undone at parse time: measured, 20 flat + the real master's groups
+    # validates to 66 skills, with nothing anywhere reporting that the curation
+    # was reversed. The prompt does say "Return skill_groups: []", and across 12
+    # measured runs the model complied every time — but an instruction is not a
+    # guarantee, this one is a single temperature sample from failing, and when
+    # it fails it defeats every other thing that shortens this section.
+    #
+    # The model's own FLAT list is authoritative and the groups are dropped.
+    # Both halves of the condition matter: a response that returned groups and
+    # NO flat list has the union as its only content, and stripping there would
+    # delete the skills section outright.
+    raw_tailored = dict(data.get("tailored_resume") or resume.model_dump())
+    if raw_tailored.get("skill_groups") and raw_tailored.get("skills"):
+        raw_tailored["skill_groups"] = []
+    tailored = ResumeModel.model_validate(raw_tailored)
     changelog = [ChangeLogEntry.model_validate(c) for c in data.get("changelog", [])]
     covered = list(data.get("covered_keywords", []))
 
@@ -189,6 +209,45 @@ def tailor_resume(
         level down."""
         return [s for s in tailored.skills if s not in pre_skills]
 
+    # THE CEILING, immediately after the floor. `preserve_keywords` guarantees a
+    # JD keyword the candidate's own skills list carried is not deleted;
+    # `shortlist_skills` guarantees the section is a shortlist rather than the
+    # master's inventory. Both are deterministic, both use the SAME matcher, and
+    # they are adjacent so nothing between them can see a list that only one of
+    # them has finished with.
+    #
+    # MEASURED, and this placement is the one that was measured: the trim ran
+    # here in the winning A/B arm, over 12 job-pairs across two independent
+    # real-key runs (`tests/ab_tailor.py`). Paired per-job medians vs the same
+    # prompt with the trim off — 63.5 -> 20 skills, better on 12 of 12 jobs;
+    # entries the job never names 48.5 -> 7.5; precision 18.6% -> 55.0%; and
+    # coverage, lost keywords, fabrication flags, voice and page count all
+    # UNCHANGED (coverage delta median 0.0, lost keywords tied on 12 of 12).
+    # Every prompt-only arm that cut the count paid for it in coverage.
+    #
+    # The restored entries are protected, or the cap could evict a carrier the
+    # changelog below then claims was put back.
+    tailored, dropped_noise = shortlist_skills(
+        tailored, jd, settings.resume_max_skills, protected=frozenset(restored_entries())
+    )
+    if dropped_noise:
+        changelog.append(
+            ChangeLogEntry(
+                section="skills",
+                # A COUNT AND A SAMPLE, never the whole list: the master's tail
+                # can run to forty entries and a changelog paragraph naming all
+                # of them is not a log, it is the section over again.
+                change=f"Cut the skills list to the {len(tailored.skills)} this job asks for",
+                reason="Your master résumé lists "
+                + str(len(dropped_noise) + len(tailored.skills))
+                + " skills; a CV for one job is a shortlist a recruiter reads in about "
+                "three seconds. Nothing this posting names was dropped — "
+                + ", ".join(dropped_noise[:6])
+                + (" and others" if len(dropped_noise) > 6 else "")
+                + " stay in your master résumé.",
+            )
+        )
+
     if tailored is not pre_restore:
         pages_pre = page_count(pre_restore, template)
         shed: list[str] = []
@@ -257,7 +316,12 @@ def tailor_resume(
         # Say so when the restore changed the size. Without this the report can
         # read pages_before=1, pages_after=2, trimmed=False, notes=[] — a CV that
         # grew a page with no vocabulary anywhere for why.
-        if pages_now != pages_pre:
+        # Gated on the restore having ACTUALLY added something. This branch is
+        # now also reached when the restore added nothing and the shortlist
+        # merely trimmed — and a trim can only make the CV shorter, so an
+        # ungated note would report a page the trim SAVED as a page the restore
+        # SPENT, which is the sentence backwards.
+        if pages_now != pages_pre and restored_entries():
             length_report.notes.append(
                 f"putting back skills the job asks for took the CV from {pages_pre} "
                 f"to {pages_now} pages"

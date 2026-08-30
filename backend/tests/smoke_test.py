@@ -167,6 +167,184 @@ check("no false fabrication flags on honest tailor", len(result.fabrication_flag
 check("keyword coverage is a percentage", 0 <= result.score_after.keyword_coverage <= 100)
 check("gap analysis present", len(result.score_after.gaps) > 0)
 
+# 4a. A CURATED SHORTLIST SURVIVES THE UNION VALIDATOR.
+# `ResumeModel` keeps `skills` as the flat union of `skill_groups` and only ever
+# ADDS — right for a master, where the taxonomy is the document. But a TAILOR
+# response that returns a curated flat list AND echoes the master's groups has
+# its curation silently reversed at parse time: measured on the real master,
+# 20 flat entries + the real groups validates to 66 skills, and nothing reports
+# it. That would defeat every other mechanism that shortens this section, so
+# `tailor_resume` strips the groups before validating.
+#
+# DRIVEN, not called: a check that invoked the flattening directly would still
+# pass with the call site deleted. This swaps a fake client into the real
+# function so the assertion is about the shipped path.
+import app.core.tailor as _flat_mod  # noqa: E402
+
+
+class _GroupEchoClient:
+    """Answers TAILOR with a curated flat list AND the master's groups; every
+    other task falls through to the stub so the rest of the pipeline is real."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def complete_json(self, system: str, user: str):
+        if not system.startswith("Task: TAILOR."):
+            return self._inner.complete_json(system, user)
+        body = resume.model_dump()
+        body["skills"] = ["Python", "SQL"]
+        body["skill_groups"] = [
+            {"label": "Backend", "items": ["Python", "SQL"]},
+            {"label": "Other", "items": ["Fortran", "COBOL", "Pascal", "Delphi"]},
+        ]
+        return {"tailored_resume": body, "changelog": [], "covered_keywords": []}
+
+    def complete_text(self, system: str, user: str):
+        return self._inner.complete_text(system, user)
+
+
+_real_factory = _flat_mod.get_llm_client
+_flat_mod.get_llm_client = lambda: _GroupEchoClient(_real_factory())
+try:
+    _flat = tailor_resume(resume, jd, ledger)
+finally:
+    _flat_mod.get_llm_client = _real_factory
+check(
+    "a tailored CV is flat: echoed skill_groups do not resurrect the curated-away skills",
+    _flat.tailored_resume.skill_groups == []
+    and "Fortran" not in _flat.tailored_resume.skills,
+    f"{len(_flat.tailored_resume.skills)} skills, "
+    f"{len(_flat.tailored_resume.skill_groups)} groups",
+)
+# The false-positive half: groups with NO flat list are the only content there
+# is, so stripping them there would delete the section outright. Asserted on the
+# validator, which is where that case is decided.
+check(
+    "groups with no flat list still populate skills (stripping there would delete the section)",
+    ResumeModel.model_validate(
+        {"skill_groups": [{"label": "A", "items": ["Rust", "Zig"]}]}
+    ).skills == ["Rust", "Zig"],
+)
+
+# 4b. THE SKILLS CEILING (`core/skills_shortlist.py`), the mirror of the keyword
+# guard's floor. Measured on the real key over 12 job-pairs across two
+# independent runs: the shipped CV carried a median of 63.5 skills against a
+# 66-skill master — more than it started with — at 18.6% precision, and every
+# prompt-only fix that cut the count paid for it in keyword coverage.
+from app.config import get_settings as _cap_settings  # noqa: E402
+from app.core.skills_shortlist import relevance as _rel, shortlist_skills  # noqa: E402
+from app.models import JDModel as _AtsJD, SkillGroup  # noqa: E402
+
+_big = ResumeModel(
+    skills=["Python", "PostgreSQL"] + [f"Noise{i}" for i in range(40)],
+    skill_groups=[
+        SkillGroup(label="Backend", items=["Python", "PostgreSQL"]),
+        SkillGroup(label="Other", items=[f"Noise{i}" for i in range(40)]),
+    ],
+)
+_capjd = _AtsJD(hard_skills=["Python"], keywords=["PostgreSQL"])
+_cut, _dropped = shortlist_skills(_big, _capjd, 10)
+check(
+    "skills shortlist: 42 entries cut to the cap",
+    len(_cut.skills) == 10 and len(_dropped) == 32,
+    f"{len(_cut.skills)} kept, {len(_dropped)} dropped",
+)
+check(
+    "skills shortlist: a skill THIS JOB NAMES is never dropped, cap or no cap",
+    # cap of 1 against two named skills: both survive. This is the whole reason
+    # the ceiling cannot re-open the defect the keyword floor exists to fix.
+    set(shortlist_skills(_big, _capjd, 1)[0].skills) >= {"Python", "PostgreSQL"},
+    str(shortlist_skills(_big, _capjd, 1)[0].skills),
+)
+check(
+    "skills shortlist: a restored carrier is protected from the cap",
+    "Noise7" in shortlist_skills(_big, _capjd, 3, protected=frozenset(["Noise7"]))[0].skills,
+)
+check(
+    "skills shortlist: the model's own order survives the cut",
+    _cut.skills == [s for s in _big.skills if s in set(_cut.skills)],
+)
+check(
+    "skills shortlist: the two-field write — a dropped skill leaves its GROUP too",
+    all(i in set(_cut.skills) for g in _cut.skill_groups for i in g.items),
+    str([(g.label, len(g.items)) for g in _cut.skill_groups]),
+)
+# THE FALSE-POSITIVE HALF, in three directions. "Cut the skills list" is
+# trivially satisfied by cutting always, so each of these is a case where firing
+# would be the defect.
+check(
+    "skills shortlist: a list already under the cap is returned UNTOUCHED, same object",
+    shortlist_skills(_big, _capjd, 99)[0] is _big
+    and shortlist_skills(_big, _capjd, 0)[0] is _big,
+)
+check(
+    "skills shortlist: a JD naming nothing cannot cut anything",
+    shortlist_skills(_big, _AtsJD(), 5)[0] is _big,
+)
+check(
+    "skills shortlist: relevance uses the scorer's matcher, so a Hebrew prefix still matches",
+    # The Python twin of check-mirrors 10: ב/ל/ה/ו/מ/ש are word characters, so
+    # only the verbatim-substring branch matches פייתון inside בפייתון. A
+    # shortlist with its own matcher would drop the carrier as irrelevant — in
+    # the primary market.
+    _rel("פיתוח בפייתון", ["פייתון"]) == "covered" and _rel("Java", ["JavaScript"]) == "missing",
+    f'{_rel("פיתוח בפייתון", ["פייתון"])=} {_rel("Java", ["JavaScript"])=}',
+)
+# DRIVEN through the shipped pipeline, not called — and the stub has to be made
+# to OVERSHOOT first. The first version of this check drove `tailor_resume` with
+# the plain stub, which returns a 4-skill résumé: the cap never fired, so it
+# passed green and would have gone on passing with the call site in `tailor.py`
+# deleted. That is the 21.7 failure mode, caught here only because the PASS line
+# printed the count.
+_cap_prev = _cap_settings().resume_max_skills
+_wide_jd = _AtsJD(hard_skills=["Python", "SQL"], keywords=["REST APIs"])
+_bloat_master = ResumeModel(
+    contact=Contact(name="A", email="a@b.com"),
+    skills=["Python", "SQL", "REST APIs"] + [f"Filler{i}" for i in range(50)],
+    experience=[Experience(company="Acme", title="Eng", start_date="2020", end_date="2023",
+                           bullets=["Built the API in Python."])],
+)
+
+
+class _BloatClient:
+    """Answers TAILOR with the whole 53-entry list — the measured real-model
+    behaviour (63.5 shipped against a 66-skill master) — and falls through to
+    the stub for every other task."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def complete_json(self, system: str, user: str):
+        if not system.startswith("Task: TAILOR."):
+            return self._inner.complete_json(system, user)
+        body = _bloat_master.model_dump()
+        body["skill_groups"] = []
+        return {"tailored_resume": body, "changelog": [], "covered_keywords": []}
+
+    def complete_text(self, system: str, user: str):
+        return self._inner.complete_text(system, user)
+
+
+_cap_real = _flat_mod.get_llm_client
+_flat_mod.get_llm_client = lambda: _BloatClient(_cap_real())
+try:
+    _capped = tailor_resume(_bloat_master, _wide_jd)
+finally:
+    _flat_mod.get_llm_client = _cap_real
+check(
+    "tailor: the shipped pipeline applies the ceiling to a 53-skill response",
+    len(_capped.tailored_resume.skills) == _cap_prev,
+    f"{len(_capped.tailored_resume.skills)} skills, cap {_cap_prev}",
+)
+check(
+    "tailor: nothing the job named was cut, and the cut is REPORTED, never silent",
+    {"Python", "SQL", "REST APIs"} <= set(_capped.tailored_resume.skills)
+    and any(c.section == "skills" and "Cut the skills list" in c.change
+            for c in _capped.changelog),
+    str([c.change for c in _capped.changelog if c.section == "skills"]),
+)
+
 # 5. Fabrication guard catches an injected fake employer
 fake = result.tailored_resume.model_copy(deep=True)
 fake.experience.append(Experience(company="FAKE Industries Ltd", title="CEO", start_date="2010", end_date="2019"))
@@ -337,6 +515,61 @@ from app.models import JDModel as _AtsJD  # noqa: E402
 
 ats = scan_resume(resume, _AtsJD(hard_skills=["Python", "SQL", "REST APIs"], keywords=["Python", "SQL"]))
 check("ats scan produced issues + score", len(ats.issues) > 0 and 0 <= ats.score <= 100, str(ats.score))
+
+# 10a. The skills-count verdict is TWO-SIDED, and only when there is a job to be
+# two-sided about. The version this replaced returned severity="good" for any
+# count at or above five with no upper bound, so a measured 79-skill tailored CV
+# — against a 66-skill master — was told "79 skills listed: good", while the
+# owner's actual complaint was that the section was overstuffed and the TAILOR
+# prompt thirty lines away asked for 15-25.
+#
+# THE FALSE-POSITIVE PIN IS THE FIRST ONE AND IT IS THE POINT. A master résumé
+# listing 66 skills is an inventory, which is what a master is FOR; warning on it
+# would be a guard firing on legitimate input. So the bound exists only when a JD
+# does, and "make the long list warn" is NOT trivially satisfiable by warning on
+# length.
+_inventory = ResumeModel(
+    contact=Contact(name="A", email="a@b.com", phone="050"),
+    skills=[f"Skill{i}" for i in range(60)] + ["Python", "SQL"],
+)
+_narrow_jd = _AtsJD(hard_skills=["Python"], keywords=["SQL"])
+_skill_verdict = lambda r, j=None: next(  # noqa: E731
+    i for i in scan_resume(r, j).issues if "skill" in i.label.lower() and "sentence" not in i.label
+)
+check(
+    "ats scan: a 62-skill master with NO job is an inventory, not a defect",
+    _skill_verdict(_inventory).severity == "good",
+    _skill_verdict(_inventory).label,
+)
+check(
+    "ats scan: the SAME résumé against a job it mostly does not match warns",
+    _skill_verdict(_inventory, _narrow_jd).severity == "warn"
+    and "60" in _skill_verdict(_inventory, _narrow_jd).detail,
+    _skill_verdict(_inventory, _narrow_jd).label,
+)
+_focused = ResumeModel(
+    contact=Contact(name="A", email="a@b.com", phone="050"),
+    skills=["Python", "SQL", "REST APIs", "PostgreSQL", "Docker"],
+)
+check(
+    "ats scan: a focused list is not punished for being short",
+    _skill_verdict(_focused, _AtsJD(hard_skills=["Python", "SQL", "PostgreSQL"])).severity == "good",
+    _skill_verdict(_focused, _AtsJD(hard_skills=["Python", "SQL", "PostgreSQL"])).label,
+)
+check(
+    "ats scan: fewer than five skills still reads as too few, JD or not",
+    _skill_verdict(ResumeModel(skills=["Python", "SQL"]), _narrow_jd).severity == "warn"
+    and _skill_verdict(ResumeModel(skills=["Python", "SQL"])).severity == "warn",
+)
+# The verdict is REPLACED, never appended: `format_health` is good/len(issues),
+# so a JD-only issue would give the same document a different FORMAT health
+# depending on which job it was aimed at — and whether the paper parses has
+# nothing to do with that.
+check(
+    "ats scan: supplying a JD does not change how many issues there are",
+    len(scan_resume(_inventory).issues) == len(scan_resume(_inventory, _narrow_jd).issues),
+    f"{len(scan_resume(_inventory).issues)} vs {len(scan_resume(_inventory, _narrow_jd).issues)}",
+)
 
 # 10b. Deeper ATS checks (PLAN 17.4) — all deterministic, all explainable, and
 # all reporting rather than rewriting. Each is pinned on a résumé that trips it
@@ -2675,6 +2908,36 @@ check(
     _default_master.label if _default_master else "None",
 )
 check("get by lang misses cleanly", get_master_resume(lang="fr", db=_db, user=_admin_user) is None)
+# ...AND THE ANSWER IS NOT A COIN FLIP WHEN THE CLOCK CANNOT SEPARATE TWO SAVES.
+# `datetime.now()` ticks about every 15.6 ms on Windows, so two saves inside one
+# tick used to land on the identical `updated_at`, and `_master_rows`' sort had
+# nothing left to order them by — `GET /profile/resume` with no `lang` then
+# answered with whichever row SQLite happened to return. It surfaced as the
+# check above failing on one run and passing on the next.
+#
+# Driven by FORCING the tie rather than by hoping for one: both rows are stamped
+# with the same instant, then a save must still come back on top. A check that
+# waited for the real 15 ms collision would pass by never firing.
+from datetime import datetime as _tie_dt, timezone as _tie_tz  # noqa: E402
+from app.api.routes import _master_rows  # noqa: E402
+
+_tie_at = _tie_dt(2030, 1, 1, tzinfo=_tie_tz.utc)
+for _tie_row in _master_rows(_db, _admin_user.id):
+    _tie_row.updated_at = _tie_at
+_db.commit()
+save_master_resume(MasterResumeIn(resume=resume, label="EN master v3"), db=_db, user=_admin_user)
+_tied_default = get_master_resume(db=_db, user=_admin_user)
+check(
+    "default master: a save wins even when the clock cannot separate it from the other slot",
+    _tied_default is not None and _tied_default.label == "EN master v3",
+    _tied_default.label if _tied_default else "None",
+)
+check(
+    "...and the other language slot is untouched by that tiebreak",
+    (_he_after := get_master_resume(lang="he", db=_db, user=_admin_user)) is not None
+    and _he_after.label == "HE master",
+    _he_after.label if _he_after else "None",
+)
 
 # 15c. Job alerts (PLAN 6): settings row, history diffing, email body, and the
 # full run loop with a canned search function (no network, no LLM, no SMTP)
@@ -8207,6 +8470,65 @@ _KG_CLIENT_SRC = _kg_inspect.getsource(_kg_client_mod)
 check(
     "keyword guard: app/llm/client.py gained no stub branch for it",
     "KEYWORD_GUARD" not in _KG_CLIENT_SRC and "PRESERVE_KEYWORD" not in _KG_CLIENT_SRC,
+)
+# THE CEILING GETS THE SAME PINS AS THE FLOOR. `skills_shortlist` is the other
+# half of the same trade and sits one line from it in `tailor.py`, so every way
+# `keyword_guard` could go wrong is a way this can: reaching the model would put
+# an LLM in charge of which skills ship, and carrying its own matcher would make
+# it disagree with the guard about the same entry while both run on the same
+# résumé, one line apart.
+import app.core.skills_shortlist as _ss_mod  # noqa: E402
+
+_SS_SRC = _kg_inspect.getsource(_ss_mod)
+# IDENTIFIERS THE CODE ACTUALLY REFERENCES, not a substring scan of the file.
+# The substring form went red the moment this module's docstring EXPLAINED the
+# hazard by name — the module warns that `scorer` imports the client factory, so
+# writing that warning down tripped the guard against it. That is the same
+# can't-tell-an-import-from-a-mention defect the keyword-guard pins above are
+# parsed to avoid, arriving from the other direction: there a mention passed as
+# safe, here a mention failed as dangerous. Reading Name/Attribute/import nodes
+# answers the question the check is actually asking.
+_SS_TREE = _kg_ast.parse(_SS_SRC)
+_SS_USED = (
+    {n.id for n in _kg_ast.walk(_SS_TREE) if isinstance(n, _kg_ast.Name)}
+    | {n.attr for n in _kg_ast.walk(_SS_TREE) if isinstance(n, _kg_ast.Attribute)}
+    | {
+        a.asname or a.name
+        for n in _kg_ast.walk(_SS_TREE)
+        if isinstance(n, (_kg_ast.Import, _kg_ast.ImportFrom))
+        for a in n.names
+    }
+    | {
+        n.module
+        for n in _kg_ast.walk(_SS_TREE)
+        if isinstance(n, _kg_ast.ImportFrom) and n.module
+    }
+)
+check(
+    "skills shortlist: source-pinned to no LLM and no network",
+    len(_SS_SRC) > 2000
+    and not _SS_USED & {
+        "get_llm_client", "complete_json", "complete_text",
+        "openai", "urllib", "requests", "httpx", "socket",
+    },
+    f"{len(_SS_SRC)} chars, {len(_SS_USED)} identifiers",
+)
+_SS_SCORER_IMPORTS = {
+    _ss_alias.name
+    for _ss_node in _kg_ast.walk(_kg_ast.parse(_SS_SRC))
+    if isinstance(_ss_node, _kg_ast.ImportFrom) and _ss_node.module == "app.core.scorer"
+    for _ss_alias in _ss_node.names
+}
+check(
+    "skills shortlist: imports EXACTLY the scorer's two matcher helpers — appending "
+    "a fourth name to that line is how the model gets a vote on the CV",
+    _SS_SCORER_IMPORTS == {"_keyword_present", "_tokens"}
+    and "def _keyword_present" not in _SS_SRC,
+    str(sorted(_SS_SCORER_IMPORTS)),
+)
+check(
+    "skills shortlist: app/llm/client.py gained no stub branch for it",
+    "SHORTLIST" not in _KG_CLIENT_SRC and "SKILLS_CAP" not in _KG_CLIENT_SRC,
 )
 # ONE CALL SITE, inside `tailor_resume`. Not `routes.py` ("thin FastAPI
 # handlers... No business logic here"), not `kits.py` (which reaches the same

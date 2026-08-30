@@ -44,3 +44,8 @@ Thumbs.db
 # Competitor UI reference captures (local only — screenshots of a third-party
 # product plus the user's own resume data; never push these to GitHub).
 reference-screenshots/
+
+# Real-key A/B fixtures and results (backend/tests/ab_tailor.py) — the owner’s
+# own résumé plus real job ads and every measured run. Local only, like
+# reference-screenshots/. The harness itself IS tracked; its data never is.
+backend/tests/fixtures/ab/

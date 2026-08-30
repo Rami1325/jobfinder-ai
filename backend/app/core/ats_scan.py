@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 
 from app.core.dates import ats_form, is_current, years_of_experience
-from app.core.scorer import keyword_analysis
+from app.core.scorer import _keyword_present, _tokens, keyword_analysis
 from app.models import ATSIssue, ATSScanResult, JDModel, ResumeModel
 
 # Terms an ATS matches literally: a résumé that only ever writes "CI/CD" misses
@@ -49,6 +49,10 @@ _SHORT_BULLET_WORDS = 4
 # prose in the skills list scores as one keyword however much it says.
 _LONG_SKILL_WORDS = 6
 _LONG_SKILL_REPORT_CAP = 2
+# Five is the floor the one-sided version already used; it is kept so a
+# near-empty skills list still reads as the defect it was.
+_MIN_SKILLS = 5
+_UNASKED_REPORT_CAP = 4
 # Roughly what one page holds in our renderers (see app/render/templates.py).
 _ONE_PAGE_WORDS = 650
 _ONE_PAGE_MAX_YEARS = 10
@@ -190,6 +194,82 @@ def _skill_length_issue(skills: list[str]) -> ATSIssue:
     )
 
 
+def _skill_count_issue(skills: list[str], jd: JDModel | None) -> ATSIssue:
+    """How many of these skills THIS job actually names — or, with no job to
+    measure against, merely how many there are.
+
+    The version this replaces was one-sided: `severity="good"` for any count at
+    or above five, with no upper bound at all. So the scanner told a candidate
+    whose tailored CV carried 79 skills — measured, against a master of 66 —
+    that "79 skills listed" was GOOD, thirty lines from a TAILOR prompt asking
+    for 15-25 and while the owner's own complaint was that the section was
+    overstuffed. A tool contradicting the pipeline about the same document is
+    worse than a tool that says nothing.
+
+    **The upper bound exists only when a JD does, and that is the whole design.**
+    A master résumé listing 66 skills is not a defect — it is an inventory, and
+    that is what a master is FOR (`skill_groups` exists to organise exactly
+    that). Warning on it would be a guard firing on legitimate input, the
+    failure this codebase treats as worse than no guard. With a JD in hand the
+    question changes from "how many" to "how many of these did this employer ask
+    for", which is answerable, is the number the user actually needs, and cannot
+    fire on a master being scanned for its own sake.
+
+    The matcher is `scorer._keyword_present`, the same one `keyword_guard`
+    selects carriers with and `length_budget` protects entries with — a fourth
+    opinion about whether a job asked for a skill would contradict the three the
+    pipeline already acts on. The term UNION is inlined rather than imported
+    from `length_budget._jd_terms`, following the precedent set there: that
+    module documents why the dependency must not run this way, and a
+    deterministic scanner reaching into the tailoring page budget is exactly
+    that direction.
+    """
+    n = len(skills)
+    if n < _MIN_SKILLS:
+        return ATSIssue(
+            label="Few skills listed",
+            severity="warn",
+            detail="List more of your real, relevant hard skills.",
+        )
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    if jd is not None:
+        for group in (jd.hard_skills, jd.keywords, jd.preferred_skills):
+            for kw in group:
+                k = (kw or "").strip().lower()
+                if k and k not in seen:
+                    seen.add(k)
+                    terms.append(k)
+    if not terms:
+        # No job to measure against (or a JD that named nothing): the count is
+        # all there is to say, and a count alone is not a defect.
+        return ATSIssue(label=f"{n} skills listed", severity="good")
+
+    asked = [
+        s
+        for s in skills
+        if any(_keyword_present(kw, s.lower(), _tokens(s)) != "missing" for kw in terms)
+    ]
+    unasked = [s for s in skills if s not in asked]
+    if len(unasked) <= len(asked):
+        return ATSIssue(
+            label=f"{len(asked)} of {n} skills match this job",
+            severity="good",
+        )
+    # Plain quotes, matching `_skill_length_issue` — `repr()` would render a
+    # Hebrew entry inside Python's own quoting rules on a user-facing string.
+    sample = "; ".join(f"'{s}'" for s in unasked[:_UNASKED_REPORT_CAP])
+    return ATSIssue(
+        label="Most of the skills list is not about this job",
+        severity="warn",
+        detail=f"{len(unasked)} of {n} entries are not mentioned by this posting, "
+        f"including {sample}. "
+        "A recruiter skims this section in about three seconds, so a long list "
+        "buries the terms you actually match. They stay in your master résumé.",
+    )
+
+
 def _length_issue(resume: ResumeModel, text: str) -> ATSIssue:
     words = len(text.split())
     years = years_of_experience(resume)
@@ -235,11 +315,12 @@ def scan_resume(resume: ResumeModel, jd: JDModel | None = None) -> ATSScanResult
         if resume.summary
         else ATSIssue(label="No summary", severity="warn", detail="A short targeted summary helps ATS and recruiters.")
     )
-    issues.append(
-        ATSIssue(label=f"{len(resume.skills)} skills listed", severity="good")
-        if len(resume.skills) >= 5
-        else ATSIssue(label="Few skills listed", severity="warn", detail="List more of your real, relevant hard skills.")
-    )
+    # REPLACED, never appended. `format_health` is `good / len(issues)`, so an
+    # issue that exists only in the JD branch would give the same résumé a
+    # different FORMAT health depending on whether a job was supplied — and
+    # whether the paper is ATS-parseable has nothing to do with which job it is
+    # aimed at. One issue either way; only its question changes.
+    issues.append(_skill_count_issue(resume.skills, jd))
     # Gated the way `_bullet_length_issue` is gated on `bullets`: a résumé with
     # no skills at all already carries "Few skills listed", and handing the
     # emptiest possible CV a free "good" would inflate `format_health` on the
