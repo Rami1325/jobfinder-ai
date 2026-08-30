@@ -558,6 +558,10 @@ def run_cell(
         "title": job["title"],
         "company": job["company"],
         "rep": rep,
+        # Recorded per ROW, from the settings the cell actually ran under, not
+        # from the knob that was meant to apply. If a cache-clear is ever missed
+        # the rows say so instead of the table quietly comparing one model twice.
+        "model": get_settings().model_id,
     }
     try:
         with metering.meter() as tally:
@@ -607,11 +611,29 @@ def run_variant(
     once -- the second would silently score the first's prompt. Cells inside one
     variant are safe because they all read the same patched value."""
     import app.core.tailor as tailor_mod
+    from app.llm.client import get_llm_client
 
     prev_prompt = prompts.TAILOR_SYSTEM
     prev_kg = keyword_guard.MAX_RESTORED
     prev_tailor_kg = tailor_mod.MAX_RESTORED
+    prev_model = os.environ.get("MODEL_ID")
     prompts.TAILOR_SYSTEM = variant.system
+    # A MODEL IS JUST ANOTHER ARM. `MODEL_ID` is already config, so comparing two
+    # models is the same experiment as comparing two prompts — and it has to be,
+    # because the last model choice for this app was recorded in `.env` as "0
+    # fabrication in A/B tests (gpt-4o-mini leaked unowned skills)" and
+    # `fabrication_flags` structurally cannot see the skills list. That decision
+    # was made on a metric blind to the failure it claimed to rule out.
+    #
+    # BOTH caches, or the swap silently does nothing: `get_settings` is
+    # lru_cached, and so is `get_llm_client` — it is a process-wide singleton
+    # that captured `settings.model_id` at first call, so clearing only the
+    # settings cache leaves the old client, and every "new model" cell would
+    # quietly re-measure the old one.
+    if variant.knobs.get("model"):
+        os.environ["MODEL_ID"] = variant.knobs["model"]
+        get_settings.cache_clear()
+        get_llm_client.cache_clear()
     if "max_restored" in variant.knobs:
         # Two bindings, because `tailor.py` does `from ... import MAX_RESTORED`
         # (a value import) while `preserve_keywords` reads its own module
@@ -646,6 +668,13 @@ def run_variant(
         prompts.TAILOR_SYSTEM = prev_prompt
         keyword_guard.MAX_RESTORED = prev_kg
         tailor_mod.MAX_RESTORED = prev_tailor_kg
+        if variant.knobs.get("model"):
+            if prev_model is None:
+                os.environ.pop("MODEL_ID", None)
+            else:
+                os.environ["MODEL_ID"] = prev_model
+            get_settings.cache_clear()
+            get_llm_client.cache_clear()
 
 
 # --------------------------------------------------------------------------- #

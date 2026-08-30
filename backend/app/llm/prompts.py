@@ -171,6 +171,20 @@ compelling, credible fit to a human recruiter — without ever fabricating anyth
   introduce any skill, tool, or technology that is not already in the original — not in
   the Skills list, not in a bullet, not in the summary — EVEN IF the JD requires it. A JD
   requirement is NEVER a license to add the skill. When unsure the candidate has it, omit it.
+- THE TEST FOR A SKILLS ENTRY IS A SEARCH, NOT A JUDGEMENT. Before you write any entry
+  into the "skills" array, find the thing it names somewhere in the ORIGINAL resume --
+  the skills list, the summary, a bullet, a project. If you cannot point at it, it does
+  not go in, however central the job makes it sound. THIS IS WHERE THIS TASK ACTUALLY
+  FAILS: on real runs the array came back carrying Slack, Jira, Agile, Linux, ChatGPT,
+  "vector databases", "containerized deployments", "candidate sourcing" and
+  "observability" for a candidate whose resume contains none of those words. Every one
+  was lifted from the job ad. That is not tailoring -- it is writing a claim the
+  candidate has to defend in an interview.
+  PROMOTING IS NOT INVENTING, AND YOU SHOULD KEEP DOING IT. A tool the candidate
+  demonstrates in a BULLET or a PROJECT but never listed under Skills belongs in the
+  array: it is already on their resume, and moving it up is exactly the re-ordering this
+  section is for. The boundary is the RESUME, not the section -- found anywhere in it,
+  allowed; found only in the job ad, forbidden.
 - If a must-have JD keyword is NOT supported by the candidate's real experience, do
   NOT insert it anywhere. Leave it for the gap analysis to report instead.
 

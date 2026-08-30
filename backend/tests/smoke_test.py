@@ -8530,6 +8530,32 @@ check(
     "skills shortlist: app/llm/client.py gained no stub branch for it",
     "SHORTLIST" not in _KG_CLIENT_SRC and "SKILLS_CAP" not in _KG_CLIENT_SRC,
 )
+# THE ANTI-MINTING RULE, AND ESPECIALLY ITS SECOND HALF. Measured over 18 real-key
+# runs per arm: naming the observed leaks and forbidding minting cut unambiguous
+# fabrications (Linux, Agile, ChatGPT, Slack, Jira, bash, AWS/GCP/Azure,
+# "candidate sourcing") from 0.78 to 0.22 per run, p=0.0018 against the pooled
+# control rate.
+#
+# The RELOCATION PERMISSION is what makes it safe, and it is the half a future
+# edit would delete while "tightening" the rule. Two independently designed arms
+# forbade moving a term from a bullet up into the skills list and BOTH lost 9-13
+# keyword-coverage points, because the page budget deletes the project that
+# carried the term and the skills list is the only place left to keep it. Any
+# rewrite that drops these sentences re-opens a measured regression, so both
+# halves are pinned, not just the prohibition.
+from app.llm import prompts as _mint_prompts  # noqa: E402
+
+check(
+    "TAILOR prompt: the anti-minting rule survives",
+    "THE TEST FOR A SKILLS ENTRY IS A SEARCH, NOT A JUDGEMENT" in _mint_prompts.TAILOR_SYSTEM
+    and "found only in the job ad, forbidden" in _mint_prompts.TAILOR_SYSTEM,
+)
+check(
+    "TAILOR prompt: ...and so does the relocation permission that keeps it from "
+    "costing coverage",
+    "PROMOTING IS NOT INVENTING" in _mint_prompts.TAILOR_SYSTEM
+    and "The boundary is the RESUME, not the section" in _mint_prompts.TAILOR_SYSTEM,
+)
 # ONE CALL SITE, inside `tailor_resume`. Not `routes.py` ("thin FastAPI
 # handlers... No business logic here"), not `kits.py` (which reaches the same
 # function through `tailor_fn`). A second site would classify on a DIFFERENT gate
