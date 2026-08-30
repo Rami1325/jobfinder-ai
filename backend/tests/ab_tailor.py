@@ -614,6 +614,21 @@ def run_variant(
     from app.llm.client import get_llm_client
 
     prev_prompt = prompts.TAILOR_SYSTEM
+    # THE PLANNER IS A PROMPT TOO, and until now the harness could not vary it.
+    # `cv_planner` decides which projects survive -- measured at 3, 3 and 7 on three
+    # identical runs of one job -- so it owns more of "how the resume turned out"
+    # than the skills list does. A variant names its planner file with the
+    # `plan_variant` knob; the TAILOR prompt stays at baseline so the arm is
+    # attributable to the planner alone.
+    prev_plan = prompts.PLAN_CV_SYSTEM
+    if variant.knobs.get("plan_variant"):
+        pf = VARIANTS_DIR / (variant.knobs["plan_variant"] + ".plan.txt")
+        if not pf.exists():
+            raise SystemExit("no planner variant file " + str(pf))
+        text = pf.read_text(encoding="utf-8")
+        if not text.startswith("Task: PLAN_CV."):
+            raise SystemExit("planner variant must keep the 'Task: PLAN_CV.' routing tag")
+        prompts.PLAN_CV_SYSTEM = text
     prev_kg = keyword_guard.MAX_RESTORED
     prev_tailor_kg = tailor_mod.MAX_RESTORED
     prev_model = os.environ.get("MODEL_ID")
@@ -666,6 +681,7 @@ def run_variant(
         return rows
     finally:
         prompts.TAILOR_SYSTEM = prev_prompt
+        prompts.PLAN_CV_SYSTEM = prev_plan
         keyword_guard.MAX_RESTORED = prev_kg
         tailor_mod.MAX_RESTORED = prev_tailor_kg
         if variant.knobs.get("model"):
@@ -838,6 +854,50 @@ def paired_report(rows: list[dict[str, Any]], control: str = "baseline") -> str:
     return "\n".join(lines)
 
 
+CONSISTENCY_COLS = ["n_projects", "n_skills", "skills_precision", "coverage_after",
+                    "fit_after", "body_words"]
+
+
+def consistency_report(rows: list[dict[str, Any]]) -> str:
+    """WITHIN-JOB SPREAD -- does the same input produce the same CV twice?
+
+    Every other view in this file reports a median, and a median is blind to the
+    defect this measures: `cv_planner` selected 3, 3 and 7 projects on three
+    identical runs of one job, and the median said 3 both times it mattered. A
+    user pressing Tailor twice on the same posting gets two materially different
+    documents, which is not a quality anyone can see in an average.
+
+    Reported as the median over jobs of (max - min) across that job's reps, so a
+    single erratic job shows up in the range rather than being averaged away.
+    Lower is better; 0 means the arm is reproducible on this input.
+    """
+    variants: list[str] = []
+    for r in rows:
+        if r["variant"] not in variants:
+            variants.append(r["variant"])
+    jobs = sorted({r["job"] for r in rows})
+    head = "%-14s " % "arm" + " ".join("%16s" % c for c in CONSISTENCY_COLS)
+    lines = ["", "RUN-TO-RUN SPREAD ON IDENTICAL INPUT (median over jobs of max-min across reps)",
+             head, "-" * len(head)]
+    for v in variants:
+        cells = []
+        for k in CONSISTENCY_COLS:
+            spreads = []
+            for j in jobs:
+                vals = [r[k] for r in rows
+                        if r["variant"] == v and r["job"] == j and not r["error"]
+                        and isinstance(r.get(k), (int, float))]
+                if len(vals) > 1:
+                    spreads.append(max(vals) - min(vals))
+            cells.append("%16s" % (
+                "-" if not spreads
+                else "%g [%g..%g]" % (statistics.median(spreads), min(spreads), max(spreads))))
+        lines.append("%-14s %s" % (v, " ".join(cells)))
+    lines.append("")
+    lines.append("0 = pressing Tailor twice on one job gives the same document.")
+    return "\n".join(lines)
+
+
 def latency_report(rows: list[dict[str, Any]]) -> str:
     """PLAN 20.1: the tailor's serial LLM latency, per task, measured."""
     by_task: dict[str, list[float]] = {}
@@ -899,6 +959,7 @@ def main() -> int:
                 r["skills_relocated_list"] = reloc
         print(report(rows))
         print(paired_report(rows))
+        print(consistency_report(rows))
         print(latency_report(rows))
         return 0
 
