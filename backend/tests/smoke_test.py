@@ -345,6 +345,60 @@ check(
     str([c.change for c in _capped.changelog if c.section == "skills"]),
 )
 
+# 4c. THE POOLED CALLS STILL REPORT THEIR TOKENS.
+# `tailor_resume` runs two pairs of LLM calls concurrently (score_before ∥
+# plan_cv, and credibility ∥ score_after) -- 2.1s of a measured 20.1s, hidden.
+# A ThreadPoolExecutor worker starts from an EMPTY context, so a bare
+# `pool.submit(fn, ...)` instead of `pool.submit(copy_context().run, fn, ...)`
+# makes four of the five calls invisible to `metering` and their tokens vanish
+# from `usage_log` -- silently, with the tailor still returning a perfect result.
+# Nothing else in the app would notice; the bill would just be wrong.
+#
+# Driven through the real function inside a real meter, because that is the only
+# thing that can tell the two spellings apart.
+# BEHAVIOUR CANNOT PIN THIS, and finding that out is half the check. Driving
+# `tailor_resume` inside a real `metering.meter()` reports 0 calls and 0 tokens
+# whether the submits are right or wrong -- because this suite runs on
+# `StubClient`, and only `OpenAIClient` calls `metering.record()`. A behavioural
+# assertion here would have been red on correct code, then "fixed" by weakening
+# it into something that never fires. So the SOURCE is parsed instead, the same
+# answer the keyword-guard and geo-restriction pins reached for the same reason.
+import ast as _pool_ast  # noqa: E402
+import inspect as _pool_inspect  # noqa: E402
+
+import app.core.tailor as _pool_mod  # noqa: E402
+
+_POOL_SUBMITS = [
+    n for n in _pool_ast.walk(_pool_ast.parse(_pool_inspect.getsource(_pool_mod)))
+    if isinstance(n, _pool_ast.Call)
+    and isinstance(n.func, _pool_ast.Attribute)
+    and n.func.attr == "submit"
+]
+
+
+def _is_copy_context_run(call: _pool_ast.Call) -> bool:
+    """First argument must be `copy_context().run` — anything else is a bare
+    submit, and a bare submit loses the tokens."""
+    if not call.args:
+        return False
+    a = call.args[0]
+    return (
+        isinstance(a, _pool_ast.Attribute)
+        and a.attr == "run"
+        and isinstance(a.value, _pool_ast.Call)
+        and isinstance(a.value.func, _pool_ast.Name)
+        and a.value.func.id == "copy_context"
+    )
+
+
+check(
+    "tailor: every pooled LLM call is submitted through copy_context().run — a bare "
+    "submit starts the worker from an EMPTY context and its tokens vanish from usage_log",
+    len(_POOL_SUBMITS) == 4 and all(_is_copy_context_run(c) for c in _POOL_SUBMITS),
+    f"{len(_POOL_SUBMITS)} submits, "
+    f"{sum(1 for c in _POOL_SUBMITS if _is_copy_context_run(c))} context-copied",
+)
+
 # 5. Fabrication guard catches an injected fake employer
 fake = result.tailored_resume.model_copy(deep=True)
 fake.experience.append(Experience(company="FAKE Industries Ltd", title="CEO", start_date="2010", end_date="2019"))

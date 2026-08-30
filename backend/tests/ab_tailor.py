@@ -54,6 +54,7 @@ import statistics
 import sys
 import threading
 import time
+from contextvars import ContextVar
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -97,6 +98,21 @@ DB_PATH = HERE.parent / "jobfinder.db"
 # their namespaces and patching the factory would miss every one of them; the
 # class object is shared by all of them.
 _local = threading.local()
+
+# THE CALL LOG IS A ContextVar, NOT A THREAD-LOCAL, and that distinction is the
+# whole reason this comment exists. `tailor_resume` now runs two pairs of LLM
+# calls in a ThreadPoolExecutor, submitted through `copy_context().run` --
+# which propagates CONTEXTVARS and knows nothing about thread-locals. The first
+# version of this probe used `threading.local()`, so those four calls appended
+# to a worker's empty log, never reached the report, and the latency table
+# quietly halved: it printed "SERIAL TOTAL 7.28s" for a pipeline the wall clock
+# measured at 14.4s. An instrument that under-reports after the optimisation it
+# is measuring is worse than no instrument.
+#
+# The list is MUTABLE and shared by reference, exactly like `metering.TokenTally`
+# -- a copied context sees the same object, so a worker's append lands on the
+# run's log. Same fix, same reason, one layer up.
+_calls_var: ContextVar[list | None] = ContextVar("ab_calls", default=None)
 
 # A 429 IS NOT A RESULT, AND A HARNESS THAT RECORDS IT AS ONE LIES BY OMISSION.
 # The first full run put 7 arms x 6 jobs x 3 reps through 6 workers and lost 74
@@ -162,7 +178,7 @@ def _install_probe() -> None:
                                 pass
                         return out
                     finally:
-                        log = getattr(_local, "calls", None)
+                        log = _calls_var.get()
                         if log is not None:
                             # The `Task: X.` tag is the first line of every
                             # system prompt (it is what StubClient routes on),
@@ -556,6 +572,7 @@ def run_cell(
     jd = JDModel.model_validate(job["jd"])
     terms = job["jd_terms"]
     _local.calls = []
+    _calls_var.set(_local.calls)
     _local.model_skills = None
     _local.guard = None
     # Thread-local, not a module global like the prompt patch: `run_cell` is what
@@ -591,7 +608,7 @@ def run_cell(
     except Exception as exc:  # a bad cell must not destroy the other 47
         row["error"] = "%s: %s" % (type(exc).__name__, exc)
     row["wall_seconds"] = round(time.perf_counter() - started, 2)
-    row["calls"] = list(getattr(_local, "calls", []))
+    row["calls"] = list(_calls_var.get() or [])
     row["llm_seconds"] = round(sum(c["seconds"] for c in row["calls"]), 2)
     # Attribution: what the model returned, what the guard added, what shipped.
     guard = getattr(_local, "guard", None) or {}

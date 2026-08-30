@@ -2,6 +2,9 @@
 credibility review -> rescore (the humanization-spec pipeline)."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
+
 from app.config import get_settings
 from app.core.credibility import review_credibility
 from app.core.cv_planner import plan_cv
@@ -50,12 +53,30 @@ def tailor_resume(
     max_pages = settings.resume_max_pages
     hard_max_pages = settings.resume_hard_max_pages
 
-    score_before = score_resume(resume, jd)
-
-    # Stage 4 (positioning): decide the professional story before writing —
-    # including WHICH projects earn their space in this particular CV.
-    # Best-effort — a failed plan (None) tailors without one.
-    plan = plan_cv(resume, jd)
+    # TWO CALLS THAT READ THE SAME TWO INPUTS AND NOTHING ELSE, so they have no
+    # reason to queue behind each other. `score_before` is recorded in the result
+    # and feeds nothing; `plan_cv` decides the story before writing. Measured
+    # medians over 126 real runs: FIT_SCORE 1.20 s, PLAN_CV 2.79 s — serially
+    # 3.99 s, concurrently 2.79 s.
+    #
+    # `copy_context().run`, never a bare submit: a pool worker starts from an
+    # EMPTY context, so the request's LLM token tally (PLAN 20.8/N2) would be
+    # invisible and every token these two spend would silently vanish from
+    # `usage_log`. A fresh copy per submit because one Context cannot be entered
+    # from two threads at once; the tally is mutable and shared by reference, so
+    # the workers' usage still lands on the request's.
+    #
+    # Exceptions still propagate on `.result()`, so a failing `score_resume`
+    # fails the tailor exactly as it did serially, and `plan_cv`'s own
+    # best-effort `None` is unchanged.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        _score_before = pool.submit(copy_context().run, score_resume, resume, jd)
+        # Stage 4 (positioning): decide the professional story before writing —
+        # including WHICH projects earn their space in this particular CV.
+        # Best-effort — a failed plan (None) tailors without one.
+        _plan = pool.submit(copy_context().run, plan_cv, resume, jd)
+        score_before = _score_before.result()
+        plan = _plan.result()
 
     client = get_llm_client()
     data = client.complete_json(
@@ -420,11 +441,24 @@ def tailor_resume(
             )
         )
 
-    # Stage 11 (credibility): true-but-overstated wording the candidate may
-    # struggle to defend in an interview. Advisory flags, never auto-removal.
-    credibility_flags = review_credibility(tailored, jd)
-
-    score_after = score_resume(tailored, jd)
+    # THE TAIL, and the same argument: both of these read the finished `tailored`
+    # and neither reads the other. Measured medians: CREDIBILITY 5.71 s,
+    # FIT_SCORE 1.20 s — serially 6.91 s, concurrently 5.71 s.
+    #
+    # Stage 11 (credibility) is true-but-overstated wording the candidate may
+    # struggle to defend in an interview: advisory flags, never auto-removal.
+    # It is the single slowest call in the pipeline at 31% of the wall clock, and
+    # because it is advisory it is also the obvious candidate for dropping out of
+    # the response entirely — NOT DONE HERE, deliberately. `TailorPage` and
+    # `KitReviewPage` both read `result.credibility_flags`, and a stored kit
+    # persists the whole result JSON, so deferring it is a response-contract
+    # change with a frontend and a persistence half. That is its own slice; this
+    # one is behaviour-identical.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        _cred = pool.submit(copy_context().run, review_credibility, tailored, jd)
+        _after = pool.submit(copy_context().run, score_resume, tailored, jd)
+        credibility_flags = _cred.result()
+        score_after = _after.result()
 
     return TailorResult(
         tailored_resume=tailored,
