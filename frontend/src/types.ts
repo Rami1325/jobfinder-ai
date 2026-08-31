@@ -222,20 +222,6 @@ export interface PageCountResult {
   template: string; // the resolved spec id, echoed back
 }
 
-export interface CredibilityFlag {
-  text: string;
-  risk:
-    | "exaggerated_ownership"
-    | "inflated_seniority"
-    | "unverified_production"
-    | "vague_impact"
-    | "excessive_scale"
-    | "tool_padding"
-    | "unclear_contribution";
-  detail: string;
-  suggestion: string;
-}
-
 export interface TailorResult {
   tailored_resume: ResumeModel;
   changelog: ChangeLogEntry[];
@@ -245,7 +231,6 @@ export interface TailorResult {
   score_after: Score;
   voice_report?: VoiceReport; // absent on results saved by older backends
   plan?: CVPlan | null;
-  credibility_flags?: CredibilityFlag[];
   length_report?: LengthReport; // absent on results saved by older backends
 }
 

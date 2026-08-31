@@ -1362,7 +1362,6 @@ export default function TailorPage() {
             <VoicePanel
               report={result.voice_report}
               plan={result.plan}
-              credibility={result.credibility_flags ?? []}
             />
             <MatchReport gaps={result.score_after.gaps} jdText={jdText} />
 

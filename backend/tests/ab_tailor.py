@@ -503,16 +503,6 @@ def score_run(
         "jd_terms_n": len(terms),
         # --- truthfulness and voice, which no variant may trade away ------- #
         "fabrication_flags": len(res.fabrication_flags),
-        "credibility_flags": len(res.credibility_flags),
-        # The credibility reviewer already has a `tool_padding` risk category,
-        # so the app may be diagnosing this defect internally and reporting it as
-        # an advisory warning instead of acting on it. Recorded per risk so a
-        # variant that cuts the list can be checked for whether it also quiets
-        # the reviewer -- two independent readings of the same document.
-        "credibility_risks": sorted(
-            {r: sum(1 for f in res.credibility_flags if f.risk == r) for r in {f.risk for f in res.credibility_flags}}.items()
-        ),
-        "credibility_texts": [f.text[:120] for f in res.credibility_flags[:10]],
         "voice_score": res.voice_report.human_voice_score,
         "voice_issues": len(res.voice_report.issues),
         "voice_revised": res.voice_report.revised,
@@ -738,7 +728,6 @@ SUMMARY_COLS = [
     ("coverage_delta", "d-cov"),
     ("lost_keywords_n", "lost"),
     ("fabrication_flags", "fab"),
-    ("credibility_flags", "cred"),
     ("voice_score", "voice"),
     ("pages", "pages"),
     ("body_words", "words"),

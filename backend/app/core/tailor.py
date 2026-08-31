@@ -1,12 +1,11 @@
 """The tailoring engine: score -> plan -> rewrite -> guard -> humanize ->
-credibility review -> rescore (the humanization-spec pipeline)."""
+rescore (the humanization-spec pipeline)."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 
 from app.config import get_settings
-from app.core.credibility import review_credibility
 from app.core.cv_planner import plan_cv
 from app.core.fabrication_guard import check_fabrication, drop_invented_roles
 from app.core.humanizer import humanize_resume
@@ -206,8 +205,8 @@ def tailor_resume(
     # AFTER the humanizer, not before `fit_to_pages`: the humanizer is the last
     # stage that can delete a keyword, and the conjunct above narrows that but
     # cannot close it (a gate is a comparison, not a constraint). A guard placed
-    # earlier would leave the restore un-guaranteed. Before credibility and
-    # `score_after`, so both describe the résumé that actually ships.
+    # earlier would leave the restore un-guaranteed. Before `score_after`, so it
+    # describes the résumé that actually ships.
     pre_restore = tailored
     tailored, _, attempted = preserve_keywords(resume, tailored, jd)
     # THE GUARD'S OWN `restored` LIST IS DROPPED ON THE FLOOR HERE, deliberately.
@@ -537,24 +536,17 @@ def tailor_resume(
             )
         )
 
-    # THE TAIL, and the same argument: both of these read the finished `tailored`
-    # and neither reads the other. Measured medians: CREDIBILITY 5.71 s,
-    # FIT_SCORE 1.20 s — serially 6.91 s, concurrently 5.71 s.
+    # `score_after` used to share a pool with the CREDIBILITY review. That stage
+    # is GONE — it produced 7-18 advisory flags per tailor for 31% of the wall
+    # clock and the owner never read them, so it was removed rather than
+    # deferred: a deferral needs a tri-state ("not yet reviewed" is a real third
+    # state), and a deletion has none.
     #
-    # Stage 11 (credibility) is true-but-overstated wording the candidate may
-    # struggle to defend in an interview: advisory flags, never auto-removal.
-    # It is the single slowest call in the pipeline at 31% of the wall clock, and
-    # because it is advisory it is also the obvious candidate for dropping out of
-    # the response entirely — NOT DONE HERE, deliberately. `TailorPage` and
-    # `KitReviewPage` both read `result.credibility_flags`, and a stored kit
-    # persists the whole result JSON, so deferring it is a response-contract
-    # change with a frontend and a persistence half. That is its own slice; this
-    # one is behaviour-identical.
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        _cred = pool.submit(copy_context().run, review_credibility, tailored, jd)
-        _after = pool.submit(copy_context().run, score_resume, tailored, jd)
-        credibility_flags = _cred.result()
-        score_after = _after.result()
+    # Inline, not a one-member pool: that would be a thread spawn and a context
+    # copy for zero concurrency. It is also the SAFER spelling — `copy_context()
+    # .run` exists only because a pool worker starts from an EMPTY context, and a
+    # call on the request's own thread is natively visible to `metering`.
+    score_after = score_resume(tailored, jd)
 
     return TailorResult(
         tailored_resume=tailored,
@@ -565,6 +557,5 @@ def tailor_resume(
         score_after=score_after,
         voice_report=report,
         plan=plan,
-        credibility_flags=credibility_flags,
         length_report=length_report,
     )

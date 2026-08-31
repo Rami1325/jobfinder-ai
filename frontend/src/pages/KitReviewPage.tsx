@@ -366,12 +366,11 @@ export default function KitReviewPage() {
         <>
           <p className="text-xs text-ink-muted">{t("kitReview.downloadNote")}</p>
           {/* Humanization audit (16.4): same panel as the Tailor page — voice
-              score, positioning story, credibility warnings. Old kits stored
+              score and positioning story. Old kits stored
               before Phase 16 have no voice_report and render nothing. */}
           <VoicePanel
             report={kit.result.voice_report}
             plan={kit.result.plan}
-            credibility={kit.result.credibility_flags ?? []}
           />
           <ChangeLog
             edits={edits}

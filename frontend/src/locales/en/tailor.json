@@ -151,20 +151,7 @@
       "uniform_bullets": "uniform bullet lengths",
       "keyword_stuffing": "keyword stuffing"
     },
-    "positioning": "The story this résumé tells:",
-    "credTitle_one": "{{count}} claim to be ready to defend",
-    "credTitle_other": "{{count}} claims to be ready to defend",
-    "credNote": "True but strongly worded — an interviewer may dig in. Soften the wording or be ready to back it up.",
-    "credSuggestion": "More defensible:",
-    "risk": {
-      "exaggerated_ownership": "ownership sounds bigger than the résumé shows",
-      "inflated_seniority": "seniority sounds inflated",
-      "unverified_production": "production claim without support",
-      "vague_impact": "impact claimed without detail",
-      "excessive_scale": "scale sounds bigger than supported",
-      "tool_padding": "tool list without your contribution",
-      "unclear_contribution": "your part isn't clear"
-    }
+    "positioning": "The story this résumé tells:"
   },
   "report": {
     "title": "Keyword match report",

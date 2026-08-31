@@ -264,19 +264,6 @@ class LengthReport(BaseModel):
     notes: list[str] = Field(default_factory=list)  # human-readable trim actions
 
 
-class CredibilityFlag(BaseModel):
-    """A claim the candidate may struggle to defend in an interview
-    (humanization spec stage 11). Unlike FabricationFlags these are not
-    invented facts — they are true-but-overstated wording. Advisory: surfaced
-    as warnings, never auto-removed."""
-
-    text: str  # the flagged bullet/sentence (as written)
-    # exaggerated_ownership | inflated_seniority | unverified_production |
-    # vague_impact | excessive_scale | tool_padding | unclear_contribution
-    risk: str
-    detail: str = ""
-    suggestion: str = ""  # a more defensible rewording of the SAME facts
-
 
 class TailorResult(BaseModel):
     tailored_resume: ResumeModel
@@ -287,7 +274,6 @@ class TailorResult(BaseModel):
     score_after: Score = Field(default_factory=Score)
     voice_report: VoiceReport = Field(default_factory=VoiceReport)
     plan: CVPlan | None = None
-    credibility_flags: list[CredibilityFlag] = Field(default_factory=list)
     length_report: LengthReport = Field(default_factory=LengthReport)
 
 

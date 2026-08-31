@@ -1,23 +1,25 @@
-import { Sparkles, CheckCircle2, AlertTriangle, Compass, ShieldQuestion } from "lucide-react";
+import { Sparkles, CheckCircle2, AlertTriangle, Compass } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { CredibilityFlag, CVPlan, VoiceReport } from "../types";
+import type { CVPlan, VoiceReport } from "../types";
 import { Card, CardTitle } from "./ui";
 import { cn } from "../lib/cn";
 
 /**
  * The humanization audit surfaced next to the scores: the positioning story
- * the tailor followed, which AI tells were detected/rewritten, and any
- * true-but-overstated claims worth softening before an interview. Absent
+ * the tailor followed and which AI tells were detected/rewritten. Absent
  * report (older saved results) renders nothing.
+ *
+ * It used to carry a third block, the CREDIBILITY reviewer's advisory flags.
+ * That stage was REMOVED, not deferred -- 7-18 flags a tailor for 31% of the
+ * wall clock, and the owner never read them. Old kits still hold their flags in
+ * `result_json`; nothing rewrites that column, so the data is recoverable.
  */
 export default function VoicePanel({
   report,
   plan,
-  credibility = [],
 }: {
   report?: VoiceReport;
   plan?: CVPlan | null;
-  credibility?: CredibilityFlag[];
 }) {
   const { t } = useTranslation("tailor");
   if (!report) return null;
@@ -87,30 +89,6 @@ export default function VoicePanel({
         </ul>
       )}
 
-      {credibility.length > 0 && (
-        <div className="mt-4 border-t border-line pt-3">
-          <p className="flex items-center gap-1.5 text-sm font-semibold text-ink">
-            <ShieldQuestion size={15} className="shrink-0 text-warn" />
-            {t("voice.credTitle", { count: credibility.length })}
-          </p>
-          <p className="mt-1 text-xs leading-snug text-ink-faint">{t("voice.credNote")}</p>
-          <ul className="mt-2 space-y-2.5">
-            {credibility.map((f) => (
-              <li key={f.text} className="text-sm leading-snug">
-                <span className="text-ink-muted">"{f.text}"</span>
-                <span className="mt-0.5 block text-xs text-ink-faint">
-                  {t(`voice.risk.${f.risk}`)} · {f.detail}
-                </span>
-                {f.suggestion && (
-                  <span className="mt-0.5 block text-xs text-mint">
-                    {t("voice.credSuggestion")} {f.suggestion}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </Card>
   );
 }

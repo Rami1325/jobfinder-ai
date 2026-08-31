@@ -156,21 +156,7 @@
       "uniform_bullets": "אורך אחיד לכל השורות",
       "keyword_stuffing": "דחיסת מילות מפתח"
     },
-    "positioning": "הסיפור שקורות החיים מספרים:",
-    "credTitle_one": "טענה אחת שכדאי להיות מוכנים להגן עליה",
-    "credTitle_two": "{{count}} טענות שכדאי להיות מוכנים להגן עליהן",
-    "credTitle_other": "{{count}} טענות שכדאי להיות מוכנים להגן עליהן",
-    "credNote": "נכון אבל מנוסח חזק — מראיין עלול לחפור. רככו את הניסוח או היו מוכנים לגבות אותו.",
-    "credSuggestion": "ניסוח בטוח יותר:",
-    "risk": {
-      "exaggerated_ownership": "הבעלות נשמעת גדולה ממה שקורות החיים מראים",
-      "inflated_seniority": "הבכירות נשמעת מנופחת",
-      "unverified_production": "טענת פרודקשן ללא ביסוס",
-      "vague_impact": "השפעה ללא פירוט",
-      "excessive_scale": "היקף נשמע גדול מהמבוסס",
-      "tool_padding": "רשימת כלים בלי התרומה שלכם",
-      "unclear_contribution": "החלק שלכם לא ברור"
-    }
+    "positioning": "הסיפור שקורות החיים מספרים:"
   },
   "report": {
     "title": "דו״ח התאמת מילות מפתח",

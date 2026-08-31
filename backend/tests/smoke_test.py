@@ -652,7 +652,8 @@ check(
 
 # 4c. THE POOLED CALLS STILL REPORT THEIR TOKENS.
 # `tailor_resume` runs two pairs of LLM calls concurrently (score_before ∥
-# plan_cv, and credibility ∥ score_after) -- 2.1s of a measured 20.1s, hidden.
+# plan_cv). The second pair was credibility ∥ score_after; CREDIBILITY was
+# REMOVED, so `score_after` is inline now and this pins the surviving pair.
 # A ThreadPoolExecutor worker starts from an EMPTY context, so a bare
 # `pool.submit(fn, ...)` instead of `pool.submit(copy_context().run, fn, ...)`
 # makes four of the five calls invisible to `metering` and their tokens vanish
@@ -699,7 +700,10 @@ def _is_copy_context_run(call: _pool_ast.Call) -> bool:
 check(
     "tailor: every pooled LLM call is submitted through copy_context().run — a bare "
     "submit starts the worker from an EMPTY context and its tokens vanish from usage_log",
-    len(_POOL_SUBMITS) == 4 and all(_is_copy_context_run(c) for c in _POOL_SUBMITS),
+    # EXACT COUNT, never `>= 1` and never `all(...)` alone: `all()` over an
+    # empty list is True, so a count-free pin passes vacuously on a file with
+    # no submits at all.
+    len(_POOL_SUBMITS) == 2 and all(_is_copy_context_run(c) for c in _POOL_SUBMITS),
     f"{len(_POOL_SUBMITS)} submits, "
     f"{sum(1 for c in _POOL_SUBMITS if _is_copy_context_run(c))} context-copied",
 )
@@ -7341,9 +7345,8 @@ check(
 )
 
 # 24. Humanization spec — remaining stages: JD mandatory/preferred split,
-# CV positioning plan (PLAN_CV), credibility review (CREDIBILITY), keyword
+# CV positioning plan (PLAN_CV), keyword
 # stuffing + JD copy %, and the writing-prefs feedback loop (§26).
-from app.core.credibility import review_credibility as _cred  # noqa: E402
 from app.core.cv_planner import plan_cv as _plan  # noqa: E402
 from app.core import writing_prefs as _wprefs  # noqa: E402
 from app.db.models import User as _WPUser  # noqa: E402
@@ -7360,29 +7363,12 @@ check(
 _p = _plan(resume, jd)
 check("PLAN_CV stub routes to a positioning plan", _p is not None and _p.positioning != "", str(_p))
 check(
-    "tailor result carries the plan and clean credibility flags for plain writing",
+    "tailor result carries the positioning plan",
     result.plan is not None
     and result.plan.positioning != ""
-    and result.credibility_flags == [],
-    f"plan={result.plan} cred={result.credibility_flags}",
+    f"plan={result.plan}",
 )
 
-# Stage 11: the credibility reviewer flags true-but-overstated wording.
-_c_resume = resume.model_copy(deep=True)
-_c_resume.experience[0].bullets = [
-    "Architected enterprise-grade automation infrastructure.",
-    "Wrote SQL reports for internal teams.",
-]
-_c_flags = _cred(_c_resume, jd)
-check(
-    "CREDIBILITY stub flags exaggerated scale wording with a defensible rewording",
-    len(_c_flags) == 1
-    and _c_flags[0].risk == "excessive_scale"
-    and "enterprise-grade" in _c_flags[0].text
-    and _c_flags[0].suggestion != "",
-    str(_c_flags),
-)
-check("credibility review passes plain bullets", _cred(result.tailored_resume, jd) == [], str(_cred(result.tailored_resume, jd)))
 
 # Stage 9: keyword stuffing + JD phrase-overlap percentage.
 _s_resume = resume.model_copy(deep=True)
@@ -7473,15 +7459,9 @@ check(
 
 # Prompt pins for the new tasks (stub routing + extraction rules).
 check("PLAN_CV prompt Task tag first", _prompts.PLAN_CV_SYSTEM.startswith("Task: PLAN_CV."))
-check("CREDIBILITY prompt Task tag first", _prompts.CREDIBILITY_SYSTEM.startswith("Task: CREDIBILITY."))
 check(
     "ANALYZE_JD and JD_FIT extract the mandatory/preferred split",
     "preferred_skills" in _prompts.ANALYZE_JD_SYSTEM and "preferred_skills" in _prompts.JD_FIT_SYSTEM,
-)
-check(
-    "credibility_user keeps the stub's parse markers",
-    "RESUME TO REVIEW (JSON):" in _prompts.credibility_user("{}", "{}")
-    and "END RESUME" in _prompts.credibility_user("{}", "{}"),
 )
 
 # ---------------------------------------------------------------------------

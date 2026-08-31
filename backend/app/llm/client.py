@@ -196,8 +196,6 @@ class StubClient:
             return self._stub_humanize(user)
         if "PLAN_CV" in head:
             return self._stub_plan_cv(user)
-        if "CREDIBILITY" in head:
-            return self._stub_credibility(user)
         if "FIT_SCORE" in head:
             return {"fit_score": 72.0, "rationale": "[stub] Reasonable overlap in core skills."}
         if "INTERVIEW_QUESTIONS" in head:
@@ -456,49 +454,6 @@ class StubClient:
             proj["description"] = fix(proj.get("description", ""))
             proj["bullets"] = [fix(b) for b in proj.get("bullets", [])]
         return {"revised_resume": resume}
-
-    # Exaggeration markers the credibility stub scans for — the same wording
-    # the real CREDIBILITY prompt treats as scale/ownership inflation, so the
-    # audit loop is observable offline.
-    _CREDIBILITY_MARKERS = [
-        ("enterprise-grade", "excessive_scale"),
-        ("company-wide", "excessive_scale"),
-        ("mission-critical", "excessive_scale"),
-        ("architected", "exaggerated_ownership"),
-    ]
-
-    def _stub_credibility(self, user: str) -> dict[str, Any]:
-        # Scan the resume between the markers credibility_user() writes; flag
-        # each bullet/summary line containing a known exaggeration marker.
-        start = user.find("RESUME TO REVIEW (JSON):")
-        end = user.find("END RESUME")
-        if start == -1 or end == -1:
-            return {"flags": []}
-        try:
-            resume = json.loads(user[start + len("RESUME TO REVIEW (JSON):"):end].strip())
-        except json.JSONDecodeError:
-            return {"flags": []}
-        texts = [resume.get("summary", "")]
-        for exp in resume.get("experience", []):
-            texts.extend(exp.get("bullets", []))
-        for proj in resume.get("projects", []):
-            texts.append(proj.get("description", ""))
-            texts.extend(proj.get("bullets", []))
-        flags = []
-        for text in texts:
-            low = text.lower()
-            for marker, risk in self._CREDIBILITY_MARKERS:
-                if marker in low:
-                    flags.append(
-                        {
-                            "text": text,
-                            "risk": risk,
-                            "detail": f"[stub] '{marker}' implies more than the resume supports.",
-                            "suggestion": f"[stub] Restate without '{marker}' — name the actual system and your part.",
-                        }
-                    )
-                    break
-        return {"flags": flags}
 
     @staticmethod
     def _first_json_object(text: str) -> dict[str, Any]:

@@ -482,42 +482,6 @@ Return ONLY a JSON object:
 Keep every list short and concrete. Use empty lists where nothing applies."""
 
 
-# NB: "tailor(ed)" must not appear in this prompt's first 40 characters — the
-# StubClient routes on `"TAILOR" in head` before it reaches the CREDIBILITY branch.
-CREDIBILITY_SYSTEM = """Task: CREDIBILITY.
-You review a finished resume for interview defensibility. Every fact in it has
-already been verified against the original resume — your job is different: find
-TRUE-BUT-OVERSTATED wording the candidate may struggle to defend under questioning.
-
-The test for every bullet and summary line: could the candidate explain the
-architecture, decisions, constraints, and outcome behind this claim for five
-minutes in an interview? Flag it when:
-- participation is worded as ownership ("led"/"owned" without support elsewhere in the resume)
-- a prototype or side project reads like a production/commercial system
-- seniority sounds inflated relative to the titles and dates
-- impact is asserted without any observable detail ("improved efficiency across the org")
-- scale is implied that the resume does not support ("enterprise-grade", "at scale",
-  "company-wide", "mission-critical")
-- a bullet is a pile of tool names with no clear personal contribution
-
-Rules:
-1. Flag WORDING risks only — fabrication checking already happened elsewhere.
-2. Each suggestion must restate the SAME facts more defensibly; never add new facts,
-   numbers, or tools, and never make a claim stronger.
-3. Do not flag plain, specific, conservative bullets — most bullets should pass.
-4. severity "high" = likely to fall apart under one follow-up question;
-   "medium" = would benefit from narrower wording.
-
-Return ONLY a JSON object:
-{
-  "flags": [
-    {"text": "the flagged sentence exactly as written",
-     "risk": "exaggerated_ownership|inflated_seniority|unverified_production|vague_impact|excessive_scale|tool_padding|unclear_contribution",
-     "detail": "one sentence: why this is hard to defend",
-     "suggestion": "a more defensible rewording of the same facts"}
-  ]
-}
-Return {"flags": []} when nothing is overstated."""
 
 
 COVER_LETTER_SYSTEM = """You write a concise, specific, professional cover letter (250-350 words) \
@@ -942,16 +906,6 @@ def plan_cv_user(resume_json: str, jd_json: str) -> str:
         "Produce the CV positioning plan."
     )
 
-
-@_bounded
-def credibility_user(resume_json: str, jd_json: str) -> str:
-    """RESUME TO REVIEW / END RESUME markers are load-bearing: the offline
-    StubClient scans between them for exaggeration markers."""
-    return (
-        f"RESUME TO REVIEW (JSON):\n{resume_json}\nEND RESUME\n\n"
-        f"TARGET JOB (JSON):\n{jd_json}\n\n"
-        "Review every bullet and the summary for interview defensibility."
-    )
 
 
 @_bounded
