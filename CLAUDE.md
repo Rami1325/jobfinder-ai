@@ -293,6 +293,99 @@ Default `MODEL_ID` is **`gpt-4o-mini`** — cheap, fast, and strong at this JSON
 - **`cv_planner`'s project count varies run to run, TWO prompt fixes were measured, and BOTH made it worse.** The rubric says "There is NO fixed number", which is the same open-ended shape that let the skills list reach 59, and the planner picked 3, 3 and 7 projects on three identical runs of one job. **Calibrate that before acting on it: 3/3/7 is the WORST job, not the typical one** — the median within-job spread is **1 project** (range 0-4), measured twice on separate rounds. Two arms were tried against a decision rule written before the data, TAILOR held byte-identical so the planner was the only variable: `planrank` (rank strictly, err generous, let the page budget cut — today's proven pattern applied to projects) took the spread **1 → 2** and cost 10 points of skills precision; `plananchor` (derive the count from the posting's distinct requirements, so the same posting yields the same number) breached no quality floor but took the spread **1 → 3**. Neither shipped. Both variants are kept at `tests/fixtures/ab/variants/plan{rank,anchor}.plan.txt`. The lesson is the one this whole phase keeps teaching: **a prompt instruction about a COUNT is weakly followed, whatever shape it takes** — and unlike skills, project selection is judgement, so the deterministic answer that worked there would be worse here. Treat the residual spread as accepted, not open.
 - **Trimming BEFORE the page budget does not buy projects back — refuted, don't retry it.** The theory was sound (the budget keeps 8 projects at 10 skills and 4 at 66, at a constant 2 pages, so the bloat is billed to the project list) but the measured paired delta on `n_projects` was **−0.5 [−3..+2]**, i.e. nothing. The shipped placement — after `preserve_keywords`, before `report_restore` — stands.
 
+### What using the app found (2026-08-31) — and four measured dead ends
+
+Phase 24's "next up" opened with **USE THE APP**. Two real tailors were run on the
+real key, rendered, and read. Everything below came out of reading four pages;
+none of it was visible to any metric the app records.
+
+- **A skill could be drawn twice, and a duplicate bought a free cap slot.** 3 of 12
+  real-key runs returned the same entry twice and every one shipped — `skill_blocks`
+  hands the flat list straight to both renderers. `ResumeModel`'s union validator
+  cannot see it (it dedupes what it ADDS from `skill_groups` and seeds `seen` FROM
+  the flat list), and `shortlist_skills` counts the cap against a SET while emitting
+  a LIST, so cap 30 shipped 31 and 32. `tailor._dedupe_skills` fixes it at the one
+  door where a raw TAILOR response becomes a résumé — **not** in a `model_validator`,
+  for the reason the multi-skill splitter documents one door over.
+- **THE CANDIDATE'S OWN WORDS LEAD THE SKILLS SECTION; THE AD'S FOLLOW.**
+  `skills_shortlist.order_skills`, a stable partition applied last. **This replaces
+  the old "the model's own order survives" rule**, whose premise — that the tailor
+  "puts the JD-relevant entries first and does that well" — a rendered page
+  falsifies: what it puts first is the ad's vocabulary. Measured on a real AI-
+  engineering tailor, the first twelve chips were `workflow automation`, `LLM
+  systems`, `retrieval`, `tool use`, `orchestration patterns`… — ten of thirty
+  entries absent from the candidate's own 66 — with OpenAI, RAG, pgvector, MCP and
+  FastAPI in the tail. **It is a PARTITION, never a re-sort**: the set is untouched,
+  so coverage, `lost_keywords`, the fabrication flags and the page count are all
+  functions of the set and provably cannot move, and the model's ranking survives
+  inside each group. Judged the only way a presentation change can be — three
+  orderings of the identical set rendered and read side by side.
+- **A changelog may not describe a document that does not exist.** That entry made
+  three claims and two were false: "Cut the skills list to the 30 this job asks for"
+  (the cap keeps the top N by relevance — the app's own `ats_scan` said 19 of those
+  30 are not mentioned by the posting), and "Your master résumé lists 75 skills"
+  (75 is what the MODEL returned; the master lists 66). Its "stay in your master
+  résumé" sample was drawn from `dropped_noise`, which contains the model's own
+  inventions, so it could promise `orchestration patterns` was in the master.
+
+**Four dead ends, each measured, so they are not retried.**
+
+- **The shortlist cannot be re-ranked into fixing the paraphrase problem.** Over 153
+  recorded model outputs at cap 30: an own-wording FILL changes 8/153 outputs and
+  buys nothing (this reproduces the earlier "byte-identical" finding and explains
+  it — the fill is not where the paraphrase lives). Letting the cap EVICT covered
+  entries that are the model's wording buys +3 own entries and +1 toolchain entry
+  for **−8.5 median and −56.0 worst-job** coverage. Raising the cap is free on
+  coverage (flat at every cap 20→45, confirming the earlier result) but buys only
+  +1 toolchain entry per +6 chips. **The paraphrase is `covered` BECAUSE it is
+  verbatim from the ad**, so any relevance ranking must rank it top — which is why
+  the fix is ordering, not selection.
+- **A deterministic minting screen tops out at 53% precision — a warning wrong half
+  the time, so it is off the table as an advisory as well as a filter.** This is
+  CLAUDE.md's earlier "checked rather than assumed" claim, now with a number. The
+  best rule found (bounded matching, plural folding, stem comparison, compound-head
+  so `vector` ⊂ `pgvector` clears) catches every invention CLAUDE.md names and
+  clears every rewording it names — and still flags `Git`, `SQL`, `retrieval`,
+  `observability` and `debugging`, all things the candidate genuinely does. Two
+  traps worth keeping: the "master token inside the entry" direction is the
+  dangerous one (`form` from "form submissions" clears **Terraform**; `gpt` clears
+  **ChatGPT**), and a ≥4-character guard is the only reason `SQL` fails.
+- **Naming a leak more precisely in the prompt did not help, and may backfire.** The
+  `nomint2` arm (36 real runs, decision rule written first, kept at
+  `tests/fixtures/ab/decision-nomint2.md`) targeted two classes the current rule
+  does not name — regulatory marks (`CE`/`FCC`/`UL`) and requirement fragments
+  (`modern programming language`, `open-source technologies`). REJECTED on 3 of 6
+  criteria. `skills_unowned` was unmoved (1.39 → 1.22/run, inside noise) and one job
+  lost 10.4 coverage points. **The result worth keeping is the backfire**: on class B
+  the arm went BACKWARDS — `open-source technologies` shipped in 1/3 baseline runs
+  and **3/3** nomint2 runs. Naming a string that is ALSO a verbatim JD keyword puts
+  it in front of the model twice. The existing rule gets away with naming leaks
+  because those strings are not in the ad being tailored against.
+- **`CE`/`FCC`/`UL` is intermittent, and one rendered page is not a rate.** Three
+  hardware-compliance marks shipped onto a Senior Quality Engineer CV — all verbatim
+  `jd.hard_skills`, on a candidate who has never done compliance work. The chain:
+  the model mints them, `shortlist_skills.relevance` ranks them `covered` (the JD
+  names them, so they match themselves), a covered entry is never dropped, and
+  `check_fabrication` does not read skills by design — **nothing in the pipeline can
+  remove a JD-derived fabrication, and the ceiling actively protects it.** But six
+  further runs of the same job across two arms produced **zero** occurrences, so at
+  n=3 per arm there was no power to measure a change in it. Order it after the
+  measurable work; the ordering partition at least puts it last on the page.
+
+**Per-task model routing (PLAN 24 item 3) is REJECTED for `PLAN_CV` and blocked for
+`FIT_SCORE`.** FIT_SCORE + PLAN_CV are **56.8% of prompt volume**, so the saving is
+real (~$0.0021 of a $0.0051 tailor). But the latency was never measured per task,
+and the 3.2× figure came from TAILOR alone: measured directly, **PLAN_CV is 4.22×
+slower on gpt-5.6-luna** (2.55 s → 10.79 s) and FIT_SCORE 1.81×. Pool 1's wall time
+is `max(FIT_SCORE, PLAN_CV)`, so routing both adds **+8.2 s to save $0.002**.
+Routing FIT_SCORE alone costs +0.23 s and is plausible — but `metering` carries no
+model dimension (`usage_log` folds everything into one `action="tokens"` row per
+user per day), so a mixed run blends two price tiers with nothing recording the
+split, and the saving would be unverifiable the moment it shipped. Add the
+dimension first. Note also that one `OpenAIClient` per process means **one
+`_unsupported` probe set**: two models through one instance would let a cheap
+model's rejected `temperature` silently strip it from every TAILOR call.
+
 ### Skills are terms, not sentences
 
 - **Splitting a multi-skill entry happens at ONE server-side door — `structure_resume` — and never in a `model_validator`.** A CV that writes "Python, SQL, Go" on one line arrives from the LLM as a SINGLE skill: one chip on the page, one keyword to the scorer, one fact to the x-ray. A validator runs on every construction, i.e. every READ of every stored master, tracker résumé, saved kit and version snapshot, so it would rewrite all of them without any of them being a write — bypassing `resume_versions.snapshot` and breaking its byte-identical dedupe, so the first save after deploy burns an undo slot on a no-op. It would also fire between `original` and `tailored` inside `TailorResult`, orphaning the frontend's text-derived `@skills.<key>` anchors. Pinned three ways, because no one of them is enough: the flat-only form is asserted to DO resurrect, `app/models` is grepped, and a stored résumé is PUT and read back verbatim — the grep cannot see an INLINE COPY of the splitter, and the round trip cannot tell a correct door from a validator that happens to agree with it.
