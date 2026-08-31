@@ -97,6 +97,53 @@ def relevance(entry: str, terms: list[str]) -> str:
     return best
 
 
+def order_skills(resume: ResumeModel, original: ResumeModel) -> ResumeModel:
+    """The candidate's own words lead; wording the model introduced follows.
+
+    A STABLE PARTITION, never a re-sort. The model's ranking survives inside
+    each group, so this discards the least judgement of anything that fixes the
+    defect below, and the SET is untouched — which is the whole safety argument.
+    Coverage, `lost_keywords`, the fabrication flags and the page count are all
+    functions of the set, so none of them can move. Nothing downstream reads
+    skill ORDER (`length_budget._drop_unmatched_skill` picks by length and
+    match, not position), and this runs last regardless.
+
+    WHY, MEASURED. `shortlist_skills` ranks an entry by whether the JD names it,
+    so a phrase COPIED FROM THE AD scores `covered` by construction and outranks
+    the candidate's own tools. On a real "AI Engineer, Agentic Workflows"
+    tailor the first twelve chips were `workflow automation`, `LLM systems`,
+    `document processing`, `retrieval`, `tool use`, `orchestration patterns`,
+    `evaluation`, `feedback loops`, `data pipelines`, `unstructured data
+    processing` — ten of thirty entries absent from the candidate's own 66 —
+    while `OpenAI`, `RAG`, `pgvector`, `MCP`, `FastAPI` and `SQLAlchemy` sat in
+    the tail. This is the same defect the cap-at-20 regression was: raising the
+    cap to 30 lengthened the tail without changing who won the top.
+
+    THIS REPLACES "the model's own order survives", which was one of this
+    module's three rules. That rule's stated premise was that the tailor "is
+    told to put the JD-relevant entries first and it does that well" — and a
+    rendered page falsifies it: what it puts first is the ad's vocabulary. Its
+    other half, that the ATS reads the leading entries hardest, is why the
+    partition keeps every entry rather than dropping any; ordering is the only
+    thing traded, and no ATS behaviour this repo has measured depends on it.
+
+    Judged the only way it can be: three orderings of the identical set were
+    rendered and read side by side. A full re-sort by tier scattered niche
+    entries (`Cloudflare Tunnel`) into the lead; this partition put the real
+    stack in the first three rows on both jobs tested and cost nothing.
+    """
+    own = {s.strip() for s in original.skills}
+    mine = [s for s in resume.skills if s.strip() in own]
+    if not mine or len(mine) == len(resume.skills):
+        # Nothing to move — every entry is the candidate's, or none is. The
+        # identity convention `shortlist_skills` and `preserve_keywords` share:
+        # a guard with nothing to say returns the object it was given.
+        return resume
+    out = resume.model_copy(deep=True)
+    out.skills = mine + [s for s in resume.skills if s.strip() not in own]
+    return out
+
+
 def shortlist_skills(
     resume: ResumeModel,
     jd: JDModel,

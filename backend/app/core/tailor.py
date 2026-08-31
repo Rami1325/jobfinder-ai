@@ -20,7 +20,7 @@ from app.core.keyword_guard import (
 from app.core.lang import resume_language
 from app.core.length_budget import OVERFLOW_NOTE, fit_to_pages
 from app.core.scorer import score_resume
-from app.core.skills_shortlist import shortlist_skills
+from app.core.skills_shortlist import order_skills, shortlist_skills
 from app.core.voice_audit import audit_voice
 from app.llm.client import get_llm_client
 from app.llm import prompts
@@ -61,9 +61,11 @@ def _dedupe_skills(raw: object) -> object:
     résumé.
 
     IT MAY ONLY EVER REMOVE. The first occurrence keeps its position and the
-    model's own spelling, because that ORDER is load-bearing downstream — the
-    ATS reads the leading entries hardest, and `shortlist_skills` preserves the
-    model's ranking deliberately. The key is stripped and casefolded because
+    model's own spelling: `shortlist_skills` selects in the model's order and
+    `order_skills` partitions that order without re-sorting inside it, so the
+    model's relative ranking is still carried all the way to the page and
+    dropping the FIRST copy instead of the second would move an entry the model
+    ranked. The key is stripped and casefolded because
     `['Python', 'python', '  Python  ']` renders as three chips, not one.
 
     Shape-guarded rather than coerced: a response whose `skills` is not a list
@@ -438,6 +440,15 @@ def tailor_resume(
         was_revised, was_fixed = report.revised, report.fixed
         report = audit_voice(tailored, jd)
         report.revised, report.fixed = was_revised, was_fixed
+
+    # PRESENTATION, LAST: the candidate's own words lead, the ad's follow. After
+    # every stage that can change the SET, because ordering something that is
+    # about to be trimmed would be describing a document that does not ship.
+    # A stable partition of the same entries — see `order_skills` for the
+    # measurement, and note that every counterweight this pipeline reports
+    # (coverage, lost keywords, fabrication flags, pages) is a function of the
+    # set and therefore provably unmoved.
+    tailored = order_skills(tailored, resume)
 
     # BOTH LISTS ARE MEASURED HERE, after every stage that can change what the CV
     # says has finished. `restored` is "was lost before the restore and is at

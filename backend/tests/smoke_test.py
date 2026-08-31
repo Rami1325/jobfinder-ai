@@ -233,7 +233,11 @@ check(
 # 66-skill master — more than it started with — at 18.6% precision, and every
 # prompt-only fix that cut the count paid for it in keyword coverage.
 from app.config import get_settings as _cap_settings  # noqa: E402
-from app.core.skills_shortlist import relevance as _rel, shortlist_skills  # noqa: E402
+from app.core.skills_shortlist import (  # noqa: E402
+    relevance as _rel,
+    shortlist_skills,
+)
+import app.core.skills_shortlist as _order_mod  # noqa: E402
 from app.models import JDModel as _AtsJD, SkillGroup  # noqa: E402
 
 _big = ResumeModel(
@@ -417,6 +421,56 @@ check(
     any(s.startswith("Minted") for s in _mint_response
         if s not in set(_minted.tailored_resume.skills)),
     str([s for s in _mint_response if s not in set(_minted.tailored_resume.skills)]),
+)
+
+# 4b-iii. THE CANDIDATE'S OWN WORDS LEAD; THE AD'S FOLLOW.
+# `shortlist_skills` ranks by whether the JD names an entry, so a phrase COPIED
+# FROM THE AD scores `covered` by construction and outranks the candidate's real
+# tools. Measured on a real "AI Engineer, Agentic Workflows" tailor: the first
+# twelve chips were `workflow automation`, `LLM systems`, `retrieval`, `tool
+# use`, `orchestration patterns`... while OpenAI, RAG, pgvector, MCP, FastAPI
+# and SQLAlchemy sat in the tail. `order_skills` is a stable PARTITION of that
+# same list -- which is the whole safety argument, since coverage, lost
+# keywords, the fabrication flags and the page count are all functions of the
+# SET and therefore cannot move.
+_ordered = _minted.tailored_resume.skills
+_own_at = [i for i, s in enumerate(_ordered) if not s.startswith("Minted")]
+_mint_at = [i for i, s in enumerate(_ordered) if s.startswith("Minted")]
+check(
+    "tailor: the candidate's own skills all precede the wording the model introduced",
+    not _own_at or not _mint_at or max(_own_at) < min(_mint_at),
+    str(_ordered[:8]) + " ... " + str(_ordered[-4:]),
+)
+check(
+    "tailor: …and BOTH groups are actually present, so the check can fail",
+    bool(_own_at) and bool(_mint_at),
+    f"{len(_own_at)} own, {len(_mint_at)} introduced",
+)
+check(
+    "tailor: ordering is a PARTITION — the set is byte-identical, so no metric can move",
+    sorted(_ordered) == sorted(
+        [s for s in _mint_response if s in set(_ordered)][: len(_ordered)]
+    ) or sorted(_ordered) == sorted(set(_ordered)) and set(_ordered) <= set(_mint_response),
+    f"{len(_ordered)} entries, all from the response: {set(_ordered) <= set(_mint_response)}",
+)
+check(
+    "tailor: the model's relative ranking survives INSIDE each group (stable, not re-sorted)",
+    [s for s in _ordered if s.startswith("Minted")]
+    == [s for s in _mint_response if s.startswith("Minted") and s in set(_ordered)]
+    and [s for s in _ordered if not s.startswith("Minted")]
+    == [s for s in _mint_response if not s.startswith("Minted") and s in set(_ordered)],
+    str([s for s in _ordered if s.startswith("Minted")][:5]),
+)
+# THE FALSE-POSITIVE HALF: a guard with nothing to say returns what it was given,
+# the identity convention `shortlist_skills` and `preserve_keywords` share.
+# Without this, "own words lead" is trivially satisfied by rewriting every list.
+_all_own = ResumeModel(contact=Contact(name="A", email="a@b.com"), skills=["Go", "Rust", "C"])
+_all_foreign = ResumeModel(contact=Contact(name="A", email="a@b.com"), skills=["X1", "X2"])
+check(
+    "skills order: a list with nothing to move is returned UNTOUCHED, same object",
+    _order_mod.order_skills(_all_own, _all_own) is _all_own
+    and _order_mod.order_skills(_all_foreign, _all_own) is _all_foreign
+    and _order_mod.order_skills(_all_own, ResumeModel(contact=Contact(name="A"))) is _all_own,
 )
 
 # 4b-ii. A SKILL MAY NOT BE DRAWN TWICE, AND A DUPLICATE MAY NOT BUY A CAP SLOT.
