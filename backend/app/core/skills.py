@@ -206,3 +206,61 @@ def skill_blocks(resume: ResumeModel) -> list[tuple[str, list[str]]]:
     if leftover:
         blocks.append(("", leftover))
     return blocks
+
+
+def dedupe_skills(raw: object) -> object:
+    """Drop repeated entries from the model's flat skills list. First wins.
+
+    MEASURED on the shipped configuration: 3 of 12 real-key runs returned the
+    same entry twice — `AI agents`, `webhooks`, `Python` — and every one of them
+    shipped. `skills.skill_blocks` hands the flat list straight to both
+    renderers and `ResumeView` mirrors it, so a repeat is a chip drawn twice on
+    the page the user sends. `ResumeModel`'s union validator cannot catch it: it
+    dedupes what it ADDS from `skill_groups` and seeds `seen` FROM the flat
+    list, so a flat list handed in already carrying repeats is passed through
+    untouched.
+
+    It also breaks the cap. `shortlist_skills` counts `cap` against a SET of
+    kept strings and then emits `[s for s in resume.skills if s in keep]`, so a
+    duplicate buys a free slot — cap 30 shipped 31 and 32, under a changelog
+    line announcing the cut to "the 32 this job asks for".
+
+    TWO DOORS, and the second was found by review after the first was shipped.
+    `tailor.py` validates the TAILOR payload; `humanizer.py` validates a raw
+    HUMANIZE payload and `tailor_resume` ACCEPTS it afterwards, so a duplicate
+    introduced by the polish pass sailed past a guard that had already run.
+    The humanizer is pointed straight at this list — `voice_audit` scans the
+    joined skills for banned phrases — so it rewords entries routinely, and two
+    rewordings colliding on one string IS the duplicate. Reproduced end to end.
+    It lives here, in the module both doors can import, and NOT in a
+    `model_validator` — the
+    reason the multi-skill splitter documents one door over: a validator runs on
+    every construction, i.e. every READ of every stored master, tracker résumé,
+    saved kit and version snapshot, and would rewrite all of them without any of
+    them being a write. This is the one place a raw TAILOR response becomes a
+    résumé.
+
+    IT MAY ONLY EVER REMOVE. The first occurrence keeps its position and the
+    model's own spelling: `shortlist_skills` selects in the model's order and
+    `order_skills` partitions that order without re-sorting inside it, so the
+    model's relative ranking is still carried all the way to the page and
+    dropping the FIRST copy instead of the second would move an entry the model
+    ranked. The key is stripped and casefolded because
+    `['Python', 'python', '  Python  ']` renders as three chips, not one.
+
+    Shape-guarded rather than coerced: a response whose `skills` is not a list
+    of strings is returned exactly as it arrived, so `ResumeModel.model_validate`
+    still reports it as the validation error it is instead of this function
+    dying on it first with a worse message.
+    """
+    if not isinstance(raw, list) or not all(isinstance(s, str) for s in raw):
+        return raw
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in raw:
+        key = s.strip().casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out

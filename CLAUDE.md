@@ -304,9 +304,15 @@ none of it was visible to any metric the app records.
   hands the flat list straight to both renderers. `ResumeModel`'s union validator
   cannot see it (it dedupes what it ADDS from `skill_groups` and seeds `seen` FROM
   the flat list), and `shortlist_skills` counts the cap against a SET while emitting
-  a LIST, so cap 30 shipped 31 and 32. `tailor._dedupe_skills` fixes it at the one
-  door where a raw TAILOR response becomes a résumé — **not** in a `model_validator`,
-  for the reason the multi-skill splitter documents one door over.
+  a LIST, so cap 30 shipped 31 and 32. `skills.dedupe_skills` fixes it — **not** in a
+  `model_validator`, for the reason the multi-skill splitter documents one door
+  over. **There are TWO doors, and the second was found by review after the first
+  shipped**: `humanizer.py` validates its own raw HUMANIZE payload and
+  `tailor_resume` ACCEPTS it after the first dedupe has already run. The humanizer
+  is pointed straight at this list (`voice_audit` scans the joined skills for
+  banned phrases), so it rewords entries routinely and two rewordings colliding on
+  one string IS the duplicate. Patch `humanizer.get_llm_client` to drive it —
+  patching the caller's binding is a no-op that reads as a pass.
 - **THE CANDIDATE'S OWN WORDS LEAD THE SKILLS SECTION; THE AD'S FOLLOW.**
   `skills_shortlist.order_skills`, a stable partition applied last. **This replaces
   the old "the model's own order survives" rule**, whose premise — that the tailor
@@ -315,10 +321,19 @@ none of it was visible to any metric the app records.
   engineering tailor, the first twelve chips were `workflow automation`, `LLM
   systems`, `retrieval`, `tool use`, `orchestration patterns`… — ten of thirty
   entries absent from the candidate's own 66 — with OpenAI, RAG, pgvector, MCP and
-  FastAPI in the tail. **It is a PARTITION, never a re-sort**: the set is untouched,
-  so coverage, `lost_keywords`, the fabrication flags and the page count are all
-  functions of the set and provably cannot move, and the model's ranking survives
-  inside each group. Judged the only way a presentation change can be — three
+  FastAPI in the tail. **It is a PARTITION, never a re-sort**, and the model's
+  ranking survives inside each group. **It is NOT free, and the claim that it was
+  is the one this work got wrong** — caught in review, before deploy.
+  `scorer._resume_text` joins skills with a SPACE and `_keyword_present` tries the
+  verbatim phrase FIRST, so a multi-word JD keyword can match ACROSS the join
+  between two adjacent entries, and Hebrew's ב/ל/ה/ו/מ/ש prefixes stop the token
+  fallback rescuing it: measured, the same set reordered scores **100.0 then 50.0**
+  against `פייתון מתקדם` — in the primary market. `_Chips._pack` also fills rows by
+  WIDTH, so a reorder repacks the section and can change its rendered height after
+  the page budget has signed the CV off. **`tailor_resume` therefore measures
+  coverage and the page count either side of the reorder and keeps the old order
+  unless the new one is free** — the guarantee is enforced, not argued, in the
+  humanizer's acceptance-gate shape. Judged the only way a presentation change can be — three
   orderings of the identical set rendered and read side by side.
 - **A changelog may not describe a document that does not exist.** That entry made
   three claims and two were false: "Cut the skills list to the 30 this job asks for"

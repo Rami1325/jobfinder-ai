@@ -8,6 +8,7 @@ humanizer can therefore never make the resume less truthful, only less robotic.
 from __future__ import annotations
 
 from app.core.lang import resume_language
+from app.core.skills import dedupe_skills
 from app.llm import prompts
 from app.llm.client import get_llm_client
 from app.models import JDModel, ResumeModel, VoiceIssue
@@ -45,6 +46,12 @@ def humanize_resume(tailored: ResumeModel, issues: list[VoiceIssue], jd: JDModel
         revised = data.get("revised_resume")
         if not isinstance(revised, dict):
             return None
+        # The SECOND door a raw LLM skills list comes through — see
+        # `skills.dedupe_skills`. `tailor_resume` accepts this résumé after
+        # its own dedupe has already run, so without this a repeat the
+        # polish pass introduced ships and buys a free cap slot.
+        if isinstance(revised.get("skills"), list):
+            revised["skills"] = dedupe_skills(revised["skills"])
         return ResumeModel.model_validate(revised)
     except Exception:  # noqa: BLE001 - a failed polish pass must never break tailoring
         return None

@@ -238,6 +238,7 @@ from app.core.skills_shortlist import (  # noqa: E402
     shortlist_skills,
 )
 import app.core.skills_shortlist as _order_mod  # noqa: E402
+import app.core.skills as _skills_mod  # noqa: E402
 from app.models import JDModel as _AtsJD, SkillGroup  # noqa: E402
 
 _big = ResumeModel(
@@ -407,7 +408,7 @@ _mint_entry = next(c for c in _minted.changelog
                    if c.section == "skills" and c.change.startswith("Cut the skills list"))
 _mint_named = [
     n.strip()
-    for n in _mint_entry.reason.split("posting names was dropped.")[-1]
+    for n in _mint_entry.reason.split("was dropped.")[-1]
     .replace(" and others", "").replace(" stay in your master résumé.", "").split(",")
     if n.strip()
 ]
@@ -467,6 +468,125 @@ check(
 _all_own = ResumeModel(contact=Contact(name="A", email="a@b.com"), skills=["Go", "Rust", "C"])
 _all_foreign = ResumeModel(contact=Contact(name="A", email="a@b.com"), skills=["X1", "X2"])
 check(
+    "tailor: the reorder is REPORTED — the model's own changelog claims the opposite order",
+    any(c.section == "skills" and "Put your own wording first" in c.change
+        for c in _minted.changelog),
+    str([c.change for c in _minted.changelog if c.section == "skills"]),
+)
+# THE FALSE-POSITIVE HALF. `_BloatClient` answers TAILOR with the master itself,
+# so every entry is the candidate's own and `order_skills` moves NOTHING —
+# claiming a reorder there is a changelog describing a document that does not
+# exist, which is the defect the entry above this one was written to answer.
+check(
+    "tailor: …and NOT claimed when nothing moved (every entry is already the candidate's)",
+    not any(c.section == "skills" and "Put your own wording first" in c.change
+            for c in _capped.changelog),
+    str([c.change for c in _capped.changelog if c.section == "skills"]),
+)
+# 4b-iv. THE SECOND DOOR. `humanizer.py` validates its OWN raw LLM résumé and
+# `tailor_resume` accepts it AFTER the dedupe has already run, so a repeat the
+# polish pass introduces sails past a guard that finished earlier. The humanizer
+# is pointed straight at this list — `voice_audit` scans the joined skills for
+# banned phrases — so it rewords entries routinely, and two rewordings colliding
+# on one string IS the duplicate. Found by review, after the first fix shipped.
+#
+# PATCHED ON `app.core.humanizer`, not on `tailor`: humanizer.py does its own
+# `from app.llm.client import get_llm_client`, so the name is already bound in
+# ITS namespace and patching the caller's is a no-op that reads as a pass.
+import app.core.humanizer as _hum_mod  # noqa: E402
+
+_dup_hum_master = ResumeModel(
+    contact=Contact(name="A", email="a@b.com"),
+    skills=["Python", "SQL", "Go"],
+    # A banned word is what makes the humanizer FIRE at all; without an issue to
+    # fix, `tailor_resume` never calls it and this check passes by never firing.
+    experience=[Experience(company="Acme", title="Eng", start_date="2020", end_date="2023",
+                           bullets=["Leveraged Python to build the API."])],
+)
+
+
+class _HumDupClient(_BloatClient):
+    """Answers TAILOR clean and HUMANIZE with repeats — the measured shape."""
+
+    def complete_json(self, system: str, user: str):
+        if system.startswith("Task: HUMANIZE."):
+            body = _dup_hum_master.model_dump()
+            body["skills"] = ["Python", "SQL", "python", "Go", "  Python  ", "Go"]
+            body["skill_groups"] = []
+            body["experience"][0]["bullets"] = ["Built the API in Python."]
+            return {"revised_resume": body}
+        if not system.startswith("Task: TAILOR."):
+            return self._inner.complete_json(system, user)
+        body = _dup_hum_master.model_dump()
+        body["skill_groups"] = []
+        return {"tailored_resume": body, "changelog": [], "covered_keywords": []}
+
+
+_hum_real = _hum_mod.get_llm_client
+_flat_mod.get_llm_client = lambda: _HumDupClient(_cap_real())
+_hum_mod.get_llm_client = lambda: _HumDupClient(_cap_real())
+try:
+    _humdup = tailor_resume(_dup_hum_master, _wide_jd)
+finally:
+    _flat_mod.get_llm_client, _hum_mod.get_llm_client = _cap_real, _hum_real
+_hs = _humdup.tailored_resume.skills
+check(
+    "tailor: a duplicate the HUMANIZER introduced does not ship either (the second door)",
+    len(_hs) == len({s.strip().casefold() for s in _hs}),
+    str(_hs),
+)
+check(
+    "tailor: …and the humanizer fixture really did run, or the check above proves nothing",
+    _humdup.voice_report.revised,
+    f"revised={_humdup.voice_report.revised} issues={len(_humdup.voice_report.issues)}",
+)
+
+# 4b-v. THE ORDER IS APPLIED ONLY IF IT COSTS NOTHING, and this is the check that
+# stops a Hebrew regression. `scorer._resume_text` joins skills with a SPACE and
+# `_keyword_present` tries the verbatim phrase FIRST, so a multi-word JD keyword
+# can match ACROSS the join between two adjacent entries — and Hebrew's ב/ל/ה/ו/מ/ש
+# prefixes mean the token fallback does not rescue it. Measured: the same set,
+# reordered, scores 100.0 then 50.0. So `tailor_resume` measures coverage and the
+# page count either side of the reorder and keeps the old order when the new one
+# is worse.
+_he_jd = _AtsJD(hard_skills=["פייתון מתקדם"], keywords=[])
+_he_master = ResumeModel(
+    contact=Contact(name="A", email="a@b.com"),
+    skills=["מתקדם"],
+    experience=[Experience(company="Acme", title="Eng", start_date="2020", end_date="2023",
+                           bullets=["בניתי מערכת."])],
+)
+
+
+class _HeClient(_BloatClient):
+    def complete_json(self, system: str, user: str):
+        if not system.startswith("Task: TAILOR."):
+            return self._inner.complete_json(system, user)
+        body = _he_master.model_dump()
+        # 'בפייתון' is NOT in the master, so `order_skills` wants to move it last
+        # -- which breaks the cross-join match and halves coverage.
+        body["skills"], body["skill_groups"] = ["בפייתון", "מתקדם"], []
+        return {"tailored_resume": body, "changelog": [], "covered_keywords": []}
+
+
+_flat_mod.get_llm_client = lambda: _HeClient(_cap_real())
+try:
+    _he = tailor_resume(_he_master, _he_jd)
+finally:
+    _flat_mod.get_llm_client = _cap_real
+check(
+    "tailor: a reorder that would COST keyword coverage is refused — Hebrew, the primary market",
+    _he.tailored_resume.skills == ["בפייתון", "מתקדם"],
+    str(_he.tailored_resume.skills),
+)
+check(
+    "tailor: …and the refusal is silent — no reorder is claimed in the changelog",
+    not any(c.section == "skills" and "Put your own wording first" in c.change
+            for c in _he.changelog),
+    str([c.change for c in _he.changelog if c.section == "skills"]),
+)
+
+check(
     "skills order: a list with nothing to move is returned UNTOUCHED, same object",
     _order_mod.order_skills(_all_own, _all_own) is _all_own
     and _order_mod.order_skills(_all_foreign, _all_own) is _all_foreign
@@ -525,9 +645,9 @@ check(
 # "counts the DRAFT it cut" check goes red. Nothing else needs to run for it.
 check(
     "tailor: a skills payload that is not a list of strings still fails VALIDATION, not the dedupe",
-    _flat_mod._dedupe_skills("Python, SQL") == "Python, SQL"
-    and _flat_mod._dedupe_skills(["Python", 7]) == ["Python", 7]
-    and _flat_mod._dedupe_skills(None) is None,
+    _skills_mod.dedupe_skills("Python, SQL") == "Python, SQL"
+    and _skills_mod.dedupe_skills(["Python", 7]) == ["Python", 7]
+    and _skills_mod.dedupe_skills(None) is None,
 )
 
 # 4c. THE POOLED CALLS STILL REPORT THEIR TOKENS.

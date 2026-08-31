@@ -37,9 +37,15 @@ THREE RULES, each avoiding a defect this codebase has already paid for once:
   defect `keyword_guard` exists to repair, so a trim able to cause it would be
   undoing the last release from the other side — and a carrier the guard just
   put back is protected by the very matcher that chose it.
-* **The model's own order survives.** The tailor is told to put the JD-relevant
-  entries first and it does that well; re-sorting by tier would throw away a
-  judgement it actually got right, and the ATS reads the first entries hardest.
+* **The model's own order survives the CUT** — `shortlist_skills` selects in
+  it and never re-sorts. What that order is not allowed to decide any more is
+  what leads the section: the rule used to read "the tailor is told to put the
+  JD-relevant entries first and it does that well", and a rendered page
+  falsified it — what it puts first is the AD's vocabulary, because a phrase
+  copied from the posting scores `covered` by construction. `order_skills`
+  partitions the selected list so the candidate's own wording leads. It keeps
+  every entry, so the other half of the old rule (the ATS reads the leading
+  entries hardest) costs nothing.
 
 IT MAY NEVER REACH THE MODEL OR THE NETWORK, like `keyword_guard` and
 `geo_restriction`, and like them that is source-pinned through the AST rather
@@ -102,11 +108,24 @@ def order_skills(resume: ResumeModel, original: ResumeModel) -> ResumeModel:
 
     A STABLE PARTITION, never a re-sort. The model's ranking survives inside
     each group, so this discards the least judgement of anything that fixes the
-    defect below, and the SET is untouched — which is the whole safety argument.
-    Coverage, `lost_keywords`, the fabrication flags and the page count are all
-    functions of the set, so none of them can move. Nothing downstream reads
-    skill ORDER (`length_budget._drop_unmatched_skill` picks by length and
-    match, not position), and this runs last regardless.
+    defect below.
+
+    IT IS NOT FREE, AND THE FIRST VERSION OF THIS DOCSTRING SAID IT WAS. "The set
+    is unchanged, so coverage and the page count cannot move" is wrong twice.
+    `scorer._resume_text` joins the skills with a SPACE and `_keyword_present`
+    tries the verbatim phrase first, so a multi-word JD keyword can match ACROSS
+    the join between two adjacent entries; in Hebrew the token fallback does not
+    rescue it, because ב/ל/ה/ו/מ/ש glue to the noun. Measured — same set,
+    reordered: `['בפייתון', 'מתקדם']` scores 100.0 against `פייתון מתקדם` and
+    `['מתקדם', 'בפייתון']` scores 50.0, in the primary market. And `_Chips._pack`
+    fills rows by WIDTH, so a reorder repacks the section and can change its
+    rendered height, after the page budget has already signed the CV off.
+
+    So the CALLER enforces what this cannot promise: `tailor_resume` measures
+    coverage and the page count either side and keeps the old order unless the
+    new one is free. Only `check_fabrication` is genuinely order-blind (it never
+    reads skills at all), and `length_budget._drop_unmatched_skill` picks by
+    length and match rather than position.
 
     WHY, MEASURED. `shortlist_skills` ranks an entry by whether the JD names it,
     so a phrase COPIED FROM THE AD scores `covered` by construction and outranks

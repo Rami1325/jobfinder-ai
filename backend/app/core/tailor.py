@@ -19,7 +19,8 @@ from app.core.keyword_guard import (
 )
 from app.core.lang import resume_language
 from app.core.length_budget import OVERFLOW_NOTE, fit_to_pages
-from app.core.scorer import score_resume
+from app.core.scorer import keyword_analysis, score_resume
+from app.core.skills import dedupe_skills
 from app.core.skills_shortlist import order_skills, shortlist_skills
 from app.core.voice_audit import audit_voice
 from app.llm.client import get_llm_client
@@ -34,56 +35,6 @@ from app.models import (
 from app.parsers.structurer import build_facts_ledger
 from app.render.pdf_renderer import page_count
 from app.render.templates import DEFAULT_TEMPLATE
-
-
-def _dedupe_skills(raw: object) -> object:
-    """Drop repeated entries from the model's flat skills list. First wins.
-
-    MEASURED on the shipped configuration: 3 of 12 real-key runs returned the
-    same entry twice — `AI agents`, `webhooks`, `Python` — and every one of them
-    shipped. `skills.skill_blocks` hands the flat list straight to both
-    renderers and `ResumeView` mirrors it, so a repeat is a chip drawn twice on
-    the page the user sends. `ResumeModel`'s union validator cannot catch it: it
-    dedupes what it ADDS from `skill_groups` and seeds `seen` FROM the flat
-    list, so a flat list handed in already carrying repeats is passed through
-    untouched.
-
-    It also breaks the cap. `shortlist_skills` counts `cap` against a SET of
-    kept strings and then emits `[s for s in resume.skills if s in keep]`, so a
-    duplicate buys a free slot — cap 30 shipped 31 and 32, under a changelog
-    line announcing the cut to "the 32 this job asks for".
-
-    HERE, beside the `skill_groups` strip, and NOT in a `model_validator` — the
-    reason the multi-skill splitter documents one door over: a validator runs on
-    every construction, i.e. every READ of every stored master, tracker résumé,
-    saved kit and version snapshot, and would rewrite all of them without any of
-    them being a write. This is the one place a raw TAILOR response becomes a
-    résumé.
-
-    IT MAY ONLY EVER REMOVE. The first occurrence keeps its position and the
-    model's own spelling: `shortlist_skills` selects in the model's order and
-    `order_skills` partitions that order without re-sorting inside it, so the
-    model's relative ranking is still carried all the way to the page and
-    dropping the FIRST copy instead of the second would move an entry the model
-    ranked. The key is stripped and casefolded because
-    `['Python', 'python', '  Python  ']` renders as three chips, not one.
-
-    Shape-guarded rather than coerced: a response whose `skills` is not a list
-    of strings is returned exactly as it arrived, so `ResumeModel.model_validate`
-    still reports it as the validation error it is instead of this function
-    dying on it first with a worse message.
-    """
-    if not isinstance(raw, list) or not all(isinstance(s, str) for s in raw):
-        return raw
-    out: list[str] = []
-    seen: set[str] = set()
-    for s in raw:
-        key = s.strip().casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(s)
-    return out
 
 
 def tailor_resume(
@@ -163,7 +114,7 @@ def tailor_resume(
     if raw_tailored.get("skill_groups") and raw_tailored.get("skills"):
         raw_tailored["skill_groups"] = []
     if "skills" in raw_tailored:
-        raw_tailored["skills"] = _dedupe_skills(raw_tailored["skills"])
+        raw_tailored["skills"] = dedupe_skills(raw_tailored["skills"])
     tailored = ResumeModel.model_validate(raw_tailored)
     changelog = [ChangeLogEntry.model_validate(c) for c in data.get("changelog", [])]
     covered = list(data.get("covered_keywords", []))
@@ -324,8 +275,13 @@ def tailor_resume(
         # its own — "orchestration patterns", "tool use", "unstructured data
         # processing" — that no master lists. Sampling those under "stay in your
         # master résumé" is the same class of false sentence as the two above.
-        own = {s.strip() for s in resume.skills}
-        recoverable = [s for s in dropped_noise if s.strip() in own]
+        # Casefolded, because `dedupe_skills` is: an entry the model
+        # returned as `python` against a master saying `Python` is the
+        # same skill, and comparing raw would silently drop it from the
+        # sample -- under-naming, never over-naming, but it can empty the
+        # sentence out entirely.
+        own = {s.strip().casefold() for s in resume.skills}
+        recoverable = [s for s in dropped_noise if s.strip().casefold() in own]
         # A COUNT AND A SAMPLE, never the whole list: the master's tail can run
         # to forty entries and a changelog paragraph naming all of them is not a
         # log, it is the section over again.
@@ -338,9 +294,14 @@ def tailor_resume(
                     "ranked by how well each matches this posting"
                 ),
                 reason=(
-                    f"The draft came back with {n_before} skills; a CV for one job is a "
+                    # NO SECOND COUNT HERE. `change` above states the pre-cut
+                    # number, which is the honest one; attributing it to what
+                    # "the draft came back with" was wrong by up to MAX_RESTORED,
+                    # since `fit_to_pages` removes skills and `preserve_keywords`
+                    # adds them between the response and this line.
+                    "A CV for one job is a "
                     "shortlist a recruiter reads in about three seconds. Nothing this "
-                    "posting names was dropped."
+                    "posting names outright was dropped."
                     + (
                         f" {sample}"
                         + (" and others" if len(recoverable) > 6 else "")
@@ -444,11 +405,54 @@ def tailor_resume(
     # PRESENTATION, LAST: the candidate's own words lead, the ad's follow. After
     # every stage that can change the SET, because ordering something that is
     # about to be trimmed would be describing a document that does not ship.
-    # A stable partition of the same entries — see `order_skills` for the
-    # measurement, and note that every counterweight this pipeline reports
-    # (coverage, lost keywords, fabrication flags, pages) is a function of the
-    # set and therefore provably unmoved.
-    tailored = order_skills(tailored, resume)
+    #
+    # APPLIED ONLY IF IT COSTS NOTHING, and that gate is not belt-and-braces —
+    # it replaces a claim that was FALSE. "The set is unchanged, so coverage and
+    # the page count cannot move" is wrong twice over. `scorer._resume_text`
+    # joins the skills with a SPACE and `_keyword_present` tries the verbatim
+    # phrase first, so a multi-word JD keyword can match ACROSS the join between
+    # two adjacent entries — and in Hebrew the token fallback does not rescue it,
+    # because ב/ל/ה/ו/מ/ש glue to the noun. Measured, same set, reordered:
+    # `['בפייתון', 'מתקדם']` scores 100.0 against `פייתון מתקדם` and
+    # `['מתקדם', 'בפייתון']` scores 50.0. In the primary market. And `_Chips._pack`
+    # fills rows by WIDTH, so a reorder repacks the section and can change its
+    # rendered height — after the page budget has already signed the CV off.
+    #
+    # So the guarantee is ENFORCED rather than argued: measure both, keep the new
+    # order only when coverage has not fallen and the CV has not grown, and
+    # otherwise leave the document exactly as it was. Same acceptance-gate shape
+    # as the humanizer's, one stage down.
+    _pre_order = tailored
+    _candidate = order_skills(tailored, resume)
+    if _candidate is not tailored:
+        _cov_before, _ = keyword_analysis(tailored, jd)
+        _cov_after, _ = keyword_analysis(_candidate, jd)
+        if _cov_after >= _cov_before and page_count(_candidate, template) <= page_count(
+            tailored, template
+        ):
+            tailored = _candidate
+    if tailored is not _pre_order:
+        # SAY SO, because the MODEL already said the opposite. It writes its own
+        # skills changelog entry — "Reordered skills to surface Python,
+        # automation tools, AI utilities, validation, logs, traceability … first"
+        # was a real one — and this pass then moves exactly those to the end. Its
+        # sentence is not deleted (identifying it means matching free text, which
+        # would break the first time the wording drifted); it is ANSWERED, by a
+        # later entry that describes the order actually on the page. Emitted only
+        # when something moved: `order_skills` returns the same object when it
+        # had nothing to say, so the gate is identity, like every other guard
+        # here.
+        changelog.append(
+            ChangeLogEntry(
+                section="skills",
+                change="Put your own wording first and the job ad's phrasing after it",
+                reason="Nothing was added or removed — only the order. The job's own "
+                "phrases score as relevant because they came from the posting, so they "
+                "were crowding out the tools you actually named. A reader sees your "
+                "stack first; the posting's wording is still there, further down, where "
+                "keyword matching reads it just the same.",
+            )
+        )
 
     # BOTH LISTS ARE MEASURED HERE, after every stage that can change what the CV
     # says has finished. `restored` is "was lost before the restore and is at
