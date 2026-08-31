@@ -344,6 +344,137 @@ check(
             for c in _capped.changelog),
     str([c.change for c in _capped.changelog if c.section == "skills"]),
 )
+# THE CHANGELOG MAY NOT DESCRIBE A DOCUMENT THAT DOES NOT EXIST. Two sentences
+# in this entry were false on a rendered CV: it announced the cut as "to the 30
+# this job asks for" while the app's OWN `ats_scan` said 19 of those 30 are not
+# mentioned by the posting, and it opened "Your master résumé lists 75 skills"
+# with a number that is what the MODEL returned (it over-produces on purpose)
+# against a 66-entry master. Pinned on the two claims, not on the wording:
+# the count named must be the pre-cut list, and the entries named as still being
+# in the master must actually BE in it.
+_cap_entry = next(c for c in _capped.changelog
+                  if c.section == "skills" and c.change.startswith("Cut the skills list"))
+check(
+    "tailor: the skills changelog counts the DRAFT it cut, not the master",
+    f"{len(_bloat_master.skills)} to {len(_capped.tailored_resume.skills)}" in _cap_entry.change
+    and "master résumé lists" not in _cap_entry.reason,
+    _cap_entry.change,
+)
+# THE SECOND CLAIM NEEDS ITS OWN FIXTURE, and finding that out is the reason
+# this comment is here. Written against `_bloat_master` the check passed by
+# never firing: `_BloatClient` answers TAILOR with the master ITSELF, so every
+# dropped entry is a master entry by construction and no sample could ever be
+# wrong. Probed by making the code name model-invented entries — the defect it
+# exists for — and it stayed green.
+#
+# The real case is a model that writes entries of its own ("orchestration
+# patterns", "tool use") and has SOME of them fall outside the cap alongside
+# some of the candidate's. The tail is alternated deliberately: a response that
+# ends in a solid run of minted entries drops only those, leaves the sample
+# empty, and the check passes vacuously again.
+_mint_master = ResumeModel(
+    contact=Contact(name="A", email="a@b.com"),
+    skills=["Python", "SQL", "REST APIs"] + [f"Real{i}" for i in range(20)],
+    experience=[Experience(company="Acme", title="Eng", start_date="2020", end_date="2023",
+                           bullets=["Built the API in Python."])],
+)
+_mint_response = (
+    ["Python", "SQL", "REST APIs"]
+    + [f"Real{i}" for i in range(5)]
+    + [x for i in range(15) for x in (f"Minted{i}", f"Real{5 + i}")]
+)
+
+
+class _MintClient(_BloatClient):
+    def complete_json(self, system: str, user: str):
+        if not system.startswith("Task: TAILOR."):
+            return self._inner.complete_json(system, user)
+        body = _mint_master.model_dump()
+        body["skills"], body["skill_groups"] = list(_mint_response), []
+        return {"tailored_resume": body, "changelog": [], "covered_keywords": []}
+
+
+_flat_mod.get_llm_client = lambda: _MintClient(_cap_real())
+try:
+    _minted = tailor_resume(_mint_master, _wide_jd)
+finally:
+    _flat_mod.get_llm_client = _cap_real
+_mint_entry = next(c for c in _minted.changelog
+                   if c.section == "skills" and c.change.startswith("Cut the skills list"))
+_mint_named = [
+    n.strip()
+    for n in _mint_entry.reason.split("posting names was dropped.")[-1]
+    .replace(" and others", "").replace(" stay in your master résumé.", "").split(",")
+    if n.strip()
+]
+check(
+    "tailor: the changelog's 'stay in your master résumé' sample names ONLY master entries",
+    _mint_named and all(n in {s.strip() for s in _mint_master.skills} for n in _mint_named),
+    f"named {_mint_named}",
+)
+check(
+    "tailor: …and the fixture can actually catch it — the cut DID drop minted entries too",
+    any(s.startswith("Minted") for s in _mint_response
+        if s not in set(_minted.tailored_resume.skills)),
+    str([s for s in _mint_response if s not in set(_minted.tailored_resume.skills)]),
+)
+
+# 4b-ii. A SKILL MAY NOT BE DRAWN TWICE, AND A DUPLICATE MAY NOT BUY A CAP SLOT.
+# Measured on the shipped config: 3 of 12 real-key runs returned the same entry
+# twice and every one shipped it — `skill_blocks` hands the flat list straight to
+# both renderers, so it is a chip drawn twice on the page the user sends.
+# `ResumeModel`'s union validator cannot see it (it seeds `seen` FROM the flat
+# list), and `shortlist_skills` counts the cap against a SET while emitting a
+# LIST, so cap 30 shipped 31 and 32.
+#
+# DRIVEN, for the `_BloatClient` reason above: a check that called
+# `_dedupe_skills` directly would still pass with the call site deleted.
+_dup_master = ResumeModel(
+    contact=Contact(name="A", email="a@b.com"),
+    # `python` and `  Python  ` are the same chip on the page; the cap counts
+    # them as three. Interleaved, so first-wins ORDER is pinned too.
+    skills=["Python", "SQL", "python", "REST APIs", "  Python  ", "Go"],
+    experience=[Experience(company="Acme", title="Eng", start_date="2020", end_date="2023",
+                           bullets=["Built the API in Python."])],
+)
+
+
+class _DupClient(_BloatClient):
+    def complete_json(self, system: str, user: str):
+        if not system.startswith("Task: TAILOR."):
+            return self._inner.complete_json(system, user)
+        body = _dup_master.model_dump()
+        body["skill_groups"] = []
+        return {"tailored_resume": body, "changelog": [], "covered_keywords": []}
+
+
+_flat_mod.get_llm_client = lambda: _DupClient(_cap_real())
+try:
+    _deduped = tailor_resume(_dup_master, _wide_jd)
+finally:
+    _flat_mod.get_llm_client = _cap_real
+_dshipped = _deduped.tailored_resume.skills
+check(
+    "tailor: a duplicated skill is drawn once — case and padding included",
+    len(_dshipped) == len({s.strip().casefold() for s in _dshipped}),
+    str(_dshipped),
+)
+check(
+    "tailor: the dedupe only ever REMOVES — first occurrence keeps its place and spelling",
+    _dshipped == ["Python", "SQL", "REST APIs", "Go"],
+    str(_dshipped),
+)
+# THE FALSE-POSITIVE HALF is the check above this block, and it is load-bearing:
+# "no duplicates" is trivially satisfied by mangling every list. `_bloat_master`
+# has 53 DISTINCT entries, so the changelog's pre-cut count must still read 53 —
+# if the dedupe ever removed from a clean list, that number would fall and the
+# "counts the DRAFT it cut" check goes red. Nothing else needs to run for it.
+check(
+    "tailor: a skills payload that is not a list of strings still fails VALIDATION, not the dedupe",
+    _flat_mod._dedupe_skills("Python, SQL") == "Python, SQL"
+    and _flat_mod._dedupe_skills(["Python", 7]) == ["Python", 7]
+    and _flat_mod._dedupe_skills(None) is None,
+)
 
 # 4c. THE POOLED CALLS STILL REPORT THEIR TOKENS.
 # `tailor_resume` runs two pairs of LLM calls concurrently (score_before ∥

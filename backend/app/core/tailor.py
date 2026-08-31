@@ -36,6 +36,54 @@ from app.render.pdf_renderer import page_count
 from app.render.templates import DEFAULT_TEMPLATE
 
 
+def _dedupe_skills(raw: object) -> object:
+    """Drop repeated entries from the model's flat skills list. First wins.
+
+    MEASURED on the shipped configuration: 3 of 12 real-key runs returned the
+    same entry twice — `AI agents`, `webhooks`, `Python` — and every one of them
+    shipped. `skills.skill_blocks` hands the flat list straight to both
+    renderers and `ResumeView` mirrors it, so a repeat is a chip drawn twice on
+    the page the user sends. `ResumeModel`'s union validator cannot catch it: it
+    dedupes what it ADDS from `skill_groups` and seeds `seen` FROM the flat
+    list, so a flat list handed in already carrying repeats is passed through
+    untouched.
+
+    It also breaks the cap. `shortlist_skills` counts `cap` against a SET of
+    kept strings and then emits `[s for s in resume.skills if s in keep]`, so a
+    duplicate buys a free slot — cap 30 shipped 31 and 32, under a changelog
+    line announcing the cut to "the 32 this job asks for".
+
+    HERE, beside the `skill_groups` strip, and NOT in a `model_validator` — the
+    reason the multi-skill splitter documents one door over: a validator runs on
+    every construction, i.e. every READ of every stored master, tracker résumé,
+    saved kit and version snapshot, and would rewrite all of them without any of
+    them being a write. This is the one place a raw TAILOR response becomes a
+    résumé.
+
+    IT MAY ONLY EVER REMOVE. The first occurrence keeps its position and the
+    model's own spelling, because that ORDER is load-bearing downstream — the
+    ATS reads the leading entries hardest, and `shortlist_skills` preserves the
+    model's ranking deliberately. The key is stripped and casefolded because
+    `['Python', 'python', '  Python  ']` renders as three chips, not one.
+
+    Shape-guarded rather than coerced: a response whose `skills` is not a list
+    of strings is returned exactly as it arrived, so `ResumeModel.model_validate`
+    still reports it as the validation error it is instead of this function
+    dying on it first with a worse message.
+    """
+    if not isinstance(raw, list) or not all(isinstance(s, str) for s in raw):
+        return raw
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in raw:
+        key = s.strip().casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
 def tailor_resume(
     resume: ResumeModel,
     jd: JDModel,
@@ -112,6 +160,8 @@ def tailor_resume(
     raw_tailored = dict(data.get("tailored_resume") or resume.model_dump())
     if raw_tailored.get("skill_groups") and raw_tailored.get("skills"):
         raw_tailored["skill_groups"] = []
+    if "skills" in raw_tailored:
+        raw_tailored["skills"] = _dedupe_skills(raw_tailored["skills"])
     tailored = ResumeModel.model_validate(raw_tailored)
     changelog = [ChangeLogEntry.model_validate(c) for c in data.get("changelog", [])]
     covered = list(data.get("covered_keywords", []))
@@ -252,20 +302,51 @@ def tailor_resume(
         tailored, jd, settings.resume_max_skills, protected=frozenset(restored_entries())
     )
     if dropped_noise:
+        # THREE CLAIMS, AND TWO OF THEM WERE FALSE. Read off a rendered CV:
+        #
+        #   "Cut the skills list to the 30 this job asks for" — the cap keeps
+        #   the top N by relevance, and most of them are NOT named by the job.
+        #   The app's own `ats_scan` said so about the same document, in the
+        #   same session: "19 of 30 entries are not mentioned by this posting."
+        #
+        #   "Your master résumé lists 75 skills" — 75 is what the MODEL
+        #   returned, and it over-produces on purpose (the master lists 66).
+        #   The sentence named the wrong document.
+        #
+        # The third — "nothing this posting names was dropped" — is true, and
+        # `shortlist_skills` is what makes it true: a `covered` entry is never
+        # dropped, cap or no cap.
+        n_before = len(dropped_noise) + len(tailored.skills)
+        # NAME ONLY WHAT IS ACTUALLY IN THE MASTER. `dropped_noise` is the
+        # model's list minus what the cap kept, and the model writes entries of
+        # its own — "orchestration patterns", "tool use", "unstructured data
+        # processing" — that no master lists. Sampling those under "stay in your
+        # master résumé" is the same class of false sentence as the two above.
+        own = {s.strip() for s in resume.skills}
+        recoverable = [s for s in dropped_noise if s.strip() in own]
+        # A COUNT AND A SAMPLE, never the whole list: the master's tail can run
+        # to forty entries and a changelog paragraph naming all of them is not a
+        # log, it is the section over again.
+        sample = ", ".join(recoverable[:6])
         changelog.append(
             ChangeLogEntry(
                 section="skills",
-                # A COUNT AND A SAMPLE, never the whole list: the master's tail
-                # can run to forty entries and a changelog paragraph naming all
-                # of them is not a log, it is the section over again.
-                change=f"Cut the skills list to the {len(tailored.skills)} this job asks for",
-                reason="Your master résumé lists "
-                + str(len(dropped_noise) + len(tailored.skills))
-                + " skills; a CV for one job is a shortlist a recruiter reads in about "
-                "three seconds. Nothing this posting names was dropped — "
-                + ", ".join(dropped_noise[:6])
-                + (" and others" if len(dropped_noise) > 6 else "")
-                + " stay in your master résumé.",
+                change=(
+                    f"Cut the skills list from {n_before} to {len(tailored.skills)}, "
+                    "ranked by how well each matches this posting"
+                ),
+                reason=(
+                    f"The draft came back with {n_before} skills; a CV for one job is a "
+                    "shortlist a recruiter reads in about three seconds. Nothing this "
+                    "posting names was dropped."
+                    + (
+                        f" {sample}"
+                        + (" and others" if len(recoverable) > 6 else "")
+                        + " stay in your master résumé."
+                        if sample
+                        else ""
+                    )
+                ),
             )
         )
 
