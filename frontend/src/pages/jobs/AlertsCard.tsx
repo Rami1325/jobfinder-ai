@@ -13,6 +13,7 @@ import {
   inputCls,
   LOCATION_PRESETS,
   MAX_AGE_OPTIONS,
+  MIN_SCORE_OPTIONS,
   SOURCE_IDS,
   sourceLabel,
   WORK_MODES,
@@ -264,6 +265,10 @@ export function AlertsCard({
   const [email, setEmail] = useState("");
   const [enabled, setEnabled] = useState(false);
   const [nudges, setNudges] = useState(false);
+  // The fit bar. Seeded from the server (which owns the default), so an older
+  // backend that doesn't send it leaves the picker at "any fit" and the PUT
+  // below omits it — never inventing a bar the server hasn't got.
+  const [minScore, setMinScore] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   // Alert-specific customized search (independent of the search card's panel).
@@ -278,6 +283,7 @@ export function AlertsCard({
         setEmail(s.email);
         setEnabled(s.enabled);
         setNudges(!!s.nudge_emails);
+        if (typeof s.min_score === "number") setMinScore(s.min_score);
         if (s.context) {
           // A saved context means the alert was customized — show it as such.
           setCtx(s.context);
@@ -295,6 +301,7 @@ export function AlertsCard({
   const unsaved =
     email.trim() !== settings.email ||
     nudges !== !!settings.nudge_emails ||
+    (minScore !== null && minScore !== settings.min_score) ||
     contextKey(customOpen ? ctx : null) !== contextKey(settings.context);
 
   function toggleCustomize(checked: boolean) {
@@ -331,10 +338,12 @@ export function AlertsCard({
         email,
         context: customOpen ? ctx : null,
         nudge_emails: nextNudges,
+        ...(minScore === null ? {} : { min_score: minScore }),
       });
       setSettings(s);
       setEnabled(s.enabled);
       setNudges(!!s.nudge_emails);
+      if (typeof s.min_score === "number") setMinScore(s.min_score);
       if (s.context) setCtx(s.context); // server echo — canonical field set
       toast("success", t("alerts.saved"));
       return s;
@@ -356,9 +365,13 @@ export function AlertsCard({
       if (r.error) {
         toast("error", t("alerts.runError", { error: r.error }));
       } else {
+        const bar = minScore ?? settings?.min_score ?? 0;
         toast(
           "success",
           t("alerts.runResult", { total: r.total, count: r.new_count }) +
+            (bar > 0 && typeof r.above_min === "number"
+              ? t("alerts.runAboveMin", { n: r.above_min, bar })
+              : "") +
             (r.emailed ? t("alerts.runEmailed", { email }) : ""),
         );
       }
@@ -424,6 +437,28 @@ export function AlertsCard({
         )}
       </div>
 
+      {/* The fit bar. Its own row rather than a sixth control in the row above:
+          at 390px that row already wraps to three lines, and this is a sentence
+          about the email rather than another toggle. */}
+      <div className="mt-4">
+        <label className="flex max-w-xs flex-col gap-1 text-xs font-semibold text-ink-muted">
+          {t("alerts.minScore")}
+          <select
+            value={minScore ?? 0}
+            disabled={saving}
+            onChange={(e) => setMinScore(Number(e.target.value))}
+            className={inputCls}
+          >
+            {MIN_SCORE_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n === 0 ? t("alerts.minScoreAny") : t("alerts.minScoreOption", { n })}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="mt-1 text-xs text-ink-faint">{t("alerts.minScoreHint")}</p>
+      </div>
+
       <label className="mt-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-ink">
         <input
           type="checkbox"
@@ -447,10 +482,21 @@ export function AlertsCard({
         {unsaved && <p className="text-warn">{t("alerts.unsaved")}</p>}
         {settings.last_run_at && (
           <p>
-            {t("alerts.lastRun", {
-              date: settings.last_run_at.slice(0, 10),
-              count: settings.last_new_count,
-            })}
+            {/* The bar line only for a run that actually measured against one.
+                `last_above_min == null` is a run from before the bar existed —
+                unknown, not zero — and claiming "0 above your 75% bar" about a
+                morning that had no bar is the row-predates-the-field lie. */}
+            {(settings.min_score ?? 0) > 0 && settings.last_above_min != null
+              ? t("alerts.lastRunBar", {
+                  date: settings.last_run_at.slice(0, 10),
+                  count: settings.last_new_count,
+                  n: settings.last_above_min,
+                  bar: settings.min_score,
+                })
+              : t("alerts.lastRun", {
+                  date: settings.last_run_at.slice(0, 10),
+                  count: settings.last_new_count,
+                })}
           </p>
         )}
         {settings.last_error && <p className="text-danger">{settings.last_error}</p>}

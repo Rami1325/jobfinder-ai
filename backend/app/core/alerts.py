@@ -12,6 +12,20 @@ iterates every enabled row (`run_all_alerts`). `run_alert` takes the search
 function as a parameter so the offline smoke test can exercise the whole flow
 (diffing, recording, settings bookkeeping) with a canned search result — no
 network, no LLM.
+
+NEW SINCE THE FIT BAR: "new" is necessary but no longer sufficient. A search
+returns up to 25 postings ranked by fit and the alert used to email every unseen
+one of them, so a good morning arrived as twenty jobs of which two were worth
+opening — the daily mail read as noise and stopped being read. `JobAlert.min_score`
+(default 75, 0 = everything) is the bar, and `above_min` applies it to the
+already-diffed list.
+
+The bar filters the EMAIL, never the history: `record_search_hits` still records
+every match. Two reasons, and both matter. History is what the app's History tab
+shows and what `load_score_cache` reads, so skipping the below-bar rows would
+make every daily cron re-score them from scratch — the cache exists precisely to
+stop that. And a posting hidden from the inbox is still one the user can find in
+the app; a posting missing from history is one we deliberately lost.
 """
 from __future__ import annotations
 
@@ -37,6 +51,13 @@ from app.models import (
 )
 
 
+# Default fit bar for a new (or never-configured) alert. 75 is not a new opinion:
+# it is `KIT_DEFAULT_THRESHOLD` in frontend/src/pages/jobs/kits.tsx, the bar the
+# batch-tailor card already offers for "worth applying to", so the daily email and
+# the batch queue agree about which jobs clear it.
+DEFAULT_MIN_SCORE = 75
+
+
 def get_alert(db: Session, user_id: int) -> JobAlert:
     """The user's settings row, created on first access."""
     row = db.execute(
@@ -58,15 +79,55 @@ def update_alert(
     email: str,
     context: SearchContext | None,
     nudge_emails: bool = False,
+    min_score: int | None = None,
 ) -> JobAlert:
+    """`min_score=None` leaves the fit bar alone — see AlertSettingsIn for why
+    that one field is not a full replace like the others."""
     row = get_alert(db, user_id)
     row.enabled = enabled
     row.email = email.strip()
     row.context_json = context.model_dump_json() if context else ""
     row.nudge_emails = nudge_emails
+    if min_score is not None:
+        row.min_score = max(0, min(100, int(min_score)))
     db.commit()
     db.refresh(row)
     return row
+
+
+def alert_min_score(row: JobAlert) -> int:
+    """The row's fit bar, clamped, with the DEFAULT as the fallback.
+
+    The ADD COLUMN shim backfills existing rows with 75, so a NULL here is not
+    expected — the guard is for the paths that could still produce one (a row
+    written straight to the DB, a column added by an earlier partial deploy
+    without a default). What is deliberate is WHICH way it falls: to the default,
+    never to 0. Falling back to 0 turns the bar off, and it would do so for
+    exactly the rows that never got a chance to set one — a filter silently
+    disabling itself on the rows it knows least about."""
+    raw = getattr(row, "min_score", None)
+    if raw is None:
+        return DEFAULT_MIN_SCORE
+    return max(0, min(100, int(raw)))
+
+
+def above_min(matches: list[JobMatch], min_score: int) -> list[JobMatch]:
+    """The subset of `matches` worth an email: fit at or above the bar. Pure —
+    smoke-pinned, in BOTH directions (a bar that drops everything is trivially
+    "only high-match jobs").
+
+    Compared on `round(m.overall)`, which is the number the email prints and the
+    number the app's fit ring shows — not on the raw float. A posting at 74.6
+    renders as "75% fit" everywhere the user can see it, so dropping it from a
+    75%-bar email would have the History tab contradicting the email footer about
+    the same job. One matcher, one answer, applied to the displayed value.
+
+    `overall` is the blend the search ranks by and both email bodies print, so
+    the bar is stated in the same currency the user is already reading.
+    """
+    if min_score <= 0:
+        return list(matches)
+    return [m for m in matches if round(m.overall) >= min_score]
 
 
 def alert_context(row: JobAlert) -> SearchContext | None:
@@ -93,8 +154,31 @@ def split_new_matches(db: Session, matches: list[JobMatch], user_id: int) -> lis
     return [m for m in matches if m.url and m.url not in seen]
 
 
-def build_alert_email(new: list[JobMatch], ctx: SearchContext) -> tuple[str, str]:
-    """(subject, plain-text body) for an alert email. Pure — smoke-pinned."""
+def _bar_note(min_score: int) -> str:
+    """One sentence naming the bar, or "" when there isn't one.
+
+    States the RULE, never a held-back count. The geo work settled this for the
+    alert email already: "a number you cannot tap to reveal is a dead end in an
+    inbox". "9 more were below your bar" is exactly that — it invites a question
+    the email cannot answer. The rule is different: it explains why the list is
+    short and says where to change it, and the postings themselves are one tap
+    away in the app either way.
+    """
+    if min_score <= 0:
+        return ""
+    return f"Only jobs at {min_score}% fit or above — the rest are in your search history."
+
+
+def build_alert_email(
+    new: list[JobMatch], ctx: SearchContext, min_score: int = 0
+) -> tuple[str, str]:
+    """(subject, plain-text body) for an alert email. Pure — smoke-pinned.
+
+    `new` is already filtered by the caller (`run_alert`), so every count here
+    describes what the reader can actually see; `min_score` only names the bar in
+    the footer. Keeping the filter OUT of the builders is what lets both bodies
+    stay pure functions of the list they render.
+    """
     where = f" in {ctx.location}" if ctx.location.strip() else ""
     subject = f"JobFinder: {len(new)} new job{'s' if len(new) != 1 else ''} for {ctx.job_title}{where}"
     lines = [
@@ -114,7 +198,10 @@ def build_alert_email(new: list[JobMatch], ctx: SearchContext) -> tuple[str, str
         lines.append("• " + " ".join(bits))
         if m.url:
             lines.append(f"  {m.url}")
-    lines += ["", "Sent by your JobFinder job alert. Manage it on the Jobs page."]
+    lines += [""]
+    if note := _bar_note(min_score):
+        lines += [note]
+    lines += ["Sent by your JobFinder job alert. Manage it on the Jobs page."]
     return subject, "\n".join(lines)
 
 
@@ -233,16 +320,25 @@ def _job_card_html(m: JobMatch) -> str:
 <div style="height:12px;line-height:12px;">&nbsp;</div>"""
 
 
-def build_alert_email_html(new: list[JobMatch], ctx: SearchContext, app_url: str = "") -> str:
+def build_alert_email_html(
+    new: list[JobMatch], ctx: SearchContext, app_url: str = "", min_score: int = 0
+) -> str:
     """HTML alternative for the alert email, themed like the app's dark UI.
     Pure — smoke-pinned. Inline styles + tables only (email-client-safe);
-    every dynamic string is escaped; Hebrew titles get dir="auto"."""
+    every dynamic string is escaped; Hebrew titles get dir="auto".
+
+    Like the plain-text twin, `new` arrives already filtered and `min_score` only
+    names the bar in the footer."""
     esc = html_lib.escape
     where = f" in {ctx.location}" if ctx.location.strip() else ""
     n = len(new)
     headline = f"{n} new job{'s' if n != 1 else ''}"
     search_desc = esc(f"{ctx.job_title}{where}")
     cards = "".join(_job_card_html(m) for m in new)
+    bar = _bar_note(min_score)
+    bar_row = (
+        f'<div style="padding-bottom:6px;">{esc(bar)}</div>' if bar else ""
+    )
     manage = (
         f' &#183; <a href="{esc(app_url.rstrip("/"), quote=True)}/jobs" '
         f'style="color:{_EM["accent_soft"]};text-decoration:none;">Manage alerts</a>'
@@ -286,7 +382,7 @@ def build_alert_email_html(new: list[JobMatch], ctx: SearchContext, app_url: str
         <tr><td>{cards}</td></tr>
         <tr>
           <td align="center" style="padding:10px 4px 0;color:{_EM['faint']};font:12px {_EM_FONT};">
-            Sent by your JobFinder job alert{manage}
+            {bar_row}Sent by your JobFinder job alert{manage}
           </td>
         </tr>
       </table>
@@ -350,11 +446,22 @@ def run_alert(
         db.commit()
         return AlertRunResult(user_id=user_id, ran=True, error=row.last_error)
 
+    # The bar, applied AFTER record_search_hits above: below-bar postings are
+    # kept out of the inbox and kept in the history the app reads and the score
+    # cache reuses. `new` stays the diff's answer ("never seen before") and
+    # `worth` is the email's ("...and worth your morning") — two questions, two
+    # numbers, because a run that finds 12 and emails 3 must not look like a run
+    # that found 3.
+    min_score = alert_min_score(row)
+    worth = above_min(new, min_score)
+
     emailed = False
     email_error = ""
-    if new and row.email and mailer.smtp_configured():
-        subject, body = build_alert_email(new, result.context)
-        html = build_alert_email_html(new, result.context, app_url=get_settings().app_base_url)
+    if worth and row.email and mailer.smtp_configured():
+        subject, body = build_alert_email(worth, result.context, min_score)
+        html = build_alert_email_html(
+            worth, result.context, app_url=get_settings().app_base_url, min_score=min_score
+        )
         try:
             mailer.send_email(row.email, subject, body, html=html)
             emailed = True
@@ -363,6 +470,7 @@ def run_alert(
 
     row.last_run_at = datetime.now(timezone.utc)
     row.last_new_count = len(new)
+    row.last_above_min = len(worth)
     row.last_error = email_error
     db.commit()
     return AlertRunResult(
@@ -370,6 +478,7 @@ def run_alert(
         ran=True,
         total=len(result.matches),
         new_count=len(new),
+        above_min=len(worth),
         emailed=emailed,
         error=email_error,
     )

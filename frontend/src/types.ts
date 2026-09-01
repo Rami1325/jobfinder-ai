@@ -416,11 +416,20 @@ export interface AlertSettings {
   last_error: string;
   smtp_configured: boolean;
   nudge_emails?: boolean; // PLAN 11.4 follow-up reminders; absent on older backends
+  // Minimum fit a new posting needs to reach the inbox (0 = email everything).
+  // Below-bar jobs are still recorded in search history — hidden from the
+  // mail, not from the app.
+  min_score?: number;
+  // Of last_new_count, how many cleared the bar. null/absent = the last run
+  // predates the bar and never measured it — NOT the same as 0, which means it
+  // measured and nothing cleared. Render the pre-bar line for null.
+  last_above_min?: number | null;
 }
 export interface AlertRunResult {
   ran: boolean;
   total: number;
   new_count: number;
+  above_min?: number; // of new_count, how many cleared the fit bar
   emailed: boolean;
   error: string;
 }

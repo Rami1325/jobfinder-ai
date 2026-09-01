@@ -262,6 +262,27 @@ class JobAlert(Base):
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     last_new_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str] = mapped_column(Text, default="")
+    # The fit bar: a new posting is emailed only when its ROUNDED overall fit is
+    # at least this (0 = email every new posting, the pre-bar behaviour). The
+    # alert used to email everything the search returned, which on a good day is
+    # 20 postings most of which the user would never open. Below-bar postings are
+    # still RECORDED in history (see alerts.run_alert) — they are hidden from the
+    # inbox, not from the app. Existing rows pick 75 up from the ADD COLUMN
+    # DEFAULT, so this DOES change behaviour on deploy: that is the point, and
+    # the card states the bar and lets it be changed or turned off.
+    min_score: Mapped[int] = mapped_column(Integer, default=75)
+    # Of `last_new_count`, how many cleared `min_score` — i.e. what the email
+    # carried. Stored because without it the card says "12 new" on a morning
+    # that sent no email, which reads as a broken alert.
+    #
+    # NULLABLE with no default, deliberately: a run that happened before the bar
+    # existed never measured this, and a row that predates the field means
+    # UNKNOWN, never zero. With `default=0` the ADD COLUMN shim backfills every
+    # historical row with 0 and the card asserts "6 new jobs, 0 above your 75%
+    # bar" about a morning that had no bar — seen on the real page, which is why
+    # this is nullable. 0 stays a legitimate stored value ("6 new, none cleared
+    # it"), so the two must not share a representation.
+    last_above_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     # PLAN 11.4 — stale-application nudge emails. Opt-in lives here because the
     # row already holds the recipient address; independent of `enabled`.
     nudge_emails: Mapped[bool] = mapped_column(Boolean, default=False)

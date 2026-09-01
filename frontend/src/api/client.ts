@@ -419,6 +419,9 @@ export async function updateJobAlert(payload: {
   email: string;
   context?: SearchContext | null;
   nudge_emails?: boolean;
+  // Omitting this leaves the server's stored bar alone (see AlertSettingsIn) —
+  // only send it when the user actually picked a value.
+  min_score?: number;
 }): Promise<AlertSettings> {
   const { data } = await api.put<AlertSettings>("/jobs/alerts", payload);
   invalidateData("alert");

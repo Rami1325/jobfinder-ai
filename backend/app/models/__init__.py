@@ -379,6 +379,14 @@ class AlertSettingsIn(BaseModel):
     email: str = ""
     context: Optional["SearchContext"] = None  # None = derive from the résumé
     nudge_emails: bool = False  # PLAN 11.4: email follow-up reminders too
+    # Minimum ROUNDED fit (0-100) a new posting needs to reach the inbox; 0
+    # emails everything. Optional, and None means LEAVE UNCHANGED rather than
+    # "reset to the default" — every other field on this model is a full
+    # replace, but a tab left open across a deploy PUTs the old field set, and
+    # for this one field the failure that causes is the exact complaint the bar
+    # exists to fix: a user who chose 90 silently drops back to 75 and starts
+    # getting mail again. A new client always sends it, including 0.
+    min_score: Optional[int] = None
 
 
 class AlertSettingsOut(BaseModel):
@@ -390,6 +398,11 @@ class AlertSettingsOut(BaseModel):
     last_error: str = ""
     smtp_configured: bool = False  # False => runs won't email; UI explains
     nudge_emails: bool = False
+    min_score: int = 0  # the fit bar in force; 0 = email every new posting
+    # Of last_new_count, how many cleared the bar. None = the last run predates
+    # the bar and never measured it — which is NOT the same as 0 ("it measured,
+    # and none cleared"). The card renders its pre-bar line for None.
+    last_above_min: Optional[int] = None
 
 
 class AlertRunResult(BaseModel):
@@ -401,6 +414,11 @@ class AlertRunResult(BaseModel):
     ran: bool = False
     total: int = 0  # jobs the search returned
     new_count: int = 0  # of those, never seen in history before
+    # Of `new_count`, how many cleared the alert's fit bar — the postings the
+    # email actually carried. The two are reported separately on purpose: a run
+    # that finds 12 new jobs and emails 3 is working correctly, and collapsing
+    # them into one number makes that indistinguishable from a broken search.
+    above_min: int = 0
     emailed: bool = False
     error: str = ""
 

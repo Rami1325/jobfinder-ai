@@ -721,6 +721,8 @@ def _alert_out(row) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert ORM row
         last_error=row.last_error or "",
         smtp_configured=smtp_configured(),
         nudge_emails=bool(row.nudge_emails),
+        min_score=alerts_core.alert_min_score(row),
+        last_above_min=row.last_above_min,  # `or 0` would erase the unknown/zero split
     )
 
 
@@ -746,6 +748,7 @@ def update_job_alert(
         email=body.email,
         context=body.context,
         nudge_emails=body.nudge_emails,
+        min_score=body.min_score,
     )
     return _alert_out(row)
 

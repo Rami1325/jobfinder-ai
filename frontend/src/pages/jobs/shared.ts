@@ -15,6 +15,14 @@ export const WORK_MODES = ["any", "remote", "onsite", "hybrid"] as const;
 // ctx without max_age_days (older saved contexts) behaves like "Month".
 export const MAX_AGE_OPTIONS = [1, 3, 7, 14, 30, 0] as const;
 
+// The email alert's fit bar: only new postings at or above it are mailed.
+// 0 = "any fit", i.e. the pre-bar behaviour of emailing every unseen job.
+// Same numbers the batch-tailor card offers (KIT_THRESHOLDS in kits.tsx),
+// because both read the same `overall` fit — two lists would let the app offer
+// 75 for one and 78 for the other while meaning the same thing. The server
+// owns the value and clamps it; this is only which bars the picker offers.
+export const MIN_SCORE_OPTIONS = [0, 60, 65, 70, 75, 80, 85, 90] as const;
+
 // Selectable job boards (PROVIDERS registry ids). Empty/absent = all boards.
 // Keep in sync with the backend registry: a board missing here disappears
 // from any customized search the moment the user unchecks one box.

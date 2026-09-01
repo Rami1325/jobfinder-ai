@@ -3305,6 +3305,9 @@ check(
 # 15c. Job alerts (PLAN 6): settings row, history diffing, email body, and the
 # full run loop with a canned search function (no network, no LLM, no SMTP)
 from app.core.alerts import (  # noqa: E402
+    DEFAULT_MIN_SCORE,
+    above_min,
+    alert_min_score,
     build_alert_email,
     build_alert_email_html,
     get_alert,
@@ -3454,6 +3457,133 @@ check(
     _run_err.ran is True and "boards are down" in _run_err.error
     and "boards are down" in get_alert(_db, _admin_id).last_error,
 )
+
+# 15c-bis. The alert fit bar: the daily email carries only high-fit jobs.
+# Before this, every unseen posting the search returned was emailed — a good
+# morning arrived as ~20 jobs of which two were worth opening.
+_bar_pool = [
+    JobMatch(title="Way above", company="A", overall=91.0, url="https://bar/91"),
+    JobMatch(title="At the bar", company="B", overall=75.0, url="https://bar/75"),
+    JobMatch(title="Rounds up to the bar", company="C", overall=74.6, url="https://bar/74.6"),
+    JobMatch(title="Rounds below", company="D", overall=74.4, url="https://bar/74.4"),
+    JobMatch(title="Well below", company="E", overall=41.0, url="https://bar/41"),
+]
+check(
+    "alert bar keeps jobs at/above it and drops the rest",
+    [m.url for m in above_min(_bar_pool, 75)] == ["https://bar/91", "https://bar/75", "https://bar/74.6"],
+    str([m.url for m in above_min(_bar_pool, 75)]),
+)
+# The rounded value is the one the email prints ("75% fit") and the one the fit
+# ring shows, so the bar must be read off THAT and not the raw float — otherwise
+# the History tab shows "75% fit" on a job the 75% email footer says it excluded.
+check(
+    "alert bar compares the DISPLAYED (rounded) fit, not the raw float",
+    any(m.url == "https://bar/74.6" for m in above_min(_bar_pool, 75))
+    and not any(m.url == "https://bar/74.4" for m in above_min(_bar_pool, 75)),
+)
+# The false-positive half: "only email high-match jobs" is trivially satisfied by
+# emailing nothing, and 0 must still mean the pre-bar behaviour.
+check(
+    "alert bar of 0 emails every new job (the pre-bar behaviour is reachable)",
+    [m.url for m in above_min(_bar_pool, 0)] == [m.url for m in _bar_pool]
+    and len(above_min(_bar_pool, 60)) == 4
+    and len(above_min(_bar_pool, 90)) == 1,
+)
+check("alert bar defaults to 75", DEFAULT_MIN_SCORE == 75)
+
+update_alert(_db, _admin_id, enabled=True, email="me@example.com", context=None, min_score=60)
+check("alert bar persists on the settings row", alert_min_score(get_alert(_db, _admin_id)) == 60)
+update_alert(_db, _admin_id, enabled=True, email="me@example.com", context=None)
+check(
+    "alert update with min_score=None leaves the bar alone (a stale client can't reset it)",
+    alert_min_score(get_alert(_db, _admin_id)) == 60,
+)
+update_alert(_db, _admin_id, enabled=True, email="me@example.com", context=None, min_score=150)
+check("alert bar clamps above 100", alert_min_score(get_alert(_db, _admin_id)) == 100)
+update_alert(_db, _admin_id, enabled=True, email="me@example.com", context=None, min_score=-5)
+check("alert bar clamps below 0", alert_min_score(get_alert(_db, _admin_id)) == 0)
+
+# The footer names the RULE, never a held-back count (a number you cannot tap to
+# reveal is a dead end in an inbox — the same call the geo filter made).
+_bar_subj, _bar_body = build_alert_email(_bar_pool[:1], _AlertCtx(job_title="X"), 75)
+_bar_html = build_alert_email_html(_bar_pool[:1], _AlertCtx(job_title="X"), min_score=75)
+check(
+    "alert email states the bar in both bodies",
+    "75% fit or above" in _bar_body and "75% fit or above" in _bar_html,
+)
+check(
+    "alert email says nothing about a bar when there is none",
+    "fit or above" not in build_alert_email(_bar_pool[:1], _AlertCtx(job_title="X"), 0)[1]
+    and "fit or above" not in build_alert_email_html(_bar_pool[:1], _AlertCtx(job_title="X")),
+)
+check(
+    "alert email footer names no held-back count",
+    "below your bar" not in _bar_body and "below your bar" not in _bar_html
+    and "4 more" not in _bar_body,
+)
+
+# End to end: the bar filters the EMAIL, never the history. Every match is still
+# recorded — that is what the History tab shows and what load_score_cache reuses,
+# so dropping below-bar rows would make the cron re-score them every morning.
+def _bar_search(resume, ctx, cache=None):  # noqa: ANN001 - matches search_jobs' shape
+    return JobSearchResult(context=_AlertCtx(job_title="X"), matches=_bar_pool, skipped=0)
+
+
+update_alert(_db, _admin_id, enabled=True, email="me@example.com", context=None, min_score=75)
+_bar_run = run_alert(_db, _admin_id, search_fn=_bar_search)
+check(
+    "alert run reports all new jobs AND the subset that cleared the bar",
+    _bar_run.total == 5 and _bar_run.new_count == 5 and _bar_run.above_min == 3,
+    str(_bar_run),
+)
+_bar_row = get_alert(_db, _admin_id)
+check(
+    "alert run persists both counts (12 new / 3 emailed must not read as a broken run)",
+    _bar_row.last_new_count == 5 and _bar_row.last_above_min == 3,
+    f"{_bar_row.last_new_count}/{_bar_row.last_above_min}",
+)
+# A run from BEFORE the bar never measured this, and the card renders a
+# different sentence for unknown than for zero — so the column must not default
+# to 0. Caught on the real page, which said "6 new jobs, 0 above your 75% bar"
+# about a morning that had no bar. 0 stays a legitimate stored value.
+from app.db.models import JobAlert as _JobAlert  # noqa: E402
+
+_virgin = _JobAlert(user_id=987654)
+_db.add(_virgin)
+_db.commit()
+_db.refresh(_virgin)
+check(
+    "a never-run alert reports its cleared-the-bar count as UNKNOWN, not 0",
+    _virgin.last_above_min is None and _virgin.last_new_count == 0,
+    str(_virgin.last_above_min),
+)
+
+check(
+    "below-bar jobs are still recorded in history (cache stays warm, never re-emailed)",
+    split_new_matches(_db, _bar_pool, _admin_id) == [],
+    str([m.url for m in split_new_matches(_db, _bar_pool, _admin_id)]),
+)
+
+# A run where nothing clears the bar sends no email at all — and still records.
+_low = [JobMatch(title="Low", company="F", overall=30.0, url="https://bar/low-1")]
+
+
+def _low_search(resume, ctx, cache=None):  # noqa: ANN001
+    return JobSearchResult(context=_AlertCtx(job_title="X"), matches=_low, skipped=0)
+
+
+_low_run = run_alert(_db, _admin_id, search_fn=_low_search)
+check(
+    "alert run with nothing above the bar: new but nothing to email",
+    _low_run.new_count == 1 and _low_run.above_min == 0 and _low_run.emailed is False,
+    str(_low_run),
+)
+check(
+    "and a measured 0 is STORED as 0, not left unknown — the other half of the split",
+    get_alert(_db, _admin_id).last_above_min == 0,
+    str(get_alert(_db, _admin_id).last_above_min),
+)
+update_alert(_db, _admin_id, enabled=False, email="me@example.com", context=None, min_score=DEFAULT_MIN_SCORE)
 
 # 16. Comeet company registry: auto-seed, token persistence, careers-URL upsert
 from app.core.providers.comeet_seed import SEED_COMPANIES  # noqa: E402
