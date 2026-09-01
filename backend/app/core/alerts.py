@@ -30,6 +30,7 @@ the app; a posting missing from history is one we deliberately lost.
 from __future__ import annotations
 
 import html as html_lib
+import math
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -111,6 +112,21 @@ def alert_min_score(row: JobAlert) -> int:
     return max(0, min(100, int(raw)))
 
 
+def displayed_score(overall: float) -> int:
+    """The integer the USER sees for a fit score, everywhere.
+
+    Half-up, matching JavaScript's `Math.round` — which is what `ProgressRing`
+    uses and therefore what the fit ring, the job card and the History row all
+    show. Python's built-in `round()` is half-to-even, so it disagrees on every
+    x.5, and `overall` is stored to one decimal so x.5 is reachable rather than
+    hypothetical.
+
+    Anything that thresholds on a fit score the user can read must go through
+    this, or the app contradicts itself about one job across two surfaces.
+    """
+    return math.floor(overall + 0.5)
+
+
 def above_min(matches: list[JobMatch], min_score: int) -> list[JobMatch]:
     """The subset of `matches` worth an email: fit at or above the bar. Pure —
     smoke-pinned, in BOTH directions (a bar that drops everything is trivially
@@ -124,10 +140,19 @@ def above_min(matches: list[JobMatch], min_score: int) -> list[JobMatch]:
 
     `overall` is the blend the search ranks by and both email bodies print, so
     the bar is stated in the same currency the user is already reading.
+
+    HALF-UP, NOT `round()`. Python's built-in rounds half to EVEN, so
+    `round(74.5)` is 74 while the fit ring's `Math.round(74.5)` is 75 — and
+    `overall` is stored to one decimal (`round(0.5*cov + 0.5*fit, 1)`), so x.5
+    is exactly reachable, e.g. coverage 80.0 with fit 69.0. The docstring above
+    promised the email and the visible number agree; on that band they did not,
+    and the app painted "75% fit" in History under a footer saying the mail
+    carried everything at 75% or above. `floor(x + 0.5)` is what JavaScript
+    does, and the displayed value is the one both sides must round the same way.
     """
     if min_score <= 0:
         return list(matches)
-    return [m for m in matches if round(m.overall) >= min_score]
+    return [m for m in matches if displayed_score(m.overall) >= min_score]
 
 
 def alert_context(row: JobAlert) -> SearchContext | None:

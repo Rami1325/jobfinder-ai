@@ -5,7 +5,15 @@ import type { ResumeModel } from "../types";
 import type { ResumeTemplate } from "../api/client";
 import { Badge } from "./ui";
 import { cn } from "../lib/cn";
-import { CONTACT_FIELDS, dkey, inlineField, INSERT_KINDS, type InsertKind } from "../lib/resumeBlocks";
+import {
+  CONTACT_FIELDS,
+  dkey,
+  inlineField,
+  INSERT_KINDS,
+  isNamedInsert,
+  type EntryInsertKind,
+  type NamedInsertKind,
+} from "../lib/resumeBlocks";
 import { resumeLanguage } from "../lib/lang";
 import { TEMPLATE_SPECS, bandFill, headingRuleFill, type TemplateSpec } from "../lib/templateSpecs";
 
@@ -86,8 +94,23 @@ interface Props {
    * text is already trimmed and non-empty. Absent = no add affordance
    * (read-only surfaces). */
   onAddSkill?: (groupLabel: string, text: string) => void;
-  /** "+ Add to your CV" at the foot of the paper. Absent = no add control. */
-  onAdd?: (kind: InsertKind) => void;
+  /** "+ Add to your CV" at the foot of the paper — the four ENTRY kinds, each
+   * added blank and addressed positionally. Absent = no add control.
+   *
+   * BOTH OR NEITHER with `onAddNamed`: the control is one fixed list of seven
+   * rows and it renders only when it can serve all seven, on the same reasoning
+   * `editable` uses two lines up. Passing one alone would silently ship a
+   * control that is three rows short of the list this file documents. */
+  onAdd?: (kind: EntryInsertKind) => void;
+  /** The other three rows of that same control — a skill, a certification, a
+   * language — with the text the user typed into it.
+   *
+   * They are separated because they cannot be added the way an entry is: a
+   * keyed block's path IS its own value, so there is nothing to address until
+   * there is text. `insertBlock` used to mint "New skill" / "New certification"
+   * / "New language" to give itself a key, which put untranslated English into
+   * a Hebrew CV, live in the store and in the download with no Save. */
+  onAddNamed?: (kind: NamedInsertKind, text: string) => void;
   /** Append a bullet to this entry. Rendered at the end of its own list, which
    * is the only place a user looks for it. */
   onAddBullet?: (entryPath: string) => void;
@@ -380,6 +403,92 @@ function MetaLine({ lead = "", bits = [] }: { lead?: string; bits?: (string | un
 }
 
 /**
+ * The field half of an add affordance: type a word, commit, keep going.
+ *
+ * ONE definition, used by the skills row's chip AND by the foot control's three
+ * keyed rows, for check 6's reason — every trap in it was paid for once already
+ * and a second copy would only get to pay for them again:
+ *   * a REAL `<input>`, never a contentEditable, and it carries NO `data-block`.
+ *     This file's five delegated root handlers all key off
+ *     `el.isContentEditable` or `closest("[data-block]")`, so the field is
+ *     invisible to every one of them — including `onKeyDown`, whose
+ *     `preventDefault()` on `" "` would otherwise eat the SPACE BAR in a
+ *     two-word skill (it runs only AFTER the path lookup, which comes back
+ *     empty here). No `data-block` is also the honest statement: this field
+ *     addresses nothing on the résumé yet, and nothing is written until it does;
+ *   * Escape must not be able to commit through the blur that closing MIGHT
+ *     fire — browsers disagree about whether removing a focused node dispatches
+ *     focusout, and the losing outcome writes a discarded word onto the CV;
+ *   * `spellCheck={false} autoCapitalize="off"` or iOS rewrites "gRPC" to
+ *     "GRPC" on the way in, silently, in the one place a wrong string is a
+ *     wrong claim;
+ *   * Enter is guarded on `isComposing`: Gboard and dictation fire keydown
+ *     mid-word, so an unguarded Enter commits half a word.
+ *
+ * Enter commits, CLEARS and KEEPS focus. Adding ONE thing was never the ask —
+ * "I want to add another skill" is a run of them, and re-opening the field
+ * between each is the friction that made the panel unusable for this.
+ */
+function ChipInput({
+  label,
+  placeholder,
+  dir,
+  onCommit,
+  onClose,
+}: {
+  /** The accessible name — what a screen reader announces for the field. */
+  label: string;
+  /** The greyed hint INSIDE the field. It is drawn by the browser and is not
+   * the field's value, which is the whole distinction this component exists to
+   * keep: there is nothing here to commit until the user types. */
+  placeholder: string;
+  dir: "ltr" | "rtl";
+  /** Always trimmed and non-empty: a blank field commits NOTHING. */
+  onCommit: (text: string) => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState("");
+  const discarded = useRef(false);
+  const commit = () => {
+    const value = text.trim();
+    if (value) onCommit(value);
+    setText("");
+  };
+  return (
+    <input
+      autoFocus
+      value={text}
+      // The PAPER's direction, like every editable node on the sheet — never
+      // `dir="auto"`, which would flip the field under the caret the moment a
+      // Hebrew CV's next skill happens to be spelled "React".
+      dir={dir}
+      spellCheck={false}
+      autoCapitalize="off"
+      aria-label={label}
+      placeholder={placeholder}
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          commit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          discarded.current = true;
+          setText("");
+          onClose();
+        }
+      }}
+      onBlur={() => {
+        if (!discarded.current) commit();
+        discarded.current = false;
+        onClose();
+      }}
+      className="w-28 max-w-full rounded-full border border-accent/60 bg-transparent px-2.5 py-0.5 text-xs font-medium text-ink outline-none placeholder:text-ink-faint focus:border-accent"
+    />
+  );
+}
+
+/**
  * The one add control, at the foot of the paper.
  *
  * A FIXED list of seven rows, not "offered iff that section is empty":
@@ -392,37 +501,79 @@ function MetaLine({ lead = "", bits = [] }: { lead?: string; bits?: (string | un
  * A disclosure, not a modal: `Modal` binds ESC and backdrop on `window` and
  * this sits inside a page that already has one, and a bottom sheet for seven
  * words is the complication the owner asked to be rid of.
+ *
+ * THE SEVEN ROWS ARE TWO KINDS OF ACTION, and the split is `isNamedInsert`.
+ * The four ENTRY rows add a blank entry and open its panel — an entry is
+ * addressed positionally, so it can exist before it says anything. The three
+ * KEYED rows have no such address (`@skills.python` IS the skill's own text),
+ * so they swap the row list for this field and add nothing at all until the
+ * user has typed something. They used to append "New skill" / "New
+ * certification" / "New language" — untranslated English on a Hebrew CV, live
+ * in the store, on the paper and in the download with no Save.
  */
-function AddToResume({ onAdd }: { onAdd: (kind: InsertKind) => void }) {
+function AddToResume({
+  dir,
+  onAdd,
+  onAddNamed,
+}: {
+  dir: "ltr" | "rtl";
+  onAdd: (kind: EntryInsertKind) => void;
+  onAddNamed: (kind: NamedInsertKind, text: string) => void;
+}) {
   const { t } = useTranslation("tailor");
   const [open, setOpen] = useState(false);
+  const [typing, setTyping] = useState<NamedInsertKind | null>(null);
   return (
     <div className="mt-6 border-t border-line pt-4">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setTyping(null);
+          setOpen((v) => !v);
+        }}
         aria-expanded={open}
         className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-semibold text-accent-soft transition-colors hover:bg-accent/[0.07] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
       >
         <Plus size={15} /> {t("edit.addTitle")}
       </button>
-      {open && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {INSERT_KINDS.map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              onClick={() => {
+      {open &&
+        (typing ? (
+          <div className="mt-2">
+            {/* The row's own noun is the placeholder and the accessible name —
+                the field is cleared after every Enter, so it comes straight
+                back and a run of certifications always says which run it is. */}
+            <ChipInput
+              label={t(`edit.add.${typing}`)}
+              placeholder={t(`edit.add.${typing}`)}
+              dir={dir}
+              onCommit={(text) => onAddNamed(typing, text)}
+              onClose={() => {
+                setTyping(null);
                 setOpen(false);
-                onAdd(kind);
               }}
-              className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:border-accent/50 hover:bg-accent/[0.07] hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
-            >
-              {t(`edit.add.${kind}`)}
-            </button>
-          ))}
-        </div>
-      )}
+            />
+          </div>
+        ) : (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {INSERT_KINDS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => {
+                  if (isNamedInsert(kind)) {
+                    setTyping(kind);
+                    return;
+                  }
+                  setOpen(false);
+                  onAdd(kind);
+                }}
+                className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:border-accent/50 hover:bg-accent/[0.07] hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+              >
+                {t(`edit.add.${kind}`)}
+              </button>
+            ))}
+          </div>
+        ))}
     </div>
   );
 }
@@ -430,17 +581,16 @@ function AddToResume({ onAdd }: { onAdd: (kind: InsertKind) => void }) {
 /**
  * The last chip in a skills row: a dashed outline that becomes a field.
  *
- * A REAL `<input>`, never a contentEditable, and never carrying `data-block`.
- * This file's five delegated root handlers all key off `el.isContentEditable`
- * or `closest("[data-block]")`, so an input outside every block is invisible to
- * all of them — including `onKeyDown`, whose `preventDefault()` on `" "` would
- * otherwise eat the SPACE BAR in a two-word skill (it runs only AFTER the path
- * lookup, which comes back empty here). No `data-block` is also the honest
- * statement: this chip addresses nothing on the résumé yet.
+ * The dashed outline is a button; the field it becomes is `ChipInput`, which is
+ * shared with the foot control's three keyed rows and carries every rule this
+ * interaction has to obey (a real `<input>`, no `data-block`, Escape that
+ * cannot commit, `isComposing`-guarded Enter). See its own note.
  *
- * Enter commits, CLEARS and KEEPS focus. Adding one skill was never the ask —
- * "I want to add another skill" is a run of them, and re-opening the chip
- * between each is the friction that made the panel unusable for this.
+ * The placeholder is `edit.addSkillPlaceholder` ("New skill"), and it being a
+ * PLACEHOLDER is the whole distinction this component is built around: it is
+ * drawn by the browser, it is not the field's value, and there is nothing there
+ * to commit until the user types. The same string as a model value would be a
+ * claim on the CV.
  */
 function AddSkillChip({
   label,
@@ -453,20 +603,12 @@ function AddSkillChip({
 }) {
   const { t } = useTranslation("tailor");
   const [open, setOpen] = useState(false);
-  const [text, setText] = useState("");
-  // Escape must not be able to commit through the blur that closing MIGHT
-  // fire: browsers disagree about whether removing a focused node dispatches
-  // focusout, and the losing outcome writes a discarded word onto the CV.
-  const discarded = useRef(false);
 
   if (!open) {
     return (
       <button
         type="button"
-        onClick={() => {
-          discarded.current = false;
-          setOpen(true);
-        }}
+        onClick={() => setOpen(true)}
         aria-label={t("edit.addSkillIn", { group: label })}
         className="inline-flex items-center gap-1 rounded-full border border-dashed border-accent/45 px-2.5 py-0.5 text-xs font-medium text-accent-soft/90 transition-colors hover:border-accent/70 hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
       >
@@ -475,46 +617,13 @@ function AddSkillChip({
     );
   }
 
-  const commit = () => {
-    const value = text.trim();
-    if (value) onAdd(value);
-    setText("");
-  };
-
   return (
-    <input
-      autoFocus
-      value={text}
-      // The PAPER's direction, like every editable node on the sheet — never
-      // `dir="auto"`, which would flip the field under the caret the moment a
-      // Hebrew CV's next skill happens to be spelled "React".
-      dir={dir}
-      // iOS would rewrite "gRPC" to "GRPC" on the way in, silently, in the one
-      // place a wrong string is a wrong claim.
-      spellCheck={false}
-      autoCapitalize="off"
-      aria-label={t("edit.addSkillIn", { group: label })}
+    <ChipInput
+      label={t("edit.addSkillIn", { group: label })}
       placeholder={t("edit.addSkillPlaceholder")}
-      onChange={(e) => setText(e.target.value)}
-      onKeyDown={(e) => {
-        // isComposing: Gboard and dictation fire keydown mid-word, so an
-        // unguarded Enter commits half a word.
-        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-          e.preventDefault();
-          commit();
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          discarded.current = true;
-          setText("");
-          setOpen(false);
-        }
-      }}
-      onBlur={() => {
-        if (!discarded.current) commit();
-        discarded.current = false;
-        setOpen(false);
-      }}
-      className="w-28 max-w-full rounded-full border border-accent/60 bg-transparent px-2.5 py-0.5 text-xs font-medium text-ink outline-none placeholder:text-ink-faint focus:border-accent"
+      dir={dir}
+      onCommit={onAdd}
+      onClose={() => setOpen(false)}
     />
   );
 }
@@ -531,6 +640,7 @@ export default function ResumeView({
   onInlineCommit,
   onAddSkill,
   onAdd,
+  onAddNamed,
   onAddBullet,
   footNote,
 }: Props) {
@@ -1383,8 +1493,8 @@ export default function ResumeView({
       {/* Outside every [data-block] on purpose: it emits no path, so
           check-mirrors check 7 has nothing to validate and the add control can
           never be mistaken for a part of the résumé. */}
-      {onAdd ? (
-        <AddToResume onAdd={onAdd} />
+      {onAdd && onAddNamed ? (
+        <AddToResume dir={paperDir} onAdd={onAdd} onAddNamed={onAddNamed} />
       ) : (
         footNote && (
           <p className="mt-6 border-t border-line pt-4 text-xs leading-relaxed text-ink-faint">{footNote}</p>

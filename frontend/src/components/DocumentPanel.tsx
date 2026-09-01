@@ -1,5 +1,5 @@
 import { forwardRef, useState } from "react";
-import type { InsertKind } from "../lib/resumeBlocks";
+import type { EntryInsertKind, NamedInsertKind } from "../lib/resumeBlocks";
 import { useTranslation } from "react-i18next";
 import {
   Download,
@@ -88,7 +88,10 @@ interface Props {
   onEditBlock?: (path: string) => void;
   onInlineCommit?: (path: string, text: string) => void;
   onAddSkill?: (groupLabel: string, text: string) => void;
-  onAdd?: (kind: InsertKind) => void;
+  /** Both or neither — ResumeView renders the seven-row add control only when
+   * it can serve all seven. See its own Props note. */
+  onAdd?: (kind: EntryInsertKind) => void;
+  onAddNamed?: (kind: NamedInsertKind, text: string) => void;
   onAddBullet?: (entryPath: string) => void;
   /** Passed straight through to ResumeView — one line at the foot of the paper
    * for a surface that cannot add. */
@@ -119,7 +122,7 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, onTemplate, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddBullet, footNote, onReplace },
+  { resume, template, view, onView, onTemplate, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddNamed, onAddBullet, footNote, onReplace },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
@@ -255,6 +258,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
             onInlineCommit={onInlineCommit}
             onAddSkill={onAddSkill}
             onAdd={onAdd}
+            onAddNamed={onAddNamed}
             onAddBullet={onAddBullet}
             footNote={footNote}
           />

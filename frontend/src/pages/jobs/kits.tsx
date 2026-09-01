@@ -42,8 +42,14 @@ export function BatchTailorCard({
     getKitsState,
   );
   const [threshold, setThreshold] = useState<number>(KIT_DEFAULT_THRESHOLD);
+  // Threshold the DISPLAYED integer, not the raw float. The card, the fit ring
+  // and the alert email all show `Math.round(overall)`, so a job at 74.6 reads
+  // as "75% fit" on the very row this control filters — and the backend's
+  // `alerts.displayed_score` rounds the same way for the 75% mail. Comparing
+  // the float here made this queue the one surface that disagreed, which is
+  // exactly what sharing the number 75 with KIT_DEFAULT_THRESHOLD was for.
   const eligible = matches
-    .filter((m) => m.url && m.jd_text && m.overall >= threshold)
+    .filter((m) => m.url && m.jd_text && Math.round(m.overall) >= threshold)
     .sort((a, b) => b.overall - a.overall)
     .slice(0, KIT_MAX_BATCH);
 

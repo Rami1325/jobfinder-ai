@@ -40,6 +40,39 @@ class Settings(BaseSettings):
     # while stopping a thousand-page decompression bomb.
     max_upload_mb: int = 10
     max_pdf_pages: int = 50
+    # The DOCX half of the same guard, and the one the page ceiling above does
+    # not cover. `max_upload_mb` caps COMPRESSED bytes; a .docx is a zip, and
+    # python-docx expands every part into an lxml tree before we see a word of
+    # it. Measured on this machine: a valid .docx of 3,000,000 trivial
+    # paragraphs compresses 343:1 — 0.298 MB of zip becomes 102.0 MB of
+    # `document.xml`, and python-docx builds the tree in 1.2 s. Against the
+    # 10 MB compressed cap that same content admits ~3.4 GB of XML from
+    # unremarkable input, before anyone crafts a payload. (The defect report
+    # measured the same shape at 294:1, 0.85 MB -> 249 MB / 5.6 s, i.e. ~2.9 GB
+    # at the cap — the ratio varies with paragraph shape, the class does not.)
+    #
+    # 32 MB is sized off the worst LEGITIMATE case, not off the bomb. Measured:
+    # a 30-page text master expands to 1.0 MB, our own `render_docx` output to
+    # 0.9 MB, and a CV whose bulk is embedded photos to 10.3 MB — images are
+    # already compressed, so an image-heavy .docx expands ~1:1 and its ceiling
+    # is `max_upload_mb` ITSELF. That is the real floor under this number, and
+    # `_assert_docx_expansion` DERIVES it (`max(cap, 3 * max_upload_mb)`) rather
+    # than trusting this constant to be kept in step: a cap at or below 10 MB
+    # would refuse a legitimate photo-heavy CV the upload cap had just admitted.
+    #
+    # What it still costs is recorded rather than guessed. `extract_text` is
+    # linear at ~1.19 s per MB of expanded XML (3.4 MB -> 4.2 s; 17.0 MB ->
+    # 20.2 s; 61.2 MB -> 72.7 s) — the `doc.paragraphs` walk, not the tree
+    # build. So a bomb sized just under this cap still buys ~38 s of one
+    # instance against Vercel's 300 s kill; unguarded, the same upload buys
+    # ~3.4 GB and OOMs long before it finishes. 64 MB was the first choice and
+    # was halved on exactly that number: /public/scan takes no access code, so
+    # the CPU an anonymous request can buy is the quantity being bounded, and
+    # 3x headroom over a measured worst case is enough. Below ~12 MB the guard
+    # starts firing on legitimate input, which is the other wall.
+    #
+    # <= 0 disables the check.
+    max_docx_uncompressed_mb: int = 32
     jooble_api_key: str = ""  # empty => the Jooble board reports "needs an API key"
     # Stale-application nudges: an "applied" app with no status change for this
     # many days surfaces a "time to follow up" reminder on the tracker (<= 0 disables).

@@ -582,21 +582,49 @@ export const INSERT_KINDS = [
 export type InsertKind = (typeof INSERT_KINDS)[number];
 
 /**
- * Add an empty thing and return the path that now addresses it.
+ * The three kinds whose ITEM IS ITS OWN TEXT — a skill, a certification, a
+ * language. They are TYPED (`insertNamed`), never inserted blank, and that is
+ * why `insertBlock` cannot add them.
+ *
+ * A keyed block's path is derived from its own value (`@skills.python`), so an
+ * empty one has no address at all: `dkey("")` is `""`, `RE_KEYED` needs at
+ * least one character after the dot, and two empty items would collide on the
+ * same path anyway. The old code answered that by inserting the untranslated
+ * English strings "New skill" / "New certification" / "New language" — a claim
+ * the user never made, committed to the store with no Save, rendered as a chip,
+ * downloadable, and in ENGLISH on a Hebrew CV. `check_fabrication` cannot see
+ * it either: it lives in the master the ledger is built FROM, so the app's own
+ * truthfulness guard certifies it clean.
+ *
+ * Inserting an EMPTY one instead is not the fix. Beyond having no address, both
+ * renderers draw a bullet glyph for a blank list item and a chip for a blank
+ * skill — "there is no honest blank bullet to store" is the same sentence
+ * `BlockDraft.removable` is written around. So nothing reaches the model until
+ * the user has supplied the text.
+ */
+export const NAMED_INSERT_KINDS = ["skill", "certification", "language"] as const;
+export type NamedInsertKind = (typeof NAMED_INSERT_KINDS)[number];
+/** What `insertBlock` can add: an entry, positionally addressed, born blank. */
+export type EntryInsertKind = Exclude<InsertKind, NamedInsertKind>;
+const NAMED = new Set<string>(NAMED_INSERT_KINDS);
+export const isNamedInsert = (kind: InsertKind): kind is NamedInsertKind => NAMED.has(kind);
+
+/**
+ * Add an empty ENTRY and return the path that now addresses it.
  *
  * Empty, not placeholder-filled: a placeholder is a fabricated claim the moment
  * it reaches a renderer, and this codebase already refuses to print
- * "School or University" into a downloaded file. The caller focuses the
- * returned path — a caret for the single-field kinds, the panel for the
- * compound ones — and an insert the user abandons is cleared by the
- * empty-means-remove rule in `removeBlock`'s callers rather than by a
- * pending-state machine here.
+ * "School or University" into a downloaded file. An entry can be born blank
+ * because it is addressed POSITIONALLY — `@exp.2` names the third job whatever
+ * it says — so the caller opens its panel straight away and `freshEntry` takes
+ * the blank back if the panel is cancelled. The keyed kinds have no such
+ * address; see `NAMED_INSERT_KINDS`.
  *
  * APPENDS, never inserts mid-list. Every existing path stays valid, so an open
  * editor cannot have an index shift out from under it — the failure `onGone`
  * exists for.
  */
-export function insertBlock(resume: ResumeModel, kind: InsertKind): WriteResult {
+export function insertBlock(resume: ResumeModel, kind: EntryInsertKind): WriteResult {
   switch (kind) {
     case "experience": {
       const list = [...resume.experience, { company: "", title: "", location: "", start_date: "", end_date: "", bullets: [] }];
@@ -613,22 +641,6 @@ export function insertBlock(resume: ResumeModel, kind: InsertKind): WriteResult 
     case "military": {
       const list = [...(resume.military_service ?? []), { unit: "", role: "", rank: "", start_date: "", end_date: "", bullets: [] }];
       return { ok: true, path: `@mil.${list.length - 1}`, resume: { ...resume, military_service: list } };
-    }
-    case "skill": {
-      // ONE field only. The flat `skills` list is what every scorer reads, and
-      // a new skill belongs to no group — `skillBlocksOf` renders it in the
-      // trailing unlabelled block, because nothing may be hidden.
-      const name = uniqueName(resume.skills, "New skill");
-      return { ok: true, path: `@skills.${dkey(name)}`, resume: { ...resume, skills: [...resume.skills, name] } };
-    }
-    case "certification": {
-      const name = uniqueName(resume.certifications, "New certification");
-      return { ok: true, path: `@cert.${dkey(name)}`, resume: { ...resume, certifications: [...resume.certifications, name] } };
-    }
-    case "language": {
-      const list = resume.languages ?? [];
-      const name = uniqueName(list.map((l) => l.language), "New language");
-      return { ok: true, path: `@lang.${dkey(name)}`, resume: { ...resume, languages: [...list, { language: name, level: "" }] } };
     }
   }
 }
@@ -678,6 +690,55 @@ export function insertSkill(resume: ResumeModel, groupLabel: string, text: strin
   };
 }
 
+/**
+ * Add a skill, a certification or a language BY NAME — the only way one of the
+ * three keyed kinds reaches the résumé.
+ *
+ * Text first, model second, and that order is the whole change: the item's path
+ * is derived from its own value, so it is not addressable until it has one, and
+ * a placeholder minted here to paper over that is a claim the user never made
+ * sitting in the document they are about to send. Blank text is REFUSED rather
+ * than stored — which is also what makes an abandoned add cost nothing: the
+ * user closes the field and the résumé was never touched, so there is no litter
+ * for `commitInline`'s empty-means-remove rule to clean up after.
+ *
+ * `skill` delegates to `insertSkill` rather than repeating it: that one is the
+ * two-field write (`skills` AND the group), and an empty label means the flat
+ * list, which is exactly what the foot-of-paper control adds to (23.5).
+ *
+ * A duplicate returns the SAME résumé object, `insertSkill`'s rule for
+ * `insertSkill`'s reason: adding something you already have is not an edit and
+ * must not burn an undo slot. It still returns `ok` with the existing path, so
+ * the caller can point at the chip that already says it.
+ *
+ * A language arrives with an EMPTY level. The level is the second field of a
+ * two-field block, so `inlineField` returns null for it and it is reached
+ * through the panel like every other compound block on this page — guessing at
+ * it here would be inventing the very thing this function exists to stop.
+ */
+export function insertNamed(resume: ResumeModel, kind: NamedInsertKind, text: string): WriteResult {
+  const name = clean(text);
+  if (!name) return { ok: false, reason: "not-found" };
+  if (kind === "skill") return insertSkill(resume, "", name);
+
+  const key = dkey(name);
+  if (kind === "certification") {
+    if (resume.certifications.some((c) => dkey(c) === key)) return { ok: true, path: `@cert.${key}`, resume };
+    return {
+      ok: true,
+      path: `@cert.${key}`,
+      resume: { ...resume, certifications: [...resume.certifications, name] },
+    };
+  }
+  const list = resume.languages ?? [];
+  if (list.some((l) => dkey(l.language) === key)) return { ok: true, path: `@lang.${key}`, resume };
+  return {
+    ok: true,
+    path: `@lang.${key}`,
+    resume: { ...resume, languages: [...list, { language: name, level: "" }] },
+  };
+}
+
 /** Add a bullet to an existing entry, returning the new bullet's path. */
 export function insertBullet(resume: ResumeModel, entryPath: string): WriteResult {
   const entry = RE_ENTRY.exec(entryPath);
@@ -698,16 +759,10 @@ export function insertBullet(resume: ResumeModel, entryPath: string): WriteResul
   return { ok: true, path, resume: { ...resume, military_service: splice1(mil, i, { ...mil[i], bullets: next }) } };
 }
 
-/** A keyed block IS its own text, so a new one needs a name that does not
- * collide — two items sharing a `dkey` would share a `data-block`. */
-function uniqueName(existing: string[], base: string): string {
-  const taken = new Set(existing.map((x) => dkey(x)));
-  if (!taken.has(dkey(base))) return base;
-  for (let n = 2; ; n++) {
-    const candidate = `${base} ${n}`;
-    if (!taken.has(dkey(candidate))) return candidate;
-  }
-}
+// `uniqueName` lived here: it minted "New skill 2" so two placeholders could not
+// share a `dkey`. Nothing needs it now — a keyed item is never created without
+// the user's own text, and `insertNamed` answers a collision by handing back the
+// item that is already there instead of inventing a second name for it.
 
 export function removeBlock(resume: ResumeModel, path: string): WriteResult {
   const notFound = { ok: false, reason: "not-found" } as const;

@@ -36,11 +36,13 @@ import {
   inlineField,
   insertBlock,
   insertBullet,
+  insertNamed,
   insertSkill,
   readBlock,
   removeBlock,
   writeBlock,
-  type InsertKind,
+  type EntryInsertKind,
+  type NamedInsertKind,
   type Values,
 } from "../lib/resumeBlocks";
 import type { BlockMark } from "../components/ResumeView";
@@ -280,9 +282,9 @@ export default function TailorPage() {
     if (res.ok) applyBlockEdit(res.resume);
   }
 
-  /** Add something and put the caret (or the panel) on it straight away. An
+  /** Add a blank ENTRY and put the panel (or the caret) on it straight away. An
    * added thing you then have to hunt for is not an add control. */
-  function addToResume(kind: InsertKind) {
+  function addToResume(kind: EntryInsertKind) {
     const base = getTailorState().resume;
     if (!base) return;
     const res = insertBlock(base, kind);
@@ -290,11 +292,45 @@ export default function TailorPage() {
     applyBlockEdit(res.resume);
     // Compound kinds have no single field to type into, so they open the panel;
     // the single-field kinds get a caret, on the next frame, once rendered.
+    // Derived from `inlineField` rather than listed here, so a kind that later
+    // becomes one field starts getting a caret by itself.
     if (inlineField(res.resume, res.path)) focusBlockSoon(res.path);
     else {
       setFreshEntry(res.path);
       setEditPath(res.path);
     }
+  }
+
+  /** A finished skill, certification or language, typed into the foot control.
+   *
+   * The keyed twin of `addToResume`, and the reason that function no longer
+   * handles all seven kinds. These three are addressed by their own text
+   * (`@skills.python` IS the skill), so there is nothing to insert until the
+   * user has typed something: `insertBlock` used to invent that text —
+   * "New skill", "New certification", "New language" — which put a claim the
+   * user never made into the master résumé, live in the store with no Save,
+   * rendered as a chip and present in the download. `check_fabrication` cannot
+   * see it: the ledger is built FROM the master, so the app's own truthfulness
+   * guard certifies the invented string clean. On a Hebrew CV it was English.
+   *
+   * A duplicate is not an edit — `insertNamed` hands back the SAME résumé
+   * object, so the identity check keeps it off the undo stack and the chip that
+   * already says it is scrolled to and bloomed instead. `addSkill`'s rule, for
+   * `addSkill`'s reason: the honest answer to "add Python" on a CV that already
+   * says Python is to show them where it already is.
+   *
+   * A language arrives with an empty level, which is its second field, so it is
+   * set the way every other second field on this page is — by tapping the chip
+   * and using the panel. Nothing here guesses at it.
+   */
+  function addNamed(kind: NamedInsertKind, text: string) {
+    const base = getTailorState().resume;
+    if (!base) return;
+    const res = insertNamed(base, kind, text);
+    if (!res.ok) return;
+    if (res.resume !== base) applyBlockEdit(res.resume);
+    else scrollToBlock(res.path);
+    markSpot(res.path);
   }
 
   /** A finished skill, typed straight onto the chip row of the group the user
@@ -1289,6 +1325,7 @@ export default function TailorPage() {
           // guard story.
           onAddSkill={isMaster ? addSkill : undefined}
           onAdd={isMaster ? addToResume : undefined}
+          onAddNamed={isMaster ? addNamed : undefined}
           onAddBullet={isMaster ? addBullet : undefined}
           // In the add control's own place, so its absence is answered where
           // the question gets asked rather than in a toolbar three scrolls up.

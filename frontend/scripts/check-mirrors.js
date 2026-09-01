@@ -1414,7 +1414,7 @@ try {
   const MASTER_ONLY = opensWith("isMaster");
   const DOC_EDITABLE = opensWith("canEditDoc");
 
-  for (const prop of ["onAdd", "onAddSkill", "onAddBullet", "onReplace"]) {
+  for (const prop of ["onAdd", "onAddNamed", "onAddSkill", "onAddBullet", "onReplace"]) {
     const g = gate(page, prop);
     if (g === null) throw new Error(`could not find ${prop}={…} in TailorPage.tsx`);
     if (!MASTER_ONLY.test(g) || /\bcanEditDoc\b/.test(g))
@@ -2049,6 +2049,200 @@ try {
     fail("check 24 fires on a colour that is an ARGUMENT, not a table entry");
 } catch (e) {
   fail(`document-template check could not run: ${e.message}`);
+}
+
+// ---- 25. a new item arrives EMPTY (EXECUTED, not parsed) ----------------- //
+// The foot-of-paper add control wrote English placeholder text into the user's
+// own résumé. Three of the seven rows — skill, certification, language — are
+// addressed by their VALUE (`@skills.python` IS the skill), so an empty one has
+// no path at all: `dkey("")` is `""` and `RE_KEYED` needs a character after the
+// dot. `insertBlock` answered that by inventing a key it could use, appending
+// the literal strings "New skill" / "New certification" / "New language".
+//
+// That is a fabricated claim on the document the user is about to send. It was
+// committed to the store by `applyBlockEdit` on the same tick, so it rendered
+// as a chip, went into the DOCX and the PDF, and reached the tracker row — with
+// no Save and no confirmation anywhere. `check_fabrication` cannot see it: the
+// ledger is built FROM the master, so the app's own truthfulness guard
+// certifies the invented string clean. And it was never translated, so a Hebrew
+// CV grew English text. CLAUDE.md states the opposite as an invariant in two
+// places ("A new item arrives empty, never placeholder-filled" and "a
+// placeholder rendered as text is committable").
+//
+// EXECUTED rather than parsed, check 17's mechanism for check 17's reason: the
+// property is about what ends up in the MODEL, and reading the source cannot
+// tell an honest insert from one that writes a string somewhere the reader is
+// not looking. So the shipped module is bundled and driven, and the assertion
+// is made on the résumé that comes back rather than on the code that made it.
+//
+// FOUR PROPERTIES, and each is a different way this could regress:
+//
+//  (a) THE KIND LISTS PARTITION `INSERT_KINDS`. Every one of the seven rows is
+//      covered by exactly one of the two halves. Without this, "make the check
+//      pass" is satisfied by quietly dropping a kind out of both lists — the
+//      row keeps rendering, and nothing below ever looks at it.
+//  (b) AN ENTRY IS BORN BLANK, measured over the WHOLE MODEL, not over the
+//      fields this check happens to know about. Every string in the résumé
+//      before and after the insert has to be the same multiset of non-empty
+//      values, so a placeholder in ANY field of ANY entry kind — including a
+//      field added years from now — fires this.
+//  (c) A KEYED KIND WRITES THE USER'S TEXT AND NOTHING ELSE. Blank in, nothing
+//      out (not an empty item either: both renderers draw a bullet glyph for a
+//      blank list item and a chip for a blank skill, which is why
+//      `BlockDraft.removable` exists). Typed in, and the ONLY non-empty string
+//      anywhere in the résumé is the one the user typed.
+//  (d) EVERY PATH THESE RETURN RESOLVES. This is the trap the placeholder
+//      existed to avoid, so it is the one a fix is most likely to fall into:
+//      inserting `""` instead makes the path `@skills.`, `readBlock` returns
+//      null, the caller focuses nothing and the sheet opens empty. An
+//      unaddressable blank is a different bug, not a fix.
+try {
+  const esbuild = createRequire(import.meta.url)("esbuild");
+  const built = esbuild.buildSync({
+    stdin: {
+      contents:
+        `export { INSERT_KINDS, NAMED_INSERT_KINDS, isNamedInsert, insertBlock, insertNamed, ` +
+        `readBlock, removeBlock } from "./lib/resumeBlocks";\n`,
+      resolveDir: SRC,
+      sourcefile: "check-mirrors-insert-probe.ts",
+      loader: "ts",
+    },
+    bundle: true,
+    write: false,
+    format: "cjs",
+    platform: "node",
+    target: "node18",
+    logLevel: "silent",
+  });
+  const mod = { exports: {} };
+  new Function("module", "exports", "require", built.outputFiles[0].text)(
+    mod,
+    mod.exports,
+    createRequire(import.meta.url),
+  );
+  const { INSERT_KINDS, NAMED_INSERT_KINDS, isNamedInsert, insertBlock, insertNamed, readBlock, removeBlock } =
+    mod.exports;
+  for (const [name, fn] of Object.entries({ isNamedInsert, insertBlock, insertNamed, readBlock, removeBlock })) {
+    if (typeof fn !== "function") throw new Error(`the bundle did not export ${name}`);
+  }
+  if (!Array.isArray(INSERT_KINDS) || INSERT_KINDS.length < 7)
+    throw new Error(`INSERT_KINDS came back as ${INSERT_KINDS?.length} entries`);
+  if (!Array.isArray(NAMED_INSERT_KINDS) || NAMED_INSERT_KINDS.length < 3)
+    throw new Error(`NAMED_INSERT_KINDS came back as ${NAMED_INSERT_KINDS?.length} entries`);
+
+  // (a) the partition, off the module's own predicate rather than a second copy
+  // of the rule — `isNamedInsert` is what the view branches on, so this cannot
+  // certify a split the control does not use.
+  const named = INSERT_KINDS.filter((k) => isNamedInsert(k));
+  const entries = INSERT_KINDS.filter((k) => !isNamedInsert(k));
+  if (named.length !== NAMED_INSERT_KINDS.length || named.some((k) => !NAMED_INSERT_KINDS.includes(k)))
+    throw new Error(
+      `isNamedInsert and NAMED_INSERT_KINDS disagree (${named.join("/")} vs ${NAMED_INSERT_KINDS.join("/")}) — ` +
+        "the add control and this check would be looking at different rows",
+    );
+  if (entries.length + named.length !== INSERT_KINDS.length || entries.length < 4)
+    throw new Error(`the kind split does not cover INSERT_KINDS (${entries.length} + ${named.length})`);
+
+  /** Every string anywhere in the model, non-empty only, sorted. */
+  const textOf = (v, out = []) => {
+    if (typeof v === "string") {
+      if (v.trim()) out.push(v.trim());
+    } else if (Array.isArray(v)) for (const x of v) textOf(x, out);
+    else if (v && typeof v === "object") for (const x of Object.values(v)) textOf(x, out);
+    return out.sort();
+  };
+  const BLANK = {
+    contact: { name: "", email: "", phone: "", location: "", linkedin: "", website: "" },
+    headline: "",
+    summary: "",
+    skills: [],
+    skill_groups: [],
+    experience: [],
+    education: [],
+    projects: [],
+    certifications: [],
+    languages: [],
+    military_service: [],
+  };
+  // The premise: a résumé with nothing in it says nothing. If this ever stops
+  // holding, every comparison below is measuring the fixture, not the insert.
+  if (textOf(BLANK).length !== 0) throw new Error("the blank fixture is not blank — this check's premise is gone");
+
+  // (b) an entry is born blank, and (d) its path resolves.
+  for (const kind of entries) {
+    const res = insertBlock(BLANK, kind);
+    if (!res.ok) throw new Error(`insertBlock("${kind}") failed outright`);
+    const draft = readBlock(res.resume, res.path);
+    if (!draft)
+      fail(
+        `lib/resumeBlocks.ts: insertBlock("${kind}") returned \`${res.path}\`, which readBlock cannot ` +
+          "resolve. The caller focuses that path and opens its editor, so the user taps Add and gets " +
+          "a block that is on the paper and cannot be typed into.",
+      );
+    const said = textOf(res.resume);
+    if (said.length) {
+      fail(
+        `lib/resumeBlocks.ts: insertBlock("${kind}") put ${said.map((s) => `"${s}"`).join(", ")} into the ` +
+          "résumé. A new item must arrive EMPTY — a placeholder is a fabricated claim the moment it " +
+          "reaches a renderer, it is committed to the store with no Save, it is in the download, and " +
+          "check_fabrication cannot flag it because the ledger is built FROM the master.",
+      );
+    }
+  }
+
+  // (c) a keyed kind writes the user's text and nothing else, and (d) again.
+  const MINE = "Kubernetes";
+  for (const kind of named) {
+    for (const blank of ["", "   "]) {
+      const res = insertNamed(BLANK, kind, blank);
+      // Either refusal shape is fine; what may not happen is a write.
+      const after = res && res.ok ? textOf(res.resume) : [];
+      if (after.length)
+        fail(
+          `lib/resumeBlocks.ts: insertNamed("${kind}", ${JSON.stringify(blank)}) wrote ` +
+            `${after.map((s) => `"${s}"`).join(", ")} to the résumé. Nothing typed means nothing added — ` +
+            "an add the user abandons must cost the document nothing.",
+        );
+    }
+    const res = insertNamed(BLANK, kind, MINE);
+    if (!res.ok) throw new Error(`insertNamed("${kind}", "${MINE}") refused a perfectly good word`);
+    const said = textOf(res.resume);
+    const minted = said.filter((s) => s !== MINE);
+    if (minted.length)
+      fail(
+        `lib/resumeBlocks.ts: insertNamed("${kind}") also wrote ${minted.map((s) => `"${s}"`).join(", ")}, ` +
+          "which the user did not type. The only string a keyed add may put on the CV is the one it " +
+          "was handed — anything else is a claim invented on the user's behalf, in English, on a " +
+          "résumé that may be Hebrew.",
+      );
+    if (!said.includes(MINE))
+      fail(`lib/resumeBlocks.ts: insertNamed("${kind}") did not store the text it was given.`);
+    const draft = readBlock(res.resume, res.path);
+    if (!draft)
+      fail(
+        `lib/resumeBlocks.ts: insertNamed("${kind}") returned \`${res.path}\`, which readBlock cannot ` +
+          "resolve — so the chip the user just created cannot be edited or removed.",
+      );
+    // A duplicate is not an edit: the SAME object comes back, which is how the
+    // caller keeps it off the undo stack (`insertSkill`'s documented contract).
+    const again = insertNamed(res.resume, kind, MINE);
+    if (!again.ok || again.resume !== res.resume)
+      fail(
+        `lib/resumeBlocks.ts: adding "${MINE}" twice as a ${kind} did not return the SAME résumé object, ` +
+          "so a duplicate would burn an undo slot and the caller cannot tell 'already there' from 'added'.",
+      );
+  }
+
+  // The other direction, on the real assertions: the defect this check was
+  // written for, reproduced. A detector that cannot match its own defect shape
+  // passes for ever.
+  const placebo = { ...BLANK, skills: ["New skill"] };
+  if (!textOf(placebo).includes("New skill"))
+    fail("check 25's text scraper cannot see a placeholder that WAS written into the résumé");
+  if (textOf({ ...BLANK, experience: [{ company: "", title: "", bullets: [] }] }).length)
+    fail("check 25's text scraper reports content in a genuinely blank entry — it would fire on correct code");
+} catch (e) {
+  fail(`empty-insert check could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

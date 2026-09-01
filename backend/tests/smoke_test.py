@@ -8,6 +8,7 @@ Run from the backend dir:
 """
 from __future__ import annotations
 
+import atexit
 import os
 import sys
 import tempfile
@@ -69,13 +70,34 @@ from app.render.docx_renderer import render_docx  # noqa: E402
 from app.render.pdf_renderer import render_pdf  # noqa: E402
 
 failures: list[str] = []
+_ran = 0
+_reached_end = False
 
 
 def check(name: str, cond: bool, extra: str = "") -> None:
+    global _ran
+    _ran += 1
     status = "PASS" if cond else "FAIL"
     print(f"[{status}] {name}" + (f" — {extra}" if extra else ""))
     if not cond:
         failures.append(name)
+
+
+@atexit.register
+def _report_abort() -> None:
+    """Say how much of the suite actually ran when it dies mid-file.
+
+    This file is straight-line top-level code with no top-level try, so an
+    exception at check N aborts the process and every check after it silently
+    never runs — a traceback is the only output, and it says nothing about the
+    ~865 checks that were skipped, which makes a crash read as a small local
+    failure. CI used to paper over exactly that with `smoke_test || smoke_test`
+    (removed — see .github/workflows/ci.yml), so an intermittent crash could
+    land as a GREEN build. The retry is gone; this line makes what remains
+    legible instead of merely red.
+    """
+    if not _reached_end:
+        print(f"\nABORTED after {_ran} checks — the rest of the suite never ran.")
 
 
 # 1. Structure a resume from raw text
@@ -3310,6 +3332,7 @@ from app.core.alerts import (  # noqa: E402
     alert_min_score,
     build_alert_email,
     build_alert_email_html,
+    displayed_score as _displayed_score,
     get_alert,
     run_alert,
     split_new_matches,
@@ -3480,6 +3503,28 @@ check(
     "alert bar compares the DISPLAYED (rounded) fit, not the raw float",
     any(m.url == "https://bar/74.6" for m in above_min(_bar_pool, 75))
     and not any(m.url == "https://bar/74.4" for m in above_min(_bar_pool, 75)),
+)
+# EXACTLY x.5 IS THE CASE THAT MATTERS, and the two probes above straddle it
+# without ever landing on it — which is why this shipped. Python's `round()` is
+# half-to-EVEN, so `round(74.5)` is 74 while `Math.round(74.5)` (ProgressRing,
+# the job card, the kits queue) is 75. `overall` is stored to one decimal —
+# `round(0.5*cov + 0.5*fit, 1)`, reachable at coverage 80.0 / fit 69.0 — so x.5
+# is a real value, not a hypothetical. The app painted "75% fit" on a job the
+# 75%-bar email had silently dropped.
+_bar_half = [JobMatch(title="Exactly half", company="F", overall=74.5, url="https://bar/74.5")]
+check(
+    "alert bar rounds HALF-UP like the fit ring — 74.5 displays as 75 and must "
+    "clear a 75 bar (python's round() is half-to-even and would drop it)",
+    [m.url for m in above_min(_bar_half, 75)] == ["https://bar/74.5"],
+    f"displayed_score(74.5)={_displayed_score(74.5)} "
+    f"round(74.5)={round(74.5)}",
+)
+# The false-positive half: half-up must not become "round everything up".
+check(
+    "alert bar half-up still drops 74.49 — the rounding is half-up, not ceiling",
+    above_min([JobMatch(title="x", company="G", overall=74.49, url="https://bar/74.49")], 75) == []
+    and _displayed_score(75.5) == 76
+    and _displayed_score(75.0) == 75,
 )
 # The false-positive half: "only email high-match jobs" is trivially satisfied by
 # emailing nothing, and 0 must still mean the pre-bar behaviour.
@@ -3725,13 +3770,179 @@ check(
     str(_fs_rescue_status),
 )
 
+# ---------------------------------------------------------------------------
+# THE DOCX DECOMPRESSION CAP. `max_upload_mb` bounds COMPRESSED bytes, and a
+# .docx is a zip that python-docx expands into an lxml tree in full before a
+# word of text exists. Measured: 0.298 MB of zip is 102.0 MB of `document.xml`
+# (343:1), so the 10 MB upload cap admitted ~3.4 GB of XML from unremarkable
+# content. That matters because `POST /public/scan` takes NO access code — it
+# is the one door a stranger who has never seen an invite code can reach.
+#
+# Driven through `extract_text`, never by calling the guard directly: a direct
+# call still passes with the `_assert_docx_expansion(data)` line deleted from
+# `_extract_docx`, which is the 22.10 failure mode — a check that cannot fail.
+import inspect as _docx_inspect  # noqa: E402
+import io as _docx_io  # noqa: E402
+import random as _docx_random  # noqa: E402
+import zipfile as _zf_mod  # noqa: E402
+
+from app.llm.limits import InputTooLarge as _DocxTooLarge  # noqa: E402
+from app.parsers.resume_parser import extract_text as _docx_extract  # noqa: E402
+
+
+def _make_docx(document_xml: bytes, extra: dict[str, bytes] | None = None) -> bytes:
+    """A minimal but VALID .docx, so the guard is what refuses it — not a parse error."""
+    buf = _docx_io.BytesIO()
+    with _zf_mod.ZipFile(buf, "w", _zf_mod.ZIP_DEFLATED) as z:
+        z.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Default Extension="jpeg" ContentType="image/jpeg"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument'
+            '.wordprocessingml.document.main+xml"/></Types>',
+        )
+        z.writestr(
+            "_rels/.rels",
+            '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+            '/officeDocument" Target="word/document.xml"/></Relationships>',
+        )
+        z.writestr("word/document.xml", document_xml)
+        for name, blob in (extra or {}).items():
+            z.writestr(name, blob)
+    return buf.getvalue()
+
+
+_DOCX_HEAD = (
+    b'<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/'
+    b'wordprocessingml/2006/main"><w:body>'
+)
+_DOCX_TAIL = b"</w:body></w:document>"
+_DOCX_PARA = b"<w:p><w:r><w:t>x</w:t></w:r></w:p>"
+
+# ~40 MB of XML from ~0.1 MB of zip: past the 32 MB cap, nowhere near the 10 MB
+# upload cap, so only the expansion guard can refuse it.
+_docx_bomb = _make_docx(_DOCX_HEAD + _DOCX_PARA * 1_200_000 + _DOCX_TAIL)
+
+# THE FALSE-POSITIVE HALF, IN THE SAME CHECK. "Make the bomb fail" is trivially
+# satisfied by capping at 1 MB, and the case that would break first is not a
+# text CV (a 30-page master is 1.0 MB of XML) but an image-heavy one: images are
+# already compressed, so a photo-laden .docx expands ~1:1 and its ceiling is
+# `max_upload_mb` ITSELF. Incompressible bytes, deliberately — a run of zeros
+# would compress away and pin nothing.
+_docx_real = _make_docx(
+    _DOCX_HEAD + b"<w:p><w:r><w:t>Dana Levi builds Kubernetes tooling</w:t></w:r></w:p>" + _DOCX_TAIL,
+    {"word/media/image1.jpeg": _docx_random.Random(7).randbytes(6 * 1024 * 1024)},
+)
+_docx_bomb_err: object = None
+try:
+    _docx_extract("bomb.docx", _docx_bomb)
+except Exception as _e:  # noqa: BLE001 - the TYPE is the assertion
+    _docx_bomb_err = _e
+_docx_real_text = _docx_extract("real.docx", _docx_real)
+check(
+    "a .docx that expands past the cap is refused (413), while a 6 MB "
+    "image-heavy CV — which expands ~1:1 and is the worst legitimate case — "
+    "still parses",
+    isinstance(_docx_bomb_err, _DocxTooLarge)
+    and getattr(_docx_bomb_err, "kind", "") == "resume"
+    and "Kubernetes" in _docx_real_text,
+    f"bomb={type(_docx_bomb_err).__name__} zip={len(_docx_bomb)}B "
+    f"real_zip={len(_docx_real)}B text={_docx_real_text[:40]!r}",
+)
+
+# Our OWN render must survive it: `ats_xray` feeds `render_docx` output straight
+# back through `extract_text`, so a guard that fires here breaks /tools/ats-xray
+# rather than only uploads.
+_docx_ours_err: object = None
+_docx_ours = ""
+try:
+    _docx_ours = _docx_extract("ours.docx", render_docx(resume))
+except Exception as _e:  # noqa: BLE001
+    _docx_ours_err = _e
+check(
+    "the cap never fires on our own render_docx output — the x-ray reads it back "
+    "through this same path, so a guard that fires here breaks /tools/ats-xray",
+    _docx_ours_err is None and len(_docx_ours.strip()) > 0,
+    f"err={_docx_ours_err} len={len(_docx_ours)}",
+)
+
+# THE CAP'S FLOOR IS DERIVED FROM THE UPLOAD CAP, so raising `max_upload_mb`
+# cannot silently turn this into a guard that refuses a CV the upload cap admits.
+from app.parsers import resume_parser as _rp_mod  # noqa: E402
+
+check(
+    "the expansion cap is floored at 3x max_upload_mb — the two numbers cannot drift",
+    "max(cap_mb, 3 * settings.max_upload_mb)" in _docx_inspect.getsource(_rp_mod._assert_docx_expansion),
+)
+
+# FAILS CLOSED, NOT OPEN. "The central directory can lie" is the obvious
+# evasion, and it does not work: `ZipExtFile._read1` clamps each member to the
+# declared `file_size` and the CRC then fails at EOF, so an under-declaring zip
+# inflates nothing. It must land on the 400 path, not 500 and not 413.
+_docx_lie = bytearray(_docx_bomb)
+_docx_i = _docx_lie.find(b"PK\x01\x02")
+while _docx_i != -1:
+    _docx_lie[_docx_i + 24 : _docx_i + 28] = (1).to_bytes(4, "little")
+    _docx_i = _docx_lie.find(b"PK\x01\x02", _docx_i + 4)
+_docx_lie_err: object = None
+try:
+    _docx_extract("lie.docx", bytes(_docx_lie))
+except Exception as _e:  # noqa: BLE001
+    _docx_lie_err = _e
+check(
+    "a zip whose central directory UNDER-declares its sizes fails closed — the "
+    "member's CRC breaks and it lands on 400, never inflating past the cap",
+    isinstance(_docx_lie_err, ValueError) and not isinstance(_docx_lie_err, _DocxTooLarge),
+    f"{type(_docx_lie_err).__name__}: {_docx_lie_err}",
+)
+
+# Malformed input is user error, not our bug. Both of these were 500s before the
+# guard landed: a PDF renamed .docx raised PackageNotFoundError, and a plain zip
+# renamed .docx died on a bare KeyError inside ZipFile.read.
+_docx_bad = []
+for _name, _blob in (
+    ("pdf-renamed.docx", b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\ntrailer"),
+    ("plain-zip.docx", b""),
+):
+    if not _blob:
+        _z = _docx_io.BytesIO()
+        with _zf_mod.ZipFile(_z, "w") as _zw:
+            _zw.writestr("hello.txt", "not a word document")
+        _blob = _z.getvalue()
+    try:
+        _docx_extract(_name, _blob)
+        _docx_bad.append(f"{_name}: no raise")
+    except ValueError:
+        pass
+    except Exception as _e:  # noqa: BLE001
+        _docx_bad.append(f"{_name}: {type(_e).__name__}")
+check(
+    "a corrupt or non-Word .docx is a 400, never a 500 — a PDF and a plain zip "
+    "renamed .docx both raise ValueError",
+    _docx_bad == [],
+    str(_docx_bad),
+)
+
 # WHY COVERAGE LIVES ON THE SERVER, pinned so nobody "optimises" it into the
-# frontend. `_keyword_present` tries the VERBATIM phrase first, so a JD keyword
-# finds itself inside a prefixed Hebrew word — Hebrew attaches ב/ל/ה/ו/מ/ש
-# directly. `frontend/src/lib/keywords.ts` wraps the needle in token-boundary
-# guards (`(?<![a-z0-9+#.֐-׿])`), which makes exactly this MISS. A TS
-# reimplementation would therefore show a different number from the one the
-# server computed, in the primary market.
+# frontend. `_keyword_present` tries the VERBATIM phrase first, and a JD keyword
+# has to find itself inside a prefixed Hebrew word, because Hebrew attaches
+# ב/ל/ה/ו/מ/ש directly onto the noun.
+#
+# This comment used to say the frontend's `lib/keywords.ts` made exactly this
+# case MISS, and that the resulting disagreement was the reason status stays on
+# the server. That is no longer true and the correction matters: the two
+# matchers now agree here, because `_keyword_present`'s boundary was given the
+# SAME asymmetry the TS side already had — a Latin-only lookbehind, a
+# full-class lookahead (see the boundary block below). They disagreed for a long
+# time and "one matcher, one answer" says they may not.
+#
+# The rule still stands, on its real reason: `countOccurrences` answers "how
+# many times does this phrase appear", while STATUS additionally carries the
+# token fallback and the `partial` tier, which the TS side does not implement
+# and must not start to. check-mirrors check 4 fails the build if any lib/*.ts
+# begins returning covered/partial/missing.
 from app.core.scorer import keyword_analysis as _kw_analysis  # noqa: E402
 from app.models import JDModel as _JD_glue  # noqa: E402
 
@@ -3743,6 +3954,225 @@ check(
     "is not reimplemented in TypeScript, where the boundary guard makes it miss",
     _glue_gaps and _glue_gaps[0].status == "covered" and _glue_pct == 100.0,
     f"pct={_glue_pct} statuses={[(g.keyword, g.status) for g in _glue_gaps]}",
+)
+
+# ---------------------------------------------------------------------------
+# COVERAGE READS EVERY PRINTED SECTION, AND ONLY MATCHES AT TOKEN BOUNDARIES.
+#
+# Two defects, one function pair, both moving the app's flagship deterministic
+# number — in opposite directions at once.
+#
+# (a) `scorer._resume_text` omitted `headline`, `military_service` and
+#     `languages` while BOTH renderers draw all three. An Israeli CV whose
+#     Kubernetes/Terraform evidence lived in a unit bullet scored those
+#     `missing`, and /tools/coverage advised "surface real experience using the
+#     term 'Terraform'" about a page that printed it twice. Coverage is half of
+#     `overall`, so it moved search ranking, History, the fit ring and the 75%
+#     alert bar — and `keyword_guard` reads the same text, so the keyword floor
+#     was structurally unable to see the tailor delete a military-only keyword.
+#
+# (b) the verbatim branch was a bare `kw in resume_text` with NO boundary, so
+#     `Go` matched inside "django", `ORM` inside "terraform", and `R`/`C`
+#     matched almost anything. Every one is an ordinary `jd.hard_skills` value.
+#
+# Both halves are pinned WITH their false-positive case, because "read the
+# military section" is trivially satisfied by reading everything, and "add a
+# boundary" is trivially satisfied by a symmetric one that deletes Hebrew.
+from app.core import ats_scan as _cov_ats  # noqa: E402
+from app.core.scorer import _keyword_present as _cov_kp  # noqa: E402
+from app.core.scorer import _resume_text as _cov_text  # noqa: E402
+from app.core.scorer import _tokens as _cov_tok  # noqa: E402
+from app.models import LanguageSkill as _CovLang  # noqa: E402
+from app.models import MilitaryService as _CovMil  # noqa: E402
+
+# Every printed section carries a unique sentinel, so the assertion is "this
+# section is READ", not "this particular string appears".
+_cov_cv = ResumeModel(
+    contact=Contact(name="Dana Levi"),
+    headline="Senior sentinelheadline Engineer",
+    summary="Backend engineer, sentinelsummary.",
+    skills=["sentinelskill"],
+    certifications=["sentinelcert"],
+    experience=[Experience(title="sentineltitle", company="sentinelcompany", bullets=["sentinelbullet"])],
+    education=[Education(degree="sentineldegree", field="sentinelfield", institution="sentinelinstitution")],
+    projects=[Project(name="sentinelproject", description="sentineldesc", bullets=["sentinelprojbullet"])],
+    military_service=[_CovMil(unit="sentinelunit", role="sentinelrole", bullets=["sentinelmilbullet"])],
+    languages=[_CovLang(language="sentinellanguage", level="sentinellevel")],
+)
+_cov_txt = _cov_text(_cov_cv)
+_cov_missed = [
+    s
+    for s in (
+        "sentinelheadline", "sentinelsummary", "sentinelskill", "sentinelcert",
+        "sentineltitle", "sentinelcompany", "sentinelbullet",
+        "sentineldegree", "sentinelfield", "sentinelinstitution",
+        "sentinelproject", "sentineldesc", "sentinelprojbullet",
+        "sentinelunit", "sentinelrole", "sentinelmilbullet",
+        "sentinellanguage",
+    )
+    if s not in _cov_txt
+]
+check(
+    "coverage corpus reads EVERY printed section — headline, military service and "
+    "languages included (the three it silently skipped)",
+    _cov_missed == [],
+    f"not read: {_cov_missed}",
+)
+# The false-positive half: a proficiency word is not a skill claim, so `level`
+# stays out. Including it would let a JD keyword hit on a word no claim holds.
+check(
+    "coverage corpus reads a language's NAME but not its proficiency level",
+    "sentinellanguage" in _cov_txt and "sentinellevel" not in _cov_txt,
+)
+
+# Adding a printed section to the model must force a decision here rather than
+# silently shipping a section nothing scores — check-mirrors 1's rule, in Python.
+_COV_UNREAD = {"contact", "skill_groups"}  # Contact is not a claim; groups are presentation
+_COV_READ = {
+    "headline", "summary", "skills", "certifications", "experience",
+    "education", "projects", "military_service", "languages",
+}
+_cov_new = set(ResumeModel.model_fields) - _COV_UNREAD - _COV_READ
+check(
+    "a new ResumeModel section cannot ship unread by the coverage corpus",
+    _cov_new == set(),
+    f"unaccounted for: {sorted(_cov_new)}",
+)
+
+# `ats_scan._resume_text` is a DELIBERATE second corpus (", " skill join, " \n"
+# part join, case preserved) because it feeds prose checks — `_has_term`, the
+# one-page word count — not keyword matching. It may differ in punctuation; it
+# may NOT read a different set of sections. Nothing pinned that, which is how
+# the two disagreed about military service for as long as they did.
+_cov_ats_txt = _cov_ats._resume_text(_cov_cv).lower()
+_cov_div = [
+    s
+    for s in (
+        "sentinelheadline", "sentinelsummary", "sentinelskill", "sentinelcert",
+        "sentineltitle", "sentinelproject", "sentineldegree",
+        "sentinelunit", "sentinelmilbullet",
+    )
+    if (s in _cov_txt) != (s in _cov_ats_txt)
+]
+check(
+    "scorer and ats_scan read the SAME sections — two corpora, never two answers "
+    "about which parts of the résumé count",
+    _cov_div == [],
+    f"divergent: {_cov_div}",
+)
+
+# (b) the boundary — catch and false positive in one table.
+_cov_lat = "built microservices in django with mongodb, terraform and react; strong grpc background"
+_cov_lat_t = _cov_tok(_cov_lat)
+_cov_fp = [k for k in ("Go", "R", "C", "ORM", "Java", "Script") if _cov_kp(k, _cov_lat, _cov_lat_t) == "covered"]
+_cov_tp = [
+    k
+    for k in ("django", "MongoDB", "Terraform", "React", "gRPC", "microservices")
+    if _cov_kp(k, _cov_lat, _cov_lat_t) != "covered"
+]
+check(
+    "coverage: a keyword buried mid-word is NOT covered — 'Go' in django, 'ORM' "
+    "in terraform, 'Java' in JavaScript",
+    _cov_fp == [],
+    f"falsely covered: {_cov_fp}",
+)
+check(
+    "coverage: the terms the résumé really holds are still covered — the false-"
+    "positive half, since a boundary is trivially satisfied by matching nothing",
+    _cov_tp == [],
+    f"wrongly missing: {_cov_tp}",
+)
+
+# `+#.` are word characters in `_WORD_RE`, so C++/C#/.NET survive the boundary
+# while a bare `C` does not.
+_cov_pp = "experienced in c++, c# and .net core"
+_cov_pp_t = _cov_tok(_cov_pp)
+check(
+    "coverage: C++ / C# / .NET match while a bare 'C' does not",
+    all(_cov_kp(k, _cov_pp, _cov_pp_t) == "covered" for k in ("C++", "C#", ".NET"))
+    and _cov_kp("C", _cov_pp, _cov_pp_t) != "covered",
+    str([(k, _cov_kp(k, _cov_pp, _cov_pp_t)) for k in ("C++", "C#", ".NET", "C")]),
+)
+
+# THE LOOKBEHIND IS LATIN-ONLY AND THAT ASYMMETRY IS THE WHOLE FIX. A symmetric
+# boundary passes every Latin check above and silently deletes Hebrew coverage
+# in the primary market, because ב/ל/ה/ו/מ/ש glue straight onto the noun.
+_cov_he = "ניסיון רב בפייתון ובניהול צוותים"
+_cov_he_t = _cov_tok(_cov_he)
+check(
+    "coverage: a Hebrew keyword still matches behind its inseparable prefix — "
+    "פייתון inside בפייתון, ניהול inside ובניהול",
+    _cov_kp("פייתון", _cov_he, _cov_he_t) == "covered"
+    and _cov_kp("ניהול", _cov_he, _cov_he_t) == "covered",
+)
+# ...while the LOOKAHEAD keeps the Hebrew block, so a longer Hebrew word that
+# merely STARTS with the keyword is not a match.
+check(
+    "coverage: a longer Hebrew word that only STARTS with the keyword is not covered",
+    _cov_kp("ניהו", _cov_he, _cov_he_t) != "covered",
+    _cov_kp("ניהו", _cov_he, _cov_he_t),
+)
+
+# The multi-word cross-join match that `order_skills`' acceptance gate was
+# calibrated on: skills join with a SPACE, so a two-word JD phrase can span two
+# adjacent entries. The boundary must not break it, or that gate silently
+# changes meaning.
+_cov_join = _cov_text(ResumeModel(contact=Contact(name="דנה"), skills=["פייתון", "מתקדם"]))
+check(
+    "coverage: a multi-word keyword still matches ACROSS the skills space-join — "
+    "the behaviour order_skills' gate measures",
+    _cov_kp("פייתון מתקדם", _cov_join, _cov_tok(_cov_join)) == "covered",
+)
+
+# A LONGER TERM THAT STARTS WITH THE KEYWORD IS `partial`, NEVER `covered`.
+# `PostgreSQL` is evidence for `Postgres`, not the term — which is exactly what
+# `partial` means here. Dropping it outright was the first attempt and it broke
+# a pinned invariant one file over: `length_budget._drop_unmatched_skill`
+# protects any entry the scorer reads as not-`missing` and removes the LONGEST
+# unmatched one, so a strict boundary would have deleted "PostgreSQL
+# administration and replication tuning at scale" from a CV applying to a job
+# that says Postgres.
+#
+# `SQL` inside `PostgreSQL` stays missing, and that asymmetry is the point: it
+# is a SUFFIX, the same shape as `ORM` inside terraform.
+_cov_pg = "postgresql administration and replication tuning"
+_cov_pg_t = _cov_tok(_cov_pg)
+check(
+    "coverage: a longer term that STARTS with the keyword is partial, not covered "
+    "— PostgreSQL is evidence for Postgres, not the term",
+    _cov_kp("Postgres", _cov_pg, _cov_pg_t) == "partial"
+    and _cov_kp("PostgreSQL", _cov_pg, _cov_pg_t) == "covered"
+    and _cov_kp("SQL", _cov_pg, _cov_pg_t) == "missing",
+    str([(k, _cov_kp(k, _cov_pg, _cov_pg_t)) for k in ("Postgres", "PostgreSQL", "SQL")]),
+)
+# The false-positive half, and the reason the floor exists: below it a shared
+# prefix is coincidence, not a shared root. `R` inside "react" and `C` inside
+# "clusters" are how single-letter JD hard skills used to score 100%, and `Java`
+# must never reach `JavaScript` — the case lib/keywords.ts names in its own
+# comment. The floor is TUNED, not measured; it sits between Java(4) and
+# Postgres(8).
+_cov_sp = "react clusters, rust and javascript"
+_cov_sp_t = _cov_tok(_cov_sp)
+check(
+    "coverage: a short keyword never rides the prefix rule — R/C/Go stay missing "
+    "and Java never reaches JavaScript",
+    all(_cov_kp(k, _cov_sp, _cov_sp_t) == "missing" for k in ("R", "C", "Go", "Java")),
+    str([(k, _cov_kp(k, _cov_sp, _cov_sp_t)) for k in ("R", "C", "Go", "Java")]),
+)
+
+# A KEYWORD AT THE END OF A SENTENCE. `.` is a word character only so `.NET` and
+# `node.js` hold together, and a flat trailing class therefore made `SQL`
+# invisible inside "…ו-SQL." — which is how this change first came back red.
+_cov_dot = "מהנדסת תוכנה עם ניסיון בפייתון ו-sql. גם python. built with node.js"
+_cov_dot_t = _cov_tok(_cov_dot)
+check(
+    "coverage: a sentence-final full stop is a boundary, while a dot INSIDE a "
+    "name is not — 'SQL.'/'Python.' match, 'node' ⊄ 'node.js'",
+    _cov_kp("SQL", _cov_dot, _cov_dot_t) == "covered"
+    and _cov_kp("Python", _cov_dot, _cov_dot_t) == "covered"
+    and _cov_kp("node.js", _cov_dot, _cov_dot_t) == "covered"
+    and _cov_kp("node", _cov_dot, _cov_dot_t) == "missing",
+    str([(k, _cov_kp(k, _cov_dot, _cov_dot_t)) for k in ("SQL", "Python", "node.js", "node")]),
 )
 
 _rl = RateLimiter(max_requests=3, window_seconds=60)
@@ -3781,6 +4211,44 @@ with TestClient(_fastapi_app) as _tc:
     )
     _gated = _tc.post("/jd/analyze", json={"jd_text": "Python developer"})
     check("gated routes still 401 without the access code", _gated.status_code == 401, str(_gated.status_code))
+
+    # THE ZIP BOMB, OVER HTTP, ON THE ONE ROUTE THAT TAKES NO ACCESS CODE. The
+    # unit check above proves the guard raises; this proves the raise is WIRED —
+    # gate exemption, the `InputTooLarge` exception handler and the structured
+    # 413 body all in one request. Without it the guard could regress to a 500
+    # (a limit the user can act on turning into a Sentry issue) with the unit
+    # check still green.
+    _bomb_resp = _tc.post(
+        "/public/scan",
+        files={"file": ("bomb.docx", _docx_bomb,
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+        data={"jd_text": "Python developer."},
+    )
+    check(
+        "the unauthenticated /public/scan refuses a decompression bomb with a 413, "
+        "not a 500 — the door a stranger with no invite code can reach",
+        _bomb_resp.status_code == 413
+        and _bomb_resp.json().get("detail", {}).get("code") == "input_too_large",
+        f"{_bomb_resp.status_code} {_bomb_resp.text[:160]}",
+    )
+    # The false-positive half over HTTP too: an ordinary .docx still scores.
+    # A SMALL one — this suite sets MAX_UPLOAD_MB=1 (top of file), so the 6 MB
+    # image-heavy fixture the unit check uses is refused by the *upload* cap
+    # before the expansion guard is reached. That case belongs to the unit
+    # check, which does not cross an HTTP boundary; what this one has to prove
+    # is that a normal CV still gets a 200 through the same route.
+    _ok_resp = _tc.post(
+        "/public/scan",
+        files={"file": ("small.docx", _make_docx(
+            _DOCX_HEAD + b"<w:p><w:r><w:t>Dana Levi builds Kubernetes tooling</w:t></w:r></w:p>" + _DOCX_TAIL),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+        data={"jd_text": "Kubernetes engineer. Kubernetes required."},
+    )
+    check(
+        "…while a real .docx upload still scans normally through the same route",
+        _ok_resp.status_code == 200 and 0 < _ok_resp.json()["coverage"] <= 100,
+        f"{_ok_resp.status_code} {_ok_resp.text[:160]}",
+    )
 
 # 18. Résumé templates (PLAN 6): every template × format × language renders,
 # stays ATS-safe (no tables/text-boxes/images/headers/footers in the DOCX
@@ -9740,5 +10208,7 @@ with TestClient(_fastapi_app) as _tc:
         str(_ns_back),
     )
 
-print("\n" + ("ALL PASSED" if not failures else f"FAILURES: {failures}"))
+_reached_end = True
+print(f"\n{_ran} checks ran.")
+print("ALL PASSED" if not failures else f"FAILURES: {failures}")
 raise SystemExit(1 if failures else 0)

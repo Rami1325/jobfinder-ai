@@ -18,10 +18,18 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      # One retry: a single check ("default master is the most recently updated")
-      # can flake on same-second updated_at ordering.
+      # NO RETRY. There used to be a `|| python -m tests.smoke_test` here, for a
+      # single check ("default master is the most recently updated") that flaked
+      # on same-second updated_at ordering. That flake was FIXED at the point of
+      # writing (routes.py stamps updated_at one microsecond past the newest row
+      # for the user), so the retry outlived its cause and became a liability:
+      # smoke_test.py is straight-line top-level code with no top-level try, so
+      # an exception at check 50 aborts the process and checks 51-915 never run.
+      # Under `A || A` a nondeterministic crash therefore produced a GREEN build
+      # with ~865 checks silently unexecuted. A red run is real — do not re-run
+      # it away, diagnose it.
       - name: Offline smoke test (stub LLM)
-        run: python -m tests.smoke_test || python -m tests.smoke_test
+        run: python -m tests.smoke_test
 
   frontend-build:
     runs-on: ubuntu-latest
