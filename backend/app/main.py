@@ -132,16 +132,33 @@ async def access_gate(request: Request, call_next):
         and request.url.path not in _GATE_EXEMPT
     ):
         from app.db.database import SessionLocal
-        from app.db.users import resolve_user
+        from app.db.users import resolve_user, touch_last_seen
 
         db = SessionLocal()
         try:
             user = resolve_user(db, request.headers.get("x-app-key", ""))
+            # Stamped here, on the session already open for the lookup, so it
+            # costs no extra connection and covers every authenticated request
+            # — including the uncapped /tools/* routes and unknown paths, which
+            # this gate sees but no route dependency ever does.
+            #
+            # The id is read INSIDE the session, and that is load-bearing:
+            # `touch_last_seen` commits, SQLAlchemy expires every attribute on
+            # commit, and `db.close()` then detaches the instance — so a later
+            # `user.id` tries to refresh itself and raises
+            # DetachedInstanceError. It bit here, and only on the first request
+            # of each throttle window (a throttled call never commits, so it
+            # never expires anything), which is exactly the shape that reaches
+            # production looking like a flake.
+            user_id = None
+            if user is not None:
+                touch_last_seen(db, user)
+                user_id = user.id
         finally:
             db.close()
-        if user is None:
+        if user_id is None:
             return JSONResponse({"detail": "Access code required."}, status_code=401)
-        request.state.user_id = user.id
+        request.state.user_id = user_id
     return await call_next(request)
 
 

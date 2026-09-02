@@ -9,6 +9,7 @@ deployment (and the Chrome extension's saved access code) keeps working.
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -51,6 +52,42 @@ def resolve_user(db: Session, invite_code: str) -> User | None:
     return db.execute(
         select(User).where(User.invite_code == invite_code, User.is_active.is_(True))
     ).scalars().first()
+
+
+# One page load fires several API calls; without a throttle each is a write to
+# Neon. The question this column answers — "did they ever open it, and roughly
+# when" — needs nothing finer than this.
+SEEN_THROTTLE = timedelta(minutes=5)
+
+
+def touch_last_seen(db: Session, user: User) -> None:
+    """Stamp when this user was last seen. Throttled, and best-effort.
+
+    Called from the access gate rather than from `current_user`, and that
+    placement is the point: the gate runs BEFORE routing, so this covers the
+    deterministic routes that are deliberately uncapped (and so write no
+    `usage_log` row) and even requests to paths that do not exist. Moving it
+    into a dependency would silently re-open exactly the blind spot it closes.
+
+    Never raises. Bookkeeping must not turn a served request into an error —
+    the `usage.record_tokens` precedent.
+    """
+    now = datetime.now(timezone.utc)
+    last = user.last_seen_at
+    if last is not None:
+        # The column is a plain `DateTime`, so what was written as aware UTC
+        # reads back NAIVE from both SQLite and Postgres. Comparing the two
+        # directly raises TypeError — inside a try that would look like a
+        # throttle that simply never fires, i.e. a write on every request.
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        if now - last < SEEN_THROTTLE:
+            return
+    try:
+        user.last_seen_at = now
+        db.commit()
+    except Exception:  # noqa: BLE001 - never fail a request over bookkeeping
+        db.rollback()
 
 
 def mint_user(db: Session, name: str, email: str = "") -> User:

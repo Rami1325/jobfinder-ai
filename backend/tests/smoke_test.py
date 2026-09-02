@@ -6202,6 +6202,69 @@ with TestClient(_fastapi_app) as _tc:
         u["id"] for u in _tc.get("/admin/users", headers=_ADMIN_H).json()["users"] if u["is_admin"]
     )
     check("friend code opens the gate", _tc.get("/applications", headers=_FRIEND_H).status_code == 200)
+
+    # --- users.last_seen_at: stamped by the GATE, not by a route -----------
+    # Exists because `usage_log` could not answer "has this person ever opened
+    # it": admins write no action rows at all, and the deterministic routes are
+    # deliberately uncapped so they write nothing either.
+    from app.db.models import User as _SeenUser  # noqa: E402
+
+    def _seen(uid):
+        _d = SessionLocal()
+        try:
+            return _d.get(_SeenUser, uid).last_seen_at
+        finally:
+            _d.close()
+
+    def _clear_seen(uid):
+        """Reset so the next request is outside SEEN_THROTTLE — otherwise every
+        check after the first one passes for the wrong reason."""
+        _d = SessionLocal()
+        try:
+            _d.get(_SeenUser, uid).last_seen_at = None
+            _d.commit()
+        finally:
+            _d.close()
+
+    check(
+        "a freshly minted user reads UNKNOWN, not 'never visited'",
+        _mint.json()["last_seen_at"] == "",
+        _mint.json().get("last_seen_at"),
+    )
+    check("a real request stamps last_seen_at", _seen(_friend_id) is not None)
+
+    _t1 = _seen(_friend_id)
+    _tc.get("/applications", headers=_FRIEND_H)
+    check(
+        # `is not None` is load-bearing: with the stamp dead both reads are
+        # None, they compare equal, and this passes by never firing.
+        "a second request inside the throttle does NOT rewrite it",
+        _t1 is not None and _seen(_friend_id) == _t1,
+        f"{_t1} -> {_seen(_friend_id)}",
+    )
+
+    # THE placement pin. The gate runs before routing, so an unknown path still
+    # stamps; a `Depends(current_user)` implementation could never do this, and
+    # would silently re-open the /tools/* blind spot this column exists to close.
+    _clear_seen(_friend_id)
+    _r404 = _tc.get("/no-such-route-at-all", headers=_FRIEND_H)
+    check(
+        "an unrouted path still stamps (proves the stamp is in the middleware)",
+        _r404.status_code == 404 and _seen(_friend_id) is not None,
+        f"status {_r404.status_code}",
+    )
+
+    # False-positive half: a guard that stamps on a REJECTED code would report
+    # visits that never happened. "Make it stamp" is otherwise trivially
+    # satisfied by stamping unconditionally.
+    _clear_seen(_friend_id)
+    check(
+        "a rejected access code stamps nobody",
+        _tc.get("/applications", headers={"X-App-Key": "not-a-code"}).status_code == 401
+        and _seen(_friend_id) is None,
+    )
+    _tc.get("/applications", headers=_FRIEND_H)  # restore for later sections
+
     check(
         "friend can't reach admin endpoints (403)",
         _tc.get("/admin/users", headers=_FRIEND_H).status_code == 403

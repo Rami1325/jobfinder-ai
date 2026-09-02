@@ -549,6 +549,10 @@ class UserOut(BaseModel):
     is_admin: bool = False
     is_active: bool = True
     created_at: str = ""
+    # "" means NOT MEASURED — either the row predates the column or this build
+    # never stamped it — and NEVER "has not visited". Any UI for this has to
+    # say "unknown", or a code minted before the column reads as a no-show.
+    last_seen_at: str = ""
 
 
 class UserList(BaseModel):

@@ -33,6 +33,20 @@ class User(Base):
     # prompt as an avoid-list. Learned only from explicit user decisions.
     # "" = none. Migrates via the ADD-COLUMN shim.
     writing_prefs_json: Mapped[str] = mapped_column(Text, default="")
+    # When this user last made an authenticated API request. Stamped by the
+    # access-gate middleware, so it covers EVERY request — including the
+    # deliberately uncapped deterministic routes (/tools/*, /render), which
+    # write no `usage_log` row and were therefore invisible.
+    #
+    # NULLABLE, and the distinction is the whole point: NULL means NOT
+    # MEASURED, never "never visited". The five invite codes minted before
+    # this column existed would otherwise read as confirmed no-shows — the
+    # same "a row that predates the field means unknown" rule the tracker's
+    # voice_score/fabrication_flag_count columns are nullable for. Migrates
+    # via the ADD-COLUMN shim in database.py.
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

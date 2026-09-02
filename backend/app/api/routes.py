@@ -1725,6 +1725,7 @@ def _user_out(u: User) -> UserOut:
         is_admin=u.is_admin,
         is_active=u.is_active,
         created_at=u.created_at.isoformat() if u.created_at else "",
+        last_seen_at=u.last_seen_at.isoformat() if u.last_seen_at else "",
     )
 
 
