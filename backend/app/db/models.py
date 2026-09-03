@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -156,6 +156,88 @@ class JobSearchHit(Base):
     searched_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+
+
+class PostingSighting(Base):
+    """When we first and last saw one posting — the app's market memory (PLAN 28.3).
+
+    Nothing in this app could say how long a posting has REALLY been open, and
+    `JobSearchHit` above is exactly why: it updates its row IN PLACE and bumps
+    `searched_at` on every write, so the only date it ever holds is the most
+    recent one; and it is capped at the newest 100 rows per user, so a posting
+    that falls off that tail takes its whole history with it. This table
+    outlives both — one row per (board, posting), `first_seen_at` written once
+    and then left alone, trimmed only by a 180-day retention sweep.
+
+    **NO `user_id`, deliberately — this is the one privacy decision in Phase 28.**
+    A row here is metadata a BOARD published: which board, the title+company
+    fingerprint, when we first and last saw it, its URLs, a count. It is not
+    user content, nothing in it is derived from a résumé, and several users
+    searching the same market legitimately SHARE one row. It therefore does not
+    belong in `routes._wipe_user_rows` and **must not be added there**: that
+    helper deletes rows `WHERE model.user_id == user.id`, so a table with no
+    such column cannot even be expressed in it — and wiping by any other key
+    would destroy market memory that other users' searches wrote, while saying
+    nothing whatsoever about the user who left. `jd_text`, the raw title and
+    every other posting BODY field are absent for the same reason: the moment
+    this table holds a description it is a content store with no owner.
+
+    Created by `create_all`; no ADD-COLUMN shim entry is needed, because
+    `_migrate_missing_columns` skips any table the inspector does not already
+    have ("create_all handles brand-new tables") — the shim exists for columns
+    added to tables that already exist in a live DB.
+
+    Written and read by `app.db.sightings`, which owns the continuity rule that
+    makes `first_seen_at` mean "since the start of the CURRENT run" rather than
+    "the first time we ever saw this title at this company".
+    """
+
+    __tablename__ = "posting_sightings"
+    # A posting is identified by (board, title+company fingerprint), never by
+    # URL: boards mint a fresh listing id for a relisted role, which is the
+    # `reposted` signal itself — keying on the URL would file the relist as a
+    # brand-new posting and lose the very fact we are here to record.
+    __table_args__ = (
+        UniqueConstraint("source", "content_key", name="uq_posting_sightings_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(32), default="", index=True)  # PROVIDERS key
+    # app.core.job_search.content_key(title, company) — normalized title|company.
+    # NEVER "" in a stored row: content_key returns "" when either half is
+    # missing, and one shared "" row would fuse every keyless posting on a board
+    # into a single sighting whose first_seen_at is the oldest of them. The skip
+    # lives in db.sightings.record_sightings.
+    content_key: Mapped[str] = mapped_column(String(255), default="", index=True)
+    # The start of the CURRENT run, not of all time. A gap longer than
+    # SIGHTING_GAP_DAYS resets this and bumps `relist_count`, so a role relisted
+    # after a quiet quarter is never reported as "open 200 days".
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    # Deliberately NOT indexed: the retention sweep in `db.sightings` scans it
+    # once per search, but the table is bounded at ~25 rows per searching user
+    # per day for 180 days, so the scan is free and the index is one more thing
+    # to keep true. Add it if this ever holds a market rather than a beta.
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    # The listing URL at the start of this run vs. the newest one. `reposted`
+    # reads exactly this difference: same board, same title+company, new id.
+    first_url: Mapped[str] = mapped_column(String(1000), default="")
+    last_url: Mapped[str] = mapped_column(String(1000), default="")
+    # How many searches have observed this posting during the current run — one
+    # increment per search, not per result row.
+    seen_count: Mapped[int] = mapped_column(Integer, default=1)
+    # The earliest date the BOARD itself stated for this run ("" = it never
+    # said, which is unknown and never "posted today"). Kept beside our own
+    # first_seen_at because the two answer different questions: this is the
+    # board's claim, ours is a lower bound from when someone first searched.
+    first_posted_at: Mapped[str] = mapped_column(String(32), default="")
+    # How many completed runs preceded this one, i.e. how often this exact role
+    # has been taken down and put back up. 0 on a posting we have only ever
+    # seen once.
+    relist_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class TailorKit(Base):

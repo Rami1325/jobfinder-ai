@@ -1,0 +1,77 @@
+<!-- Trimmed https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4440649502 response
+     (fetched 2026-09-03) — a LIVE posting, same chrome and same description container as
+     linkedin_job_closed.html with the closed-job <figure> absent, which is exactly how the
+     live page differs. Verified against ten open guest pages fetched the same day: not one
+     contained the substring "closed" or "accepting" anywhere.
+
+     THE FALSE-POSITIVE HALF, and it is not optional — a false "closed" deletes a live job,
+     the worst failure this feature has, and "make the closed case pass" is trivially
+     satisfied by returning the marker always. Four traps are planted in this file on
+     purpose and `linkedin_closed_marker` must return "" for all of them:
+
+       1. the description tells applicants it stopped taking submissions by email —
+          ordinary ad copy, and the reason the phrase scan runs with the description
+          container removed;
+       2. a commented-out closed-job figure in the chrome, where the real banner would
+          sit — invisible to a reader, so comments are stripped before either anchor;
+       3. the same num-applicants figcaption decoy the closed fixture carries, so a scan
+          anchored on the <figcaption> tag instead of the closed-job class fires here;
+       4. "undisclosed" and "closed-loop" in the body, so a bare "closed" substring fires.
+
+     `_description_from_html` must still return this posting's text byte-for-byte, headed
+     "Backend Engineer — Check Point Software". -->
+<div class="top-card-layout__entity-info-container flex flex-wrap papabear:flex-nowrap">
+  <div class="top-card-layout__entity-info flex-grow flex-shrink-0 basis-0 babybear:w-full">
+    <a href="https://il.linkedin.com/jobs/view/backend-engineer-at-check-point-software-4440649502?trk=public_jobs_topcard-title" data-tracking-control-name="public_jobs_topcard-title" class="topcard__link" data-tracking-will-navigate>
+      <h2 class="top-card-layout__title font-sans text-lg papabear:text-xl font-bold leading-open text-color-text mb-0 topcard__title">Backend Engineer</h2>
+    </a>
+    <h4 class="top-card-layout__second-subline font-sans text-sm leading-open text-color-text-low-emphasis mt-0.5">
+      <div class="topcard__flavor-row">
+        <span class="topcard__flavor">
+          <a class="topcard__org-name-link topcard__flavor--black-link" data-tracking-control-name="public_jobs_topcard-org-name" data-tracking-will-navigate href="https://www.linkedin.com/company/check-point-software-technologies?trk=public_jobs_topcard-org-name" rel="noopener" target="_blank">
+            Check Point Software
+          </a>
+        </span>
+        <span class="topcard__flavor topcard__flavor--bullet">
+          Tel Aviv-Yafo, Tel Aviv District, Israel
+        </span>
+      </div>
+      <div class="topcard__flavor-row">
+        <span class="posted-time-ago__text topcard__flavor--metadata">
+          1 month ago
+        </span>
+        <figure class="num-applicants__figure topcard__flavor--metadata topcard__flavor--bullet">
+          <span class="num-applicants__icon num-applicants__icon--clock lazy-load"></span>
+          <figcaption class="num-applicants__caption">
+            Be among the first 25 applicants
+          </figcaption>
+        </figure>
+      </div>
+
+    <!-- trap 2: the banner as it would appear, commented out. A reader sees nothing.
+    <figure class="closed-job closed-job__flavor topcard__flavor-row">
+      <figcaption class="closed-job__flavor--closed">No longer accepting applications</figcaption>
+    </figure>
+    -->
+
+    </h4>
+  </div>
+</div>
+
+<div class="decorated-job-posting__details">
+  <section class="core-section-container my-3 description">
+    <div class="core-section-container__content break-words">
+      <div class="description__text description__text--rich">
+        <section class="show-more-less-html" data-max-lines="5">
+          <div class="show-more-less-html__markup show-more-less-html__markup--clamp-after-5
+              relative overflow-hidden">
+            Why Join Us?<br><br>Join our Cloudinfra R&amp;D group, responsible for Check Point&#8217;s Infinity Portal!<br><br><strong>The Backend Engineer Will<br><br></strong><ul><li>Build server-side infrastructure in NodeJS and Python.</li><li>Own closed-loop monitoring for the platform&#8217;s control plane.</li></ul>Compensation is competitive and undisclosed at this stage.<br><br>We are no longer accepting applications by email &#8212; please apply through this posting.<br><br>Applications close when the role is filled.
+          </div>
+          <button class="show-more-less-html__button show-more-less-html__button--more" data-tracking-control-name="public_jobs_show-more-html-btn">
+            Show more
+          </button>
+        </section>
+      </div>
+    </div>
+  </section>
+</div>

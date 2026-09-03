@@ -848,9 +848,60 @@ class GeoRestriction(BaseModel):
     raw: str = ""  # the matched sentence, whitespace-normalised, <= 240 chars
 
 
+class GhostSignal(BaseModel):
+    """One reason to suspect a posting is not a live vacancy. Evidence, never a
+    verdict.
+
+    One signal is one thing the posting SAYS (`raw`, its own sentence) or one
+    thing our own sighting history COUNTS (`days`, measured from `since` on the
+    basis named in `basis`). It is never a probability and never a score — see
+    GhostReport for why there is no confidence number anywhere in this pair.
+
+    `days` / `since` / `basis` are `long_open` only, and `basis` names two
+    different truths that must never be printed with the same sentence:
+    "first_published" is the BOARD's own first-publish date, while "first_seen"
+    is only a LOWER bound — the day one of our own searches first happened to
+    see it, which says nothing about the days before that."""
+
+    kind: str = ""      # closed | evergreen | long_open | reposted
+    strength: str = ""  # certain | strong | weak
+    raw: str = ""       # the posting's own sentence, whitespace-normalised, <= 240 chars
+    days: int = 0       # long_open only
+    since: str = ""     # long_open only: ISO date the count is measured from
+    basis: str = ""     # long_open only: "first_published" | "first_seen"
+
+
+class GhostReport(BaseModel):
+    """What the deterministic ghost check found. NO confidence field, for the reason
+    GeoRestriction's docstring gives.
+
+    Deterministic detection only — never an LLM, never the network; see
+    app/core/ghost_signals.py.
+
+    This can say a posting SAYS it is a talent pool, that it has been visible
+    for N days, that it reappeared under a new listing id, or that the board
+    says it is no longer accepting applications. It can NEVER say that nobody
+    is hiring: a genuine vacancy can sit open for months, a company reposts a
+    live role when the first listing expires, and a talent-pool ad has produced
+    real interviews. Every signal is a label on the TEXT and on our own
+    sightings, which is why the UI quotes `raw` and counts rather than asserting
+    a verdict.
+
+    None — not an empty report — is what "nothing fired" looks like, and it
+    means the classifier abstained, never that the posting is real. No
+    `confidence` field, for GeoRestriction's reason plus one of its own:
+    `strength` is a TUNED label, not a measured rate, so a number beside it
+    would be a second clock reading an unmeasured quantity."""
+
+    closed: bool = False   # a CERTAIN signal — filtered before the scoring LLM call
+    likely: bool = False   # >= 1 strong, or >= 2 weak. One rule, pinned.
+    signals: list[GhostSignal] = Field(default_factory=list)
+
+
 class FilteredJob(BaseModel):
-    """A posting removed before scoring because it states a Tier-1 restriction,
-    returned so the removal is VISIBLE and appealable rather than silent.
+    """A posting removed before scoring — because it states a Tier-1 restriction,
+    or because the board says it is closed — returned so the removal is VISIBLE
+    and appealable rather than silent. `reason` says which.
 
     Deliberately carries no scores — it was never scored, and a zero would be a
     fabricated number."""
@@ -863,6 +914,14 @@ class FilteredJob(BaseModel):
     posted_at: str = ""
     logo_url: str = ""
     geo_restriction: Optional[GeoRestriction] = None
+    # Why this posting was removed. Defaults to "restriction" so every
+    # pre-Phase-28 caller and every stored row stays honest. A row that predates
+    # the field means "restriction", which is TRUE — this repo's "unknown is
+    # never zero" rule, applied where the old value genuinely is known.
+    reason: str = "restriction"  # restriction | closed
+    # The evidence behind reason == "closed" — the board's own words, or the
+    # status it answered with. None when the removal was a restriction.
+    ghost: Optional[GhostReport] = None
 
 
 class JobMatch(BaseModel):
@@ -886,6 +945,12 @@ class JobMatch(BaseModel):
     # every posting with no migration. None means "nothing stated", which is
     # NOT the same as "open to you".
     geo_restriction: Optional[GeoRestriction] = None
+    # Reasons to suspect this is not a live vacancy (see GhostReport). Derived
+    # on read from the posting text + our sightings, NEVER stored on
+    # job_search_hits — so re-tuning the rules reclassifies every posting with
+    # no migration. Same as geo_restriction. None means "nothing fired", which
+    # is NOT the same as "this vacancy is real".
+    ghost: Optional[GhostReport] = None
     # Posted before the search's max_age_days window but kept because the title
     # matches the searched keywords (PLAN 15.6). The UI shows an "Older" badge.
     stale: bool = False
@@ -950,10 +1015,15 @@ class JobSearchResult(BaseModel):
     context: SearchContext = Field(default_factory=SearchContext)  # what was actually searched
     matches: list[JobMatch] = Field(default_factory=list)
     skipped: int = 0  # listings found but not fetchable/scorable
-    # Postings dropped BEFORE scoring because they state a Tier-1 hiring
-    # restriction abroad. Returned rather than silently discarded so the user
-    # can see the count, read the sentence we fired on, and reveal them. NOT
-    # part of `skipped`, whose user-facing string means "not fetchable/scorable".
+    # Postings found but deliberately NOT scored, returned rather than silently
+    # discarded so the user can see the count, read the sentence we fired on,
+    # and reveal them. Two reasons, and `FilteredJob.reason` says which: a
+    # Tier-1 hiring restriction stated abroad, or a board that says the posting
+    # is no longer accepting applications. NOT part of `skipped`, whose
+    # user-facing string means "not fetchable/scorable" — a filtered posting was
+    # perfectly fetchable, and folding either reason into it is exactly what
+    # this list exists to prevent. ONE list, never a second one per reason: two
+    # lists fragment the same idea and every caller has to remember both.
     filtered: list[FilteredJob] = Field(default_factory=list)
     # Provider name -> user-facing error for boards that FAILED (blocked,
     # unreachable, misconfigured) while others succeeded. Boards that answered

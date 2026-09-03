@@ -2,10 +2,12 @@
 import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   ArrowRight,
   Building2,
   ExternalLink,
+  Ghost,
   Globe,
   MessageCircle,
   Bookmark,
@@ -18,7 +20,14 @@ import { listKits, saveApplication } from "../../api/client";
 import { Badge, BorderGlow, Button, CountUp, ProgressRing, useToast } from "../../components/ui";
 import { fitReason } from "../../lib/fitReason";
 import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
-import type { FilteredJob, GeoRestriction, JobMatch, JobSearchHit } from "../../types";
+import type {
+  FilteredJob,
+  GeoRestriction,
+  GhostReport,
+  GhostSignal,
+  JobMatch,
+  JobSearchHit,
+} from "../../types";
 import type { AlsoOn } from "../../types";
 import {
   avatarTone,
@@ -174,6 +183,132 @@ export function GeoNote({ geo }: { geo?: GeoRestriction | null }) {
   );
 }
 
+// Every ghost `kind` this build has a string for. A newer backend may emit a
+// kind we have never heard of, and `t("card.ghost.<unknown>")` renders the KEY
+// — a dotted path at 12px in amber, on the card, in production. So an unknown
+// kind is skipped and the next-strongest known signal is shown instead;
+// abstention is the safe direction here exactly as it is in the classifier.
+const GHOST_KINDS = ["closed", "evergreen", "long_open", "reposted"];
+
+// Sort key for `strength`. An unrecognised value from a newer backend sorts
+// LAST rather than throwing — the same reason `strength` is a plain string on
+// the type and not a union.
+const GHOST_RANK: Record<string, number> = { certain: 0, strong: 1, weak: 2 };
+
+/** The ONE ghost signal a card shows, or null when it shows none.
+ *
+ * Two decisions live here rather than at the call sites, so nothing can drift
+ * between what the card DRAWS and what it suppresses for.
+ *
+ * **`closed || likely` is the threshold, never `signals.length > 0`.** The
+ * backend owns one pinned rule for `likely` (>= 1 strong, or >= 2 weak) and
+ * re-deriving a second one here would be two gates answering the same question
+ * about the same posting — the correction the geo work already paid for once.
+ * It also matters in the false-positive direction: a lone weak signal is the
+ * "we're always looking for great people" line that ships inside the about-us
+ * blurb of perfectly real postings, and an amber warning on it is a guard
+ * firing on legitimate input, which is worse than no guard.
+ *
+ * The pick is a STABLE sort by strength, so the backend's own rule order
+ * survives inside a rank — a partition, never a re-sort. */
+export function strongestGhostSignal(ghost?: GhostReport | null): GhostSignal | null {
+  if (!ghost || !(ghost.closed || ghost.likely)) return null;
+  const known = (ghost.signals ?? []).filter((s) => GHOST_KINDS.includes(s.kind));
+  return (
+    [...known].sort((a, b) => (GHOST_RANK[a.strength] ?? 9) - (GHOST_RANK[b.strength] ?? 9))[0] ??
+    null
+  );
+}
+
+/** One signal's label. `t` is passed in so this stays a plain function — it is
+ * called from `GhostNote`'s render AND from its `title` builder, and a second
+ * `useTranslation` inside a loop is a hook in a loop. */
+function ghostLabel(s: GhostSignal, t: TFunction<"jobs">): string {
+  if (s.kind !== "long_open") return t(`card.ghost.${s.kind}`);
+  // `basis` separates two claims that must never share a sentence.
+  // "first_published" is the BOARD's own publish date — "Posted N days ago".
+  // Anything else falls to the sightings phrasing, which describes OUR
+  // observation: it is the claim we can always substantiate, because a signal
+  // we emitted is by construction a posting we have seen. Printing "Posted N
+  // days ago" off a number the board never gave us would be inventing an
+  // attribution, which is the one thing `raw`-style evidence exists to avoid.
+  return t(`card.ghost.long_open.${s.basis === "first_published" ? "published" : "seen"}`, {
+    days: s.days,
+  });
+}
+
+/** Reasons to suspect this posting is not a live vacancy — quoted, or counted.
+ *
+ * `GeoNote`'s shape, for `GeoNote`'s reasons: a full-width line rather than an
+ * eighth `shrink-0` badge in a ~264px row at 390px, and the evidence ON THE
+ * PAGE rather than in `title`, because there is no hover on a phone and a
+ * two-word badge cannot carry a sentence. `break-words` is load-bearing —
+ * `raw` is untrusted third-party text, so an unbroken 200-character run would
+ * otherwise push the card's own layout sideways. `<bdi dir="auto">` wraps the
+ * QUOTE and never the paragraph: the paragraph opens with the translated
+ * label, so a paragraph-level `dir="auto"` resolves from the UI locale and
+ * leaves the posting's own sentence unisolated — in Hebrew the curly quotes
+ * and the trailing period then reorder around an English run.
+ *
+ * **ONE evidence line, however many signals fired.** Some apps itemise four
+ * lines per row; at 390px four stacked evidence lines ARE the card. The rest go
+ * in `title`. That is desktop-only and therefore a real degradation — but the
+ * signal the card is ASSERTING is always on the page, and `title` carries only
+ * corroboration for that same claim. That is the distinction `GeoNote`'s own
+ * "it cannot live in `title`" note is drawing: evidence for the claim must be
+ * readable on a phone; a second reason to believe it need not be.
+ *
+ * A Ghost, never a warning triangle, for `GeoNote`'s reason: at 12px in amber a
+ * triangle reads as an app error rather than as a property of the job. */
+export function GhostNote({ ghost }: { ghost?: GhostReport | null }) {
+  const { t } = useTranslation("jobs");
+  const shown = strongestGhostSignal(ghost);
+  if (!shown) return null;
+  const rest = (ghost?.signals ?? []).filter((s) => s !== shown && GHOST_KINDS.includes(s.kind));
+  const more = rest
+    .map((s) => (s.raw ? `${ghostLabel(s, t)} — “${s.raw}”` : ghostLabel(s, t)))
+    .join("\n");
+  return (
+    <p className="mt-2 flex items-start gap-1.5 text-xs text-warn" title={more || undefined}>
+      <Ghost size={12} className="mt-0.5 shrink-0" />
+      <span className="min-w-0 break-words">
+        {ghostLabel(shown, t)}
+        {shown.raw ? (
+          <bdi dir="auto" className="text-ink-faint">
+            {" · “"}
+            {shown.raw}
+            {"”"}
+          </bdi>
+        ) : null}
+      </span>
+    </p>
+  );
+}
+
+/** The honesty line under whichever notes are showing — ONE sentence per card.
+ *
+ * `card.geoNote` shipped in both locales and was rendered NOWHERE; this is
+ * where it renders. Only one disclaimer is drawn even when both notes are up:
+ * two of them under two evidence lines is four lines of chrome on a 390px card,
+ * and the second is read by nobody. The GEO sentence wins that slot because it
+ * is the one with teeth — a location label is the only one of the two that can
+ * talk a user out of a job they could actually work, which is exactly what
+ * "we report what it says, never whether you qualify" is there to prevent.
+ *
+ * The ghost twin is not decoration: the geo sentence would be FALSE for a
+ * `long_open` signal, whose number is a count out of our own search history
+ * rather than a quotation, so "Quoted from the posting" would be an invented
+ * attribution. Both keys are reachable — a blocking geo restriction never
+ * reaches a `MatchCard` (it was filtered), and a closed `RestrictedRow` carries
+ * no geo note at all. */
+function PostingNote({ geo, ghost }: { geo: boolean; ghost: boolean }) {
+  const { t } = useTranslation("jobs");
+  if (!geo && !ghost) return null;
+  return (
+    <p className="mt-1 text-xs text-ink-faint">{t(geo ? "card.geoNote" : "card.ghost.note")}</p>
+  );
+}
+
 /** One posting the search dropped before scoring, shown when the user taps
  * "Show them".
  *
@@ -183,6 +318,11 @@ export function GeoNote({ geo }: { geo?: GeoRestriction | null }) {
  * read as a zero fit, which is a number we never computed. */
 export function RestrictedRow({ job }: { job: FilteredJob }) {
   const { t } = useTranslation("jobs");
+  // One posting, one reason. `reason` defaults to "restriction" on the backend
+  // and is ABSENT on a pre-Phase-28 response, so the test is "is it literally
+  // closed" — read the other way round, an old payload would fall through to a
+  // row with no note at all, having stated a restriction we then never showed.
+  const closed = job.reason === "closed";
   return (
     <JobResultCard>
       <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -201,7 +341,11 @@ export function RestrictedRow({ job }: { job: FilteredJob }) {
             {job.company || "—"}
             {job.location ? ` · ${job.location}` : ""}
           </p>
-          <GeoNote geo={job.geo_restriction} />
+          {closed ? <GhostNote ghost={job.ghost} /> : <GeoNote geo={job.geo_restriction} />}
+          <PostingNote
+            geo={!closed && !!job.geo_restriction}
+            ghost={closed && !!strongestGhostSignal(job.ghost)}
+          />
           {job.url && (
             <a
               href={job.url}
@@ -285,6 +429,9 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
   const [justSaved, setJustSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const status = justSaved ? "saved" : appStatus;
+  // Computed once and shared by the badge row and the note below it, so the
+  // suppression rule and the drawn line can never disagree — see the badge row.
+  const ghostShown = strongestGhostSignal(m.ghost);
 
   async function saveForLater() {
     setSaving(true);
@@ -347,7 +494,21 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
               {m.title || t("card.untitled")}
             </p>
             <NewBadge postedAt={m.posted_at} />
-            <StaleBadge stale={m.stale} postedAt={m.posted_at} />
+            {/* NEVER TWO AGE CHIPS. A `long_open` ghost line and the "Older ·
+                posted X" badge make the same claim — this posting is old — and
+                drawing both has the card arguing with itself about which number
+                to believe. The ghost line wins: it counts from the ORIGINAL
+                publish date, or from our own first sighting, while StaleBadge
+                counts from `posted_at`, which a board rewrites every time the
+                listing is refreshed. This is the kind of line a later edit
+                silently reinstates, so note the two wrong ways to write it: an
+                unconditional `<StaleBadge>` puts both back, and gating on
+                `m.ghost` instead deletes the age from every card carrying a
+                signal we chose NOT to draw. The gate is `ghostShown`, the same
+                value `GhostNote` renders — derived, never restated. */}
+            {ghostShown?.kind !== "long_open" && (
+              <StaleBadge stale={m.stale} postedAt={m.posted_at} />
+            )}
             {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
             {m.salary?.raw && (
               <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
@@ -396,6 +557,8 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
             <WhatsAppShare title={m.title} company={m.company} url={m.url} />
           </div>
           <GeoNote geo={m.geo_restriction} />
+          <GhostNote ghost={m.ghost} />
+          <PostingNote geo={!!m.geo_restriction} ghost={!!ghostShown} />
           {(() => {
             const reason = fitReason(m.top_matched, m.top_gaps, t);
             return reason ? (

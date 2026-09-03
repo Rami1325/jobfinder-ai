@@ -33,6 +33,7 @@ import html as html_lib
 import math
 import time
 from datetime import datetime, timezone
+from functools import partial
 from typing import Callable
 
 from sqlalchemy import case, select
@@ -43,8 +44,10 @@ from app.core import mailer
 from app.core.job_search import resume_hash, search_jobs
 from app.db.history import load_score_cache, record_search_hits
 from app.db.models import JobAlert, JobSearchHit, SavedResume, User
+from app.db.sightings import load_sightings, record_sightings
 from app.models import (
     AlertRunResult,
+    GhostReport,
     JobMatch,
     JobSearchResult,
     ResumeModel,
@@ -194,6 +197,65 @@ def _bar_note(min_score: int) -> str:
     return f"Only jobs at {min_score}% fit or above — the rest are in your search history."
 
 
+# Strongest first: `certain` outranks `strong` outranks `weak`. An UNRECOGNISED
+# strength sorts LAST, not first — a value this build does not know came from a
+# newer classifier, and letting it outrank a `certain` we do understand would
+# swap a fact for a guess in the one line the reader sees.
+_GHOST_STRENGTH_RANK = {"certain": 0, "strong": 1, "weak": 2}
+
+
+def _ghost_label(ghost: GhostReport | None) -> str:
+    """The STRONGEST ghost signal's short label, or "" when there is nothing
+    this build can name. Pure.
+
+    ONE definition, read by BOTH email bodies, so the HTML chip and the
+    plain-text parenthetical can never describe the same posting differently —
+    the "one matcher, one answer" rule applied to the two renderings of one
+    email. It is a LABEL, never a verdict: `GhostReport` carries evidence that a
+    posting may not be a live vacancy, and none of these four kinds can say it
+    isn't.
+
+    `closed` is in the table and cannot occur here, deliberately. A certain
+    signal filters the posting before a JobMatch exists (see `_job_card_html`),
+    exactly as a Tier-1 geo restriction does, so nothing in an alert email can
+    carry it. The row stays because a function that answers for every kind the
+    contract defines is safer than one with a hole — and a hole here returns "",
+    which is indistinguishable from "no signal".
+
+    An unrecognised `kind` also returns "". Printing `sig.kind` would put a raw
+    internal token like `long_open` in someone's inbox, and `sig.raw` is the
+    BOARD's own sentence, which is evidence and not a label.
+    """
+    if ghost is None or not ghost.signals:
+        return ""
+    # `min` returns the FIRST minimal element, so ties fall back to the
+    # classifier's own signal order rather than to whatever sorts alphabetically.
+    sig = min(
+        ghost.signals,
+        key=lambda s: _GHOST_STRENGTH_RANK.get(s.strength, len(_GHOST_STRENGTH_RANK)),
+    )
+    if sig.kind == "closed":
+        return "No longer accepting applications"
+    if sig.kind == "evergreen":
+        return "General application"
+    if sig.kind == "reposted":
+        return "Relisted"
+    if sig.kind == "long_open":
+        days = max(0, int(sig.days))
+        plural = "" if days == 1 else "s"
+        # Two bases, two sentences, because they are two different claims.
+        # `first_published` is the BOARD's own stated date; `first_seen` is only
+        # a LOWER bound — the day one of our own searches first noticed it, which
+        # says nothing about how long it was up before that. Printing "Posted N
+        # days ago" off a sighting would attribute to the board a date it never
+        # stated. An unknown basis therefore falls to the weaker sentence: the
+        # abstaining direction is the one that claims less.
+        if sig.basis == "first_published":
+            return f"Posted {days} day{plural} ago"
+        return f"Seen for {days} day{plural}"
+    return ""
+
+
 def build_alert_email(
     new: list[JobMatch], ctx: SearchContext, min_score: int = 0
 ) -> tuple[str, str]:
@@ -220,6 +282,14 @@ def build_alert_email(
             bits.append(f"(older posting — {m.posted_at[:10]})")
         if m.geo_restriction is not None:
             bits.append("(states a location requirement)")
+        # The plain-text twin of the HTML ghost chip, off the SAME label
+        # function, so the two bodies of one email cannot say different things
+        # about one posting. Lower-cased on the FIRST CHARACTER ONLY: it reads
+        # as a sentence fragment beside "(states a location requirement)", and
+        # `.lower()` on the whole string would flatten an acronym the day one of
+        # these labels carries one.
+        if label := _ghost_label(m.ghost):
+            bits.append(f"({label[:1].lower()}{label[1:]})")
         lines.append("• " + " ".join(bits))
         if m.url:
             lines.append(f"  {m.url}")
@@ -308,6 +378,28 @@ def _job_card_html(m: JobMatch) -> str:
             f'border-radius:999px;background:#3a2f18;border:1px solid #6b5527;'
             f'color:#ffc96b;font:600 11px {_EM_FONT};letter-spacing:.4px;">'
             f"Location requirement</span>"
+        )
+    # Ghost signals (PLAN 28.5), and the paragraph above applies unchanged one
+    # class over: the SOFT signals are the only ones that can reach this chip.
+    # A CERTAIN `closed` signal filters the posting before a JobMatch exists, so
+    # the cron can no more email a dead posting than it can email a Tier-1 geo
+    # restriction — what arrives here is `evergreen` / `long_open` / `reposted`,
+    # reasons to SUSPECT the vacancy is not live and never proof that it isn't.
+    # Like the geo chip it is a label and never a filter. v1 excludes nothing on
+    # a ghost signal because the precision of these rules is unmeasured (PLAN
+    # 28.5 buys that number with three real searches read by hand first), and
+    # there is deliberately no held-back count and no footer line — a number you
+    # cannot tap to reveal is a dead end in an inbox, which is the geo work's own
+    # conclusion about this email.
+    #
+    # `esc` even though every label is our own literal: `days` is interpolated,
+    # and the next kind added to `_ghost_label` may well carry a board's words.
+    if ghost_label := _ghost_label(m.ghost):
+        chips += (
+            f'{" " if chips else ""}<span style="display:inline-block;padding:3px 10px;'
+            f'border-radius:999px;background:#3a2f18;border:1px solid #6b5527;'
+            f'color:#ffc96b;font:600 11px {_EM_FONT};letter-spacing:.4px;">'
+            f"{esc(ghost_label)}</span>"
         )
     view = (
         f'<a href="{esc(m.url, quote=True)}" style="color:{_EM["accent_soft"]};'
@@ -442,7 +534,8 @@ def run_alert(
     toggle is off (the UI's "Run now"). Never raises: failures land in
     `last_error` and the returned result so the cron caller always gets a 200
     with the outcome. `search_fn` is called as
-    `search_fn(resume, context, cache=...)` — fakes must accept the kwarg."""
+    `search_fn(resume, context, cache=..., sightings_fn=...)` — fakes must accept
+    BOTH kwargs."""
     row = get_alert(db, user_id)
     if not row.enabled and not force:
         return AlertRunResult(user_id=user_id, ran=False, error="Alerts are disabled.")
@@ -461,8 +554,20 @@ def run_alert(
     except Exception:  # noqa: BLE001
         cache = {}
 
+    # The ghost detector's market memory (PLAN 28.3). `search_fn` calls it ONCE
+    # on this thread before its scoring pool, so it can share the run's session.
+    # Bare, not wrapped like `cache` above: `search_jobs` already catches what
+    # this raises and falls back to no sightings, and a second try/except here
+    # would be a second owner of one policy.
+    #
+    # THE CRON IS WHAT MAKES `long_open` HONEST, so this call site is not one of
+    # three equivalent ones. A daily alert run is a daily sample of the market,
+    # which is what turns `first_seen_at` from "the day someone happened to
+    # search" into a real lower bound on a posting's age, within weeks of deploy.
     try:
-        result = search_fn(resume, alert_context(row), cache=cache)
+        result = search_fn(
+            resume, alert_context(row), cache=cache, sightings_fn=partial(load_sightings, db)
+        )
         new = split_new_matches(db, result.matches, user_id)
         record_search_hits(db, result.matches, user_id, resume_hash=master_hash)
     except Exception as e:  # noqa: BLE001 - report, don't crash the cron
@@ -470,6 +575,23 @@ def run_alert(
         row.last_error = str(e)[:500]
         db.commit()
         return AlertRunResult(user_id=user_id, ran=True, error=row.last_error)
+
+    # READ BEFORE WRITE (PLAN 28.3): the reader above ran INSIDE the search;
+    # this records what that search found. Reversed, every posting would be
+    # stamped `first_seen_at = now` and then read back in the same run, so
+    # `long_open` would measure each posting's age against the moment we noticed
+    # it — zero days, always, for ever. The signal would pass by never firing.
+    #
+    # In its OWN best-effort block rather than the try above, because the two
+    # have different consequences: a failure inside that try abandons the run and
+    # the user loses this morning's email, while this is bookkeeping for
+    # TOMORROW's ghost signals. `usage.record_tokens` keeps the same rule and the
+    # same shape — rollback rather than `pass`, so a half-written upsert cannot
+    # leave the session dirty for the settings commit further down.
+    try:
+        record_sightings(db, result.matches, datetime.now(timezone.utc))
+    except Exception:  # noqa: BLE001 - never lose a served run over bookkeeping
+        db.rollback()
 
     # The bar, applied AFTER record_search_hits above: below-bar postings are
     # kept out of the inbox and kept in the history the app reads and the score

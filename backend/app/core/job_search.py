@@ -27,6 +27,7 @@ from app.core.providers.linkedin import (  # noqa: F401 - re-exports
     parse_search_results,
 )
 from app.core.geo_restriction import detect_geo_restriction
+from app.core.ghost_signals import Sighting, detect_ghost_signals, parse_board_date
 from app.core.relevance import RELEVANT_MIN, title_relevance
 from app.core.salary import extract_salary
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
@@ -36,6 +37,7 @@ from app.models import (
     AlsoOn,
     FilteredJob,
     GeoRestriction,
+    GhostReport,
     JobMatch,
     JobSearchResult,
     ResumeModel,
@@ -101,6 +103,17 @@ class CachedScore:
     posted_at: str
     logo_url: str
     is_full_match: bool
+
+
+# What our own search history remembers about the postings in THIS run, looked
+# up by (source, content_key) — see `_ghost_for` and the load site in
+# `search_jobs`. Injected as a CALLABLE, never imported: this module has always
+# been DB-free (the caller owns the Session and hands `cache` in already
+# loaded), and `app.db.sightings` imports `app.models` + SQLAlchemy, which the
+# pure classifier chain must stay clear of. The callable also keeps the pool
+# workers away from a Session — SQLAlchemy's is not thread-safe, and a worker
+# starts from an empty context regardless.
+SightingsFn = Callable[[list[tuple[str, str]]], dict[tuple[str, str], Sighting]]
 
 
 def _clean_titles(titles: list[str]) -> list[str]:
@@ -182,12 +195,22 @@ def _resolve_context(resume: ResumeModel, customize: SearchContext | None) -> Se
 
 def _posted_datetime(posted_at: str) -> datetime | None:
     """Lenient parse of a JobHit.posted_at ISO string ('' / junk → None).
-    Timezone info is dropped — freshness only needs day granularity."""
-    try:
-        dt = datetime.fromisoformat(posted_at.strip())
-    except ValueError:
-        return None
-    return dt.replace(tzinfo=None)
+    Timezone info is dropped — freshness only needs day granularity.
+
+    MOVED to `app.core.ghost_signals.parse_board_date` (Phase 28); this name
+    stays as a delegating alias because the tiering above, the smoke test and
+    older callers import it from here.
+
+    It moved rather than being copied for the reason this repo keeps relearning:
+    ONE parser, ONE answer. The ghost classifier measures how long a posting has
+    been open from the SAME strings the freshness tier reads, and a second
+    lenient-ISO parser is a second opinion — one that would render on the same
+    card as the first. A string the tier parses and the age check does not is an
+    "Older" badge over a "Posted 3 days ago" line, both ours, disagreeing about
+    one posting; a string they parse to different instants is worse, because
+    nothing on the page says which clock it came from.
+    """
+    return parse_board_date(posted_at)
 
 
 def freshest_first(hits: list[JobHit], max_age_days: int, now: datetime | None = None) -> list[JobHit]:
@@ -437,15 +460,67 @@ def _geo_for(hit: JobHit, jd_text: str, location: str) -> GeoRestriction | None:
     return detect_geo_restriction(jd_text, location, hit.title)
 
 
+def _ghost_for(
+    hit: JobHit, jd_text: str, sighting: Sighting | None, now: datetime
+) -> GhostReport | None:
+    """The ghost check: classify EVERY posting. The contrast with `_geo_for`
+    directly above is the whole comment.
+
+    `_geo_for` is GATED on `origin_market` because its rules only make sense for
+    the worldwide pass: "must be authorized to work in the United States" is a
+    sentence about the reader's passport, and it is meaningless — worse,
+    actively wrong — read against a Tel Aviv listing, so an Israeli-board
+    posting is put structurally out of the classifier's reach rather than merely
+    made unlikely to trip it.
+
+    This one is deliberately UNGATED, because a ghost posting is a
+    PRIMARY-MARKET problem. The evergreen מאגר מועמדים, the agency listing that
+    has been open since spring, the LinkedIn card whose posting closed a month
+    ago are exactly what a user searching Israel from Israel loses an afternoon
+    to — that is the complaint this feature came from. Gating it on the same
+    stamp would disable it for every user who never turns the worldwide opt-in
+    on, i.e. for the default search: a detector that ships green because it can
+    never fire.
+
+    Nothing is inferred here that the caller does not already hold. `title` and
+    `jd_text` carry the wording rules; `posted_at` and `raw` carry the stated
+    age (Greenhouse's `first_published` has been riding in `raw` unread since
+    the provider was written); `hit.closed` is what the BOARD said, never a
+    guess of ours; the sighting is what our own past searches remember. `now` is
+    a PARAMETER and never `datetime.now()` inside — the
+    `providers.jobmaster.parse_hebrew_relative_date` precedent — so the whole
+    chain stays pure and pinnable, and every hit in one run ages against one
+    instant instead of drifting across a threshold mid-search.
+
+    None means nothing fired. It NEVER means the posting is real.
+    """
+    return detect_ghost_signals(
+        title=hit.title,
+        jd_text=jd_text,
+        posted_at=hit.posted_at,
+        raw=hit.raw,
+        closed=hit.closed,
+        sighting=sighting,
+        url=hit.url,
+        now=now,
+    )
+
+
 def search_jobs(
     resume: ResumeModel,
     customize: SearchContext | None = None,
     progress: ProgressFn | None = None,
     cache: dict[str, CachedScore] | None = None,
+    sightings_fn: SightingsFn | None = None,
 ) -> JobSearchResult:
     """`cache` maps URL-dedupe keys (`url.rstrip("/")` — same key as
     `_interleave_and_dedupe`) to fresh history rows; see CachedScore for the
-    two reuse tiers. None/{} means every hit takes the full fetch+score path."""
+    two reuse tiers. None/{} means every hit takes the full fetch+score path.
+
+    `sightings_fn` is the market memory (Phase 28): the caller passes
+    `partial(app.db.sightings.load_sightings, db)` and records the run AFTERWARDS,
+    beside `record_search_hits`. None means every posting classifies without a
+    sighting, which the ghost rules treat as "unknown" — never as "new"."""
     notify = progress or (lambda event: None)
     ctx = _resolve_context(resume, customize)
     if not ctx.job_title:
@@ -513,6 +588,46 @@ def search_jobs(
             "keywords under 'Customize search' and try again."
         )
 
+    # The market memory, read ONCE, here, on the main thread — after the hits
+    # are chosen (so it is one query for exactly the postings we will classify)
+    # and BEFORE the scoring pool.
+    #
+    # THE ORDER IS THE WHOLE TRAP. The caller writes this run's sightings AFTER
+    # the search returns, beside `record_search_hits`. Recording before reading
+    # would stamp every posting `first_seen_at = now` and then hand it its own
+    # stamp back, so every posting in every search would be "first seen today",
+    # `long_open` could never fire, and the feature would ship green and inert —
+    # the 21.7 failure mode, a check that passes by never firing. Read, then
+    # classify, then write.
+    #
+    # ONE call rather than one per hit: `load_sightings` is a single query in
+    # the caller, and a pool worker must never touch the Session.
+    #
+    # A hit whose `content_key` is "" is deliberately NOT looked up. That ""
+    # means "never merge this" (the title or the company is missing), so using
+    # it as a memory key would fuse every title-less posting on a board into ONE
+    # row and then report an unrelated posting's age as this one's. An absent
+    # sighting makes the classifier abstain, which is the safe direction; a
+    # shared one makes it confidently wrong.
+    #
+    # One instant for the whole run: hits scored a minute apart must not land on
+    # opposite sides of the 60-day threshold and disagree about the same market.
+    now = datetime.now()
+    sightings: dict[tuple[str, str], Sighting] = {}
+    if sightings_fn is not None:
+        keys = sorted({(h.source, ck) for h in hits if (ck := content_key(h.title, h.company))})
+        try:
+            sightings = sightings_fn(keys) if keys else {}
+        except Exception:  # noqa: BLE001 - see below
+            # The sighting is bookkeeping feeding an ADVISORY signal, and the
+            # rule `usage.record_tokens` and `users.touch_last_seen` already
+            # follow applies: bookkeeping may never turn a served request into
+            # an error. A cold Neon connection must not turn a working search
+            # into a 502 over a badge. Note the cost honestly: if this table is
+            # permanently unreachable, `long_open` and `reposted` silently never
+            # fire and nothing on the page says so.
+            sightings = {}
+
     # Scoring stage: fetch + score concurrently — each job is ONE merged JD_FIT
     # LLM call (analyze_and_score) instead of the old analyze_jd + fit_score
     # pair. Detail fetches to the SAME board stay serialized and throttled via
@@ -521,6 +636,11 @@ def search_jobs(
     # Index-addressed like matches_by_hit, and for the same reason: a shared
     # list append would need progress_lock, which already holds an SSE queue put.
     geo_by_hit: list[GeoRestriction | None] = [None] * len(hits)
+    # Same shape, same reason. Kept as its OWN list rather than folded into
+    # geo_by_hit: the two answer different questions about the posting ("can
+    # this reader work it" vs "is it a live vacancy at all"), a posting can
+    # carry either, both or neither, and `filtered` has to be able to say which.
+    ghost_by_hit: list[GhostReport | None] = [None] * len(hits)
     fetch_locks: dict[str, threading.Lock] = {h.source: threading.Lock() for h in hits}
     last_fetch: dict[str, float] = {}
     scored_done = 0
@@ -550,13 +670,15 @@ def search_jobs(
         """
         nonlocal scored_done
         geo: GeoRestriction | None = None
+        ghost: GhostReport | None = None
         try:
-            match, geo = _build_match(hit)
+            match, geo, ghost = _build_match(hit)
         except Exception as e:  # noqa: BLE001 - one bad posting must not sink the search
             match = None
             with progress_lock:
                 score_errors.append(f"{hit.title or hit.url}: {e}")
         geo_by_hit[hit_i] = geo
+        ghost_by_hit[hit_i] = ghost
         if match is not None:
             matches_by_hit[hit_i] = match
         with progress_lock:
@@ -581,14 +703,21 @@ def search_jobs(
                     }
                 )
 
-    def _build_match(hit: JobHit) -> tuple[JobMatch | None, GeoRestriction | None]:
-        """(match, geo_restriction). A blocking restriction returns (None, geo)
-        — a VALUE, never an exception: `_score_hit`'s contract turns a raise
-        into `score_errors`, which surfaces as "couldn't score any of them" and
-        would blame the boards for a posting we deliberately dropped."""
+    def _build_match(
+        hit: JobHit,
+    ) -> tuple[JobMatch | None, GeoRestriction | None, GhostReport | None]:
+        """(match, geo_restriction, ghost). A blocking restriction returns
+        (None, geo, …) and a CLOSED posting returns (None, …, ghost) — a VALUE,
+        never an exception: `_score_hit`'s contract turns a raise into
+        `score_errors`, which surfaces as "couldn't score any of them" and would
+        blame the boards for a posting we deliberately dropped. Both reports are
+        returned even when the match is not, because `filtered` has to show the
+        user WHAT we fired on."""
         cached = (cache or {}).get(hit.url.rstrip("/"))
+        sighting = sightings.get((hit.source, content_key(hit.title, hit.company)))
         match: JobMatch | None = None
         geo: GeoRestriction | None = None
+        ghost: GhostReport | None = None
         if cached is not None and cached.is_full_match:
             # Tier 1 (PLAN 12.4): this exact posting was scored against this
             # exact résumé within the TTL — rebuild the match from the history
@@ -603,7 +732,24 @@ def search_jobs(
             # through unclassified.
             geo = _geo_for(hit, cached.jd_text, hit.location or cached.location)
             if geo is not None and geo.blocking:
-                return None, geo
+                return None, geo, ghost
+            # The ghost classifier is here for the identical reason, and it is
+            # the branch that gets forgotten precisely because it does no work.
+            # The wording rules and the sighting-based age read fine off cached
+            # text: an evergreen "talent pool" posting was evergreen last week
+            # too, and `long_open` gets STRONGER with age, never weaker.
+            #
+            # THE HONEST GAP: this branch cannot observe CLOSURE. `hit.closed`
+            # is set by `fetch_description`, which is exactly what this branch
+            # skips, so a posting that died since it was last scored still ranks
+            # here with no closed signal. That is a known gap, and it is
+            # deliberately NOT fixed by adding a liveness fetch: this branch's
+            # whole purpose is not fetching (PLAN 12.4 — zero LLM calls, zero
+            # network), and a HEAD request per cached hit would spend the exact
+            # budget the cache exists to save, on every search, to catch the
+            # minority of postings that closed inside the TTL. The cache TTL is
+            # the bound on how stale this can be.
+            ghost = _ghost_for(hit, cached.jd_text, sighting, now)
             match = JobMatch(
                 title=hit.title or cached.title,
                 company=hit.company or cached.company,
@@ -621,6 +767,7 @@ def search_jobs(
                 also_on=[AlsoOn(**a) for a in hit.also_on],
                 salary=extract_salary(cached.jd_text),
                 geo_restriction=geo,
+                ghost=ghost,
                 stale=hit.stale,
             )
         else:
@@ -634,7 +781,16 @@ def search_jobs(
                 # has been made, so a blocking posting costs zero tokens.
                 geo = _geo_for(hit, jd_text, hit.location)
                 if geo is not None and geo.blocking:
-                    return None, geo
+                    return None, geo, ghost
+                # Ghost second, and the closure gate BEFORE analyze_and_score
+                # for the same reason the geo gate sits above it: this is the
+                # only seam where every code path holds the text and no model
+                # call has been made, so a posting the board itself says is
+                # dead costs zero tokens. `hit.closed` was filled by the fetch
+                # a few lines up — this is the one branch that can observe it.
+                ghost = _ghost_for(hit, jd_text, sighting, now)
+                if ghost is not None and ghost.closed:
+                    return None, geo, ghost
                 jd, score = analyze_and_score(resume, jd_text)
                 top_matched, top_gaps = top_matched_and_gaps(score.gaps)
                 match = JobMatch(
@@ -656,9 +812,10 @@ def search_jobs(
                     also_on=[AlsoOn(**a) for a in hit.also_on],
                     salary=extract_salary(jd_text),
                     geo_restriction=geo,
+                    ghost=ghost,
                     stale=hit.stale,
                 )
-        return match, geo
+        return match, geo, ghost
 
     with ThreadPoolExecutor(max_workers=SCORE_WORKERS) as pool:
         # copy_context() per submit, not a bare submit: a pool worker starts
@@ -678,6 +835,39 @@ def search_jobs(
     # hits order survives (matches_by_hit is index-addressed), so the sort below
     # stays stable across ties exactly as the serial append-then-sort was.
     matches = [m for m in matches_by_hit if m is not None]
+    # WHY each posting was deliberately removed, one answer per hit, "" for
+    # "it wasn't". Computed once and read TWICE — by `filtered` below and by the
+    # score_errors re-attribution further down — because those two ask the same
+    # question ("is this missing match a decision or a failure?") and a second
+    # copy of the rule is check-mirrors 1's defect in Python: the closed case
+    # gets added to one and forgotten in the other, and a genuinely broken
+    # posting silently loses its diagnostic.
+    #
+    # A posting can trip BOTH gates, and GEO WINS. It is the more specific claim
+    # about the READER — "this posting says it will not hire someone where you
+    # are" is a fact about them, which nothing else on the page tells them —
+    # while "closed" is a fact about the posting that is equally true for
+    # everyone; and a card headed "no longer accepting applications" would let
+    # the user file the removal under bad luck when what we actually found was a
+    # hiring restriction they may want to appeal (they hold a second passport;
+    # the sponsorship question lives in the form). Both REPORTS ride along on
+    # the row either way, so nothing is hidden by the choice of heading.
+    #
+    # This is written as ONE reason per hit rather than two concatenated
+    # comprehensions on purpose: two lists would emit TWO rows for a posting
+    # that trips both, `len(filtered)` would exceed the number of removed hits,
+    # and `skipped` below would go NEGATIVE. Today's order in `_build_match`
+    # (geo returns before ghost is even classified) makes the overlap
+    # unreachable — the rule is written down anyway so a future reordering
+    # cannot resurrect that arithmetic silently.
+    filter_reasons = [
+        "restriction"
+        if geo is not None and geo.blocking
+        else "closed"
+        if ghost is not None and ghost.closed
+        else ""
+        for geo, ghost in zip(geo_by_hit, ghost_by_hit)
+    ]
     filtered = [
         FilteredJob(
             title=hits[i].title,
@@ -687,15 +877,25 @@ def search_jobs(
             source=hits[i].source,
             posted_at=hits[i].posted_at,
             logo_url=hits[i].logo_url,
-            geo_restriction=geo,
+            geo_restriction=geo_by_hit[i],
+            ghost=ghost_by_hit[i],
+            reason=reason,
         )
-        for i, geo in enumerate(geo_by_hit)
-        if geo is not None and geo.blocking
+        for i, reason in enumerate(filter_reasons)
+        if reason
     ]
     # `skipped` keeps its documented meaning — "listings found but not
     # fetchable/scorable". A geo-filtered posting was perfectly fetchable; it
     # gets its own list, and folding the two would make the UI's skipped string
     # a lie.
+    #
+    # A CLOSED posting was fetchable too — more so than any other row here: we
+    # know it is closed BECAUSE we fetched it and the board said so in its own
+    # words. So it joins `filtered` under its own `reason` rather than inflating
+    # `skipped`, which would tell the user the boards were throttling us at the
+    # exact moment we had the clearest possible answer from one. The arithmetic
+    # survives the second kind because `filtered` is at most one row per hit by
+    # construction (see filter_reasons).
     skipped = len(hits) - len(matches) - len(filtered)
 
     if not matches and filtered:
@@ -705,15 +905,28 @@ def search_jobs(
         # throttling message below would send them to re-run a search that fails
         # identically. The only existing contract this design changes.
         #
+        # It fires for EITHER reason. A morning where every posting the boards
+        # returned has closed is exactly as much a "we removed these on purpose,
+        # here they are" answer as a morning where every one states a hiring
+        # restriction — and raising would destroy the list in both. This
+        # function states no reason of its own: the response carries
+        # `filtered[i].reason` and the UI switches on it, so nothing here can
+        # tell a user their search was blocked by a hiring restriction when what
+        # we actually found was a dead posting.
+        #
         # The guard is `filtered`, not "everything was filtered", so postings
         # that genuinely broke can be in here too — and their diagnostic must
         # not vanish with the raise we are skipping. Attribute each to the board
         # it came from, which is where the UI already reports board trouble; a
         # scoring failure blamed on nothing at all is how "0 ranked, 9 skipped"
-        # becomes an unexplained dead end.
+        # becomes an unexplained dead end. `filter_reasons` is what separates a
+        # decision from a failure here, and it is the SAME list `filtered` was
+        # built from — testing `geo_by_hit[i] is None` alone would re-attribute
+        # every closed posting as a board error and put a scary board message
+        # under a row that says, correctly, "no longer accepting applications".
         if score_errors:
             for i, m in enumerate(matches_by_hit):
-                if m is None and geo_by_hit[i] is None:
+                if m is None and not filter_reasons[i]:
                     source_errors.setdefault(hits[i].source, score_errors[0])
         return JobSearchResult(
             context=ctx,

@@ -2154,6 +2154,524 @@ check(
     is None,
 )
 
+# 14c. Ghost postings — the deterministic classifier (PLAN 28.1). A talent pool
+# wearing a job title, a listing that has been up since spring, a role the board
+# relisted under a new id, an application form that closed weeks ago: each costs
+# the user a tailor, a cover letter and a week of waiting. `ghost_signals` reads
+# the posting plus what our own searches remember about it and returns the
+# EVIDENCE, never a score.
+#
+# Same shape as the geo block above, for the same reason: every positive sits in
+# the SAME check() as the legitimate posting it must not fire on, because "make
+# the talent-pool case pass" is trivially satisfied by matching anything that
+# says "talent". Two differences from geo worth knowing before reading on:
+#
+#   - recall here is FAR worse. A ghost posting that says nothing unusual, whose
+#     board states no publish date and that none of our searches has seen before
+#     is indistinguishable from a live one. So `None` never means "the posting is
+#     real", and no check below may be written as if it did.
+#   - the classifier is UNGATED. Geo is gated on `origin_market` because its
+#     rules are meaningless against a Tel Aviv listing; ghosts are a
+#     PRIMARY-MARKET problem, so the Israeli cases here are positives, not
+#     escapes. Pinned end to end in section 21e.
+from datetime import datetime as _gh_dt, timedelta as _gh_td  # noqa: E402
+
+from app.core import ghost_signals as _ghost_mod  # noqa: E402
+from app.core.ghost_signals import (  # noqa: E402
+    LONG_OPEN_STRONG_DAYS as _GH_STRONG_DAYS,
+    LONG_OPEN_WEAK_DAYS as _GH_WEAK_DAYS,
+    Sighting as _GhSighting,
+    detect_ghost_signals as _gh_detect,
+    parse_board_date as _gh_parse_date,
+)
+from app.models import GhostReport as _GhostReport, GhostSignal as _GhostSignal  # noqa: E402
+
+# ONE instant for this whole block. `detect_ghost_signals` takes `now` as a
+# parameter (the `jobmaster.parse_hebrew_relative_date` precedent) precisely so
+# these checks are dates and not dice: a suite reading the wall clock would
+# drift across the 30/60-day thresholds depending on the hour CI happened to run,
+# and the failure would look like a flake rather than a rule.
+_GH_NOW = _gh_dt(2026, 9, 3, 12, 0, 0)
+
+
+def _gh(title: str = "", jd: str = "", **kw):  # noqa: ANN201
+    """`detect_ghost_signals` with the two text arguments up front, so each check
+    below reads as the posting it describes rather than as a keyword soup."""
+    kw.setdefault("now", _GH_NOW)
+    return _gh_detect(title=title, jd_text=jd, **kw)
+
+
+def _gh_kinds(report) -> dict:  # noqa: ANN001
+    """{kind: strength}. Safe as a dict because each kind is emitted at most
+    once; comparing the WHOLE mapping (rather than asserting one kind is
+    present) is what makes a rule that fires twice, or fires on the wrong
+    posting, go red instead of hiding behind a truthy membership test."""
+    return {s.kind: s.strength for s in (report.signals if report else [])}
+
+
+def _gh_rep(report):  # noqa: ANN001
+    """The report, or an EMPTY one when nothing fired. Same reason as
+    `_gh_sig0` below: a check must go RED, never abort the suite, on a rule
+    that used to fire and stopped."""
+    return report if report is not None else _GhostReport()
+
+
+def _gh_sig0(report):  # noqa: ANN001
+    """The strongest signal, or a blank one when the report is None/empty.
+
+    Never `report.signals[0]` at a check site. A regression that makes a rule
+    stop firing would raise AttributeError/IndexError there, and this file is
+    straight-line top-level code with no top-level try — so ONE broken rule would
+    abort the process and every later check in the suite would silently never
+    run, reported only as `ABORTED after N checks`. A blank signal keeps the
+    failure local and red. (Learned here while probing `long_open`.)"""
+    return report.signals[0] if report is not None and report.signals else _GhostSignal()
+
+
+def _gh_sight(days_ago=None, first_url="", seen_count=0, relist_count=0) -> _GhSighting:  # noqa: ANN001
+    return _GhSighting(
+        first_seen_at=None if days_ago is None else _GH_NOW - _gh_td(days=days_ago),
+        first_url=first_url,
+        seen_count=seen_count,
+        relist_count=relist_count,
+    )
+
+
+# The four kinds, each with the strength ITS OWN rule claims. Asserting the
+# whole {kind: strength} mapping rather than "a signal fired" is deliberate: a
+# `long_open` that shipped as `strong` at 31 days, or an `evergreen` weak family
+# promoted to strong, would filter and badge postings the derivation rule below
+# says it must not — and a membership test cannot see either.
+check(
+    "ghost: all four kinds fire, each carrying the strength its own rule claims",
+    _gh_kinds(_gh("Backend Engineer", "Python.", closed="No longer accepting applications"))
+    == {"closed": "certain"}
+    and _gh_kinds(_gh("Talent Pool - Engineering", "Python.")) == {"evergreen": "strong"}
+    and _gh_kinds(_gh("Backend Engineer", "We are always looking for talented engineers."))
+    == {"evergreen": "weak"}
+    and _gh_kinds(_gh(raw={"first_published": "2026-06-02"})) == {"long_open": "strong"}
+    and _gh_kinds(_gh(sighting=_gh_sight(35, "https://b/1"), url="https://b/1"))
+    == {"long_open": "weak"}
+    and _gh_kinds(_gh(sighting=_gh_sight(2, "https://b/1"), url="https://b/2"))
+    == {"reposted": "weak"},
+)
+# THE DERIVATION RULE, which is the only arithmetic in the module and therefore
+# the only thing a future edit can silently retune. `likely` is >= 1 strong OR
+# >= 2 weak, and `closed` is any CERTAIN signal. The two flags describe
+# DIFFERENT facts and do not nest: a closed-only report is `likely=False`
+# because "likely a ghost" is a suspicion and closure is past it, while a
+# posting that is both closed AND a talent pool carries both — so a UI reading
+# `likely` as "is this suspicious at all" would call a dead posting clean.
+#
+# Every report is bound BEFORE the check rather than by a walrus inside it. This
+# file is straight-line top-level code with no top-level try, so a name the
+# and-chain short-circuits past would make the `extra` f-string raise NameError
+# and abort the whole suite at the first regression — turning one red check into
+# "ABORTED after 234 checks". Found the hard way while probing this very check.
+_gh1 = _gh_rep(_gh("Talent Pool", "x"))
+_gh2 = _gh_rep(_gh("Backend Engineer", "We are always looking for talented people.",
+                   sighting=_gh_sight(31, "https://b/1"), url="https://b/1"))
+_gh3 = _gh_rep(_gh("Backend Engineer", "We are always looking for talented people."))
+_gh4 = _gh_rep(_gh(closed="HTTP 404"))
+_gh5 = _gh_rep(_gh("Talent Pool", "x", closed="HTTP 410"))
+check(
+    "ghost: 1 strong ⇒ likely, 2 weak ⇒ likely, 1 weak ⇒ NOT likely, certain ⇒ closed",
+    _gh1.likely is True and _gh1.closed is False
+    and _gh2.likely is True and len(_gh2.signals) == 2
+    and _gh3.likely is False and _gh3.closed is False and len(_gh3.signals) == 1
+    and _gh4.closed is True and _gh4.likely is False
+    # …and the two flags are independent, not nested.
+    and _gh5.closed is True and _gh5.likely is True
+    and _gh_sig0(_gh5).kind == "closed",
+    f"strong={_gh1.likely} 2weak={_gh2.likely} 1weak={_gh3.likely} "
+    f"certain={_gh4.closed}/{_gh4.likely} both={_gh5.closed}/{_gh5.likely}",
+)
+# FALSE POSITIVE (a): PRIVACY BOILERPLATE. `קורות החיים יישמרו במאגר החברה`
+# ships on a large share of Israeli agency ads for perfectly live vacancies, and
+# the English "kept on file / retained for future opportunities" is its twin.
+# This is why the evergreen markers are TITLE-ONLY: a privacy paragraph lives in
+# the body and the body matcher does not know those phrases, so the protection is
+# structural rather than a veto that can be out-argued. The true positive sits in
+# the same check because "never fire on privacy text" is trivially satisfied by
+# deleting the evergreen family outright.
+check(
+    "ghost: privacy boilerplate never fires — in Hebrew or English — and the title marker still does",
+    _gh("מפתח Full Stack", "דרוש מפתח. קורות החיים יישמרו במאגר החברה לצורך משרות עתידיות.") is None
+    and _gh("מפתחת Backend", "המידע יישמר לצורך משרות עתידיות במאגר מועמדים של החברה.") is None
+    and _gh("Backend Engineer", "Your CV will be kept on file and retained for future opportunities.")
+    is None
+    and _gh(
+        "Backend Engineer",
+        "Privacy notice: your data is retained for future opportunities in our talent pool.",
+    ) is None
+    # …while the same words IN THE TITLE are the posting describing itself.
+    and _gh_kinds(_gh("מאגר מועמדים - מפתחים", "פייתון.")) == {"evergreen": "strong"}
+    and _gh_kinds(_gh("Future Opportunities - Engineering", "x")) == {"evergreen": "strong"},
+)
+# FALSE POSITIVE (b): A RECRUITER'S OWN JOB names the vocabulary as a DUTY.
+# `רכזת גיוס - ניהול מאגר מועמדים` is a real Drushim title carrying the marker
+# verbatim. The body half is structural (title-only markers); the title half
+# needs `_RECRUITER_DUTY`, scoped to the "ownable" markers only — a pool, a
+# community, a network, a pipeline are things a recruiter can be PAID to run,
+# while "General Application" is not a duty in any phrasing, so vetoing it could
+# only ever lose a true positive. Both halves are pinned here.
+check(
+    "ghost: a recruiter's own pipeline job never fires, and an un-ownable marker is never vetoed",
+    _gh(
+        "Talent Acquisition Partner",
+        "You will build and grow our talent pipeline and maintain the talent pool.",
+    ) is None
+    and _gh("רכזת גיוס - ניהול מאגר מועמדים", "עבודה מול מנהלים.") is None
+    and _gh("אחראי מאגר מועמדים", "x") is None
+    and _gh("Recruiter - Building our Talent Pipeline", "x") is None
+    # …the veto is GERUNDS only, so a talent pool naming its AUDIENCE still fires…
+    and _gh_kinds(_gh("Talent Pool - Engineering Manager", "x")) == {"evergreen": "strong"}
+    # …and the un-ownable markers fire even wearing the duty vocabulary.
+    and _gh_kinds(_gh("General Application - Managing Director", "x")) == {"evergreen": "strong"}
+    and _gh_kinds(_gh("מועמדות כללית - ניהול מוצר", "x")) == {"evergreen": "strong"},
+)
+# FALSE POSITIVE (c): `מאגר` is the ordinary Hebrew word for a database.
+# `ניהול מאגר לקוחות` is a CRM job and `מאגר מידע` / `מאגר נתונים` are what every
+# Israeli data role calls its warehouse. Structural again — the marker is the
+# two-word phrase `מאגר מועמדים`, never a bare `מאגר` — and the true positive is
+# in the same check because "never fire on מאגר" is trivially satisfied by
+# deleting the Hebrew half, which would disable the feature in the primary market.
+check(
+    "ghost: מאגר as 'database' never fires; מאגר מועמדים still does",
+    _gh("מפתח - ניהול מאגר לקוחות", "בניית מאגר מידע ומאגר נתונים.") is None
+    and _gh("Data Engineer", "בניית מאגר מידע גדול לניתוח.") is None
+    and _gh("מנהל מאגר נתונים", "x") is None
+    and _gh_kinds(_gh("מאגר מועמדים כללי", "x")) == {"evergreen": "strong"},
+)
+# The weak family's PERSON OBJECT is mandatory, and it is the guard. "We are
+# always looking for ways to improve our platform" is a sentence about work, not
+# about candidates, and it sits in the about-us blurb of thousands of real
+# postings — a bare `always looking for` fires on every one of them. Two weak
+# signals make a posting `likely`, so this family firing loosely is a badge on
+# the whole market.
+check(
+    "ghost: 'always looking for' needs a PERSON object — ways/technologies never fire",
+    _gh("Backend Engineer", "We are always looking for ways to improve our platform.") is None
+    and _gh("Backend Engineer", "We are always on the lookout for new technologies.") is None
+    and _gh("מפתח", "אנחנו תמיד מחפשים דרכים לשפר את המוצר.") is None
+    # …and the candidate-facing form still fires, in both languages.
+    and _gh_kinds(_gh("Backend Engineer", "We are always looking for talented engineers."))
+    == {"evergreen": "weak"}
+    and _gh_kinds(_gh("מפתח", "אנחנו תמיד מחפשים אנשים מוכשרים.")) == {"evergreen": "weak"},
+)
+# long_open answers TWO DIFFERENT QUESTIONS and must say which, because the UI
+# prints a different sentence for each: `first_published` is the BOARD's own
+# publish date ("posted N days ago"), while `first_seen` is only a LOWER bound —
+# the day one of OUR searches first ran over it, which says nothing about the
+# days before that. When both exist the EARLIER wins and reports ITS basis. When
+# NEITHER exists the signal is absent: unknown is never zero, the `last_above_min`
+# rule arriving again.
+_gl1 = _gh_sig0(_gh(raw={"first_published": "2026-05-01"}, sighting=_gh_sight(35, "https://b/1"),
+                    url="https://b/1"))
+# the sighting is the earlier of the two here, so it wins and says so
+_gl2 = _gh_sig0(_gh(raw={"first_published": "2026-08-20"}, sighting=_gh_sight(90, "https://b/1"),
+                    url="https://b/1"))
+check(
+    "ghost: long_open prefers the earlier date, names its basis, and abstains when it has neither",
+    _gl1.basis == "first_published" and _gl1.days == 125 and _gl1.since == "2026-05-01"
+    and _gl2.basis == "first_seen" and _gl2.days == 90 and _gl2.since == "2026-06-05"
+    # neither: a posting whose board never said and that we have never seen
+    and _gh("Backend Engineer", "Talent pipeline work in Python.") is None
+    # a board clock ahead of ours yields a negative age and must abstain, never
+    # report a 0-day "ghost"
+    and _gh(raw={"first_published": "2027-01-01"}) is None
+    # nothing in the posting SAYS this — we computed it — so there is no quote,
+    # and inventing one would be the module claiming the posting said something
+    # it did not.
+    and _gl1.raw == "",
+    f"{_gl1.basis}/{_gl1.days} then {_gl2.basis}/{_gl2.days}",
+)
+# `posted_at` is ACCEPTED and deliberately UNUSED by the age. Comeet's
+# `time_updated` and Greenhouse's `updated_at` land in it, so an evergreen
+# posting touched weekly reads as permanently fresh — which is precisely the
+# ghost failure mode this signal exists to catch, i.e. wiring it in would make
+# the signal agree with the ghost instead of with the market. Driven with a
+# FRESH posted_at beside an OLD first_published: a classifier that read the
+# former would abstain, and this check would go red.
+_gp = _gh(posted_at="2026-09-02", raw={"first_published": "2026-01-01"})
+_gp_sig = _gh_sig0(_gp)
+_gp_only = _gh(posted_at="2026-01-01")
+check(
+    "ghost: long_open never reads posted_at — a board that touches the row weekly cannot hide",
+    _gp_sig.days == 245 and _gp_sig.basis == "first_published"
+    # …and posted_at ALONE, however old, produces nothing at all.
+    and _gp_only is None,
+    f"{_gh_kinds(_gp)} then posted_at-only={_gp_only}",
+)
+# `reposted` is about a NEW LISTING ID for the same role, never about having been
+# seen twice — a posting we saw yesterday and see again today is a posting that
+# is still up, which is the normal case and the whole market. It also abstains on
+# an EMPTY url: without that guard `"" != first_url` is true for every posting
+# whose url the caller did not pass, and a guard that fires on everything is
+# worse than no guard.
+check(
+    "ghost: reposted needs a DIFFERENT url — a second sighting at the same one is not a relist",
+    _gh_kinds(_gh(sighting=_gh_sight(2, "https://b/1", seen_count=9), url="https://b/2"))
+    == {"reposted": "weak"}
+    and _gh(sighting=_gh_sight(2, "https://b/1", seen_count=9), url="https://b/1") is None
+    # a trailing slash is the same URL — the key `_interleave_and_dedupe` and the
+    # score cache already agree on
+    and _gh(sighting=_gh_sight(2, "https://b/1/", seen_count=9), url="https://b/1") is None
+    # no url on our side, and no first_url on the row: abstain, both directions
+    and _gh(sighting=_gh_sight(2, "https://b/1", seen_count=9), url="") is None
+    and _gh(sighting=_gh_sight(2, "", seen_count=9), url="https://b/2") is None,
+)
+
+
+class _GhTripwire:
+    """Stands in for the evergreen title pattern and COUNTS being consulted.
+
+    The fast path's whole job is not scanning, and "returns None" cannot tell a
+    bail-out from a full scan that matched nothing — a check that passes by never
+    firing is the 21.7 failure mode. Both directions ride in one check below: the
+    clean posting must not consult it, and a posting carrying one marker must."""
+
+    def __init__(self) -> None:
+        self.consulted = 0
+
+    def finditer(self, text: str):  # noqa: ANN202
+        self.consulted += 1
+        return iter(())
+
+
+_gh_trip = _GhTripwire()
+_gh_real_title_re = _ghost_mod._EVERGREEN_TITLE_RE
+try:
+    _ghost_mod._EVERGREEN_TITLE_RE = _gh_trip
+    _gh_quiet = _gh("Backend Engineer", "We build developer tools in Python and Go.")
+    _gh_quiet_scans = _gh_trip.consulted
+    _gh("Talent Pool - Engineering", "Python.")
+    _gh_marker_scans = _gh_trip.consulted
+finally:
+    _ghost_mod._EVERGREEN_TITLE_RE = _gh_real_title_re
+check(
+    "ghost: a posting with no rule vocabulary and no sighting is answered without scanning",
+    _gh_quiet is None and _gh_quiet_scans == 0 and _gh_marker_scans == 1,
+    f"clean consulted the tables {_gh_quiet_scans}×, a marker posting {_gh_marker_scans}×",
+)
+# `raw` is what the card prints under "Quoted from the posting". A head slice
+# drops the evidence whenever the match sits past RAW_MAX inside its own
+# sentence — a run-on, or a scraped body with no terminator — and the UI then
+# shows a quote that does not contain the phrase we fired on. Same contract as
+# `GeoRestriction.raw` and `SalaryInfo.raw`: proof, not promise.
+_GH_RUNON = (
+    "We are a fast growing team building developer tooling for large enterprises across "
+    "many industries and we care deeply about craft, ownership and shipping quickly with "
+    "a small senior team that values written communication over meetings, and right now "
+    "there are no specific openings for this discipline"
+)
+_gq_raw = _gh_sig0(_gh("Backend Engineer", _GH_RUNON)).raw
+# a long TITLE is capped the same way, and the marker survives the cap
+_gq2_raw = _gh_sig0(_gh("Talent Pool " + "x" * 300, "")).raw
+check(
+    "ghost: the quote always contains the phrase that fired, and stays within the card's cap",
+    "no specific openings" in _gq_raw and len(_gq_raw) <= 240 and "\n" not in _gq_raw
+    and _gq2_raw.startswith("Talent Pool") and len(_gq2_raw) == 240,
+    f"{len(_gq_raw)} chars: …{_gq_raw[-52:]}",
+)
+# `now` IS A PARAMETER, and this is what that buys. The identical posting, aged
+# against three different instants, gives three different answers — strong,
+# weak, and nothing at all. A `datetime.now()` inside the module would make
+# every one of the checks above depend on the day CI ran, and the 30/60-day
+# thresholds unpinnable by construction.
+_GH_PUB = {"first_published": "2026-06-02"}
+_gn1 = _gh_sig0(_gh_detect(title="", jd_text="", raw=_GH_PUB, now=_gh_dt(2026, 9, 3)))
+_gn2 = _gh_sig0(_gh_detect(title="", jd_text="", raw=_GH_PUB, now=_gh_dt(2026, 7, 7)))
+_gn3 = _gh_detect(title="", jd_text="", raw=_GH_PUB, now=_gh_dt(2026, 6, 20))
+check(
+    "ghost: `now` is injected — the same posting is strong, weak or silent purely by the clock",
+    _gn1.days == 93 and _gn1.strength == "strong"
+    and _gn2.days == 35 and _gn2.strength == "weak"
+    and _gn3 is None
+    # …and the two thresholds are the module's own constants, not restated here
+    and _gn1.days >= _GH_STRONG_DAYS > _gn2.days >= _GH_WEAK_DAYS,
+    f"{_gn1.days}d {_gn1.strength} / {_gn2.days}d {_gn2.strength} / 18d {_gn3}",
+)
+
+# 14c-2. The closure marker. `linkedin_closed_marker` is the only place in the
+# app where a BOARD tells us a posting is dead, and the false-positive half is
+# the one that matters: a false "closed" DELETES A LIVE JOB, which is the worst
+# failure this feature has. `tests/fixtures/linkedin_job_open.html` exists for
+# exactly that — "make the closed case pass" is trivially satisfied by returning
+# the marker always.
+#
+# The four decoys planted in the open fixture are asserted PRESENT first. Without
+# that, a fixture someone trimmed would make this check pass by never firing —
+# the same failure the x-ray's true-positive pin was written to avoid.
+from pathlib import Path as _gh_Path  # noqa: E402
+
+from app.core.providers.linkedin import linkedin_closed_marker as _gh_closed  # noqa: E402
+
+_GH_FIXTURES = _gh_Path(__file__).resolve().parent / "fixtures"
+_GH_CLOSED_HTML = (_GH_FIXTURES / "linkedin_job_closed.html").read_text(encoding="utf-8")
+_GH_OPEN_HTML = (_GH_FIXTURES / "linkedin_job_open.html").read_text(encoding="utf-8")
+# Anchored on the DECOYS' OWN MARKUP, never on a word that also appears in the
+# fixture's provenance comment. The first draft asserted `"undisclosed" in html`
+# — and the header comment that DOCUMENTS the trap contains that word, so
+# deleting the decoy from the body left this check green. Probed with exactly
+# that edit. The commented banner is pinned through the provider's own comment
+# regex rather than a "<!--" substring, so "the banner is invisible to a reader"
+# is asserted rather than assumed.
+from app.core.providers.linkedin import _COMMENT_RE as _GH_COMMENT_RE  # noqa: E402
+
+_GH_OPEN_UNCOMMENTED = _GH_COMMENT_RE.sub("", _GH_OPEN_HTML)
+check(
+    "ghost: the OPEN fixture still carries all four decoys a naive matcher fires on",
+    # 1. ordinary ad copy that says the phrase, inside the description container
+    "We are no longer accepting applications by email" in _GH_OPEN_HTML
+    # 2. the real banner, present but COMMENTED OUT — a reader sees nothing
+    and "closed-job__flavor--closed" in _GH_OPEN_HTML
+    and "closed-job__flavor--closed" not in _GH_OPEN_UNCOMMENTED
+    # 3. the neighbouring figcaption a tag-anchored scan would return instead
+    and 'class="num-applicants__caption"' in _GH_OPEN_UNCOMMENTED
+    # 4. the bare-"closed" bait, in the body
+    and "undisclosed at this stage" in _GH_OPEN_HTML
+    and "closed-loop monitoring" in _GH_OPEN_HTML
+    # …and the closed fixture really does carry the banner, uncommented
+    and "closed-job__flavor--closed" in _GH_COMMENT_RE.sub("", _GH_CLOSED_HTML),
+)
+check(
+    "ghost: linkedin_closed_marker fires on the closed page and NEVER on the open one",
+    _gh_closed(_GH_CLOSED_HTML) == "No longer accepting applications"
+    and _gh_closed(_GH_OPEN_HTML) == ""
+    # "" means NOT OBSERVED, never "open" — an unfetchable page abstains
+    and _gh_closed("") == ""
+    and _gh_closed("<html><body>Sign in to continue</body></html>") == "",
+    f"closed={_gh_closed(_GH_CLOSED_HTML)!r} open={_gh_closed(_GH_OPEN_HTML)!r}",
+)
+
+# 14c-3. Source pins. Behaviour alone cannot pin "this never reaches the model"
+# — an LLM-backed classifier also returns a verdict — so the shape is pinned too.
+#
+# PARSED, NEVER GREPPED, and this module is the case that proves why: its
+# docstring says in so many words "Never the LLM and never the network", and it
+# imports from `geo_restriction`, which is itself one hop from the client
+# factory. A substring scan for "get_llm_client" therefore fails in BOTH
+# directions here — green when a module merely imports something that imports
+# the client, red the moment a comment names the hazard. Reading Name/Attribute/
+# import nodes answers the question the check is actually asking. (This is the
+# same correction `skills_shortlist`'s pin records, arriving before the defect
+# rather than after it.)
+import ast as _gh_ast  # noqa: E402
+import inspect as _gh_inspect  # noqa: E402
+
+_GH_SRC = _gh_inspect.getsource(_ghost_mod)
+_GH_TREE = _gh_ast.parse(_GH_SRC)
+_GH_USED = (
+    {n.id for n in _gh_ast.walk(_GH_TREE) if isinstance(n, _gh_ast.Name)}
+    | {n.attr for n in _gh_ast.walk(_GH_TREE) if isinstance(n, _gh_ast.Attribute)}
+    | {
+        part
+        for n in _gh_ast.walk(_GH_TREE)
+        if isinstance(n, (_gh_ast.Import, _gh_ast.ImportFrom))
+        for a in n.names
+        # BOTH the bound name and every DOTTED SEGMENT of the module path. The
+        # first draft collected `a.asname or a.name` only, so `import
+        # urllib.request` contributed the single string "urllib.request" and the
+        # forbidden-set intersection against "urllib" missed it entirely — the
+        # check went GREEN with the network imported. Found by probing exactly
+        # that defect in, per the rule at the top of check-mirrors.
+        for part in {a.asname or a.name, *(a.name.split("."))}
+    }
+    | {
+        part
+        for n in _gh_ast.walk(_GH_TREE)
+        if isinstance(n, _gh_ast.ImportFrom) and n.module
+        for part in {n.module, *n.module.split(".")}
+    }
+)
+check(
+    "ghost: the classifier is source-pinned to no LLM, no network and no clock",
+    len(_GH_SRC) > 2000
+    and not _GH_USED & {
+        "get_llm_client", "complete_json", "complete_text", "analyze_jd",
+        "openai", "urllib", "requests", "httpx", "socket",
+    }
+    # `now` is a parameter — a `datetime.now()` here would make every check in
+    # 14c depend on the hour it ran, and the thresholds unpinnable.
+    and "datetime.now" not in _GH_SRC
+    and "utcnow" not in _GH_SRC,
+    f"{len(_GH_SRC)} chars, {len(_GH_USED)} identifiers",
+)
+# This is NOT an LLM task, so CLAUDE.md's "any new LLM task must add a stub
+# branch and a smoke-test check" rule deliberately does not apply — and a future
+# reader must not add one, because a stub branch here would mean the classifier
+# had grown a model call the geo section's own rule forbids. Pinned the way the
+# keyword-guard and skills-shortlist pins do it: by the absence of a routing token.
+import app.llm.client as _gh_client_mod  # noqa: E402
+
+_GH_CLIENT_SRC = _gh_inspect.getsource(_gh_client_mod)
+check(
+    "ghost: app/llm/client.py gained no stub branch for it — this is not an LLM task",
+    "GHOST" not in _GH_CLIENT_SRC and "GHOST_SIGNAL" not in _GH_CLIENT_SRC,
+)
+# ONE parser for board dates, one answer. `job_search._posted_datetime` delegates
+# here, so the ghost's age and the freshness tier can never disagree about the
+# same string — the "one matcher, one answer" rule applied to a date. A second
+# `fromisoformat` in `job_search` would let a posting be 93 days old to the badge
+# and unparseable to the tier, on the same row.
+import app.core.job_search as _gh_js_mod  # noqa: E402
+
+_GH_JS_SRC = _gh_inspect.getsource(_gh_js_mod)
+check(
+    "ghost: parse_board_date is THE board-date parser, and job_search delegates to it",
+    _gh_parse_date("2026-06-02T03:17:15-04:00") == _gh_dt(2026, 6, 2, 3, 17, 15)
+    and _gh_parse_date("") is None and _gh_parse_date("junk") is None
+    and _gh_parse_date(None) is None  # type: ignore[arg-type]
+    and _gh_js_mod._posted_datetime("2026-06-02T03:17:15-04:00")
+    == _gh_parse_date("2026-06-02T03:17:15-04:00")
+    and "fromisoformat" not in _GH_JS_SRC,
+)
+# THE IMPORTER CENSUS. A second call site would classify on a DIFFERENT gate and
+# contradict the first about the same posting — the geo-restriction correction
+# CLAUDE.md records as the one that mattered most (`kits.enqueue_kits` and
+# `GET /jobs/history` each re-derived a verdict the search had already answered,
+# and each disagreed with it). `kits.py`, `job_match.py`, `db/history.py` and
+# `alerts.py` are where that would go today; the set is COMPUTED by walking every
+# module the app ships, so it finds tomorrow's too.
+#
+# TWO tiers, because the module exports two different kinds of thing and only one
+# of them is a gate. `db/sightings.py` legitimately imports the `Sighting`
+# dataclass — it is the RETURN TYPE of `load_sightings`, a frozen value object
+# that classifies nothing — while `detect_ghost_signals` is the classifier and
+# must have exactly one importer. Folding the two would either forbid a type
+# import the contract requires, or permit a second call site.
+_GH_APP_DIR = _gh_Path(_ghost_mod.__file__).parents[1]  # …/app, never cwd
+_GH_MOD_IMPORTERS: list[str] = []
+_GH_FN_IMPORTERS: list[str] = []
+_GH_SCANNED = 0
+for _gh_py in sorted(_GH_APP_DIR.rglob("*.py")):
+    _GH_SCANNED += 1
+    _gh_rel = str(_gh_py.relative_to(_GH_APP_DIR)).replace("\\", "/")
+    if _gh_rel == "core/ghost_signals.py":
+        continue
+    _gh_mod_hit = _gh_fn_hit = False
+    for _gh_n in _gh_ast.walk(_gh_ast.parse(_gh_py.read_text(encoding="utf-8"))):
+        if isinstance(_gh_n, _gh_ast.ImportFrom):
+            if (_gh_n.module or "").split(".")[-1] == "ghost_signals":
+                _gh_mod_hit = True
+                _gh_fn_hit |= any(a.name == "detect_ghost_signals" for a in _gh_n.names)
+            elif any(a.name == "ghost_signals" for a in _gh_n.names):
+                _gh_mod_hit = True
+        elif isinstance(_gh_n, _gh_ast.Import):
+            _gh_mod_hit |= any(a.name.split(".")[-1] == "ghost_signals" for a in _gh_n.names)
+    if _gh_mod_hit:
+        _GH_MOD_IMPORTERS.append(_gh_rel)
+    if _gh_fn_hit:
+        _GH_FN_IMPORTERS.append(_gh_rel)
+check(
+    "ghost: exactly one CLASSIFIER call site in the whole app — core/job_search.py",
+    _GH_FN_IMPORTERS == ["core/job_search.py"]
+    and _GH_MOD_IMPORTERS == ["core/job_search.py", "db/sightings.py"]
+    and _GH_SCANNED > 40,
+    f"classifier={_GH_FN_IMPORTERS} module={_GH_MOD_IMPORTERS} ({_GH_SCANNED} modules scanned)",
+)
+
 # 14b-6. Prompt input bounds, output cap, and honest size errors.
 # A production Sentry issue was a token-limit failure on a large master résumé.
 # Nothing in the backend bounded prompt input: the only ceiling was a 10 MB FILE
@@ -3421,7 +3939,17 @@ check(
 )
 
 
-def _canned_search(resume, ctx, cache=None):  # noqa: ANN001 - matches search_jobs' shape
+# `sightings_fn` is NAMED on every fake below rather than swallowed by a `**_`.
+# `run_alert` documents its call shape as
+# `search_fn(resume, context, cache=..., sightings_fn=...)`, and a `**_` would
+# absorb a RENAMED kwarg silently — the fake would keep passing while the real
+# `search_jobs` stopped receiving the market memory and `long_open`/`reposted`
+# went permanently quiet. Spelled out, a rename goes red here first.
+_alert_sfn: list = []  # what the cron actually handed the search, per call
+
+
+def _canned_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001 - matches search_jobs' shape
+    _alert_sfn.append(sightings_fn)
     return JobSearchResult(
         context=_AlertCtx(job_title="Backend Engineer", location="Tel Aviv"),
         matches=_alert_matches,
@@ -3447,8 +3975,9 @@ check("alert re-run: nothing new (hits now in history)", _run2.new_count == 0, s
 _seen_ctx: list = []
 
 
-def _recording_search(resume, ctx, cache=None):  # noqa: ANN001 - matches search_jobs' shape
+def _recording_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001 - matches search_jobs' shape
     _seen_ctx.append(ctx)
+    _alert_sfn.append(sightings_fn)
     return JobSearchResult(context=_AlertCtx(job_title="X"), matches=[], skipped=0)
 
 
@@ -3458,6 +3987,19 @@ check(
     len(_seen_ctx) == 1 and _seen_ctx[0] is not None
     and _seen_ctx[0].job_title == "Backend Engineer" and _seen_ctx[0].location == "Tel Aviv",
     str(_seen_ctx[0]) if _seen_ctx else "no call",
+)
+
+# …and the market memory travels with it (PLAN 28.3). A daily cron that read no
+# sightings would leave `long_open` and `reposted` permanently dark in the one
+# place they matter most — the email is the surface that tells the user not to
+# bother — and nothing on the page would say so, because the classifier abstains
+# silently when the sighting is None. Pinned by CALLING what was handed over:
+# a `partial(load_sightings, db)` answers {} for an empty key list, while a None
+# or a sentinel does not answer at all.
+check(
+    "alerts cron: the search is handed a live market-memory reader, not None",
+    _alert_sfn and callable(_alert_sfn[-1]) and _alert_sfn[-1]([]) == {},
+    f"{len(_alert_sfn)} calls, last={_alert_sfn[-1] if _alert_sfn else None}",
 )
 
 update_alert(_db, _admin_id, enabled=False, email="me@example.com", context=None)
@@ -3470,7 +4012,7 @@ check("alert run respects the toggle", run_alert(_db, _admin_id, search_fn=_cann
 check("alert run with force ignores the toggle", run_alert(_db, _admin_id, force=True, search_fn=_canned_search).ran is True)
 
 
-def _broken_search(resume, ctx, cache=None):  # noqa: ANN001
+def _broken_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001
     raise ValueError("boards are down")
 
 
@@ -3570,7 +4112,7 @@ check(
 # End to end: the bar filters the EMAIL, never the history. Every match is still
 # recorded — that is what the History tab shows and what load_score_cache reuses,
 # so dropping below-bar rows would make the cron re-score them every morning.
-def _bar_search(resume, ctx, cache=None):  # noqa: ANN001 - matches search_jobs' shape
+def _bar_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001 - matches search_jobs' shape
     return JobSearchResult(context=_AlertCtx(job_title="X"), matches=_bar_pool, skipped=0)
 
 
@@ -3613,7 +4155,7 @@ check(
 _low = [JobMatch(title="Low", company="F", overall=30.0, url="https://bar/low-1")]
 
 
-def _low_search(resume, ctx, cache=None):  # noqa: ANN001
+def _low_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001
     return JobSearchResult(context=_AlertCtx(job_title="X"), matches=_low, skipped=0)
 
 
@@ -6794,7 +7336,7 @@ _STREAM_MATCH = JobMatch(
 )
 
 
-def _fake_stream_search(resume, customize, progress=None, cache=None):  # noqa: ANN001 - matches search_jobs' shape
+def _fake_stream_search(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001 - matches search_jobs' shape
     progress({"stage": "boards", "source": "linkedin", "index": 1, "total": 1})
     progress({"stage": "scoring", "index": 1, "total": 1, "title": _STREAM_MATCH.title, "company": "StreamCo"})
     progress({"stage": "match", "index": 1, "total": 1, "match": _STREAM_MATCH.model_dump()})
@@ -6867,7 +7409,7 @@ try:
             str(_stream_hit)[:200],
         )
 
-        def _broken_stream_search(resume, customize, progress=None, cache=None):  # noqa: ANN001
+        def _broken_stream_search(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
             raise ValueError("boards are down")
 
         _routes_mod.search_jobs = _broken_stream_search
@@ -7370,6 +7912,430 @@ finally:
         _PROV[_GEO_WW] = _geo_real_board
     else:
         _PROV.pop(_GEO_WW, None)
+
+# 21d. The market memory (PLAN 28.3). `posting_sightings` is the only thing in
+# this app that can say how long a posting has REALLY been open: `job_search_hits`
+# updates in place and bumps `searched_at` on every write, is capped at the newest
+# 100 rows, and is per-user. Everything below drives the real table through the
+# real session, because the two rules that matter here — read-before-write and the
+# continuity reset — are orderings, and an ordering cannot be pinned by reading a
+# function on its own.
+from sqlalchemy import select as _gh_sel  # noqa: E402
+
+from app.core.job_search import content_key as _gh_ckey  # noqa: E402
+from app.db.models import PostingSighting as _GhSightRow  # noqa: E402
+from app.db.sightings import (  # noqa: E402
+    SIGHTING_GAP_DAYS as _GH_GAP,
+    SIGHTING_RETENTION_DAYS as _GH_RETAIN,
+    load_sightings as _gh_load_sightings,
+    record_sightings as _gh_record_sightings,
+)
+
+_gh_db = SessionLocal()
+_GH_T0 = _gh_dt(2026, 6, 1, 9, 0, 0)
+_GH_KEY = ("linkedin", _gh_ckey("Backend Engineer", "SightCo"))
+
+
+def _gh_match(url: str, title: str = "Backend Engineer", company: str = "SightCo") -> JobMatch:
+    return JobMatch(title=title, company=company, url=url, source="linkedin")
+
+
+try:
+    # READ BEFORE WRITE. `search_jobs` reads the sightings on the main thread and
+    # the CALLER records this run afterwards, beside `record_search_hits`.
+    # Recording first would stamp every posting `first_seen_at = now` and then
+    # hand it its own stamp straight back: every posting in every search would be
+    # "first seen today", `long_open` could never fire, and the whole feature
+    # would ship green and inert — the 21.7 failure mode. Both halves are driven
+    # in the real order, and the classifier is asked the question the search asks
+    # it, because "load returns {}" alone does not prove the badge stays off.
+    _gh_before = _gh_load_sightings(_gh_db, [_GH_KEY], now=_GH_T0)
+    _gh_first_report = _gh_detect(
+        title="Backend Engineer", jd_text="Python and SQL.",
+        sighting=_gh_before.get(_GH_KEY), url="https://sight.test/1", now=_GH_T0,
+    )
+    _gh_record_sightings(_gh_db, [_gh_match("https://sight.test/1")], _GH_T0)
+    _gh_after = _gh_load_sightings(_gh_db, [_GH_KEY], now=_GH_T0)
+    check(
+        "sightings: a posting seen for the FIRST time carries no long_open in that same search",
+        _gh_before == {}
+        and _gh_first_report is None
+        and _gh_after[_GH_KEY].first_seen_at == _GH_T0
+        and _gh_after[_GH_KEY].seen_count == 1
+        and _gh_after[_GH_KEY].relist_count == 0
+        # …and the row it just wrote still yields nothing: 0 days is not 30.
+        and _gh_detect(title="Backend Engineer", jd_text="Python and SQL.",
+                       sighting=_gh_after[_GH_KEY], url="https://sight.test/1",
+                       now=_GH_T0) is None,
+        str(_gh_after.get(_GH_KEY)),
+    )
+
+    # A URL CHANGE INSIDE ONE RUN is exactly what `reposted` reads: same board,
+    # same title+company, new listing id. `first_url` is written once and left
+    # alone while `last_url` follows the board, and the classifier compares the
+    # two — so this check drives the row AND the rule that consumes it, because a
+    # row that records the change nobody reads is worth nothing.
+    _gh_record_sightings(_gh_db, [_gh_match("https://sight.test/2")], _GH_T0 + _gh_td(days=1))
+    _gh_relist = _gh_load_sightings(_gh_db, [_GH_KEY], now=_GH_T0 + _gh_td(days=1))[_GH_KEY]
+    check(
+        "sightings: first_url is written once, last_url follows the board, and reposted reads the gap",
+        _gh_relist.first_url == "https://sight.test/1"
+        and _gh_relist.seen_count == 2
+        and _gh_relist.first_seen_at == _GH_T0
+        and _gh_kinds(
+            _gh_detect(title="Backend Engineer", jd_text="Python.", sighting=_gh_relist,
+                       url="https://sight.test/2", now=_GH_T0 + _gh_td(days=1))
+        ) == {"reposted": "weak"}
+        # …and the SAME url on the same row is a posting that is simply still up.
+        and _gh_detect(title="Backend Engineer", jd_text="Python.", sighting=_gh_relist,
+                       url="https://sight.test/1", now=_GH_T0 + _gh_td(days=1)) is None,
+        str(_gh_relist),
+    )
+
+    # THE CONTINUITY RESET. A role filled in March and relisted in September must
+    # not report as "open 200 days" — a lie in the direction that costs the user a
+    # real job, since `long_open` is what the card uses to say don't bother. A gap
+    # longer than SIGHTING_GAP_DAYS ends the run: first_seen_at, first_url and
+    # seen_count reset, and relist_count — which is real history and the point of
+    # the table — goes UP rather than being cleared with them.
+    _gh_late = _GH_T0 + _gh_td(days=1 + _GH_GAP + 2)
+    _gh_record_sightings(_gh_db, [_gh_match("https://sight.test/9")], _gh_late)
+    _gh_db.expire_all()
+    _gh_row = _gh_db.execute(
+        _gh_sel(_GhSightRow).where(_GhSightRow.content_key == _GH_KEY[1])
+    ).scalars().one()
+    check(
+        f"sightings: a gap over {_GH_GAP} days resets first_seen_at and bumps relist_count",
+        _gh_row.first_seen_at == _gh_late
+        and _gh_row.first_url == "https://sight.test/9"
+        and _gh_row.seen_count == 1
+        and _gh_row.relist_count == 1
+        # …and a relisted role is therefore NOT reported as open since June.
+        and _gh_detect(title="Backend Engineer", jd_text="Python.",
+                       sighting=_gh_load_sightings(_gh_db, [_GH_KEY], now=_gh_late)[_GH_KEY],
+                       url="https://sight.test/9", now=_gh_late) is None,
+        f"first_seen={_gh_row.first_seen_at} relist={_gh_row.relist_count} seen={_gh_row.seen_count}",
+    )
+    # The reset is applied ON READ too, so the pure classifier is handed a
+    # Sighting that is already about the CURRENT run. A stale row loses the three
+    # fields that would be false about the run now starting and keeps
+    # relist_count; first_seen_at becomes None — unknown, never `now`, because the
+    # row for this run has not been written yet.
+    _gh_stale = _gh_load_sightings(_gh_db, [_GH_KEY], now=_gh_late + _gh_td(days=_GH_GAP + 1))[_GH_KEY]
+    check(
+        "sightings: the reset is applied on READ, so a stale row reports unknown rather than zero",
+        _gh_stale.first_seen_at is None and _gh_stale.first_url == ""
+        and _gh_stale.seen_count == 0 and _gh_stale.relist_count == 1,
+        str(_gh_stale),
+    )
+
+    # THE 180-DAY PRUNE keeps growth bounded without a second cron to forget
+    # about, and it cannot evict a posting that is still open: every search that
+    # sees one stamps `last_seen_at = now`, so the sweep only ever reaches
+    # postings that have been gone for half a year. Both halves are pinned — a
+    # sweep that took the live row too would delete the market memory the whole
+    # table exists to hold.
+    _gh_record_sightings(
+        _gh_db, [_gh_match("https://sight.test/old", title="Old Role", company="OldCo")], _GH_T0
+    )
+    _gh_sweep_at = _GH_T0 + _gh_td(days=_GH_RETAIN + 1)
+    _gh_record_sightings(
+        _gh_db, [_gh_match("https://sight.test/z", title="Zed Role", company="ZedCo")], _gh_sweep_at
+    )
+    _gh_db.expire_all()
+    _gh_keys_left = {
+        r.content_key for r in _gh_db.execute(_gh_sel(_GhSightRow)).scalars().all()
+    }
+    check(
+        f"sightings: rows untouched for {_GH_RETAIN} days are pruned, and fresher ones survive",
+        _gh_ckey("Old Role", "OldCo") not in _gh_keys_left
+        and _gh_ckey("Zed Role", "ZedCo") in _gh_keys_left
+        and _GH_KEY[1] in _gh_keys_left,
+        str(sorted(_gh_keys_left)),
+    )
+finally:
+    _gh_db.close()
+
+# NO `user_id`, AND THAT IS THE ONE PRIVACY DECISION IN PHASE 28. A row here is
+# metadata a BOARD published — which board, the title+company fingerprint, when
+# we first and last saw it, its URLs, a count. Nothing in it is derived from a
+# résumé or from anything the user typed, and several users searching the same
+# market legitimately SHARE one row. So it must stay out of `_wipe_user_rows`,
+# which deletes `WHERE model.user_id == user.id`: wiping this table on any other
+# key would destroy market memory OTHER users' searches wrote while saying
+# nothing whatsoever about the person leaving.
+#
+# Both halves are pinned because either alone is satisfiable the wrong way. The
+# COLUMN check is what makes the decision structural rather than a convention —
+# add `user_id` and the helper below can express the delete, and the next person
+# to read the wipe rule will add it. Inspected off the mapped table, not the
+# source, so a column added through any spelling is seen.
+import inspect as _ghw_inspect  # noqa: E402
+
+from app.api import routes as _ghw_routes  # noqa: E402
+
+_GH_WIPE_SRC = _ghw_inspect.getsource(_ghw_routes._wipe_user_rows)
+check(
+    "sightings: the table has NO user_id, so the privacy wipe cannot even express it",
+    "user_id" not in {c.name for c in _GhSightRow.__table__.columns}
+    and not hasattr(_GhSightRow, "user_id")
+    and "PostingSighting" not in _GH_WIPE_SRC
+    and "posting_sighting" not in _GH_WIPE_SRC
+    # the helper is genuinely the wipe we think it is — a renamed function would
+    # otherwise make this pass by scanning the wrong source
+    and "SavedResume" in _GH_WIPE_SRC and "JobSearchHit" in _GH_WIPE_SRC,
+    str(sorted(c.name for c in _GhSightRow.__table__.columns)),
+)
+
+# 21e. The ghost gate END TO END. Section 14c proves the classifier works and
+# NOTHING about the verdict reaching the user, so this drives a purpose-built
+# board through the real fan-out — the same reason 21c does, and the same
+# purpose-built fixture rule: the shared job-search fakes produce no ghost, so a
+# check written against them would pass by never firing.
+#
+# Registered under an ORDINARY board name, not `WORLDWIDE_BOARD`. That is the
+# gate difference this section exists to pin: `_geo_for` is gated on
+# `origin_market`, `_ghost_for` deliberately is not, because a ghost posting is a
+# primary-market problem and gating it would disable the detector for every user
+# who never turns the worldwide opt-in on — i.e. for the default search.
+_GH_CLOSED_TXT = "Python and SQL. Backend work on a distributed platform."
+_GH_POOL_TXT = "Python and SQL. Send us your CV and we will be in touch."
+_GH_CLEAN_TXT = "Python and SQL work on a distributed backend."
+_GH_BOARD_TEXTS = {"dead": _GH_CLOSED_TXT, "pool": _GH_POOL_TXT, "clean": _GH_CLEAN_TXT}
+# Distinct title AND company per posting: the fan-out dedupes by content
+# (title|company, PLAN 15.1), so a fixture whose postings share both collapses
+# into one row and the check passes by never firing.
+_GH_BOARD_CARDS = {
+    "dead": ("Python Developer dead", "GhostCo dead"),
+    "pool": ("Talent Pool - Python pool", "GhostCo pool"),
+    "clean": ("Python Developer clean", "GhostCo clean"),
+}
+
+
+def _gh_hit(slug: str) -> "_FanHit":
+    # `description` is EMPTY on purpose. `hit.closed` is a side effect of
+    # `fetch_description`, and `_build_match` short-circuits the fetch whenever
+    # the board inlined its text — so an inline fixture would make closure
+    # unobservable and the filter check would pass without the gate existing.
+    title, company = _GH_BOARD_CARDS[slug]
+    return _FanHit(source="fake_ghost", title=title, company=company,
+                   description="", url=f"https://ghost.test/{slug}")
+
+
+class _GhostBoard:
+    """A board with one dead posting, one talent pool and one ordinary job.
+
+    `fetch_description` sets `hit.closed` for the dead one exactly as
+    `LinkedInProvider.fetch_description` does — evidence text on the hit, with
+    the description still returned, because a closed guest page serves its body
+    untouched and "dead" and "no text" do not imply each other in either
+    direction."""
+
+    name = "fake_ghost"
+
+    def __init__(self, slugs: tuple[str, ...] = ("dead", "pool", "clean")) -> None:
+        self.slugs = slugs
+        self.fetches = 0
+        self.fetched: list[str] = []
+
+    def search(self, ctx):  # noqa: ANN001
+        return [_gh_hit(s) for s in self.slugs]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        slug = hit.url.rsplit("/", 1)[-1]
+        self.fetches += 1
+        self.fetched.append(slug)
+        if slug == "dead":
+            hit.closed = "No longer accepting applications"
+        return _GH_BOARD_TEXTS[slug]
+
+
+_gh_stub = _get_llm()
+_gh_orig_cjson = _gh_stub.complete_json
+_gh_llm_tasks: list[str] = []
+
+
+def _gh_counting_cjson(system, user):  # noqa: ANN001
+    _gh_llm_tasks.append(system[:40].upper())
+    return _gh_orig_cjson(system, user)
+
+
+def _gh_jdfit() -> int:
+    return len([t for t in _gh_llm_tasks if "JD_FIT" in t])
+
+
+# `sightings_fn` is what `search_jobs` calls once, on the main thread, before the
+# scoring pool starts. Handing back a 90-day-old sighting for the CLEAN posting
+# is how `long_open` is driven end to end without a clock: `search_jobs` builds
+# its own `now` from the wall clock, so the fixture is anchored to the wall clock
+# too. Note the caller swallows anything this raises (bookkeeping may never turn
+# a served request into an error) — so a broken fixture here would silently
+# produce no signal, which is why the check asserts the signal ARRIVED rather
+# than that the function was called.
+_gh_sfn_keys: list = []
+_GH_OLD_SEEN = _gh_dt.now() - _gh_td(days=90)
+
+
+def _gh_sightings_fn(keys):  # noqa: ANN001
+    _gh_sfn_keys.append(list(keys))
+    ck = _gh_ckey(*_GH_BOARD_CARDS["clean"])
+    return {("fake_ghost", ck): _GhSighting(
+        first_seen_at=_GH_OLD_SEEN, first_url="https://ghost.test/clean", seen_count=12,
+    )}
+
+
+_gh_ctx = _AlertCtx(job_title="Python Developer", sources=["fake_ghost"], max_age_days=0)
+_gh_board = _GhostBoard()
+_PROV["fake_ghost"] = _gh_board
+_gh_stub.complete_json = _gh_counting_cjson
+try:
+    _ghr = _fan_search(resume, _gh_ctx, sightings_fn=_gh_sightings_fn)
+    _ghr_by_url = {m.url: m for m in _ghr.matches}
+    _ghr_filtered = {f.url: f for f in _ghr.filtered}
+    # Bound before the check, never by a walrus inside it — see the note in 14c:
+    # a name the and-chain short-circuits past makes the `extra` f-string raise
+    # and aborts every check after it.
+    _ghd = _ghr_filtered.get("https://ghost.test/dead")
+    _ghf = _ghd.ghost if _ghd else None
+    check(
+        "ghost search: a posting the BOARD says is closed is filtered, carrying its own words",
+        [f.url for f in _ghr.filtered] == ["https://ghost.test/dead"]
+        and _ghd is not None and _ghd.reason == "closed"
+        and _ghf is not None and _ghf.closed is True
+        and _gh_sig0(_ghf).kind == "closed" and _gh_sig0(_ghf).strength == "certain"
+        and _gh_sig0(_ghf).raw == "No longer accepting applications"
+        # …and it carries no geo verdict, because nothing geographic fired: the
+        # two lists answer different questions and `reason` is what says which.
+        and _ghd.geo_restriction is None,
+        f"filtered={[(f.url, f.reason) for f in _ghr.filtered]} ghost={_ghf}",
+    )
+    # Pinned right beside the geo twin above, which says the same thing for the
+    # same reason: `skipped` means "listings found but NOT FETCHABLE/scorable",
+    # and a closed posting was fetchable — more so than any other row here, since
+    # we know it is closed BECAUSE we fetched it and the board said so. Folding it
+    # into `skipped` would tell the user the boards were throttling us at the exact
+    # moment we had the clearest possible answer from one.
+    check(
+        "ghost search: a closed posting does NOT inflate `skipped` (its string means unfetchable)",
+        _ghr.skipped == 0 and len(_ghr.matches) == 2,
+        f"skipped={_ghr.skipped} matched={sorted(_ghr_by_url)}",
+    )
+    # ZERO LLM CALLS for the dropped posting. The gate sits before
+    # `analyze_and_score` for exactly the reason the geo gate does: it is the only
+    # seam where every code path holds the text and no model call has been made.
+    # Made observable the way 21c makes a skipped fetch observable — a count, not
+    # an inference: three hits were fetched, two were scored.
+    check(
+        "ghost search: the closed posting is fetched and then costs ZERO scoring LLM calls",
+        _gh_board.fetches == 3 and sorted(_gh_board.fetched) == ["clean", "dead", "pool"]
+        and _gh_jdfit() == 2,
+        f"fetches={_gh_board.fetched} jd_fit={_gh_jdfit()} llm={_gh_llm_tasks}",
+    )
+    # A SOFT SIGNAL IS A BADGE, NEVER A FILTER. `likely` is a suspicion and the
+    # posting still ranks with its evidence attached — the same contract the
+    # Tier-2 geo region note keeps one section up. Two independent mechanisms are
+    # pinned here so a regression in either shows: the talent-pool TITLE (text)
+    # and the 90-day sighting (`sightings_fn`, i.e. the market memory reaching the
+    # search at all).
+    _ghp_m = _ghr_by_url.get("https://ghost.test/pool")
+    _ghp = _ghp_m.ghost if _ghp_m else None
+    check(
+        "ghost search: an evergreen title RANKS and carries its ghost, never filtered",
+        _ghp is not None and _ghp.closed is False and _ghp.likely is True
+        and _gh_kinds(_ghp) == {"evergreen": "strong"}
+        and "Talent Pool" in _gh_sig0(_ghp).raw,
+        str(_ghp),
+    )
+    _ghl_m = _ghr_by_url.get("https://ghost.test/clean")
+    _ghl = _ghl_m.ghost if _ghl_m else None
+    check(
+        "ghost search: the market memory reaches the classifier — long_open on a ranked match",
+        bool(_gh_sfn_keys)
+        and ("fake_ghost", _gh_ckey(*_GH_BOARD_CARDS["clean"])) in _gh_sfn_keys[0]
+        and _ghl is not None and _gh_kinds(_ghl) == {"long_open": "strong"}
+        and _gh_sig0(_ghl).basis == "first_seen" and _gh_sig0(_ghl).days >= 89,
+        f"keys={_gh_sfn_keys[0] if _gh_sfn_keys else None} ghost={_ghl}",
+    )
+
+    # THE CACHE BRANCH IS NOT A BYPASS. It skips the fetch AND the LLM, so nothing
+    # in it looks like work — which is exactly why it is the branch that gets
+    # forgotten, and why the geo section pins the same thing one screen up. The
+    # wording rules read fine off cached text and `long_open` only gets stronger
+    # with age, so a posting scored last week must not launder through
+    # unclassified.
+    _gh_board_c = _GhostBoard()
+    _PROV["fake_ghost"] = _gh_board_c
+    _gh_llm_tasks.clear()
+    _gh_cache = {
+        f"https://ghost.test/{slug}": _GeoCached(
+            jd_text=_GH_BOARD_TEXTS[slug], overall=80.0, keyword_coverage=70.0, fit_score=90.0,
+            top_matched=("Python",), top_gaps=(), title=_GH_BOARD_CARDS[slug][0],
+            company=_GH_BOARD_CARDS[slug][1], location="Tel Aviv", posted_at="",
+            logo_url="", is_full_match=True,
+        )
+        for slug in ("dead", "pool")
+    }
+    _ghc = _fan_search(resume, _gh_ctx, cache=_gh_cache, sightings_fn=_gh_sightings_fn)
+    _ghc_by_url = {m.url: m for m in _ghc.matches}
+    _ghcp_m = _ghc_by_url.get("https://ghost.test/pool")
+    _ghcp = _ghcp_m.ghost if _ghcp_m else None
+    check(
+        "ghost search: a full-match CACHED posting is still classified (the branch is not a bypass)",
+        _ghcp is not None and _gh_kinds(_ghcp) == {"evergreen": "strong"}
+        and _gh_board_c.fetched == ["clean"]  # the two cached ones never fetched
+        and _gh_jdfit() == 1,
+        f"fetched={_gh_board_c.fetched} jd_fit={_gh_jdfit()} ghost={_ghcp}",
+    )
+    # THE HONEST GAP, pinned as a gap rather than papered over. `hit.closed` is set
+    # by `fetch_description`, which is precisely what this branch skips, so a
+    # posting that died since it was last scored still RANKS here with no closed
+    # signal. It is deliberately not fixed with a liveness fetch: this branch's
+    # whole purpose is not fetching (PLAN 12.4 — zero LLM calls, zero network), and
+    # a HEAD per cached hit would spend the exact budget the cache exists to save
+    # on every search. The cache TTL is the bound on how stale this can get.
+    #
+    # Written as an assertion so it goes RED the day someone closes it — at which
+    # point this check is the thing that says the comment above is now a lie.
+    check(
+        "ghost search: KNOWN GAP — the cache branch cannot observe closure, and does not pretend to",
+        "https://ghost.test/dead" in _ghc_by_url
+        and (_ghc_by_url["https://ghost.test/dead"].ghost is None
+             or _ghc_by_url["https://ghost.test/dead"].ghost.closed is False)
+        and "dead" not in _gh_board_c.fetched
+        and [f.url for f in _ghc.filtered] == [],
+        f"ranked={sorted(_ghc_by_url)} filtered={[f.url for f in _ghc.filtered]}",
+    )
+
+    # 100% closed is the maximum-suspicion case, and the reveal must survive it:
+    # raising here would destroy the list and send the user to re-run a search that
+    # fails identically. `search_jobs` states no reason of its own — the response
+    # carries `filtered[i].reason` and the UI switches on it — so a morning where
+    # every posting had closed must not be reported as a hiring restriction.
+    _PROV["fake_ghost"] = _GhostBoard(slugs=("dead",))
+    _gh_llm_tasks.clear()
+    # CAUGHT, not left to propagate. "does not raise" is half of what this check
+    # asserts, and an uncaught raise here would abort the process — turning one
+    # red check into 200 that silently never ran, with the traceback saying
+    # nothing about the rest. Reproduced while probing: drop the `closed` arm of
+    # `filter_reasons` and this call raises the board-throttling error instead.
+    _gha, _gha_err = None, ""
+    try:
+        _gha = _fan_search(resume, _gh_ctx, sightings_fn=_gh_sightings_fn)
+    except Exception as _gha_e:  # noqa: BLE001
+        _gha_err = f"{type(_gha_e).__name__}: {_gha_e}"
+    check(
+        "ghost search: an all-closed search returns 200 with the list, and never says 'restriction'",
+        _gha_err == "" and _gha is not None
+        and _gha.matches == [] and len(_gha.filtered) == 1
+        and _gha.filtered[0].reason == "closed"
+        and _gha.filtered[0].geo_restriction is None
+        and _gh_jdfit() == 0,
+        _gha_err or f"matches={len(_gha.matches)} "
+        f"filtered={[(f.url, f.reason) for f in _gha.filtered]} jd_fit={_gh_jdfit()}",
+    )
+finally:
+    _gh_stub.complete_json = _gh_orig_cjson
+    _PROV.pop("fake_ghost", None)
 
 # 22. Batch auto-tailor kits (PLAN 8.1): enqueue high-fit jobs, drain the
 # queue one tailor per request (the serverless-safe loop), guard flags mark
@@ -9492,16 +10458,23 @@ _SS_TREE = _kg_ast.parse(_SS_SRC)
 _SS_USED = (
     {n.id for n in _kg_ast.walk(_SS_TREE) if isinstance(n, _kg_ast.Name)}
     | {n.attr for n in _kg_ast.walk(_SS_TREE) if isinstance(n, _kg_ast.Attribute)}
+    # DOTTED SEGMENTS as well as the bound name. `import urllib.request` binds
+    # the single string "urllib.request", so a set built from `a.asname or
+    # a.name` alone never intersects "urllib" and this check stayed GREEN with
+    # the network imported. Found in 2026-09-03 by probing that exact line into
+    # `ghost_signals`, whose pin is a copy of this one; fixed in both.
     | {
-        a.asname or a.name
+        part
         for n in _kg_ast.walk(_SS_TREE)
         if isinstance(n, (_kg_ast.Import, _kg_ast.ImportFrom))
         for a in n.names
+        for part in {a.asname or a.name, *a.name.split(".")}
     }
     | {
-        n.module
+        part
         for n in _kg_ast.walk(_SS_TREE)
         if isinstance(n, _kg_ast.ImportFrom) and n.module
+        for part in {n.module, *n.module.split(".")}
     }
 )
 check(

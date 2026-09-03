@@ -7,6 +7,7 @@ import json
 import queue
 import threading
 from datetime import datetime, timedelta, timezone
+from functools import partial
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -69,6 +70,7 @@ from app.core import writing_prefs as writing_prefs_core
 from app.db.comeet import list_companies as list_comeet_companies
 from app.db.database import SessionLocal, get_db
 from app.db.greenhouse import list_companies as list_greenhouse_companies
+from app.db.sightings import load_sightings, record_sightings
 from app.db.users import mint_user
 from app.db import resume_versions
 from app.db.history import (
@@ -506,7 +508,27 @@ def jobs_search(
     except Exception:  # noqa: BLE001
         cache = {}
     try:
-        result = search_jobs(body.resume, body.customize, cache=cache)
+        result = search_jobs(
+            body.resume,
+            body.customize,
+            cache=cache,
+            # READ BEFORE WRITE, and the order is the whole trap (PLAN 28.3).
+            # `search_jobs` calls this once on THIS thread, after select_hits
+            # and before the scoring pool — so the request's own session is
+            # safe to close over — and `record_sightings` below runs only once
+            # the search has returned. Recording first would stamp every
+            # posting's `first_seen_at` with NOW and then read it straight
+            # back, so `long_open` would measure each posting's age against the
+            # moment we noticed it: zero days, for every posting, for ever.
+            # The signal would pass by never firing.
+            #
+            # Passed BARE, not wrapped: `search_jobs` already catches whatever
+            # this raises and falls back to no sightings, on the rule that
+            # bookkeeping may never turn a served request into an error. A
+            # second try/except here would be a second owner of one policy, and
+            # the two would drift.
+            sightings_fn=partial(load_sightings, db),
+        )
     except ValueError as e:  # user-facing scrape/search problems
         raise HTTPException(400, str(e))
     except _SIZE_ERRORS:
@@ -517,6 +539,13 @@ def jobs_search(
         record_search_hits(db, result.matches, user.id, resume_hash=rhash)
     except Exception:  # noqa: BLE001
         pass
+    try:  # and so is the market memory this search just read (PLAN 28.3)
+        record_sightings(db, result.matches, datetime.now(timezone.utc))
+    except Exception:  # noqa: BLE001 - bookkeeping for TOMORROW's ghost signals
+        # `rollback`, not `pass`, following `usage.record_tokens`: a half-written
+        # upsert leaves the session dirty and the next commit on it fails
+        # somewhere unrelated, which reads as a bug in whatever ran next.
+        db.rollback()
     try:  # so is the already-applied marking
         stamp_applied(result.matches, applied_status_map(db, user.id))
     except Exception:  # noqa: BLE001
@@ -570,6 +599,29 @@ def jobs_search_stream(
     # a tally from. Bind one explicitly and write it when the stream ends.
     tally = TokenTally()
 
+    def _sightings_fn(keys: list[tuple[str, str]]) -> dict:
+        """The ghost detector's market-memory read (PLAN 28.3), on the SSE path.
+
+        It cannot close over `db` the way the non-stream route does: `db.close()`
+        above deliberately released the pooled (Neon) connection before this
+        endpoint returned, and `search_jobs` calls this minutes later on the
+        worker thread. So it opens the same kind of short-lived session the
+        terminal `result` frame already opens for `record_search_hits`
+        (`hist_db`) rather than inventing a second pattern, and closes it
+        immediately — the read is one query and happens once per search.
+
+        try/FINALLY, not try/except: a raise here (a cold Neon connection, a
+        table that isn't there yet) has to reach `search_jobs`, which owns the
+        "abstain, never fail the search" rule for this callable. Swallowing it
+        into `{}` locally would put that policy in two places. The session is
+        closed either way.
+        """
+        sdb = SessionLocal()
+        try:
+            return load_sightings(sdb, keys)
+        finally:
+            sdb.close()
+
     def _worker() -> None:
         with bind(tally):
             try:
@@ -578,6 +630,11 @@ def jobs_search_stream(
                     body.customize,
                     progress=lambda e: events.put(("progress", e)),
                     cache=cache,
+                    # Read before write: this runs before the scoring pool, and
+                    # the sightings are recorded only in the `result` branch
+                    # below. See the non-stream route for what reversing it
+                    # would cost.
+                    sightings_fn=_sightings_fn,
                 )
                 events.put(("result", result))
             except ValueError as e:  # user-facing scrape/search problems
@@ -625,6 +682,19 @@ def jobs_search_stream(
                         hist_db = SessionLocal()
                         try:
                             record_search_hits(hist_db, payload.matches, user_id, resume_hash=rhash)
+                            # The market memory rides the SAME short-lived
+                            # session as the history write — one session, one
+                            # close, rather than a third connection opened for
+                            # a single upsert on a stream that has already run
+                            # for minutes. A failure here is bookkeeping for
+                            # TOMORROW's ghost signals and must not cost the
+                            # user this search, so it lands in the existing
+                            # best-effort `except` below; `hist_db` is closed
+                            # and discarded either way, so there is no dirty
+                            # session left to poison anything.
+                            record_sightings(
+                                hist_db, payload.matches, datetime.now(timezone.utc)
+                            )
                         finally:
                             hist_db.close()
                     except Exception:  # noqa: BLE001

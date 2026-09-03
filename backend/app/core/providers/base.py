@@ -64,6 +64,19 @@ class JobHit:
     # and the classifier is never called, so a normal search and every
     # Israeli-board posting are structurally out of its reach.
     origin_market: str = ""
+    # Evidence text set by `fetch_description` when the BOARD ITSELF says the
+    # posting is dead — the guest page's own banner ("No longer accepting
+    # applications"), or "HTTP 404" / "HTTP 410" on the detail endpoint.
+    #
+    # "" means NOT OBSERVED, which is NOT the same as "open". Most boards can
+    # never say: Drushim's search API drops `IsExpired` rows before we see them
+    # (drushim.py:65), Comeet's positions API and Greenhouse's board API list
+    # only open roles, and none of the three fetches anything at score time — so
+    # on those boards this field is "" for a live posting and "" for a dead one
+    # alike, and nothing downstream may read "" as a liveness claim. It is
+    # LinkedIn-only by construction (PLAN 28.2): the one registered board whose
+    # search index is stale by design. Set by providers, never by the fan-out.
+    closed: str = ""
 
 
 @runtime_checkable

@@ -207,7 +207,9 @@
     "geoFiltered_other": "{{count}} jobs state a hiring restriction abroad",
     "geoShow": "Show them",
     "geoHide": "Hide them",
-    "geoAllFiltered": "Every job we found states a hiring restriction abroad. Read what each one says before dismissing the search."
+    "geoAllFiltered": "Every job we found states a hiring restriction abroad. Read what each one says before dismissing the search.",
+    "filteredClosed_one": "{{count}} posting is no longer accepting applications",
+    "filteredClosed_other": "{{count}} postings are no longer accepting applications"
   },
   "workModes": {
     "any": "Any",
@@ -261,6 +263,16 @@
     },
     "geoNote": "Quoted from the posting — we report what it says, never whether you qualify.",
     "geoNotScored": "Not scored",
+    "ghost": {
+      "closed": "No longer accepting applications",
+      "evergreen": "A general application, not a specific role",
+      "long_open": {
+        "published": "Posted {{days}} days ago",
+        "seen": "Seen in searches for {{days}} days"
+      },
+      "reposted": "Relisted under a new link",
+      "note": "What the posting says and how long it's been up — evidence, never a verdict on whether the job is real."
+    },
     "save": "Save for later",
     "saveDone": "Saved — find it on the Tracker.",
     "saveFailed": "Couldn't save that job. Try again.",

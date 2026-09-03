@@ -5,6 +5,7 @@ import { Trans, useTranslation } from "react-i18next";
 import {
   BadgeCheck,
   Briefcase,
+  Ghost,
   Globe,
   Link2,
   Loader2,
@@ -721,26 +722,60 @@ export default function JobsPage() {
                     </label>
                   </div>
                 </div>
-                {(searchResult.filtered?.length ?? 0) > 0 && (
-                  <p className="flex flex-wrap items-center gap-2 text-xs text-warn">
-                    <Globe size={13} className="shrink-0" />
-                    {/* "Every job" is only true when nothing was dropped for
-                        another reason — `skipped` counts postings that failed
-                        to fetch or score, and claiming they stated a
-                        restriction contradicts the "N skipped" line directly
-                        above. */}
-                    {searchResult.matches.length === 0 && searchResult.skipped === 0
-                      ? t("search.geoAllFiltered")
-                      : t("search.geoFiltered", { count: searchResult.filtered!.length })}
-                    <button
-                      type="button"
-                      onClick={() => setShowRestricted((v) => !v)}
-                      className="font-semibold underline underline-offset-2"
-                    >
-                      {t(showRestricted ? "search.geoHide" : "search.geoShow")}
-                    </button>
-                  </p>
-                )}
+                {(searchResult.filtered?.length ?? 0) > 0 &&
+                  (() => {
+                    // ONE list on the wire, two reasons in it, so the count is
+                    // taken PER REASON here rather than a second list being
+                    // asked for on the API. `reason` defaults to "restriction"
+                    // on the backend and is absent on a pre-Phase-28 response,
+                    // so the test is "is it literally closed" — read the other
+                    // way round, every old payload would be counted as closed
+                    // and the banner would describe a search that never ran.
+                    const filtered = searchResult.filtered!;
+                    const closed = filtered.filter((j) => j.reason === "closed").length;
+                    const restricted = filtered.length - closed;
+                    return (
+                      <p className="flex flex-wrap items-center gap-2 text-xs text-warn">
+                        {restricted > 0 && (
+                          <>
+                            <Globe size={13} className="shrink-0" />
+                            {/* "Every job" is only true when nothing was
+                                dropped for another reason. `skipped` counts
+                                postings that failed to fetch or score, and
+                                claiming they stated a restriction contradicts
+                                the "N skipped" line directly above — and
+                                `closed === 0` is the same guard one release
+                                later: a list of dead postings sitting under a
+                                sentence that says every job we found states a
+                                hiring restriction abroad is the banner
+                                contradicting the rows it introduces. */}
+                            {searchResult.matches.length === 0 &&
+                            searchResult.skipped === 0 &&
+                            closed === 0
+                              ? t("search.geoAllFiltered")
+                              : t("search.geoFiltered", { count: restricted })}
+                          </>
+                        )}
+                        {closed > 0 && (
+                          <>
+                            <Ghost size={13} className="shrink-0" />
+                            {t("search.filteredClosed", { count: closed })}
+                          </>
+                        )}
+                        {/* ONE toggle for both sentences: `showRestricted`
+                            reveals the whole `filtered` list, so a control per
+                            reason would promise a filter this reveal does not
+                            implement. */}
+                        <button
+                          type="button"
+                          onClick={() => setShowRestricted((v) => !v)}
+                          className="font-semibold underline underline-offset-2"
+                        >
+                          {t(showRestricted ? "search.geoHide" : "search.geoShow")}
+                        </button>
+                      </p>
+                    );
+                  })()}
                 {sortedMatches.length > 0 && (
                   <BatchTailorCard
                     matches={searchResult.matches}

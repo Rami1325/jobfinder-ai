@@ -331,6 +331,10 @@ export interface JobMatch {
   also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
   salary?: SalaryInfo | null; // only when literally stated in the posting
   geo_restriction?: GeoRestriction | null; // a hiring restriction the posting STATES
+  // Reasons to suspect this is not a live vacancy. Derived on read from the
+  // posting text + our own sightings, never stored — so re-tuning the rules
+  // reclassifies every posting with no migration. Same as `geo_restriction`.
+  ghost?: GhostReport | null;
   stale?: boolean; // older than the search window, kept for keyword relevance (PLAN 15.6)
   // Tracker status when this posting is already in the tracker ("saved" |
   // "applied" | "interview" | "offer" | "rejected"); "" or absent when new.
@@ -360,9 +364,39 @@ export interface GeoRestriction {
   blocking: boolean; // true => the search dropped it before scoring
   raw: string; // the posting's own sentence
 }
-/** A posting the search dropped BEFORE scoring because it states a blocking
- * restriction. Carries no scores on purpose: it was never scored, and a zero
- * would be a fabricated number. */
+/** One reason to suspect a posting is not a live vacancy — evidence, never a
+ * verdict. A signal is either something the posting SAYS (`raw`, its own
+ * sentence) or something our own search history COUNTS (`days`, measured from
+ * `since` on the basis named in `basis`).
+ * `kind`, `strength` and `basis` are plain strings, not unions, for the reason
+ * `GeoRestriction` gives above: a newer backend value must not break the build.
+ * `days`/`since`/`basis` are `long_open` only, and `basis` separates two claims
+ * that must never share a sentence — `first_published` is the BOARD's own date,
+ * `first_seen` is only a lower bound (the day one of our searches first saw it,
+ * which says nothing about the days before that). */
+export interface GhostSignal {
+  kind: string; // closed | evergreen | long_open | reposted
+  strength: string; // certain | strong | weak
+  raw: string; // the posting's own sentence; "" when the signal is a date, not a quote
+  days: number; // long_open only
+  since: string; // long_open only: ISO date the count is measured from
+  basis: string; // long_open only: first_published | first_seen
+}
+/** What the deterministic ghost check found. No confidence number, for the
+ * reason `GeoRestriction` gives — the module either matched or it did not.
+ * Absent/null means nothing fired, which is NOT the same as "this vacancy is
+ * real". `likely` is the backend's ONE pinned rule (>= 1 strong, or >= 2 weak)
+ * and the UI must threshold on it rather than re-deriving one from `signals` —
+ * a second gate answering the same question is how two surfaces end up
+ * contradicting each other about the same posting. */
+export interface GhostReport {
+  closed: boolean; // a CERTAIN signal — the search dropped it before scoring
+  likely: boolean; // >= 1 strong, or >= 2 weak
+  signals: GhostSignal[];
+}
+/** A posting the search dropped BEFORE scoring — because it states a blocking
+ * restriction, or because the board says it is closed. Carries no scores on
+ * purpose: it was never scored, and a zero would be a fabricated number. */
 export interface FilteredJob {
   title: string;
   company: string;
@@ -372,6 +406,11 @@ export interface FilteredJob {
   posted_at: string;
   logo_url: string;
   geo_restriction?: GeoRestriction | null;
+  // Why it was dropped. The backend defaults it to "restriction", so a response
+  // that predates Phase 28 means "restriction" — which is TRUE, not unknown.
+  // Read it in that direction: anything not literally "closed" is a restriction.
+  reason?: string; // restriction | closed
+  ghost?: GhostReport | null; // the evidence behind reason === "closed"
 }
 /** Multi-turn mock interview (PLAN 11.3) — stateless backend, the client
  * sends the whole transcript with every turn. */
