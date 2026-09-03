@@ -226,7 +226,26 @@ def _ghost_label(ghost: GhostReport | None) -> str:
     internal token like `long_open` in someone's inbox, and `sig.raw` is the
     BOARD's own sentence, which is evidence and not a label.
     """
-    if ghost is None or not ghost.signals:
+    # `closed or likely` is the threshold, NEVER `signals` being non-empty, and
+    # the two are genuinely different: `likely` is >= 1 strong or >= 2 weak, so a
+    # posting carrying a single WEAK signal — merely relisted, or 35 days old —
+    # has signals and is not likely.
+    #
+    # This is the one place the email could contradict the app about the same
+    # posting, and it did. `cards.tsx::strongestGhostSignal` gates on exactly
+    # these two booleans; gating here on the list instead chipped "Relisted" in
+    # the inbox for a job whose card showed nothing, so tapping through from the
+    # email landed on a posting with no sign of what the email had just claimed.
+    # That is the geo section's own lesson — a second surface deciding on a
+    # different gate and so contradicting the first about one posting.
+    #
+    # Note what makes this ONE rule rather than two agreeing ones: `likely` is
+    # computed once, in `ghost_signals._report`, and both surfaces only READ it.
+    # Neither re-derives the strong/weak arithmetic, so there is no second
+    # matcher here to drift.
+    if ghost is None or not (ghost.closed or ghost.likely):
+        return ""
+    if not ghost.signals:  # a report cannot be closed/likely with no signals
         return ""
     # `min` returns the FIRST minimal element, so ties fall back to the
     # classifier's own signal order rather than to whatever sorts alphabetically.

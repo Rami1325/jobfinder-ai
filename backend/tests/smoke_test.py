@@ -3938,6 +3938,66 @@ check(
     "מהנדס/ת תוכנה" in _html_he and 'dir="auto"' in _html_he,
 )
 
+# PLAN 28.5 — the ghost chip, in BOTH bodies, off ONE threshold.
+#
+# The email and the Jobs card must never describe the same posting differently,
+# and they did: `_ghost_label` gated on `signals` being non-empty while
+# `cards.tsx::strongestGhostSignal` gates on `closed || likely`. A posting with
+# ONE WEAK signal has signals and is not likely, so it was chipped "Relisted" in
+# the inbox and showed nothing on the card it linked to. Both halves are pinned
+# here, in one check, because "make the chip appear" is trivially satisfied by
+# chipping every posting that carries any signal at all — which is the defect.
+#
+# `closed` is deliberately absent: a certain signal filters the posting before a
+# JobMatch exists, so it is unreachable from an email by construction. That is
+# asserted one section down, where the search itself is driven.
+def _ghost_match(url: str, ghost) -> JobMatch:  # noqa: ANN001, ANN202
+    return JobMatch(title="Backend Engineer", company="GhostCo", overall=80.0, url=url, ghost=ghost)
+
+
+_gh_strong = _GhostReport(
+    likely=True,
+    signals=[_GhostSignal(kind="evergreen", strength="strong", raw="This is not a specific role.")],
+)
+_gh_one_weak = _GhostReport(  # has a signal, is NOT likely — the case that broke
+    likely=False,
+    signals=[_GhostSignal(kind="reposted", strength="weak")],
+)
+_gh_two_weak = _GhostReport(
+    likely=True,
+    signals=[
+        _GhostSignal(kind="long_open", strength="weak", days=35, basis="first_seen"),
+        _GhostSignal(kind="reposted", strength="weak"),
+    ],
+)
+_gh_html_strong = build_alert_email_html([_ghost_match("https://a/g1", _gh_strong)], _AlertCtx(job_title="X"))
+_gh_text_strong = build_alert_email([_ghost_match("https://a/g1", _gh_strong)], _AlertCtx(job_title="X"))[1]
+_gh_html_weak = build_alert_email_html([_ghost_match("https://a/g2", _gh_one_weak)], _AlertCtx(job_title="X"))
+_gh_text_weak = build_alert_email([_ghost_match("https://a/g2", _gh_one_weak)], _AlertCtx(job_title="X"))[1]
+_gh_html_two = build_alert_email_html([_ghost_match("https://a/g3", _gh_two_weak)], _AlertCtx(job_title="X"))
+_gh_text_two = build_alert_email([_ghost_match("https://a/g3", _gh_two_weak)], _AlertCtx(job_title="X"))[1]
+check(
+    "alert ghost chip rides BOTH bodies on `closed or likely`, and one weak "
+    "signal — which the card would not badge — chips neither",
+    # The HTML chip is title-case; the plain-text twin lower-cases the FIRST
+    # CHARACTER ONLY, so it reads as a fragment beside "(states a location
+    # requirement)" without flattening an acronym a future label may carry.
+    # Both casings are pinned: one body drifting is the same defect as one body
+    # gating differently, which is what this check exists for.
+    "General application" in _gh_html_strong
+    and "(general application)" in _gh_text_strong
+    and "Relisted" not in _gh_html_weak
+    and "relisted" not in _gh_text_weak.lower()
+    # 2 weak IS likely, and long_open outranks reposted, so the STRONGEST
+    # signal's label is the one that ships — not merely any label.
+    and "Seen for 35 days" in _gh_html_two
+    and "(seen for 35 days)" in _gh_text_two
+    and "General application" not in _html,  # a plain match never grows the chip
+    f"strong_html={'General application' in _gh_html_strong} "
+    f"strong_text={'(general application)' in _gh_text_strong} "
+    f"weak_html={'Relisted' in _gh_html_weak} two={'Seen for 35 days' in _gh_html_two}",
+)
+
 
 # `sightings_fn` is NAMED on every fake below rather than swallowed by a `**_`.
 # `run_alert` documents its call shape as
