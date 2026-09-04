@@ -544,11 +544,20 @@ select {
   --drawer-from: -100%;
 }
 
-/* HOVERING A REVIEW ROW TINTS ITS BLOCK. Flat colour, no transition, no scale,
-   no scroll: the sheet rule is that nothing on the paper MOVES on hover, and a
-   static tint marks the block without making the artefact behave like a toy.
-   It sits under `.sheet` so it cannot leak onto the marketing `.paper`. */
+/* HOVERING A REVIEW ROW TINTS ITS BLOCK. COLOUR ONLY -- no geometry, no
+   transform, no size, no scroll. It cross-fades over 150ms because `blk()`
+   already puts `transition-colors duration-150` on every editable block, and
+   that is what satisfies the sheet's motion rule rather than violating it: the
+   rule forbids the paper MOVING on hover, and a colour cross-fade moves
+   nothing.
+
+   It sets NO `border-radius`, and that omission is load-bearing. At (0,3,0)
+   this selector beats `Badge`'s `.rounded-full` (0,1,0), so a `border-radius:
+   4px` here squared off every skill and language CHIP the moment a review row
+   pointing at one was hovered -- the pill snapped to a near-rectangle and back.
+   Any geometry added to this rule has the same reach.
+
+   Scoped under `.sheet` so it cannot leak onto the marketing `.paper`. */
 .sheet [data-block][data-hover="1"] {
   background-color: rgb(var(--accent) / 0.14);
-  border-radius: 4px;
 }

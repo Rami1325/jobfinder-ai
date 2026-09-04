@@ -1,4 +1,4 @@
-import { forwardRef, useState } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { EntryInsertKind, NamedInsertKind } from "../lib/resumeBlocks";
 import { useTranslation } from "react-i18next";
@@ -217,6 +217,10 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   // mouseleave, so lifting it to TailorPage would re-render the whole
   // document surface on every row the pointer crosses.
   const [hoverPaths, setHoverPaths] = useState<Set<string> | null>(null);
+  // Only for `aria-modal`: the drawer traps nothing at `lg` and above, where it
+  // sits beside the paper rather than over it.
+  const isWide =
+    typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
   // Closing drops the tint with the drawer. Without this, moving the pointer
   // off a row and onto the close button leaves the highlighted blocks lit with
   // nothing on screen that explains them — a mark on the document the user
@@ -225,6 +229,19 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
     setReviewOpen(false);
     setHoverPaths(null);
   };
+
+  // Escape closes it, the same shape `Modal` and `BlockEditSheet` use. Below
+  // `lg` this drawer IS modal -- it and its backdrop both cover the z-30 tab bar
+  // -- and a full-screen overlay with no keyboard dismissal is the one thing
+  // every other overlay in this app already gets right.
+  useEffect(() => {
+    if (!reviewOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeReview();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [reviewOpen]);
   /* THE SUGGESTIONS LIVE HERE, not inside ReviewPanel, and the reason is money.
      That panel is rendered conditionally — an inline Card, never a height tween
      (check 11) — so it unmounts the moment the review is closed. With the
@@ -421,12 +438,28 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
             <button
               type="button"
               aria-label={t("doc.review.close")}
-              className="fixed inset-0 top-14 z-[39] bg-black/40 lg:hidden"
+              // `touch-none` because `overscroll-contain` only stops a drag
+              // that STARTS inside the panel from chaining out, and a drag that
+              // starts on the backdrop is not in the panel -- the exact pairing
+              // `AppLayout` already documents having paid for once, where the
+              // document scrolled behind a stationary sheet.
+              className="fixed inset-0 top-14 z-[39] touch-none bg-black/40 lg:hidden"
               onClick={() => closeReview()}
             />
             <aside
-              className="animate-drawer-in fixed top-14 bottom-0 end-0 z-40 flex w-full max-w-[380px] flex-col border-s border-line bg-panel shadow-2xl"
+              // MODAL BELOW `lg`, BESIDE THE DOCUMENT FROM `lg`. Under the
+              // breakpoint the drawer and its backdrop both cover the z-30 tab
+              // bar and the paper, which is what makes the close button, the
+              // dismissable backdrop and the Escape key load-bearing; at `lg`
+              // and above it sits beside the document, nothing is trapped, and
+              // announcing it as a modal would be a lie to a screen reader.
+              // `overscroll-contain` on the aside itself and not only on the
+              // scroller, because the header row is outside the scroller and a
+              // drag starting there would otherwise chain to the page.
+              className="animate-drawer-in fixed top-14 bottom-0 end-0 z-40 flex w-full max-w-[380px] flex-col overscroll-contain border-s border-line bg-panel shadow-2xl"
               aria-label={t("doc.review.title")}
+              role="dialog"
+              aria-modal={!isWide}
             >
               <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
                 <p className="text-sm font-semibold text-ink">{t("doc.review.title")}</p>
@@ -441,13 +474,27 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
               </div>
               {/* The SCROLLER is here, not on the panel: the drawer owns its
                   own height and the list inside it is what overflows. */}
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              {/* `pb` carries the safe-area inset: this is the only
+                  bottom-anchored fixed element in the app without one, and on a
+                  gesture-bar phone the last row sits under the bar. */}
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
                 <ReviewPanel
                   resume={resume}
                   data={review ?? null}
                   stale={!!reviewStale}
                   failed={!!reviewFailed}
-                  onJump={onJumpToBlock}
+                  // BELOW `lg` THE JUMP CLOSES THE DRAWER, because the
+                  // drawer is what the jump would land behind. `jumpToBlock`
+                  // switches the view, spotlights the block and scrolls to it --
+                  // all three under an opaque full-bleed panel on a phone, with
+                  // a 2200 ms spotlight the user cannot see start. The inline
+                  // card this replaced sat ABOVE the document and never had the
+                  // problem; the drawer reintroduced it. Evaluated at click
+                  // time so a rotation is handled.
+                  onJump={(path) => {
+                    onJumpToBlock(path);
+                    if (!window.matchMedia("(min-width: 1024px)").matches) closeReview();
+                  }}
                   // Hover marks the paper; the tap still scrolls and spotlights.
                   onHover={(paths) => setHoverPaths(paths ? new Set(paths) : null)}
                   onUseRewrite={onUseRewrite}

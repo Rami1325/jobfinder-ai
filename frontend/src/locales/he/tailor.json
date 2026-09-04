@@ -332,6 +332,7 @@
       "rewritesCost": "שימוש בקרדיט AI אחד. כל השאר כאן חינם.",
       "close": "סגירה",
       "nothingRan": "עדיין אין מה לבדוק",
+      "eachWorth": "כל תיקון ≈ {{pct}}%",
       "checks": {
         "contact-email": {
           "label": "אין כתובת אימייל",

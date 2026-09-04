@@ -1496,17 +1496,27 @@ try {
     ["components/ResumeView.tsx", 6],
     ["components/ResumeEditBar.tsx", 12],
     ["components/BlockEditSheet.tsx", 3],
+    // The review drawer. Its `doc.review.*` scalars were guarded by NOTHING
+    // until 2026-09-04: check 27 covers `doc.review.checks.<id>.{label,how}`
+    // only, and check 8 stays green while a key is missing from BOTH locales,
+    // which is exactly how a literal like `doc.review.upTo` would ship as a raw
+    // key at 12px in Hebrew.
+    ["components/ReviewPanel.tsx", 9],
+    ["components/DocumentPanel.tsx", 2],
   ];
   // `[,)]` for check 9's reason: a counted or interpolated label —
   // t("edit.yours", { count }) — is exactly the kind most likely to be renamed,
   // and a `)`-only matcher is blind to it.
-  const CALL = /\bt\("((?:review|edit)\.[^"]+)"\s*[,)]/g;
+  // `doc\.review` before `review` in the alternation would still match the
+  // shorter branch first on a `doc.review.*` key, so the prefix is spelled out
+  // as its own branch and the regex is anchored by `t("`.
+  const CALL = /\bt\("((?:doc\.review|review|edit)\.[^"]+)"\s*[,)]/g;
   const keys = new Set();
   for (const [f, floor] of files) {
     const here = [...decomment(read(f)).matchAll(CALL)].map((m) => m[1]);
     if (here.length < floor)
       throw new Error(
-        `scraped only ${here.length} literal t("review.*")/t("edit.*") keys from ${f} (expected at least ${floor}) — the call shape changed`,
+        `scraped only ${here.length} literal t("doc.review.*")/t("review.*")/t("edit.*") keys from ${f} (expected at least ${floor}) — the call shape changed`,
       );
     for (const k of here) keys.add(k);
   }

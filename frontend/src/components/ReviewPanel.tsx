@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Crosshair, Info, Sparkles } from "lucide-react";
 import { inlineField, readBlock } from "../lib/resumeBlocks";
@@ -48,7 +48,7 @@ export interface CheckRow {
    * So the row keeps them all and the explanation renders the DISTINCT
    * sentences. Identical ones collapse — five "no measured result" findings
    * produce one line, not five. */
-  items: { path: string; args: Record<string, string | number> }[];
+  items: { path: string; raw: string; args: Record<string, string | number> }[];
   count: number;
 }
 
@@ -71,14 +71,14 @@ export function groupChecks(findings: ReviewFinding[]): CheckRow[] {
         severity: f.severity === "bad" ? "bad" : "warn",
         paths: f.path ? [f.path] : [],
         raw: f.raw,
-        items: [{ path: f.path, args: f.args }],
+        items: [{ path: f.path, raw: f.raw, args: f.args }],
         count: 1,
       });
       continue;
     }
     row.count += 1;
     if (f.path) row.paths.push(f.path);
-    row.items.push({ path: f.path, args: f.args });
+    row.items.push({ path: f.path, raw: f.raw, args: f.args });
     // `bad` outranks `warn` if one check ever emits both, so the row describes
     // the worst thing it found rather than whichever finding happened to land
     // first.
@@ -124,9 +124,13 @@ export function reviewScore(data: ReviewResult | null): {
     clean,
     ran,
     pct: ran > 0 ? Math.round((clean / ran) * 100) : 0,
-    // What clearing ONE check is worth, for the per-row badge. Rounded for
-    // display only; the row badges are a guide to which fix buys the most, and
-    // are never summed against the headline.
+    // What clearing ONE check is worth. It is the SAME for every check by
+    // construction -- `clean/ran` moves by exactly `100/ran` whichever one you
+    // clear -- so it is stated ONCE beside the headline and never as a per-row
+    // badge. It rode on every row until an audit pointed out that a number
+    // identical on all eight lines cannot be "a guide to which fix buys most",
+    // which is what this comment used to claim: it guided nothing, and spent
+    // ~35px of a 333px row on the primary viewport to do it.
     each: ran > 0 ? Math.round(100 / ran) : 0,
   };
 }
@@ -145,13 +149,11 @@ export function reviewScore(data: ReviewResult | null): {
 function Row({
   row,
   resume,
-  each,
   onJump,
   onHover,
 }: {
   row: CheckRow;
   resume: ResumeModel;
-  each: number;
   onJump?: (path: string) => void;
   onHover?: (paths: string[] | null) => void;
 }) {
@@ -159,6 +161,19 @@ function Row({
   const [why, setWhy] = useState(false);
   const live = row.paths.filter((p) => !!readBlock(resume, p));
   const anchored = live.length > 0;
+  const evidence = row.items.find((i) => i.path === live[0])?.raw ?? row.raw;
+  const argTotal = row.items[0]?.args.total;
+  const shownCount =
+    row.id === "no-outcome" && typeof argTotal === "number" ? argTotal : row.count;
+
+  // A row can UNMOUNT under the pointer -- the review re-runs every 400 ms and a
+  // check that clears takes its row with it -- and React synthesizes no
+  // mouseleave for a node it removes. Without this the tint it lit stays on the
+  // paper with nothing left to explain it. `onHover` is held in a ref so the
+  // cleanup does not re-run on every render.
+  const hoverRef = useRef(onHover);
+  hoverRef.current = onHover;
+  useEffect(() => () => hoverRef.current?.(null), []);
 
   return (
     <li
@@ -184,33 +199,64 @@ function Row({
         />
         {/* The LABEL alone. The how-text used to sit under every row and it is
             what made this panel a wall of prose — it moved behind the `!`. */}
-        <span className="min-w-0 flex-1 truncate text-sm text-ink">
-          {t(`doc.review.checks.${row.id}.label`)}
-        </span>
-        {row.count > 1 && (
-          <span className="shrink-0 text-xs tabular-nums text-ink-faint">×{row.count}</span>
+        {/* THE LABEL IS THE JUMP TARGET, not inert text beside two 20px dots.
+            Before the drawer it was a full-width `<button>`; it regressed to a
+            span, and on a phone -- where there is no hover -- that left the
+            panel's whole purpose reachable only through a 20px crosshair at the
+            far inline-end of the row. `title` keeps a truncated label readable
+            (the two longest English labels exceed the width a counted row
+            leaves); the negative margin buys a 32px hit box without changing
+            the row's height. */}
+        {anchored ? (
+          <button
+            type="button"
+            onClick={() => onJump?.(live[0])}
+            title={t(`doc.review.checks.${row.id}.label`)}
+            className="-my-1.5 min-w-0 flex-1 truncate py-1.5 text-start text-sm text-ink"
+          >
+            {t(`doc.review.checks.${row.id}.label`)}
+          </button>
+        ) : (
+          <span
+            className="min-w-0 flex-1 truncate text-sm text-ink"
+            title={t(`doc.review.checks.${row.id}.label`)}
+          >
+            {t(`doc.review.checks.${row.id}.label`)}
+          </span>
         )}
-        <span className="shrink-0 text-xs tabular-nums text-mint">+{each}%</span>
+        {/* THE MEASURED COUNT, not the length of a truncated list. `no-outcome`
+            is capped at five findings server-side and carries the real number in
+            `args.total`, under a comment saying "a cap that hid the total would
+            understate the problem" -- and printing x5 for nine bullets did
+            exactly that. Scoped to that one check on purpose: `total` is not one
+            quantity across the result, and reading it wherever it appears would
+            print a skills count as a finding count. */}
+        {shownCount > 1 && (
+          <span className="shrink-0 text-xs tabular-nums text-ink-faint">×{shownCount}</span>
+        )}
         <button
           type="button"
           aria-expanded={why}
           aria-label={t("doc.review.why")}
           onClick={() => setWhy((w) => !w)}
           className={cn(
-            "grid h-5 w-5 shrink-0 place-items-center rounded-full border text-ink-faint",
+            // h-8, the floor this app already keeps (ThemeToggle, the account
+            // avatar, this drawer's own close). At 20px these were the smallest
+            // controls in the product, on the viewport most of its users are on.
+            "grid h-8 w-8 shrink-0 place-items-center rounded-full border text-ink-faint",
             why ? "border-accent/50 text-accent-soft" : "border-line",
           )}
         >
-          <Info size={11} />
+          <Info size={13} />
         </button>
         {anchored && (
           <button
             type="button"
             aria-label={t("doc.review.showInDoc")}
             onClick={() => onJump?.(live[0])}
-            className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-line text-ink-faint"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line text-ink-faint"
           >
-            <Crosshair size={11} />
+            <Crosshair size={13} />
           </button>
         )}
       </div>
@@ -218,9 +264,13 @@ function Row({
       {/* The evidence, one line, clipped. `<bdi dir="auto">` because one list
           can hold a Hebrew bullet and a Latin skill, and a bare span lets the
           first strong character of one row reorder the punctuation of the next. */}
-      {row.raw && (
+      {/* The evidence belongs to the block the crosshair actually jumps to.
+          `raw` was the FIRST finding's while `live[0]` is the first RESOLVABLE
+          one, so on a row whose earlier block had been edited away the quote and
+          the jump described two different lines. */}
+      {evidence && (
         <p className="mt-1 truncate text-xs text-ink-muted">
-          <bdi dir="auto">{row.raw}</bdi>
+          <bdi dir="auto">{evidence}</bdi>
         </p>
       )}
 
@@ -310,11 +360,16 @@ export default function ReviewPanel({
     <div className={cn("space-y-3", stale && "opacity-60")}>
       {/* THE HEADLINE NUMBER. `now → up to`, with the counts underneath that
           make it checkable — the reader can add the rows up. */}
-      {/* NO PERCENTAGE WHEN NOTHING RAN. On a document where every check is
-          skipped the arithmetic gives 0, and "0%" over a résumé reads as a
-          verdict on it — when what actually happened is that we could not look.
-          Unknown is never clean, and it is never zero either: the panel says
-          what it could not check and shows no number at all. */}
+      {/* NO PERCENTAGE WHEN NOTHING RAN -- a DIVISION GUARD, and today it is
+          only that. `clean/ran` is 0/0 when every check skips, and "0%" over a
+          résumé reads as a verdict on the document when what happened is that we
+          could not look at it. It is currently UNREACHABLE through
+          `POST /tools/review`: seven checks answer with a list on every input
+          and never `None`, so `ran` is at least seven however empty the CV. It
+          stays because the alternative is an expression that divides by a
+          number nothing guarantees is non-zero, and because a check moving to a
+          skip is a one-line change in `resume_review.py`. It is NOT a claim
+          that the branch fires. */}
       <div className="space-y-1.5">
         <div className="flex items-baseline gap-2">
           {score.ran === 0 ? (
@@ -345,6 +400,12 @@ export default function ReviewPanel({
         )}
         <p className="text-xs text-ink-muted">
           {t("doc.review.counts", { fix: bad, consider: warn, clean: score.clean })}
+          {score.ran > 0 && rows.length > 0 && (
+            <span className="text-ink-faint">
+              {" · "}
+              {t("doc.review.eachWorth", { pct: score.each })}
+            </span>
+          )}
         </p>
       </div>
 
@@ -359,7 +420,6 @@ export default function ReviewPanel({
               key={r.id}
               row={r}
               resume={resume}
-              each={score.each}
               onJump={onJump}
               onHover={onHover}
             />
