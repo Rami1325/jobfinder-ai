@@ -653,6 +653,85 @@ export interface ResumeHealthResult {
   improvements: string[];
   rewrites: BulletRewrite[];
 }
+
+/** One thing to fix on the résumé, anchored to the block it is about.
+ *
+ * `path` is a BLOCK PATH the document resolves through `lib/resumeBlocks.ts`
+ * (`@exp.2.b.1`, `@summary`, `@skills.<verbatim text>`, `@edu.0`), or "" for a
+ * document-level finding that belongs to no single block. The grammar is a
+ * MIRROR — Python emits it, TypeScript resolves it, and check-mirrors holds the
+ * two lists identical — so a path this build cannot resolve means a newer
+ * backend knows a shape `BLOCK_PATTERNS` does not. Such a row is listed
+ * WITHOUT a mark on the paper and never thrown on: a review that crashes the
+ * document is worse than a review that admits it cannot point.
+ *
+ * `id` and `severity` are plain strings, not unions, for the reason
+ * `GeoRestriction` gives above: a newer backend value must not break the build.
+ * `id` doubles as the translation key (`review.checks.<id>.{label,how}`), so an
+ * id this build has no strings for degrades to an untranslated row rather than
+ * a type error — and check-mirrors is what stops that shipping.
+ *
+ * `raw` is the offending text VERBATIM and it is a PREVIEW, not the anchor
+ * (`path` is). Render it inside `<bdi dir="auto">`: one list can hold a Hebrew
+ * bullet and a Latin skill, and a bare span lets the first strong character of
+ * one row reorder the punctuation of the next. */
+export interface ReviewFinding {
+  id: string; // stable check id; the UI renders review.checks.<id>.{label,how}
+  severity: string; // bad (fix) | warn (consider) — "good" is NOT a finding
+  path: string; // a block path the document can resolve, or "" for document-level
+  raw: string; // the offending text, verbatim, <= 240 chars
+  args: Record<string, string | number>; // interpolates the how-text: { suggested: "Mar 2020" }
+}
+
+/** What the deterministic review found on the document as it stands RIGHT NOW.
+ *
+ * Three lists, and the third is the whole point. `passed` ran and found
+ * nothing; `skipped` COULD NOT run (the gap check needs two dated spans, the
+ * JD-gated checks need a JD) — and unknown is never shown as clean, the same
+ * rule the tracker's nullable `voice_score` and the alert bar's
+ * `last_above_min` follow. Folding `skipped` into `passed` would have the panel
+ * assert a résumé is clean on a check that never looked.
+ *
+ * Every check always runs, so `passed ∪ skipped ∪ ids(findings)` is the entire
+ * check set: there are no toggles, and therefore no way for an empty result to
+ * mean "you turned that one off". It carries no SCORE on purpose — a number
+ * invites the user to optimise it, and these checks are advice about a
+ * document, not a measurement of one. */
+export interface ReviewResult {
+  findings: ReviewFinding[];
+  passed: string[]; // ids that ran and found nothing
+  skipped: string[]; // ids that COULD NOT run — unknown, never clean
+}
+
+/** One model-suggested rewording of a real bullet.
+ *
+ * `before` is copied VERBATIM out of the résumé, and that exact match is what
+ * yields `path` — a rewrite whose `before` matches no bullet is dropped
+ * server-side rather than shown, because "Use this" writes through the same
+ * block path as every other edit on this surface and a path nothing produced
+ * would write into the wrong line. `after` is the same facts in stronger
+ * wording with no new number, tool or claim, re-checked deterministically after
+ * the call the way `check_fabrication` runs after a tailor. */
+export interface ReviewRewrite {
+  path: string; // the bullet `before` was matched at
+  before: string; // a real bullet, verbatim
+  after: string; // same facts, stronger wording, no new claims
+}
+
+/** The rewrite batch, plus what the guards refused.
+ *
+ * `dropped` is reported rather than swallowed: a guard that fires silently is
+ * the 21.7 failure mode, and "we asked for five and are showing you two" is a
+ * fact the user can act on. `dropped_reasons` are backend-authored English
+ * fragments, so the COUNT is the user-facing part and the reasons are for
+ * diagnostics — the treatment `LengthReport.notes` already gets. `rewrites: []`
+ * with `dropped: 0` means the model returned nothing worth offering, which is
+ * NOT the same as "every bullet is already strong". */
+export interface ReviewRewriteResult {
+  rewrites: ReviewRewrite[];
+  dropped: number; // refused by a guard, not by the model
+  dropped_reasons: string[]; // hard-coded English fragments — the count is what the user sees
+}
 export interface RecruiterPrepItem {
   question: string;
   talking_point: string;

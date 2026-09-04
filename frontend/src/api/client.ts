@@ -42,6 +42,8 @@ import type {
   ResumeModel,
   ResumeUploadResponse,
   ResumeVersion,
+  ReviewResult,
+  ReviewRewriteResult,
   ScreeningAnswerResult,
   SearchContext,
   StaleApplication,
@@ -525,6 +527,69 @@ export async function coverageOf(
   signal?: AbortSignal,
 ): Promise<CoverageResult> {
   const { data } = await api.post<CoverageResult>("/tools/coverage", { resume, jd }, { signal });
+  return data;
+}
+
+/** Every deterministic review check, run against the document as it stands.
+ *
+ * Uncapped and free — the route carries no `Depends`, reaches no model and no
+ * network — which is what makes it safe to re-run on every edit exactly as
+ * `coverageOf` is. It takes an ANALYSED `jd` or `null`, never raw job-ad text:
+ * an uncapped route that accepted job-ad text would have to reach the model to
+ * use it, which is the `/tools/ats-scan` mistake this repo has already paid
+ * for once. Pass `null` and the JD-gated checks simply do not fire — they come
+ * back in `skipped`, not in `passed`, because unknown is never clean.
+ *
+ * The `AbortSignal` is not optional in practice: `useReview` debounces at
+ * 400 ms and aborts the in-flight request on every keystroke, the way
+ * `useCoverage` does over `coverageOf`. Without it a fast typist stacks
+ * requests and the LAST response to arrive wins, which is not the last one
+ * asked for — findings for a résumé two edits ago, painted as current.
+ *
+ * DELIBERATELY NOT in `lib/dataCache.ts`, and neither is `reviewRewrites`.
+ * That cache exists for SERVER state several pages read and a mutating wrapper
+ * invalidates (the master résumé, kits, history): a short string key, a 30 s
+ * fresh window. This is the opposite in all three respects — the input is an
+ * in-memory `ResumeModel` recomputed per keystroke, so there is no honest key
+ * short of hashing the whole document; a 30 s window would paint findings for
+ * a résumé the user has already edited away, which is the one thing this panel
+ * must never do; and no mutation exists to invalidate it, because the edits
+ * that change the answer never touch the server. Debounce plus abort is the
+ * right mechanism here, and it already exists. */
+export async function reviewResume(
+  resume: ResumeModel,
+  jd: JDModel | null,
+  signal?: AbortSignal,
+): Promise<ReviewResult> {
+  const { data } = await api.post<ReviewResult>(
+    "/tools/review",
+    { resume, jd: jd ?? null },
+    { signal },
+  );
+  return data;
+}
+
+/** Model rewordings for the rewritable findings — the ONE part of the review
+ * that spends. COSTS ONE AI CREDIT and is capped, which is exactly why it sits
+ * behind a button instead of riding the debounce: everything else on this
+ * surface is free, and a review that quietly billed per keystroke would be the
+ * uncapped-route defect wearing the other hat.
+ *
+ * `paths` picks which bullets to ask about; an empty array means "choose the
+ * rewritable findings server-side". The response is guard-checked after the
+ * call (a `before` that matches no bullet, a number in `after` that is not in
+ * `before`, a banned phrase) and says how many it refused — see
+ * `ReviewRewriteResult.dropped`. Not cached, for `reviewResume`'s reasons plus
+ * a sharper one: a cache hit would offer a rewrite for a bullet the user has
+ * since rewritten, and "Use this" would then write stale text onto the paper. */
+export async function reviewRewrites(
+  resume: ResumeModel,
+  paths: string[] = [],
+): Promise<ReviewRewriteResult> {
+  const { data } = await api.post<ReviewRewriteResult>("/tools/review/rewrites", {
+    resume,
+    paths,
+  });
   return data;
 }
 

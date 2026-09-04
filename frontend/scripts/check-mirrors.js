@@ -2245,6 +2245,391 @@ try {
   fail(`empty-insert check could not run: ${e.message}`);
 }
 
+// --------------------------------------------------------------------------- //
+// `backend/app/core/resume_review.py`, read as a LITERAL. ONE loader and ONE
+// tuple parser, shared by checks 26 and 27.
+//
+// PURE NODE, no interpreter, on check 23's terms and for check 23's reason:
+// check-mirrors runs FIRST in `npm run build` and on every Vercel CI build,
+// where there is no Python venv — so shelling out to the interpreter would be a
+// check that cannot run in CI, i.e. one that has stopped firing, which is the
+// 21.7 failure mode this whole file exists for.
+//
+// DEGRADES LOUDLY, and only on ENOENT. `vercel.json` roots the frontend service
+// at `frontend/`, so `../backend` may not be in that build's context; every
+// other failure — a permissions error, a parse that comes up short — is a red
+// build. GitHub Actions checks the whole repo out and runs `npm run build` from
+// frontend/ on every push and PR, so both comparisons have a home that does not
+// depend on how Vercel packages a service. The skip is remembered so the final
+// summary line admits it too: a warning printed above a bare "mirrors ok" is a
+// warning somebody reads as noise.
+//
+// ONE loader rather than one per check, for check 6's reason: two readers of the
+// same file are free to disagree about it while both stay green. It is called
+// lazily so a missing file lands in a check's own try/catch, and a non-ENOENT
+// failure re-throws there as a loud `fail`.
+const RESUME_REVIEW_PY = path.join(HERE, "..", "..", "backend", "app", "core", "resume_review.py");
+let reviewSkip = null;
+let reviewSrcCache; // undefined = not attempted yet, null = ENOENT
+function reviewSource() {
+  if (reviewSrcCache !== undefined) return reviewSrcCache;
+  try {
+    reviewSrcCache = fs.readFileSync(RESUME_REVIEW_PY, "utf8");
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+    reviewSrcCache = null;
+    reviewSkip = `${RESUME_REVIEW_PY} not readable`;
+    console.warn(
+      `\n  ! checks 26 + 27 DEGRADED: ${RESUME_REVIEW_PY} is not readable from this build, so the\n` +
+        `    review's path grammar was NOT compared against lib/resumeBlocks.ts and its check ids\n` +
+        `    were NOT resolved against either locale. The frontend halves — the BLOCK_PATTERNS\n` +
+        `    floor and ReviewPanel's own call shape — still ran.\n` +
+        `    This is expected only where the frontend is built without the repo around it;\n` +
+        `    CI (.github/workflows/ci.yml) checks the whole repo out, so both run there.\n`,
+    );
+  }
+  return reviewSrcCache;
+}
+
+/**
+ * The entries of a `NAME: tuple[str, ...] = (` literal in resume_review.py,
+ * written one quoted entry per line.
+ *
+ * Deliberately a LINE grammar rather than a bracket matcher plus a regex sweep.
+ * A `#` comment inside the tuple can hold a parenthesis AND a quoted string, so
+ * a balanced scan would need the whole Python-string-aware decommenter check 23
+ * carries, and a bare `matchAll(/"([^"]+)"/g)` over the slice would happily
+ * scrape a shape out of a comment ABOUT a shape — which is the 21.7 shape: a
+ * mirror comparing one side against a sentence.
+ *
+ * Every line inside is classified as blank, comment, or exactly one entry, and
+ * anything else THROWS naming the line it choked on. So a reformat that packs
+ * two entries onto one line is a red build carrying an instruction, never a
+ * silently short list that compares equal by accident.
+ */
+function pyTuple(src, name) {
+  const open = new RegExp(`^${name}\\b[^=\\n]*=\\s*\\(\\s*$`, "m").exec(src);
+  if (!open)
+    throw new Error(`resume_review.py has no \`${name} … = (\` opening a one-entry-per-line tuple`);
+  const items = [];
+  for (const raw of src.slice(open.index + open[0].length).split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line === ")") return items;
+    const m = /^"([^"]*)"\s*,?\s*(?:#.*)?$/.exec(line);
+    if (!m)
+      throw new Error(
+        `resume_review.py: cannot read \`${line}\` inside ${name} — this parser wants exactly one ` +
+          "quoted entry per line (see check 26 on why it is a line grammar, not a bracket matcher)",
+      );
+    items.push(m[1]);
+  }
+  throw new Error(`resume_review.py: ${name} is never closed by a \`)\` on its own line`);
+}
+
+// ---- 26. the block-path grammar is ONE grammar --------------------------- //
+// `POST /tools/review` answers with findings whose `path` is a BLOCK PATH, and
+// the two halves of that contract are written in different languages: Python
+// EMITS the path (`resume_review.PATH_SHAPES`) and TypeScript RESOLVES it
+// (`readBlock`, whose grammar is `BLOCK_PATTERNS`). The grammar is shared state.
+//
+// A shape only Python has is A REVIEW ROW THAT JUMPS NOWHERE. `ReviewPanel`
+// computes `anchored = !!f.path && !!readBlock(resume, f.path)` and renders an
+// unresolvable finding as a plain `<div>` — no Crosshair, not tappable — so the
+// user is told which bullet is too long and given no way to reach it, silently,
+// on the one surface whose entire promise is that it points at the paper. A
+// shape only TypeScript has is the same defect reversed: a block the document
+// can edit that the review can never talk about.
+//
+// Neither compiler can see it: a path is a string on both sides, so `tsc` is
+// quiet and so is anything pointed at the Python.
+//
+// SET equality, and ORDER deliberately NOT asserted. Both lists' comments claim
+// "in order" and that is worth keeping, because it is what lets the two be read
+// side by side — but nothing behaves differently if one is permuted, and a check
+// that fires on a permutation is a guard firing on legitimate input. (Contrast
+// check 23's TEMPLATE_IDS, where the order IS the display order, so a
+// permutation really does show the same eleven templates two different ways.)
+//
+// BLOCK_PATTERNS is extracted with check 7's two lines, character for character,
+// and that sameness is the point rather than laziness: two different readers of
+// one list are free to disagree about it while both stay green, which is the
+// very drift this check exists to prevent.
+//
+// THE `dkey` HALF is the other thing that can break every keyed finding at once,
+// and it breaks them QUIETLY. A keyed path resolves by VALUE, not by index —
+// `readBlock` matches `dkey(value) === key` — so `@skills.<verbatim text>`,
+// `@cert.*` and `@lang.*` resolve at all only because both sides normalise
+// identically. `dkey` has exactly ONE definition and check 6 pins that it stays
+// in TypeScript, so resume_review.py carries a mirror; this half compares what
+// the two sources actually DO instead of trusting the comment that says they
+// agree. The two locale-aware folds are rejected outright, because that is the
+// specific desync both doc comments already name: a Turkish-locale dotted İ.
+//
+// FALSE POSITIVE, named: a `dkey` rewritten in an idiom neither table knows —
+// say TS `.split(/\s+/).join(" ")` where there is a `.replace(/\s+/g, " ")`
+// today — goes RED although nothing has drifted. That is deliberate, and the
+// message says which table to teach. The alternative is a recogniser that
+// quietly stops matching one side and then reports parity between two things it
+// can no longer read, which is the failure mode this file was written for. Both
+// idioms that exist in this repo today are already in the tables.
+try {
+  const blocks = read("lib/resumeBlocks.ts");
+  const pa = blocks.indexOf("export const BLOCK_PATTERNS = [");
+  if (pa === -1) throw new Error("could not find BLOCK_PATTERNS in lib/resumeBlocks.ts");
+  const ts = [...blocks.slice(pa, blocks.indexOf("]", pa)).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  // Floor set just under the fifteen shapes both sides carry today: adding a
+  // sixteenth to both is fine, a parser that has stopped matching is not.
+  if (ts.length < 14) throw new Error(`BLOCK_PATTERNS parsed as ${ts.length} entries`);
+
+  const src = reviewSource();
+  if (src !== null) {
+    const py = pyTuple(src, "PATH_SHAPES");
+    if (py.length < 14) throw new Error(`PATH_SHAPES parsed as ${py.length} entries`);
+
+    // A duplicate would let set-equality pass while one side quietly carries a
+    // shape twice, so membership is not the only thing compared.
+    for (const [what, list] of [
+      ["lib/resumeBlocks.ts's BLOCK_PATTERNS", ts],
+      ["resume_review.py's PATH_SHAPES", py],
+    ]) {
+      const seen = new Set();
+      const dupes = list.filter((p) => (seen.has(p) ? true : (seen.add(p), false)));
+      if (dupes.length)
+        fail(`${what} lists ${[...new Set(dupes)].map((p) => `\`${p}\``).join(", ")} more than once.`);
+    }
+
+    const onlyPy = py.filter((p) => !ts.includes(p));
+    const onlyTs = ts.filter((p) => !py.includes(p));
+    if (onlyPy.length)
+      fail(
+        `resume_review.py emits block path shape(s) ${onlyPy.map((p) => `\`${p}\``).join(", ")} that ` +
+          "lib/resumeBlocks.ts cannot resolve. Add them to BLOCK_PATTERNS and to readBlock/writeBlock, " +
+          "or every finding at that shape is a review row listed with no Crosshair and no way to reach " +
+          "the text it is about.",
+      );
+    if (onlyTs.length)
+      fail(
+        `lib/resumeBlocks.ts resolves block path shape(s) ${onlyTs.map((p) => `\`${p}\``).join(", ")} ` +
+          "that resume_review.py's PATH_SHAPES does not list. PATH_SHAPES is the review's whole " +
+          "vocabulary, so that part of the document is one the review can never point at — and the " +
+          "smoke check that asserts every emitted path matches a shape stays green either way.",
+      );
+
+    // --- the `dkey` mirror -------------------------------------------------
+    // The normalisation each side performs, read off its own source. Two known
+    // idioms per operation, because there are two in this repo: an explicit
+    // trim/collapse pair, and the split-and-rejoin that does both at once
+    // (Python's `" ".join(s.split())` is exactly that).
+    const OPS = {
+      ts: {
+        empty: /(?:\?\?|\|\|)\s*""/,
+        trim: /\.trim\(\)|\.split\(\s*\/\\s\+\/\s*\)/,
+        collapse:
+          /\.replace\(\s*\/\\s\+\/[gimsuy]*\s*,\s*" "\s*\)|\.split\(\s*\/\\s\+\/\s*\)[^\n]*\.join\(\s*" "\s*\)/,
+        lower: /\.toLowerCase\(\s*\)/,
+      },
+      py: {
+        empty: /\bor\s+""/,
+        trim: /\.strip\(\s*\)|\.split\(\s*\)/,
+        collapse: /" "\.join\([^\n]*\.split\(\s*\)\)|re\.sub\(\s*r?"\\s\+"\s*,\s*" "/,
+        lower: /\.lower\(\s*\)/,
+      },
+    };
+    // The fold both doc comments forbid by name, one per language.
+    const POISON = { ts: /toLocaleLowerCase/, py: /\.casefold\(/ };
+    const WHERE = { ts: "lib/resumeBlocks.ts", py: "resume_review.py" };
+    const opsOf = (side, text) =>
+      new Set(
+        Object.entries(OPS[side])
+          .filter(([, re]) => re.test(text))
+          .map(([k]) => k),
+      );
+
+    const tsDef = /export const dkey\s*=\s*([^;]+);/.exec(blocks);
+    if (!tsDef) throw new Error("lib/resumeBlocks.ts no longer defines `export const dkey = …;`");
+
+    // The RETURN STATEMENT only, never the whole function. `dkey`'s docstring
+    // NAMES `toLocaleLowerCase` and `.lower()` in prose — it is the comment that
+    // warns against the locale-aware fold — so a body-wide scan would read the
+    // warning as the implementation and the poison test would fire on the very
+    // sentence that prevents the defect.
+    const defAt = src.search(/^def dkey\b/m);
+    if (defAt === -1) throw new Error("resume_review.py no longer defines `def dkey`");
+    const after = src.slice(defAt);
+    const tail = after.slice(after.indexOf("\n") + 1);
+    const nextTop = tail.search(/^\S/m);
+    const fnBody = nextTop === -1 ? tail : tail.slice(0, nextTop);
+    const returns = [...fnBody.matchAll(/^[ \t]+return\s+(.+?)\s*$/gm)].map((m) => m[1]);
+    if (returns.length !== 1)
+      throw new Error(
+        `resume_review.py: def dkey has ${returns.length} return statements and this check reads ` +
+          "exactly one — a dkey with a branch is not a mirror of a one-expression arrow function",
+      );
+
+    const body = { ts: tsDef[1], py: returns[0] };
+    const ops = { ts: opsOf("ts", body.ts), py: opsOf("py", body.py) };
+    for (const side of ["ts", "py"]) {
+      if (POISON[side].test(body[side]))
+        fail(
+          `${WHERE[side]}: dkey uses a locale-aware case fold. Both definitions document why it must ` +
+            "not: a Turkish-locale dotted İ folds differently on the two sides, and every @skills / " +
+            "@cert / @lang finding then resolves on one side and not the other.",
+        );
+      // Fail-loud floor, per side. Three named operations have to be VISIBLE in
+      // the source; if one is not, either dkey stopped normalising or it was
+      // rewritten in an idiom this check cannot read, and both are a human
+      // decision rather than something to report as parity.
+      for (const need of ["trim", "collapse", "lower"])
+        if (!ops[side].has(need))
+          throw new Error(
+            `${WHERE[side]}: dkey does not visibly ${need} (\`${body[side].trim()}\`) — either it ` +
+              "stopped normalising, or it uses an idiom missing from check 26's OPS table. Add the " +
+              "idiom, or fix the definition; do not delete the assertion.",
+          );
+    }
+    const drift = [...new Set([...ops.ts, ...ops.py])].filter((o) => ops.ts.has(o) !== ops.py.has(o));
+    if (drift.length)
+      fail(
+        `dkey has drifted: {${drift.join(", ")}} happens on one side only — lib/resumeBlocks.ts does ` +
+          `{${[...ops.ts].sort().join(", ")}} and resume_review.py does {${[...ops.py].sort().join(", ")}}. ` +
+          "A keyed block path is matched `dkey(value) === key`, so every @skills / @cert / @lang finding " +
+          "the review emits resolves to nothing on exactly the entries the two disagree about — listed, " +
+          "unanchored, with no error anywhere.",
+      );
+
+    // Both directions, on the recogniser the assertions actually use: the two
+    // real definitions, the alternate idiom each table claims to know, and a
+    // reduced form that must NOT be read as doing more than it does. A detector
+    // that cannot match its own defect shape passes for ever.
+    for (const [side, probe, want] of [
+      ["ts", `(s ?? "").trim().replace(/\\s+/g, " ").toLowerCase()`, ["collapse", "empty", "lower", "trim"]],
+      [
+        "ts",
+        `(s ?? "").split(/\\s+/).filter(Boolean).join(" ").toLowerCase()`,
+        ["collapse", "empty", "lower", "trim"],
+      ],
+      ["ts", `s.trim().toLowerCase()`, ["lower", "trim"]],
+      ["py", `" ".join((s or "").split()).lower()`, ["collapse", "empty", "lower", "trim"]],
+      ["py", `re.sub(r"\\s+", " ", s or "").strip().lower()`, ["collapse", "empty", "lower", "trim"]],
+      ["py", `(s or "").strip().lower()`, ["empty", "lower", "trim"]],
+    ]) {
+      const got = [...opsOf(side, probe)].sort();
+      if (got.join(",") !== want.join(","))
+        fail(
+          `check 26's ${side} dkey recogniser reads \`${probe}\` as {${got.join(", ")}} — it should ` +
+            `read {${want.join(", ")}}, so it can no longer tell one normalisation from another.`,
+        );
+    }
+    if (!POISON.ts.test("s.toLocaleLowerCase()") || POISON.ts.test("s.toLowerCase()"))
+      fail("check 26 cannot tell toLocaleLowerCase from toLowerCase");
+    if (!POISON.py.test("s.casefold()") || POISON.py.test("s.lower()"))
+      fail("check 26 cannot tell casefold from lower");
+  }
+} catch (e) {
+  fail(`block-path grammar mirror check could not run: ${e.message}`);
+}
+
+// ---- 27. every review check id has a label AND a how in both locales ----- //
+// The checks 2 / 3 / 5 / 18 family, one namespace over and one language
+// further: the vocabulary is declared in PYTHON. `ReviewPanel` renders
+// t(`<prefix>.${f.id}.label`) as a row's title and t(`<prefix>.${f.id}.how`,
+// f.args) as the whole of its advice, so an id added to `CHECK_IDS` with no copy
+// renders "doc.review.checks.<id>.label" at 12px as the ONLY thing that row
+// says — in Hebrew, in the primary market. `data.skipped` maps the same `.label`
+// key, so a skipped id with no copy prints the raw key inside a sentence about
+// what could NOT be checked, which is the one row a reader has to be able to
+// read: unknown is never clean, and it cannot say so as a raw key.
+//
+// CHECK 8 CANNOT SEE THIS, and that is the whole reason this family exists:
+// check 8 compares en against he, so it stays GREEN whenever a key is missing
+// from BOTH sides — which is exactly the shape a new check id ships in. Nobody
+// adds a backend id and then writes only the Hebrew half.
+//
+// Check 22 cannot see it either, from the other end: these are TEMPLATE literals
+// with no fixed key to look up, and check 22 is scoped to literal `t("review.*")`
+// / `t("edit.*")` calls for exactly that reason.
+//
+// The PREFIX is DERIVED from ReviewPanel.tsx, not written down here, so renaming
+// the namespace moves the assertion with the code instead of quietly pointing
+// this check at a subtree nothing reads any more. It is `doc.review.checks` and
+// not `review.checks` because ChangeLog already owns `review.*` (check 22
+// scrapes it): a collision there would have two panels sharing one subtree, and
+// each would look correct on its own.
+//
+// FALSE POSITIVE, named: exactly ONE prefix may be in use. If a second per-id
+// table is ever rendered from this file through t(`<other>.${id}.label`), this
+// check THROWS rather than guesses — demanding that both `<other>` and
+// `doc.review.checks` resolve for every CHECK_IDS entry would fire on legitimate
+// copy that was never meant to have a twin.
+try {
+  const prefixesIn = (text, leaf) =>
+    new Set(
+      [
+        ...text.matchAll(
+          new RegExp("\\bt\\(\\s*`([A-Za-z][\\w.]*)\\.\\$\\{[^}]*\\}\\." + leaf + "`", "g"),
+        ),
+      ].map((m) => m[1]),
+    );
+  // The scraper, both directions, before it is trusted with the real file.
+  if (![...prefixesIn("t(`a.b.${f.id}.label`)", "label")].includes("a.b"))
+    fail("check 27's prefix scraper cannot read the call shape ReviewPanel writes");
+  if (prefixesIn('t("a.b.label")', "label").size)
+    fail(
+      "check 27's prefix scraper accepts a LITERAL key as a per-id table — a literal has no id to " +
+        "expand, and check 22 already covers those.",
+    );
+
+  const panel = decomment(read("components/ReviewPanel.tsx"));
+  const at = { label: prefixesIn(panel, "label"), how: prefixesIn(panel, "how") };
+  if (!at.label.size || !at.how.size)
+    throw new Error(
+      "components/ReviewPanel.tsx no longer renders both t(`<prefix>.${id}.label`) and " +
+        "t(`<prefix>.${id}.how`) — this check no longer guards what it thinks it guards",
+    );
+  if (at.label.size !== 1 || at.how.size !== 1 || !at.label.has([...at.how][0]))
+    throw new Error(
+      "components/ReviewPanel.tsx renders per-id copy under more than one prefix (label: " +
+        `${[...at.label].join(", ")}; how: ${[...at.how].join(", ")}) — teach check 27 which one ` +
+        "carries CHECK_IDS instead of letting it guess",
+    );
+  const prefix = [...at.label][0];
+
+  const src = reviewSource();
+  if (src !== null) {
+    const ids = pyTuple(src, "CHECK_IDS");
+    // Floor well under the twenty-six ids today: a check table shrinks by one
+    // when a check is deleted, and it does not shrink to two without a parser
+    // having stopped matching.
+    if (ids.length < 20) throw new Error(`CHECK_IDS parsed as ${ids.length} entries`);
+    const seen = new Set();
+    const dupes = ids.filter((id) => (seen.has(id) ? true : (seen.add(id), false)));
+    if (dupes.length)
+      fail(
+        `resume_review.py: CHECK_IDS lists ${[...new Set(dupes)].map((i) => `\`${i}\``).join(", ")} ` +
+          "twice — the passed / skipped / found partition the module accounts for on every run cannot hold.",
+      );
+
+    for (const loc of ["en", "he"]) {
+      const ns = JSON.parse(read(`locales/${loc}/tailor.json`));
+      const missing = [];
+      for (const id of ids) {
+        for (const leaf of ["label", "how"]) {
+          if (!resolvesIn(ns, `${prefix}.${id}.${leaf}`)) missing.push(`${id}.${leaf}`);
+        }
+      }
+      if (missing.length)
+        fail(
+          `locales/${loc}/tailor.json: ${prefix}.{${missing.join(", ")}} missing — ReviewPanel would ` +
+            "render the raw key as that row's title, or as the whole of its advice. Check 8 stays " +
+            "green while both locales are equally wrong.",
+        );
+    }
+  }
+} catch (e) {
+  fail(`review check-id copy check could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
@@ -2253,5 +2638,6 @@ if (problems.length) {
 }
 console.log(
   `mirrors ok — ${sectionKeys.length} edit sections, en/he parity across all namespaces` +
-    (templateSkip ? ` — but the template specs were NOT compared (${templateSkip})` : ""),
+    (templateSkip ? ` — but the template specs were NOT compared (${templateSkip})` : "") +
+    (reviewSkip ? ` — and the review mirrors were NOT compared (${reviewSkip})` : ""),
 );

@@ -2,6 +2,7 @@ import { forwardRef, useState } from "react";
 import type { EntryInsertKind, NamedInsertKind } from "../lib/resumeBlocks";
 import { useTranslation } from "react-i18next";
 import {
+  ClipboardCheck,
   Download,
   FileUp,
   ExternalLink,
@@ -12,15 +13,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import ResumeView, { type BlockMark } from "./ResumeView";
+import ReviewPanel, { badCount } from "./ReviewPanel";
 import TemplatePicker from "./TemplatePicker";
 import ResumeUpload from "./ResumeUpload";
 import XrayResult from "./XrayResult";
 import { usePdfPreview, useXray } from "../hooks/useFilePreview";
-import { downloadResume, resumeFilename, type ResumeTemplate } from "../api/client";
+import { downloadResume, resumeFilename, reviewRewrites, type ResumeTemplate } from "../api/client";
 import { PDF_ONLY, TEMPLATE_SPECS } from "../lib/templateSpecs";
 import { Button, Card, CardTitle, Skeleton } from "./ui";
 import { cn } from "../lib/cn";
-import type { FactsLedger, ResumeModel } from "../types";
+import type { FactsLedger, ResumeModel, ReviewResult, ReviewRewrite } from "../types";
 
 export type DocView = "screen" | "file" | "ats";
 const VIEWS: DocView[] = ["screen", "file", "ats"];
@@ -35,6 +37,23 @@ interface Tool {
   Icon: LucideIcon;
   label: string;
   active?: boolean;
+  /**
+   * A live number ON the control — the count of things to fix.
+   *
+   * THE METRIC IS THE AFFORDANCE. Before this, no control on `/app` carried a
+   * number at all: you had to open a panel to learn whether it had anything in
+   * it, so the panel that had nothing to say was indistinguishable from the one
+   * with three broken dates. It is honest to put here for the same reason the
+   * page badge and the coverage count sit on the toolbar — it is a deterministic,
+   * uncapped, free read, not a model call, so it costs nothing to keep current.
+   *
+   * `undefined` = not measured yet (and NOT zero, the rule this repo applies to
+   * every nullable it stores): the badge is absent while the first review is in
+   * flight rather than announcing a clean document a moment before it finds
+   * three problems. `0` is a real measurement and still draws nothing — a "0"
+   * pinned to a button is noise, and the panel says "clean" in words.
+   */
+  count?: number;
   onClick: () => void;
 }
 
@@ -47,15 +66,24 @@ interface Tool {
  */
 function ToolButton({ tool, labelled }: { tool: Tool; labelled?: boolean }) {
   const { Icon } = tool;
+  // Zero draws nothing — see `Tool.count`. `> 0` and not `!= null`, so an
+  // undefined count and a measured zero take the same (silent) branch without
+  // the two ever being stored as the same thing.
+  const badge = (tool.count ?? 0) > 0 ? tool.count : null;
   return (
     <button
       type="button"
       title={tool.label}
-      aria-label={labelled ? undefined : tool.label}
+      // The count has to reach the accessible name too, or the one control on
+      // this page that carries a number is the one control a screen reader
+      // learns nothing new from. On the labelled pill the number is a sibling
+      // text node and is read as part of the button already, so it is added
+      // only where the visible label is replaced by `aria-label`.
+      aria-label={labelled ? undefined : badge ? `${tool.label} (${badge})` : tool.label}
       aria-pressed={tool.active}
       onClick={tool.onClick}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border text-xs font-medium transition",
+        "relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border text-xs font-medium transition",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
         labelled ? "snap-start px-3 py-1.5" : "h-10 w-10",
         tool.active
@@ -65,6 +93,29 @@ function ToolButton({ tool, labelled }: { tool: Tool; labelled?: boolean }) {
     >
       <Icon size={labelled ? 13 : 16} aria-hidden />
       {labelled && tool.label}
+      {/* In the labelled row the count rides inline after the text; in the icon
+          rail it is a corner pip, positioned with LOGICAL properties so it
+          lands on the far top corner in RTL as well. `aria-hidden` on the pip:
+          the number is already in `aria-label` above, and announcing it twice
+          is worse than not announcing it. */}
+      {badge !== null &&
+        (labelled ? (
+          <span
+            className={cn(
+              "rounded-full px-1.5 text-[11px] font-semibold tabular-nums",
+              tool.active ? "bg-white/25 text-white" : "bg-danger/15 text-danger",
+            )}
+          >
+            {badge}
+          </span>
+        ) : (
+          <span
+            aria-hidden
+            className="absolute -top-1.5 -end-1.5 min-w-[16px] rounded-full border border-panel bg-danger px-1 text-[10px] font-semibold leading-4 tabular-nums text-white"
+          >
+            {badge}
+          </span>
+        ))}
     </button>
   );
 }
@@ -79,6 +130,34 @@ interface Props {
   onTemplate?: (t: ResumeTemplate) => void;
   company?: string;
   marks?: Map<string, BlockMark>;
+  /** Passed straight through to ResumeView, and deliberately NOT merged into
+   * `marks` — see its own Props note there. */
+  flags?: Map<string, "bad" | "warn">;
+  /** The deterministic review of the document above, as it stands right now.
+   * `null` = not measured yet, which is why the tool's badge is absent rather
+   * than zero until the first response lands. */
+  review?: ReviewResult | null;
+  /** A newer review is in flight; the panel dims rather than emptying. */
+  reviewStale?: boolean;
+  reviewFailed?: boolean;
+  /**
+   * Point the document at one block — the review row → paper jump.
+   *
+   * THE GATE FOR THE WHOLE REVIEW TOOL, the way `onTemplate` gates the picker
+   * and `onReplace` gates the dropzone. A panel whose rows cannot be tapped is
+   * a report, and a report is the thing this feature is not; the caller is also
+   * the only party that can implement the jump, because it owns `docView` and
+   * `scrollIntoView` on a `display:none` node is a silent no-op.
+   */
+  onJumpToBlock?: (path: string) => void;
+  /**
+   * Commit a suggested rewrite. Absent = the rewrites UI is not offered.
+   *
+   * This is the caller's own inline-commit function, unchanged: master ⇒
+   * `applyBlockEdit`, tailored draft ⇒ `setBlockOverride`. Nothing in this
+   * component or in `ReviewPanel` writes a résumé.
+   */
+  onUseRewrite?: (path: string, text: string) => void;
   activeBlock?: string | null;
   /** Passed straight through to ResumeView — see its own doc comment. */
   activeNonce?: number;
@@ -122,7 +201,7 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, onTemplate, company = "", marks, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddNamed, onAddBullet, footNote, onReplace },
+  { resume, template, view, onView, onTemplate, company = "", marks, flags, review, reviewStale, reviewFailed, onJumpToBlock, onUseRewrite, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddNamed, onAddBullet, footNote, onReplace },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
@@ -130,6 +209,41 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   const xray = useXray(resume, template, view === "ats");
   const [tplOpen, setTplOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  /* THE SUGGESTIONS LIVE HERE, not inside ReviewPanel, and the reason is money.
+     That panel is rendered conditionally — an inline Card, never a height tween
+     (check 11) — so it unmounts the moment the review is closed. With the
+     rewrites in its own state, closing the panel silently discarded a result
+     the user had just spent an AI credit on, and reopening it offered to spend
+     a second one for the same three sentences. `tplOpen` / `replaceOpen` are up
+     here for the same structural reason; this one just also has a price.
+
+     The call is made here rather than passed in because it is the panel's own
+     button, not the page's: `POST /tools/review/rewrites` needs nothing the
+     page owns beyond the résumé this component already renders. What the page
+     DOES own is the write — `onUseRewrite` — because master-vs-tailored is its
+     rule and nothing here may reimplement it. */
+  const [rewrites, setRewrites] = useState<ReviewRewrite[] | null>(null);
+  const [rewritesDropped, setRewritesDropped] = useState(0);
+  const [rewritesBusy, setRewritesBusy] = useState(false);
+  const [rewritesFailed, setRewritesFailed] = useState(false);
+
+  async function suggestRewrites() {
+    setRewritesBusy(true);
+    setRewritesFailed(false);
+    try {
+      // `paths: []` = "pick the rewritable findings server-side". The panel's
+      // own REWRITABLE list only decides whether the BUTTON is on screen, so
+      // the selection has exactly one author.
+      const res = await reviewRewrites(resume, []);
+      setRewrites(res.rewrites);
+      setRewritesDropped(res.dropped);
+    } catch {
+      setRewritesFailed(true);
+    } finally {
+      setRewritesBusy(false);
+    }
+  }
   // Read for the note under the screen view only — ResumeView resolves its own
   // spec from the same table. `?? classic` is `get_template`'s own fallback.
   const spec = TEMPLATE_SPECS[template] ?? TEMPLATE_SPECS.classic;
@@ -160,6 +274,24 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
             label: t("download.templateLabel"),
             active: tplOpen,
             onClick: () => setTplOpen((o) => !o),
+          },
+        ]
+      : []),
+    // The review. Placed BEFORE Download deliberately: it is the control that
+    // has something to say about the file you are about to download, and a
+    // list whose most consequential item comes after the terminal action reads
+    // as an afterthought. It is also the only tool here carrying a number, and
+    // that number is the reason it is on the rail rather than inside a tab.
+    ...(onJumpToBlock
+      ? [
+          {
+            key: "review",
+            Icon: ClipboardCheck,
+            label: t("doc.review.tool"),
+            active: reviewOpen,
+            // `undefined` until the first response, never 0 — see `Tool.count`.
+            count: review ? badCount(review) : undefined,
+            onClick: () => setReviewOpen((o) => !o),
           },
         ]
       : []),
@@ -238,6 +370,42 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           </Card>
         )}
 
+        {/* The third inline Card, in the same shape and for the same reasons as
+            the two above: rendered conditionally, `animate-fade-up` (opacity +
+            transform), and NEVER a motion `height: auto` tween. check-mirrors
+            11 fails the build on one and there are seven shipped defects behind
+            it — including this exact panel shape twice on the Jobs page, where
+            Replace froze at 80px over a 287px dropzone.
+            It sits ABOVE the document rather than beside it: a row tap scrolls
+            the paper, and a panel below the paper would scroll itself off
+            screen doing so. */}
+        {onJumpToBlock && reviewOpen && (
+          <Card className="animate-fade-up">
+            <CardTitle>{t("doc.review.title")}</CardTitle>
+            <div className="mt-3">
+              <ReviewPanel
+                resume={resume}
+                data={review ?? null}
+                stale={!!reviewStale}
+                failed={!!reviewFailed}
+                // Handed straight through, with nothing added on the way. The
+                // caller does the view switch, the spotlight and the scroll in
+                // ONE place, so a review row and every other jump on the page
+                // land identically — and the view switch has to be theirs,
+                // because `view` is their state and `scrollIntoView` on a
+                // `display:none` node is a silent no-op.
+                onJump={onJumpToBlock}
+                onUseRewrite={onUseRewrite}
+                rewrites={rewrites}
+                rewritesDropped={rewritesDropped}
+                rewritesBusy={rewritesBusy}
+                rewritesFailed={rewritesFailed}
+                onSuggestRewrites={suggestRewrites}
+              />
+            </div>
+          </Card>
+        )}
+
         {/* Always mounted — it carries the block anchors the review panel jumps to. */}
         <div ref={screenRef} className={cn(view !== "screen" && "hidden")}>
           <ResumeView
@@ -251,6 +419,10 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
             // honoured the choice; the one the user works on did not.
             template={template}
             marks={marks}
+            // A SECOND Map, never merged into `marks` — one holds who last
+            // spoke on a line, the other holds what a check found on it, and a
+            // single Map would silently keep whichever was written last.
+            flags={flags}
             activeBlock={activeBlock}
             activeNonce={activeNonce}
             onSelectBlock={onSelectBlock}

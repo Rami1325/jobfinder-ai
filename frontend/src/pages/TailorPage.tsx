@@ -23,9 +23,11 @@ import TailorOverlay from "../components/TailorOverlay";
 import BlockEditSheet from "../components/BlockEditSheet";
 import ResumeEditBar from "../components/ResumeEditBar";
 import { useCoverage } from "../hooks/useCoverage";
+import { useReview } from "../hooks/useReview";
 import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
 import ResumeUpload from "../components/ResumeUpload";
+import { flagsOf } from "../components/ReviewPanel";
 import ScoreCard from "../components/ScoreCard";
 import VoicePanel from "../components/VoicePanel";
 import { resetMasterCache } from "../hooks/useMasterResume";
@@ -557,6 +559,32 @@ export default function TailorPage() {
   // spending, so it is not here.
   const coverage = useCoverage(shown, jd);
 
+  /**
+   * Every deterministic check, against the document ON SCREEN.
+   *
+   * `shown`, not `resume` — so on a tailored draft the review describes the
+   * merged CV with the user's own overrides over it, which is the paper, the
+   * PDF preview, the x-ray, both downloads and the tracker row. Reviewing the
+   * master while the user is looking at something else would put a finding on
+   * the tool badge for a sentence that is not on the page.
+   *
+   * `jd` is passed and may be null: unlike coverage, this hook does NOT bail
+   * without a job. Twenty-five of the twenty-six checks are properties of the
+   * CV alone, and the master document — where there is usually no posting
+   * attached — is the surface the feature exists for. The one JD-gated check
+   * lands in `skipped`, never in `passed`.
+   *
+   * Free to run on every keystroke for the same reason coverage is: `POST
+   * /tools/review` carries no `Depends`, reaches no model and writes no
+   * `usage_log` row. The one part that spends is a button inside the panel.
+   */
+  const review = useReview(shown, jd);
+
+  /** Block path → the worst thing the review found there. Derived in
+   * `ReviewPanel` beside the badge count, so the dots on the paper and the
+   * number on the tool cannot be computed two different ways. */
+  const reviewFlags = useMemo(() => flagsOf(review.data), [review.data]);
+
   /** How each block on the page relates to the tailoring. There is no
    * "undecided" state in this flow — every edit is accepted until rejected — so
    * a block is either showing the AI's wording or, if every edit on it was
@@ -801,15 +829,27 @@ export default function TailorPage() {
     });
   }
 
+  /** Point the document at one BLOCK PATH — select the view, light the block
+   * up, bring it into the middle of the screen.
+   *
+   * ONE implementation for every "show me that on the CV" in the app: the
+   * tailor review's rows (through `showInDoc` below, which resolves an edit id
+   * first) and the deterministic review panel's rows (which already carry a
+   * path). Two copies would drift on the one line that is easy to forget —
+   * `setDocView("screen")`, without which the whole thing is a silent no-op
+   * whenever the user is on the PDF or ATS tab, because `scrollIntoView` on a
+   * `display:none` node does nothing and reports nothing. */
+  function jumpToBlock(path: string) {
+    setDocView("screen");
+    markSpot(path);
+    scrollToBlock(path);
+  }
+
   /** Review row → document. */
   function showInDoc(id: string) {
     const path = editBlock[id];
     if (!path) return; // an accepted removal is not on the page — nothing to point at
-    // The file and ATS views hide the screen document, and scrollIntoView on a
-    // display:none node is a silent no-op — so select it before scrolling.
-    setDocView("screen");
-    markSpot(path);
-    scrollToBlock(path);
+    jumpToBlock(path);
   }
 
   /** Document block → review row. */
@@ -1308,6 +1348,22 @@ export default function TailorPage() {
           onTemplate={setTemplate}
           company={jd?.company ?? company}
           marks={marks}
+          // The review's own vocabulary, kept apart from `marks` — see
+          // ResumeView's Props note on why one Map cannot hold both.
+          flags={reviewFlags}
+          review={review.data}
+          reviewStale={review.stale}
+          reviewFailed={review.failed}
+          // The tool's gate as well as its jump: no callback, no review panel.
+          onJumpToBlock={jumpToBlock}
+          // "Use this" goes through the SAME writer as a caret edit on the
+          // paper, so the master/tailored split has exactly one implementation:
+          // `applyBlockEdit` on the master, `setBlockOverride` on a tailored
+          // draft, and never `writeDraft` on either. A private write path in
+          // the panel would be the 23.7 defect on purpose — one keystroke
+          // through `applyBlockEdit` while a result is up nulls `result`,
+          // `tailoredFrom` and `rejectedEdits` and destroys the whole review.
+          onUseRewrite={canEditDoc ? commitInline : undefined}
           activeBlock={spot?.path ?? null}
           activeNonce={spot?.nonce}
           onSelectBlock={selectBlock}

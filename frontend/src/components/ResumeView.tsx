@@ -70,6 +70,30 @@ interface Props {
   /** Block path → how it relates to the tailoring. Paths come from
    * `resumeDiff.mergeForReview`'s `blocks`, and must use the same grammar. */
   marks?: Map<string, BlockMark>;
+  /**
+   * Block path → the worst thing the deterministic review found on that block.
+   *
+   * A SEPARATE PROP FROM `marks`, and that separation is the whole point. A Map
+   * holds one value per path, and the two answer different questions about the
+   * same line: `marks` says who last spoke on it (the AI, your original, you),
+   * while this says a check found something wrong with it. Folding them into one
+   * Map would make a bullet that the tailor rewrote AND that has no measured
+   * outcome carry only whichever of the two was written last — silently.
+   *
+   * Painted as a small STATIC dot in the margin, through `::after` and nothing
+   * else. Never an element: that `<li>` IS the `contentEditable` node for
+   * `@exp.i.b.j`, so a glyph `<span>` inside it is typed over or deleted by the
+   * first edit — the same reason the bullet marker is `list-style-type` and the
+   * empty-field placeholder is `[data-ph]:empty::before`. And never animated:
+   * nothing on the paper may move unless a value the backend returned or an edit
+   * the user made caused it, and a finding appearing is neither — the panel
+   * beside it is where a change of state gets announced.
+   *
+   * A path this document does not render simply never matches, which is the
+   * "listed in the panel, unmarked on the paper" behaviour a document-level or
+   * stale finding is supposed to get.
+   */
+  flags?: Map<string, "bad" | "warn">;
   /** The block to spotlight right now (a jump from the review panel). */
   activeBlock?: string | null;
   /** Bumped every time the caller spotlights a block, including the SAME one
@@ -633,6 +657,7 @@ export default function ResumeView({
   surface = "panel",
   template = "classic",
   marks,
+  flags,
   activeBlock,
   activeNonce,
   onSelectBlock,
@@ -800,6 +825,55 @@ export default function ResumeView({
   const RAIL_DOT =
     "relative before:absolute before:-start-[19px] before:top-[7px] before:h-[5px] before:w-[5px] before:rounded-full before:bg-accent/55 before:content-['']";
 
+  /**
+   * The review's dot, in the margin beside a block a check found something on.
+   *
+   * `::after`, NOT `::before`, and that is not a style preference — both of the
+   * `::before`s on these very blocks are already spoken for. `RAIL_DOT` (four
+   * of the eleven templates) draws the rail's per-entry dot through
+   * `before:absolute` on `@exp.i` / `@proj.i` / `@edu.i` / `@mil.i`, which are
+   * exactly the paths `dates-missing`, `entry-empty`, `edu-placeholder` and
+   * `duplicate-entry` anchor to; and `styles.css`'s `.sheet [data-ph]:empty::before`
+   * draws the empty-field placeholder on `@summary`, which `summary-missing`
+   * anchors to. An element has ONE `::before`, so either collision would mean
+   * one of the two silently disappearing — and on the placeholder it would be
+   * the higher-specificity stylesheet rule that won, i.e. the flag would vanish
+   * with nothing on screen to say so. A pseudo-element is equally safe from the
+   * caret either way (the 23.7 rule is "never an ELEMENT" — a `<span>` glyph
+   * inside a `contentEditable` block gets typed over), so `::after` costs
+   * nothing and cannot collide.
+   *
+   * COLOUR AND POSITION ONLY, absolutely positioned in the gutter. It must not
+   * change the block's own box: this sheet is measured against a real reportlab
+   * page count, so a dot that reflowed the text would make the measured page
+   * count wrong. And no transition, no animation, no hover response — a finding
+   * arriving is not a value the user moved, and the panel beside the paper is
+   * where a state change is announced.
+   *
+   * Two offsets, because a bullet's start edge is not where its text starts:
+   * the `<ul>` carries `ps-5` and the list marker hangs in that 20px, so an
+   * `item` has to clear the marker rather than sit on top of it. Both are
+   * logical (`-start-`, i.e. `inset-inline-start`), so RTL mirrors with no
+   * second rule.
+   */
+  const flagDot = (path: string, shape: "block" | "item" | "chip") => {
+    const flag = flags?.get(path);
+    if (!flag) return undefined;
+    return cn(
+      "relative after:absolute after:h-[5px] after:w-[5px] after:rounded-full after:content-['']",
+      flag === "bad" ? "after:bg-danger/80" : "after:bg-warn/70",
+      shape === "item"
+        ? "after:top-[0.5em] after:-start-[22px]"
+        : shape === "chip"
+          ? // A corner pip rather than a margin dot: a chip sits in a
+            // comma-joined run or a wrapped row of bordered pills, so there is
+            // no reliable gutter beside it — 10px into the start would land on
+            // the previous chip's last letter.
+            "after:-top-[3px] after:-start-[3px]"
+          : "after:top-[0.5em] after:-start-[10px]",
+    );
+  };
+
   /** Marker + spotlight for one block. Every marker uses LOGICAL properties
    * (`border-s`, `-ms`, `ps`) so RTL mirrors without a second rule. A bullet
    * marks its own glyph rather than growing a start-bar, which would collide
@@ -854,6 +928,9 @@ export default function ResumeView({
       activeBlock === path && "rounded-[3px] bg-accent/10 outline outline-2 outline-offset-2 outline-accent/60",
       activeBlock === path &&
         ((activeNonce ?? 0) % 2 === 0 ? "animate-block-settle" : "animate-block-settle-alt"),
+      // LAST, and on its own pseudo-element, so it can never be in a position
+      // to win or lose against one of the marks above it.
+      flagDot(path, shape),
     );
   };
 
@@ -985,14 +1062,38 @@ export default function ResumeView({
   const blkProps = (path: string, shape: "block" | "item" | "chip" = "block", extra?: string) => {
     const inline = !!onInlineCommit && !!inlineField(resume, path);
     const mark = marks?.get(path);
+    const flag = flags?.get(path);
+    const flagTitle = flag ? t(flag === "bad" ? "doc.review.groupBad" : "doc.review.groupWarn") : "";
     return {
       "data-block": path,
+      // The review's severity, on the block itself. The dot is drawn by
+      // `flagDot`'s classes rather than off this attribute, so it is not
+      // load-bearing for the paint — it is here because it is the only way a
+      // browser pass, a screenshot diff or a future check can ask "which blocks
+      // did the review mark, and how", and a pseudo-element's colour is not
+      // queryable in the DOM.
+      "data-flag": flag,
       className: cn(extra, blk(path, shape)),
       // A marked block is a coloured bar and nothing else, which says "this is
       // different" without saying HOW. The title is the difference, and it is
       // also the block's accessible name for a screen reader that gets no
       // colour at all.
-      title: mark ? t(`review.mark.${mark}`) : undefined,
+      //
+      // BOTH, when both apply, and appended rather than one replacing the
+      // other: they answer different questions ("who wrote this" and "a check
+      // found something here") and picking one would silently hide the other on
+      // any block that carries both. The review's half is only a SEVERITY — the
+      // finding's own label and its how-sentence live in the panel, which is the
+      // accessible route to what it actually says — so it reuses the panel's own
+      // group headings rather than inventing a second phrasing for "to fix".
+      //
+      // The `mark ? t(`review.mark.${mark}`)` shape is pinned by check-mirrors
+      // 18 (every BlockMark has a name in both locales, which check 8 cannot
+      // see), so the flag is concatenated onto it rather than folded into a
+      // join that would take that literal apart.
+      title: mark
+        ? t(`review.mark.${mark}`) + (flagTitle && ` · ${flagTitle}`)
+        : flagTitle || undefined,
       ...(inline
         ? {
             contentEditable: EDITABLE_MODE,

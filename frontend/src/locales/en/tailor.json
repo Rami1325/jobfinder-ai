@@ -299,6 +299,129 @@
     "unavailable": "Couldn't re-measure the page count."
   },
   "doc": {
+    "review": {
+      "tool": "Check my CV",
+      "title": "Résumé review",
+      "counts": "{{fix}} to fix · {{consider}} to consider · {{clean}} clean",
+      "groupBad": "To fix",
+      "groupWarn": "To consider",
+      "rewrites": "Suggest rewrites",
+      "rewriteBefore": "Now",
+      "rewriteAfter": "Suggested",
+      "rewriteDropped": "{{n}} suggestions were thrown away because they added a number or a claim your own wording does not make.",
+      "useThis": "Use this",
+      "empty": "Nothing to fix — every check ran clean on this version.",
+      "failed": "We couldn't check your résumé just now.",
+      "passed": "{{n}} checks ran clean",
+      "skipped": "Couldn't check: {{list}}",
+      "skippedNote": "These couldn't run on this version, so they are not counted as clean.",
+      "checks": {
+        "contact-email": {
+          "label": "No email address",
+          "how": "Add the email address you actually read — an application system with no way to reply to you drops the CV before a person sees it."
+        },
+        "contact-phone": {
+          "label": "No phone number",
+          "how": "Add the mobile number you answer — recruiters here call before they email, and a CV they cannot phone waits."
+        },
+        "contact-linkedin": {
+          "label": "No LinkedIn link",
+          "how": "Paste your LinkedIn profile URL — it is the first thing a recruiter opens after the CV, and leaving it out makes them search your name and guess."
+        },
+        "headline": {
+          "label": "No target-title line",
+          "how": "Write the job title you are applying for under your name — it is the first line a filter matches, and a real title beats no line at all."
+        },
+        "summary-missing": {
+          "label": "No summary",
+          "how": "Write two or three lines naming your field, your years of experience and the work you want next — this is what a recruiter reads before anything else."
+        },
+        "summary-long": {
+          "label": "Summary runs long",
+          "how": "Cut it to about sixty words: keep your field, your strongest result and the role you are aiming at, and move everything else down into your bullets."
+        },
+        "no-experience": {
+          "label": "No experience section",
+          "how": "Add at least one role, project or military position with dates and a few bullets — a CV with no experience section is filtered out before a person reads it."
+        },
+        "dates-missing": {
+          "label": "Role has no dates",
+          "how": "Add a start and an end month to this role — a reader takes a missing date for a gap you are hiding, and most parsers drop the whole entry."
+        },
+        "dates-format": {
+          "label": "Dates in an odd format",
+          "how": "Write the dates as \"{{suggested}}\" — parsers read that form reliably and guess at everything else."
+        },
+        "gap": {
+          "label": "Gap before this role",
+          "how": "There are {{months}} months before this role starts — account for them in one line (studies, military service, travel, freelance) so nobody has to guess."
+        },
+        "weak-opener": {
+          "label": "Bullet opens weakly",
+          "how": "Open with the action itself — built, cut, shipped, led — instead of describing what you were responsible for."
+        },
+        "no-outcome": {
+          "label": "No measured result",
+          "how": "End this bullet with the number it moved — a percentage, a time, a count of users, a sum — so a reader sees the result and not only the task."
+        },
+        "bullet-long": {
+          "label": "Bullet runs long",
+          "how": "Split it in two or cut it under twenty words — a recruiter scans the first line of a bullet and skips the rest of it."
+        },
+        "bullet-short": {
+          "label": "Bullet is too short",
+          "how": "Say what you built, what you built it with and what changed — a three-word line names a task without showing you did it."
+        },
+        "repeated-verb": {
+          "label": "Same opener repeated",
+          "how": "\"{{verb}}\" opens three or more of your bullets — vary the repeats so the list reads as separate pieces of work rather than one long job."
+        },
+        "duplicate-bullet": {
+          "label": "Two bullets say the same thing",
+          "how": "Keep the stronger one and delete this, or make it specific to this role — a repeat spends a line and adds no new claim."
+        },
+        "buzzword": {
+          "label": "Filler phrase",
+          "how": "Delete the phrase and put the evidence in its place — write the thing you did that would make a reader say it about you."
+        },
+        "pronoun": {
+          "label": "Written in first person",
+          "how": "Drop the \"I\" and \"my\" and start on the verb — CV bullets are written without pronouns, and the reader already knows the page is about you."
+        },
+        "acronym": {
+          "label": "Acronym never spelled out",
+          "how": "Write it once as {{pair}} and use the short form after that — a keyword filter searches for one spelling and your CV carries only the other."
+        },
+        "entry-empty": {
+          "label": "Role with no bullets",
+          "how": "Add two or three bullets saying what you built and what changed — a title and dates prove you held the job, not that you did anything in it."
+        },
+        "edu-placeholder": {
+          "label": "Template text instead of a school",
+          "how": "Replace it with the real institution name — this text came from a template and it is printing on your CV as though it were where you studied."
+        },
+        "duplicate-entry": {
+          "label": "Credential printed twice",
+          "how": "Delete the second copy — the same degree or certificate listed twice reads as padding rather than as two qualifications."
+        },
+        "skills-few": {
+          "label": "Very few skills listed",
+          "how": "List at least ten tools, languages and platforms you genuinely work with — a filter matches this section first, and a short list scores low against every job."
+        },
+        "skills-sentence": {
+          "label": "Skill written as a sentence",
+          "how": "Cut it to the term itself — \"PostgreSQL\", not a sentence about it — so a filter can match it and the chip fits on one line."
+        },
+        "skills-unasked": {
+          "label": "Mostly skills this job never asks for",
+          "how": "Lead with the tools the posting actually names and move the rest down or off — this section is read as a shortlist for one job, not as an inventory."
+        },
+        "length": {
+          "label": "Length does not match the experience",
+          "how": "This renders as {{pages}} pages against {{years}} years of experience — aim for one page up to about ten years and two beyond that, trimming the oldest roles and the weakest bullets first."
+        }
+      }
+    },
     "toolsLabel": "Document tools",
     "views": {
       "screen": "On screen",
