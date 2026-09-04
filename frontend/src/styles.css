@@ -535,3 +535,20 @@ select {
   color: rgb(var(--doc-bullet, var(--ink-muted)));
   font-size: var(--doc-bullet-size, 1em);
 }
+
+/* The review drawer opens from the INLINE-END edge, so in RTL it comes from the
+   left and must slide in from the left. One custom property flips the keyframe
+   rather than a second animation, which keeps the two directions impossible to
+   desync. */
+[dir="rtl"] .animate-drawer-in {
+  --drawer-from: -100%;
+}
+
+/* HOVERING A REVIEW ROW TINTS ITS BLOCK. Flat colour, no transition, no scale,
+   no scroll: the sheet rule is that nothing on the paper MOVES on hover, and a
+   static tint marks the block without making the artefact behave like a toy.
+   It sits under `.sheet` so it cannot leak onto the marketing `.paper`. */
+.sheet [data-block][data-hover="1"] {
+  background-color: rgb(var(--accent) / 0.14);
+  border-radius: 4px;
+}

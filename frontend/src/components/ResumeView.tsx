@@ -94,6 +94,19 @@ interface Props {
    * stale finding is supposed to get.
    */
   flags?: Map<string, "bad" | "warn">;
+  /** The blocks the pointer is currently over in the review drawer.
+   *
+   * A SET, not a single path: one review row now stands for one CHECK, and a
+   * check can flag five bullets — hovering "no measured result" has to light
+   * all five or the row would point at an arbitrary one of them.
+   *
+   * It paints a FLAT TINT and nothing else. The sheet rule is that nothing on
+   * the paper moves on hover, on scroll or on a timer, and that rule is about
+   * MOTION: a static background is a mark, not an animation, so the document
+   * stays an artefact rather than becoming a toy. A tap still scrolls and
+   * spotlights, which is the only path a phone has — hover is an enhancement
+   * on top of it, never the only way to find the block. */
+  hoverPaths?: Set<string>;
   /** The block to spotlight right now (a jump from the review panel). */
   activeBlock?: string | null;
   /** Bumped every time the caller spotlights a block, including the SAME one
@@ -658,6 +671,7 @@ export default function ResumeView({
   template = "classic",
   marks,
   flags,
+  hoverPaths,
   activeBlock,
   activeNonce,
   onSelectBlock,
@@ -1073,6 +1087,11 @@ export default function ResumeView({
       // did the review mark, and how", and a pseudo-element's colour is not
       // queryable in the DOM.
       "data-flag": flag,
+      // Read by ONE css rule in styles.css. An attribute rather than a class
+      // because the tint has to win over `blk()`'s own background without
+      // fighting it for specificity, and because a browser pass can then ask
+      // the DOM which blocks a row claims to be about.
+      "data-hover": hoverPaths?.has(path) ? "1" : undefined,
       className: cn(extra, blk(path, shape)),
       // A marked block is a coloured bar and nothing else, which says "this is
       // different" without saying HOW. The title is the difference, and it is

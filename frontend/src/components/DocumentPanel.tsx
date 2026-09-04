@@ -1,4 +1,5 @@
 import { forwardRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { EntryInsertKind, NamedInsertKind } from "../lib/resumeBlocks";
 import { useTranslation } from "react-i18next";
 import {
@@ -11,6 +12,7 @@ import {
   Monitor,
   ScanEye,
   type LucideIcon,
+  X,
 } from "lucide-react";
 import ResumeView, { type BlockMark } from "./ResumeView";
 import ReviewPanel, { badCount } from "./ReviewPanel";
@@ -210,6 +212,11 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   const [tplOpen, setTplOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  // The blocks the pointer is over in the drawer. Local to this component
+  // because nothing above it needs to know: it paints a tint and is gone on
+  // mouseleave, so lifting it to TailorPage would re-render the whole
+  // document surface on every row the pointer crosses.
+  const [hoverPaths, setHoverPaths] = useState<Set<string> | null>(null);
   /* THE SUGGESTIONS LIVE HERE, not inside ReviewPanel, and the reason is money.
      That panel is rendered conditionally — an inline Card, never a height tween
      (check 11) — so it unmounts the moment the review is closed. With the
@@ -370,40 +377,82 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           </Card>
         )}
 
-        {/* The third inline Card, in the same shape and for the same reasons as
-            the two above: rendered conditionally, `animate-fade-up` (opacity +
-            transform), and NEVER a motion `height: auto` tween. check-mirrors
-            11 fails the build on one and there are seven shipped defects behind
-            it — including this exact panel shape twice on the Jobs page, where
-            Replace froze at 80px over a 287px dropzone.
-            It sits ABOVE the document rather than beside it: a row tap scrolls
-            the paper, and a panel below the paper would scroll itself off
-            screen doing so. */}
-        {onJumpToBlock && reviewOpen && (
-          <Card className="animate-fade-up">
-            <CardTitle>{t("doc.review.title")}</CardTitle>
-            <div className="mt-3">
-              <ReviewPanel
-                resume={resume}
-                data={review ?? null}
-                stale={!!reviewStale}
-                failed={!!reviewFailed}
-                // Handed straight through, with nothing added on the way. The
-                // caller does the view switch, the spotlight and the scroll in
-                // ONE place, so a review row and every other jump on the page
-                // land identically — and the view switch has to be theirs,
-                // because `view` is their state and `scrollIntoView` on a
-                // `display:none` node is a silent no-op.
-                onJump={onJumpToBlock}
-                onUseRewrite={onUseRewrite}
-                rewrites={rewrites}
-                rewritesDropped={rewritesDropped}
-                rewritesBusy={rewritesBusy}
-                rewritesFailed={rewritesFailed}
-                onSuggestRewrites={suggestRewrites}
-              />
-            </div>
-          </Card>
+        {/* THE REVIEW IS A DRAWER, not an inline card (owner's request,
+            2026-09-04). Three things about it are load-bearing.
+
+            It slides on TRANSFORM and opacity ONLY — never a height tween.
+            check-mirrors 11 fails the build on one and there are seven shipped
+            defects behind it, including this exact panel shape twice on the
+            Jobs page where Replace froze at 80px over a 287px dropzone.
+
+            It opens from the INLINE-END edge, so it is on the right in English
+            and the left in Hebrew, and `--drawer-from` flips the keyframe with
+            it — a hard-coded `translateX(100%)` would slide the Hebrew drawer
+            in from the far side, straight across the document it is about to
+            sit beside.
+
+            It starts BELOW the `h-14` header (`top-14`) and sits at `z-40`:
+            under the header's `z-[45]` so the app's own chrome stays reachable
+            while it is open, and under the `z-50` modal layer so it can never
+            paint over `BlockEditSheet`'s scrim. */}
+        {/* PORTALLED TO `document.body`, and that is not tidiness — it is the
+            only thing that makes `fixed` mean fixed. An ancestor of this panel
+            carries a `transform` (a motion wrapper mid-tween), and a
+            transformed element becomes the containing block for every
+            fixed-position descendant, so the drawer resolved against a div two
+            thousand pixels down the page instead of the viewport. Measured
+            before the portal: top 162, bottom 3316, pinned to neither edge.
+            `AccessGate`, `BlockEditSheet` and `Modal` all portal for the same
+            reason. */}
+        {onJumpToBlock && reviewOpen && createPortal(
+          <>
+            {/* Backdrop on small screens only: at 390px the drawer covers the
+                paper, so there has to be somewhere to tap to dismiss it. On a
+                wide screen the drawer sits BESIDE the document and a backdrop
+                would block the very blocks its rows point at. */}
+            <button
+              type="button"
+              aria-label={t("doc.review.close")}
+              className="fixed inset-0 top-14 z-[39] bg-black/40 lg:hidden"
+              onClick={() => setReviewOpen(false)}
+            />
+            <aside
+              className="animate-drawer-in fixed top-14 bottom-0 end-0 z-40 flex w-full max-w-[380px] flex-col border-s border-line bg-panel shadow-2xl"
+              aria-label={t("doc.review.title")}
+            >
+              <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
+                <p className="text-sm font-semibold text-ink">{t("doc.review.title")}</p>
+                <button
+                  type="button"
+                  aria-label={t("doc.review.close")}
+                  onClick={() => setReviewOpen(false)}
+                  className="grid h-7 w-7 place-items-center rounded-lg border border-line text-ink-muted"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              {/* The SCROLLER is here, not on the panel: the drawer owns its
+                  own height and the list inside it is what overflows. */}
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                <ReviewPanel
+                  resume={resume}
+                  data={review ?? null}
+                  stale={!!reviewStale}
+                  failed={!!reviewFailed}
+                  onJump={onJumpToBlock}
+                  // Hover marks the paper; the tap still scrolls and spotlights.
+                  onHover={(paths) => setHoverPaths(paths ? new Set(paths) : null)}
+                  onUseRewrite={onUseRewrite}
+                  rewrites={rewrites ?? undefined}
+                  rewritesDropped={rewritesDropped}
+                  rewritesBusy={rewritesBusy}
+                  rewritesFailed={rewritesFailed}
+                  onSuggestRewrites={suggestRewrites}
+                />
+              </div>
+            </aside>
+          </>,
+          document.body,
         )}
 
         {/* Always mounted — it carries the block anchors the review panel jumps to. */}
@@ -423,6 +472,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
             // spoke on a line, the other holds what a check found on it, and a
             // single Map would silently keep whichever was written last.
             flags={flags}
+            hoverPaths={hoverPaths ?? undefined}
             activeBlock={activeBlock}
             activeNonce={activeNonce}
             onSelectBlock={onSelectBlock}

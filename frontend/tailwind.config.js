@@ -97,6 +97,19 @@ export default {
           "0%": { opacity: "0", transform: "translateY(12px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        // The review drawer. TRANSFORM ONLY -- never a height tween, which is
+        // what check-mirrors 11 exists to forbid and what froze seven shipped
+        // reveals at an interpolated pixel height.
+        //
+        // The start offset is a custom property rather than a literal because
+        // the drawer opens from the INLINE-END edge: that is the right in LTR
+        // and the left in RTL, so a hard-coded `100%` would slide the Hebrew
+        // drawer in from the wrong side of the screen, across the document it
+        // is about to sit beside.
+        "drawer-in": {
+          "0%": { opacity: "0", transform: "translateX(var(--drawer-from, 100%))" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
+        },
         // One radial spark line of a click burst; --a is set per-spark inline.
         spark: {
           "0%": { transform: "rotate(var(--a)) translateY(-6px) scaleY(1)", opacity: "1" },
@@ -127,6 +140,11 @@ export default {
         "block-settle": "block-settle .52s cubic-bezier(.22,1,.36,1) both",
         "block-settle-alt": "block-settle-alt .52s cubic-bezier(.22,1,.36,1) both",
         "fade-up": "fade-up .5s cubic-bezier(.22,1,.36,1) both",
+        // `both`, so it ENDS on its resting state: the global
+        // prefers-reduced-motion rule collapses this to 0.001ms with one
+        // iteration, and an animation that ended on nothing would park the
+        // drawer off screen for exactly the users who asked for less motion.
+        "drawer-in": "drawer-in .18s cubic-bezier(.22,1,.36,1) both",
         spark: "spark .4s cubic-bezier(.22,1,.36,1) forwards",
         "pulse-glow": "pulse-glow 3s ease-in-out infinite",
         float: "float 6s ease-in-out infinite",
