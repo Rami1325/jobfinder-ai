@@ -230,6 +230,27 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
     setHoverPaths(null);
   };
 
+  // THE DRAWER RESERVES ITS WIDTH FROM `lg` UP, where it has no backdrop and is
+  // meant to sit BESIDE the document rather than over it. It is `position:
+  // fixed` and `main` is `mx-auto max-w-6xl`, so on any viewport whose centring
+  // gutter is under 380px the drawer lands ON TOP of the content — measured at
+  // 1707px in Hebrew: drawer 0-380 against a toolbar at 272-1424 and a tool rail
+  // at 304-344, so the Tailor button, the template picker, both downloads and
+  // Replace were all under the panel that hid them.
+  //
+  // A CLASS ON `body`, not padding on a container, because the things it has to
+  // move are SIBLINGS in three different components: the sticky
+  // `DocumentToolbar` is rendered by `TailorPage`, the rail and the sheet by
+  // this file. Padding the row here moved the rail and left the toolbar behind —
+  // which is the bug the owner screenshotted. One rule on `main` moves all of
+  // them, and `padding-inline-end` is logical so it pushes away from whichever
+  // edge the drawer is actually on.
+  useEffect(() => {
+    const on = reviewOpen && !!onJumpToBlock;
+    document.body.classList.toggle("review-open", on);
+    return () => document.body.classList.remove("review-open");
+  }, [reviewOpen, onJumpToBlock]);
+
   // Escape closes it, the same shape `Modal` and `BlockEditSheet` use. Below
   // `lg` this drawer IS modal -- it and its backdrop both cover the z-30 tab bar
   // -- and a full-screen overlay with no keyboard dismissal is the one thing
