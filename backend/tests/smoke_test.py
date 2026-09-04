@@ -3201,16 +3201,61 @@ check(
 # `fromisoformat` in `job_search` would let a posting be 93 days old to the badge
 # and unparseable to the tier, on the same row.
 import app.core.job_search as _gh_js_mod  # noqa: E402
+from datetime import timezone as _gh_tz  # noqa: E402
 
+from app.core.job_search import utc_now as _gh_utc_now  # noqa: E402
 _GH_JS_SRC = _gh_inspect.getsource(_gh_js_mod)
+_GH_ARGLESS_NOW = [
+    _n.lineno
+    for _n in _gh_ast.walk(_gh_ast.parse(_GH_JS_SRC))
+    if isinstance(_n, _gh_ast.Call)
+    and isinstance(_n.func, _gh_ast.Attribute)
+    and _n.func.attr == "now"
+    and not _n.args
+    and not _n.keywords
+]
 check(
     "ghost: parse_board_date is THE board-date parser, and job_search delegates to it",
-    _gh_parse_date("2026-06-02T03:17:15-04:00") == _gh_dt(2026, 6, 2, 3, 17, 15)
-    and _gh_parse_date("") is None and _gh_parse_date("junk") is None
+    _gh_parse_date("") is None and _gh_parse_date("junk") is None
     and _gh_parse_date(None) is None  # type: ignore[arg-type]
     and _gh_js_mod._posted_datetime("2026-06-02T03:17:15-04:00")
     == _gh_parse_date("2026-06-02T03:17:15-04:00")
     and "fromisoformat" not in _GH_JS_SRC,
+)
+# A BOARD DATE IS CONVERTED TO UTC, NEVER JUST STRIPPED OF ITS OFFSET.
+# This assertion used to read `== _gh_dt(2026, 6, 2, 3, 17, 15)` — it PINNED the
+# defect. Discarding `-04:00` reads 03:17 as UTC when it is 07:17, so a
+# Greenhouse posting looked four hours younger than it was, and a UTC+13 board
+# thirteen hours older. Day granularity does not make that safe: it decides
+# which side of a day boundary `long_open` lands on. Both directions are pinned
+# because "convert" is trivially satisfiable in one of them by adding a constant.
+check(
+    "ghost: a board date is CONVERTED to UTC, both directions — dropping the offset "
+    "made a -04:00 posting 4h younger and a +13:00 one 13h older than it is",
+    _gh_parse_date("2026-06-02T03:17:15-04:00") == _gh_dt(2026, 6, 2, 7, 17, 15)
+    and _gh_parse_date("2026-06-02T03:17:15+13:00") == _gh_dt(2026, 6, 1, 14, 17, 15)
+    # A naive string is already ours (the DateTime columns read back naive UTC)
+    # and must pass through untouched, or every stored date shifts by the
+    # machine's offset the moment this function is asked to be clever.
+    and _gh_parse_date("2026-06-02T03:17:15") == _gh_dt(2026, 6, 2, 3, 17, 15),
+    f'-04:00 -> {_gh_parse_date("2026-06-02T03:17:15-04:00")}',
+)
+# ONE CLOCK, ONE FRAME. `record_sightings` writes `first_seen_at` as naive UTC
+# and `search_jobs` measured ages against naive LOCAL time, so every `long_open`
+# age was inflated by the machine's UTC offset — +3h in the primary market,
+# which reported a share of postings a full day older than they were, always in
+# the "older" direction. Pinned on the SOURCE too: a bare `datetime.now()` back
+# in the search path reads as correct and is the whole bug.
+check(
+    "ghost: the search path measures age in UTC — a bare datetime.now() is naive LOCAL "
+    "and silently ages every posting by the machine's offset",
+    abs((_gh_utc_now() - _gh_dt.now(_gh_tz.utc).replace(tzinfo=None)).total_seconds()) < 5
+    and _GH_ARGLESS_NOW == [],
+    # Read off the AST, never the source text: this module's own docstrings say
+    # "never `datetime.now()` inside" in prose, and a substring check reads the
+    # promise as the violation. The same trap `resume_review`'s purity pin
+    # documents one module over.
+    f"argless datetime.now() at lines {_GH_ARGLESS_NOW}",
 )
 # THE IMPORTER CENSUS. A second call site would classify on a DIFFERENT gate and
 # contradict the first about the same posting — the geo-restriction correction

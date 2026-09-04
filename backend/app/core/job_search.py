@@ -16,7 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 # Re-exported for the smoke test and any older callers: the LinkedIn card parser
@@ -193,6 +193,24 @@ def _resolve_context(resume: ResumeModel, customize: SearchContext | None) -> Se
     return ctx
 
 
+def utc_now() -> datetime:
+    """The one clock for every age in this module.
+
+    `datetime.now()` is naive LOCAL time. `record_sightings` writes
+    `first_seen_at` as naive UTC and `parse_board_date` returns naive UTC, so
+    measuring an age against a local clock inflated every `long_open` by the
+    machine's offset — +3h in the primary market, which reported a share of
+    postings a full day older than they were, always in the "older" direction,
+    in the daily email where the user cannot check it against anything.
+
+    It lives HERE and not in `ghost_signals`: that module is source-pinned to
+    read no clock at all, which is what makes `detect_ghost_signals`
+    deterministic given its `now` parameter. Putting the wall clock there to
+    share it would have deleted that guarantee to fix a bug about clocks.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _posted_datetime(posted_at: str) -> datetime | None:
     """Lenient parse of a JobHit.posted_at ISO string ('' / junk → None).
     Timezone info is dropped — freshness only needs day granularity.
@@ -219,7 +237,7 @@ def freshest_first(hits: list[JobHit], max_age_days: int, now: datetime | None =
     parseable date are kept (missing data shouldn't hide a job) but sort last.
     Pure given `now`; pinned by the smoke test."""
     if max_age_days > 0:
-        cutoff = (now or datetime.now()) - timedelta(days=max_age_days)
+        cutoff = (now or utc_now()) - timedelta(days=max_age_days)
         kept = []
         for hit in hits:
             dt = _posted_datetime(hit.posted_at)
@@ -330,7 +348,7 @@ def tiered_by_source(
     fresh (missing data shouldn't hide a job) but sort last within their tier.
     Pure given `now`; pinned by the smoke test."""
     tiers: list[dict[str, list[JobHit]]] = [{}, {}, {}]
-    cutoff = (now or datetime.now()) - timedelta(days=max_age_days) if max_age_days > 0 else None
+    cutoff = (now or utc_now()) - timedelta(days=max_age_days) if max_age_days > 0 else None
     for name, hits in hits_by_source.items():
         # Same lexicographic newest-first trick as freshest_first: "" (unknown
         # date) is smallest, so reverse=True puts undated hits last.
@@ -612,7 +630,7 @@ def search_jobs(
     #
     # One instant for the whole run: hits scored a minute apart must not land on
     # opposite sides of the 60-day threshold and disagree about the same market.
-    now = datetime.now()
+    now = utc_now()
     sightings: dict[tuple[str, str], Sighting] = {}
     if sightings_fn is not None:
         keys = sorted({(h.source, ck) for h in hits if (ck := content_key(h.title, h.company))})

@@ -30,7 +30,7 @@ import html as _html
 import re
 import time
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
@@ -120,8 +120,15 @@ def parse_jobmaster_results(html: str, now: datetime | None = None) -> list[JobH
     key, order preserved. Promoted (Mekudam) cards are kept — their key opens
     the same detail page. Descriptions stay empty (cards only carry a
     truncated snippet, stored in `raw` as the detail-fetch fallback).
-    Pure given `now`; pinned by the smoke test against a trimmed real page."""
-    now = now or datetime.now()
+    Pure given `now`; pinned by the smoke test against a trimmed real page.
+
+    The default clock is naive UTC, not naive local. A Hebrew relative date is
+    coarse enough that three hours never moves "לפני 3 ימים" to another day, so
+    this is a FRAME fix rather than an accuracy one — but the `posted_at` it
+    mints is compared against `job_search`'s UTC cutoffs, and one module keeping
+    its own frame is exactly how the `long_open` age ended up being measured
+    across two of them."""
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     hits: list[JobHit] = []
     seen: set[str] = set()
     for m in _ARTICLE_RE.finditer(html):

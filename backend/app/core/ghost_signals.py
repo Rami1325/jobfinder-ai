@@ -95,7 +95,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 # RAW_MAX is IMPORTED, never restated: `raw` renders inline on a 390px card and
 # the cap is layout-load-bearing, so one number, one place. `_sentence_around`
@@ -154,9 +154,16 @@ def parse_board_date(value: str) -> datetime | None:
     `job_search` imports this module — putting it there and importing it back
     is the circular import, and the delegation direction is what avoids it.
 
-    Timezone is dropped rather than converted: Greenhouse sends
-    `2026-06-02T03:17:15-04:00` while `now` arrives naive from the caller, and
-    day granularity is all any consumer needs. `TypeError`/`AttributeError` are
+    Timezone is CONVERTED TO UTC and then dropped, never merely dropped.
+    Greenhouse sends `2026-06-02T03:17:15-04:00`; discarding the offset reads
+    that as 03:17 UTC when it is 07:17 UTC, so the posting looks four hours
+    younger than it is. Day granularity does not make that safe — it decides
+    which side of a day boundary the age lands on, and boards span the whole
+    offset range, so the error reached a full day between a UTC+13 board and a
+    UTC-11 one. Every consumer of this value compares it against naive UTC
+    (`job_search.utc_now`, and `first_seen_at` as `record_sightings` writes
+    it), so UTC is the only frame in which those subtractions mean anything.
+    `TypeError`/`AttributeError` are
     caught alongside `ValueError` because the value can come straight out of a
     provider's raw JSON payload, where `first_published` may be `null` or a
     number — a per-job problem is a VALUE, never an exception."""
@@ -168,12 +175,22 @@ def parse_board_date(value: str) -> datetime | None:
 
 
 def _naive(dt: datetime) -> datetime:
-    """Drop tzinfo. Subtracting an aware datetime from a naive one raises
-    TypeError, and a row read back from Postgres is not guaranteed to match the
-    caller's clock in awareness — that is a crash in the middle of a search."""
-    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+    """Normalise to naive UTC. Subtracting an aware datetime from a naive one
+    raises TypeError, and a row read back from Postgres is not guaranteed to
+    match the caller's clock in awareness — that is a crash in the middle of a
+    search.
 
+    An AWARE value is converted to UTC first; only then is the tzinfo dropped.
+    Dropping it outright keeps the wall-clock reading of whatever zone the value
+    happened to be in, which is how a board date and our own clock ended up
+    being subtracted from each other in two different frames.
 
+    A NAIVE value is assumed to be UTC already, because every naive datetime
+    reaching this module is one of ours: `record_sightings` is called with an
+    aware UTC clock and the DateTime columns read it back naive. (Spelling that
+    call out here would trip this module's own no-clock pin, which greps the
+    source — the promise reading as the violation.)"""
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo is not None else dt
 # --------------------------------------------------------------------------- #
 # Phrase tables → patterns
 # --------------------------------------------------------------------------- #
