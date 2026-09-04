@@ -42,12 +42,14 @@ def _resume_text(resume: ResumeModel) -> str:
     had rank 0 and the keyword floor was structurally unable to notice the
     tailor deleting it.
 
-    `ats_scan._resume_text` is a DELIBERATE second corpus, not a duplicate to be
-    merged: it joins skills with ", " and parts with " \\n", filters empties and
-    preserves case, because it feeds prose checks (`_has_term`, the one-page
-    word count) rather than keyword matching. The two must read the same
+    `resume_review._corpus` is a DELIBERATE second corpus, not a duplicate to
+    be merged: it joins every part with a newline, filters empties and
+    preserves case, because it feeds prose checks (`_has_term`, the acronym
+    pairing) rather than keyword matching. The two must read the same
     SECTIONS and are free to differ in punctuation; a smoke check pins exactly
-    that, so neither can silently drop a section again.
+    that, so neither can silently drop a section again. It inherited that role
+    from `ats_scan._resume_text`, which went with `ats_scan.py` in Phase 28 —
+    the module is gone, the two-corpora rule is not.
 
     The space join between skills is load-bearing and must not become ", ":
     `order_skills`' acceptance gate measures coverage either side of the

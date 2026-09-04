@@ -7,7 +7,6 @@ import type {
   AlertSettings,
   ApplicationDetail,
   ApplicationOut,
-  ATSScanResult,
   CompanyBriefResult,
   ChatTurn,
   CoverageResult,
@@ -38,7 +37,6 @@ import type {
   OutreachResult,
   PageCountResult,
   RecruiterScreenResult,
-  ResumeHealthResult,
   ResumeModel,
   ResumeUploadResponse,
   ResumeVersion,
@@ -462,15 +460,6 @@ export async function freeScan(file: File, jdText: string): Promise<FreeScanResu
   return data;
 }
 
-/** Deterministic format/content scan, plus keyword coverage when an ANALYSED
- * JD is supplied. It takes `jd`, never `jd_text`: the route is uncapped, so a
- * route that accepted job-ad text would have to reach the model to use it.
- * Analyse the posting once with `analyzeJD` (capped) and scan against it. */
-export async function atsScan(resume: ResumeModel, jd?: JDModel | null): Promise<ATSScanResult> {
-  const { data } = await api.post<ATSScanResult>("/tools/ats-scan", { resume, jd: jd ?? null });
-  return data;
-}
-
 /** Render the résumé and read it back with our own parser — deterministic, uncapped. */
 export async function atsXray(
   resume: ResumeModel,
@@ -691,11 +680,6 @@ export async function companyBrief(payload: {
   job_title?: string;
 }): Promise<CompanyBriefResult> {
   const { data } = await api.post<CompanyBriefResult>("/tools/company-brief", payload);
-  return data;
-}
-
-export async function resumeHealth(resume: ResumeModel): Promise<ResumeHealthResult> {
-  const { data } = await api.post<ResumeHealthResult>("/tools/resume-health", { resume });
   return data;
 }
 

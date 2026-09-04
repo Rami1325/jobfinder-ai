@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowUpRight, Briefcase, Contact, FileText, Mail, MessageSquareText, ScanLine } from "lucide-react";
+import { ArrowUpRight, Briefcase, Contact, FileText, Mail, MessageSquareText, ScanEye } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Reveal from "./Reveal";
 
@@ -7,7 +7,7 @@ const features = [
   { to: "/app", icon: FileText, key: "tailoring" },
   { to: "/interview", icon: MessageSquareText, key: "interview" },
   { to: "/jobs", icon: Briefcase, key: "jobs" },
-  { to: "/tools/ats", icon: ScanLine, key: "ats" },
+  { to: "/tools/xray", icon: ScanEye, key: "xray" },
   { to: "/tools/linkedin", icon: Contact, key: "linkedin" },
   { to: "/tools/follow-up", icon: Mail, key: "followUp" },
 ] as const;

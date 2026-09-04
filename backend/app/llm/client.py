@@ -281,14 +281,19 @@ class StubClient:
                 "and REST APIs — the pipeline work your team does lines up closely with what "
                 "I've been building. Would you be open to a quick chat about the role?",
             }
-        if "RESUME_HEALTH" in head:
+        if "REVIEW_REWRITE" in head:
+            # Echo back the bullets it was given, reworded in a way that cannot
+            # trip the guards `review_rewrites` runs after the call: `before` is
+            # the document's own string verbatim (so it matches a bullet and
+            # yields a path) and `after` introduces no number, tool or claim
+            # that is not already in it. The guarded cases are driven by a
+            # canned client in the suite, not from here — a stub that returned
+            # an invented metric would make every clean run look dropped.
             return {
-                "strengths": ["[stub] Real metrics in the experience bullets"],
-                "improvements": ["[stub] Lead the summary with your seniority and stack"],
                 "rewrites": [
-                    {"before": "Built things.",
-                     "after": "Built internal tooling for the operations team."}
-                ],
+                    {"before": text, "after": f"[stub] {text}"}
+                    for text in self._stub_review_bullets(user)
+                ]
             }
         if "RECRUITER_SCREEN" in head:
             return {
@@ -344,6 +349,24 @@ class StubClient:
             if len(items) >= 2:
                 groups.append({"label": label.strip(), "items": items})
         return groups[:6]
+
+    @staticmethod
+    def _stub_review_bullets(user: str) -> list[str]:
+        """The bullet texts out of a REVIEW_REWRITE user message.
+
+        Read out of the JSON payload rather than regexed off the prose, so a
+        bullet that itself contains `"text":` cannot desync the stub from what
+        the caller actually asked about.
+        """
+        start = user.find("[")
+        end = user.rfind("]")
+        if start == -1 or end <= start:
+            return []
+        try:
+            rows = json.loads(user[start : end + 1])
+        except (ValueError, TypeError):
+            return []
+        return [r["text"] for r in rows if isinstance(r, dict) and r.get("text")]
 
     def _stub_structured_resume(self, raw: str) -> dict[str, Any]:
         groups = self._stub_skill_groups(raw)

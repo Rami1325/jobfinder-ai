@@ -18,10 +18,8 @@ import {
   Loader2,
   ShieldCheck,
   ChevronDown,
-  ScanLine,
   ScanEye,
   Building2,
-  HeartPulse,
   Send,
   Contact,
   Mail,
@@ -78,10 +76,8 @@ const moreNav: NavEntry[] = [
 // Sub-tools listed under the Tools entry — mirrors the cards on ToolsPage
 // (labels come from the "tools" namespace so the two stay in sync).
 const toolsSubNav = [
-  { to: "/tools/ats", key: "ats", icon: ScanLine },
   { to: "/tools/xray", key: "xray", icon: ScanEye },
   { to: "/tools/company-brief", key: "brief", icon: Building2 },
-  { to: "/tools/resume-health", key: "health", icon: HeartPulse },
   { to: "/tools/outreach", key: "outreach", icon: Send },
   { to: "/tools/screening", key: "screening", icon: MessageSquareText },
   { to: "/tools/linkedin", key: "linkedin", icon: Contact },

@@ -572,17 +572,6 @@ export interface FreeScanResult {
 }
 
 // Tools
-export interface ATSIssue {
-  label: string;
-  severity: "good" | "warn" | "bad";
-  detail: string;
-}
-export interface ATSScanResult {
-  score: number;
-  keyword_coverage: number;
-  issues: ATSIssue[];
-  gaps: GapItem[];
-}
 export interface LinkedInResult {
   headline: string;
   about: string;
@@ -633,25 +622,6 @@ export interface CompanyBriefResult {
   outreach_subject: string;
   outreach_message: string;
   grounded: boolean;
-}
-/** One deterministic résumé-health check; the UI translates by `id`. */
-export interface HealthCheck {
-  id: string;
-  severity: "good" | "warn" | "bad";
-  count: number;
-  total: number;
-  examples: string[];
-}
-export interface BulletRewrite {
-  before: string;
-  after: string;
-}
-export interface ResumeHealthResult {
-  score: number;
-  checks: HealthCheck[];
-  strengths: string[];
-  improvements: string[];
-  rewrites: BulletRewrite[];
 }
 
 /** One thing to fix on the résumé, anchored to the block it is about.

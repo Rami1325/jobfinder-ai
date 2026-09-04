@@ -136,9 +136,9 @@
       "title": "Job match",
       "body": "Paste or link multiple roles and rank them by fit against your master resume."
     },
-    "ats": {
-      "title": "ATS scanner",
-      "body": "Check formatting and keyword coverage before a bot ever rejects you."
+    "xray": {
+      "title": "ATS X-ray",
+      "body": "See the exact text a parser pulls out of your rendered CV — and every fact that came back wrong."
     },
     "linkedin": {
       "title": "LinkedIn optimizer",

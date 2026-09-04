@@ -634,19 +634,26 @@ the role/team — or a simple 'would you be open to a quick chat?'). No flattery
 clichés, nothing invented.
 Keep every list to 3-5 concise items. Use empty strings/arrays when the text supports nothing."""
 
-RESUME_HEALTH_SYSTEM = """Task: RESUME_HEALTH.
-You are a blunt but kind résumé reviewer doing a JD-independent quality pass. Judge the \
-writing and the evidence, not the career. Ground EVERYTHING in the résumé as given — \
-never invent employers, titles, numbers, or skills. Return JSON:
-{
-  "strengths": ["2-4 specific things this résumé already does well"],
-  "improvements": ["3-5 concrete, actionable fixes, most impactful first"],
-  "rewrites": [{"before": "a real bullet copied VERBATIM from the résumé",
-                "after": "a stronger rewrite of the SAME facts — no new numbers, tools, or claims"}]
-}
-Pick at most 3 rewrites, choosing the weakest bullets. Rewrites use plain working verbs \
-(built, ran, led, cut, shipped) — no buzzwords (spearheaded, leveraged, streamlined…), \
-and never add a metric the original bullet does not contain."""
+REVIEW_REWRITE_SYSTEM = """Task: REVIEW_REWRITE.
+You rewrite résumé bullets. You are given bullets the deterministic review already \
+judged weak — it found them opening on a duty rather than an action, stating no measured \
+result, or running long. It has ALREADY told the candidate what is wrong with each one, \
+so do not explain, grade, or comment: return the stronger sentence and nothing else.
+Return JSON: {"rewrites": [{"before": "...", "after": "..."}]}
+Rules, each of which is checked deterministically after you answer and will cause your \
+rewrite to be DROPPED if you break it:
+1. "before" must be one of the given bullets copied VERBATIM, character for character. \
+It is what the rewrite is matched back to; a "before" we cannot find is discarded.
+2. "after" may contain NO number, percentage, duration, currency amount or count that \
+is not already in "before". Do not invent a metric to make a bullet look measured — if \
+the bullet states no result, rewrite it to lead with the action and let it stay unmeasured.
+3. "after" may add no tool, employer, title or claim absent from "before".
+4. Plain working verbs — built, ran, led, cut, shipped, migrated, owned. No buzzwords \
+(spearheaded, leveraged, utilized, streamlined, orchestrated, championed, results-driven).
+5. Keep "after" in the SAME LANGUAGE as "before", Hebrew included, and shorter than it \
+wherever the original ran long.
+Rewrite only the bullets given. Return fewer than you were given rather than padding the \
+list with a bullet you cannot improve."""
 
 SEARCH_CONTEXT_SYSTEM = """Task: SEARCH_CONTEXT.
 You derive a job-board search query from a candidate's resume. Pick the single job title \
@@ -851,8 +858,18 @@ def company_brief_user(resume_json: str, company: str, page_text: str, jd_text: 
 
 
 @_bounded
-def resume_health_user(resume_json: str) -> str:
-    return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nProduce the health critique."
+def review_rewrite_user(resume_json: str) -> str:
+    """The bullets the review flagged, as JSON.
+
+    The payload is a strict SUBSET of the candidate's own résumé, so it is bound
+    by the résumé cap and the argument is named `resume_json` to say so — a
+    builder naming it anything outside `_RESUME_ARGS` would be silently
+    unguarded, which is the trap the smoke test pins this decorator against.
+    """
+    return (
+        f"BULLETS TO REWRITE (JSON):\n{resume_json}\n\n"
+        "Return the rewrites, one per bullet you can genuinely improve."
+    )
 
 
 @_bounded

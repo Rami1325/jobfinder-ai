@@ -11,10 +11,6 @@
       "title": "Screening answers",
       "body": "Honest, résumé-grounded answers to application questions like \"Why us?\" or \"Describe a time…\""
     },
-    "ats": {
-      "title": "ATS résumé scanner",
-      "body": "Score formatting + keyword coverage and get concrete fixes before a bot rejects you."
-    },
     "xray": {
       "title": "ATS X-ray",
       "body": "See the exact text a parser pulls out of your rendered CV — and every fact that came back wrong."
@@ -30,10 +26,6 @@
     "brief": {
       "title": "Company brief",
       "body": "What to know before you apply or interview — grounded in the company's own pages, with who to reach and a ready reach-out message."
-    },
-    "health": {
-      "title": "Résumé health-check",
-      "body": "A JD-independent grade of your master résumé: weak openers, missing metrics, buzzwords, length, gaps."
     }
   },
   "outreach": {
@@ -77,17 +69,6 @@
     "draft": "Draft answer",
     "answer": "Answer",
     "copied": "Answer copied"
-  },
-  "ats": {
-    "gateFeature": "the ATS scanner",
-    "subtitle": "Format + keyword checks on your saved résumé. Add a job description for coverage scoring.",
-    "jdTitle": "Optional: target job description",
-    "jdPlaceholder": "Paste a JD to also score keyword coverage (optional)…",
-    "scan": "Scan résumé",
-    "scoreLabel": "ATS score",
-    "coverage": "Keyword coverage vs. JD: <1>{{pct}}%</1>",
-    "missing": "Missing keywords",
-    "error": "Couldn't scan your résumé. Please try again."
   },
   "xray": {
     "gateFeature": "the ATS X-ray",
@@ -199,55 +180,6 @@
     "messageNote": "Short, grounded in your résumé, ends with a question. Review it, personalize it — then send it yourself.",
     "subject": "Subject: {{subject}}",
     "copied": "Copied"
-  },
-  "health": {
-    "gateFeature": "the résumé health-check",
-    "subtitle": "A job-independent grade of your master résumé — writing, evidence, length, gaps. The score is computed by fixed checks, not the AI.",
-    "run": "Check my résumé",
-    "error": "Couldn't check the résumé.",
-    "scoreLabel": "Health score",
-    "scoreNote": "Scored by deterministic checks — the AI writes the advice below, never the number.",
-    "checks": {
-      "weak-openers": {
-        "label": "Bullet openers.",
-        "ok": "Bullets open with real verbs.",
-        "issue": "{{n}} of {{total}} bullets open with a weak phrase (\"responsible for\", \"helped\"):"
-      },
-      "quantified": {
-        "label": "Evidence & metrics.",
-        "ok": "{{n}} of {{total}} bullets carry a number.",
-        "issue": "Only {{n}} of {{total}} bullets carry a number — add real metrics where you have them."
-      },
-      "buzzwords": {
-        "label": "Buzzwords.",
-        "ok": "No AI-tell buzzwords.",
-        "issue": "{{n}} buzzwords recruiters read as filler — swap for plain verbs:"
-      },
-      "long-bullets": {
-        "label": "Bullet length.",
-        "ok": "No bullet runs past 30 words.",
-        "issue": "{{n}} of {{total}} bullets read as paragraphs — split or trim:"
-      },
-      "length": {
-        "label": "One-page length.",
-        "ok": "≈{{n}} words — fits one page.",
-        "issue": "≈{{n}} words — likely over one page. Cut the weakest bullets first."
-      },
-      "gaps": {
-        "label": "Employment gaps.",
-        "ok": "No gaps over 6 months between roles.",
-        "issue": "{{n}} gap(s) over 6 months — fine, but be ready to explain:"
-      },
-      "repeated-verbs": {
-        "label": "Verb variety.",
-        "ok": "Opening verbs vary.",
-        "issue": "The same opener starts 3+ bullets — vary the sentence shapes:"
-      }
-    },
-    "strengths": "What already works",
-    "improvements": "What to fix first",
-    "rewrites": "Example rewrites",
-    "rewriteNote": "Same facts, stronger wording. Apply the ones that sound like you — and check anything it made more specific."
   },
   "followup": {
     "subtitle": "A concise, specific follow-up for any stage — no clichés, no filler.",

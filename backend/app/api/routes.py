@@ -20,11 +20,11 @@ from app.config import get_settings
 from app.core import alerts as alerts_core
 from app.core import auto_submit
 from app.core import nudges as nudges_core
-from app.core.ats_scan import scan_resume
+from app.core.resume_review import review_resume
 from app.core.ats_xray import xray
 from app.core.company_brief import build_company_brief
 from app.core.cover_letter import generate_cover_letter
-from app.core.resume_health import check_resume_health
+from app.core.review_rewrites import write_rewrites
 from app.core.salary import extract_salary
 from app.llm.limits import (
     ContextWindowExceeded,
@@ -95,6 +95,10 @@ from app.db.models import (
     User,
 )
 from app.models import (
+    ReviewRequest,
+    ReviewResult,
+    ReviewRewriteRequest,
+    ReviewRewriteResult,
     AddComeetCompanyRequest,
     AddGreenhouseCompanyRequest,
     AlertCronResult,
@@ -111,10 +115,8 @@ from app.models import (
     ApplicationDetail,
     ApplicationOut,
     ApplicationUpdate,
-    ATSScanRequest,
     ATSXrayRequest,
     ATSXrayResult,
-    ATSScanResult,
     ComeetCompanyList,
     ComeetCompanyOut,
     CompanyBriefRequest,
@@ -174,8 +176,6 @@ from app.models import (
     RecruiterScreenRequest,
     RecruiterScreenResult,
     RenderRequest,
-    ResumeHealthRequest,
-    ResumeHealthResult,
     ResumeModel,
     ResumeUploadResponse,
     ScreeningAnswerResult,
@@ -1089,14 +1089,47 @@ async def public_scan(
 # nobody noticed. Its smoke pin sent `jd_text: ""`, the one value that never
 # enters the branch, under a label asserting the opposite; it is now pinned in
 # both directions with a real JD.
-@router.post("/tools/ats-scan", response_model=ATSScanResult)
-def tools_ats_scan(body: ATSScanRequest) -> ATSScanResult:
+@router.post("/tools/review", response_model=ReviewResult)
+def tools_review(body: ReviewRequest) -> ReviewResult:
+    """Every deterministic review check, against the document as it stands.
+
+    NO `Depends` — this is the successor to `/tools/ats-scan` and it inherits
+    that route's whole cautionary tale. It is uncapped because `resume_review`
+    reaches no model and no network, which is source-pinned off the AST rather
+    than asserted here; and it takes an ANALYSED `jd` or `null`, never job-ad
+    text, because a route that accepted text would have to reach the model to
+    use it, and an uncapped door onto the model is exactly the defect that rule
+    exists to prevent.
+
+    `useReview` re-runs this on a 400 ms debounce as the user types, so it must
+    stay cheap and must never 500: an unmeasurable check reports itself in
+    `skipped` instead.
+    """
     try:
-        return scan_resume(body.resume, body.jd)
+        return review_resume(body.resume, body.jd)
     except _SIZE_ERRORS:
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"Error while scanning résumé: {e}")
+        raise HTTPException(502, f"Error while reviewing résumé: {e}")
+
+
+@router.post("/tools/review/rewrites", response_model=ReviewRewriteResult)
+def tools_review_rewrites(
+    body: ReviewRewriteRequest, _u: User = Depends(llm_user)
+) -> ReviewRewriteResult:
+    """Model rewordings for the rewritable findings — the one part of the
+    review that spends, and therefore the one part that is capped.
+
+    Its sibling above is free and runs on every keystroke; this one costs an AI
+    credit and sits behind a button. Every rewrite is guard-checked after the
+    call and the response says how many were refused.
+    """
+    try:
+        return write_rewrites(body.resume, body.paths)
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while rewriting bullets: {e}")
 
 
 # Deterministic like /tools/ats-scan — it renders and re-parses, never calls the
@@ -1238,18 +1271,6 @@ def tools_company_brief(body: CompanyBriefRequest, _u: User = Depends(llm_user))
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while building the company brief: {e}")
-
-
-@router.post("/tools/resume-health", response_model=ResumeHealthResult)
-def tools_resume_health(body: ResumeHealthRequest, _u: User = Depends(llm_user)) -> ResumeHealthResult:
-    """JD-independent résumé health-check: deterministic writing checks drive
-    the score; the LLM adds critique text (strengths/improvements/rewrites)."""
-    try:
-        return check_resume_health(body.resume)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while checking the résumé: {e}")
 
 
 # --------------------------------------------------------------------------- #

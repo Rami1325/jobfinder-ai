@@ -20,14 +20,12 @@ const InterviewPage = lazy(() => import("./pages/InterviewPage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
 const KitReviewPage = lazy(() => import("./pages/KitReviewPage"));
 const ToolsPage = lazy(() => import("./pages/ToolsPage"));
-const AtsToolPage = lazy(() => import("./pages/tools/AtsToolPage"));
 const XrayToolPage = lazy(() => import("./pages/tools/XrayToolPage"));
 const LinkedInToolPage = lazy(() => import("./pages/tools/LinkedInToolPage"));
 const FollowUpToolPage = lazy(() => import("./pages/tools/FollowUpToolPage"));
 const OutreachToolPage = lazy(() => import("./pages/tools/OutreachToolPage"));
 const ScreeningToolPage = lazy(() => import("./pages/tools/ScreeningToolPage"));
 const CompanyBriefToolPage = lazy(() => import("./pages/tools/CompanyBriefToolPage"));
-const ResumeHealthToolPage = lazy(() => import("./pages/tools/ResumeHealthToolPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 function RouteFallback() {
@@ -59,14 +57,12 @@ export default function App() {
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/kits/:id" element={<KitReviewPage />} />
             <Route path="/tools" element={<ToolsPage />} />
-            <Route path="/tools/ats" element={<AtsToolPage />} />
             <Route path="/tools/xray" element={<XrayToolPage />} />
             <Route path="/tools/linkedin" element={<LinkedInToolPage />} />
             <Route path="/tools/follow-up" element={<FollowUpToolPage />} />
             <Route path="/tools/outreach" element={<OutreachToolPage />} />
             <Route path="/tools/screening" element={<ScreeningToolPage />} />
             <Route path="/tools/company-brief" element={<CompanyBriefToolPage />} />
-            <Route path="/tools/resume-health" element={<ResumeHealthToolPage />} />
             <Route path="/tracker" element={<TrackerPage />} />
             {/* A real page INSIDE the layout group, not a redirect. The rule
                 only pushes redirects out (a <Navigate> under this route paints

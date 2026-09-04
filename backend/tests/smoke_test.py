@@ -55,7 +55,7 @@ from app.config import get_settings  # noqa: E402
 
 get_settings.cache_clear()  # ensure env override is picked up
 
-from app.core.ats_scan import scan_resume  # noqa: E402
+from app.core.resume_review import review_resume  # noqa: E402
 from app.core.cover_letter import generate_cover_letter  # noqa: E402
 from app.core.fabrication_guard import check_fabrication  # noqa: E402
 from app.core.follow_up import write_follow_up  # noqa: E402
@@ -892,68 +892,268 @@ check(
     "JD_FIT" in jd_fit_system("he")[:40].upper(),
 )
 
-# 10. ATS scanner (deterministic checks + optional coverage)
-# It takes an ANALYSED JDModel and never job-ad text: /tools/ats-scan is
-# uncapped because nothing in it reaches the model, and accepting text would
-# force it to (see ATSScanRequest).
-from app.models import JDModel as _AtsJD  # noqa: E402
-
-ats = scan_resume(resume, _AtsJD(hard_skills=["Python", "SQL", "REST APIs"], keywords=["Python", "SQL"]))
-check("ats scan produced issues + score", len(ats.issues) > 0 and 0 <= ats.score <= 100, str(ats.score))
-
-# 10a. The skills-count verdict is TWO-SIDED, and only when there is a job to be
-# two-sided about. The version this replaced returned severity="good" for any
-# count at or above five with no upper bound, so a measured 79-skill tailored CV
-# — against a 66-skill master — was told "79 skills listed: good", while the
-# owner's actual complaint was that the section was overstuffed and the TAILOR
-# prompt thirty lines away asked for 15-25.
+# 10. The résumé review (PLAN 28.6) — one home for every check, each finding
+# anchored to the block it is about. It SUPERSEDES the ATS scanner and the
+# résumé health-check, and every behaviour those two pinned is re-pinned below
+# on `ReviewFinding.id` rather than on an English label substring — a label is
+# copy, and pinning behaviour to copy is why those checks could not be
+# translated without breaking the suite.
 #
-# THE FALSE-POSITIVE PIN IS THE FIRST ONE AND IT IS THE POINT. A master résumé
-# listing 66 skills is an inventory, which is what a master is FOR; warning on it
-# would be a guard firing on legitimate input. So the bound exists only when a JD
-# does, and "make the long list warn" is NOT trivially satisfiable by warning on
-# length.
+# It takes an ANALYSED JDModel and never job-ad text: /tools/review is uncapped
+# because nothing in it reaches the model, and accepting text would force it to
+# (see ReviewRequest).
+from app.core.resume_review import CHECK_IDS as _RV_IDS  # noqa: E402
+from app.core.resume_review import PATH_SHAPES as _RV_SHAPES  # noqa: E402
+from app.core.resume_review import RAW_CAP as _RV_RAW_CAP  # noqa: E402
+from app.core.resume_review import REWRITABLE as _RV_REWRITABLE  # noqa: E402
+from app.core.resume_review import dkey as _rv_dkey  # noqa: E402
+from app.models import JDModel as _AtsJD  # noqa: E402
+from app.models import MilitaryService as _RvMil  # noqa: E402
+from app.models import Project as _RvProj  # noqa: E402
+
+# The page count is measured by the renderer and has its own checks further
+# down; everywhere else it is stubbed, so one reportlab build per fixture does
+# not dominate the suite.
+_rv_pages = lambda _r: 1  # noqa: E731
+
+
+def _rv_boom(_r):
+    """A renderer that fails, to prove `length` degrades to SKIPPED."""
+    raise RuntimeError("reportlab exploded")
+
+
+def _rv_real_pages(r):
+    from app.render.pdf_renderer import page_count as _pc
+
+    return _pc(r)
+
+
+def _rv(r, jd=None, pages=None):
+    return review_resume(r, jd, page_count_fn=pages or _rv_pages)
+
+
+def _rv_ids(r, jd=None, pages=None):
+    return {f.id for f in _rv(r, jd, pages).findings}
+
+
+def _rv_find(r, cid, jd=None, pages=None):
+    return [f for f in _rv(r, jd, pages).findings if f.id == cid]
+
+
+_rv_res = _rv(resume, _AtsJD(hard_skills=["Python", "SQL", "REST APIs"], keywords=["Python", "SQL"]))
+check(
+    "review: the result carries counts and evidence, never a score",
+    not hasattr(_rv_res, "score") and set(type(_rv_res).model_fields) == {"findings", "passed", "skipped"},
+    str(sorted(type(_rv_res).model_fields)),
+)
+
+# THE STRUCTURAL INVARIANT. Every check always runs, so the three lists tile
+# CHECK_IDS exactly and never overlap. A check that quietly stopped being
+# called would otherwise sit in neither list, and an empty panel would mean
+# both "clean" and "we did not look".
+_rv_fixtures: dict[str, ResumeModel] = {}
+
+
+def _rv_tile(name: str, r: ResumeModel, jd=None) -> bool:
+    _rv_fixtures[name] = r
+    res = _rv(r, jd)
+    ids = {f.id for f in res.findings}
+    p, s = set(res.passed), set(res.skipped)
+    return ids | p | s == set(_RV_IDS) and not (ids & p) and not (ids & s) and not (p & s)
+
+
+# A blank page skips every check that needs text; the one clean verdict it earns
+# is the measurement it really made.
+_rv_blank = ResumeModel()
+_rv_soldier = ResumeModel(
+    contact=Contact(name="Noa", email="n@e.com", phone="050", linkedin="in/noa"),
+    headline="Software Engineer",
+    summary="Software engineer out of an intelligence unit, building backend services.",
+    skills=["Python", "SQL", "Linux", "Bash", "Docker", "Git"],
+    experience=[Experience(
+        company="Acme", title="Backend Engineer", start_date="Oct 2019", end_date="Present",
+        bullets=["Cut checkout latency by 38% across 1.2M transactions."],
+    )],
+    military_service=[_RvMil(
+        unit="8200", role="Software Engineer", start_date="Mar 2016", end_date="Aug 2019",
+        bullets=["Responsible for the unit's log pipeline.",
+                 "Cut alert triage time by 60% for a team of 12 analysts."],
+    )],
+)
+check(
+    "review: findings ∪ passed ∪ skipped == CHECK_IDS on every fixture, pairwise "
+    "disjoint — every check always runs, and one that could not is SKIPPED rather "
+    "than reported clean",
+    _rv_tile("blank", _rv_blank)
+    and _rv_tile("soldier", _rv_soldier)
+    and _rv_tile("full", resume)
+    and _rv_tile("full+jd", resume, _AtsJD(hard_skills=["Python"], keywords=["SQL"])),
+)
+check(
+    "review: passed and skipped come back in CHECK_IDS order",
+    all(
+        _rv(r).passed == [i for i in _RV_IDS if i in set(_rv(r).passed)]
+        and _rv(r).skipped == [i for i in _RV_IDS if i in set(_rv(r).skipped)]
+        for r in _rv_fixtures.values()
+    ),
+)
+# An id in CHECK_IDS that no check ever produces would sit in `passed` for ever,
+# reporting a check that does not exist as clean.
+_rv_reached: set[str] = set()
+for _r in _rv_fixtures.values():
+    for _pages in (_rv_pages, _rv_boom, lambda _x: 4):
+        _res = _rv(_r, _AtsJD(hard_skills=["Python"], keywords=["SQL"]), pages=_pages)
+        _rv_reached |= {f.id for f in _res.findings} | set(_res.skipped)
+_rv_reached |= _rv_ids(ResumeModel(skills=["A sentence pretending very hard to be one skill"]))
+check(
+    "review: every id in CHECK_IDS is reached — emitted or skipped by at least one "
+    "fixture, so an id with no call site cannot hide in `passed`",
+    set(_RV_IDS) - _rv_reached == set(),
+    f"never reached: {sorted(set(_RV_IDS) - _rv_reached)}",
+)
+check(
+    "review: every finding is `bad` or `warn` — 'good' is not a finding, it is an id in `passed`",
+    {f.severity for r in _rv_fixtures.values() for f in _rv(r).findings} <= {"bad", "warn"},
+)
+check(
+    "review: a blank page skips every check that needs text, and the only clean "
+    "verdict is the one it really measured",
+    len(_rv(_rv_blank).skipped) >= 15
+    and _rv(_rv_blank).passed == ["length"],
+    f"skipped={len(_rv(_rv_blank).skipped)} passed={_rv(_rv_blank).passed}",
+)
+
+# THE ANCHOR IS THE FEATURE. Every path a finding carries must match a shape the
+# document's own resolver knows, and every index in it must be in range on the
+# résumé it came from — an off-by-one renders identically and scrolls nowhere.
+_rv_shape_re = [
+    __import__("re").compile("^" + __import__("re").escape(s).replace(r"\*", "[^.]+") + "$")
+    for s in _RV_SHAPES
+]
+_rv_bad_shape = [
+    f.path
+    for r in _rv_fixtures.values()
+    for f in _rv(r, _AtsJD(hard_skills=["Python"], keywords=["SQL"])).findings
+    if f.path and not any(rx.match(f.path) for rx in _rv_shape_re)
+]
+check(
+    "review: every emitted path matches a PATH_SHAPES shape — a shape only Python "
+    "knows is a review row that jumps nowhere",
+    _rv_bad_shape == [],
+    f"unmatched: {_rv_bad_shape}",
+)
+
+
+def _rv_in_range(r: ResumeModel, path: str) -> bool:
+    """Resolve an emitted index against the résumé it was emitted from."""
+    import re as _re
+
+    m = _re.match(r"^@(exp|proj|mil|edu)\.(\d+)(?:\.b\.(\d+))?$", path)
+    if not m:
+        return True
+    kind, i, j = m.group(1), int(m.group(2)), m.group(3)
+    rows = {"exp": r.experience, "proj": r.projects, "mil": r.military_service, "edu": r.education}[kind] or []
+    if i >= len(rows):
+        return False
+    return j is None or int(j) < len(getattr(rows[i], "bullets", None) or [])
+
+
+_rv_oob = [
+    (name, f.id, f.path)
+    for name, r in _rv_fixtures.items()
+    for f in _rv(r, _AtsJD(hard_skills=["Python"], keywords=["SQL"])).findings
+    if f.path and not _rv_in_range(r, f.path)
+]
+check(
+    "review: every index in an emitted path is IN RANGE on the résumé it came from "
+    "— an off-by-one anchor renders identically and scrolls nowhere",
+    _rv_oob == [],
+    f"out of range: {_rv_oob}",
+)
+check(
+    "review: a keyed anchor is normalised through dkey — case folded and runs of "
+    "whitespace collapsed, so the value-addressed block still resolves",
+    _rv_dkey("  Apache   Kafka ") == "apache kafka" and _rv_dkey("") == "" and _rv_dkey(None) == "",
+)
+check(
+    "review: `raw` is a capped PREVIEW while the finding's args carry the real measurement",
+    all(
+        len(f.raw) <= _RV_RAW_CAP
+        for r in _rv_fixtures.values()
+        for f in _rv(r).findings
+    )
+    and _rv_find(
+        ResumeModel(experience=[Experience(company="A", title="T", start_date="Mar 2019",
+                                           end_date="Mar 2020", bullets=["word " * 400])]),
+        "bullet-long",
+    )[0].raw.endswith("…"),
+)
+
+# THE DISCHARGED SOLDIER. `resume_health` read `experience` only and returned a
+# hollow report for the single commonest shape of CV in this app's primary
+# market — someone whose only bullets are their military service.
+_rv_mil = _rv_find(_rv_soldier, "weak-opener")
+check(
+    "review: a discharged soldier's MILITARY bullets get bullet-level findings, "
+    "anchored @mil.<i>.b.<j> — resume_health returned a hollow report here",
+    len(_rv_mil) == 1 and _rv_mil[0].path == "@mil.0.b.0",
+    str([f.path for f in _rv_mil]),
+)
+check(
+    "review: a military span COUNTS as occupied — the soldier's gap check runs and "
+    "finds nothing, and drops to `skipped` the moment the military section is removed, "
+    "proving it was the second span",
+    "gap" in _rv(_rv_soldier).passed
+    and "gap" in _rv(_rv_soldier.model_copy(update={"military_service": []})).skipped,
+)
+
+# 10a. The skills verdict is TWO-SIDED, and only when there is a job to be
+# two-sided about. A 66-skill master with NO job attached is an INVENTORY, which
+# is what a master is FOR — warning on it would be a guard firing on legitimate
+# input, and calling it clean would be answering a question nobody asked, so it
+# is SKIPPED. That false-positive half is the point: "make the long list warn"
+# is NOT trivially satisfiable by warning on length.
 _inventory = ResumeModel(
     contact=Contact(name="A", email="a@b.com", phone="050"),
     skills=[f"Skill{i}" for i in range(60)] + ["Python", "SQL"],
 )
 _narrow_jd = _AtsJD(hard_skills=["Python"], keywords=["SQL"])
-_skill_verdict = lambda r, j=None: next(  # noqa: E731
-    i for i in scan_resume(r, j).issues if "skill" in i.label.lower() and "sentence" not in i.label
-)
 check(
-    "ats scan: a 62-skill master with NO job is an inventory, not a defect",
-    _skill_verdict(_inventory).severity == "good",
-    _skill_verdict(_inventory).label,
+    "review: a 62-skill master with NO job produces no skills-unasked finding — it is "
+    "SKIPPED (unanswerable), never passed (clean), and never a warning on an inventory",
+    "skills-unasked" in _rv(_inventory).skipped
+    and "skills-unasked" not in _rv_ids(_inventory),
 )
+_rv_unasked = _rv_find(_inventory, "skills-unasked", _narrow_jd)
 check(
-    "ats scan: the SAME résumé against a job it mostly does not match warns",
-    _skill_verdict(_inventory, _narrow_jd).severity == "warn"
-    and "60" in _skill_verdict(_inventory, _narrow_jd).detail,
-    _skill_verdict(_inventory, _narrow_jd).label,
+    "review: the SAME résumé against a job it mostly does not match warns, with the "
+    "counts and a sample rather than a bare verdict",
+    len(_rv_unasked) == 1
+    and _rv_unasked[0].args["total"] == 62
+    and _rv_unasked[0].args["matched"] < 5
+    and bool(_rv_unasked[0].args["sample"]),
+    str(_rv_unasked[0].args) if _rv_unasked else "no finding",
 )
 _focused = ResumeModel(
     contact=Contact(name="A", email="a@b.com", phone="050"),
     skills=["Python", "SQL", "REST APIs", "PostgreSQL", "Docker"],
 )
 check(
-    "ats scan: a focused list is not punished for being short",
-    _skill_verdict(_focused, _AtsJD(hard_skills=["Python", "SQL", "PostgreSQL"])).severity == "good",
-    _skill_verdict(_focused, _AtsJD(hard_skills=["Python", "SQL", "PostgreSQL"])).label,
+    "review: a focused list the job asks for is not punished for existing",
+    "skills-unasked" not in _rv_ids(_focused, _AtsJD(hard_skills=["Python", "SQL", "PostgreSQL"])),
 )
 check(
-    "ats scan: fewer than five skills still reads as too few, JD or not",
-    _skill_verdict(ResumeModel(skills=["Python", "SQL"]), _narrow_jd).severity == "warn"
-    and _skill_verdict(ResumeModel(skills=["Python", "SQL"])).severity == "warn",
+    "review: the skills FLOOR needs no job — fewer than five reads as too few either way",
+    "skills-few" in _rv_ids(ResumeModel(skills=["Python", "SQL"]), _narrow_jd)
+    and "skills-few" in _rv_ids(ResumeModel(skills=["Python", "SQL"])),
 )
-# The verdict is REPLACED, never appended: `format_health` is good/len(issues),
-# so a JD-only issue would give the same document a different FORMAT health
-# depending on which job it was aimed at — and whether the paper parses has
-# nothing to do with that.
+# Attaching a job changes exactly ONE row. Whether the paper parses has nothing
+# to do with which job it is aimed at, so every other verdict must be identical.
 check(
-    "ats scan: supplying a JD does not change how many issues there are",
-    len(scan_resume(_inventory).issues) == len(scan_resume(_inventory, _narrow_jd).issues),
-    f"{len(scan_resume(_inventory).issues)} vs {len(scan_resume(_inventory, _narrow_jd).issues)}",
+    "review: attaching a job changes exactly one row — everything else it says about "
+    "the document is the same document",
+    (_rv_ids(_inventory, _narrow_jd) ^ _rv_ids(_inventory)) <= {"skills-unasked"},
+    str(_rv_ids(_inventory, _narrow_jd) ^ _rv_ids(_inventory)),
 )
 
 # 10b. Deeper ATS checks (PLAN 17.4) — all deterministic, all explainable, and
@@ -991,10 +1191,6 @@ check(
 )
 
 
-def _ats_labels(r: ResumeModel, severity: str | None = None) -> set[str]:
-    return {i.label for i in scan_resume(r).issues if severity is None or i.severity == severity}
-
-
 _messy = ResumeModel(
     contact=Contact(name="A", email="a@b.com", phone="050"),
     summary="I lead ML work and my focus is CI/CD.",
@@ -1004,17 +1200,16 @@ _messy = ResumeModel(
         bullets=["Did.", "Shipped a thing."],
     )],
 )
-_messy_warn = _ats_labels(_messy)
+_messy_ids = _rv_ids(_messy)
 check(
-    "ats 17.4: unreadable dates, unpaired acronyms, pronouns and stub bullets all surface",
-    "Unreadable employment dates" in _messy_warn
-    and "Pair each acronym with its long form once" in _messy_warn
-    and "Drop the first-person pronouns" in _messy_warn
-    and "Some bullets are the wrong length" in _messy_warn,
-    str(sorted(_messy_warn)),
+    "review (ats successor): unreadable dates, unpaired acronyms, pronouns and stub "
+    "bullets all surface",
+    {"dates-missing", "acronym", "pronoun", "bullet-short"} <= _messy_ids,
+    str(sorted(_messy_ids)),
 )
 _tidy = ResumeModel(
-    contact=Contact(name="A", email="a@b.com", phone="050"),
+    contact=Contact(name="A", email="a@b.com", phone="050", linkedin="in/a"),
+    headline="Backend Engineer",
     summary="Backend engineer building payment services.",
     skills=["Python", "SQL", "FastAPI", "Docker", "Git"],
     experience=[Experience(
@@ -1023,28 +1218,52 @@ _tidy = ResumeModel(
                  "Reduced failed charges by 38% with an idempotent retry pipeline."],
     )],
 )
-_tidy_good = _ats_labels(_tidy, "good")
+# THE FALSE-POSITIVE PIN, and the one that matters most on this whole surface: a
+# panel that always has something in it teaches the user to ignore the panel.
 check(
-    "ats 17.4: a clean résumé passes every new check (no always-on warnings)",
-    {"Dates are in an ATS-readable format", "Acronyms are spelled out",
-     "No first-person pronouns", "Bullet lengths are well judged",
-     "Length suits the experience"} <= _tidy_good,
-    str(sorted(_ats_labels(_tidy) - _tidy_good)),
+    "review: a completely clean résumé produces ZERO findings — no always-on warning, "
+    "which is the failure that teaches a user to ignore the panel",
+    _rv_ids(_tidy) == set(),
+    str(sorted(_rv_ids(_tidy))),
 )
 check(
-    "ats 17.4: 'I' is matched as a word, not inside other words",
-    "Drop the first-person pronouns" not in _ats_labels(
+    "review (ats successor): an unreadable date is `bad` with NO suggestion, a "
+    "readable-but-nonstandard one is `warn` WITH the rewrite, and 'Present' / 'היום' "
+    "are valid end dates that are never flagged",
+    _rv_find(_messy, "dates-missing")[0].severity == "bad"
+    and "suggested" not in _rv_find(_messy, "dates-missing")[0].args
+    and _rv_find(
+        _tidy.model_copy(update={"experience": [
+            _tidy.experience[0].model_copy(update={"start_date": "03/2019"})]}),
+        "dates-format",
+    )[0].args["suggested"] == "Mar 2019"
+    and "dates-format" not in _rv_ids(_tidy)
+    and "dates-format" not in _rv_ids(
+        _tidy.model_copy(update={"experience": [
+            _tidy.experience[0].model_copy(update={"end_date": "היום"})]})
+    ),
+)
+check(
+    "review (ats successor): unpaired acronyms surface with the missing form in "
+    "args.pair, anchored to the FIRST block that writes the one it has",
+    {f.args["pair"] for f in _rv_find(_messy, "acronym")}
+    == {"machine learning (ML)", "continuous integration (CI/CD)"}
+    and {f.path for f in _rv_find(_messy, "acronym")} == {"@summary"},
+    str([(f.args.get("pair"), f.path) for f in _rv_find(_messy, "acronym")]),
+)
+check(
+    "review (ats successor): first-person pronouns surface, and 'I' is matched as a "
+    "WORD — 'Migrated it, improved it, integrated it.' stays green",
+    "pronoun" in _rv_ids(_messy)
+    and "pronoun" not in _rv_ids(
         _tidy.model_copy(update={"summary": "Migrated it, improved it, integrated it."})
     ),
 )
-# 10b-bis (PLAN 07/9). A SKILL WRITTEN AS A SENTENCE. `structure_resume` splits
-# the entries a CV PUNCTUATED as a list (see the normalisation checks in 18e); a
-# sentence carries no separator, so nothing may split it and nothing may shorten
-# it — that would be truncating the user's own document. This is where that case
-# belongs instead: the route is uncapped and this module reaches no model, so it
-# can report what it cannot fix. The false-positive half matters most — the
-# user's own longest real entries run to FOUR words and their CV must stay green,
-# or a warning that always fires teaches them to ignore the panel.
+# A SKILL WRITTEN AS A SENTENCE. `structure_resume` splits the entries a CV
+# PUNCTUATES as a list; a sentence carries no separator, so nothing may split it
+# and nothing may SHORTEN it — that would be truncating the user's own document.
+# The false-positive half matters most: the owner's own longest real entries run
+# to four words and their CV must stay green.
 _sentence_skill_cv = _tidy.model_copy(update={"skills": [
     "Designing and operating distributed backend systems at scale", *_tidy.skills,
 ]})
@@ -1053,17 +1272,254 @@ _real_skill_cv = _tidy.model_copy(update={"skills": [
     "RTL and i18n", "Python",
 ]})
 _sentence_skills_before = list(_sentence_skill_cv.skills)
-_sentence_labels = _ats_labels(_sentence_skill_cv)
+_rv_sentence = _rv_find(_sentence_skill_cv, "skills-sentence")
 check(
-    "ats: a skill written as a sentence is REPORTED and left untouched, while "
-    "four-word entries from a real résumé stay green",
-    "Some skills are written as sentences" in _sentence_labels
-    and "Skills read as terms, not sentences" in _ats_labels(_real_skill_cv, "good")
-    and "Some skills are written as sentences" not in _ats_labels(_real_skill_cv)
-    # The scanner reports; it never rewrites. Pinned because "fix the sentence"
-    # is the tempting next step and it is data loss in the user's own words.
+    "review (ats successor): a skill written as a sentence is REPORTED, anchored to "
+    "that chip, and the résumé is left untouched — while the owner's real four-word "
+    "entries stay green (nothing may shorten the user's own text)",
+    len(_rv_sentence) == 1
+    and _rv_sentence[0].path == "@skills." + _rv_dkey(_sentence_skills_before[0])
+    and "skills-sentence" not in _rv_ids(_real_skill_cv)
+    # It reports; it never rewrites. Pinned because "fix the sentence" is the
+    # tempting next step and it is data loss in the user's own words.
     and _sentence_skill_cv.skills == _sentence_skills_before,
-    str(sorted(_sentence_labels)),
+    str([(f.path, f.raw[:40]) for f in _rv_sentence]),
+)
+
+# THE WEAK-OPENER FAMILY, inherited from resume_health and re-pinned per bullet.
+_weak_resume = ResumeModel(
+    contact=Contact(name="A", email="a@b.com", phone="050"),
+    summary="Results-driven professional.",
+    skills=["Python"],
+    experience=[
+        Experience(
+            company="Acme", title="Dev", start_date="Jan 2015", end_date="2018",
+            bullets=[
+                "Responsible for maintaining the internal reporting system and also handling "
+                "assorted requests from several departments across the organization on a very "
+                "regular recurring basis whenever they came up during the year"
+            ],
+        ),
+        Experience(
+            company="Beta", title="Dev", start_date="March 2020", end_date="Present",
+            bullets=[
+                "Worked on various tasks",
+                "Helped the team with testing",
+                "Helped with deployments",
+                "Helped with code reviews",
+            ],
+        ),
+    ],
+)
+_weak_ids = _rv_ids(_weak_resume)
+check(
+    "review (health successor): weak openers are flagged VERBATIM and per bullet — "
+    "'Responsible for' at @exp.0.b.0, 'Worked on'/'Helped' on the other role — while a "
+    "strong opener carrying the same phrase mid-sentence does not fire",
+    {f.path for f in _rv_find(_weak_resume, "weak-opener")}
+    == {"@exp.0.b.0", "@exp.1.b.0", "@exp.1.b.1", "@exp.1.b.2", "@exp.1.b.3"}
+    and "weak-opener" not in _rv_ids(
+        _tidy.model_copy(update={"experience": [_tidy.experience[0].model_copy(update={
+            "bullets": ["Built the service that helped the team ship weekly."]})]})
+    ),
+    str(sorted(f.path for f in _rv_find(_weak_resume, "weak-opener"))),
+)
+# HEBREW IS NOT A FOLLOW-UP. ו/ש/ה/ב/ל/מ glue onto the following word, so a
+# Latin-style boundary misses `ואחראי על` entirely — the Python twin of
+# check-mirrors 10, in the primary market.
+_he_cv = ResumeModel(
+    contact=Contact(name="נועה", email="n@e.com", phone="050"),
+    summary="מהנדסת תוכנה עם ניסיון בבניית שירותי צד שרת.",
+    skills=["פייתון", "SQL", "Docker", "Git", "Linux"],
+    experience=[Experience(company="אקמי", title="מהנדסת", start_date="Mar 2019", end_date="Present",
+                           bullets=["ואחראי על תחזוקת מערכת הדיווח הפנימית של הצוות."])],
+)
+check(
+    "review (health successor): the Hebrew weak opener is caught THROUGH its glued "
+    "prefix (ואחראי על), and the Hebrew clichés with it — the primary market, which "
+    "voice_audit's own repeated-verb check skips entirely",
+    "weak-opener" in _rv_ids(_he_cv)
+    and "buzzword" in _rv_ids(_he_cv.model_copy(update={"summary": "בעלת יחסי אנוש מעולים וראש גדול."})),
+    str(sorted(_rv_ids(_he_cv))),
+)
+check(
+    "review (health successor): one bullet-length threshold (30), both directions, "
+    "each naming its own bullet",
+    _rv_find(_weak_resume, "bullet-long")[0].path == "@exp.0.b.0"
+    and _rv_find(_weak_resume, "bullet-long")[0].args["words"] > 30
+    and _rv_find(_messy, "bullet-short")[0].args["words"] < 4,
+)
+check(
+    "review (health successor): the gap 2018→2020 is found and anchored on the LATER "
+    "role, naming the one it follows — and a year-only END still reads as December, so "
+    "2020→Jan 2021 is NOT a gap",
+    _rv_find(_weak_resume, "gap")[0].path == "@exp.1"
+    and _rv_find(_weak_resume, "gap")[0].args["after"] == "Dev"
+    and _rv_find(_weak_resume, "gap")[0].args["months"] >= 6
+    and "gap" in _rv(ResumeModel(experience=[
+        Experience(company="A", title="Eng", start_date="Jan 2019", end_date="2020", bullets=["Cut X by 5%."]),
+        Experience(company="B", title="Eng", start_date="January 2021", end_date="Present", bullets=["Cut Y by 5%."]),
+    ])).passed,
+)
+check(
+    "review (health successor): a repeated opening verb is ONE finding anchored on its "
+    "SECOND occurrence with the count — 'helped' ×3, not three rows",
+    len(_rv_find(_weak_resume, "repeated-verb")) == 1
+    and _rv_find(_weak_resume, "repeated-verb")[0].args["verb"] == "helped"
+    and _rv_find(_weak_resume, "repeated-verb")[0].args["count"] == 3
+    and _rv_find(_weak_resume, "repeated-verb")[0].path == "@exp.1.b.2",
+    str([(f.path, f.args) for f in _rv_find(_weak_resume, "repeated-verb")]),
+)
+# A METRIC IS A RESULT, NOT ANY DIGIT. A bare \d scores a version number, a unit
+# number, a tenure and a standard as outcomes, which makes the check useless in
+# exactly the way that teaches a user to ignore it.
+_rv_numbers_cv = _tidy.model_copy(update={"experience": [_tidy.experience[0].model_copy(update={"bullets": [
+    "Migrated the service to Python 3 and Vue 3.",
+    "Served in unit 8200 for 2 years.",
+    "Implemented the ISO 27001 controls.",
+    "Worked there from 2019 to 2023.",
+]})]})
+check(
+    "review: a version, an IDF unit number, a tenure, a standard and a date range are "
+    "NOT measured results (a bare \\d scores every one of them as one) — while the real "
+    "metrics, Hebrew included, still are, so 'flag everything' is not a way to pass",
+    len(_rv_find(_rv_numbers_cv, "no-outcome")) == 4
+    and "no-outcome" not in _rv_ids(_tidy)
+    and "no-outcome" not in _rv_ids(_he_cv.model_copy(update={"experience": [
+        _he_cv.experience[0].model_copy(update={"bullets": ["צמצמתי את זמן הטיפול ב-40% עבור 12 אנליסטים."]})]})),
+    str([f.raw[:34] for f in _rv_find(_rv_numbers_cv, "no-outcome")]),
+)
+_rv_many = _tidy.model_copy(update={"experience": [_tidy.experience[0].model_copy(
+    update={"bullets": [f"Maintained the internal service number {i}." for i in range(9)]})]})
+check(
+    "review: no-outcome fires on the bullets that state nothing and not on the ones "
+    "that do — capped at five, with args.total carrying the true count",
+    len(_rv_find(_rv_many, "no-outcome")) == 5
+    and _rv_find(_rv_many, "no-outcome")[0].args["total"] == 9,
+    str(len(_rv_find(_rv_many, "no-outcome"))),
+)
+check(
+    "review: 'dynamic programming' and 'Dynamics 365' stay green (resume_health's "
+    "substring list flagged both) while a real buzzword AND a Hebrew cliché are caught "
+    "— one finding per distinct phrase, anchored to the block it is in",
+    "buzzword" not in _rv_ids(_tidy.model_copy(update={
+        "summary": "Backend engineer using dynamic programming and Dynamics 365."}))
+    and len(_rv_find(_weak_resume, "buzzword")) == 1
+    and _rv_find(_weak_resume, "buzzword")[0].args["phrase"] == "results-driven"
+    and _rv_find(_weak_resume, "buzzword")[0].path == "@summary",
+    str([(f.args.get("phrase"), f.path) for f in _rv_find(_weak_resume, "buzzword")]),
+)
+# A bullet copy-pasted BETWEEN employers is padding; two PARALLEL bullets inside
+# ONE role — the same work for two customers — are a legitimate thing to write.
+_rv_dupe = _tidy.model_copy(update={"experience": [
+    Experience(company="A", title="Eng", start_date="Jan 2019", end_date="Dec 2020",
+               bullets=["Built and shipped the billing reconciliation pipeline."]),
+    Experience(company="B", title="Eng", start_date="Jan 2021", end_date="Present",
+               bullets=["Built and shipped the billing reconciliation pipeline."]),
+]})
+_rv_parallel = _tidy.model_copy(update={"experience": [
+    Experience(company="A", title="Eng", start_date="Jan 2019", end_date="Present",
+               bullets=["Built the billing reconciliation pipeline for Acme.",
+                        "Built the billing reconciliation pipeline for Beta."]),
+]})
+check(
+    "review: a bullet copy-pasted BETWEEN two employers is flagged on the later one, "
+    "while two PARALLEL bullets inside one role — the same work for two customers — "
+    "are not compared at all",
+    [f.path for f in _rv_find(_rv_dupe, "duplicate-bullet")] == ["@exp.1.b.0"]
+    and "duplicate-bullet" not in _rv_ids(_rv_parallel),
+)
+check(
+    "review: a ROLE with no bullets is flagged and named, while a PROJECT carrying only "
+    "a description is not — its description is what both renderers draw",
+    [f.path for f in _rv_find(
+        _tidy.model_copy(update={"experience": [_tidy.experience[0].model_copy(update={"bullets": []})]}),
+        "entry-empty")] == ["@exp.0"]
+    and "entry-empty" not in _rv_ids(_tidy.model_copy(update={
+        "projects": [_RvProj(name="P", description="A small tool that batches invoices.")]})),
+)
+# THE ACCEPTANCE TEST FOR THIS WHOLE PHASE. "School or University" has printed on
+# every one of the owner's CVs since 2026-08-28: `resumeBlocks.ts` refuses it on a
+# NEW insert and nothing ever warned about the one already stored. Whole-field
+# equality, never a substring — every real university keeps the word in its name.
+check(
+    "review: 'School or University' as the institution is `bad` (case- and "
+    "space-insensitive, Hebrew included) while every REAL university keeps the word "
+    "'University' in its name and stays green — whole-field equality, never a substring",
+    _rv_find(_tidy.model_copy(update={"education": [
+        Education(institution="School or University", degree="BSc")]}), "edu-placeholder")[0].severity == "bad"
+    and "edu-placeholder" in _rv_ids(_tidy.model_copy(update={"education": [
+        Education(institution="  school   OR   university ", degree="BSc")]}))
+    and "edu-placeholder" in _rv_ids(_tidy.model_copy(update={"education": [
+        Education(institution="בית ספר או אוניברסיטה", degree="BSc")]}))
+    and "edu-placeholder" not in _rv_ids(_tidy.model_copy(update={"education": [
+        Education(institution="Tel Aviv University", degree="BSc"),
+        Education(institution="The Open University of Israel", degree="MSc")]})),
+)
+check(
+    "review: the same credential printed twice is flagged on the LATER one by token "
+    "SET, so a reordering counts — while two real AWS certificates and a BSc+MSc from "
+    "one university do not",
+    [f.path for f in _rv_find(_tidy.model_copy(update={
+        "certifications": ["AI Engineering Certification", "Certification AI Engineering"]}),
+        "duplicate-entry")] == ["@cert." + _rv_dkey("Certification AI Engineering")]
+    and "duplicate-entry" not in _rv_ids(_tidy.model_copy(update={
+        "certifications": ["AWS Solutions Architect Associate", "AWS Solutions Architect Professional"]}))
+    and "duplicate-entry" not in _rv_ids(_tidy.model_copy(update={"education": [
+        Education(institution="Tel Aviv University", degree="BSc"),
+        Education(institution="Tel Aviv University", degree="MSc")]})),
+)
+check(
+    "review: no experience section is a document-level `bad`, and the three role-level "
+    "checks are SKIPPED rather than reported clean",
+    _rv_find(_rv_blank, "no-experience")[0].severity == "bad"
+    and _rv_find(_rv_blank, "no-experience")[0].path == ""
+    and {"dates-missing", "dates-format", "entry-empty"} <= set(_rv(_rv_blank).skipped),
+)
+check(
+    "review: with no summary, `summary-long` is SKIPPED while `summary-missing` fires "
+    "— the one shared call, and the skip is the half that cannot be inferred",
+    "summary-missing" in _rv_ids(_rv_blank)
+    and "summary-long" in _rv(_rv_blank).skipped
+    and "summary-long" in _rv_ids(_tidy.model_copy(update={"summary": "word " * 90})),
+)
+check(
+    "review: fewer than two dated spans puts `gap` in SKIPPED — one role is not a clean "
+    "gap history, it is no gap history (resume_health reported `good`)",
+    "gap" in _rv(_tidy).skipped and "gap" in _rv(_rv_blank).skipped,
+)
+
+# THE PAGE COUNT IS MEASURED, not guessed from a word count — the same call
+# /tools/page-count makes. An unmeasurable one is SKIPPED, never swallowed as
+# clean and never raised: a free uncapped route may not 500 on a renderer bug.
+_rv_senior = _tidy.model_copy(update={"experience": [_tidy.experience[0].model_copy(
+    update={"start_date": "Jan 2010"})]})
+check(
+    "review: `length` follows the MEASURED page count, not a word count — the same "
+    "bytes are clean at 1 and 2 pages and warn at 3, and the finding quotes the "
+    "measurement it was given",
+    "length" in _rv(_rv_senior, pages=lambda _r: 1).passed
+    and "length" in _rv(_rv_senior, pages=lambda _r: 2).passed
+    and _rv_find(_rv_senior, "length", pages=lambda _r: 3)[0].args["pages"] == 3,
+)
+check(
+    "review: a decade of work earns the third page — 3 is clean for a senior CV and "
+    "warns for a junior one, and args.years is a formatted STRING (a float would fail "
+    "the args contract and 500 an uncapped route)",
+    "length" in _rv_ids(_tidy, pages=lambda _r: 3)
+    and isinstance(_rv_find(_tidy, "length", pages=lambda _r: 3)[0].args["years"], str),
+)
+check(
+    "review: an unmeasurable page count is SKIPPED, not swallowed as clean and not "
+    "raised — a free uncapped route may not 500 on a renderer bug",
+    "length" in _rv(_tidy, pages=_rv_boom).skipped,
+)
+check(
+    "review: with no page_count_fn the default measurement is the renderer's own — it "
+    "runs, agrees with page_count(), and lands in one of the three buckets",
+    (lambda res, p: ("length" in res.passed) or any(
+        f.id == "length" and f.args["pages"] == p for f in res.findings
+    ))(review_resume(_tidy), _rv_real_pages(_tidy)),
 )
 
 # 10c. Section order by profile (PLAN 17.5): education outranks experience for
@@ -1299,85 +1755,214 @@ check(
     str([t.title for t in _brief2.targets]),
 )
 
-# 12f. Résumé health-check (PLAN 11.2): deterministic checks drive the score;
-# the LLM only writes critique text.
-from app.core.resume_health import (  # noqa: E402
-    check_resume_health,
-    deterministic_checks,
-    health_score,
-    parse_month,
-)
+# 12f. Rewrites — the ONE part of the review that spends (PLAN 28.7).
+#
+# Everything in `resume_review` is deterministic, free and uncapped and runs on
+# every keystroke; this runs behind a button, takes Depends(llm_user) and costs
+# an AI credit. The model is not trusted with the result: three guards run after
+# the call, the way check_fabrication runs after a tailor, and what they refuse
+# is COUNTED rather than swallowed.
+import app.core.review_rewrites as _rv_rw  # noqa: E402
 
-_weak_resume = ResumeModel(
-    summary="Results-driven professional.",
-    skills=["Python"],
-    experience=[
-        Experience(
-            company="Acme", title="Dev", start_date="Jan 2015", end_date="2018",
-            bullets=[
-                "Responsible for maintaining the internal reporting system and also handling "
-                "assorted requests from several departments across the organization on a very "
-                "regular recurring basis whenever they came up during the year"
-            ],
-        ),
-        Experience(
-            company="Beta", title="Dev", start_date="March 2020", end_date="Present",
-            bullets=[
-                "Worked on various tasks",
-                "Helped the team with testing",
-                "Helped with deployments",
-                "Helped with code reviews",
-            ],
-        ),
-    ],
-)
-_weak_checks = deterministic_checks(_weak_resume)
-
-
-def _hc(checks, cid):
-    return next((c for c in checks if c.id == cid), None)
-
-
-check("weak openers flagged with verbatim examples", _hc(_weak_checks, "weak-openers").severity == "bad" and len(_hc(_weak_checks, "weak-openers").examples) > 0)
-check("unquantified bullets flagged", _hc(_weak_checks, "quantified").severity == "bad" and _hc(_weak_checks, "quantified").count == 0)
-check("buzzword bloat flagged (results-driven)", _hc(_weak_checks, "buzzwords").count == 1 and "results-driven" in _hc(_weak_checks, "buzzwords").examples)
-check("over-long bullet flagged", _hc(_weak_checks, "long-bullets").count == 1)
-check("employment gap 2018→2020 detected", _hc(_weak_checks, "gaps").severity == "warn" and "Acme" in _hc(_weak_checks, "gaps").examples[0])
-check("repeated opening verb flagged (helped ×3)", "helped" in _hc(_weak_checks, "repeated-verbs").examples)
-
-_strong_resume = ResumeModel(
-    summary="Backend engineer building Python services.",
-    skills=["Python", "SQL"],
-    experience=[
-        Experience(company="Acme", title="Engineer", start_date="Jan 2019", end_date="2020",
-                   bullets=["Cut the nightly batch from 4h to 40min", "Built a REST API serving 2M requests/day"]),
-        Experience(company="Beta", title="Engineer", start_date="January 2021", end_date="Present",
-                   bullets=["Led a team of 3 engineers", "Shipped 12 releases with zero rollbacks"]),
-    ],
-)
-_strong_checks = deterministic_checks(_strong_resume)
 check(
-    "year-only end date reads as December (2020→Jan 2021 is NOT a gap)",
-    _hc(_strong_checks, "gaps").severity == "good",
-    str(_hc(_strong_checks, "gaps").examples),
+    "REVIEW_REWRITE prompt Task tag still first, and stays inside the stub's 40-char "
+    "routing window after with_resume_language appends the Hebrew note",
+    _li_prompts.REVIEW_REWRITE_SYSTEM.startswith("Task: REVIEW_REWRITE.")
+    and "REVIEW_REWRITE" in _li_prompts.with_resume_language(
+        _li_prompts.REVIEW_REWRITE_SYSTEM, "he"
+    )[:40].upper(),
 )
 check(
-    "strong resume outscores weak resume deterministically",
-    health_score(_strong_checks) > health_score(_weak_checks),
-    f"{health_score(_strong_checks)} vs {health_score(_weak_checks)}",
+    "rewrites: exactly the three sentence-shaped findings are rewritable, and every one "
+    "of them is bullet-anchored",
+    _RV_REWRITABLE == frozenset({"no-outcome", "bullet-long", "weak-opener"})
+    and _RV_REWRITABLE <= set(_RV_IDS)
+    and all(
+        f.path and ".b." in f.path
+        for r in _rv_fixtures.values()
+        for f in _rv(r).findings
+        if f.id in _RV_REWRITABLE
+    ),
 )
-check("parse_month start defaults to January", parse_month("2021") % 12 == 0)
-check("parse_month hebrew month + present handled", parse_month("מרץ 2020") % 12 == 2 and parse_month("היום") is not None)
-_health = check_resume_health(_weak_resume)
+
+_RV_RW_CV = ResumeModel(
+    contact=Contact(name="Dana Levi", email="d@e.com", phone="050", linkedin="in/d"),
+    headline="Backend Engineer",
+    summary="Backend engineer building payment services.",
+    skills=["Python", "SQL", "FastAPI", "Docker", "Git"],
+    experience=[Experience(
+        company="Acme", title="Eng", start_date="Mar 2019", end_date="Present",
+        bullets=["Responsible for the nightly batch job.",
+                 "Helped the team migrate to Python 3.",
+                 "Cut checkout latency by 38% across 1.2M transactions."],
+    )],
+)
+_rv_rw_ok = _rv_rw.write_rewrites(_RV_RW_CV)
 check(
-    "resume health result: score + checks + stub critique",
-    _health.score == health_score(_weak_checks)
-    and len(_health.checks) > 0
-    and len(_health.strengths) > 0
-    and len(_health.improvements) > 0
-    and len(_health.rewrites) > 0,
+    "rewrites: the stub branch routes on the Task tag and a clean rewrite SURVIVES — "
+    "path derived from the match, `before` the DOCUMENT's own string, nothing dropped",
+    len(_rv_rw_ok.rewrites) == 2
+    and [x.path for x in _rv_rw_ok.rewrites] == ["@exp.0.b.0", "@exp.0.b.1"]
+    # The third bullet already states a measured result, so it is not offered.
+    and all(x.before != _RV_RW_CV.experience[0].bullets[2] for x in _rv_rw_ok.rewrites)
+    and all(x.before in _RV_RW_CV.experience[0].bullets for x in _rv_rw_ok.rewrites)
+    and _rv_rw_ok.dropped == 0
+    and _rv_rw_ok.dropped_reasons == [],
+    f"{[(x.path, x.after[:24]) for x in _rv_rw_ok.rewrites]} dropped={_rv_rw_ok.dropped_reasons}",
 )
-check("RESUME_HEALTH prompt Task tag still first", _li_prompts.RESUME_HEALTH_SYSTEM.startswith("Task: RESUME_HEALTH."))
+
+
+class _RvCanned:
+    """A client that returns exactly one payload, to drive the guards.
+
+    Patched onto `review_rewrites.get_llm_client`, NEVER onto
+    `app.llm.client.get_llm_client`: that module did `from app.llm.client import
+    get_llm_client`, so the name is already bound and patching the definition
+    is a no-op that reads as a pass. Same trap CLAUDE.md records against
+    `humanizer` and `preserve_keywords`.
+    """
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def complete_json(self, system, user):
+        return self._payload
+
+    def complete_text(self, system, user):
+        return ""
+
+
+_rv_rw_orig = _rv_rw.get_llm_client
+_rv_guard_cases = {
+    "invented number": (
+        {"rewrites": [{"before": "Responsible for the nightly batch job.",
+                       "after": "Ran the nightly batch job for 250 clients."}]},
+        "250",
+    ),
+    "before matches nothing": (
+        {"rewrites": [{"before": "A bullet that is not on this CV.",
+                       "after": "Ran the nightly batch job."}]},
+        "matches no bullet",
+    ),
+    "banned phrase": (
+        {"rewrites": [{"before": "Responsible for the nightly batch job.",
+                       "after": "Spearheaded the nightly batch job."}]},
+        "banned phrase",
+    ),
+}
+_rv_guard_out = {}
+for _name, (_payload, _needle) in _rv_guard_cases.items():
+    _rv_rw.get_llm_client = lambda p=_payload: _RvCanned(p)
+    _rv_guard_out[_name] = _rv_rw.write_rewrites(_RV_RW_CV)
+_rv_rw.get_llm_client = lambda: _RvCanned(
+    {"rewrites": [{"before": "Responsible for the nightly batch job.",
+                   "after": "Ran the nightly batch job end to end."}]}
+)
+_rv_rw_clean = _rv_rw.write_rewrites(_RV_RW_CV)
+_rv_rw.get_llm_client = _rv_rw_orig
+check(
+    "rewrites: each guard DROPS and COUNTS — an invented number, a `before` matching no "
+    "bullet, a banned phrase — while the same code path keeps a clean rewrite, so "
+    "'drop everything' is not a way to pass",
+    all(
+        _rv_guard_out[n].rewrites == []
+        and _rv_guard_out[n].dropped == 1
+        and needle in _rv_guard_out[n].dropped_reasons[0]
+        for n, (_, needle) in _rv_guard_cases.items()
+    )
+    and len(_rv_rw_clean.rewrites) == 1
+    and _rv_rw_clean.dropped == 0,
+    str({n: o.dropped_reasons for n, o in _rv_guard_out.items()}),
+)
+check(
+    "rewrites: nothing to rewrite is an empty result, not an error and not a spend — a "
+    "clean document must not cost an AI credit to discover",
+    _rv_rw.write_rewrites(_tidy).rewrites == []
+    and _rv_rw.write_rewrites(_tidy).dropped == 0,
+)
+
+# THE UNCAPPED ROUTE'S WHOLE JUSTIFICATION. `/tools/review` carries no Depends,
+# so the only thing between it and a free door onto the model is that nothing in
+# `resume_review` can reach one. Read off the AST, not by substring: the module
+# docstring NAMES get_llm_client, urllib and datetime in order to promise it
+# does not use them, and a grep cannot tell a promise from an import.
+import ast as _rv_ast  # noqa: E402
+import inspect as _rv_inspect  # noqa: E402
+
+import app.core.resume_review as _rv_mod  # noqa: E402
+
+_RV_SRC = _rv_inspect.getsource(_rv_mod)
+_RV_TREE = _rv_ast.parse(_RV_SRC)
+_RV_IMPORTED = {
+    (n.module or "") for n in _rv_ast.walk(_RV_TREE) if isinstance(n, _rv_ast.ImportFrom)
+} | {
+    a.name for n in _rv_ast.walk(_RV_TREE) if isinstance(n, _rv_ast.Import) for a in n.names
+}
+check(
+    "review: source-pinned to no LLM and no network — the uncapped route's whole "
+    "justification, read off the AST because the docstring names every one of these "
+    "tokens in order to promise it does not use them",
+    len(_RV_SRC) > 2000
+    and not any(
+        m.split(".")[0] in {"urllib", "requests", "httpx", "socket"}
+        or m.endswith("llm.client")
+        or "get_llm_client" in m
+        for m in _RV_IMPORTED
+    )
+    and "get_llm_client" not in {
+        a.name
+        for n in _rv_ast.walk(_RV_TREE)
+        if isinstance(n, _rv_ast.ImportFrom)
+        for a in n.names
+    },
+    f"{len(_RV_SRC)} chars, imports {sorted(_RV_IMPORTED)}",
+)
+_RV_SCORER_IMPORTS = {
+    a.name
+    for n in _rv_ast.walk(_RV_TREE)
+    if isinstance(n, _rv_ast.ImportFrom) and n.module == "app.core.scorer"
+    for a in n.names
+}
+check(
+    "review: imports EXACTLY the scorer's two matcher helpers — a third name off that "
+    "module is how the model gets a vote on an uncapped route, with every substring pin "
+    "still green",
+    _RV_SCORER_IMPORTS == {"_keyword_present", "_tokens"},
+    str(sorted(_RV_SCORER_IMPORTS)),
+)
+_rv_client_src = _rv_inspect.getsource(__import__("app.llm.client", fromlist=["x"]))
+check(
+    "review: app/llm/client.py has a stub branch for the REWRITE task and none for the "
+    "deterministic review",
+    '"REVIEW_REWRITE" in head' in _rv_client_src
+    and '"RESUME_REVIEW" in head' not in _rv_client_src
+    and '"REVIEW_RESUME" in head' not in _rv_client_src,
+)
+# ONE classifier, one answer. A second reader would classify the same résumé on
+# a different gate and contradict this one about the same document — the
+# geo-restriction correction, which this repo paid for once already.
+_RV_IMPORTERS = []
+_RV_SCANNED = 0
+for _p in __import__("pathlib").Path("app").rglob("*.py"):
+    _RV_SCANNED += 1
+    _txt = _p.read_text(encoding="utf-8")
+    if "resume_review" in _txt and "import" in _txt and _p.name != "resume_review.py":
+        for _n in _rv_ast.walk(_rv_ast.parse(_txt)):
+            if isinstance(_n, _rv_ast.ImportFrom) and (_n.module or "").endswith("resume_review"):
+                _RV_IMPORTERS.append(_p.as_posix().replace("app/", ""))
+                break
+            if isinstance(_n, _rv_ast.Import) and any(
+                a.name.endswith("resume_review") for a in _n.names
+            ):
+                _RV_IMPORTERS.append(_p.as_posix().replace("app/", ""))
+                break
+check(
+    "review: the only importers in the whole app are the route and the rewrite step — a "
+    "second reader would classify the same résumé on a different gate",
+    sorted(_RV_IMPORTERS) == ["api/routes.py", "core/review_rewrites.py"]
+    and _RV_SCANNED > 40,
+    f"{sorted(_RV_IMPORTERS)} over {_RV_SCANNED} modules",
+)
 
 # 13. Job-link fetch helpers (pure, offline): LinkedIn id parsing + login-wall guard
 from app.core.job_match import _linkedin_job_id, _looks_like_login_wall  # noqa: E402
@@ -4580,7 +5165,7 @@ check(
 # Both halves are pinned WITH their false-positive case, because "read the
 # military section" is trivially satisfied by reading everything, and "add a
 # boundary" is trivially satisfied by a symmetric one that deletes Hebrew.
-from app.core import ats_scan as _cov_ats  # noqa: E402
+from app.core import resume_review as _cov_rv  # noqa: E402
 from app.core.scorer import _keyword_present as _cov_kp  # noqa: E402
 from app.core.scorer import _resume_text as _cov_text  # noqa: E402
 from app.core.scorer import _tokens as _cov_tok  # noqa: E402
@@ -4641,12 +5226,12 @@ check(
     f"unaccounted for: {sorted(_cov_new)}",
 )
 
-# `ats_scan._resume_text` is a DELIBERATE second corpus (", " skill join, " \n"
+# `resume_review._corpus` is a DELIBERATE second corpus (", " skill join, " \n"
 # part join, case preserved) because it feeds prose checks — `_has_term`, the
 # one-page word count — not keyword matching. It may differ in punctuation; it
 # may NOT read a different set of sections. Nothing pinned that, which is how
 # the two disagreed about military service for as long as they did.
-_cov_ats_txt = _cov_ats._resume_text(_cov_cv).lower()
+_cov_ats_txt = _cov_rv._corpus(_cov_cv).lower()
 _cov_div = [
     s
     for s in (
@@ -4657,7 +5242,7 @@ _cov_div = [
     if (s in _cov_txt) != (s in _cov_ats_txt)
 ]
 check(
-    "scorer and ats_scan read the SAME sections — two corpora, never two answers "
+    "scorer and resume_review read the SAME sections — two corpora, never two answers "
     "about which parts of the résumé count",
     _cov_div == [],
     f"divergent: {_cov_div}",
@@ -5785,7 +6370,7 @@ _tf = ResumeModel(
                       description="Guides couriers through Jaffa alleyways nightly.")],
     education=[Education(institution="Technion", degree="B.Sc.", field="Computer Science",
                          start_date="2010", end_date="2014")],
-    military_service=[MilitaryService(unit="8200", role="Analyst",
+    military_service=[_RvMil(unit="8200", role="Analyst",
                                       start_date="2006", end_date="2009")],
     certifications=["Certalpha Solutions Architect", "Certbravo Kubernetes Admin",
                     "Certcharlie Terraform Associate"],
@@ -10982,29 +11567,35 @@ with TestClient(_fastapi_app) as _tc:
     # too, since there is no cap to trip — so the SHAPE and the SOURCE are
     # pinned as well. Those are what make a regression impossible to miss.
     _ats_jd = {"hard_skills": ["Python", "SQL"], "keywords": ["Python"]}
-    _ats_ok = _tc.post("/tools/ats-scan", json={"resume": _resume_json, "jd": _ats_jd}, headers=_CAP_H)
+    _rv_ok = _tc.post("/tools/review", json={"resume": _resume_json, "jd": _ats_jd}, headers=_CAP_H)
     check(
-        "deterministic tools are NOT charged (ats-scan scores a REAL jd on an exhausted cap)",
-        _ats_ok.status_code == 200 and _ats_ok.json()["keyword_coverage"] > 0,
-        _ats_ok.text[:120],
+        "deterministic tools are NOT charged (review runs every check on an exhausted cap)",
+        _rv_ok.status_code == 200
+        and set(_rv_ok.json()) == {"findings", "passed", "skipped"}
+        and len(_rv_ok.json()["passed"]) + len(_rv_ok.json()["skipped"])
+        + len({f["id"] for f in _rv_ok.json()["findings"]}) == len(_RV_IDS),
+        _rv_ok.text[:120],
     )
     check(
-        "ats-scan refuses raw job-ad text — an uncapped route may never reach the model",
-        _tc.post("/tools/ats-scan", json={"resume": _resume_json, "jd_text": "we need python"},
+        "review refuses raw job-ad text — an uncapped route may never reach the model",
+        _tc.post("/tools/review", json={"resume": _resume_json, "jd_text": "we need python"},
                  headers=_CAP_H).status_code == 422,
     )
-    import inspect as _inspect_ats  # noqa: E402
-
-    import app.core.ats_scan as _ats_mod  # noqa: E402
-
-    _ats_src = _inspect_ats.getsource(_ats_mod)
     check(
-        "ats_scan's SOURCE reaches no model — the uncapped route's whole justification",
-        # Fail loudly rather than silently passing on an unreadable module.
-        len(_ats_src) > 2000
-        and "analyze_jd" not in _ats_src
-        and "get_llm_client" not in _ats_src,
-        f"{len(_ats_src)} chars scanned",
+        "review accepts a null jd — the master-résumé case, where the JD-gated check is "
+        "SKIPPED rather than passed",
+        (lambda r: r.status_code == 200 and "skills-unasked" in r.json()["skipped"])(
+            _tc.post("/tools/review", json={"resume": _resume_json, "jd": None}, headers=_CAP_H)
+        ),
+    )
+    # Its sibling SPENDS, so it is the one that must 429 on the same exhausted cap.
+    # Pinned beside the free route, because "uncapped" and "capped" are one
+    # decision made twice and a copied decorator is how they drift.
+    check(
+        "review/rewrites IS charged — the one part of the review that reaches the model "
+        "429s on the very cap its free sibling ignores",
+        _tc.post("/tools/review/rewrites", json={"resume": _resume_json, "paths": []},
+                 headers=_CAP_H).status_code == 429,
     )
     check(
         "deterministic tools are NOT charged (ats-xray renders + re-parses, no model)",

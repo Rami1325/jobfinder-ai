@@ -1104,28 +1104,6 @@ class JobFetchResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 # Standalone tools
 # --------------------------------------------------------------------------- #
-class ATSScanRequest(BaseModel):
-    """Deterministic format/content scan, plus optional keyword coverage.
-
-    Takes an ANALYSED `JDModel`, never raw `jd_text` — the same rule, and for
-    the same reason, as `CoverageRequest` below. `/tools/ats-scan` is uncapped
-    because it is deterministic; it accepted job-ad text until Phase 22.10 and
-    ran `analyze_jd` on it, which is an LLM call, which made the uncapped route
-    a free door onto the model for anyone past the shared access-code gate.
-    The caller analyses the posting once on the capped `/jd/analyze` and scans
-    against the result as often as it likes.
-    """
-
-    # `extra="forbid"` is the load-bearing half. Without it a caller still
-    # sending the old `jd_text` gets a silent format-only scan — a coverage
-    # number that quietly became zero is worse than an error, and it is what
-    # would let the old shape linger unnoticed in the extension or a script.
-    model_config = {"extra": "forbid"}
-
-    resume: ResumeModel
-    jd: JDModel | None = None
-
-
 class ATSXrayRequest(BaseModel):
     resume: ResumeModel
     template: str = ""  # "" falls back to the default, like every render call
@@ -1216,19 +1194,6 @@ class PageCountResult(BaseModel):
     max_pages: int = 2
     hard_max_pages: int = 3
     template: str = ""  # the resolved spec id, echoed back
-
-
-class ATSIssue(BaseModel):
-    label: str
-    severity: str = "good"  # good | warn | bad
-    detail: str = ""
-
-
-class ATSScanResult(BaseModel):
-    score: float = 0.0
-    keyword_coverage: float = 0.0
-    issues: list[ATSIssue] = Field(default_factory=list)
-    gaps: list[GapItem] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -1391,30 +1356,136 @@ class CompanyBriefResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Standalone résumé health-check — JD-independent quality grade of the master
-# résumé. Deterministic writing checks (stable ids the UI translates) compute
-# the score; the LLM contributes critique text only, never the number.
+# The résumé review (PLAN 28.6) — one home for every check, each finding
+# anchored to the block it is about.
+#
+# This supersedes ATSScanResult and ResumeHealthResult, and the shape change is
+# the point of it. Those two answered with a SCORE and a list of English
+# sentences: a number the user could optimise instead of a document they could
+# fix, and prose no Hebrew reader could read. A finding here carries a stable
+# `id` (which is the translation key) and a `path` (which is where it IS), so
+# the panel can point at the paper and say it in either language.
 # --------------------------------------------------------------------------- #
-class HealthCheck(BaseModel):
-    id: str  # stable id the UI translates (health.checks.<id>)
-    severity: str = "good"  # good | warn | bad
-    count: int = 0  # numeric payload for the UI copy (meaning varies by id)
-    total: int = 0
-    examples: list[str] = Field(default_factory=list)  # offending snippets, verbatim
+class ReviewFinding(BaseModel):
+    """One thing to fix, anchored to the block it is about.
+
+    `path` is a BLOCK PATH the document resolves through `lib/resumeBlocks.ts`
+    (`@exp.2.b.1`, `@summary`, `@skills.<verbatim text>`, `@edu.0`), or `""`
+    for a document-level finding that belongs to no single block. The grammar
+    is a MIRROR — Python emits it here, TypeScript resolves it, and
+    check-mirrors 26 holds `resume_review.PATH_SHAPES` and `BLOCK_PATTERNS`
+    identical — because a shape only one side knows is a review row that jumps
+    nowhere, silently, on the one surface whose whole promise is that it points.
+
+    `severity` is `bad` (fix) or `warn` (consider). There is deliberately no
+    `good`: a check that ran and found nothing is an id in `ReviewResult.passed`,
+    not a finding, so the panel can never fill with reassurance the user has to
+    read past to reach the three rows that matter.
+
+    `raw` is the offending text VERBATIM and it is a PREVIEW, not the anchor
+    (`path` is) — capped at 240 characters so one pathological bullet cannot
+    push the real findings off the panel.
+
+    `args` interpolates the how-text (`{"suggested": "Mar 2020"}`), which is
+    what lets one translated sentence carry a measurement. Values are `str` or
+    `int` ONLY: a float renders as `3.0999999` in one locale and `3,1` in
+    another, and this route is uncapped, so a serialisation error here is a 500
+    on a free door.
+    """
+
+    id: str  # stable check id; the UI renders doc.review.checks.<id>.{label,how}
+    severity: str = "warn"  # bad (fix) | warn (consider) — "good" is not a finding
+    path: str = ""  # a block path the document can resolve, or "" for document-level
+    raw: str = ""  # the offending text, verbatim, <= REVIEW_RAW_CAP chars
+    args: dict[str, str | int] = Field(default_factory=dict)
 
 
-class BulletRewrite(BaseModel):
-    before: str = ""  # a real bullet, verbatim
-    after: str = ""  # same facts, stronger wording — never new claims
+class ReviewResult(BaseModel):
+    """What the deterministic review found on the document as it stands.
+
+    Three lists, and the third is the whole point. `passed` ran and found
+    nothing; `skipped` COULD NOT run — the gap check needs two dated spans, the
+    JD-gated check needs a job — and unknown is never shown as clean, the same
+    rule the tracker's nullable `voice_score` and the alert bar's
+    `last_above_min` follow. Folding `skipped` into `passed` would have the
+    panel assert a résumé is clean on a check that never looked at it.
+
+    Every check always runs, so `passed ∪ skipped ∪ {f.id for f in findings}`
+    is the entire `CHECK_IDS` set on every call: there are no toggles, and
+    therefore no way for an empty result to mean "you turned that one off".
+
+    It carries NO SCORE on purpose. A number invites the user to optimise it,
+    and these checks are advice about a document, not a measurement of one.
+    """
+
+    findings: list[ReviewFinding] = Field(default_factory=list)
+    passed: list[str] = Field(default_factory=list)  # ran, found nothing
+    skipped: list[str] = Field(default_factory=list)  # COULD NOT run — unknown, never clean
 
 
-class ResumeHealthRequest(BaseModel):
+class ReviewRequest(BaseModel):
+    """Body of `POST /tools/review`.
+
+    Takes an ANALYSED `jd` or `None`, never raw job-ad text — the
+    `/tools/ats-scan` cautionary tale in CLAUDE.md, which is the whole reason
+    this route can be uncapped: a route that accepted job-ad text would have to
+    reach the model to use it, and an uncapped door onto the model is exactly
+    what that rule exists to prevent.
+
+    `extra="forbid"` for the reason the deleted `ATSScanRequest` carried it —
+    that model went with `ats_scan.py`, so the reasoning lives here now: without
+    it a stale caller sending `jd_text` gets a silent JD-less review, and one
+    check quietly lands in `skipped` for ever with nothing saying why.
+    """
+
+    model_config = {"extra": "forbid"}
+
     resume: ResumeModel
+    jd: JDModel | None = None
 
 
-class ResumeHealthResult(BaseModel):
-    score: float = 0.0  # deterministic, derived from the checks
-    checks: list[HealthCheck] = Field(default_factory=list)
-    strengths: list[str] = Field(default_factory=list)  # LLM critique
-    improvements: list[str] = Field(default_factory=list)  # LLM critique
-    rewrites: list[BulletRewrite] = Field(default_factory=list)
+class ReviewRewrite(BaseModel):
+    """One model-suggested rewording of a real bullet.
+
+    `before` is copied VERBATIM out of the résumé, and that exact match is what
+    yields `path` — a rewrite whose `before` matches no bullet is dropped
+    server-side rather than shown, because "Use this" writes through the same
+    block path as every other edit on this surface and a path nothing produced
+    would write into the wrong line.
+    """
+
+    path: str  # the bullet `before` was matched at
+    before: str  # a real bullet, verbatim
+    after: str  # same facts, stronger wording, no new claims
+
+
+class ReviewRewriteResult(BaseModel):
+    """The rewrite batch, plus what the guards refused.
+
+    `dropped` is reported rather than swallowed: a guard that fires silently is
+    the 21.7 failure mode, and "we asked for five and are showing you two" is a
+    fact the user can act on. `dropped_reasons` are backend-authored English
+    fragments, so the COUNT is the user-facing part and the reasons are for
+    diagnostics — the treatment `LengthReport.notes` already gets.
+
+    `rewrites: []` with `dropped: 0` means the model returned nothing worth
+    offering, which is NOT the same as "every bullet is already strong".
+    """
+
+    rewrites: list[ReviewRewrite] = Field(default_factory=list)
+    dropped: int = 0  # refused by a guard, not by the model
+    dropped_reasons: list[str] = Field(default_factory=list)
+
+
+class ReviewRewriteRequest(BaseModel):
+    """Body of `POST /tools/review/rewrites` — the one part of the review that spends.
+
+    `paths` picks which bullets to ask about; `[]` means "choose the rewritable
+    findings server-side", which is what the panel sends. Capped server-side so
+    a caller cannot turn one AI credit into an arbitrarily long prompt.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    resume: ResumeModel
+    paths: list[str] = Field(default_factory=list)
