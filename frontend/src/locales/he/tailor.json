@@ -331,6 +331,7 @@
       "showInDoc": "הצג בקורות החיים",
       "rewritesCost": "שימוש בקרדיט AI אחד. כל השאר כאן חינם.",
       "close": "סגירה",
+      "nothingRan": "עדיין אין מה לבדוק",
       "checks": {
         "contact-email": {
           "label": "אין כתובת אימייל",

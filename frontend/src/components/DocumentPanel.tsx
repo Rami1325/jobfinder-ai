@@ -217,6 +217,14 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   // mouseleave, so lifting it to TailorPage would re-render the whole
   // document surface on every row the pointer crosses.
   const [hoverPaths, setHoverPaths] = useState<Set<string> | null>(null);
+  // Closing drops the tint with the drawer. Without this, moving the pointer
+  // off a row and onto the close button leaves the highlighted blocks lit with
+  // nothing on screen that explains them — a mark on the document the user
+  // cannot get rid of short of hovering another row.
+  const closeReview = () => {
+    setReviewOpen(false);
+    setHoverPaths(null);
+  };
   /* THE SUGGESTIONS LIVE HERE, not inside ReviewPanel, and the reason is money.
      That panel is rendered conditionally — an inline Card, never a height tween
      (check 11) — so it unmounts the moment the review is closed. With the
@@ -298,7 +306,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
             active: reviewOpen,
             // `undefined` until the first response, never 0 — see `Tool.count`.
             count: review ? badCount(review) : undefined,
-            onClick: () => setReviewOpen((o) => !o),
+            onClick: () => (reviewOpen ? closeReview() : setReviewOpen(true)),
           },
         ]
       : []),
@@ -414,7 +422,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
               type="button"
               aria-label={t("doc.review.close")}
               className="fixed inset-0 top-14 z-[39] bg-black/40 lg:hidden"
-              onClick={() => setReviewOpen(false)}
+              onClick={() => closeReview()}
             />
             <aside
               className="animate-drawer-in fixed top-14 bottom-0 end-0 z-40 flex w-full max-w-[380px] flex-col border-s border-line bg-panel shadow-2xl"
@@ -425,7 +433,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
                 <button
                   type="button"
                   aria-label={t("doc.review.close")}
-                  onClick={() => setReviewOpen(false)}
+                  onClick={() => closeReview()}
                   className="grid h-7 w-7 place-items-center rounded-lg border border-line text-ink-muted"
                 >
                   <X size={14} />

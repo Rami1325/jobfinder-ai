@@ -310,10 +310,19 @@ export default function ReviewPanel({
     <div className={cn("space-y-3", stale && "opacity-60")}>
       {/* THE HEADLINE NUMBER. `now → up to`, with the counts underneath that
           make it checkable — the reader can add the rows up. */}
+      {/* NO PERCENTAGE WHEN NOTHING RAN. On a document where every check is
+          skipped the arithmetic gives 0, and "0%" over a résumé reads as a
+          verdict on it — when what actually happened is that we could not look.
+          Unknown is never clean, and it is never zero either: the panel says
+          what it could not check and shows no number at all. */}
       <div className="space-y-1.5">
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-semibold tabular-nums text-ink">{score.pct}%</span>
-          {rows.length > 0 && (
+          {score.ran === 0 ? (
+            <span className="text-sm text-ink-muted">{t("doc.review.nothingRan")}</span>
+          ) : (
+            <span className="text-2xl font-semibold tabular-nums text-ink">{score.pct}%</span>
+          )}
+          {rows.length > 0 && score.ran > 0 && (
             <>
               <span aria-hidden className="text-ink-faint">
                 →
@@ -326,12 +335,14 @@ export default function ReviewPanel({
         </div>
         {/* A bar, not a ring: it is a share of a whole, and it must not animate
             its own width on every keystroke of the debounce. */}
+        {score.ran > 0 && (
         <div className="h-1 w-full overflow-hidden rounded-full bg-line">
           <div
             className={cn("h-full rounded-full", bad > 0 ? "bg-danger/70" : "bg-mint/70")}
             style={{ inlineSize: `${score.pct}%` }}
           />
         </div>
+        )}
         <p className="text-xs text-ink-muted">
           {t("doc.review.counts", { fix: bad, consider: warn, clean: score.clean })}
         </p>

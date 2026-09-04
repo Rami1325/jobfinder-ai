@@ -316,6 +316,7 @@
       "showInDoc": "Show on the CV",
       "rewritesCost": "Uses one AI credit. Everything else here is free.",
       "close": "Close",
+      "nothingRan": "Nothing could be checked yet",
       "checks": {
         "contact-email": {
           "label": "No email address",
