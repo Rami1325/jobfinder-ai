@@ -424,7 +424,7 @@ def _bullet_blocks(resume: ResumeModel) -> list[tuple[str, str]]:
 def _corpus(resume: ResumeModel) -> str:
     """The prose the document-level checks read. Every printed section, joined
     with newlines — the third reader of the section list, pinned by a sentinel
-    per section so it cannot silently drift from `scorer` and `ats_scan`."""
+    per section so it cannot silently drift from `scorer`'s."""
     parts: list[str] = [resume.headline or "", resume.summary or ""]
     for exp in resume.experience:
         parts += [exp.title or "", exp.company or "", *(exp.bullets or [])]

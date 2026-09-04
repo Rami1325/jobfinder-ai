@@ -5231,7 +5231,7 @@ check(
 # one-page word count — not keyword matching. It may differ in punctuation; it
 # may NOT read a different set of sections. Nothing pinned that, which is how
 # the two disagreed about military service for as long as they did.
-_cov_ats_txt = _cov_rv._corpus(_cov_cv).lower()
+_cov_rv_txt = _cov_rv._corpus(_cov_cv).lower()
 _cov_div = [
     s
     for s in (
@@ -5239,7 +5239,7 @@ _cov_div = [
         "sentineltitle", "sentinelproject", "sentineldegree",
         "sentinelunit", "sentinelmilbullet",
     )
-    if (s in _cov_txt) != (s in _cov_ats_txt)
+    if (s in _cov_txt) != (s in _cov_rv_txt)
 ]
 check(
     "scorer and resume_review read the SAME sections — two corpora, never two answers "
