@@ -34,8 +34,21 @@ export interface CheckRow {
   id: string;
   severity: "bad" | "warn";
   paths: string[]; // every block this check flagged, in document order
-  raw: string; // the FIRST offending snippet, as the row's evidence
-  args: Record<string, string | number>;
+  raw: string; // the FIRST offending snippet, as the row's collapsed evidence
+  /** EVERY finding this row stands for, not just the first.
+   *
+   * The row collapses N findings into one line, but five of the how-texts
+   * interpolate a value that belongs to ONE of them — `dates-format` names the
+   * rewrite (`{{suggested}}`), `gap` the month count, `repeated-verb` the verb,
+   * `acronym` the pair. Carrying only the first finding's `args` made the
+   * explanation state a fact about one occurrence as though it covered all of
+   * them: on the owner's own CV the `acronym` row reads "×3" and its how-text
+   * named only `machine learning (ML)`, silently dropping CI/CD.
+   *
+   * So the row keeps them all and the explanation renders the DISTINCT
+   * sentences. Identical ones collapse — five "no measured result" findings
+   * produce one line, not five. */
+  items: { path: string; args: Record<string, string | number> }[];
   count: number;
 }
 
@@ -58,13 +71,14 @@ export function groupChecks(findings: ReviewFinding[]): CheckRow[] {
         severity: f.severity === "bad" ? "bad" : "warn",
         paths: f.path ? [f.path] : [],
         raw: f.raw,
-        args: f.args,
+        items: [{ path: f.path, args: f.args }],
         count: 1,
       });
       continue;
     }
     row.count += 1;
     if (f.path) row.paths.push(f.path);
+    row.items.push({ path: f.path, args: f.args });
     // `bad` outranks `warn` if one check ever emits both, so the row describes
     // the worst thing it found rather than whichever finding happened to land
     // first.
@@ -211,12 +225,26 @@ function Row({
       )}
 
       {/* Opened only on demand — this is the text the owner asked to stop
-          taking up space. It carries the `args`, so the sentence still names
-          the measurement rather than describing the check in general. */}
+          taking up space. ONE LINE PER DISTINCT SENTENCE, not per finding: the
+          how-text carries the finding's own `args`, so a row standing for three
+          unpaired acronyms has three different sentences to give, while five
+          bullets with no measured result all produce the same one and it is
+          said once. */}
       {why && (
-        <p className="mt-1.5 text-xs leading-relaxed text-ink-faint">
-          {t(`doc.review.checks.${row.id}.how`, row.args)}
-        </p>
+        <div className="mt-1.5 space-y-1">
+          {[
+            ...new Map(
+              row.items.map((it) => [
+                t(`doc.review.checks.${row.id}.how`, it.args),
+                it,
+              ]),
+            ).keys(),
+          ].map((line) => (
+            <p key={line} className="text-xs leading-relaxed text-ink-faint">
+              {line}
+            </p>
+          ))}
+        </div>
       )}
     </li>
   );
