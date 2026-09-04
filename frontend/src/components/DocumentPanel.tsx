@@ -488,7 +488,11 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
                   type="button"
                   aria-label={t("doc.review.close")}
                   onClick={() => closeReview()}
-                  className="grid h-7 w-7 place-items-center rounded-lg border border-line text-ink-muted"
+                  // h-8 like the row's own controls. Below `lg` this drawer is modal and
+                  // this X is the primary way out of it, so it may not be the
+                  // smallest target in the panel it dismisses -- measured at
+                  // 28x28 against 32x32 rows in a real 390px pass.
+                  className="grid h-8 w-8 place-items-center rounded-lg border border-line text-ink-muted"
                 >
                   <X size={14} />
                 </button>
