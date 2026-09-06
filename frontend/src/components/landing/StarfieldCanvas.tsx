@@ -103,12 +103,12 @@ export default function StarfieldCanvas({
 
     const measureZone = () => {
       const el = readingRef?.current;
-      // The reading zone is in CANVAS coordinates, so it is measured against
-      // the scene box. The hero rect is cached separately, because pointer
-      // input is normalised against the HERO — a pointer at the hero's bottom
-      // edge is +1, not 0.76 of a box that continues past it.
+      // Both the reading zone and the pointer are in SCENE coordinates: the
+      // canvas fills the scene box, and the parallax has to answer the pointer
+      // anywhere the galaxy is visible — including the third of it that hangs
+      // below the hero.
       const box = scene.getBoundingClientRect();
-      rectRef.current = host.getBoundingClientRect();
+      rectRef.current = box;
       if (!el) return field.setReadingZone(null);
       const r = el.getBoundingClientRect();
       field.setReadingZone({
@@ -151,7 +151,7 @@ export default function StarfieldCanvas({
     // The rect is cached and refreshed here rather than read per pointer
     // event, which would be a forced layout at pointer frequency.
     const onScroll = () => {
-      rectRef.current = host.getBoundingClientRect();
+      rectRef.current = scene.getBoundingClientRect();
     };
     window.addEventListener("scroll", onScroll, { passive: true });
 
@@ -186,7 +186,8 @@ export default function StarfieldCanvas({
   useEffect(() => {
     pausedRef.current = paused;
     const host = containerRef.current;
-    if (!host) return;
+    const scene = sceneRef?.current ?? host;
+    if (!host || !scene) return;
 
     const mqReduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     const mqFine = window.matchMedia("(hover: hover) and (pointer: fine)");
@@ -246,8 +247,13 @@ export default function StarfieldCanvas({
       sync();
     };
 
-    // Frames are scheduled, not merely skipped: an offscreen or hidden hero
+    // Frames are scheduled, not merely skipped: an offscreen or hidden scene
     // does no work at all.
+    //
+    // It observes the SCENE, not the hero. The scene overhangs the hero by 32%,
+    // so watching the hero stopped the loop while up to 288px of galaxy was
+    // still on screen — the arms froze mid-drift exactly where the visitor was
+    // looking at them.
     const io = new IntersectionObserver(
       ([e]) => {
         onscreenRef.current = e.isIntersecting;
@@ -256,7 +262,7 @@ export default function StarfieldCanvas({
       },
       { rootMargin: "120px" },
     );
-    io.observe(host);
+    io.observe(scene);
 
     const onVisibility = () => {
       if (document.hidden) stop();
@@ -264,11 +270,28 @@ export default function StarfieldCanvas({
     };
     document.addEventListener("visibilitychange", onVisibility);
 
-    // Pointer tracking. Stores coordinates only — geometry is read from the
-    // cached rect inside the frame.
+    // POINTER TRACKING IS ON THE WINDOW, AND NORMALISED AGAINST THE SCENE.
+    //
+    // It used to listen on the hero and normalise against the hero, which was
+    // right while the scene and the hero were the same box. Once the scene
+    // started overhanging, the lower third of the galaxy sat inside the NEXT
+    // section — whose content is on top and is not a hero descendant, and the
+    // scene layer itself is `pointer-events: none` and can never be a target.
+    // So moving over the visible lower arms fired `pointerleave` on the hero
+    // and eased the whole thing back to neutral. Measured before the fix: the
+    // same horizontal sweep moved the arms 27.9px inside the hero and 2.9px
+    // over the overhang, i.e. not at all.
+    //
+    // Normalising against the scene also moves the neutral point from the
+    // hero's centre to the scene's, which is about two thirds down the hero —
+    // right about where the nucleus sits. Resting on the bright knot is a
+    // better zero than an arbitrary one.
+    //
+    // Still no layout read per event: the handler stores coordinates against
+    // the cached rect, which scroll and resize refresh.
     const onMove = (e: PointerEvent) => {
       if (e.pointerType !== "mouse" || !animated()) return;
-      const r = rectRef.current ?? host.getBoundingClientRect();
+      const r = rectRef.current ?? scene.getBoundingClientRect();
       if (!r.width || !r.height) return;
       fieldRef.current?.setPointerTarget(
         (2 * (e.clientX - r.left)) / r.width - 1,
@@ -276,10 +299,13 @@ export default function StarfieldCanvas({
       );
       start();
     };
-    const onLeave = () => fieldRef.current?.releasePointer();
+    // The pointer LEAVING is now leaving the window, not leaving the hero.
+    const onLeave = (e: PointerEvent) => {
+      if (e.pointerType === "mouse") fieldRef.current?.releasePointer();
+    };
 
-    host.addEventListener("pointermove", onMove, { passive: true });
-    host.addEventListener("pointerleave", onLeave, { passive: true });
+    window.addEventListener("pointermove", onMove, { passive: true });
+    document.documentElement.addEventListener("pointerleave", onLeave, { passive: true });
 
     reduceRef.current = mqReduce.matches;
     fineRef.current = mqFine.matches;
@@ -292,12 +318,12 @@ export default function StarfieldCanvas({
       stop();
       io.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
-      host.removeEventListener("pointermove", onMove);
-      host.removeEventListener("pointerleave", onLeave);
+      window.removeEventListener("pointermove", onMove);
+      document.documentElement.removeEventListener("pointerleave", onLeave);
       mqReduce.removeEventListener("change", onReduce);
       mqFine.removeEventListener("change", onFine);
     };
-  }, [containerRef, paused, onCapableChange]);
+  }, [containerRef, sceneRef, paused, onCapableChange]);
 
   return (
     <canvas
