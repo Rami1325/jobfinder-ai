@@ -32,7 +32,12 @@ export default function Landing() {
   const { mode, toggle } = useLandingTheme();
 
   return (
-    <div className={`jobfinder-landing min-h-screen ${mode === "light" ? "is-light" : ""}`}>
+    /* `isolate` is not decoration: the hero's star scene sits at `-z-10` so it
+       can pass UNDER the next section's text, and without a stacking context
+       here that negative z escapes to the root element and paints BEHIND this
+       wrapper's own background — the whole sculpture simply disappears, on a
+       green build. Seen, not reasoned about. */
+    <div className={`jobfinder-landing isolate min-h-screen ${mode === "light" ? "is-light" : ""}`}>
       {/* First tab stop on the page. Visible the moment it has focus. */}
       <a
         href="#main"

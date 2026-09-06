@@ -310,6 +310,13 @@ export class Starfield {
   /** CSS pixels. */
   private w = 0;
   private h = 0;
+  /**
+   * The height of the region the COMPOSITION is designed against, which is not
+   * the drawing surface: the scene box overhangs the hero and fades out below
+   * it, so `h` is taller. Everything about where the sculpture sits is measured
+   * against this; the extra height only buys room for the arms.
+   */
+  private heroH = 0;
   private dpr = 1;
   private maxDpr: number;
 
@@ -356,16 +363,19 @@ export class Starfield {
    * from a ResizeObserver — never from a raw resize event, which misses the
    * container changing for a reason other than the window.
    */
-  resize(canvas: HTMLCanvasElement, w: number, h: number) {
+  resize(canvas: HTMLCanvasElement, w: number, h: number, heroH: number = h) {
     this.dpr = Math.min(window.devicePixelRatio || 1, this.maxDpr);
     this.w = w;
     this.h = h;
+    this.heroH = heroH;
     canvas.width = Math.max(1, Math.round(w * this.dpr));
     canvas.height = Math.max(1, Math.round(h * this.dpr));
     this.ox = w * 0.5;
-    // About 70-80% of the hero width at the widest arm, cropped at the sides
-    // and along the bottom edge, which is what gives it scale.
-    this.unit = Math.max(w * 0.42, Math.min(w, h) * 0.55);
+    // About 70-80% of the hero width at the widest arm, cropped at the sides,
+    // which is what gives it scale. Measured against the HERO, not the drawing
+    // surface: sizing off the overhanging box would grow the sculpture every
+    // time the fade region grew.
+    this.unit = Math.max(w * 0.42, Math.min(w, heroH) * 0.55);
     this.place();
   }
 
@@ -385,11 +395,10 @@ export class Starfield {
    * across the text — dimmed, which is the point — but the knot clears it.
    */
   private place() {
-    const fallback = this.h * (this.w < 720 ? 0.86 : 0.82);
+    const hero = this.heroH || this.h;
+    const fallback = hero * (this.w < 720 ? 0.86 : 0.82);
     const z = this.zone;
-    this.oy = z
-      ? clamp(z.cy + z.hh + this.h * 0.035, this.h * 0.6, this.h * 0.95)
-      : fallback;
+    this.oy = z ? clamp(z.cy + z.hh + hero * 0.035, hero * 0.6, hero * 0.95) : fallback;
   }
 
   /** Store the latest pointer position, normalised. No layout reads here. */

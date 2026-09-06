@@ -24,8 +24,19 @@ import { Starfield, type StarfieldMode } from "../../lib/starfield";
  */
 
 export interface StarfieldCanvasProps {
-  /** The hero box. Pointer coordinates are normalised against its rect. */
+  /**
+   * The HERO box. Pointer coordinates are normalised against its rect, and its
+   * height is what the composition is laid out against — which is not the same
+   * as the drawing surface, because the scene deliberately overhangs the hero
+   * and fades out below it.
+   */
   containerRef: RefObject<HTMLElement>;
+  /**
+   * The box the canvas FILLS. Defaults to the hero. When the scene overhangs,
+   * this is the taller element, and the two are kept distinct so the overhang
+   * adds room for the arms without moving the sculpture.
+   */
+  sceneRef?: RefObject<HTMLElement>;
   /** Copy block the sculpture must stay behind. Its bounds dim the particles. */
   readingRef?: RefObject<HTMLElement>;
   /** Visitor's Pause control. */
@@ -49,6 +60,7 @@ function tuningFor(w: number) {
 
 export default function StarfieldCanvas({
   containerRef,
+  sceneRef,
   readingRef,
   paused,
   mode,
@@ -71,7 +83,8 @@ export default function StarfieldCanvas({
   useEffect(() => {
     const canvas = canvasRef.current;
     const host = containerRef.current;
-    if (!canvas || !host) return;
+    const scene = sceneRef?.current ?? host;
+    if (!canvas || !host || !scene) return;
 
     let field: Starfield;
     try {
@@ -90,8 +103,12 @@ export default function StarfieldCanvas({
 
     const measureZone = () => {
       const el = readingRef?.current;
-      const box = host.getBoundingClientRect();
-      rectRef.current = box;
+      // The reading zone is in CANVAS coordinates, so it is measured against
+      // the scene box. The hero rect is cached separately, because pointer
+      // input is normalised against the HERO — a pointer at the hero's bottom
+      // edge is +1, not 0.76 of a box that continues past it.
+      const box = scene.getBoundingClientRect();
+      rectRef.current = host.getBoundingClientRect();
       if (!el) return field.setReadingZone(null);
       const r = el.getBoundingClientRect();
       field.setReadingZone({
@@ -106,8 +123,8 @@ export default function StarfieldCanvas({
     };
 
     const sizeToHost = () => {
-      const box = host.getBoundingClientRect();
-      field.resize(canvas, box.width, box.height);
+      const box = scene.getBoundingClientRect();
+      field.resize(canvas, box.width, box.height, host.getBoundingClientRect().height);
       measureZone();
       field.draw();
     };
@@ -119,6 +136,7 @@ export default function StarfieldCanvas({
     // bar collapsing on a phone. Observe the box, not the window.
     const ro = new ResizeObserver(sizeToHost);
     ro.observe(host);
+    if (scene !== host) ro.observe(scene);
     const readEl = readingRef?.current;
     if (readEl) ro.observe(readEl);
 
@@ -154,7 +172,7 @@ export default function StarfieldCanvas({
       canvas.removeEventListener("contextlost", onLost);
       fieldRef.current = null;
     };
-  }, [containerRef, readingRef, onCapableChange]);
+  }, [containerRef, sceneRef, readingRef, onCapableChange]);
 
   // ---- palette -----------------------------------------------------------
   useEffect(() => {

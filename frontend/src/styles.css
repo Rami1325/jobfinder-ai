@@ -693,15 +693,38 @@ select {
    radial washes, no `filter: blur` anywhere. */
 .lp-space {
   background:
-    radial-gradient(120% 74% at 50% 116%, rgb(30 56 98 / 0.6) 0%, rgb(5 9 13 / 0) 64%),
-    radial-gradient(46% 30% at 50% 83%, rgb(110 152 218 / 0.26) 0%, rgb(5 9 13 / 0) 72%),
-    radial-gradient(100% 60% at 50% 0%, rgb(14 22 34 / 0.9) 0%, rgb(5 9 13 / 0) 55%);
+    radial-gradient(120% 56% at 50% 87.9%, rgb(30 56 98 / 0.6) 0%, rgb(5 9 13 / 0) 64%),
+    radial-gradient(46% 22.7% at 50% 62.9%, rgb(110 152 218 / 0.26) 0%, rgb(5 9 13 / 0) 72%),
+    radial-gradient(100% 45.5% at 50% 0%, rgb(14 22 34 / 0.9) 0%, rgb(5 9 13 / 0) 55%);
 }
 .jobfinder-landing.is-light .lp-space {
   background:
-    radial-gradient(120% 74% at 50% 116%, rgb(180 198 226 / 0.85) 0%, rgb(247 248 250 / 0) 66%),
-    radial-gradient(46% 30% at 50% 83%, rgb(132 166 216 / 0.32) 0%, rgb(247 248 250 / 0) 72%),
-    radial-gradient(100% 52% at 50% 0%, rgb(255 255 255 / 0.85) 0%, rgb(247 248 250 / 0) 60%);
+    radial-gradient(120% 56% at 50% 87.9%, rgb(180 198 226 / 0.85) 0%, rgb(247 248 250 / 0) 66%),
+    radial-gradient(46% 22.7% at 50% 62.9%, rgb(132 166 216 / 0.32) 0%, rgb(247 248 250 / 0) 72%),
+    radial-gradient(100% 39.4% at 50% 0%, rgb(255 255 255 / 0.85) 0%, rgb(247 248 250 / 0) 60%);
+}
+
+/* THE SCENE BOX, and the reason it is not the hero box.
+   Clipped to the section the composition read as a cropped photograph: the
+   lower arms ended on a dead-straight horizontal line and the base wash
+   stopped against the flat ground of the next section. This box runs 32% past
+   the hero and is masked away over the overhang, so the arms thin out into the
+   page instead of being cut.
+
+   THE 32% IS A FIXED RATIO, NOT A CLAMP, and that is load-bearing: every
+   position and size in `.lp-space` above is a PERCENTAGE OF THIS BOX, so a
+   bleed that changed with the viewport would slide the whole wash around. The
+   values there are the hero-relative ones divided by 1.32 — 116% -> 87.9%,
+   83% -> 62.9%, and so on — which is what keeps the composition identical to
+   the version that was designed by looking at it.
+
+   The mask starts its ramp at 72%, just above the hero's bottom edge (1/1.32 =
+   75.8%), so the fade is already under way when the section boundary arrives
+   and there is nothing to see there. `-webkit-` first for Safari. */
+.lp-scene {
+  height: 132%;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 72%, transparent 99%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 72%, transparent 99%);
 }
 
 /* The faint, STATIC echo of the hero formation behind the closing section.

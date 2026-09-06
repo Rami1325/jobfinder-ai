@@ -14,8 +14,10 @@ import type { LandingMode } from "../../hooks/useLandingTheme";
  * no tilt, no magnetism, no parallax on type. The one thing the visitor can
  * read is the one thing that stays still.
  *
- * The section is a stacking context (`isolate`): base wash, canvas, scrim,
- * content, control. The header sits above all of it at `z-50`.
+ * LAYERS. The scene (wash + canvas) sits at `-z-10` and is TALLER than this
+ * section, so it continues past the fold and is masked out rather than cut.
+ * Above it, in order: the scrim, the copy, the Pause control. The header is
+ * `fixed z-50` over everything.
  *
  * The minimum height is viewport-BASED, not fixed: on a short window the
  * padding shrinks and the section is free to grow, so the heading and both
@@ -25,6 +27,7 @@ import type { LandingMode } from "../../hooks/useLandingTheme";
 export default function LandingHero({ mode }: { mode: LandingMode }) {
   const { t } = useTranslation("marketing");
   const heroRef = useRef<HTMLElement>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
   const readingRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
   const [capable, setCapable] = useState(false);
@@ -36,15 +39,31 @@ export default function LandingHero({ mode }: { mode: LandingMode }) {
   return (
     <section
       ref={heroRef}
-      className="lp-space relative isolate flex min-h-[100svh] flex-col justify-center overflow-hidden px-5 pb-28 pt-28 sm:px-8 sm:pt-32 lg:px-14"
+      className="relative flex min-h-[100svh] flex-col justify-center px-5 pb-28 pt-28 sm:px-8 sm:pt-32 lg:px-14"
     >
-      <StarfieldCanvas
-        containerRef={heroRef}
-        readingRef={readingRef}
-        paused={paused}
-        mode={mode}
-        onCapableChange={onCapableChange}
-      />
+      {/* THE SCENE IS TALLER THAN THE HERO AND DISSOLVES INTO THE PAGE.
+          Clipped at the section boundary it read as a cropped photograph: the
+          lower arms were sliced by a dead-straight line and the base wash
+          stopped dead against the flat near-black below it. So the scene box
+          runs 32% past the hero (`.lp-scene`), carries the wash with it, and is
+          masked out over that overhang — the arms simply thin away into the
+          next section's ground.
+
+          It sits at `-z-10` and the landing root is the stacking context that
+          contains it, which is what lets it pass UNDER the following section's
+          text instead of over it. That is also why this section no longer
+          carries `isolate`: a stacking context here would keep the whole hero
+          — overhang included — painting above every later sibling. */}
+      <div ref={sceneRef} aria-hidden className="lp-scene lp-space pointer-events-none absolute inset-x-0 top-0 -z-10">
+        <StarfieldCanvas
+          containerRef={heroRef}
+          sceneRef={sceneRef}
+          readingRef={readingRef}
+          paused={paused}
+          mode={mode}
+          onCapableChange={onCapableChange}
+        />
+      </div>
 
       {/* The restrained scrim. It is a soft ellipse behind the copy, not an
           opaque rectangle over the scene — the particle fade around the
