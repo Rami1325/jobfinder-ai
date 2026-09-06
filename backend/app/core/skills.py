@@ -264,3 +264,87 @@ def dedupe_skills(raw: object) -> object:
         seen.add(key)
         out.append(s)
     return out
+
+
+def regroup_skills(resume: ResumeModel, original: ResumeModel) -> ResumeModel:
+    """Put a tailored CV's shipped skills back under the MASTER's own headings.
+
+    A tailored CV has always been flat: `tailor.py` strips `skill_groups` from
+    the raw TAILOR response, for the measured reason recorded there (the union
+    validator silently undoes the model's curation). That strip stays. This runs
+    at the END of the pipeline instead, over the entries that actually SHIPPED,
+    and re-labels them — so the grouping is the user's own taxonomy applied to a
+    shortlist, never the model's opinion about what a group is.
+
+    IT IS DETERMINISTIC AND IT NEVER TOUCHES THE SET. Every entry in, every entry
+    out: an entry the master files under a label goes under that label, an entry
+    the master does not know goes into the trailing UNLABELLED block, and
+    `skill_blocks` already draws that block for exactly this reason ("nothing may
+    be hidden"). No skill is added, dropped or reworded, so the ceiling, the
+    floor and the fabrication guard all still describe the same document.
+
+    THAT LEFTOVER BLOCK IS WHY THIS SUBSUMES `order_skills`. The entries the
+    master has never heard of are precisely the ones the model minted from the
+    job ad — `orchestration patterns`, `tool use`, `feedback loops` — and they
+    are exactly what `order_skills` exists to push off the front of the list.
+    Here they land last by construction, behind every group of the candidate's
+    own words, so the caller runs one or the other and never both: two passes
+    reordering the same list would leave the changelog describing an order the
+    document does not have.
+
+    A TWO-FIELD WRITE, like every other change to this list. `skills` is rewritten
+    to the group order so the flat surface every scorer reads is in the order the
+    page prints — otherwise `scorer._resume_text` measures a join the reader
+    never sees. It is the exact union of the groups plus the leftovers, so
+    `ResumeModel`'s validator adds nothing on the next construction.
+
+    Returns `resume` ITSELF when there is nothing to do — no master taxonomy, a
+    résumé that already carries groups, or not one shipped entry the master
+    files anywhere — the identity convention `shortlist_skills`,
+    `order_skills` and `preserve_keywords` all share, so the caller can gate on
+    `is` rather than diffing.
+    """
+    if not original.skill_groups or resume.skill_groups:
+        return resume
+    live = [s for s in resume.skills if s and s.strip()]
+    if not live:
+        return resume
+
+    # First label wins, the same rule `skill_blocks` uses when two groups claim
+    # one entry, so the two cannot disagree about where a skill belongs.
+    label_of: dict[str, str] = {}
+    for group in original.skill_groups:
+        label = (group.label or "").strip()
+        if not label:
+            continue
+        for item in group.items:
+            key = (item or "").strip().casefold()
+            if key and key not in label_of:
+                label_of[key] = label
+
+    buckets: dict[str, list[str]] = {}
+    leftover: list[str] = []
+    for entry in live:
+        label = label_of.get(entry.strip().casefold())
+        if label is None:
+            leftover.append(entry)
+        else:
+            buckets.setdefault(label, []).append(entry)
+    if not buckets:
+        return resume
+
+    # The MASTER's group order, not the order the entries happen to arrive in:
+    # the taxonomy is the user's, and its sequence is part of it.
+    ordered: list[SkillGroup] = []
+    seen_labels: set[str] = set()
+    for group in original.skill_groups:
+        label = (group.label or "").strip()
+        if label in seen_labels or label not in buckets:
+            continue
+        seen_labels.add(label)
+        ordered.append(SkillGroup(label=label, items=buckets[label]))
+
+    out = resume.model_copy(deep=True)
+    out.skill_groups = ordered
+    out.skills = [item for group in ordered for item in group.items] + leftover
+    return out

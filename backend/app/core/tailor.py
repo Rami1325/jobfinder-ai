@@ -19,7 +19,7 @@ from app.core.keyword_guard import (
 from app.core.lang import resume_language
 from app.core.length_budget import OVERFLOW_NOTE, fit_to_pages
 from app.core.scorer import keyword_analysis, score_resume
-from app.core.skills import dedupe_skills
+from app.core.skills import dedupe_skills, regroup_skills
 from app.core.skills_shortlist import order_skills, shortlist_skills
 from app.core.voice_audit import audit_voice
 from app.llm.client import get_llm_client
@@ -421,16 +421,49 @@ def tailor_resume(
     # order only when coverage has not fallen and the CV has not grown, and
     # otherwise leave the document exactly as it was. Same acceptance-gate shape
     # as the humanizer's, one stage down.
-    _pre_order = tailored
-    _candidate = order_skills(tailored, resume)
-    if _candidate is not tailored:
+    #
+    # GROUPING RUNS FIRST AND REPLACES IT WHEN IT APPLIES. `regroup_skills` files
+    # the shipped entries under the MASTER's own headings and leaves everything
+    # the master has never heard of — i.e. the wording the model minted from the
+    # ad — in the trailing unlabelled block, which is the same entries at the
+    # same end of the list that `order_skills` exists to put there. Running both
+    # would reorder the list twice and leave one of the two changelog entries
+    # describing an order the document does not have, which is the rule this
+    # file already pays for elsewhere: a changelog may not describe a document
+    # that does not exist.
+    #
+    # Both go through the SAME acceptance gate, for the same measured reasons —
+    # the skills join is what a multi-word JD keyword can match across, and the
+    # section's rendered height moves with its arrangement. A user who asked for
+    # grouped headings is not asking to lose a page or a keyword for them.
+    def _accept(candidate: ResumeModel) -> bool:
+        if candidate is tailored:
+            return False
         _cov_before, _ = keyword_analysis(tailored, jd)
-        _cov_after, _ = keyword_analysis(_candidate, jd)
-        if _cov_after >= _cov_before and page_count(_candidate, template) <= page_count(
+        _cov_after, _ = keyword_analysis(candidate, jd)
+        return _cov_after >= _cov_before and page_count(candidate, template) <= page_count(
             tailored, template
-        ):
+        )
+
+    _pre_order = tailored
+    _regrouped = regroup_skills(tailored, resume)
+    if _accept(_regrouped):
+        tailored = _regrouped
+        changelog.append(
+            ChangeLogEntry(
+                section="skills",
+                change="Grouped your skills under the headings from your master résumé",
+                reason="Same skills, same words — only the arrangement. Your own "
+                "headings go back on, in your own order, and anything the tailoring "
+                "introduced that your master résumé does not list sits after them, "
+                "unlabelled, where you can see it.",
+            )
+        )
+    else:
+        _candidate = order_skills(tailored, resume)
+        if _accept(_candidate):
             tailored = _candidate
-    if tailored is not _pre_order:
+    if tailored is not _pre_order and tailored is not _regrouped:
         # SAY SO, because the MODEL already said the opposite. It writes its own
         # skills changelog entry — "Reordered skills to surface Python,
         # automation tools, AI utilities, validation, logs, traceability … first"

@@ -286,7 +286,14 @@ class _Sheet:
         self.accent = RGBColor.from_string(spec.accent)
         # Inline separators sit between the hairline and the body grey so they
         # read as punctuation, not as content.
-        self.sep = _blend(self.muted, RGBColor.from_string(spec.rule), 0.55)
+        self.sep = (RGBColor.from_string(spec.sep_color) if spec.sep_color
+                    else _blend(self.muted, RGBColor.from_string(spec.rule), 0.55))
+        # Mirrors pdf_renderer._Sheet: the name and the headline may each sit a
+        # shade off the body text without dragging `ink` with them.
+        self.name_ink = (RGBColor.from_string(spec.name_color) if spec.name_color
+                         else self.ink)
+        self.headline_ink = (RGBColor.from_string(spec.headline_color) if spec.headline_color
+                             else self.accent)
         # Reversed-out palette for a filled header band.
         self.band_ink = RGBColor.from_string(spec.band_ink)
         self.band_sub = RGBColor.from_string(spec.band_sub)
@@ -297,16 +304,41 @@ class _Sheet:
         self.tight = spec.tight
         self.column_pt = spec.page_w_pt - 2 * spec.margin_lr_pt
 
-    sec_before = property(lambda self: (8.0 if self.tight else 12.0) * self.squeeze)
-    sec_after = property(lambda self: (2.0 if self.tight else 3.0) * self.squeeze)
-    entry_before = property(lambda self: (4.0 if self.tight else 6.5) * self.squeeze)
-    bullet_after = property(lambda self: (0.0 if self.tight else 1.2) * self.squeeze)
+    # `spec.rhythm`, when a template states one, replaces these — the same
+    # tuple, read at the same indices, as pdf_renderer._Sheet. The two renderers
+    # must not be able to disagree about the page's density.
+    def _rhythm(self, index: int, default: float) -> float:
+        r = self.spec.rhythm
+        return (r[index] if len(r) > index else default) * self.squeeze
+
+    def _fixed(self, index: int, default: float) -> float:
+        """A rhythm element the one-page squeeze does NOT scale."""
+        r = self.spec.rhythm
+        return r[index] if len(r) > index else default
+
+    sec_before = property(lambda self: self._rhythm(0, 8.0 if self.tight else 12.0))
+    sec_after = property(lambda self: self._rhythm(1, 2.0 if self.tight else 3.0))
+    entry_before = property(lambda self: self._rhythm(2, 4.0 if self.tight else 6.5))
+    bullet_after = property(lambda self: self._rhythm(3, 0.0 if self.tight else 1.2))
+    head_rule_gap = property(lambda self: self._fixed(4, 3.0))
+    header_after = property(lambda self: self._fixed(
+        5, 5.0 if self.spec.header == "plain" else 0.0))
 
     @property
     def line_pt(self) -> float | None:
-        """Exact line height, only when the résumé has to be squeezed onto one
-        page. At full size Word's own single spacing is left alone — forcing an
-        exact height there would only make the file taller than the PDF."""
+        """Exact line height.
+
+        A template that STATES a `leading_ratio` states it here too, always: the
+        whole point of the field is that this document's line is 1.167 of its
+        type, and leaving Word on its own single spacing would set the Word file
+        at a density the PDF is not.
+
+        For every other template it is set only when the résumé has to be
+        squeezed onto one page. At full size Word's own single spacing is left
+        alone — forcing an exact height there would only make the file taller
+        than the PDF."""
+        if self.spec.leading_ratio:
+            return self.spec.body_size * self.spec.leading_ratio * self.squeeze
         if self.squeeze >= 1.0:
             return None
         return max(self.spec.body_size * 1.24 * self.squeeze, self.spec.body_size * 1.12)
@@ -321,7 +353,7 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
     if spec.docx_fallback:
         spec = get_template(spec.docx_fallback)
     rtl = resume_language(resume) == "he"
-    labels = labels_for("he" if rtl else "en")
+    labels = labels_for("he" if rtl else "en", spec.label_set)
     # Same one-page-or-two verdict as the PDF, measured once by the PDF layout
     # engine — Word re-breaks the lines itself, but in a narrower face than the
     # bundled one, so a fit that the estimate clears also clears in Word.
@@ -374,15 +406,20 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
         # which the RTL sweep below turns into the right edge for Hebrew.
         return p
 
-    def text(p, value: str, *, size: float, color: RGBColor, bold: bool = False, track: float = 0.0):
+    def text(p, value: str, *, size: float, color: RGBColor, bold: bool = False,
+             italic: bool = False, track: float = 0.0):
         if not value:
             return None
         run = p.add_run(value)
         run.bold = bold
+        run.italic = italic
         run.font.size = Pt(size)
         run.font.color.rgb = color
         _tracking(run, track)
         return run
+
+    # "" keeps each site's own default — see TemplateSpec.meta_sep.
+    _sep = spec.meta_sep or "  ·  "
 
     def joined(p, parts: list[tuple[str, float, RGBColor]], *, sep: str = _SEP,
                sep_color: RGBColor | None = None, bold_first: bool = False) -> None:
@@ -404,7 +441,7 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
     name_p = para(before=spec.margin_tb_pt * 0.62 if band else 0.0,
                   center=head_center, lead=False)
     text(name_p, c.name or "Name", size=spec.name_size,
-         color=s.band_ink if band else s.ink,
+         color=s.band_ink if band else s.name_ink,
          bold=True, track=spec.name_tracking * (0.5 if rtl else 1.0))
     band_paras.append(name_p)
 
@@ -413,21 +450,28 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
         # recruiter reads after the name, and what the ATS matches on. Coloured
         # opposite the name so the two never flatten into one block.
         headline_p = para(before=1.0, after=1.0, center=head_center, lead=False)
-        text(headline_p, resume.headline, size=spec.body_size + (1.2 if band else 0.8),
-             color=s.band_sub if band else s.accent,
-             track=0.3 * (0.5 if rtl else 1.0))
+        text(headline_p, resume.headline,
+             size=spec.headline_size or (spec.body_size + (1.2 if band else 0.8)),
+             color=s.band_sub if band else s.headline_ink,
+             bold=spec.headline_bold,
+             track=spec.headline_tracking * (0.5 if rtl else 1.0))
         band_paras.append(headline_p)
 
-    bits = [b for b in [c.email, c.phone, c.location, c.linkedin, c.website] if b]
+    # Order and separator both come from the spec — see TemplateSpec.contact_order.
+    _contact = {"email": c.email, "phone": c.phone, "location": c.location,
+                "linkedin": c.linkedin, "website": c.website}
+    bits = [_contact[k] for k in
+            (spec.contact_order or ("email", "phone", "location", "linkedin", "website"))
+            if _contact.get(k)]
     contact_p = None
     if bits:
         # Without a rule to separate it, the header needs the air itself.
         contact_p = para(before=1.0,
-                         after=(spec.margin_tb_pt * 0.55 if band
-                                else (0.0 if spec.header != "plain" else 5.0)),
+                         after=(spec.margin_tb_pt * 0.55 if band else s.header_after),
                          center=head_center)
         joined(contact_p, [(b, spec.meta_size, s.band_meta if band else s.muted)
-                           for b in bits], sep_color=s.band_meta if band else None)
+                           for b in bits], sep=spec.meta_sep or _SEP,
+               sep_color=s.band_meta if band else None)
         band_paras.append(contact_p)
     if band:
         for p in band_paras:
@@ -510,8 +554,11 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
                       sz=int(round(spec.heading_rule_pt * 8)))
         elif style in ("rule", "centered"):
             # pdf_renderer draws a rule for exactly ("rule", "short", "centered")
-            # — "plain" and "hung" get none.
-            _hairline(p, spec.head_rule_fill, sz=int(round(spec.heading_rule_pt * 8)))
+            # — "plain" and "hung" get none. `head_rule_gap` is the PDF's own
+            # air between the heading and its hairline, read from the same
+            # rhythm tuple at the same index.
+            _hairline(p, spec.head_rule_fill, space_pt=int(round(s.head_rule_gap)),
+                      sz=int(round(spec.heading_rule_pt * 8)))
 
     def body(value: str, *, before: float = 0.0, after: float = 0.0) -> None:
         p = para(before=before, after=after)
@@ -548,7 +595,30 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
                 rail_border(p)
 
     def entry(primary: str, meta: str, secondary: list[tuple[str, float, RGBColor]],
-              items: list[str], first: bool) -> None:
+              items: list[str], first: bool, *, detail: str = "", bump: float = 1.0) -> None:
+        """Mirrors `pdf_renderer._flow.entry`, argument for argument — see there
+        for what `detail` and `bump` mean and why only "run" reads them."""
+        if spec.entry == "run":
+            # ONE paragraph: the bold identity, the italic circumstance, then
+            # the regular detail. Word breaks it between words exactly as
+            # `_RichText` does, so the two files carry the same sentence.
+            p = para(before=0.0 if first else s.entry_before, after=1.5, keep=bool(items))
+            named = [x for x in secondary if x[0]]
+            bold_bits = [primary] + [x[0] for x in named[:1]]
+            tail_bits = [x[0] for x in named[1:]] + ([meta] if meta else [])
+            text(p, _sep.join(b for b in bold_bits if b),
+                 size=spec.body_size + bump, color=s.ink, bold=True)
+            if tail_bits:
+                text(p, "   " + _sep.join(tail_bits), size=spec.meta_size,
+                     color=s.ink, italic=True)
+            if detail:
+                text(p, _sep + detail, size=spec.body_size, color=s.ink)
+            bullets(items)
+            return
+        if detail:
+            # Where the head cannot absorb it, the detail is the entry's last
+            # bullet — byte for byte what `build_education` used to pass in.
+            items = list(items) + [detail]
         if spec.entry == "stack":
             # Title on its own line, then "Employer · Location · Dates". The
             # split style below leaves the whole middle of the column empty
@@ -561,7 +631,7 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
                 parts.append((meta, spec.meta_size, s.muted))
             if any(x[0] for x in parts):
                 meta_p = para(keep=True)
-                joined(meta_p, parts, sep="  ·  ", bold_first=True)
+                joined(meta_p, parts, sep=_sep, bold_first=True)
                 rail_border(meta_p)
             # The rail runs down the ENTRY, so it follows the bullets too — the
             # PDF passes `rail=s.rail` to a stacked entry's bullets and None to
@@ -579,7 +649,7 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
             p.add_run("\t")
             text(p, meta, size=spec.meta_size, color=s.muted)
         if any(x[0] for x in secondary):
-            joined(para(keep=True), secondary)
+            joined(para(keep=True), secondary, sep=spec.meta_sep or _SEP)
         bullets(items)
 
     # --- content ----------------------------------------------------------
@@ -612,6 +682,16 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
             return
         heading("skills")
         for i, (label, items) in enumerate(blocks):
+            if spec.skills == "labeled":
+                # One paragraph: the label BOLD and inline, then its own
+                # comma-joined items — the same text, the same commas and the
+                # same order as the "inline" run, so a keyword parser splits it
+                # identically. Mirrors `pdf_renderer`'s `labeled`.
+                p = para(before=0.0 if i == 0 else s.bullet_after)
+                if label:
+                    text(p, f"{label}: ", size=spec.meta_size, color=s.ink, bold=True)
+                text(p, ", ".join(items), size=spec.meta_size, color=s.ink)
+                continue
             if label:
                 # The group's label: small, bold, accent, glued to its own
                 # items. Same shape as the PDF — `skill_blocks` is shared
@@ -649,6 +729,19 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
             return
         heading("projects")
         for i, proj in enumerate(resume.projects):
+            if spec.entry == "run":
+                # A "run" head is one line and cannot absorb prose, so the
+                # description is its own paragraph under it — indented and sized
+                # by the spec, exactly as `pdf_renderer` sets it. bump=0.5: a
+                # project name is a step down from a role's title.
+                entry(proj.name, "", [], [], first=(i == 0), bump=0.5)
+                if proj.description:
+                    dp = para(after=s.bullet_after if proj.bullets else 0.0)
+                    dp.paragraph_format.left_indent = Pt(spec.desc_indent_pt)
+                    text(dp, proj.description, size=spec.desc_size or spec.body_size,
+                         color=s.muted)
+                bullets(proj.bullets)
+                continue
             entry(proj.name, "", [(proj.description, spec.body_size, s.muted)],
                   proj.bullets, first=(i == 0))
 
@@ -657,11 +750,14 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
             return
         heading("education")
         for i, edu in enumerate(resume.education):
+            # `detail=` rather than a one-item bullet list — see the PDF's
+            # own `build_education`. bump=0.0: a degree is body weight beside a
+            # role's title.
             entry(
                 ", ".join(b for b in [edu.degree, edu.field] if b) or edu.institution,
                 " – ".join(d for d in [edu.start_date, edu.end_date] if d),
                 [(edu.institution if (edu.degree or edu.field) else "", spec.body_size, s.accent)],
-                [edu.details] if edu.details else [], first=(i == 0),
+                [], first=(i == 0), detail=edu.details, bump=0.0,
             )
 
     def build_military() -> None:
@@ -724,7 +820,8 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
         if spec.skills == "chips":
             chips(pairs)
             return
-        joined(para(), [(p, spec.body_size, s.ink) for p in pairs])
+        joined(para(), [(p, spec.body_size, s.ink) for p in pairs],
+               sep=spec.meta_sep or _SEP)
 
     builders = {
         "summary": build_summary, "skills": build_skills, "experience": build_experience,

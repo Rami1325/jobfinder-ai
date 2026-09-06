@@ -15,7 +15,9 @@ consequence may join them: a heading shape, a bullet glyph, a column count or a
 rule weight changes what the document says, so those are reproduced in both.
 
 Everything here stays ATS-safe: real selectable text, zero tables / text boxes /
-images / headers / footers, standard section names. The DOCX twin of a filled
+images, and no Word header or footer. Section names come from `render/labels.py`
+in one of two sets — see `label_set`, and the ATS note in that file about the
+longer one. The DOCX twin of a filled
 band is paragraph shading, of an accent bar a left paragraph border, of a chip a
 bordered run — none of which an ATS parser has to un-pick. The smoke test renders
 every template in both formats and both languages and re-extracts the text to
@@ -29,12 +31,19 @@ Templates must differ in SHAPE, not just hue. The pre-21 set of five was one
 document in five colours, which is exactly why the downloads read as undesigned;
 a smoke check now asserts the set stays structurally diverse.
 
+`standard` (2026-09-06) is the one entry here that is a REPRODUCTION rather than
+a design: every number in it was measured off a real document the owner applies
+with, and it is the default. It is also the only template that draws a page
+footer, which is the one place the PDF and the DOCX deliberately disagree — read
+the note on `footer_name` before treating that as a bug or as a fourth ornament
+carve-out.
+
 Unknown/empty template names fall back to the default, so old clients that
 never send `template` keep working.
 
-Page size is A4 (the standard everywhere except the US/Canada, and this
-product is Israel-first). It is a per-template field, so a US-letter template
-is a one-line addition.
+Page size is a per-template field. Eleven templates are A4 (the standard
+everywhere except the US/Canada, and this product is Israel-first); `standard`
+is US Letter, because the document it reproduces is.
 """
 from __future__ import annotations
 
@@ -59,7 +68,18 @@ class TemplateSpec:
     accent_soft: str = ""
 
     # --- type -------------------------------------------------------------
-    pdf_family: str = "Lato"  # bundled family the PDF embeds (Latin)
+    # The bundled family the PDF embeds (Latin). "Helvetica" is the one legal
+    # value that names no file: it resolves through `_fonts`' base-14 fallback
+    # to reportlab's built-in Helvetica, whose metrics are Arial's and Liberation
+    # Sans's to the unit. `standard` asks for it deliberately rather than as a
+    # degradation — its source document is set in Liberation Sans, and no
+    # OFL face we could bundle reproduces those letterforms. The cost is that
+    # those glyphs are not EMBEDDED, so the viewer substitutes its own Helvetica
+    # or Arial; every desktop and mobile PDF viewer has one, the text stream is
+    # unchanged either way, and an ATS reads the stream. Bundling Liberation
+    # Sans (also OFL) would embed the identical metrics and is the strict
+    # improvement if the files are ever added.
+    pdf_family: str = "Lato"
     # The Hebrew face. `pdf_family` is NOT used in RTL — a Latin-only file has
     # no Hebrew glyphs — so the Hebrew half of a template is chosen here. It is
     # a separate axis on purpose: pairing a Latin serif with a Hebrew sans is a
@@ -76,11 +96,58 @@ class TemplateSpec:
     heading_size: float = 9.5
     name_size: float = 22.0
     meta_size: float = 9.0
+    # Body line height as a multiple of `body_size`. 0.0 = the tight/normal rule
+    # both renderers already apply (1.26 when `tight`, else 1.36) — a real value
+    # here replaces it. It is its own field rather than a third `tight` step
+    # because leading is what sets a page's density: `standard` reproduces a
+    # 10.5pt line on 9pt type (1.167), which neither existing step reaches, and
+    # over forty body lines the difference is a third of a page.
+    leading_ratio: float = 0.0
+
+    # Which contact details the header line prints, in order. () = the built-in
+    # email, phone, location, linkedin, website. It is a per-template field for
+    # the same reason `label_set` is — `standard` reproduces a document that
+    # leads with the city, and a user who switches template should see that
+    # template's document, not their previous one's habits. A key the contact
+    # has no value for is skipped, exactly as the built-in order skips it, so a
+    # short tuple hides nothing: it only reorders what is already printed.
+    contact_order: tuple[str, ...] = ()
 
     # --- layout -----------------------------------------------------------
     name_centered: bool = True  # False = name sits at the text start (right in RTL)
     name_tracking: float = 1.0  # extra letter-spacing, pt
     heading_tracking: float = 1.0
+    # The name's own colour; "" = `ink`. A template whose name is set a shade
+    # off the body text says so here rather than dragging every body word with
+    # it — `ink` is read by nine other things on the page.
+    name_color: str = ""
+    # The target-title line under the name. `headline_size` of 0.0 keeps the
+    # derived size both renderers already use (body + 1.2 on a band, + 0.8
+    # otherwise); `headline_color` of "" keeps `accent` (or `band_sub` on a
+    # band).
+    headline_bold: bool = False
+    headline_color: str = ""
+    headline_size: float = 0.0
+    # Letter-spacing on the headline, pt (halved in RTL, as every tracked run
+    # here is). 0.3 is what both renderers hard-coded before this was a field,
+    # so the eleven templates that say nothing are unchanged; `standard` sets 0
+    # because its source document tracks nothing at all, and 0.3pt over an
+    # 81-character headline is 24pt of width the original does not spend.
+    headline_tracking: float = 0.3
+
+    # Vertical rhythm, in points: (section-before, section-after, entry-before,
+    # bullet-after, heading-to-its-rule, header-after). () = the constants both
+    # renderers' `_Sheet` already applies, so a template that says nothing is
+    # untouched; a SHORTER tuple states only its leading elements and defaults
+    # the rest. One field rather than six because these are one decision — the
+    # page's density — and a template that states one of them and not the others
+    # is describing a rhythm nobody chose.
+    #
+    # Only the first four are scaled by the one-page `squeeze`. The last two are
+    # not, because neither was before they became tunable and a squeeze that
+    # started nudging the heading rule would be a silent change to eleven
+    # templates that never asked for one.
+    rhythm: tuple[float, ...] = ()
     # `accent_name`, `header_rule` and `heading_rule` used to live here. All
     # three were BOOLEANS standing beside a live enum (`header` / `heading`) that
     # already said the same thing, and that is exactly how the two renderers
@@ -144,6 +211,28 @@ class TemplateSpec:
     heading_short_pt: float = 32.0  # width of the "short" underline
     heading_hang_pt: float = 44.0  # how far "hung" headings sit out
     heading_case: str = "upper"  # "upper" | "title" (a no-op in Hebrew either way)
+
+    # Which set of section names this template prints — see `render/labels.py`.
+    # "short" is the standard one every template used before `standard` existed
+    # ("Summary", "Skills", "Experience"); "full" is the longer business wording
+    # ("Professional Summary", "Core Expertise"). It is a per-template field
+    # because the wording is part of the design, and it lives in `labels.py`
+    # rather than here so the two renderers and the on-screen document cannot
+    # each carry their own copy.
+    label_set: str = "short"
+
+    # The inline separator between the parts of the contact line, an entry's
+    # meta run and the languages line. "" = each site's own default, which is
+    # not one string: the contact and languages lines use " · " and a stacked
+    # entry's meta run uses a wider "  ·  ". A single value here overrides all
+    # three, so a template that wants "  |  " everywhere says it once and the
+    # ten templates that say nothing are untouched.
+    meta_sep: str = ""
+    # The separator's colour; "" = the mix of `muted` and `rule` both renderers
+    # compute, which reads as punctuation rather than content. A template whose
+    # separators are part of the text run (`standard` prints them inside the same
+    # black sentence) names the text colour here instead.
+    sep_color: str = ""
 
     # Header hairline weight/colour, once a template opts out of `header="rule"`.
     header_rule_pt: float = 0.8
@@ -223,11 +312,18 @@ class TemplateSpec:
         return self.layout != "single"
 
     # "skills": how the skills section is set.
-    #   "inline" — comma-joined run of text (the original; it is also exactly
-    #              what keyword parsers split on)
-    #   "chips"  — bordered chips in a wrapping row. A visible separator is
-    #              still drawn between them so the extracted text keeps a real
-    #              delimiter and multi-word skills cannot run together.
+    #   "inline"  — comma-joined run of text (the original; it is also exactly
+    #               what keyword parsers split on). A group's label sits on its
+    #               OWN line above its items.
+    #   "chips"   — bordered chips in a wrapping row. A visible separator is
+    #               still drawn between them so the extracted text keeps a real
+    #               delimiter and multi-word skills cannot run together.
+    #   "labeled" — one wrapping paragraph per group, the label BOLD and INLINE
+    #               ahead of its own comma-joined items ("GenAI & LLMs: OpenAI,
+    #               Anthropic Claude, …"). Same text and the same commas as
+    #               "inline" — only the label's position differs — so a keyword
+    #               parser splits it identically. An ungrouped résumé renders
+    #               exactly what "inline" renders, there being no label to place.
     skills: str = "inline"
 
     # "entry": the title / employer / location / dates hierarchy of one role.
@@ -236,7 +332,43 @@ class TemplateSpec:
     #   "stack" — title on its own line, then one meta line reading
     #             "Employer · Location · Dates". No gutter, tighter, and it is
     #             what every modern builder does.
+    #   "run"   — ONE wrapping line: "Title | Employer" bold, then
+    #             "Location | Dates" in italic, immediately after it. The dates
+    #             are not flush right and not on a second line, so a short title
+    #             costs no vertical space at all and the whole entry head is one
+    #             sentence. It is also the one entry style that can absorb a
+    #             `detail` inline (education's course list), rather than making
+    #             a bullet of a sentence that is not a bullet.
     entry: str = "split"
+
+    # A project's description paragraph. `desc_size` of 0.0 = `body_size`;
+    # `desc_indent_pt` of 0.0 = flush with the column. `standard` sets both,
+    # which is what makes its Projects section read as a tighter block under
+    # each name instead of a second run of body copy.
+    desc_size: float = 0.0
+    desc_indent_pt: float = 0.0
+
+    # --- the page footer (PDF ONLY, and NOT an ornament carve-out) ---------
+    # The candidate's name, centred at the foot of every page: what a two-page
+    # CV needs so page 2 can be identified if the pages are separated.
+    #
+    # IT IS NOT ONE OF THE THREE ORNAMENT CARVE-OUTS ABOVE, and it must not be
+    # read as a fourth. Those pass a test this one fails: an icon, a page tint
+    # and a rail dot carry NO TEXT, so their absence changes nothing the
+    # document SAYS. A footer is a word. So the PDF and the DOCX genuinely
+    # disagree here — the PDF prints the name at the foot of each page and the
+    # Word file does not — and that divergence is a DELIBERATE, USER-MADE
+    # CHOICE (2026-09-06), not a carve-out this file is entitled to grant.
+    #
+    # The alternative was worse: Word can only repeat a line per page through a
+    # real `w:ftr`, which is one of the headers/footers the ATS rules forbid and
+    # which `tests/smoke_test.py` pins ("still no table, text box, image, header
+    # or footer"). Weakening that pin — the check the product's whole ATS claim
+    # rests on — to reproduce a duplicate of the name already at the top of page
+    # 1 is not a trade this file may make on its own.
+    footer_name: bool = False
+    footer_size: float = 7.5
+    footer_color: str = "787878"
 
     # Certifications / languages in N columns. Those sections are a handful of
     # short items and at 1 column they waste the whole right half of the page.
@@ -254,7 +386,7 @@ class TemplateSpec:
         return self.heading_rule_color or (self.accent if self.heading == "short" else self.rule)
 
 
-# Eleven templates, and every one of them differs from the others in SHAPE —
+# Twelve templates, and every one of them differs from the others in SHAPE —
 # header treatment, heading treatment, entry grammar, column count — not just in
 # hue. The previous set of five was one document in five colours, which is
 # precisely why the downloads read as undesigned.
@@ -263,6 +395,59 @@ class TemplateSpec:
 # rows, saved kits and any client that already sends `template=executive` keep
 # working and simply start rendering better.
 TEMPLATES: dict[str, TemplateSpec] = {
+
+    # ------------------------------------------------------------- standard --
+    # THE DEFAULT (2026-09-06). A reproduction, measured element by element, of
+    # the document the owner actually applies with — centred name over a centred
+    # headline and a centred contact line, no header rule, all-caps headings on
+    # a 0.75pt grey hairline, and one dense monochrome column on US Letter.
+    #
+    # It is the only template in the set that is a COPY of a real document
+    # rather than a design of ours, so every number below came off that file
+    # rather than out of a palette: 19/10.5/8.5 in the header, 10pt headings on
+    # #A8A8A8, 9pt body on a 10.5pt line, 8.5pt skills and project prose, a
+    # 7.5pt #787878 footer, 40.3pt side margins on a 612×792 page. The greys are
+    # its greys too — #191919 for the name, #414141 for the headline, #232323
+    # for the headings, black for everything else.
+    #
+    # Three of its properties are load-bearing and easy to undo by tidying:
+    #   * `entry="run"` and `skills="labeled"` exist FOR this template. Both put
+    #     a second run inline on a line the other ten give its own — that run-on
+    #     grammar is most of why the page is this dense.
+    #   * `meta_sep="  |  "` and `sep_color="000000"` are what make those runs
+    #     read as one sentence rather than a metadata line. The pipe is inside
+    #     the same black text run in the source; a grey "·" is a different
+    #     document.
+    #   * `label_set="full"` prints "PROFESSIONAL SUMMARY" / "CORE EXPERTISE" /
+    #     "PROFESSIONAL EXPERIENCE" / "SELECTED PROJECTS". Chosen explicitly by
+    #     the owner over the standard short names, which every other template
+    #     still prints — see `render/labels.py` for the ATS note that goes with
+    #     that choice.
+    "standard": TemplateSpec(
+        id="standard", accent="232323", ink="000000", muted="000000",
+        rule="A8A8A8", accent_soft="F0F0F0",
+        # Base-14 Helvetica: Arial/Liberation Sans metrics, no file — see the
+        # note on `pdf_family`. Word is asked for Arial directly, and for Arial
+        # on the Hebrew side too, because it is one of the few families that has
+        # both Latin and Hebrew glyphs.
+        pdf_family="Helvetica", docx_font="Arial", docx_font_he="Arial",
+        body_size=9.0, heading_size=10.0, name_size=19.0, meta_size=8.5,
+        leading_ratio=1.167,
+        name_centered=True, name_tracking=0.0, heading_tracking=0.0,
+        name_color="191919",
+        headline_bold=True, headline_color="414141", headline_size=10.5,
+        rhythm=(6.3, 5.9, 4.3, 1.7, 0.0, 0.0),
+        header="plain",
+        heading="rule", heading_rule_pt=0.75, heading_rule_color="A8A8A8",
+        label_set="full", meta_sep="  |  ", sep_color="000000",
+        contact_order=("location", "phone", "email", "linkedin", "website"),
+        entry="run", skills="labeled", list_cols=1,
+        bullet_glyph="•", bullet_scale=1.0,
+        desc_size=8.5, desc_indent_pt=8.65,
+        footer_name=True, footer_size=7.5, footer_color="787878",
+        page_w_pt=LETTER_W, page_h_pt=LETTER_H,
+        margin_tb_pt=36.0, margin_lr_pt=40.3,
+    ),
 
     # -------------------------------------------------------------- classic --
     # Tinted header card, full-width heading rules. The safe default: nothing
@@ -465,7 +650,12 @@ TEMPLATES: dict[str, TemplateSpec] = {
 }
 
 
-DEFAULT_TEMPLATE = "classic"
+# `standard` since 2026-09-06, at the owner's request: it reproduces the
+# document they actually apply with, and it is what every tailor, preview,
+# download and page-count measurement uses unless the picker says otherwise. The
+# other eleven are unchanged and still selectable — an id already stored on a
+# tracker row or a saved kit keeps resolving to the template it was rendered in.
+DEFAULT_TEMPLATE = "standard"
 
 
 def get_template(name: str | None) -> TemplateSpec:

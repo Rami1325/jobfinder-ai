@@ -505,6 +505,115 @@ check(
             for c in _capped.changelog),
     str([c.change for c in _capped.changelog if c.section == "skills"]),
 )
+# 4b-iii-b. …AND WHEN THE MASTER HAS A TAXONOMY, THE GROUPING REPLACES THE
+# ORDERING (2026-09-06). `regroup_skills` files the SHIPPED entries under the
+# master's own headings and leaves everything the master has never heard of — the
+# wording the model minted from the ad — in the trailing unlabelled block. That
+# is the same entries at the same end of the list `order_skills` exists to put
+# there, so the two never both run: reordering twice would leave one of the two
+# changelog entries describing an order the document does not have.
+from app.core.skills import regroup_skills as _regroup  # noqa: E402
+from app.core.skills import skill_blocks as _rg_blocks  # noqa: E402
+
+_rg_master = ResumeModel(
+    contact=Contact(name="A", email="a@b.com"),
+    skill_groups=[SkillGroup(label="GenAI", items=["OpenAI", "RAG", "pgvector"]),
+                  SkillGroup(label="Infra", items=["Docker", "Redis"])],
+    experience=[Experience(company="Acme", title="Eng", start_date="2020", end_date="2023",
+                           bullets=["Built the API in Python."])],
+)
+# What SHIPS: two of the master's entries, out of the master's order, plus two
+# the model wrote itself.
+_rg_shipped = ResumeModel(contact=Contact(name="A", email="a@b.com"),
+                          skills=["tool use", "Redis", "OpenAI", "orchestration patterns"])
+_rg_out = _regroup(_rg_shipped, _rg_master)
+check(
+    "regroup_skills files the shipped entries under the MASTER's headings, in the "
+    "MASTER's order, and leaves what the master never listed in the trailing "
+    "unlabelled block — which is where `order_skills` was pushing it anyway",
+    [(g.label, g.items) for g in _rg_out.skill_groups]
+    == [("GenAI", ["OpenAI"]), ("Infra", ["Redis"])]
+    and _rg_blocks(_rg_out)[-1] == ("", ["tool use", "orchestration patterns"]),
+    str([(g.label, g.items) for g in _rg_out.skill_groups]) + " / " + str(_rg_blocks(_rg_out)),
+)
+check(
+    "regroup_skills is a RELABELLING, never a change of set: every entry in is an "
+    "entry out, and the flat list is rewritten to the order the page prints so the "
+    "scorer measures the join the reader sees",
+    sorted(_rg_out.skills) == sorted(_rg_shipped.skills)
+    and _rg_out.skills == [i for g in _rg_out.skill_groups for i in g.items]
+                          + ["tool use", "orchestration patterns"],
+    str(_rg_out.skills),
+)
+# The identity convention, three ways — the same one `shortlist_skills`,
+# `order_skills` and `preserve_keywords` share, so the caller can gate on `is`.
+# Without it, "group everything" is trivially satisfied.
+check(
+    "regroup_skills returns the SAME object when there is nothing to do: no master "
+    "taxonomy, a résumé that already carries groups, or not one entry the master "
+    "files anywhere",
+    _regroup(_rg_shipped, ResumeModel()) is _rg_shipped
+    and _regroup(_rg_out, _rg_master) is _rg_out
+    and _regroup(ResumeModel(skills=["Zebra", "Quokka"]), _rg_master) is not None
+    and _regroup(ResumeModel(skills=["Zebra"]), _rg_master).skill_groups == [],
+)
+
+
+class _GroupClient(_BloatClient):
+    """Answers TAILOR with a curated flat list AND an echo of the master's
+    groups — the shape `tailor.py`'s strip exists for."""
+
+    def complete_json(self, system: str, user: str):
+        if not system.startswith("Task: TAILOR."):
+            return self._inner.complete_json(system, user)
+        body = _rg_master.model_dump()
+        body["skills"] = ["OpenAI", "Redis", "orchestration patterns"]
+        body["skill_groups"] = [g.model_dump() for g in _rg_master.skill_groups]
+        return {"tailored_resume": body, "changelog": [], "covered_keywords": []}
+
+
+_flat_mod.get_llm_client = lambda: _GroupClient(_cap_real())
+try:
+    _rg_res = tailor_resume(_rg_master, _AtsJD(hard_skills=["OpenAI"]))
+finally:
+    _flat_mod.get_llm_client = _cap_real
+_rg_ship = _rg_res.tailored_resume
+check(
+    "tailor: the model's OWN skill_groups are still stripped — a response echoing the "
+    "master's taxonomy beside a curated list must not have the union validator "
+    "resurrect the whole master (measured: 20 flat + 5 groups validated to 66)",
+    len(_rg_ship.skills) <= 4 and "pgvector" not in _rg_ship.skills,
+    str(_rg_ship.skills),
+)
+check(
+    "tailor: …and the shipped CV carries the master's headings anyway, applied to what "
+    "actually shipped — the grouping is the user's taxonomy over a shortlist, never "
+    "the model's opinion about what a group is",
+    [g.label for g in _rg_ship.skill_groups] == ["GenAI", "Infra"]
+    and _rg_blocks(_rg_ship)[-1] == ("", ["orchestration patterns"]),
+    str([(g.label, g.items) for g in _rg_ship.skill_groups]),
+)
+check(
+    "tailor: the grouping is REPORTED, and the ordering entry is NOT also emitted — "
+    "two passes over one list would leave one changelog entry describing an order the "
+    "document does not have",
+    any(c.section == "skills" and "Grouped your skills" in c.change for c in _rg_res.changelog)
+    and not any(c.section == "skills" and "Put your own wording first" in c.change
+                for c in _rg_res.changelog),
+    str([c.change for c in _rg_res.changelog if c.section == "skills"]),
+)
+# THE FALSE-POSITIVE HALF: a master with NO taxonomy is untouched, and the
+# ordering pass is still the one that runs — `_minted` above proves that, and
+# this states the other side of the same fork so "always group" cannot pass.
+check(
+    "tailor: a master with no groups ships flat, and the ordering pass is what runs "
+    "there — neither entry can appear for both",
+    _minted.tailored_resume.skill_groups == []
+    and not any(c.section == "skills" and "Grouped your skills" in c.change
+                for c in _minted.changelog),
+    str([c.change for c in _minted.changelog if c.section == "skills"]),
+)
+
 # 4b-iv. THE SECOND DOOR. `humanizer.py` validates its OWN raw LLM résumé and
 # `tailor_resume` accepts it AFTER the dedupe has already run, so a repeat the
 # polish pass introduces sails past a guard that finished earlier. The humanizer
@@ -5490,8 +5599,8 @@ with TestClient(_fastapi_app) as _tc:
 from app.render.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template  # noqa: E402
 
 check(
-    "template registry: 11 templates, default present",
-    len(TEMPLATES) == 11 and DEFAULT_TEMPLATE in TEMPLATES,
+    "template registry: 12 templates, default present",
+    len(TEMPLATES) == 12 and DEFAULT_TEMPLATE in TEMPLATES,
     str(list(TEMPLATES)),
 )
 check(
@@ -6422,6 +6531,11 @@ _tf = ResumeModel(
     languages=[LanguageSkill(language="Hebrew", level="Native"),
                LanguageSkill(language="English", level="Fluent")],
 )
+# The SHORT label set, which eleven of the twelve templates print. `standard`
+# prints the "full" one ("PROFESSIONAL SUMMARY", "CORE EXPERTISE"), so every
+# check that looks for a heading has to ask the SPEC which set it renders —
+# hence `_tf_label` / `_tf_word` below rather than a module-level table. This
+# name is kept only for the one place that needs the COUNT of sections.
 _TF_LABELS = _labels_for("en")
 
 
@@ -6440,7 +6554,24 @@ def _cased(label: str, spec) -> str:
 
 
 def _heading_words(spec) -> set[str]:
-    return {_cased(v, spec) for v in _TF_LABELS.values()}
+    return {_cased(v, spec) for v in _labels_for("en", spec.label_set).values()}
+
+
+def _tf_label(key: str, spec) -> str:
+    """One section heading as THIS template prints it — its own label set, its
+    own case."""
+    return _cased(_labels_for("en", spec.label_set)[key], spec)
+
+
+def _tf_word(key: str, spec) -> str:
+    """…and the last WORD of it.
+
+    `extract_words()` splits on spaces, so a two-word heading has no word equal
+    to the label and a check comparing against the whole string finds nothing
+    and reports "heading not found" on a correct render. The LAST word is the
+    distinctive one in both sets — SUMMARY, EXPERTISE, EXPERIENCE, PROJECTS —
+    and is what the positional and colour checks locate on."""
+    return _tf_label(key, spec).split()[-1]
 
 
 # 18m-1. THE STRUCTURAL-DISTINCTNESS PIN — the one that would have caught this
@@ -6514,7 +6645,7 @@ for _tpl in TEMPLATES:
         ("pdf", get_template(_tpl), _pdf_text(render_pdf(_tf, template=_tpl))),
         ("docx", _eff(_tpl), _li_extract_text("resume.docx", render_docx(_tf, template=_tpl))),
     ):
-        _raw = _TF_LABELS["experience"]
+        _raw = _labels_for("en", _spec.label_set)["experience"]
         _want = _cased(_raw, _spec)
         _other = _raw.upper() if _spec.heading_case == "title" else _raw.title()
         if _want not in _txt or _other in _txt:
@@ -6635,11 +6766,11 @@ for _tpl, _sp in TEMPLATES.items():
     # with it would be comparing two different templates on purpose.
     if _sp.docx_fallback:
         continue
-    _word = _cased(_TF_LABELS["experience"], _sp)
+    _word = _tf_word("experience", _sp)
     _drawn = _pdf_word_color(render_pdf(_tf, template=_tpl), _word)
     _want = _sp.ink if _sp.heading in ("bar", "short", "hung") else _sp.accent
     _para = next((p for p in _Document(_io.BytesIO(render_docx(_tf, template=_tpl))).paragraphs
-                  if p.text.strip() == _word), None)
+                  if p.text.strip() == _tf_label("experience", _eff(_tpl))), None)
     _in_docx = str(_para.runs[0].font.color.rgb) if (_para and _para.runs) else None
     if (_drawn is None or _in_docx is None
             or _in_docx != _want
@@ -6665,11 +6796,13 @@ _pos_bad: list = []
 for _tpl, _sp in TEMPLATES.items():
     if _sp.docx_fallback:
         continue
-    _word = _cased(_TF_LABELS["experience"], _sp)
+    # The PDF is located on the last WORD (extract_words splits on spaces) and
+    # the Word file on the whole heading — see `_tf_word`.
+    _word = _tf_word("experience", _sp)
     with _pdfplumber.open(_io.BytesIO(render_pdf(_tf, template=_tpl))) as _pdf:
         _hits = [w for p in _pdf.pages for w in p.extract_words() if w["text"] == _word]
     _para = next((p for p in _Document(_io.BytesIO(render_docx(_tf, template=_tpl))).paragraphs
-                  if p.text.strip() == _word), None)
+                  if p.text.strip() == _tf_label("experience", _sp)), None)
     if not _hits or _para is None:
         _pos_bad.append((_tpl, "heading not found", bool(_hits), _para is not None))
         continue
@@ -6707,7 +6840,7 @@ check(
 _hdr_bad: list = []
 for _tpl, _sp in TEMPLATES.items():
     _spec_d = _eff(_tpl)
-    _word_p = _cased(_TF_LABELS["summary"], _sp)
+    _word_p = _tf_word("summary", _sp)
     _text_w = _sp.page_w_pt - 2 * _sp.margin_lr_pt
     with _pdfplumber.open(_io.BytesIO(render_pdf(_tf, template=_tpl))) as _pdf:
         _page = _pdf.pages[0]
@@ -6735,6 +6868,192 @@ check(
     not _hdr_bad
     and {t.header for t in TEMPLATES.values()} == {"rule", "plain", "band"},
     str(_hdr_bad[:3]),
+)
+
+# 18m-8b. `standard` — THE DEFAULT SINCE 2026-09-06, and the one template in the
+# set that is a REPRODUCTION of a real document rather than a design of ours.
+# Everything below pins something measured off that document and silently undone
+# by a "tidy": the two new grammars, the label sets, the contact order, the page
+# footer, and the base-14 bullet.
+from app.render.labels import SECTION_LABELS as _LABEL_SETS  # noqa: E402
+from app.render.pdf_renderer import page_count as _std_pages  # noqa: E402
+
+_std = get_template("standard")
+_std_pdf = render_pdf(_tf, template="standard")
+_std_docx = render_docx(_tf, template="standard")
+_std_text = _pdf_text(_std_pdf)
+
+# (a) THE BULLET. reportlab encodes U+2022 as byte 0x7F — one of the several
+# slots Adobe's WinAnsiEncoding fills with `bullet`, so it RENDERS and every
+# extractor using the plain WinAnsi table hands back `(cid:127)`. Measured on the
+# first `standard` render: nine bullets, nine `(cid:127)`, on the one product
+# whose promise is that the file parses. `_explicit_encoding` says which
+# character that byte is; this is what proves it still does.
+#
+# The second conjunct is the false-positive half AND the reason this cannot be
+# satisfied by deleting the glyph: an embedded-TTF template was never broken and
+# must still draw a real bullet.
+check(
+    "the base-14 bullet survives extraction — a template whose face has no font "
+    "FILE still emits a real U+2022, not the undefined code point reportlab picks",
+    "•" in _std_text and "(cid:" not in _std_text
+    and "•" in _pdf_text(render_pdf(_tf, template="classic")),
+    f"std_bullets={_std_text.count(chr(0x2022))} cid={'(cid:' in _std_text}",
+)
+
+# (b) entry="run": the title, the employer, the location AND the dates are ONE
+# line. Both directions in one check — `entry="stack"` must still put the meta on
+# a second line, or "join everything" passes.
+_std_head = [ln for ln in _std_text.splitlines() if "Staff Engineer" in ln]
+_stack_head = [ln for ln in _pdf_text(render_pdf(_tf, template="classic")).splitlines()
+               if "Staff Engineer" in ln]
+check(
+    "entry='run' sets the whole entry head on one line (title | employer, then "
+    "location | dates in italic) while entry='stack' keeps the meta on its own",
+    len(_std_head) == 1
+    and all(w in _std_head[0] for w in ("Staff Engineer", "Acme Systems", "Tel Aviv", "2016"))
+    and len(_stack_head) == 1 and "Acme Systems" not in _stack_head[0],
+    f"run={_std_head} stack={_stack_head}",
+)
+# ...and the Word file says it in ONE paragraph, with the tail in italic — the two
+# downloads may not describe the entry differently.
+_std_para = next((p for p in _Document(_io.BytesIO(_std_docx)).paragraphs
+                  if "Staff Engineer" in p.text), None)
+check(
+    "...and the DOCX puts that same line in ONE paragraph, bold identity then "
+    "italic circumstance",
+    _std_para is not None
+    and all(w in _std_para.text for w in ("Staff Engineer", "Acme Systems", "Tel Aviv", "2016"))
+    and any(r.bold and "Staff Engineer" in r.text for r in _std_para.runs)
+    and any(r.italic and "Tel Aviv" in r.text for r in _std_para.runs),
+    _std_para.text if _std_para else "no paragraph",
+)
+
+# (c) skills="labeled": the group label is BOLD and INLINE ahead of its own
+# comma-joined items. The COMMAS are the load-bearing half — that is what an ATS
+# keyword parser splits on, and moving the label must not change it. The
+# `skills="inline"` half is the other direction: there the label sits on its OWN
+# line, so "print the label inline everywhere" cannot pass this.
+_std_grp = _tf.model_copy(deep=True)
+_std_grp.skill_groups = [SkillGroup(label="Backend", items=["Python", "Go"]),
+                         SkillGroup(label="Infra", items=["PostgreSQL", "Kubernetes"])]
+_grp_lines = _pdf_text(render_pdf(_std_grp, template="standard")).splitlines()
+_inline_lines = _pdf_text(render_pdf(_std_grp, template="timeline")).splitlines()
+check(
+    "skills='labeled' sets the label inline and still comma-delimits its items, "
+    "while skills='inline' keeps the label on its own line",
+    any(ln.strip().startswith("Backend: Python, Go") for ln in _grp_lines)
+    and any(ln.strip().startswith("Infra: PostgreSQL, Kubernetes") for ln in _grp_lines)
+    and any(ln.strip() == "Backend" for ln in _inline_lines)
+    and not any("Backend: " in ln for ln in _inline_lines),
+    str([ln for ln in _grp_lines if "Backend" in ln or "Infra" in ln]),
+)
+_grp_para = next((p for p in _Document(
+    _io.BytesIO(render_docx(_std_grp, template="standard"))).paragraphs
+    if p.text.startswith("Backend: ")), None)
+check(
+    "...and the DOCX writes it as one paragraph too: a bold label run, then the "
+    "items — the two downloads cannot describe the skills section differently",
+    _grp_para is not None and _grp_para.text == "Backend: Python, Go"
+    and _grp_para.runs[0].bold and not _grp_para.runs[-1].bold,
+    _grp_para.text if _grp_para else "no paragraph",
+)
+
+# (d) A LABELLED SKILLS BLOCK CAN BE PAGE-SIZED, and a bare Flowable that cannot
+# split is all-or-nothing: reportlab raises LayoutError on one taller than the
+# frame, which reaches the user as a 500 from POST /render. That is exactly how
+# `_Segments` and `_Chips` each shipped a crash. Driven, not reasoned about — and
+# the LAST item has to survive the break, or "split anywhere" passes.
+_std_huge = _tf.model_copy(deep=True)
+_std_huge.skill_groups = [SkillGroup(label="Everything", items=[
+    f"Zephyr{i} orchestration, telemetry and capacity planning tooling" for i in range(220)])]
+_std_huge.skills = list(_std_huge.skill_groups[0].items)
+_huge_text = _pdf_text(render_pdf(_std_huge, template="standard"))
+_huge_pages = _std_pages(_std_huge, template="standard")
+check(
+    "a labelled skills block taller than the page SPLITS instead of raising, and the "
+    "last entry survives the break",
+    _huge_pages > 1
+    and "Everything: Zephyr0" in _huge_text.replace("\n", " ")
+    and "Zephyr219" in _huge_text,
+    f"pages={_huge_pages} last={'Zephyr219' in _huge_text}",
+)
+
+# (e) THE PAGE FOOTER — the ONE place the PDF and the DOCX deliberately disagree,
+# and it is NOT a fourth ornament carve-out, because it carries TEXT. Both halves
+# are pinned: the PDF prints the name at the foot of EVERY page (identifying page
+# 2 is the whole point), and no Word footer is written for it. The
+# `footerReference` half is already covered for all twelve templates by
+# `_ATS_FORBIDDEN`; it is re-stated here so the divergence is visible at its own
+# call site rather than only as an absence somewhere else.
+with _pdfplumber.open(_io.BytesIO(render_pdf(_std_huge, template="standard"))) as _fp:
+    _foot_pages = len(_fp.pages)
+    _foot_hits = [any(w["text"] == "Tamar" and w["top"] > pg.height - _std.margin_tb_pt
+                      for w in pg.extract_words())
+                  for pg in _fp.pages]
+with _pdfplumber.open(_io.BytesIO(render_pdf(_std_huge, template="classic"))) as _fp2:
+    _no_foot = not any(
+        any(w["text"] == "Tamar" and w["top"] > pg.height - get_template("classic").margin_tb_pt
+            for w in pg.extract_words())
+        for pg in _fp2.pages)
+check(
+    "footer_name draws the candidate's name in the bottom margin of EVERY PDF page, "
+    "no Word footer is written for it, and a template that does not ask for one has "
+    "nothing down there",
+    _foot_pages > 1 and all(_foot_hits) and _no_foot
+    and "footerReference" not in _docx_xml(_std_docx),
+    f"pages={_foot_pages} hits={_foot_hits} classic_clear={_no_foot}",
+)
+
+# (f) THE LABEL SETS ARE THE SAME SECTIONS, DIFFERENTLY WORDED. A set may only
+# RENAME: a missing key is a KeyError at render time and an extra one is a
+# section `section_order` never asks for. Both languages, both sets.
+check(
+    "every label set names exactly the same sections in both languages — a set may "
+    "rename a heading, never add or drop one",
+    len(_LABEL_SETS) == 2
+    and len({tuple(sorted(per_lang)) for per_set in _LABEL_SETS.values()
+             for per_lang in per_set.values()}) == 1
+    and _labels_for("en", "full")["skills"] == "Core Expertise"
+    and _labels_for("en", "short")["skills"] == "Skills"
+    # An unknown set falls back rather than raising, the way get_template does.
+    and _labels_for("en", "no-such-set") == _labels_for("en", "short"),
+    str({k: sorted(v["en"]) for k, v in _LABEL_SETS.items()}),
+)
+
+# (g) contact_order REORDERS, it never hides. `standard` reproduces a document
+# that leads with the city; every bit the built-in order prints is still printed.
+# The second half is what stops "reorder" quietly becoming "truncate".
+_std_contact = next(ln for ln in _std_text.splitlines() if _tf.contact.email in ln)
+_cls_contact = next(ln for ln in _pdf_text(render_pdf(_tf, template="classic")).splitlines()
+                    if _tf.contact.email in ln)
+check(
+    "contact_order reorders the header line and drops nothing — standard leads with "
+    "the location, the other eleven with the email, both print all four bits",
+    _std_contact.index(_tf.contact.location) < _std_contact.index(_tf.contact.email)
+    and _cls_contact.index(_tf.contact.email) < _cls_contact.index(_tf.contact.location)
+    and all(b in _std_contact and b in _cls_contact for b in
+            (_tf.contact.email, _tf.contact.phone, _tf.contact.location, _tf.contact.linkedin)),
+    f"std={_std_contact}",
+)
+
+# (h) education's detail is a SENTENCE, not a bullet, and only a "run" entry can
+# absorb it. Both directions: the other grammars must still render the bullet they
+# always rendered, or `detail=` silently deletes the course list on eleven
+# templates.
+_std_edu = _tf.model_copy(deep=True)
+_std_edu.education[0].details = "Distributed systems, compilers and networks."
+_edu_std = [ln for ln in _pdf_text(render_pdf(_std_edu, template="standard")).splitlines()
+            if "B.Sc." in ln]
+_edu_cls = _pdf_text(render_pdf(_std_edu, template="classic"))
+check(
+    "entry='run' sets education's detail inline on the heading line; every other "
+    "grammar still renders it as the bullet it has always been",
+    len(_edu_std) == 1 and "Distributed systems" in _edu_std[0]
+    and "Distributed systems" in _edu_cls
+    and not any("B.Sc." in ln and "Distributed systems" in ln
+                for ln in _edu_cls.splitlines()),
+    f"run={_edu_std}",
 )
 
 # 18m-9. THE BULLET IS THE TEMPLATE'S OWN GLYPH, and it is still a REAL WORD
@@ -6825,7 +7144,7 @@ try:
                   if p.text.strip()]
         _hw = _heading_words(_spec)
         _start = next((i for i, p in enumerate(_paras)
-                       if p.text.strip() == _cased(_TF_LABELS["certifications"], _spec)), -1)
+                       if p.text.strip() == _tf_label("certifications", _spec)), -1)
         _rows = []
         for _p in _paras[_start + 1:] if _start >= 0 else []:
             if _p.text.strip() in _hw:
@@ -6870,7 +7189,7 @@ with _pdfplumber.open(_io.BytesIO(render_pdf(_tf, template="timeline"))) as _pdf
              if abs(ln["x0"] - _rail_x) < 0.6 and abs(ln["x1"] - _rail_x) < 0.6]
     _dw = [w for w in _page1.extract_words() if w["text"] in _rail_desc]
     _hw_words = [w for w in _page1.extract_words()
-                 if w["text"] == _cased(_TF_LABELS["projects"], _rail_sp)]
+                 if w["text"] == _tf_word("projects", _rail_sp)]
 # Fail loudly if a probe word stopped being unique to the description: it would
 # then be located in a section that legitimately has no rail, and the check
 # would go red on a correct render — a guard firing on legitimate input.
@@ -7010,17 +7329,27 @@ check(
 )
 
 
+# The DEFAULT template's own section names, not a hard-coded four: `standard`
+# prints the "full" label set, in which Skills is "CORE EXPERTISE" — so a
+# literal "SKILLS" is simply absent and the order check silently compares three
+# headings instead of four, which is the pass-by-never-firing shape this file
+# exists to avoid.
+_ORDER_LABELS = {k: _cased(v, get_template(DEFAULT_TEMPLATE)) for k, v in
+                 _labels_for("en", get_template(DEFAULT_TEMPLATE).label_set).items()}
+_ORDER_KEYS = ("summary", "skills", "experience", "education")
+
+
 def _heading_order(text: str) -> list[str]:
-    heads = [h for h in ("SUMMARY", "SKILLS", "EXPERIENCE", "EDUCATION") if h in text]
-    return sorted(heads, key=text.index)
+    heads = [k for k in _ORDER_KEYS if _ORDER_LABELS[k] in text]
+    return sorted(heads, key=lambda k: text.index(_ORDER_LABELS[k]))
 
 
 _pdf_senior = _heading_order(_pdf_text(render_pdf(_senior)))
 _pdf_student = _heading_order(_pdf_text(render_pdf(_student)))
 check(
     "17.5: the PDF lays the sections out in the profile's order",
-    _pdf_senior == ["SUMMARY", "SKILLS", "EXPERIENCE", "EDUCATION"]
-    and _pdf_student == ["SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE"],
+    _pdf_senior == ["summary", "skills", "experience", "education"]
+    and _pdf_student == ["summary", "skills", "education", "experience"],
     f"senior={_pdf_senior} student={_pdf_student}",
 )
 check(
@@ -10638,6 +10967,23 @@ check(
 # is therefore canned with a 2-page résumé whose restore genuinely spills onto a
 # third page, and THAT is asserted first: a render change that stops the fixture
 # crossing the boundary must go red as "stale fixture", never quietly green.
+# THE PAGE-BUDGET FIXTURES BELOW NAME THEIR TEMPLATE, and that is deliberate.
+#
+# They exist to drive ONE branch — `if page_count(...) > max(pages_after,
+# max_pages)` — which needs a restore that genuinely crosses a page boundary.
+# That is a property of the TEMPLATE, not of the mechanism under test: measured
+# when `standard` became the default, restoring these 25 entries costs ~120pt
+# there (`skills="labeled"` sets them as one comma paragraph at 8.5pt) against
+# ~400pt on `classic` (`skills="chips"`, one chip per row on a narrower column),
+# so the same fixture stopped crossing anything and all five checks passed by
+# never firing — which is exactly what they went red for, as designed.
+#
+# Pinning the template is not weakening them: every assertion still holds, the
+# branch is still driven, and the fixture stops being a knife-edge that the next
+# change to the DEFAULT template silently blunts. `_KG_TPL` is a single-column,
+# non-fallback template so `page_count` measures the document these fixtures
+# actually build.
+_KG_TPL = "classic"
 _kg_e2e_blurb = (
     "Built the ingestion service that reads inbound events, normalizes them and writes "
     "structured records downstream, with retries, deduplication and a fallback path. "
@@ -10678,28 +11024,32 @@ def _kg_e2e_canned(system, user, **kw):
 
 _kg_stub.complete_json = _kg_e2e_canned
 try:
-    _kg_e2e_res = _tailor_b(_kg_e2e_master, _kg_e2e_jd)
+    _kg_e2e_res = _tailor_b(_kg_e2e_master, _kg_e2e_jd, template=_KG_TPL)
 finally:
     _kg_stub.complete_json = _kg_orig_cjson
 _kg_e2e_final = _kg_e2e_res.tailored_resume
-_kg_e2e_budget = max(page_count(_kg_e2e_pre), get_settings().resume_max_pages)
+_kg_e2e_budget = max(page_count(_kg_e2e_pre, template=_KG_TPL),
+                     get_settings().resume_max_pages)
 check(
     "tailor_resume: a restore that spills onto another page is refitted back inside "
     "the budget, every restored entry survives it, and length_report describes what shipped",
-    page_count(_kg_e2e_spill) > page_count(_kg_e2e_pre)          # fixture still bites
+    page_count(_kg_e2e_spill, template=_KG_TPL)
+    > page_count(_kg_e2e_pre, template=_KG_TPL)                  # fixture still bites
     and all(k in _kg_e2e_final.skills for k in _kg_e2e_kw)       # the refit undid nothing
     # The promise the pipeline already made about size is the one it has to keep.
     # `<= hard_max` would pass on a résumé that quietly grew a page, which is the
     # whole thing the refit exists to prevent.
-    and page_count(_kg_e2e_final) <= _kg_e2e_budget
-    and _kg_e2e_res.length_report.pages_after == page_count(_kg_e2e_final)
-    and _kg_e2e_res.length_report.pages_before == page_count(_kg_e2e_pre)
+    and page_count(_kg_e2e_final, template=_KG_TPL) <= _kg_e2e_budget
+    and _kg_e2e_res.length_report.pages_after == page_count(_kg_e2e_final, template=_KG_TPL)
+    and _kg_e2e_res.length_report.pages_before == page_count(_kg_e2e_pre, template=_KG_TPL)
     # CONVERGENCE: a second pass over the shipped résumé finds no SKILL-class
     # loss, i.e. the refit undid none of the restore. (Its prose-class finding is
     # the deliberate "Quicksilver" trim below; the pure form — both lists empty —
     # is pinned on the component-level fixture above.)
     and _preserve(_kg_e2e_master, _kg_e2e_final, _kg_e2e_jd)[1] == [],
-    f"{page_count(_kg_e2e_pre)} -> {page_count(_kg_e2e_spill)} -> {page_count(_kg_e2e_final)} pages "
+    f"{page_count(_kg_e2e_pre, template=_KG_TPL)} -> "
+    f"{page_count(_kg_e2e_spill, template=_KG_TPL)} -> "
+    f"{page_count(_kg_e2e_final, template=_KG_TPL)} pages "
     f"(budget {_kg_e2e_budget}), kept {sum(1 for k in _kg_e2e_kw if k in _kg_e2e_final.skills)}/25, "
     f"report={_kg_e2e_res.length_report.pages_before}->{_kg_e2e_res.length_report.pages_after}, "
     f"notes={_kg_e2e_res.length_report.notes}",
@@ -10852,7 +11202,8 @@ _kg_bo_tailored["skills"] = ["Python"]
 _kg_bo_tailored["skill_groups"] = []
 _kg_bo_pre = _Resume_b.model_validate(_kg_bo_tailored)
 _kg_bo_spill, _, _ = _preserve(_kg_bo_master, _kg_bo_pre, _kg_bo_jd)
-_, _kg_bo_refit_rep = fit_to_pages(_kg_bo_spill, _kg_bo_jd, None, max_pages=2, hard_max_pages=3)
+_, _kg_bo_refit_rep = fit_to_pages(_kg_bo_spill, _kg_bo_jd, None, template=_KG_TPL,
+                                   max_pages=2, hard_max_pages=3)
 
 
 def _kg_bo_canned(system, user, **kw):
@@ -10868,7 +11219,7 @@ def _kg_bo_canned(system, user, **kw):
 
 _kg_stub.complete_json = _kg_bo_canned
 try:
-    _kg_bo_res = _tailor_b(_kg_bo_master, _kg_bo_jd)
+    _kg_bo_res = _tailor_b(_kg_bo_master, _kg_bo_jd, template=_KG_TPL)
 finally:
     _kg_stub.complete_json = _kg_orig_cjson
 _kg_bo_final = _kg_bo_res.tailored_resume
@@ -10879,12 +11230,14 @@ _kg_bo_dropped = " | ".join(c.change for c in _kg_bo_res.changelog if c.section 
 check(
     "tailor_resume: a restore the refit cannot fit is handed back until the hard page "
     "limit holds — and the CV ships inside it",
-    page_count(_kg_bo_pre) <= 3                       # fixture: started inside the limit
-    and page_count(_kg_bo_spill) > 3                  # fixture: the restore broke it
+    page_count(_kg_bo_pre, template=_KG_TPL) <= 3     # fixture: started inside the limit
+    and page_count(_kg_bo_spill, template=_KG_TPL) > 3   # fixture: the restore broke it
     and any(n.startswith(_KG_OVERFLOW) for n in _kg_bo_refit_rep.notes)  # fixture: unfittable
-    and page_count(_kg_bo_final) <= 3                 # ...and this is the fix
+    and page_count(_kg_bo_final, template=_KG_TPL) <= 3  # ...and this is the fix
     and 0 < len(_kg_bo_kept) < len(_kg_e2e_kw),       # some given back, not all
-    f"{page_count(_kg_bo_pre)} -> {page_count(_kg_bo_spill)} -> {page_count(_kg_bo_final)} pages, "
+    f"{page_count(_kg_bo_pre, template=_KG_TPL)} -> "
+    f"{page_count(_kg_bo_spill, template=_KG_TPL)} -> "
+    f"{page_count(_kg_bo_final, template=_KG_TPL)} pages, "
     f"kept {len(_kg_bo_kept)}/{len(_kg_e2e_kw)}, refit notes={_kg_bo_refit_rep.notes}",
 )
 check(
@@ -10898,7 +11251,7 @@ check(
     and all((e in _kg_bo_dropped) == (e not in _kg_bo_final.skills) for e in _kg_e2e_kw)
     and not any(n.startswith(_KG_OVERFLOW) for n in _kg_bo_res.length_report.notes)
     and any("gave back" in n for n in _kg_bo_res.length_report.notes)
-    and _kg_bo_res.length_report.pages_after == page_count(_kg_bo_final),
+    and _kg_bo_res.length_report.pages_after == page_count(_kg_bo_final, template=_KG_TPL),
     f"put_back={_kg_bo_put[:80]} notes={_kg_bo_res.length_report.notes}",
 )
 
@@ -10934,14 +11287,15 @@ _kg_stub.complete_json = _kg_grow_canned
 try:
     _kg_grow_res = _tailor_b(_kg_grow_master,
                              _JDModel_b(job_title="Backend Engineer",
-                                        hard_skills=["Python"] + _kg_e2e_kw))
+                                        hard_skills=["Python"] + _kg_e2e_kw),
+                             template=_KG_TPL)
 finally:
     _kg_stub.complete_json = _kg_orig_cjson
 check(
     "a restore that grows the CV with no trim in sight says so in the length report",
     _kg_grow_res.length_report.pages_before == 1
     and _kg_grow_res.length_report.pages_after == 2
-    and page_count(_kg_grow_res.tailored_resume) == 2
+    and page_count(_kg_grow_res.tailored_resume, template=_KG_TPL) == 2
     and any("putting back skills" in n for n in _kg_grow_res.length_report.notes)
     and not any("putting back skills" in n for n in _kg_res.length_report.notes),
     f"{_kg_grow_res.length_report.pages_before} -> {_kg_grow_res.length_report.pages_after} "
@@ -11743,7 +12097,7 @@ with TestClient(_fastapi_app) as _tc:
     check(
         "page-count echoes the RESOLVED template, so an unknown id cannot silently measure another doc",
         _tc.post("/tools/page-count", json={"resume": _resume_json, "template": "no-such-template"},
-                 headers=_CAP_H).json()["template"] == "classic",
+                 headers=_CAP_H).json()["template"] == DEFAULT_TEMPLATE,
     )
     check(
         "page-count carries the live budget, so the UI never reads a stale length_report",

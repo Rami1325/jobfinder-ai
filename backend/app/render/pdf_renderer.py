@@ -17,6 +17,7 @@ degrades to the base-14 faces rather than failing the download.
 from __future__ import annotations
 
 import io
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -52,16 +53,78 @@ _FALLBACKS: dict[str, tuple[str, str, str]] = {
     "Spectral": ("Times-Roman", "Times-Bold", "Times-Italic"),
 }
 _BASE14 = ("Helvetica", "Helvetica-Bold", "Helvetica-Oblique")
+# The encoding `_explicit_encoding` declares. It must start with "winansi":
+# reportlab picks the unicode→byte CODEC by prefix-matching this name against
+# its standard encodings, so a name like "ATSWinAnsi" silently gets no codec and
+# every drawString raises LookupError.
+_ATS_ENC = "WinAnsiATS"
+
+
+@lru_cache(maxsize=None)
+def _explicit_encoding(faces: tuple[str, str, str]) -> tuple[str, str, str]:
+    """The base-14 faces re-declared with an EXPLICIT encoding, so a bullet
+    survives text extraction.
+
+    reportlab encodes U+2022 as byte 0x7F — one of the several slots Adobe's
+    WinAnsiEncoding fills with `bullet`, so it RENDERS correctly and every
+    extractor using the plain WinAnsi table hands back `(cid:127)` instead.
+    Measured on `standard`: every bullet on the page came out of `extract_text`
+    as that, on the one product whose whole promise is that the file parses.
+
+    The fix is not a different byte. It is SAYING WHICH CHARACTER THAT BYTE IS:
+    declaring the encoding against `StandardEncoding` while carrying WinAnsi's
+    vector makes reportlab emit a real `/Differences` array — `127 /bullet`
+    included — so the file states the mapping instead of trusting the reader's
+    table. Coverage is unchanged, because the vector IS WinAnsi's: €, ½, ¼, ×,
+    both dashes, the curly quotes and every accent still encode. So are the
+    widths, which is what keeps `_wrap_lines` honest.
+
+    MacRomanEncoding also fixes the bullet and was measured and REJECTED: it has
+    no €, ½, ¼ or ×, and an unencodable character does not fail loudly —
+    `unicode2T1` substitutes reportlab's notdef character, so "½ day" printed a
+    letter nobody typed.
+
+    Degrades to the plain faces rather than failing the download, exactly as
+    `_fonts` degrades to these: a bullet that extracts badly is a smaller defect
+    than a résumé that will not render at all.
+    """
+    try:
+        from reportlab.pdfbase.pdfmetrics import (Encoding, Font, getEncoding,
+                                                  registerEncoding)
+        try:
+            getEncoding(_ATS_ENC)
+        except Exception:
+            # `StandardEncoding` as the BASE is the whole mechanism: reportlab
+            # only writes a /Differences array for the slots that differ from
+            # the base, so declaring this against WinAnsi — which it then equals
+            # — would emit no differences at all and change nothing.
+            enc = Encoding(_ATS_ENC, "StandardEncoding")
+            enc.vector = list(getEncoding("WinAnsiEncoding").vector)
+            registerEncoding(enc)
+        names = tuple(f"{face}-ATS" for face in faces)
+        registered = set(pdfmetrics.getRegisteredFontNames())
+        for name, face in zip(names, faces):
+            if name not in registered:
+                pdfmetrics.registerFont(Font(name, face, _ATS_ENC))
+        return names  # type: ignore[return-value]
+    except Exception:  # pragma: no cover — a reportlab that has moved on
+        return faces
 
 
 @lru_cache(maxsize=None)
 def _fonts(family: str) -> tuple[str, str, str]:
     """(regular, bold, italic) PDF font names, registering the bundled TTFs
     once per process. A missing file degrades to a base-14 face so a bad
-    deploy yields a plain PDF instead of a failed download."""
+    deploy yields a plain PDF instead of a failed download.
+
+    A family this module has no FILE for is not always a degradation:
+    `standard` names "Helvetica" deliberately, because its source document is
+    set in Liberation Sans and base-14 Helvetica carries those metrics exactly
+    while no bundled face does. Either way the base-14 trio goes through
+    `_explicit_encoding` first — see there for the bullet."""
     files = _FAMILY_FILES.get(family)
     if not files:
-        return _FALLBACKS.get(family, _BASE14)
+        return _explicit_encoding(_FALLBACKS.get(family, _BASE14))
     names = (family, f"{family}-Bold", f"{family}-Italic")
     try:
         registered = set(pdfmetrics.getRegisteredFontNames())
@@ -71,7 +134,7 @@ def _fonts(family: str) -> tuple[str, str, str]:
         registerFontFamily(family, normal=names[0], bold=names[1], italic=names[2], boldItalic=names[1])
         return names
     except Exception:  # pragma: no cover — missing/corrupt font file
-        return _FALLBACKS.get(family, _BASE14)
+        return _explicit_encoding(_FALLBACKS.get(family, _BASE14))
 
 
 # --------------------------------------------------------------------------- #
@@ -573,13 +636,178 @@ class _Segments(Flowable):
                     canv.linkURL(url, (x, base - 2, x + w, base + size), relative=1)
 
 
+_TOKEN_RE = re.compile(r"\s+|\S+")
+
+
+def _merge_runs(pieces: list[tuple]) -> list[tuple]:
+    """Glue adjacent pieces that share a style back into one piece.
+
+    Not an optimisation. In RTL each piece is bidi-reordered ON ITS OWN, so a
+    line left as one piece per WORD would reorder each word against itself and
+    leave the words in logical order — i.e. exactly backwards. Merging first
+    means `_visual()` sees the longest contiguous same-style run there is, which
+    is the unit bidi is defined over.
+    """
+    out: list[list] = []
+    for text, font, size, color in pieces:
+        if out and out[-1][1:] == [font, size, color]:
+            out[-1][0] += text
+        else:
+            out.append([text, font, size, color])
+    return [tuple(p) for p in out]
+
+
+class _RichText(Flowable):
+    """A WRAPPING paragraph whose runs each carry their own font, size and
+    colour — `standard`'s entry head ("Title | Employer" bold, then
+    "Location | Dates" italic, on one line) and its labelled skills lines.
+
+    It is the third case, and neither existing flowable covers it. `_Text` wraps
+    between words but is one style throughout; `_Segments` mixes styles but
+    treats every item as ATOMIC, so an item longer than the column is drawn past
+    the margin rather than broken. This one mixes styles AND breaks between
+    words.
+
+    WHITESPACE IS PRESERVED EXACTLY, never normalised to single spaces. The
+    separators these runs are joined by are part of the design — "  |  ", and
+    the three spaces before an entry's italic tail — so a tokeniser that
+    collapsed a run of spaces would quietly redesign the line. That is why the
+    token pattern keeps whitespace as its own token instead of splitting on it.
+
+    RTL CONTRACT — the same one `_Segments` follows, and the opposite of
+    `_Text`'s. Each drawn piece is `_visual()`-reordered here and the pieces are
+    laid out in reverse, which keeps per-piece colour and weight attached to the
+    right words instead of collapsing the line into one flat string. Pieces are
+    therefore drawn with a raw `drawString`; routing them through `_draw_line`
+    would reorder a second time and hand back logical order.
+    """
+
+    def __init__(self, runs, *, leading, align="start", rtl=False, indent=0.0,
+                 space_before=0.0, space_after=0.0, rail=None):
+        super().__init__()
+        # (text, font, size, color). Empty texts are dropped so a caller can
+        # build the list unconditionally — an entry with no location and no
+        # dates simply has no italic run.
+        self.runs = [tuple(r) for r in runs if r[0]]
+        self.leading, self.align, self.rtl = leading, align, rtl
+        self.indent = indent
+        self.space_before, self.space_after = space_before, space_after
+        self.rail = rail
+
+    _pinned: list[list[tuple]] | None = None
+
+    def _break(self, avail: float) -> list[list[tuple]]:
+        lines: list[list[tuple]] = []
+        cur: list[tuple] = []
+        x = 0.0
+        gap: tuple | None = None  # whitespace held back until a word follows it
+        for text, font, size, color in self.runs:
+            for tok in _TOKEN_RE.findall(text):
+                if tok.isspace():
+                    # Leading whitespace on a line is dropped, exactly as
+                    # `_wrap_cached`'s `text.split()` drops it; anywhere else it
+                    # is carried at its own measured width.
+                    if cur:
+                        gap = (tok, font, size, color)
+                    continue
+                gap_w = _adv(gap[0], gap[1], gap[2]) if gap else 0.0
+                if cur and x + gap_w + _adv(tok, font, size) > avail:
+                    lines.append(cur)
+                    cur, x, gap = [], 0.0, None
+                elif gap:
+                    cur.append(gap)
+                    x += gap_w
+                    gap = None
+                # A single token wider than the whole column is hard-broken, the
+                # way `_wrap_cached` breaks a long URL. Without it the token is
+                # appended to an empty line unconditionally and drawn past the
+                # margin — the `_Chips._pack` defect, in a new flowable.
+                while len(tok) > 1 and _adv(tok, font, size) > avail:
+                    cut = 1
+                    while cut < len(tok) and _adv(tok[: cut + 1], font, size) <= avail:
+                        cut += 1
+                    if cur:
+                        lines.append(cur)
+                        cur, x = [], 0.0
+                    lines.append([(tok[:cut], font, size, color)])
+                    tok = tok[cut:]
+                if tok:
+                    cur.append((tok, font, size, color))
+                    x += _adv(tok, font, size)
+        if cur:
+            lines.append(cur)
+        return lines or [[]]
+
+    def wrap(self, avail_w, avail_h):
+        # A half produced by split() carries its lines already broken; re-breaking
+        # the runs would land differently and lose or repeat a word.
+        self._lines = self._pinned if self._pinned is not None else self._break(
+            avail_w - self.indent)
+        self.width = avail_w
+        self.height = self.space_before + len(self._lines) * self.leading + self.space_after
+        return self.width, self.height
+
+    def split(self, avail_w, avail_h):
+        """Break across a page boundary. A bare Flowable that cannot split is
+        all-or-nothing and reportlab raises `LayoutError` on one taller than the
+        frame — which reaches the user as a 500 from `POST /render`. A labelled
+        skills group on a 66-skill master is exactly that shape."""
+        self.wrap(avail_w, avail_h)
+        room = avail_h - self.space_before
+        fit = int(room // self.leading) if self.leading > 0 else 0
+        # A single orphan line at a page foot reads worse than moving the whole
+        # run, and a one-line widow at the top of the next page is no better.
+        if fit < 2 or len(self._lines) - fit < 2:
+            return []
+
+        def clone(lines, *, before, after):
+            part = _RichText(self.runs, leading=self.leading, align=self.align,
+                             rtl=self.rtl, indent=self.indent, rail=self.rail,
+                             space_before=before, space_after=after)
+            part._pinned = lines
+            return part
+
+        return [clone(self._lines[:fit], before=self.space_before, after=0.0),
+                clone(self._lines[fit:], before=0.0, after=self.space_after)]
+
+    def draw(self):
+        canv = self.canv
+        if self.rail:
+            color, off, _r = self.rail
+            x = (self.width + off) if self.rtl else -off
+            canv.setStrokeColor(color)
+            canv.setLineWidth(0.7)
+            canv.line(x, 0, x, self.height)
+        x0 = self.indent if not self.rtl else 0.0
+        x1 = self.width if not self.rtl else self.width - self.indent
+        for i, raw in enumerate(self._lines):
+            pieces = _merge_runs(raw)
+            if not pieces:
+                continue
+            shown = [((_visual(t) if self.rtl else t), f, s, c) for t, f, s, c in pieces]
+            if self.rtl:
+                shown.reverse()
+            widths = [_adv(t, f, s) for t, f, s, _c in shown]
+            # The TALLEST run on the line sets the baseline, or a 10pt bold title
+            # beside an 8.5pt italic tail would be measured by the italic and
+            # clip against the flowable above it.
+            ascent = max(pdfmetrics.getAscent(f, s) for _t, f, s, _c in shown)
+            base = self.height - self.space_before - ascent - i * self.leading
+            x = _place(x0, x1, sum(widths), self.align, self.rtl)
+            for (text, font, size, color), w in zip(shown, widths):
+                canv.setFont(font, size)
+                canv.setFillColor(color)
+                canv.drawString(x, base, text)
+                x += w
+
+
 class _Heading(Flowable):
     """Section heading: tracked, uppercased (a no-op in Hebrew), over a
     hairline that spans the column."""
 
     def __init__(self, text, *, font, size, color, rule_color, tracking, rtl,
                  rule=True, space_before=0.0, space_after=0.0,
-                 rule_pt=0.6, short_pt=0.0, hang_pt=0.0, align="start"):
+                 rule_pt=0.6, rule_gap=4.0, short_pt=0.0, hang_pt=0.0, align="start"):
         super().__init__()
         self.text, self.font, self.size, self.color = text, font, size, color
         self.rule_color, self.tracking, self.rtl, self.rule = rule_color, tracking, rtl, rule
@@ -588,11 +816,12 @@ class _Heading(Flowable):
         # hairline. Six full-measure grey stripes down a page read as ruled
         # paper; one short accent mark per section reads as a design.
         self.rule_pt, self.short_pt, self.hang_pt = rule_pt, short_pt, hang_pt
+        self.rule_gap = rule_gap
         self.align = align
 
     def wrap(self, avail_w, avail_h):
         self.width = avail_w
-        gap = (self.rule_pt + 4.0) if self.rule else 0.0
+        gap = (self.rule_pt + self.rule_gap) if self.rule else 0.0
         # A hung heading sits out in the margin BESIDE the body, so it costs the
         # flow nothing but its own leading.
         self.height = self.space_before + self.size * 1.15 + gap + self.space_after
@@ -1003,10 +1232,20 @@ class _Sheet:
         self.ink = HexColor(f"#{spec.ink}")
         self.muted = HexColor(f"#{spec.muted}")
         self.accent = HexColor(f"#{spec.accent}")
+        # The name and the headline may each sit a shade off the body text
+        # without dragging `ink` — which nine other things on the page read —
+        # along with them.
+        self.name_ink = HexColor(f"#{spec.name_color}") if spec.name_color else self.ink
+        self.headline_ink = (HexColor(f"#{spec.headline_color}") if spec.headline_color
+                             else self.accent)
         self.rule = HexColor(f"#{spec.rule}")
         # Inline separators sit between the hairline and the body grey so they
-        # read as punctuation, not as content.
-        self.sep = _mix(self.muted, self.rule, 0.55)
+        # read as punctuation, not as content — unless a template says otherwise
+        # (`standard` prints its "  |  " inside the same black sentence, so a
+        # greyed one would read as a metadata line the source document does not
+        # have).
+        self.sep = (HexColor(f"#{spec.sep_color}") if spec.sep_color
+                    else _mix(self.muted, self.rule, 0.55))
         # Reversed-out palette for a filled header band.
         self.band = HexColor(f"#{spec.band_fill}")
         self.band_ink = HexColor(f"#{spec.band_ink}")
@@ -1019,29 +1258,77 @@ class _Sheet:
         self.rail = (_mix(self.accent, Color(1, 1, 1), 0.45), 13.0, 2.1) if spec.rail else None
         self.body = spec.body_size
         self.meta = spec.meta_size
-        self.lead = spec.body_size * (1.26 if spec.tight else 1.36) * squeeze
+        self.lead = self.lead_for(spec.body_size)
         self.tight = spec.tight
         # Hebrew is unicase and its letterforms are already open — half the
         # Latin tracking keeps headings airy without looking spaced-out.
         self.track_head = spec.heading_tracking * (0.5 if rtl else 1.0)
         self.track_name = spec.name_tracking * (0.5 if rtl else 1.0)
 
+    def lead_for(self, size: float, default: float | None = None) -> float:
+        """Line height for one type size.
+
+        Skills and project prose are set at `meta_size`, so they need their own
+        leading — measuring them at the body line would open the section by the
+        difference on every line.
+
+        `default` is the ratio the CALLER used before `leading_ratio` existed
+        (the header's three lines each had their own). A template that states a
+        `leading_ratio` states it for the whole page, header included; the
+        eleven that state none keep the caller's own number to the digit.
+        """
+        ratio = (self.spec.leading_ratio or default
+                 or (1.26 if self.spec.tight else 1.36))
+        return size * ratio * self.squeeze
+
     # vertical rhythm ------------------------------------------------------
+    # `spec.rhythm`, when a template states one, replaces all four at once — see
+    # TemplateSpec.rhythm for why it is one field. Indices are
+    # (section-before, section-after, entry-before, bullet-after) and the DOCX
+    # `_Sheet` reads the same tuple in the same order.
+    def _rhythm(self, index: int, tight: float, loose: float) -> float:
+        r = self.spec.rhythm
+        base = r[index] if len(r) > index else (tight if self.tight else loose)
+        return base * self.squeeze
+
     @property
     def sec_before(self) -> float:
-        return (8.0 if self.tight else 12.0) * self.squeeze
+        return self._rhythm(0, 8.0, 12.0)
 
     @property
     def sec_after(self) -> float:
-        return (3.5 if self.tight else 5.0) * self.squeeze
+        return self._rhythm(1, 3.5, 5.0)
 
     @property
     def entry_before(self) -> float:
-        return (4.5 if self.tight else 7.0) * self.squeeze
+        return self._rhythm(2, 4.5, 7.0)
 
     @property
     def bullet_after(self) -> float:
-        return (0.5 if self.tight else 1.2) * self.squeeze
+        return self._rhythm(3, 0.5, 1.2)
+
+    def _fixed(self, index: int, default: float) -> float:
+        """A rhythm element the one-page squeeze does NOT scale — see
+        TemplateSpec.rhythm."""
+        r = self.spec.rhythm
+        return r[index] if len(r) > index else default
+
+    @property
+    def head_rule_gap(self) -> float:
+        """Air between a section heading and its own hairline. 4.0 is what
+        `_Heading` hard-coded before this was tunable; `standard`'s rule sits
+        right under the descender line, which is 4pt tighter and, over six
+        headings, a visible difference in how ruled the page reads."""
+        return self._fixed(4, 4.0)
+
+    @property
+    def header_after(self) -> float:
+        """Air under the contact line. A header with no hairline has to supply
+        its own separation, which is where the 5.0 came from; `standard` needs
+        none, because its first heading simply follows at the ordinary section
+        gap — measured on the source document, 16.2pt of which 9.9 is the
+        contact line's own leading and 6.3 is `sec_before`."""
+        return self._fixed(5, 5.0 if self.spec.header == "plain" else 0.0)
 
 
 def _url(bit: str) -> str:
@@ -1108,7 +1395,7 @@ def fit_squeeze(resume: ResumeModel, spec: TemplateSpec, rtl: bool) -> float:
     one page vs. two, even though Word does its own line breaking.
     """
     s = _Sheet(spec, rtl)
-    header, main, side = _flow(resume, s, labels_for("he" if rtl else "en"))
+    header, main, side = _flow(resume, s, labels_for("he" if rtl else "en", spec.label_set))
     head_h, pad_t, pad_b = _band_metrics(header, spec)
     capacity = spec.page_h_pt - 2 * spec.margin_tb_pt
     text_w = spec.page_w_pt - 2 * spec.margin_lr_pt
@@ -1144,7 +1431,7 @@ def _render(resume: ResumeModel, template: str) -> tuple[bytes, int]:
     """
     spec = get_template(template)
     rtl = resume_language(resume) == "he"
-    labels = labels_for("he" if rtl else "en")
+    labels = labels_for("he" if rtl else "en", spec.label_set)
 
     s = _Sheet(spec, rtl, squeeze=fit_squeeze(resume, spec, rtl))
     header, main, side = _flow(resume, s, labels)
@@ -1187,6 +1474,27 @@ def _render(resume: ResumeModel, template: str) -> tuple[bytes, int]:
     if band_h:
         painters.append(lambda c, _d: (c.setFillColor(s.band),
                                        c.rect(0, H - band_h, W, band_h, stroke=0, fill=1)))
+    if spec.footer_name and resume.contact.name:
+        # The candidate's name, centred at the foot of EVERY page — what a
+        # two-page CV needs so page 2 can be identified once the pages are
+        # separated. It is painted from the page template rather than flowed,
+        # because a flowable would be pushed down the column by the content
+        # above it and would only appear on the page that happened to run out.
+        #
+        # PDF ONLY, and NOT an ornament carve-out — it carries text, so the Word
+        # file genuinely says one thing less. Read `TemplateSpec.footer_name`:
+        # that divergence is a recorded decision, not something this renderer
+        # granted itself.
+        foot_font = s.reg
+        foot_color = HexColor(f"#{spec.footer_color}")
+        foot_y = spec.margin_tb_pt * 0.5
+        foot_text = resume.contact.name
+
+        def _footer(canv, _d):
+            _draw_line(canv, foot_text, doc.leftMargin, W - doc.rightMargin, foot_y,
+                       foot_font, spec.footer_size, foot_color, align="center", rtl=rtl)
+
+        painters.append(_footer)
     if side and spec.sidebar_panel:
         painters.append(lambda c, _d: (c.setFillColor(s.accent_soft),
                                        c.rect(side_x - 10.0, 0, side_w + 20.0, H - band_h,
@@ -1208,7 +1516,14 @@ def _render(resume: ResumeModel, template: str) -> tuple[bytes, int]:
             canv.setFillColor(HexColor(f"#{spec.page_bg}"))
             canv.rect(0, 0, W, H, stroke=0, fill=1)
         # No panel here: page 2+ is a single full-width frame, so painting the
-        # rail would leave a coloured stripe with nothing in it.
+        # rail would leave a coloured stripe with nothing in it. The footer, by
+        # contrast, is drawn on EVERY page — identifying page 2 is the whole
+        # reason it exists, and a footer that stopped after page 1 would be the
+        # one page it is needed on.
+        if spec.footer_name and resume.contact.name:
+            _draw_line(canv, resume.contact.name, doc.leftMargin, W - doc.rightMargin,
+                       spec.margin_tb_pt * 0.5, s.reg, spec.footer_size,
+                       HexColor(f"#{spec.footer_color}"), align="center", rtl=rtl)
         canv.restoreState()
 
     if side:
@@ -1298,23 +1613,28 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
     c = resume.contact
     flow.append(_Text(
         c.name or "Name", font=s.bold, size=spec.name_size,
-        color=s.band_ink if band else s.ink,
-        leading=spec.name_size * 1.18, tracking=s.track_name,
+        color=s.band_ink if band else s.name_ink,
+        leading=s.lead_for(spec.name_size, 1.18), tracking=s.track_name,
         align=name_align, rtl=s.rtl, space_after=1.0,
     ))
     if resume.headline:
         # Sits between the name and the contact line: the first thing a
         # recruiter reads after the name, and what the ATS matches on. Coloured
         # opposite the name so the two never flatten into one block.
+        head_size = spec.headline_size or (s.body + (1.2 if band else 0.8))
         flow.append(_Text(
-            resume.headline, font=s.reg, size=s.body + (1.2 if band else 0.8),
-            color=s.band_sub if band else s.accent,
-            leading=(s.body + 0.8) * 1.35, tracking=0.3 * (0.5 if s.rtl else 1.0),
+            resume.headline, font=s.bold if spec.headline_bold else s.reg,
+            size=head_size,
+            color=s.band_sub if band else s.headline_ink,
+            leading=s.lead_for(head_size, 1.35),
+            tracking=spec.headline_tracking * (0.5 if s.rtl else 1.0),
             align=name_align, rtl=s.rtl, space_before=1.0, space_after=1.0,
         ))
 
-    bits = [(k, v) for k, v in (("email", c.email), ("phone", c.phone), ("location", c.location),
-                                ("linkedin", c.linkedin), ("website", c.website)) if v]
+    contact_bits = {"email": c.email, "phone": c.phone, "location": c.location,
+                    "linkedin": c.linkedin, "website": c.website}
+    order = spec.contact_order or ("email", "phone", "location", "linkedin", "website")
+    bits = [(k, contact_bits[k]) for k in order if contact_bits.get(k)]
     if bits:
         flow.append(_Segments(
             # No link annotations on a band: a blue underline would fight the
@@ -1326,11 +1646,11 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
             [(v, s.reg, spec.meta_size, s.band_meta if band else s.muted,
               "" if (s.rtl or band) else _url(v),
               CONTACT_ICONS[k] if spec.contact_icons else "") for k, v in bits],
-            sep=" · ", sep_color=s.band_meta if band else s.sep,
-            leading=spec.meta_size * (1.5 if band else 1.45),
+            sep=spec.meta_sep or " · ", sep_color=s.band_meta if band else s.sep,
+            leading=s.lead_for(spec.meta_size, 1.5 if band else 1.45),
             align=name_align, rtl=s.rtl,
             # Without a rule to separate it, the header needs the air itself.
-            space_after=0.0 if spec.header != "plain" else 5.0,
+            space_after=s.header_after,
         ))
     # `header` is the only thing consulted here, and that is the fix: the
     # hairline used to key off a `header_rule` bool no template set False, so
@@ -1339,6 +1659,10 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
     if spec.header == "rule":
         flow.append(_Rule(s.accent if spec.header_rule_accent else s.rule,
                           thickness=spec.header_rule_pt, space_before=6.0, space_after=0.0))
+
+    # The inline separator, resolved once. "" keeps each site's own default,
+    # which is not one string — see TemplateSpec.meta_sep.
+    sep = spec.meta_sep or "  ·  "
 
     def heading(key: str):
         raw = labels[key]
@@ -1361,7 +1685,7 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
             rule_color=HexColor(f"#{spec.head_rule_fill}"),
             tracking=s.track_head, rtl=s.rtl,
             rule=style in ("rule", "short", "centered"),
-            rule_pt=spec.heading_rule_pt,
+            rule_pt=spec.heading_rule_pt, rule_gap=s.head_rule_gap,
             short_pt=spec.heading_short_pt if style == "short" else 0.0,
             hang_pt=spec.heading_hang_pt if style == "hung" else 0.0,
             align="center" if style == "centered" else "start",
@@ -1379,7 +1703,8 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
                      indent=s.body * 1.05, rail=rail,
                      space_after=0.0 if last else s.bullet_after)
 
-    def entry(primary: str, meta: str, secondary: list[tuple], bullets: list[str], first: bool):
+    def entry(primary: str, meta: str, secondary: list[tuple], bullets: list[str],
+              first: bool, *, detail: str = "", bump: float = 1.0):
         """One role: the title/date row, the employer · location row, and the
         bullets. Returns (opening, trailing) as flat lists — `section` glues
         the opening together so a role never strands its head at the foot of a
@@ -1391,9 +1716,43 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
         the far margin. entry="stack" drops the dates into the meta line
         instead — a short title used to leave most of the column empty between
         itself and the date, which is the widest piece of dead space on the
-        page."""
+        page. entry="run" puts the whole head on ONE wrapping line.
+
+        `detail` is a sentence that belongs to the entry but is not a bullet —
+        education's course list is the only one. A "run" entry sets it inline
+        after the meta; the other two make a bullet of it, which is what
+        `build_education` did by hand before this parameter existed, so their
+        output is unchanged to the byte.
+
+        `bump` is added to the body size for the entry's own name, and ONLY
+        "run" reads it: a role leads, a project is a step down from it and a
+        degree is body weight. The other two grammars have carried one size for
+        every section since they were written and are left alone.
+        """
         head: list = []
-        if spec.entry == "stack":
+        if spec.entry == "run":
+            # The bold identity, then the italic circumstance, then the regular
+            # detail — one sentence that wraps between words. The FIRST
+            # secondary part is the entry's proper noun (employer, institution)
+            # and joins the bold half; everything after it is circumstance and
+            # rides the italic tail with the dates.
+            named = [part for part in secondary if part[0]]
+            lead_size = s.body + bump
+            bold_bits = [primary] + [part[0] for part in named[:1]]
+            tail_bits = [part[0] for part in named[1:]] + ([meta] if meta else [])
+            runs = [(sep.join(b for b in bold_bits if b), s.bold, lead_size, s.ink)]
+            if tail_bits:
+                # Three spaces, exactly as the source document sets them: the
+                # tail is a different weight and size, so it needs a wider gap
+                # than a word space to stop reading as part of the title.
+                runs.append(("   " + sep.join(tail_bits), s.ital, s.meta, s.ink))
+            if detail:
+                runs.append((sep + detail, s.reg, s.body, s.ink))
+            head.append(_RichText(
+                runs, leading=s.lead_for(lead_size), rtl=s.rtl,
+                space_before=0.0 if first else s.entry_before, space_after=1.5,
+            ))
+        elif spec.entry == "stack":
             head.append(_Text(
                 primary, font=s.bold, size=s.body + 0.9, color=s.ink,
                 leading=(s.body + 0.9) * 1.3, rtl=s.rtl,
@@ -1419,7 +1778,7 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
                 parts.append((meta, s.reg, s.meta, s.muted, "",
                               "calendar" if spec.date_icon else ""))
             if any(part[0] for part in parts):
-                head.append(_Segments(parts, sep="  ·  ", sep_color=s.sep, leading=s.lead,
+                head.append(_Segments(parts, sep=sep, sep_color=s.sep, leading=s.lead,
                                       align="start", rtl=s.rtl, space_after=1.5,
                                       rail=s.rail))
         else:
@@ -1429,9 +1788,13 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
                 leading=s.lead, rtl=s.rtl, space_before=0.0 if first else s.entry_before,
             ))
             if any(part[0] for part in secondary):
-                head.append(_Segments(secondary, sep=" · ", sep_color=s.sep, leading=s.lead,
-                                      align="start", rtl=s.rtl))
+                head.append(_Segments(secondary, sep=spec.meta_sep or " · ", sep_color=s.sep,
+                                      leading=s.lead, align="start", rtl=s.rtl))
         live = [b for b in bullets if b]
+        if detail and spec.entry != "run":
+            # Where the head cannot absorb it, the detail is the entry's last
+            # bullet — byte for byte what `build_education` used to pass in.
+            live = live + [detail]
         items = [bullet(b, last=(i == len(live) - 1), rail=s.rail if spec.entry == "stack" else None)
                  for i, b in enumerate(live)]
         return head + items[:1], items[1:]
@@ -1468,6 +1831,19 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
                          leading=(spec.meta_size + 0.2) * 1.35, tracking=s.track_head * 0.5,
                          rtl=s.rtl, space_before=s.bullet_after + 1.5, space_after=1.0)
 
+        def labeled(label: str, items: list[str], before: float) -> _RichText:
+            """One wrapping paragraph: the group's label BOLD and inline, then
+            its own comma-joined items. Same text and the same commas as the
+            "inline" run — only the label moves — so a keyword parser splits it
+            identically, and an ungrouped résumé (no label) renders exactly what
+            "inline" renders."""
+            runs = []
+            if label:
+                runs.append((f"{label}: ", s.bold, s.meta, s.ink))
+            runs.append((", ".join(items), s.reg, s.meta, s.ink))
+            return _RichText(runs, leading=s.lead_for(s.meta), rtl=s.rtl,
+                             space_before=before)
+
         def items_of(items: list[str], before: float = 0.0):
             if spec.skills == "chips":
                 # Chips still draw a comma between them, so the extracted text
@@ -1478,6 +1854,12 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
             return body(", ".join(items), space_before=before)
 
         def block(label: str, items: list[str], first: bool) -> list:
+            if spec.skills == "labeled":
+                # The label rides the SAME paragraph, so there is no second
+                # flowable to keep together with and no unlabelled-leftover
+                # special case: a block with no label is simply a paragraph that
+                # opens with its items.
+                return [labeled(label, items, 0.0 if first else s.bullet_after)]
             if label:
                 return [label_of(label), items_of(items)]
             # An UNLABELLED block after a labelled one is the leftover — skills
@@ -1530,7 +1912,10 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
         # sized for "Company · Location" — which silently ran anything longer
         # than one line off the right edge of the page and clipped it.
         def project(proj, first: bool):
-            opening, trailing = entry(proj.name, "", [], proj.bullets, first=first)
+            # bump=0.5: in a "run" entry a project name is a step down from a
+            # role's title and a step up from a degree. Ignored by the other two
+            # grammars, which carry one size for every section.
+            opening, trailing = entry(proj.name, "", [], proj.bullets, first=first, bump=0.5)
             if proj.description:
                 # `rail=s.rail` (None for the ten templates without one) is what
                 # keeps the line continuous. The rail is drawn PER FLOWABLE over
@@ -1540,8 +1925,17 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
                 # text, on the template whose picker copy promises "one
                 # continuous line". `rail_dot` stays off: the dot marks the role,
                 # and a second one on the description would say there are two.
-                desc = _Text(proj.description, font=s.reg, size=s.body, color=s.muted,
-                             leading=s.lead, rtl=s.rtl, space_after=s.bullet_after,
+                # `desc_size` / `desc_indent_pt` default to body size and no
+                # indent, so the eleven templates that say nothing render the
+                # flowable they always did.
+                desc_size = spec.desc_size or s.body
+                desc = _Text(proj.description, font=s.reg, size=desc_size, color=s.muted,
+                             leading=s.lead_for(desc_size), rtl=s.rtl,
+                             indent=spec.desc_indent_pt,
+                             # Last thing in the entry when there are no bullets,
+                             # and the entry gap below is what separates it from
+                             # the next project.
+                             space_after=s.bullet_after if trailing or len(opening) > 1 else 0.0,
                              rail=s.rail)
                 opening = opening[:1] + [desc] + opening[1:]
             return opening, trailing
@@ -1549,13 +1943,16 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
         section("projects", [project(p, i == 0) for i, p in enumerate(resume.projects)])
 
     def build_education() -> None:
+        # `detail=` rather than a one-item bullet list: a course list is a
+        # sentence, not a bullet, and a "run" entry sets it inline. The other
+        # two grammars turn it back into exactly the bullet it was.
+        # bump=0.0 — a degree is body weight beside a role's title.
         section("education", [
             entry(
                 ", ".join(b for b in [edu.degree, edu.field] if b) or edu.institution,
                 " – ".join(d for d in [edu.start_date, edu.end_date] if d),
                 [seg(edu.institution if (edu.degree or edu.field) else "", s.accent)],
-                [edu.details] if edu.details else [],
-                first=(i == 0),
+                [], first=(i == 0), detail=edu.details, bump=0.0,
             )
             for i, edu in enumerate(resume.education)
         ])
@@ -1601,8 +1998,8 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
             return
         flow.append(KeepTogether([
             heading("languages"),
-            _Segments([seg(p, s.ink) for p in pairs], sep=" · ", sep_color=s.sep,
-                      leading=s.lead, align="start", rtl=s.rtl),
+            _Segments([seg(p, s.ink) for p in pairs], sep=spec.meta_sep or " · ",
+                      sep_color=s.sep, leading=s.lead, align="start", rtl=s.rtl),
         ]))
 
     builders = {
