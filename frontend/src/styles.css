@@ -581,3 +581,196 @@ select {
     padding-inline-end: 396px;
   }
 }
+
+/* ===========================================================================
+   LANDING — the route-owned scope for `/` (Phase 25).
+   ===========================================================================
+   Same MECHANISM as `.paper` and `.sheet` above: re-declare the token custom
+   properties on ONE subtree, so every `bg-bg` / `text-ink` / `border-line`
+   utility underneath re-resolves by inheritance. Nothing here can reach `/app`,
+   `/scan` or any other route — which is the entire point, because `/scan` still
+   renders on `.paper` and must not move.
+
+   THE LANDING IS DARK BY DEFAULT AND THAT IS ART DIRECTION, NOT A THEME BUG.
+   `useLandingTheme` resolves it as "whatever the visitor explicitly saved, else
+   dark" — it never writes on mount, so a visitor with no stored preference sees
+   the dark composition while `/app` keeps following their system setting. When
+   they do choose, `.is-light` lands on this element and the same layout is drawn
+   in ink on paper. Both are designed; neither is an inversion of the other.
+
+   Values are the brief's landing tokens. `--line` is the DECORATIVE divider,
+   flattened from rgba(255,255,255,0.12) over #05090D — anything interactive
+   (a focus ring, a control border) is given its own stronger colour at the call
+   site rather than borrowing this one. */
+.jobfinder-landing {
+  color-scheme: dark;
+
+  --bg: 5 9 13; /* #05090D */
+  --bg-soft: 8 13 19; /* #080D13 — the one lifted band */
+  --bg-elevated: 11 17 24; /* #0B1118 */
+  --panel: 11 17 24; /* #0B1118 secondary surface */
+  --panel-2: 17 24 33; /* #111821 */
+  --line: 33 40 50; /* ≈ rgba(255,255,255,.12) over the page */
+  --ink: 244 246 248; /* #F4F6F8 */
+  --ink-muted: 167 176 186; /* #A7B0BA */
+  --ink-faint: 122 132 145; /* #7A8491 */
+  --accent: 168 206 255; /* #A8CEFF */
+  --accent-soft: 196 224 255;
+  --accent-deep: 122 172 236;
+  --mint: 92 214 168;
+  --warn: 240 194 118;
+  --danger: 255 138 138;
+
+  --ring-track: 33 40 50;
+  --scrollbar-thumb: 40 49 61;
+  --scrollbar-thumb-hover: 58 70 86;
+  --radius: 14px;
+
+  /* The primary CTA is an inverted pill: near-white fill, near-black text. */
+  --cta-fill: 244 246 248;
+  --cta-ink: 16 21 27;
+
+  --shadow-glow: 0 0 0 1px rgb(255 255 255 / 0.08), 0 18px 50px -22px rgb(0 0 0 / 0.9);
+  --shadow-panel: 0 30px 80px -40px rgb(0 0 0 / 0.95);
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 20px 45px -30px rgb(0 0 0 / 0.9);
+  --shadow-doc: 0 2px 8px rgb(0 0 0 / 0.5), 0 40px 90px -40px rgb(0 0 0 / 0.85);
+
+  --grid-faint: none;
+  --hero-glow: none;
+
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+}
+
+.jobfinder-landing.is-light {
+  color-scheme: light;
+
+  --bg: 247 248 250; /* #F7F8FA */
+  --bg-soft: 239 242 246;
+  --bg-elevated: 255 255 255;
+  --panel: 255 255 255;
+  --panel-2: 244 246 249;
+  --line: 215 217 220; /* ≈ rgba(17,24,32,.14) over the page */
+  --ink: 17 24 32; /* #111820 */
+  --ink-muted: 75 89 104; /* #4B5968 */
+  /* #647180. NOT the #6E7C8C this started at: measured on the running page,
+     that was 4.01:1 against #F7F8FA, and every string wearing this token —
+     eyebrows, captions, the access disclosure, the format note, the step
+     numerals — is 13-14px, so it needs 4.5:1 rather than the large-text 3:1.
+     This is 4.69:1. */
+  --ink-faint: 100 113 128;
+  --accent: 36 91 168; /* #245BA8 */
+  --accent-soft: 46 108 194;
+  --accent-deep: 25 68 130;
+  --mint: 11 122 83;
+  --warn: 150 101 10;
+  --danger: 194 52 74;
+
+  --ring-track: 224 228 234;
+  --scrollbar-thumb: 205 211 220;
+  --scrollbar-thumb-hover: 176 185 198;
+
+  --cta-fill: 17 24 32;
+  --cta-ink: 255 255 255;
+
+  --shadow-glow: 0 1px 2px rgb(17 24 32 / 0.06), 0 12px 30px -14px rgb(17 24 32 / 0.28);
+  --shadow-panel: 0 1px 2px rgb(17 24 32 / 0.05), 0 26px 60px -34px rgb(17 24 32 / 0.32);
+  --shadow-card: 0 1px 2px rgb(17 24 32 / 0.05), 0 14px 30px -24px rgb(17 24 32 / 0.22);
+  --shadow-doc: 0 1px 1px rgb(17 24 32 / 0.06), 0 2px 4px rgb(17 24 32 / 0.05),
+    0 22px 48px -20px rgb(17 24 32 / 0.28);
+}
+
+/* Every in-page anchor has to clear the fixed header, which is 64px here and
+   72px from `md`. `scroll-margin-block-start` is the logical property, so it is
+   the top edge in both directions. */
+.jobfinder-landing [id] {
+  scroll-margin-block-start: 80px;
+}
+
+/* The hero's base atmosphere, under the canvas. It is a real part of the
+   composition, not a placeholder: if the 2D context is unavailable or lost, the
+   scene degrades to THIS rather than to a black rectangle. Two very restrained
+   radial washes, no `filter: blur` anywhere. */
+.lp-space {
+  background:
+    radial-gradient(120% 74% at 50% 116%, rgb(30 56 98 / 0.6) 0%, rgb(5 9 13 / 0) 64%),
+    radial-gradient(46% 30% at 50% 83%, rgb(110 152 218 / 0.26) 0%, rgb(5 9 13 / 0) 72%),
+    radial-gradient(100% 60% at 50% 0%, rgb(14 22 34 / 0.9) 0%, rgb(5 9 13 / 0) 55%);
+}
+.jobfinder-landing.is-light .lp-space {
+  background:
+    radial-gradient(120% 74% at 50% 116%, rgb(180 198 226 / 0.85) 0%, rgb(247 248 250 / 0) 66%),
+    radial-gradient(46% 30% at 50% 83%, rgb(132 166 216 / 0.32) 0%, rgb(247 248 250 / 0) 72%),
+    radial-gradient(100% 52% at 50% 0%, rgb(255 255 255 / 0.85) 0%, rgb(247 248 250 / 0) 60%);
+}
+
+/* The faint, STATIC echo of the hero formation behind the closing section.
+   Deliberately CSS: a second particle engine on one page is the thing the
+   brief forbids, and this only ever has to suggest the same shape. */
+.lp-echo {
+  background:
+    radial-gradient(46% 60% at 50% 108%, rgb(120 162 224 / 0.16) 0%, rgb(5 9 13 / 0) 70%),
+    radial-gradient(90% 70% at 50% 130%, rgb(24 44 78 / 0.5) 0%, rgb(5 9 13 / 0) 72%);
+}
+.jobfinder-landing.is-light .lp-echo {
+  background:
+    radial-gradient(46% 60% at 50% 108%, rgb(120 162 224 / 0.18) 0%, rgb(247 248 250 / 0) 70%),
+    radial-gradient(90% 70% at 50% 130%, rgb(206 218 236 / 0.6) 0%, rgb(247 248 250 / 0) 72%);
+}
+
+/* Display type: the reference's restraint is mostly weight and tracking, not a
+   different family. Inter Variable is already licensed and loaded here. */
+.lp-display {
+  font-weight: 450;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
+}
+[dir="rtl"] .lp-display {
+  /* Hebrew has no tracking to tighten and Heebo's own rhythm needs the room. */
+  letter-spacing: normal;
+  line-height: 1.16;
+}
+.lp-h2 {
+  font-weight: 480;
+  letter-spacing: -0.03em;
+  line-height: 1.14;
+}
+[dir="rtl"] .lp-h2 {
+  letter-spacing: normal;
+  line-height: 1.28;
+}
+
+/* One entrance, used by the hero groups. Transform and opacity only, and it
+   ENDS on the resting state — the global reduced-motion rule collapses it to
+   0.001ms with one iteration, which parks the element exactly where it belongs
+   instead of leaving it 14px low and invisible. */
+@keyframes lp-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.lp-in {
+  animation: lp-in 0.62s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Template swap on the landing's product stage. The stage reserves its box by
+   aspect ratio, so this is a fade INTO a container that never resizes — no
+   height tween, nothing to wedge. */
+@keyframes lp-swap {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.lp-swap {
+  animation: lp-swap 0.2s ease-out both;
+}
+
+/* The hero's entrance is STAGGERED by per-element `animation-delay` inline
+   styles, and the global reduced-motion rule above collapses durations only.
+   A 410ms delay is still 410ms of an invisible headline for someone who asked
+   for less motion, so the stagger is removed too — "reveal all content
+   immediately" means immediately, not "within half a second".
+   `!important` because the delays are inline styles. */
+@media (prefers-reduced-motion: reduce) {
+  .lp-in {
+    animation-delay: 0s !important;
+  }
+}

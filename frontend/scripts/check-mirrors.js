@@ -2707,6 +2707,116 @@ try {
   fail(`review check-id copy check could not run: ${e.message}`);
 }
 
+// ---- 28. the landing's own copy resolves in both locales ----------------- //
+// The landing is the largest surface in the app whose strings were guarded by
+// NOTHING. Check 8 is parity-only, so a key missing from en AND he is green;
+// checks 16 and 22 are scoped to the tailor namespace; check 9 is deliberately
+// scoped to AppLayout.tsx, so the landing's own header — which carries the
+// whole public nav — sits outside it.
+//
+// This is not hypothetical. The 2026-09-06 redesign consolidated the old `faq`
+// block into `landing.faq` and left `t("faq.kicker")` behind in LandingFaq, so
+// the section rendered the literal string "faq.kicker" as its eyebrow, on the
+// page whose entire job is the first impression. Every other check was green.
+//
+// Two namespaces, because the landing legitimately reads both: `marketing` for
+// its own copy and `common` for the shared nav/header/footer vocabulary. The
+// prefix decides which file a key is looked up in, so a key moved between
+// namespaces without its call site moving fails HERE rather than at 12px in
+// Hebrew.
+//
+// PER-FILE FLOORS, for check 22's reason: a floor on the sum is not fail-loud,
+// because the other files carry the total past it while one file's call shape
+// has gone dark.
+try {
+  const files = [
+    ["pages/Landing.tsx", 1],
+    ["components/landing/LandingHeader.tsx", 8],
+    ["components/landing/LandingHero.tsx", 8],
+    ["components/landing/TemplateStage.tsx", 6],
+    ["components/landing/HowItWorks.tsx", 8],
+    ["components/landing/FeatureList.tsx", 3],
+    ["components/landing/ScanBand.tsx", 4],
+    ["components/landing/LandingFaq.tsx", 2],
+    ["components/landing/ClosingSection.tsx", 9],
+  ];
+  // THE NAMESPACE IS READ OFF THE BINDING, not guessed from the key's prefix.
+  // A prefix table was the first attempt and it is wrong in a way this repo has
+  // paid for before: `footer` exists in BOTH bundles (common carries the link
+  // labels, marketing the nav landmark and the blurb), so the table reported a
+  // key that resolves perfectly as missing. The binder does know — `useTranslation()`
+  // is the `common` default and `useTranslation("marketing")` is not — so the
+  // declaration is parsed and every call is looked up in ITS OWN namespace.
+  const BIND = /const\s*\{\s*t(?:\s*:\s*(\w+))?\s*\}\s*=\s*useTranslation\(\s*(?:"(\w+)")?\s*\)/g;
+  // Literal calls only: a template literal has no fixed key to look up, and the
+  // two that exist here (`templates.${id}.name`, `landing.faq.q${k}`) are
+  // already pinned by check 23 and by this check's own q1/a1 siblings.
+  const CALL = /\b(\w+)\(\s*"([A-Za-z][\w.]*)"\s*[,)]/g;
+  const seen = [];
+  for (const [f, floor] of files) {
+    const src = decomment(read(f));
+    const binders = new Map();
+    for (const m of src.matchAll(BIND)) {
+      const name = m[1] || "t";
+      const ns = m[2] || "common";
+      // One identifier, two namespaces in the same file — a second component
+      // in the file binding `t` to `marketing` while the exported one binds it
+      // to `common`. Nothing here can tell those calls apart, and quietly
+      // picking the last declaration checks half the file against the wrong
+      // bundle, so it is refused rather than guessed. Rename the second binder.
+      if (binders.has(name) && binders.get(name) !== ns)
+        throw new Error(
+          `${f} binds \`${name}\` to both "${binders.get(name)}" and "${ns}" — ` +
+            "rename one so each identifier means one namespace",
+        );
+      binders.set(name, ns);
+    }
+    if (binders.size === 0)
+      throw new Error(`${f} declares no useTranslation binding — the call shape changed`);
+    const here = [...src.matchAll(CALL)].filter((m) => binders.has(m[1]));
+    if (here.length < floor)
+      throw new Error(
+        `scraped only ${here.length} literal translation calls from ${f} ` +
+          `(expected at least ${floor}) — the call shape changed`,
+      );
+    for (const m of here) seen.push([f, binders.get(m[1]), m[2]]);
+  }
+
+  const bundles = {};
+  for (const loc of ["en", "he"])
+    for (const ns of ["marketing", "common"])
+      bundles[`${loc}/${ns}`] = JSON.parse(read(`locales/${loc}/${ns}.json`));
+
+  for (const [f, ns, key] of seen) {
+    if (!bundles[`en/${ns}`]) {
+      fail(`${f} reads namespace "${ns}", which this check does not load — add its bundle.`);
+      continue;
+    }
+    for (const loc of ["en", "he"])
+      if (!resolvesIn(bundles[`${loc}/${ns}`], key))
+        fail(
+          `locales/${loc}/${ns}.json is missing "${key}" (used by ${f}) — the landing would ` +
+            "render the raw key. Check 8 stays green while both locales are equally wrong.",
+        );
+  }
+
+  // Both directions: the matcher must fire on the shape it guards and must not
+  // fire on the template literals it deliberately cannot resolve.
+  const PROBE_OK = 't("landing.hero.line1")';
+  const PROBE_TEMPLATE = "t(`landing.faq.q${k}`)";
+  const PROBE_BIND = 'const { t: tm } = useTranslation("marketing");';
+  CALL.lastIndex = 0;
+  if (!CALL.test(PROBE_OK)) fail("check 28 cannot detect its own call shape");
+  CALL.lastIndex = 0;
+  if (CALL.test(PROBE_TEMPLATE)) fail("check 28 fires on a template literal, which has no fixed key");
+  BIND.lastIndex = 0;
+  const probe = BIND.exec(PROBE_BIND);
+  if (!probe || probe[1] !== "tm" || probe[2] !== "marketing")
+    fail("check 28 cannot read a renamed namespace binding, so every key behind one goes unchecked");
+} catch (e) {
+  fail(`landing copy check could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

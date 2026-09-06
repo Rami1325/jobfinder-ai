@@ -1,0 +1,140 @@
+import { useCallback, useRef, useState } from "react";
+import { Pause, Play } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import StarfieldCanvas from "./StarfieldCanvas";
+import { Cta } from "./ui";
+import type { LandingMode } from "../../hooks/useLandingTheme";
+
+/**
+ * The immersive opening: a full-bleed star scene with the copy centred in a
+ * clear reading area and the brightest part of the sculpture below it.
+ *
+ * WHAT MOVES AND WHAT DOES NOT. The scene has depth and answers the pointer.
+ * The heading, the paragraph, the buttons and the header do not move at all —
+ * no tilt, no magnetism, no parallax on type. The one thing the visitor can
+ * read is the one thing that stays still.
+ *
+ * The section is a stacking context (`isolate`): base wash, canvas, scrim,
+ * content, control. The header sits above all of it at `z-50`.
+ *
+ * The minimum height is viewport-BASED, not fixed: on a short window the
+ * padding shrinks and the section is free to grow, so the heading and both
+ * calls to action are inside the first screen at 1366x768 and at 390x844
+ * without ever being clipped.
+ */
+export default function LandingHero({ mode }: { mode: LandingMode }) {
+  const { t } = useTranslation("marketing");
+  const heroRef = useRef<HTMLElement>(null);
+  const readingRef = useRef<HTMLDivElement>(null);
+  const [paused, setPaused] = useState(false);
+  const [capable, setCapable] = useState(false);
+
+  // Stable identity: this is a dependency of the renderer's listener effect,
+  // and a new function every render would tear the loop down and rebuild it.
+  const onCapableChange = useCallback((v: boolean) => setCapable(v), []);
+
+  return (
+    <section
+      ref={heroRef}
+      className="lp-space relative isolate flex min-h-[100svh] flex-col justify-center overflow-hidden px-5 pb-28 pt-28 sm:px-8 sm:pt-32 lg:px-14"
+    >
+      <StarfieldCanvas
+        containerRef={heroRef}
+        readingRef={readingRef}
+        paused={paused}
+        mode={mode}
+        onCapableChange={onCapableChange}
+      />
+
+      {/* The restrained scrim. It is a soft ellipse behind the copy, not an
+          opaque rectangle over the scene — the particle fade around the
+          reading zone does most of this work already. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            mode === "dark"
+              ? "radial-gradient(52% 34% at 50% 40%, rgb(5 9 13 / 0.72) 0%, rgb(5 9 13 / 0) 100%)"
+              : "radial-gradient(52% 34% at 50% 40%, rgb(247 248 250 / 0.8) 0%, rgb(247 248 250 / 0) 100%)",
+        }}
+      />
+
+      {/* `readingRef` is the WHOLE copy column. The sculpture dims behind it
+          and places its nucleus just below it, so the composition follows the
+          text instead of a fixed fraction of the hero — which is what keeps the
+          bright knot clear of the copy at 1366x768, where the block sits much
+          lower in the viewport than it does at 1440x900. */}
+      <div ref={readingRef} className="relative z-10 mx-auto w-full max-w-[1040px] text-center">
+        <p className="lp-in text-[13px] font-medium uppercase tracking-[0.24em] text-ink-faint rtl:tracking-normal">
+          {t("landing.hero.eyebrow")}
+        </p>
+
+        <h1
+          className="lp-display mx-auto mt-6 text-ink"
+          style={{ fontSize: "clamp(2.625rem, 5.6vw, 5.75rem)", animationDelay: "70ms" }}
+        >
+          {/* Two lines by intent. They are separate blocks rather than a <br>,
+              so each still wraps on its own at 320px instead of overflowing. */}
+          <span className="lp-in block" style={{ animationDelay: "70ms" }}>
+            {t("landing.hero.line1")}
+          </span>
+          <span className="lp-in block" style={{ animationDelay: "150ms" }}>
+            {t("landing.hero.line2")}
+          </span>
+        </h1>
+
+        <p
+          className="lp-in mx-auto mt-6 max-w-[52ch] text-[17px] leading-relaxed text-ink-muted sm:text-[19px]"
+          style={{ animationDelay: "230ms" }}
+        >
+          {t("landing.hero.sub")}
+        </p>
+
+        <div
+          className="lp-in mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center"
+          style={{ animationDelay: "300ms" }}
+        >
+          <Cta to="/app" arrow>
+            {t("landing.hero.ctaPrimary")}
+          </Cta>
+          <Cta to="/scan" variant="secondary">
+            {t("landing.hero.ctaSecondary")}
+          </Cta>
+        </div>
+
+        <p
+          className="lp-in mt-8 text-[13px] text-ink-faint"
+          style={{ animationDelay: "370ms" }}
+        >
+          {/* PDF and DOCX are Latin marks inside a Hebrew sentence: isolated so
+              the separator does not migrate across them in RTL. */}
+          <bdi>PDF</bdi> &amp; <bdi>DOCX</bdi> · {t("landing.hero.langs")}
+        </p>
+        <p
+          className="lp-in mx-auto mt-2 max-w-[46ch] text-[13px] leading-relaxed text-ink-faint"
+          style={{ animationDelay: "410ms" }}
+        >
+          {t("landing.hero.access")}
+        </p>
+      </div>
+
+      {/* Ambient motion continues while people read, so the way to stop it is
+          on the page — not in a settings screen. Hidden only when this device
+          and these preferences never animate in the first place. */}
+      {capable && (
+        <div className="absolute inset-x-0 bottom-5 z-20 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setPaused((p) => !p)}
+            aria-pressed={paused}
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-full px-4 text-[13px] font-medium text-ink-faint transition-colors hover:bg-ink/[0.06] hover:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            {paused ? <Play size={14} aria-hidden /> : <Pause size={14} aria-hidden />}
+            {paused ? t("landing.hero.resumeBg") : t("landing.hero.pauseBg")}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}

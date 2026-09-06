@@ -262,11 +262,24 @@ export default function ResumeMiniature({
   className,
   flagBullet = false,
   struck = false,
+  mirror,
 }: {
   template: ResumeTemplate;
   /** Accessible name. Decorative-only usage should pass nothing. */
   label?: string;
   className?: string;
+  /**
+   * Whether the SHEET is mirrored by the caller (`rtl:-scale-x-100`), which is
+   * where the PDF puts the sidebar and the start margin in Hebrew. Defaults to
+   * the UI language, which is right for a gallery of thumbnails.
+   *
+   * The landing's large preview passes `false`: the demo copy is English, so
+   * the DOCUMENT is left-to-right whatever the interface is set to, and
+   * mirroring an English page would be exactly the "flipped screenshot called
+   * Hebrew" the design brief rules out. Direction is a property of the
+   * document, not of the chrome around it.
+   */
+  mirror?: boolean;
   /**
    * Draw one bullet in the first role as a fabrication-guard catch: the line
    * in danger red, and a strike rule that animates across it when `struck`.
@@ -281,7 +294,7 @@ export default function ResumeMiniature({
   // The callers mirror the sheet with `rtl:-scale-x-100`, which fires off the
   // document `dir` i18n sets for Hebrew. `put` reads this to flip each run
   // back, so the two must agree on what "RTL" means.
-  const rtl = (i18n.language || "en").toLowerCase().startsWith("he");
+  const rtl = mirror ?? (i18n.language || "en").toLowerCase().startsWith("he");
 
   const { nodes, strike } = useMemo(() => {
     const out: ReactNode[] = [];

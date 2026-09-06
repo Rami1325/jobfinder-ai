@@ -47,8 +47,13 @@ export default function App() {
       <AccessGate />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
+          {/* The landing owns its own shell (header, footer and the
+              `.jobfinder-landing` token scope), so it sits OUTSIDE the
+              marketing layout. `/scan` keeps that layout, its warm-paper
+              palette and its aurora exactly as they were — which is the whole
+              reason the two were separated. */}
+          <Route path="/" element={<Landing />} />
           <Route element={<MarketingLayout />}>
-            <Route path="/" element={<Landing />} />
             <Route path="/scan" element={<ScanPage />} />
           </Route>
           <Route element={<AppLayout />}>

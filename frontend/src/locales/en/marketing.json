@@ -1,42 +1,16 @@
 {
-  "TODO_SOCIAL_PROOF": "TODO (owner): this page deliberately contains NO testimonials, star ratings, review counts or user numbers, because none exist yet and inventing them would contradict the product's entire pitch. The `receipts.*` block fills that slot with real product guarantees instead. When there are genuine quotes with attributable names and roles, supply them and swap `receipts.*` for them. The numbers in `stats.*` are counted from the repository (0 accounts; 5 job-board providers in app/core/providers/__init__.py; 2 locales; 600+ smoke-test checks — 666 counted 2026-08-25, printed as a floor because it moves on every backend commit) — re-verify before changing them.",
-  "hero": {
-    "badge": "ATS-safe DOCX & PDF · Hebrew and English",
-    "title1": "Resumes that look designed.",
-    "title2": "Every claim",
-    "titleHighlight": "traceable to you.",
-    "sub": "JobFinder rewrites your CV for the job you're actually applying to and renders it as a clean, ATS-safe DOCX or PDF — while a code-enforced guard checks every claim back against your real experience.",
-    "subEmphasis": "No invented numbers. No made-up titles.",
-    "ctaPrimary": "Tailor my resume",
-    "ctaSecondary": "Scan my CV free",
-    "bulletNoLogin": "No account, no email, no card",
-    "bulletOffline": "Runs fully offline with a built-in stub",
-    "bulletAts": "ATS-safe DOCX & PDF",
-    "bulletBilingual": "English and Hebrew, real RTL",
-    "docAlt": "Preview of a tailored resume page in the Classic template, with one bullet flagged by the fabrication guard",
-    "mock": {
-      "matchScore": "Match score",
-      "guardTitle": "Fabrication guard",
-      "guardBody": "1 claim couldn't be traced back to your resume.",
-      "guardStamp": "Flagged"
-    }
-  },
+  "TODO_SOCIAL_PROOF": "TODO (owner): this page deliberately carries NO testimonials, star ratings, review counts or user numbers, because none exist yet and inventing them would contradict the entire pitch. It also no longer carries a section explaining that absence — a page with no reviews on it does not need a footnote about not having reviews. When there are genuine quotes with attributable names and roles, they belong between `landing.how` and `landing.features`.",
   "templates": {
     "standard": {
       "name": "Standard",
       "desc": "Centred name, all-caps headings on a hairline, no colour. The default."
     },
     "nav": "Templates",
-    "kicker": "The output",
-    "title": "This is the thing you actually send",
-    "sub": "One shared design system, and every template a different SHAPE — header band, heading treatment, entry grammar, column count. Not one document in eleven colours.",
     "alt": "{{name}} template preview",
     "sample": {
       "title": "Sample resume page",
       "note": "Sample document. Maya Eldar is an invented person and every line is demo copy — this is not anyone's real CV."
     },
-    "pdfOnly": "PDF only",
-    "cta": "See them on my own CV",
     "classic": {
       "name": "Classic",
       "desc": "Tinted header card, full-width heading rules. The safe default."
@@ -80,167 +54,125 @@
     "minimal": {
       "name": "Minimal",
       "desc": "No colour at all. Headings hang out in the margin."
-    },
-    "proof": {
-      "ats": {
-        "title": "Every template passes our own ATS scan",
-        "body": "Standard section names, no tables, text boxes, images, headers or footers. The release suite renders every template and re-extracts the text to prove it. The two two-column designs are PDF-only for a measured reason: their .docx falls back to the closest single-column sibling, and the picker says so."
-      },
-      "bilingual": {
-        "title": "The same document in Hebrew",
-        "body": "Not a mirrored screenshot. The PDF is line-broken and bidi-reordered line by line, and the DOCX mirrors weight and size onto the complex-script properties Word actually reads for Hebrew."
-      },
-      "pages": {
-        "title": "One page or two, by measurement",
-        "body": "The renderer measures the built page and compresses the vertical rhythm — never the type size — before it lets your CV spill onto a second sheet."
-      }
     }
-  },
-  "freeScan": {
-    "kicker": "Free · no signup",
-    "title": "Check your CV against any job — free",
-    "body": "Keyword match score, matched and missing keywords, and quick resume checks. Hebrew or English, nothing stored. Tools like this cost ₪39/month elsewhere.",
-    "cta": "Scan my CV now",
-    "note": "No account. No access code. Runs in seconds."
-  },
-  "stats": {
-    "kicker": "Numbers we can actually show you",
-    "title": "Counted from the source, not from a deck",
-    "accounts": {
-      "label": "Accounts to create",
-      "note": "No sign-up, no email, no card. The hosted build asks for a one-time access code; the free CV scan doesn't even do that."
-    },
-    "boards": {
-      "label": "Job boards searched",
-      "note": "LinkedIn, Drushim, Comeet, JobMaster and Greenhouse, fanned out at once — one board failing never sinks the search."
-    },
-    "languages": {
-      "label": "Languages, end to end",
-      "note": "English and Hebrew, with real right-to-left in the interface and in the rendered PDF and DOCX alike."
-    },
-    "checks": {
-      "label": "Automated checks per release",
-      "note": "The offline suite runs the whole pipeline, renders every template in both formats and both languages, and re-extracts the text."
-    },
-    "footnote": "What's missing here is a user count, a star rating and an \"interviews landed last month\" figure. This is a new tool and it doesn't have them yet — so it isn't going to print them."
   },
   "features": {
-    "kicker": "The toolkit",
-    "title": "Everything for the search — honestly built",
-    "sub": "Six surfaces, one master resume. Save it once and every tool reads from the same set of facts.",
     "tailoring": {
-      "title": "Resume tailoring",
-      "body": "Rewrite for each job, with before/after match scores and a full changelog of every edit."
+      "title": "Resume tailoring"
     },
     "interview": {
-      "title": "Interview prep",
-      "body": "Role-specific questions and STAR model answers grounded in your real experience."
+      "title": "Interview prep"
     },
     "jobs": {
-      "title": "Job match",
-      "body": "Paste or link multiple roles and rank them by fit against your master resume."
+      "title": "Job match"
     },
     "xray": {
-      "title": "ATS X-ray",
-      "body": "See the exact text a parser pulls out of your rendered CV — and every fact that came back wrong."
+      "title": "ATS X-ray"
     },
     "linkedin": {
-      "title": "LinkedIn optimizer",
-      "body": "A sharper headline, About, and experience — from facts you already have."
+      "title": "LinkedIn optimizer"
     },
     "followUp": {
-      "title": "Follow-up writer",
-      "body": "Concise, specific follow-up emails that don't read like a template."
+      "title": "Follow-up writer"
     }
-  },
-  "how": {
-    "kicker": "How it works",
-    "title": "Three steps. Zero fabrication.",
-    "sub": "The same pipeline that runs under the hood — nothing hidden, nothing made up.",
-    "step": "Step {{n}}",
-    "upload": {
-      "title": "Upload & structure",
-      "body": "Drop in your resume (DOCX/PDF). We parse it into structured data and build an immutable Facts Ledger of everything you've actually done."
-    },
-    "analyze": {
-      "title": "Analyze & tailor",
-      "body": "Paste the job description. JobFinder scores keyword coverage and recruiter fit, then rewrites your resume to emphasize what matters — never inventing."
-    },
-    "verify": {
-      "title": "Verify & export",
-      "body": "The Fabrication Guard diffs every tailored claim against your ledger. Anything invented gets flagged. Export ATS-safe DOCX or PDF."
-    }
-  },
-  "why": {
-    "kicker": "Why honesty wins",
-    "title": "Most AI resume tools get you caught",
-    "sub": "A resume that impresses the bot but collapses in the interview isn't an advantage. JobFinder optimizes the truth.",
-    "slopTitle": "Typical \"AI apply\" tools",
-    "slop1": "Invents metrics and titles you never had",
-    "slop2": "Reads as templated — recruiters flag it",
-    "slop3": "Same buzzwords on every application",
-    "slop4": "You find out it lied in the interview",
-    "usTitle": "JobFinder",
-    "us1": "Every claim traced to your real resume",
-    "us2": "Code-enforced guard blocks fabrication",
-    "us3": "Tailored per job, keyword-accurate",
-    "us4": "You can defend every line you send",
-    "guardedLabel": "What the guard diffs, claim by claim",
-    "guarded": {
-      "employers": "Employers",
-      "titles": "Job titles",
-      "dates": "Dates",
-      "credentials": "Credentials",
-      "numbers": "Numbers"
-    },
-    "guardedNote": "Skills are deliberately not on that list. Adopting the job's wording for something you genuinely do is honest tailoring — flagging it would only train you to ignore the flags that matter."
-  },
-  "receipts": {
-    "kicker": "Receipts, not testimonials",
-    "title": "There are no reviews on this page",
-    "sub": "No stars, no user count, no quotes from people who don't exist. Here is what the code promises instead — and what enforces each promise.",
-    "guard": {
-      "quote": "If a claim isn't in your resume, you find out before the recruiter does.",
-      "body": "The guard rebuilds a facts ledger from the tailored resume and diffs it against the one built from your original. Employers, titles, dates, credentials and numbers that appeared from nowhere are flagged one by one, and you see them before you download anything.",
-      "source": "The fabrication guard — runs after every tailor, not only in tests"
-    },
-    "score": {
-      "quote": "The match score can show its work, term by term.",
-      "body": "Keyword coverage is plain deterministic Python: which terms the job asked for, which ones your resume already earned, and which ones the rewrite surfaced. Only the recruiter-fit half of the score ever asks a model.",
-      "source": "The scorer — measured before and after every tailor"
-    },
-    "ats": {
-      "quote": "Eleven format checks, and not one of them needs an API key.",
-      "body": "Date formats, acronym pairing, pronouns, bullet length, resume length weighed against your actual years of experience. Because it's deterministic it's instant, free, and identical every time you run it.",
-      "source": "The ATS scan — free and public, no code required"
-    }
-  },
-  "faq": {
-    "kicker": "FAQ",
-    "title": "Straight answers",
-    "q1": "Does JobFinder make things up on my resume?",
-    "a1": "No — and that's the whole point. A code-enforced Fabrication Guard diffs every tailored claim against a ledger built from your original resume. Anything it can't trace back to your real experience is flagged, per claim, before you download. Skills are the one deliberate exception: adopting the job's wording for something you genuinely do is honest tailoring, not fabrication.",
-    "q2": "Will the output pass ATS screening?",
-    "a2": "Both exporters enforce ATS-safe rules by construction: single column, standard section names, no tables, text boxes, images, headers or footers — just clean, selectable text. The release suite renders every template in both formats and both languages and re-extracts the text to prove it stays parseable. No tool can promise a specific company's screener will like you, but nothing in the file is there to trip one.",
-    "q3": "Do I need an account or a subscription?",
-    "a3": "There are no accounts, no email and no billing anywhere in the product. The hosted build is gated by a single access code stored on your device — that's a door key, not a profile. The free CV scan is outside the gate entirely. It also runs fully offline with a built-in stub, so you can exercise the whole pipeline without an API key.",
-    "q4": "How is this different from auto-apply tools?",
-    "a4": "Auto-apply tools optimize for volume and often submit generic, fabricated applications that get flagged. JobFinder optimizes for quality and truth: you stay in control of what's sent, and every claim is defensible. Automated submission exists for exactly one board, only for kits you approved and the guard cleared — LinkedIn is never automated.",
-    "q5": "Can I choose how the resume looks?",
-    "a5": "Yes. Each template is its own palette, type hierarchy and vertical rhythm, and you switch at download time without re-running the tailor. They share one design system, so the DOCX and the PDF read as the same document rather than two cousins.",
-    "q6": "Does it really handle Hebrew?",
-    "a6": "End to end: the interface, the parsing, the tailoring and both exports. The PDF has its own layout engine that line-breaks and bidi-reorders line by line instead of leaning on a direction-blind paragraph engine, and the Hebrew DOCX mirrors weight and size onto the complex-script properties Word actually reads. Mixed Hebrew/English resumes work too."
-  },
-  "finalCta": {
-    "title": "Send something you can defend.",
-    "sub": "Upload your CV, paste the job, and get a tailored, guard-checked version as an ATS-safe DOCX or PDF in about a minute.",
-    "cta": "Tailor my resume",
-    "ctaSecondary": "Try the free scan",
-    "note": "Nothing is stored for the free scan, and everything the app does hold about you can be deleted from a single button inside it."
   },
   "footer": {
     "navLabel": "Site sections",
     "blurb": "An honest resume tailor. It rewrites for the job, renders ATS-safe DOCX and PDF, and flags anything it can't trace back to you.",
     "honesty": "Everything claimed on this page is either visible in the product or checkable in its source. There are no user counts, star ratings or testimonials here, because there aren't any yet."
+  },
+  "landing": {
+    "skipToContent": "Skip to content",
+    "nav": {
+      "close": "Close menu",
+      "toLight": "Switch to the light theme",
+      "toDark": "Switch to the dark theme"
+    },
+    "hero": {
+      "eyebrow": "JobFinder",
+      "line1": "Your experience.",
+      "line2": "Ready for your next role.",
+      "sub": "Turn your experience into a resume tailored to the job. Review the changes, then export in English or Hebrew.",
+      "ctaPrimary": "Tailor my resume",
+      "ctaSecondary": "Scan my CV free",
+      "langs": "English & Hebrew",
+      "access": "App access requires a code. The free scan is open to everyone.",
+      "pauseBg": "Pause background",
+      "resumeBg": "Resume background"
+    },
+    "templates": {
+      "eyebrow": "The result",
+      "title": "A resume that looks as good as it reads.",
+      "sub": "Choose a layout, see your experience clearly, and export a document you can edit or send.",
+      "pickerLabel": "Layout",
+      "caption": "Example resume · fictional data",
+      "pdfOnly": "Two columns, so this layout is rendered in the PDF. The Word file falls back to the closest single-column template — the same words in a different layout.",
+      "bothFormats": "Exports as a PDF and as an editable Word file."
+    },
+    "how": {
+      "eyebrow": "How it works",
+      "title": "From your experience to a tailored resume.",
+      "upload": {
+        "title": "Add your resume",
+        "body": "Upload your existing PDF or DOCX to start with your real experience."
+      },
+      "role": {
+        "title": "Add the role",
+        "body": "Paste the job description to focus your resume on the relevant experience."
+      },
+      "review": {
+        "title": "Review and export",
+        "body": "Review the edits and flagged claims, choose your layout, and export."
+      },
+      "proof": {
+        "title": "Tailored wording. Your original facts.",
+        "beforeLabel": "Your resume",
+        "afterLabel": "Tailored for the role",
+        "before": "Led the billing rebuild that cut involuntary churn from 4.1% to 1.6% in two quarters.",
+        "after": "Reduced involuntary churn from 4.1% to 1.6% in two quarters by leading a billing rebuild.",
+        "note": "The sentence now opens with the outcome the job asks about. The figures, the timeframe and the work behind them are the ones you wrote. Anything JobFinder cannot trace back to your resume is flagged for you before you download it.",
+        "caption": "Illustrative rewrite of fictional sample data."
+      }
+    },
+    "features": {
+      "eyebrow": "The toolkit",
+      "title": "More support for your next move.",
+      "sub": "Use the same experience across the tools that support your job search.",
+      "tailoring": "Adapt your resume to a role and review what changed.",
+      "interview": "Prepare with role-specific questions based on your experience.",
+      "jobs": "Compare roles against your resume and see where you fit.",
+      "xray": "Inspect the text extracted from your exported resume.",
+      "linkedin": "Refine your headline, About section, and experience.",
+      "followUp": "Draft a clear follow-up for your next conversation."
+    },
+    "scan": {
+      "title": "Start with a free CV scan.",
+      "body": "Compare your resume with a job description and see matched keywords, missing terms, and formatting checks.",
+      "note": "No account or access code required."
+    },
+    "faq": {
+      "eyebrow": "FAQ",
+      "title": "A few things to know.",
+      "q1": "Can JobFinder invent things on my resume?",
+      "a1": "It rewrites; it does not add experience. Every tailored claim is checked back against a record built from the resume you uploaded, and anything that cannot be traced to it is flagged for you before you download. That check reads employers, job titles, dates, credentials and numbers. It is a warning system rather than a guarantee, so read the flags. Skills are the one thing it deliberately leaves alone: using the wording of the job description for something you genuinely do is ordinary tailoring.",
+      "q2": "Will the file pass an ATS?",
+      "a2": "The exports are built to be read by a machine: plain text in a single column, standard section names, and no tables, text boxes, images or Word headers and footers. You can also run the ATS X-ray, which reads your finished file back with our own parser and shows you what it found. No tool can promise that a particular employer's screener will pass you — what we can say is that nothing in the file is there to trip one.",
+      "q3": "Do I need an account?",
+      "a3": "There are no accounts, no email and no billing. The app itself sits behind a single access code stored on your device — a door key, not a profile. The free CV scan is outside that door and needs nothing at all.",
+      "q4": "Is this an auto-apply tool?",
+      "a4": "No. You decide what gets sent, and tailoring happens one role at a time so you can read it first. There is one narrow exception: for a single job board, and only for an application you have already approved, JobFinder can submit it for you. LinkedIn is never submitted automatically.",
+      "q5": "Can I choose how it looks?",
+      "a5": "Yes. Pick a layout at any time and the preview, the PDF and the Word file all follow it. Most layouts export the same design to both formats. The two-column ones are rendered in the PDF; their Word file falls back to the closest single-column template, so it carries the same words in a different layout — and the picker says so beside the layout you chose.",
+      "q6": "Does it really work in Hebrew?",
+      "a6": "Yes — the interface, the tailoring and both exported files. The PDF is laid out right to left line by line rather than being flipped, and the Word file is tagged so that Word applies Hebrew formatting properly. Resumes that mix Hebrew and English work too."
+    },
+    "closing": {
+      "title": "Make your next application count.",
+      "sub": "Start with the experience you already have.",
+      "ctaSecondary": "Try the free scan"
+    },
+    "footer": {
+      "blurb": "JobFinder helps you tailor your resume and prepare for your next opportunity."
+    }
   }
 }
