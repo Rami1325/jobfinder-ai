@@ -1,7 +1,7 @@
-// Deterministic diff between the original and AI-tailored résumé, plus the
+// Deterministic diff between the original and AI-tailored resume, plus the
 // accept/reject merge. The LLM's changelog is free text and can't be trusted
 // for before/after pairs, so we compute them structurally: one merge walk
-// emits the edit list AND builds the effective résumé, guaranteeing that what
+// emits the edit list AND builds the effective resume, guaranteeing that what
 // the review UI shows is exactly what accept/reject applies.
 import type {
   Education,
@@ -17,7 +17,7 @@ import { CONTACT_FIELDS, readBlock, type ContactField } from "./resumeBlocks";
 export type EditKind = "edited" | "added" | "removed";
 
 /**
- * Edit ids, keyed by where they land in the RENDERED (effective) résumé.
+ * Edit ids, keyed by where they land in the RENDERED (effective) resume.
  *
  * Path grammar — indices are into the document ON SCREEN, not the original:
  *   `@headline` · `@summary` · `@contact` · `@contact.name`
@@ -38,12 +38,12 @@ export type BlockAnchors = Record<string, string[]>;
 
 /**
  * Block path → SOURCE ANCHOR: where that block came from in the ORIGINAL or
- * TAILORED résumé, rather than where it landed on screen.
+ * TAILORED resume, rather than where it landed on screen.
  *
  * **Paths are not stable across accept/decline, and anchors are.** A rejected
  * removal is spliced back at `k = Math.min(oi, list.length)`, so every later
  * entry in that section shifts — proven by executing this module: with a
- * tailored résumé that drops `experience[0]`, `@exp.1` is "Gamma" with nothing
+ * tailored resume that drops `experience[0]`, `@exp.1` is "Gamma" with nothing
  * rejected and "Beta" with `exp.rm.0` rejected. The same splice runs for
  * projects, education, military and, one level down, bullets. So anything the
  * USER writes over the merged document has to be stored against this
@@ -75,11 +75,11 @@ export type EditSection =
   | "contact";
 
 export interface ResumeEdit {
-  /** Stable id derived from the ORIGINAL résumé's structure, so it survives
+  /** Stable id derived from the ORIGINAL resume's structure, so it survives
    * decision changes (the pairing is deterministic and decision-independent). */
   id: string;
   section: EditSection;
-  /** Where in the résumé, e.g. "Engineer · Acme Corp". Empty for top-level fields. */
+  /** Where in the resume, e.g. "Engineer · Acme Corp". Empty for top-level fields. */
   context: string;
   kind: EditKind;
   before: string; // "" for added
@@ -179,7 +179,7 @@ const formatLanguage = (l: LanguageSkill) => [l.language, l.level].filter(Boolea
 
 /**
  * The single merge walk. Emits every edit and simultaneously builds the
- * effective résumé where each edit takes its tailored value when accepted
+ * effective resume where each edit takes its tailored value when accepted
  * and its original value when rejected.
  */
 function mergeResumes(
@@ -285,7 +285,7 @@ function mergeResumes(
    *
    * `ids` is maintained in LOCKSTEP with `out` — every push and every splice
    * touches both. That is what makes an edit id addressable by its position in
-   * the rendered document: edit ids index the ORIGINAL résumé, the document
+   * the rendered document: edit ids index the ORIGINAL resume, the document
    * shows the EFFECTIVE one, and a restored removal is spliced back in at an
    * index that shifts everything after it. Deriving the mapping afterwards
    * would mean re-deriving the pairing; carrying it along costs nothing.
@@ -363,7 +363,7 @@ function mergeResumes(
   // --- headline -------------------------------------------------------- //
   // The target-title line is a CLAIM the guard reads (for rank), so it has to
   // be diffable and rejectable like anything else. Leaving it out of this walk
-  // silently DELETED it from the effective résumé the moment one edit was
+  // silently DELETED it from the effective resume the moment one edit was
   // rejected — and from the download, the tracker row and the cover letter
   // with it. Optional on older rows, hence the ?? "".
   const headlineIds: string[] = [];
@@ -389,7 +389,7 @@ function mergeResumes(
   // but they may never claim a skill the merge dropped: the backend's
   // flat-union validator only ever ADDS, so a stale group item resurrects the
   // skill it names on the next round trip and silently undoes the rejection.
-  // Tailored résumés carry no groups by design, so this is a no-op for the
+  // Tailored resumes carry no groups by design, so this is a no-op for the
   // tailor path and only does work when the base document is a grouped master.
   const skillKeys = new Set(skills.map(lkey));
   const skill_groups = tailored.skill_groups
@@ -744,12 +744,12 @@ function mergeResumes(
   };
 }
 
-/** All edits the AI made, in résumé order. */
+/** All edits the AI made, in resume order. */
 export function diffResumes(original: ResumeModel, tailored: ResumeModel): ResumeEdit[] {
   return mergeResumes(original, tailored, () => false).edits;
 }
 
-/** The effective résumé after applying the user's accept/reject decisions. */
+/** The effective resume after applying the user's accept/reject decisions. */
 export function applyEditDecisions(
   original: ResumeModel,
   tailored: ResumeModel,
@@ -759,12 +759,12 @@ export function applyEditDecisions(
 }
 
 /**
- * The effective résumé, its edits, AND where each edit lands in it — the one
+ * The effective resume, its edits, AND where each edit lands in it — the one
  * call the review surface wants, because all three come out of a single walk
  * and therefore cannot disagree.
  *
  * `blocks` maps an OUTPUT block path to the edit ids that touch it. Paths index
- * the document being RENDERED, not the original résumé, which is the whole
+ * the document being RENDERED, not the original resume, which is the whole
  * point: edit ids carry original indices and the rendered document is the
  * tailored one with restored removals spliced back in.
  *
@@ -897,7 +897,7 @@ export function editContainsValue(edit: ResumeEdit, value: string): boolean {
  * Asking the block is what closes that: green now means "the value is not on the
  * line it was on", which is a statement about the file the user is about to send.
  *
- * PER BLOCK rather than over the whole résumé, and that is a false-positive
+ * PER BLOCK rather than over the whole resume, and that is a false-positive
  * guard, not an economy. A `number` flag can be a bare "12" (`_NUMBER_RE` takes
  * digits on their own) and a `date` flag can be "2019" — both are substrings of
  * text that has nothing to do with them ("2012", another role's dates), so a

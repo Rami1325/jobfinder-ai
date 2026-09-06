@@ -4,7 +4,7 @@ import { resumeLanguage } from "../lib/lang";
 import { adoptMaster } from "../state/tailorStore";
 import type { MasterResume } from "../types";
 
-// Module-level cache so navigating between pages that need the master résumé
+// Module-level cache so navigating between pages that need the master resume
 // (Resume, Jobs, Interview) doesn't re-fetch and flash a skeleton on every visit.
 // Stale-while-revalidate: mounts after the first return the cache instantly and
 // refresh in the background. `null` = never loaded yet.
@@ -15,9 +15,9 @@ let cache: MasterResume[] | null = null;
  *
  * This exists because `invalidateData` CANNOT reach this variable — it only
  * clears the `dataCache` Map, and this is a plain module-level binding. Nine
- * pages read the master résumé from here (Interview, and every tool), so after
+ * pages read the master resume from here (Interview, and every tool), so after
  * the master is edited and saved, anything that skips this keeps painting AND
- * SENDING the pre-edit résumé: an ATS X-ray run straight after an edit would
+ * SENDING the pre-edit resume: an ATS X-ray run straight after an edit would
  * scan the document that was just replaced.
  *
  * Set to null rather than to the new value: consumers already treat `null` as
@@ -28,10 +28,10 @@ export function resetMasterCache(): void {
   cache = null;
 }
 
-/** Loads the persisted master résumés once (paired he/en — at most one per
+/** Loads the persisted master resumes once (paired he/en — at most one per
  * language, newest first). `master` is the most recently updated one, which is
  * all Interview / Tools need; Jobs also shows the full pair via `masters`.
- * `setMaster` upserts a freshly uploaded résumé into its language slot without
+ * `setMaster` upserts a freshly uploaded resume into its language slot without
  * a reload — and hands it to the document surface, which keeps a second copy
  * of the master that nothing else can reach (see the comment on the call). */
 export function useMasterResume() {
@@ -79,7 +79,7 @@ export function useMasterResume() {
     });
     // THIS CACHE IS NOT THE ONLY ONE. The document surface keeps its own
     // module-level copy of the master in `tailorStore`, and `TailorPage`'s
-    // loader early-returns the moment that copy is set — so a résumé replaced
+    // loader early-returns the moment that copy is set — so a resume replaced
     // from here never reached /app: it kept painting, TAILORING and downloading
     // the file this call had just replaced, until a full page reload. Uploading
     // a new CV on Jobs and then tailoring it produced the OLD one.

@@ -89,7 +89,7 @@ export function groupChecks(findings: ReviewFinding[]): CheckRow[] {
 }
 
 /**
- * How much of this résumé is clean, as a share of the checks that RAN.
+ * How much of this resume is clean, as a share of the checks that RAN.
  *
  * **This repo spent Phase 28 refusing to put a number here, and the number is
  * back because the owner asked for one.** The old rule — "no scores, counts and
@@ -101,7 +101,7 @@ export function groupChecks(findings: ReviewFinding[]): CheckRow[] {
  *
  * `skipped` is EXCLUDED from the denominator, which is the honest half. A check
  * that could not run is unknown, and folding unknowns into the denominator
- * would let a résumé's score fall for a reason it cannot act on (no job
+ * would let a resume's score fall for a reason it cannot act on (no job
  * attached), while folding them into the numerator would report unknown as
  * clean — the defect `ReviewResult` exists to avoid.
  *
@@ -362,7 +362,7 @@ export default function ReviewPanel({
           make it checkable — the reader can add the rows up. */}
       {/* NO PERCENTAGE WHEN NOTHING RAN -- a DIVISION GUARD, and today it is
           only that. `clean/ran` is 0/0 when every check skips, and "0%" over a
-          résumé reads as a verdict on the document when what happened is that we
+          resume reads as a verdict on the document when what happened is that we
           could not look at it. It is currently UNREACHABLE through
           `POST /tools/review`: seven checks answer with a list on every input
           and never `None`, so `ran` is at least seven however empty the CV. It

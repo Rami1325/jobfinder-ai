@@ -1,14 +1,14 @@
 """Company Research Brief — grounded pre-apply / pre-interview homework.
 
 Fetches the company's about/careers/team page (same fetch path job-match URLs
-use) and summarizes it alongside the résumé. Honesty rules, same brand as the
+use) and summarizes it alongside the resume. Honesty rules, same brand as the
 fabrication guard:
 - Company facts and people come ONLY from the provided text (the prompt forbids
   model memory; the UI labels everything "verify these").
 - Email addresses are NEVER produced by the LLM. `extract_emails` pulls only
   addresses that literally appear in the page text, and a person only gets an
   email when its local part matches their name.
-- The reach-out message is short and résumé-grounded (who you are, why you fit,
+- The reach-out message is short and resume-grounded (who you are, why you fit,
   one closing question) — the human sends it themselves.
 - "Who to reach" is also role-aware (PLAN 11.7) but stays deterministic: a
   role→titles table maps the target role to its likely hiring chain (AI role ⇒

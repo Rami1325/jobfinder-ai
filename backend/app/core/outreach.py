@@ -2,7 +2,7 @@
 
 The highest-converting path to an interview is a warm, specific message to a
 real person, not another portal application. Everything is grounded in the
-résumé (the prompt enforces it, same honesty rule as the fabrication guard).
+resume (the prompt enforces it, same honesty rule as the fabrication guard).
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def generate_outreach(
 ) -> OutreachResult:
     client = get_llm_client()
     data = client.complete_json(
-        # Hebrew résumé => messages in Hebrew (note appended AFTER the Task tag).
+        # Hebrew resume => messages in Hebrew (note appended AFTER the Task tag).
         prompts.with_resume_language(prompts.OUTREACH_SYSTEM, resume_language(resume)),
         prompts.outreach_user(
             resume.model_dump_json(),

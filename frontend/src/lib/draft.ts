@@ -5,21 +5,21 @@ const KEY = "jobfinder.resumeDraft";
 
 /** Older than this and the draft is dropped rather than offered.
  *
- * Not a tidiness rule. A résumé the user edited months ago and abandoned is
+ * Not a tidiness rule. A resume the user edited months ago and abandoned is
  * content they have forgotten writing, and offering to "restore" it reads as
  * the app inventing changes. Generous enough that a real interruption — a
  * closed laptop, a week off — still gets its work back. */
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface ResumeDraft {
-  /** The résumé's OWN language, not the UI locale. See `offerDraft`. */
+  /** The resume's OWN language, not the UI locale. See `offerDraft`. */
   language: "he" | "en";
   resume: ResumeModel;
   savedAt: number;
 }
 
 /** Key-order-independent equality, so a round trip through JSON cannot make an
- * identical résumé look changed and produce a restore prompt that does nothing. */
+ * identical resume look changed and produce a restore prompt that does nothing. */
 function stable(v: unknown): string {
   return JSON.stringify(v, (_k, val) =>
     val && typeof val === "object" && !Array.isArray(val)
@@ -32,7 +32,7 @@ export function sameResume(a: ResumeModel, b: ResumeModel): boolean {
   return stable(a) === stable(b);
 }
 
-/** Mirror the edited résumé to this device. Called from `applyBlockEdit`, so a
+/** Mirror the edited resume to this device. Called from `applyBlockEdit`, so a
  * new edit path cannot forget it. Best-effort by design: private mode and a
  * full quota both throw, and neither is worth failing an edit over — the
  * in-session bar still covers everything except closing the tab. */
@@ -108,7 +108,7 @@ export function offerDraft(draft: ResumeDraft | null, master: ResumeModel): bool
 }
 
 /**
- * The résumé to restore, merged OVER the loaded master.
+ * The resume to restore, merged OVER the loaded master.
  *
  * Field-by-field fallback rather than the stored object wholesale, and the
  * reason is check 1's bug in a different costume: a draft written before a

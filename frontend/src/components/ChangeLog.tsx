@@ -733,7 +733,7 @@ export default function ChangeLog({
 }
 
 /**
- * Everything from the résumé that isn't in this CV, in one quiet card.
+ * Everything from the resume that isn't in this CV, in one quiet card.
  *
  * Deliberately NOT N accept/decline rows: most of these are decisions the model
  * was told to make, and one collapsed card is the honest weight for them. It is
@@ -743,7 +743,7 @@ export default function ChangeLog({
  *
  * "Restore" is not new machinery: rejecting a removal is exactly what puts the
  * original content back, so this reuses the same `rejected` set as everything
- * else and the résumé the user downloads can never disagree with these buttons.
+ * else and the resume the user downloads can never disagree with these buttons.
  */
 function CurationCard({
   group,

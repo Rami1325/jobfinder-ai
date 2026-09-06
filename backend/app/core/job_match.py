@@ -1,4 +1,4 @@
-"""Rank multiple job listings by fit against the user's master résumé.
+"""Rank multiple job listings by fit against the user's master resume.
 
 Reuses the existing JD analyzer + scorer. No mass auto-apply — the user stays in
 control; this only surfaces fit and gaps so they choose where to tailor.
@@ -191,7 +191,7 @@ def _extract_linkedin(url: str) -> str:
 def _clip_jd(text: str) -> str:
     """Bound scraped posting text before it can reach a prompt.
 
-    CLIPPED, not refused, and silently — the opposite of the résumé rule, and
+    CLIPPED, not refused, and silently — the opposite of the resume rule, and
     for the reason that rule is about ownership: this text is a page WE fetched,
     the user never saw it, and the tail past a job ad is nav, footer and
     related-jobs boilerplate. Nothing of theirs is lost, so no notice is owed.

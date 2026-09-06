@@ -1,4 +1,4 @@
-"""Interview prep — questions, model answers, and feedback grounded in the résumé."""
+"""Interview prep — questions, model answers, and feedback grounded in the resume."""
 from __future__ import annotations
 
 from app.core.lang import resume_language
@@ -33,7 +33,7 @@ def generate_questions(resume: ResumeModel, jd: JDModel) -> InterviewQuestionsRe
 def model_answer(resume: ResumeModel, jd: JDModel, question: str) -> InterviewAnswerResult:
     client = get_llm_client()
     data = client.complete_json(
-        # Hebrew résumé => answer in Hebrew (note appended AFTER the Task tag).
+        # Hebrew resume => answer in Hebrew (note appended AFTER the Task tag).
         prompts.with_resume_language(prompts.INTERVIEW_ANSWER_SYSTEM, resume_language(resume)),
         prompts.interview_answer_user(resume.model_dump_json(), jd.model_dump_json(), question),
     )
@@ -46,7 +46,7 @@ def model_answer(resume: ResumeModel, jd: JDModel, question: str) -> InterviewAn
 def recruiter_screen(resume: ResumeModel, jd_text: str) -> RecruiterScreenResult:
     client = get_llm_client()
     data = client.complete_json(
-        # Hebrew résumé => prep sheet in Hebrew (note appended AFTER the Task tag).
+        # Hebrew resume => prep sheet in Hebrew (note appended AFTER the Task tag).
         prompts.with_resume_language(prompts.RECRUITER_SCREEN_SYSTEM, resume_language(resume)),
         prompts.recruiter_screen_user(resume.model_dump_json(), jd_text),
     )
@@ -70,7 +70,7 @@ def chat_turn(
     client owns the session."""
     client = get_llm_client()
     data = client.complete_json(
-        # Hebrew résumé => the interview runs in Hebrew (note after the Task tag).
+        # Hebrew resume => the interview runs in Hebrew (note after the Task tag).
         prompts.with_resume_language(prompts.INTERVIEW_CHAT_SYSTEM, resume_language(resume)),
         prompts.interview_chat_user(
             resume.model_dump_json(), jd_text, _transcript_pairs(transcript)
@@ -108,7 +108,7 @@ def session_scorecard(
 def answer_feedback(resume: ResumeModel, question: str, answer: str) -> InterviewFeedbackResult:
     client = get_llm_client()
     data = client.complete_json(
-        # Feedback + revised answer follow the résumé's language too.
+        # Feedback + revised answer follow the resume's language too.
         prompts.with_resume_language(prompts.INTERVIEW_FEEDBACK_SYSTEM, resume_language(resume)),
         prompts.interview_feedback_user(resume.model_dump_json(), question, answer),
     )

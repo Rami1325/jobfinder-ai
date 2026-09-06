@@ -111,7 +111,7 @@ export default function JobsPage() {
     }
   }
 
-  // -- Résumé upload state (Jobs is the front door: upload lives here too) --
+  // -- Resume upload state (Jobs is the front door: upload lives here too) --
   const [showReplace, setShowReplace] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
@@ -251,7 +251,7 @@ export default function JobsPage() {
   }
 
   // The onboarding "target role" answer steers non-customized searches (blank
-  // SearchContext fields still mean "derive from the résumé" on the backend).
+  // SearchContext fields still mean "derive from the resume" on the backend).
   function onboardingCtx(): SearchContext | null {
     const role = onboardingRole();
     return role ? { job_title: role, location: "", work_mode: "any", limit: 10 } : null;
@@ -295,15 +295,15 @@ export default function JobsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchResult]);
 
-  /** Save an uploaded résumé as the master (shared logic with TailorPage) and
+  /** Save an uploaded resume as the master (shared logic with TailorPage) and
    * update this page in place — no reload needed. The first-ever upload also
    * auto-starts a job search so jobs appear without another click. */
   async function onResumeUploaded(r: ResumeModel, l: FactsLedger) {
     const firstUpload = !master?.resume;
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
-    // A silent failure here is the difference between "my new résumé isn't
+    // A silent failure here is the difference between "my new resume isn't
     // taking" and a message you can act on: persistMaster swallows every error
-    // and only toasts on SUCCESS, so without this the page shows the new résumé
+    // and only toasts on SUCCESS, so without this the page shows the new resume
     // while the server still holds the old one, and the next reload reverts it.
     if (!m) toast("error", t("common:masterResume.saveFailed"));
     setMaster(
@@ -316,11 +316,11 @@ export default function JobsPage() {
       },
     );
     setShowReplace(false);
-    // The customize picks SURVIVE a résumé swap. This used to `setCtx(null)`
+    // The customize picks SURVIVE a resume swap. This used to `setCtx(null)`
     // to drop a stale title prefill, but ctx also carries location, work mode,
     // result count, boards, "posted within" and the worldwide opt-in — six
     // settings that have nothing to do with which file was uploaded — and
-    // clearing them read, correctly, as "replacing my résumé deleted my search
+    // clearing them read, correctly, as "replacing my resume deleted my search
     // settings". A stale job title is one field the user can see and edit; the
     // other six are not worth destroying to freshen it.
     if (firstUpload && !searching) {
@@ -492,7 +492,7 @@ export default function JobsPage() {
 
       {/* NOT height-animated. This wedges: measured on a clean load, the panel
           froze at 80px with a 287px dropzone clipped inside it, so "Replace"
-          looked like it did nothing and the master résumé could not be changed
+          looked like it did nothing and the master resume could not be changed
           at all. Same defect Disclosure documents. Opacity + transform only. */}
       {showReplace && (
         <div className="animate-fade-up">

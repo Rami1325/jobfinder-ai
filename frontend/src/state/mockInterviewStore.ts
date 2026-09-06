@@ -27,7 +27,7 @@ const initial: MockInterviewState = {
 };
 
 let state: MockInterviewState = { ...initial };
-// The résumé/JD are captured at session start so every later turn and the
+// The resume/JD are captured at session start so every later turn and the
 // scorecard are judged against the same context, even if the page's JD box
 // changes mid-session.
 let sessionResume: ResumeModel | null = null;

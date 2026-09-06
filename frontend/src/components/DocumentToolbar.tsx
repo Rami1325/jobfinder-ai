@@ -18,10 +18,10 @@ interface Props {
  *
  * DUMB ON PURPOSE. Every prop is a slot, so the decisions about *which* badge
  * and *which* verb belong to a document stay in `TailorPage` and only the
- * geometry lives here. That is what lets the same bar carry a master résumé,
+ * geometry lives here. That is what lets the same bar carry a master resume,
  * a tailored draft and an empty page without a mode flag.
  *
- * The title IS the heading. `/app` used to open with "Tailor your résumé" over
+ * The title IS the heading. `/app` used to open with "Tailor your resume" over
  * a one-line subtitle — two rows of chrome that between them said less than the
  * document's own name does, on a page whose whole subject is the document under
  * them. Naming the CV here let both strings go.
@@ -45,7 +45,7 @@ export default function DocumentToolbar({ title, badges, actions, notes }: Props
             `dir="auto"` — the ONE place in this app it is right, and the paper
             is the reason to spell that out. `ResumeView` bans it because the
             document's direction has to match the file the renderers produce,
-            computed from the résumé's prose with the name deliberately
+            computed from the resume's prose with the name deliberately
             excluded. This is chrome, and its whole content IS the name. A
             Hebrew name in an English UI is RTL text in an LTR block, so
             `truncate` clips at the box's right edge — the LOGICAL START of the

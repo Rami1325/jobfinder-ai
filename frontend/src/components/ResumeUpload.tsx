@@ -8,7 +8,7 @@ import { cn } from "../lib/cn";
 
 interface Props {
   onParsed: (resume: ResumeModel, ledger: FactsLedger) => void;
-  /** Label of an already-loaded saved résumé, shown until a new file is chosen. */
+  /** Label of an already-loaded saved resume, shown until a new file is chosen. */
   savedLabel?: string;
 }
 
@@ -101,7 +101,7 @@ export default function ResumeUpload({ onParsed, savedLabel }: Props) {
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
 
       {/* LinkedIn profile import: the export is just a PDF, so it rides the
-          same upload path — this is the no-résumé cold-start escape hatch. */}
+          same upload path — this is the no-resume cold-start escape hatch. */}
       <button
         type="button"
         onClick={() => setLiOpen((v) => !v)}

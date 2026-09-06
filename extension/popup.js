@@ -355,7 +355,7 @@ function fillApplicationForm(payload) {
           }
         } else if (tag === "SELECT") {
           // Only email dropdowns (LinkedIn offers verified addresses): pick
-          // the option matching the résumé email, otherwise leave untouched.
+          // the option matching the resume email, otherwise leave untouched.
           if (!visible(el) || done.email || !contact.email) return;
           if (!emailRe.test(labelText(el))) return;
           var target = contact.email.toLowerCase();
@@ -376,7 +376,7 @@ function fillApplicationForm(payload) {
       } catch (e) { /* one bad element must not stop the sweep */ }
     });
 
-    // Résumé file: the input labeled resume/CV, else the only file input
+    // Resume file: the input labeled resume/CV, else the only file input
     // that isn't explicitly for a cover-letter upload.
     if (payload && payload.file && payload.file.b64) {
       var fileInputs = candidates.filter(function (el) {
@@ -675,7 +675,7 @@ async function onAutofill() {
   showApplyStatus("", t("autofillPreparing"));
 
   try {
-    // 1. The approved application carries the reviewer's effective résumé +
+    // 1. The approved application carries the reviewer's effective resume +
     //    cover letter (what Approve wrote to the tracker).
     var appRes = await fetch(settings.apiUrl + "/applications/" + kit.application_id, {
       headers: apiHeaders(settings),
@@ -695,7 +695,7 @@ async function onAutofill() {
       file: null,
     };
 
-    // 2. Render the résumé file in the chosen format.
+    // 2. Render the resume file in the chosen format.
     var fmt = document.querySelector('input[name="fmt"]:checked').value;
     if (resume) {
       var rRes = await fetch(settings.apiUrl + "/render", {

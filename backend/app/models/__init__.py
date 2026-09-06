@@ -43,7 +43,7 @@ class Project(BaseModel):
 
 
 class MilitaryService(BaseModel):
-    """IDF/military service entry — standard on Israeli résumés.
+    """IDF/military service entry — standard on Israeli resumes.
 
     unit/role/rank/dates are protected facts: the ledger records them and the
     fabrication guard flags any tailored value not present in the original.
@@ -71,7 +71,7 @@ class SkillGroup(BaseModel):
 
     ADDITIVE AND OPTIONAL. `ResumeModel.skill_groups` defaults to empty, and
     while it is empty every consumer behaves exactly as it did before it
-    existed — so no stored résumé, saved kit or tracker row changes meaning.
+    existed — so no stored resume, saved kit or tracker row changes meaning.
     """
 
     label: str = ""
@@ -87,7 +87,7 @@ class ResumeModel(BaseModel):
     headline: str = ""
     summary: str = ""
     # THE FLAT SKILL SURFACE, and the only one anything downstream reads: the
-    # scorer's keyword coverage, the ATS scan, the ATS x-ray, résumé health and
+    # scorer's keyword coverage, the ATS scan, the ATS x-ray, resume health and
     # the length budget all go through `skills`. It therefore stays populated as
     # the flat union of every group's items even when `skill_groups` carries the
     # presentation — see `_sync_skill_groups`, which enforces exactly that.
@@ -241,7 +241,7 @@ class CVPlan(BaseModel):
     emphasize: list[str] = Field(default_factory=list)  # experience/projects to lead with
     downplay: list[str] = Field(default_factory=list)  # content to trim or move down
     conservative_notes: list[str] = Field(default_factory=list)  # claims needing careful wording
-    # Project curation. A master résumé carries every project the candidate has
+    # Project curation. A master resume carries every project the candidate has
     # ever shipped; one job needs a handful. The planner names which ones, in
     # priority order, and the length budget reuses those names when it has to
     # drop more. Empty lists = no opinion, fall back to keyword overlap.
@@ -250,7 +250,7 @@ class CVPlan(BaseModel):
 
 
 class LengthReport(BaseModel):
-    """What the page budget had to do to fit the résumé (app/core/length_budget.py).
+    """What the page budget had to do to fit the resume (app/core/length_budget.py).
 
     Surfaced so the trimming is visible rather than silent — a dropped project
     is a decision the candidate may want to overrule."""
@@ -331,19 +331,19 @@ class ResumeUploadResponse(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Master résumé (persisted, reused across features)
+# Master resume (persisted, reused across features)
 # --------------------------------------------------------------------------- #
 class MasterResumeIn(BaseModel):
     resume: ResumeModel
     ledger: Optional[FactsLedger] = None
-    label: str = "My résumé"
+    label: str = "My resume"
 
 
 class MasterResumeOut(BaseModel):
     resume: ResumeModel
     ledger: Optional[FactsLedger] = None
-    label: str = "My résumé"
-    language: str = "en"  # detected server-side from the résumé text ("en" | "he")
+    label: str = "My resume"
+    language: str = "en"  # detected server-side from the resume text ("en" | "he")
     updated_at: str = ""
 
 
@@ -357,7 +357,7 @@ class ResumeVersionOut(BaseModel):
     """One restore point (PLAN 20.8 / N1) — METADATA ONLY.
 
     Deliberately without `resume`: the list view shows a dozen of these and a
-    master résumé is ~48 kB of JSON, so shipping the content would make the
+    master resume is ~48 kB of JSON, so shipping the content would make the
     picker heavier than everything it is offered next to. `GET
     /profile/resume/versions/{id}` returns the full thing when one is opened.
     """
@@ -383,7 +383,7 @@ class ResumeVersionList(BaseModel):
 class AlertSettingsIn(BaseModel):
     enabled: bool = False
     email: str = ""
-    context: Optional["SearchContext"] = None  # None = derive from the résumé
+    context: Optional["SearchContext"] = None  # None = derive from the resume
     nudge_emails: bool = False  # PLAN 11.4: email follow-up reminders too
     # Minimum ROUNDED fit (0-100) a new posting needs to reach the inbox; 0
     # emails everything. Optional, and None means LEAVE UNCHANGED rather than
@@ -480,7 +480,7 @@ class KitOut(BaseModel):
     score_before: float = 0.0  # overall before tailoring
     score_after: float = 0.0
     flag_count: int = 0  # fabrication flags; > 0 => never auto-approvable
-    base_language: str = ""  # which master résumé slot was tailored ("en"|"he")
+    base_language: str = ""  # which master resume slot was tailored ("en"|"he")
     error: str = ""
     # Review outcome (PLAN 8.2):
     reject_reason: str = ""
@@ -494,7 +494,7 @@ class KitOut(BaseModel):
 
 class KitDetail(KitOut):
     """Full kit for the 8.2 review UI: the raw JD text (match-report keyword
-    counting), the analyzed JD, the master résumé the tailor ran on (the diff
+    counting), the analyzed JD, the master resume the tailor ran on (the diff
     baseline), and the complete TailorResult."""
 
     jd_text: str = ""
@@ -520,9 +520,9 @@ class KitProcessResult(BaseModel):
 class KitApproveRequest(BaseModel):
     """Approve a reviewed kit (PLAN 8.2) into the tracker as ready-to-send.
 
-    `resume` is the effective résumé after the reviewer's per-bullet
+    `resume` is the effective resume after the reviewer's per-bullet
     accept/reject decisions (client-computed, same as the Tailor page's diff);
-    omitted => the kit's full tailored résumé. `cover_letter` is whatever the
+    omitted => the kit's full tailored resume. `cover_letter` is whatever the
     reviewer generated/edited; optional."""
 
     resume: Optional[ResumeModel] = None
@@ -586,7 +586,7 @@ class DeleteMyDataResult(BaseModel):
     """Row counts wiped by DELETE /profile/data (PLAN 7.5)."""
 
     resumes: int = 0
-    # Version history (PLAN 20.8/N1). These hold FULL past résumés, so a wipe
+    # Version history (PLAN 20.8/N1). These hold FULL past resumes, so a wipe
     # that skipped them would leave the PII the wipe exists to remove.
     resume_versions: int = 0
     applications: int = 0
@@ -972,7 +972,7 @@ class JobMatchResult(BaseModel):
 
 
 class SearchContext(BaseModel):
-    """What/where to search. Blank fields mean 'derive from résumé'."""
+    """What/where to search. Blank fields mean 'derive from resume'."""
 
     job_title: str = ""
     # Extra search keywords: when non-empty this is the canonical list of
@@ -1117,7 +1117,7 @@ class ATSXrayRequest(BaseModel):
 
 
 class CoverageRequest(BaseModel):
-    """Live keyword coverage for a résumé the user is editing.
+    """Live keyword coverage for a resume the user is editing.
 
     Takes an ANALYSED `JDModel`, never raw `jd_text`. The route is uncapped, and
     a route that accepted job-ad text would have to run `analyze_jd` to do
@@ -1187,7 +1187,7 @@ class PageCountRequest(BaseModel):
 
 
 class PageCountResult(BaseModel):
-    """A live page measurement for a résumé the user is editing.
+    """A live page measurement for a resume the user is editing.
 
     Deliberately NOT `LengthReport.pages_after`: that number is measured on
     whatever template the tailor happened to use (`TailorRequest` carries none,
@@ -1203,7 +1203,7 @@ class PageCountResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# ATS X-ray (PLAN 21.7) — render the résumé, read it back as a parser does
+# ATS X-ray (PLAN 21.7) — render the resume, read it back as a parser does
 # --------------------------------------------------------------------------- #
 class ATSXrayFact(BaseModel):
     # Stable ids the UI translates: name | email | phone | location | linkedin |
@@ -1278,8 +1278,8 @@ class FollowUpResult(BaseModel):
 
 # --------------------------------------------------------------------------- #
 # Outreach Studio — recruiter / hiring-manager / referral messages that bypass
-# the ATS. Grounded only in real résumé facts (no fabrication guard needed —
-# it's not a résumé — but the prompt enforces the same honesty rule).
+# the ATS. Grounded only in real resume facts (no fabrication guard needed —
+# it's not a resume — but the prompt enforces the same honesty rule).
 # --------------------------------------------------------------------------- #
 class OutreachRequest(BaseModel):
     resume: ResumeModel
@@ -1298,7 +1298,7 @@ class OutreachResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Screening-question answerer — honest, résumé-grounded answers to application
+# Screening-question answerer — honest, resume-grounded answers to application
 # free-text questions ("Why us?", "Describe a time…").
 # --------------------------------------------------------------------------- #
 class ScreeningRequest(BaseModel):
@@ -1351,18 +1351,18 @@ class CompanyBriefResult(BaseModel):
     products: list[str] = Field(default_factory=list)
     culture: list[str] = Field(default_factory=list)
     interview_style: list[str] = Field(default_factory=list)
-    talking_points: list[str] = Field(default_factory=list)  # résumé ↔ company fit
+    talking_points: list[str] = Field(default_factory=list)  # resume ↔ company fit
     people: list[BriefPerson] = Field(default_factory=list)  # founders/managers/recruiters
     targets: list[BriefTarget] = Field(default_factory=list)  # role-aware hiring-chain links (PLAN 11.7)
     company_people_url: str = ""  # the company's LinkedIn People tab, when the page linked it
     hiring_emails: list[str] = Field(default_factory=list)  # careers@/jobs@/hr@ found on the page
     outreach_subject: str = ""
-    outreach_message: str = ""  # short reach-out to the top person (résumé-grounded)
+    outreach_message: str = ""  # short reach-out to the top person (resume-grounded)
     grounded: bool = False  # True when a company page was actually fetched/pasted
 
 
 # --------------------------------------------------------------------------- #
-# The résumé review (PLAN 28.6) — one home for every check, each finding
+# The resume review (PLAN 28.6) — one home for every check, each finding
 # anchored to the block it is about.
 #
 # This supersedes ATSScanResult and ResumeHealthResult, and the shape change is
@@ -1414,7 +1414,7 @@ class ReviewResult(BaseModel):
     JD-gated check needs a job — and unknown is never shown as clean, the same
     rule the tracker's nullable `voice_score` and the alert bar's
     `last_above_min` follow. Folding `skipped` into `passed` would have the
-    panel assert a résumé is clean on a check that never looked at it.
+    panel assert a resume is clean on a check that never looked at it.
 
     Every check always runs, so `passed ∪ skipped ∪ {f.id for f in findings}`
     is the entire `CHECK_IDS` set on every call: there are no toggles, and
@@ -1453,7 +1453,7 @@ class ReviewRequest(BaseModel):
 class ReviewRewrite(BaseModel):
     """One model-suggested rewording of a real bullet.
 
-    `before` is copied VERBATIM out of the résumé, and that exact match is what
+    `before` is copied VERBATIM out of the resume, and that exact match is what
     yields `path` — a rewrite whose `before` matches no bullet is dropped
     server-side rather than shown, because "Use this" writes through the same
     block path as every other edit on this surface and a path nothing produced

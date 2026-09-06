@@ -37,7 +37,7 @@ from app.llm.limits import (
 # Re-raised past every generic `except Exception -> 502` wrapper below so the
 # app-level handlers in main.py can map them to 413/503 with a structured,
 # translatable detail. Without this a size limit reaches the user as
-# "LLM error while structuring résumé: resume is 317 KB…" — a 5xx, which also
+# "LLM error while structuring resume: resume is 317 KB…" — a 5xx, which also
 # means Sentry keeps filing it.
 _SIZE_ERRORS = (InputTooLarge, ContextWindowExceeded, OutputTruncated)
 from app.core.mailer import smtp_configured
@@ -244,7 +244,7 @@ async def upload_resume(file: UploadFile = File(...), _u: User = Depends(llm_use
     except _SIZE_ERRORS:
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001 - surface the real LLM error to the UI
-        raise HTTPException(502, f"LLM error while structuring résumé: {e}")
+        raise HTTPException(502, f"LLM error while structuring resume: {e}")
     ledger = build_facts_ledger(resume)
     return ResumeUploadResponse(resume=resume, ledger=ledger)
 
@@ -276,7 +276,7 @@ def tailor(
     except _SIZE_ERRORS:
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while tailoring résumé: {e}")
+        raise HTTPException(502, f"LLM error while tailoring resume: {e}")
 
 
 @router.get("/profile/writing-prefs", response_model=WritingPrefsOut)
@@ -417,7 +417,7 @@ def jobs_match(body: JobMatchRequest, _u: User = Depends(llm_user)) -> JobMatchR
 
 @router.post("/jobs/fit", response_model=FitCheckResult)
 def jobs_fit(body: FitCheckRequest, _u: User = Depends(llm_user)) -> FitCheckResult:
-    """Read a posting and score the résumé against it, before any tailoring.
+    """Read a posting and score the resume against it, before any tailoring.
 
     ONE round-trip, on the existing JD_FIT task — no new prompt, no new stub
     branch. `analyze_jd` alone would cost the same unit and return half of this,
@@ -460,7 +460,7 @@ def jobs_fetch(body: JobFetchRequest) -> JobFetchResponse:
 
 @router.post("/jobs/search-context", response_model=SearchContext)
 def jobs_search_context(body: SearchContextRequest, _u: User = Depends(llm_user)) -> SearchContext:
-    """Derive what/where to search from the résumé, so the UI can prefill the
+    """Derive what/where to search from the resume, so the UI can prefill the
     'Customize search' fields before any scrape runs."""
     try:
         return derive_search_context(body.resume)
@@ -930,7 +930,7 @@ def kits_approve(
     user: User = Depends(current_user),
 ) -> KitOut:
     """Approve a reviewed kit (PLAN 8.2): lands in the tracker as a "saved"
-    (ready-to-send) application carrying the reviewer's effective résumé and
+    (ready-to-send) application carrying the reviewer's effective resume and
     cover letter; the kit links to it via application_id."""
     row = _owned_kit(db, kit_id, user)
     try:
@@ -1110,7 +1110,7 @@ def tools_review(body: ReviewRequest) -> ReviewResult:
     except _SIZE_ERRORS:
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"Error while reviewing résumé: {e}")
+        raise HTTPException(502, f"Error while reviewing resume: {e}")
 
 
 @router.post("/tools/review/rewrites", response_model=ReviewRewriteResult)
@@ -1143,7 +1143,7 @@ def tools_ats_xray(body: ATSXrayRequest) -> ATSXrayResult:
     except _SIZE_ERRORS:
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"Error while x-raying résumé: {e}")
+        raise HTTPException(502, f"Error while x-raying resume: {e}")
 
 
 # Pure Python, ~0.05 ms, no model and no network — uncapped like its siblings.
@@ -1180,7 +1180,7 @@ def tools_coverage(body: CoverageRequest) -> CoverageResult:
 # so it is deliberately uncapped, and that exclusion is smoke-pinned.
 #
 # The editor calls this whenever the user restores something the page budget cut,
-# because restoring produces a document NOTHING has measured: the trimmed résumé
+# because restoring produces a document NOTHING has measured: the trimmed resume
 # plus the master's full version of the restored item. Deriving it from
 # `length_report.pages_before/after` would be a guess, and a wrong one.
 @router.post("/tools/page-count", response_model=PageCountResult)
@@ -1225,7 +1225,7 @@ def tools_follow_up(body: FollowUpRequest, _u: User = Depends(llm_user)) -> Foll
 def outreach(body: OutreachRequest, _u: User = Depends(llm_user)) -> OutreachResult:
     """Outreach Studio: a LinkedIn connection note, an InMail/cold email, and a
     referral request for one job — the direct-to-a-human path to an interview,
-    grounded only in real résumé facts."""
+    grounded only in real resume facts."""
     try:
         return generate_outreach(
             body.resume,
@@ -1243,7 +1243,7 @@ def outreach(body: OutreachRequest, _u: User = Depends(llm_user)) -> OutreachRes
 
 @router.post("/tools/screening-answer", response_model=ScreeningAnswerResult)
 def tools_screening_answer(body: ScreeningRequest, _u: User = Depends(llm_user)) -> ScreeningAnswerResult:
-    """Draft an honest, résumé-grounded answer to an application/screening
+    """Draft an honest, resume-grounded answer to an application/screening
     free-text question (e.g. "Why do you want to work here?")."""
     if not body.question.strip():
         raise HTTPException(400, "Question is empty.")
@@ -1259,7 +1259,7 @@ def tools_screening_answer(body: ScreeningRequest, _u: User = Depends(llm_user))
 def tools_company_brief(body: CompanyBriefRequest, _u: User = Depends(llm_user)) -> CompanyBriefResult:
     """Grounded pre-apply/pre-interview company brief: fetches the company's
     about/careers page (or takes pasted text) and summarizes it — plus key
-    hiring-relevant people from the page and a short résumé-grounded reach-out.
+    hiring-relevant people from the page and a short resume-grounded reach-out.
     Never model memory alone; emails only when they appear on the page."""
     try:
         return build_company_brief(
@@ -1274,12 +1274,12 @@ def tools_company_brief(body: CompanyBriefRequest, _u: User = Depends(llm_user))
 
 
 # --------------------------------------------------------------------------- #
-# Master résumés (persisted, reused across Tailor / Interview / Job Match).
-# Paired he/en: one row per language, keyed by the résumé's detected language —
+# Master resumes (persisted, reused across Tailor / Interview / Job Match).
+# Paired he/en: one row per language, keyed by the resume's detected language —
 # never client-supplied, so the pairing can't drift from the actual content.
 # --------------------------------------------------------------------------- #
 def _saved_to_master(row, stamp) -> MasterResumeOut | None:  # noqa: ANN001
-    """Parse a stored résumé row into the API shape, or None if unreadable.
+    """Parse a stored resume row into the API shape, or None if unreadable.
 
     Takes the timestamp as an argument because it serves BOTH `saved_resumes`
     (whose column is `updated_at`) and `saved_resume_versions` (`created_at`,
@@ -1316,11 +1316,11 @@ def _version_to_master(row) -> MasterResumeOut | None:  # noqa: ANN001 - SavedRe
 
 
 def _master_rows(db: Session, user_id: int) -> list[SavedResume]:
-    """The user's saved-résumé rows, newest first, with legacy `language` healed.
+    """The user's saved-resume rows, newest first, with legacy `language` healed.
 
     The ADD-COLUMN shim stamps pre-pairing rows "en"; a Hebrew master saved
     before the column existed would shadow the real English slot, so recompute
-    the language from the stored résumé whenever they disagree.
+    the language from the stored resume whenever they disagree.
     """
     rows = db.execute(
         select(SavedResume)
@@ -1347,7 +1347,7 @@ def get_master_resume(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> MasterResumeOut | None:
-    """The master résumé — most recently updated, or the `lang` one when asked."""
+    """The master resume — most recently updated, or the `lang` one when asked."""
     for row in _master_rows(db, user.id):
         if lang and (row.language or "en") != lang:
             continue
@@ -1375,13 +1375,13 @@ def save_master_resume(
 ) -> MasterResumeOut:
     language = resume_language(body.resume)
     # A ledger-less save (the from-scratch builder, PLAN 15.3) derives the
-    # facts ledger from the résumé itself: the user typed these facts, so the
-    # résumé IS the source of truth the fabrication guard should protect.
+    # facts ledger from the resume itself: the user typed these facts, so the
+    # resume IS the source of truth the fabrication guard should protect.
     ledger = body.ledger or build_facts_ledger(body.resume)
     row = next(
         (r for r in _master_rows(db, user.id) if (r.language or "en") == language), None
     )
-    # The master résumé is embedded whole into ~20 downstream prompts, so this
+    # The master resume is embedded whole into ~20 downstream prompts, so this
     # is the door that bounds all of them at once — and it is a REAL door: since
     # Phase 23 the document is typed on directly, so a ResumeModel arrives here
     # with no file and no parser behind it. Guarded here rather than at each
@@ -1389,7 +1389,7 @@ def save_master_resume(
     #
     # THE CARVE-OUT IS LOAD-BEARING: a save that SHRINKS an already-oversize
     # master is always allowed. Without it, anyone whose master predates this
-    # cap is locked out of their own résumé — every save refused, including the
+    # cap is locked out of their own resume — every save refused, including the
     # trim that would fix it. That is a guard firing on the one action the user
     # must be able to take.
     incoming = body.resume.model_dump_json()
@@ -1402,7 +1402,7 @@ def save_master_resume(
     else:
         # Keep the outgoing content before it is overwritten (PLAN 20.8/N1).
         # Best-effort: a failure here must never cost the user the save they
-        # actually asked for — losing an undo point beats losing the résumé.
+        # actually asked for — losing an undo point beats losing the resume.
         try:
             resume_versions.snapshot(db, row, body.resume.model_dump_json())
         except Exception:  # noqa: BLE001
@@ -1450,12 +1450,12 @@ def save_master_resume(
 
 
 # --------------------------------------------------------------------------- #
-# Master résumé version history (PLAN 20.8 / N1). The save above overwrites in
+# Master resume version history (PLAN 20.8 / N1). The save above overwrites in
 # place, and several UI paths save without the user thinking of it as a save —
 # so these are the undo.
 # --------------------------------------------------------------------------- #
 def _version_out(row) -> ResumeVersionOut:  # noqa: ANN001 - SavedResumeVersion ORM row
-    """Metadata for the picker. The résumé is parsed only for the three counts
+    """Metadata for the picker. The resume is parsed only for the three counts
     that let a user tell restore points apart; a corrupt row still lists (with
     zeros) rather than vanishing, because a version you cannot see is a version
     you cannot restore."""
@@ -1510,7 +1510,7 @@ def restore_resume_version(
 
     The CURRENT content is snapshotted on the way past, so restoring is itself
     undoable — a mis-click in the picker must not be the thing that loses the
-    résumé. Restores into the version's OWN language slot, so restoring a
+    resume. Restores into the version's OWN language slot, so restoring a
     Hebrew version can never overwrite the English master.
     """
     row = resume_versions.owned_version(db, version_id, user.id)
@@ -1728,7 +1728,7 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
     # hole in it: `writing_prefs_json` holds up to 50 phrases quoted out of the
     # user's OWN tailored bullets and `avoid_phrases()` feeds them straight
     # back into the next TAILOR prompt, so a wipe that skipped them left
-    # résumé-derived text driving the model over a résumé that no longer
+    # resume-derived text driving the model over a resume that no longer
     # exists — and the Jobs page went on prefilling the wiped user's job title
     # and location from `search_prefs_json`. Cleared, not deleted: the row
     # itself stays so the invite code keeps working, which is the promise the
@@ -1767,7 +1767,7 @@ def get_me(user: User = Depends(current_user)) -> MeOut:
 def delete_my_data(
     db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> DeleteMyDataResult:
-    """Wipe everything the current user stored (PLAN 7.5) — résumés are PII
+    """Wipe everything the current user stored (PLAN 7.5) — resumes are PII
     and testers must be able to leave cleanly. The user row itself stays so
     the invite code keeps working."""
     result = _wipe_user_rows(db, user)

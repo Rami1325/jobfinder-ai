@@ -46,7 +46,7 @@ _FAMILY_FILES: dict[str, tuple[str, str, str]] = {
     "Lato": ("Lato-Regular.ttf", "Lato-Bold.ttf", "Lato-Italic.ttf"),
     "Spectral": ("Spectral-Regular.ttf", "Spectral-Bold.ttf", "Spectral-Italic.ttf"),
     # Noto Sans Hebrew covers Hebrew + Latin; it has no italic, so the regular
-    # face doubles as one (résumés never need italic Hebrew).
+    # face doubles as one (resumes never need italic Hebrew).
     _HE_FAMILY: ("NotoSansHebrew-Regular.ttf", "NotoSansHebrew-Bold.ttf", "NotoSansHebrew-Regular.ttf"),
 }
 _FALLBACKS: dict[str, tuple[str, str, str]] = {
@@ -86,7 +86,7 @@ def _explicit_encoding(faces: tuple[str, str, str]) -> tuple[str, str, str]:
 
     Degrades to the plain faces rather than failing the download, exactly as
     `_fonts` degrades to these: a bullet that extracts badly is a smaller defect
-    than a résumé that will not render at all.
+    than a resume that will not render at all.
     """
     try:
         from reportlab.pdfbase.pdfmetrics import (Encoding, Font, getEncoding,
@@ -153,7 +153,7 @@ def _adv(text: str, font: str, size: float, tracking: float = 0.0) -> float:
 # under a different NAME, so the key can't go stale. Caching it matters because
 # the page budget (app.core.length_budget) is allowed 60 real builds per tailor
 # and every one of them re-wraps the same bullets at the same column width:
-# measured 21.4 -> 11.9 ms per page_count() on a 30-project résumé, for 37
+# measured 21.4 -> 11.9 ms per page_count() on a 30-project resume, for 37
 # entries. Bounded so a long-lived process can't accumulate.
 @lru_cache(maxsize=4096)
 def _wrap_cached(text: str, font: str, size: float, width: float, tracking: float) -> tuple[str, ...]:
@@ -397,7 +397,7 @@ class _Text(Flowable):
 
         Without this, reportlab cannot place a run taller than one frame and
         raises `LayoutError`, which surfaced as a 500 from `POST /render` for
-        any résumé whose summary (or a single very long bullet) exceeded a
+        any resume whose summary (or a single very long bullet) exceeded a
         page. It is a real crash, not a layout nicety: a bare Flowable that
         does not implement `split` is all-or-nothing.
 
@@ -559,7 +559,7 @@ class _Segments(Flowable):
         the user as a 500 from `POST /render`. That is not hypothetical here —
         `_Segments` carries the LANGUAGES section on every `skills="inline"`
         template, and 160 languages 500'd on `minimal`, 163 on `executive` and
-        169 on `timeline` while the same résumé rendered fine on `classic`,
+        169 on `timeline` while the same resume rendered fine on `classic`,
         because chips route through `_Chips`, which already had a `split()`. A
         crash that depends on which template you picked is the worst shape this
         bug can take.
@@ -1011,7 +1011,7 @@ class _Chips(Flowable):
         one. A 138-skill block is taller than a page, and without this reportlab
         cannot place it at all — it jumps whole to the next frame and leaves the
         column it came from empty. That is exactly what a two-column render of a
-        dense résumé looked like: a page-1 main column holding only the summary.
+        dense resume looked like: a page-1 main column holding only the summary.
 
         The room is ACCUMULATED per row rather than divided by a fixed step:
         rows are no longer all `chip_h` tall (an over-wide chip wraps), and the
@@ -1080,7 +1080,7 @@ class _Chips(Flowable):
                     # derived from its own advance. Wrapped lines have differing
                     # widths, so they need the real direction-aware helper — and
                     # for the single-line case `_place` returns exactly `x + pad`
-                    # either way, which is what keeps an unchanged résumé
+                    # either way, which is what keeps an unchanged resume
                     # rendering byte-identically.
                     canv.drawString(
                         _place(x + self.pad, x + w - self.pad,
@@ -1351,10 +1351,10 @@ def _url(bit: str) -> str:
 # --------------------------------------------------------------------------- #
 # Build
 # --------------------------------------------------------------------------- #
-# A résumé that spills three lines onto a second page reads as sloppy, and one
+# A resume that spills three lines onto a second page reads as sloppy, and one
 # page is the Israeli convention. When the overflow is small enough to absorb,
 # the vertical rhythm is compressed (never the type size) until it fits; below
-# this floor the résumé is genuinely a two-pager and is left alone.
+# this floor the resume is genuinely a two-pager and is left alone.
 _MIN_SQUEEZE = 0.86
 
 
@@ -1387,7 +1387,7 @@ def _column_widths(spec: TemplateSpec) -> tuple[float, float]:
 
 
 def fit_squeeze(resume: ResumeModel, spec: TemplateSpec, rtl: bool) -> float:
-    """How far the vertical rhythm has to compress for this résumé to land on a
+    """How far the vertical rhythm has to compress for this resume to land on a
     single page: 1.0 when it already fits, and 1.0 again when it is a genuine
     two-pager that no reasonable squeeze would rescue.
 
@@ -1578,7 +1578,7 @@ def render_pdf(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
 
 
 def page_count(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> int:
-    """Pages this résumé actually renders to — measured, not estimated.
+    """Pages this resume actually renders to — measured, not estimated.
 
     The length budget (`app.core.length_budget`) trims against this, so it has
     to be the real pagination: a flat sum of content heights misses the slack
@@ -1814,7 +1814,7 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
         return (text, s.reg, size if size is not None else s.body, color, "")
 
     # One builder per section key; the ORDER comes from section_order(), which
-    # puts Education above Experience for an early-career résumé.
+    # puts Education above Experience for an early-career resume.
     def build_summary() -> None:
         if resume.summary:
             flow.append(KeepTogether([heading("summary"), body(resume.summary)]))
@@ -1835,7 +1835,7 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
             """One wrapping paragraph: the group's label BOLD and inline, then
             its own comma-joined items. Same text and the same commas as the
             "inline" run — only the label moves — so a keyword parser splits it
-            identically, and an ungrouped résumé (no label) renders exactly what
+            identically, and an ungrouped resume (no label) renders exactly what
             "inline" renders."""
             runs = []
             if label:
@@ -1864,8 +1864,8 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
                 return [label_of(label), items_of(items)]
             # An UNLABELLED block after a labelled one is the leftover — skills
             # the groups never claimed. Without the extra air it reads as one
-            # more row of the group above it, i.e. as a claim the résumé does
-            # not make. First block unlabelled = the ungrouped résumé, which
+            # more row of the group above it, i.e. as a claim the resume does
+            # not make. First block unlabelled = the ungrouped resume, which
             # gets exactly the flowables this section produced before groups
             # existed.
             return [items_of(items, 0.0 if first else s.entry_before)]
@@ -2011,7 +2011,7 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
     side_keys: set[str] = set()
     if spec.layout == "sidebar":
         side_keys = set(spec.sidebar_keys)
-        # PLAN 17.5 puts Education ABOVE Experience for an early-career résumé,
+        # PLAN 17.5 puts Education ABOVE Experience for an early-career resume,
         # because for a student the degree is the headline fact. Exiling it to a
         # narrow rail would silently undo that, so when the ordering says
         # early-career, education stays in the main column.
@@ -2026,7 +2026,7 @@ def _flow(resume: ResumeModel, s: _Sheet, labels: dict[str, str]) -> tuple[list,
     # full frame by advancing to the next one — which here is the MAIN column —
     # so sidebar overflow silently lands in the main column, and the explicit
     # FrameBreak that follows then pushes the real main content onto page 2,
-    # where it starts in page 2's SIDE frame. That shipped: a résumé with 138
+    # where it starts in page 2's SIDE frame. That shipped: a resume with 138
     # skills rendered its Summary and Experience inside the 30%-wide rail.
     #
     # So each sidebar section is measured at the RAIL's width before it is

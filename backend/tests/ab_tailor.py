@@ -245,7 +245,7 @@ def _install_probe() -> None:
         # fixed point on this master is ~35 entries, so the count creeps back.
         #
         # Hooking `fit_to_pages` is what makes "before" measurable without
-        # touching the shipped function: it is the first thing the parsed résumé
+        # touching the shipped function: it is the first thing the parsed resume
         # meets. The flag matters — the budget is called a SECOND time inside the
         # restore refit, and trimming there would be the "after" arm wearing the
         # "before" label.

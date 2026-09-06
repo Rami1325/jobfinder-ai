@@ -13,7 +13,7 @@ export default function FinalCTA() {
         <div className="relative overflow-hidden rounded-[2rem] border border-line bg-paper-violet/[0.14] px-6 py-14 sm:px-12 sm:py-16">
           {/* A fanned stack of pages behind the copy — the thing you leave
               with. Anchored from the TOP so the page header (the part that
-              reads as a résumé at a glance) is what shows; the foot bleeds off
+              reads as a resume at a glance) is what shows; the foot bleeds off
               the card, which clips it, so it never affects layout or
               introduces horizontal overflow. */}
           <div

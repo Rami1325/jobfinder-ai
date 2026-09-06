@@ -1,7 +1,7 @@
-"""Screening-question answerer — honest, résumé-grounded application answers.
+"""Screening-question answerer — honest, resume-grounded application answers.
 
 Many applications and screening calls ask free-text questions ("Why us?",
-"Describe a time…"). This drafts an answer using only what's in the résumé,
+"Describe a time…"). This drafts an answer using only what's in the resume,
 same honesty rule as the rest of the app.
 """
 from __future__ import annotations

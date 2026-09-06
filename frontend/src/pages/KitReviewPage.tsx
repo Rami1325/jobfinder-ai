@@ -42,7 +42,7 @@ const STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" | "da
  * match report, guard status, and cover letter — then Approve into the
  * tracker (ready to send) or Reject with a reason. Reuses the Tailor page's
  * prop-driven components; decisions live in local state, and the effective
- * résumé they produce is what gets approved and downloaded. */
+ * resume they produce is what gets approved and downloaded. */
 export default function KitReviewPage() {
   const { id } = useParams<{ id: string }>();
   const { t } = useTranslation("jobs");
@@ -80,7 +80,7 @@ export default function KitReviewPage() {
   }, [id]);
 
   // Same three memos as TailorPage (5.3): one merge walk emits the edit list
-  // AND the effective résumé, so decisions can never drift from the diff.
+  // AND the effective resume, so decisions can never drift from the diff.
   const base = kit?.base_resume ?? null;
   const tailored = kit?.result?.tailored_resume ?? null;
   const rejectedSet = useMemo(() => new Set(rejectedEdits), [rejectedEdits]);
@@ -109,7 +109,7 @@ export default function KitReviewPage() {
     if (!kit) return;
     setApproving(true);
     try {
-      // No rejections => let the backend use the kit's full tailored résumé.
+      // No rejections => let the backend use the kit's full tailored resume.
       mergeReview(await approveKit(kit.id, rejectedSet.size > 0 ? effectiveResume : null, cover));
       toast("success", t("kitReview.approvedToast"));
     } catch (e: unknown) {

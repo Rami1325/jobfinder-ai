@@ -1,11 +1,11 @@
-"""Deterministic page budget for tailored résumés (PLAN 18).
+"""Deterministic page budget for tailored resumes (PLAN 18).
 
 The LLM is *asked* to curate — PLAN_CV names the projects worth keeping and
-TAILOR writes to a page target — but asked is not guaranteed. A master résumé
+TAILOR writes to a page target — but asked is not guaranteed. A master resume
 carrying 20+ projects reliably came back as a 5-page tailored CV, because the
 old TAILOR rule "never drop a project" outranked the one-page rule it also
 carried. This module is the floor under that: it measures the REAL rendered
-page count and removes content, in relevance order, until the résumé fits.
+page count and removes content, in relevance order, until the resume fits.
 
 Two properties make it safe to run after the fabrication guard:
 
@@ -49,7 +49,7 @@ SOFT_MIN_BULLETS_OLDER = 2
 SOFT_MAX_PROJECT_BULLETS = 2
 SOFT_DESC_SENTENCES = 2
 
-# Hard floors: only reached when the résumé is still over the HARD page limit,
+# Hard floors: only reached when the resume is still over the HARD page limit,
 # where shipping an over-length CV is the worse outcome.
 HARD_MIN_PROJECTS = 1
 HARD_MIN_BULLETS_RECENT = 2
@@ -325,7 +325,7 @@ def _drop_unmatched_skill(resume: ResumeModel, jd: JDModel) -> ResumeModel | Non
     # Keep the grouped view consistent with the flat one. `skills` is the flat
     # union of every group's items, and `ResumeModel` re-establishes that on
     # every construction — so leaving the item in its group would resurrect it
-    # the moment this résumé round-trips through JSON, and the trim would
+    # the moment this resume round-trips through JSON, and the trim would
     # silently do nothing. Only when the last copy is gone from the flat list:
     # a skill listed twice is still owned by its group.
     if out.skill_groups and not any(s == dropped for s in out.skills):
@@ -350,7 +350,7 @@ def fit_to_pages(
 
     Aims for `max_pages` using the soft floors; if respecting those floors
     still leaves it over `hard_max_pages`, keeps going on the hard floors.
-    A résumé already inside the target is returned untouched.
+    A resume already inside the target is returned untouched.
     """
     max_pages = max(1, int(max_pages))
     hard_max_pages = max(max_pages, int(hard_max_pages))
@@ -373,7 +373,7 @@ def fit_to_pages(
         """Keep the MOST projects that still fit, by binary search.
 
         Dropping one project at a time and re-measuring costs one render per
-        drop, which a big master résumé exhausts: at 126 projects the old loop
+        drop, which a big master resume exhausts: at 126 projects the old loop
         hit the measurement cap and returned a 7-page CV, silently over the
         hard limit. Page count is monotonic in the number of projects kept, so
         the largest fitting count is a binary search — ~7 renders instead of

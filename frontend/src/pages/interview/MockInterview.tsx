@@ -1,5 +1,5 @@
 // Multi-turn mock interview (PLAN 11.3): live chat with an interviewer
-// grounded in the résumé + JD, then a session scorecard. The session lives in
+// grounded in the resume + JD, then a session scorecard. The session lives in
 // mockInterviewStore, so it survives navigating away mid-interview.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { motion } from "framer-motion";

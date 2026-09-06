@@ -1,4 +1,4 @@
-"""The résumé review — one home for every check, each finding anchored to the
+"""The resume review — one home for every check, each finding anchored to the
 block it is about (PLAN 28.6).
 
 This module NEVER calls the LLM, NEVER touches the network and NEVER reads the
@@ -27,9 +27,9 @@ Three rules hold the whole thing together:
 * **Unknown is never clean.** A check that COULD NOT run (the gap check with
   fewer than two dated spans, the JD-gated check with no job) lands in
   `skipped`, never in `passed`. Folding the two together would have the panel
-  assert a résumé is clean on a check that never looked at it — the rule the
+  assert a resume is clean on a check that never looked at it — the rule the
   tracker's nullable `voice_score` and the alert bar's `last_above_min` follow.
-* **A clean résumé produces zero findings.** No always-on advice, no
+* **A clean resume produces zero findings.** No always-on advice, no
   reassurance rows. A panel that always has something in it teaches the user to
   ignore the panel, which costs more than the checks are worth.
 """
@@ -143,7 +143,7 @@ def dkey(value: str) -> str:
 # --------------------------------------------------------------------------- #
 # Vocabulary. Every list is en + he or carries a stated reason it cannot be —
 # Hebrew is the primary market, and a review that only reads Latin prose would
-# be silent on the résumés it exists for.
+# be silent on the resumes it exists for.
 # --------------------------------------------------------------------------- #
 
 # Openers that bury the achievement. Matched at the START of a bullet only: the
@@ -226,7 +226,7 @@ _DYNAMIC = re.compile(r"(?<!\w)dynamic(?!\w)(?!\s+(?:programming|language|typing
 
 _PRONOUNS = re.compile(r"(?<!\w)(i|i'm|i've|my|me|myself)(?!\w)|(?<![\w])(אני|שלי)(?![\w])", re.I)
 
-# Acronym pairs an ATS searches for by ONE spelling. Reported when a résumé uses
+# Acronym pairs an ATS searches for by ONE spelling. Reported when a resume uses
 # exactly one of the two forms — never when it uses both, and never when it uses
 # neither.
 #
@@ -234,7 +234,7 @@ _PRONOUNS = re.compile(r"(?<!\w)(i|i'm|i've|my|me|myself)(?!\w)|(?<![\w])(אני
 # writes "application programming interface", so API is not here, and neither
 # are SQL, ETL, SLA or KPI. A pair whose long form no one writes fires on almost
 # every real CV, which is a guard firing on legitimate input: it would put an
-# always-on row in a panel whose entire value is that a clean résumé shows none.
+# always-on row in a panel whose entire value is that a clean resume shows none.
 _ACRONYMS: tuple[tuple[str, str], ...] = (
     ("CI/CD", "continuous integration"),
     ("ML", "machine learning"),
@@ -383,7 +383,7 @@ def _blocks(resume: ResumeModel) -> list[tuple[str, str]]:
     """Every (block path, text) the paper prints, bullets walked WITH indices.
 
     The path is what makes a finding tappable, so every index emitted here must
-    be in range on the résumé it came from — an off-by-one anchor renders
+    be in range on the resume it came from — an off-by-one anchor renders
     identically and scrolls nowhere.
     """
     out: list[tuple[str, str]] = []
@@ -453,7 +453,7 @@ def _corpus(resume: ResumeModel) -> str:
 def _dated_spans(resume: ResumeModel) -> list[tuple[int, int, str, str]]:
     """(start_month, end_month, path, label) for every span that carries dates.
 
-    MILITARY SERVICE AND EDUCATION BOTH COUNT. On an Israeli résumé the two or
+    MILITARY SERVICE AND EDUCATION BOTH COUNT. On an Israeli resume the two or
     three years after
     school are service, and a gap check that reads only `experience` reports
     them as unexplained absence — the single most common shape of CV in this
@@ -753,7 +753,7 @@ def _check_prose(resume: ResumeModel) -> dict[str, list[ReviewFinding] | None]:
         if has_short == has_long:
             continue
         have, want = (short, long) if has_short else (long, short)
-        # Anchored to the FIRST block that writes the form the résumé HAS —
+        # Anchored to the FIRST block that writes the form the resume HAS —
         # pointing at a block that does not contain the term would scroll the
         # user somewhere with nothing to see.
         where = next((p for p, t in blocks if _has_term(t, have)), "")
@@ -807,10 +807,10 @@ def _check_skills(resume: ResumeModel, jd: JDModel | None) -> dict[str, list[Rev
 
     # A skill written as a sentence is REPORTED, never shortened. Nothing here
     # may rewrite the user's own text — the "never truncate the user's own
-    # document" rule applies to a skill exactly as it does to a résumé.
+    # document" rule applies to a skill exactly as it does to a resume.
     # SKIPPED with no skills at all: there is no entry to be a sentence, so the
     # question was never answered. Reporting "your skills read as terms" about a
-    # résumé with no skills section is the unknown-shown-as-clean defect.
+    # resume with no skills section is the unknown-shown-as-clean defect.
     sentence = (
         None
         if not skills
@@ -862,7 +862,7 @@ def _check_skills(resume: ResumeModel, jd: JDModel | None) -> dict[str, list[Rev
 
 
 def _check_length(resume: ResumeModel, page_count_fn) -> list[ReviewFinding] | None:
-    """The MEASURED page count against the years the résumé covers.
+    """The MEASURED page count against the years the resume covers.
 
     This replaces BOTH word-count heuristics (`ats_scan`'s 650 words,
     `resume_health`'s own). A word count is a proxy for a thing we can simply

@@ -12,7 +12,7 @@ import type { ATSXrayResult, ResumeModel } from "../types";
  * so the cost is latency, never money.
  *
  * Debounced for the same reason `usePageCount` is: accept/decline changes the
- * effective résumé on every click, and a burst of Accept-all must not queue one
+ * effective resume on every click, and a burst of Accept-all must not queue one
  * render per edit.
  */
 const DEBOUNCE_MS = 400;

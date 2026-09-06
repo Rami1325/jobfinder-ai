@@ -49,7 +49,7 @@ interface Props {
   resume: ResumeModel;
   /**
    * `"panel"` is the original in-app card (the tracker's détail modal);
-   * `"sheet"` is the résumé as a page — white ground, page margins, a lift.
+   * `"sheet"` is the resume as a page — white ground, page margins, a lift.
    */
   surface?: "panel" | "sheet";
   /**
@@ -117,7 +117,7 @@ interface Props {
   /** Clicking a block asks the review panel to show its change. */
   onSelectBlock?: (path: string) => void;
   /** Clicking a block opens it for editing. Takes precedence over
-   * `onSelectBlock`: a tailored draft is a review surface, a master résumé is
+   * `onSelectBlock`: a tailored draft is a review surface, a master resume is
    * an editing one, and the page decides which by passing one or the other.
    *
    * Now COMPOUND blocks only — the six that fuse several model fields into one
@@ -165,7 +165,7 @@ interface Props {
 
 /**
  * Mirror of `app/core/section_order.py` (PLAN 17.5) — Education outranks
- * Experience on an early-career résumé. Duplicated rather than fetched so the
+ * Experience on an early-career resume. Duplicated rather than fetched so the
  * preview can never lay out differently from the file the user downloads; the
  * Python side is the source of truth and is pinned by the smoke test.
  */
@@ -341,7 +341,7 @@ const headingMarkPct = (spec: TemplateSpec) =>
  * declares, so the default template is unchanged on both surfaces).
  *
  * No `data-block` and no `blkProps`: a heading is a label the renderers print
- * from `labels.py`, not a part of the résumé, so nothing here is reachable by
+ * from `labels.py`, not a part of the resume, so nothing here is reachable by
  * the delegated editing handlers.
  */
 function SectionHead({
@@ -465,7 +465,7 @@ function MetaLine({
  *     `preventDefault()` on `" "` would otherwise eat the SPACE BAR in a
  *     two-word skill (it runs only AFTER the path lookup, which comes back
  *     empty here). No `data-block` is also the honest statement: this field
- *     addresses nothing on the résumé yet, and nothing is written until it does;
+ *     addresses nothing on the resume yet, and nothing is written until it does;
  *   * Escape must not be able to commit through the blur that closing MIGHT
  *     fire — browsers disagree about whether removing a focused node dispatches
  *     focusout, and the losing outcome writes a discarded word onto the CV;
@@ -713,7 +713,7 @@ export default function ResumeView({
   // together (or neither), so either one answers the question.
   const editable = !!onInlineCommit || !!onEditBlock;
   /** Is there any prose to detect a language FROM? `resumeLanguage` returns
-   * "en" for an empty résumé exactly as it does for an English one, so a
+   * "en" for an empty resume exactly as it does for an English one, so a
    * from-scratch Hebrew CV would be typed into a left-to-right page. With
    * nothing to detect, follow the interface the user chose. */
   const hasProse = !!(
@@ -1240,7 +1240,7 @@ export default function ResumeView({
 
     // `|| onAddSkill`: a section that renders only when it has content cannot
     // be the place you CREATE that content — the same trap the header blocks
-    // have, and the same fix. Without it a from-scratch résumé has no reachable
+    // have, and the same fix. Without it a from-scratch resume has no reachable
     // way to add its first skill, and the empty synthetic block below is what
     // gives the chip somewhere to live.
     skills: skillBlocks.length > 0 || onAddSkill ? (
@@ -1258,7 +1258,7 @@ export default function ResumeView({
             >
               {/* Not uppercased, unlike the section heading above it: a group
                   label is the user's own taxonomy, copied verbatim from their
-                  résumé, and both renderers print it as written. */}
+                  resume, and both renderers print it as written. */}
               {label && !labeledSkills && (
                 <p className="mb-1 text-xs font-semibold text-accent">{label}</p>
               )}
@@ -1667,7 +1667,7 @@ export default function ResumeView({
       {/* On an EDITABLE document the empty state is a real placeholder — an
           empty node plus `data-ph`, drawn by CSS — never the fallback string as
           text. As text it is committable: tapping the largest target on a
-          nameless CV and tapping away would write "Résumé" in as the person's
+          nameless CV and tapping away would write "Resume" in as the person's
           name. As a placeholder there is nothing there to commit.
           Read-only surfaces (the tracker's détail modal, a tailored draft)
           still get the words, because they have no caret to protect. */}
@@ -1689,7 +1689,7 @@ export default function ResumeView({
         {editable ? c.name : c.name || t("sections.fallbackName")}
       </div>
       {/* Rendered even when empty while editing, or they are unreachable: a
-          from-scratch résumé has no headline, no summary and no contact line,
+          from-scratch resume has no headline, no summary and no contact line,
           and a section that renders nothing cannot be tapped into. */}
       {(resume.headline || editable) && (
         <div
@@ -1781,7 +1781,7 @@ export default function ResumeView({
 
       {/* Outside every [data-block] on purpose: it emits no path, so
           check-mirrors check 7 has nothing to validate and the add control can
-          never be mistaken for a part of the résumé. */}
+          never be mistaken for a part of the resume. */}
       {onAdd && onAddNamed ? (
         <AddToResume dir={paperDir} onAdd={onAdd} onAddNamed={onAddNamed} />
       ) : (

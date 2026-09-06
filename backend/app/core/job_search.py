@@ -1,6 +1,6 @@
-"""Multi-source job search: fan out to job-board providers, rank by résumé fit.
+"""Multi-source job search: fan out to job-board providers, rank by resume fit.
 
-Search context (what title, where) is derived from the résumé automatically via
+Search context (what title, where) is derived from the resume automatically via
 the SEARCH_CONTEXT LLM task, with a deterministic fallback; the user can override
 any field, including which boards to search (`SearchContext.sources`, validated
 against the provider registry). Each board lives in `app.core.providers`; one
@@ -72,9 +72,9 @@ WORLDWIDE_BOARD = "linkedin"  # the only registered board with worldwide invento
 
 
 def resume_hash(resume: ResumeModel) -> str:
-    """Content identity of a résumé: sha256 hex of its canonical JSON. History
-    rows stamp it so a later search can tell "same résumé, reuse the scores"
-    from "different résumé, rescore" (PLAN 12.4)."""
+    """Content identity of a resume: sha256 hex of its canonical JSON. History
+    rows stamp it so a later search can tell "same resume, reuse the scores"
+    from "different resume, rescore" (PLAN 12.4)."""
     return hashlib.sha256(resume.model_dump_json().encode("utf-8")).hexdigest()
 
 
@@ -84,7 +84,7 @@ class CachedScore:
 
     Built by `app.db.history.load_score_cache`, which owns the freshness (TTL)
     and non-empty-jd_text filters — core just trusts what it's given. When
-    `is_full_match` is True the row was scored against the CURRENT résumé, so
+    `is_full_match` is True the row was scored against the CURRENT resume, so
     the whole match (scores + keywords + jd_text) can be rebuilt with zero LLM
     calls and zero network fetch; otherwise only `jd_text` is reusable (skips
     the fetch and its politeness throttle, still one LLM scoring call).
@@ -543,7 +543,7 @@ def search_jobs(
     ctx = _resolve_context(resume, customize)
     if not ctx.job_title:
         raise ValueError(
-            "Couldn't derive a job title from your résumé. "
+            "Couldn't derive a job title from your resume. "
             "Check 'Customize search' and enter one."
         )
 
@@ -738,7 +738,7 @@ def search_jobs(
         ghost: GhostReport | None = None
         if cached is not None and cached.is_full_match:
             # Tier 1 (PLAN 12.4): this exact posting was scored against this
-            # exact résumé within the TTL — rebuild the match from the history
+            # exact resume within the TTL — rebuild the match from the history
             # row with zero LLM calls and zero network fetch. The FRESH hit's
             # card fields win where the board provided them (the board is
             # authoritative for title/company/location/posted_at/logo_url);
@@ -789,7 +789,7 @@ def search_jobs(
                 stale=hit.stale,
             )
         else:
-            # Tier 2: a fresh row for a DIFFERENT résumé still spares the
+            # Tier 2: a fresh row for a DIFFERENT resume still spares the
             # description fetch (and its politeness throttle) — the posting's
             # text hasn't changed; only the scoring must rerun.
             jd_text = hit.description or (cached.jd_text if cached else "") or _fetch_throttled(hit)

@@ -11,7 +11,7 @@ Refine the existing CV-generation application so that it produces CVs that are:
 - Credible and defensible in interviews
 - ATS-compatible without keyword stuffing
 - Specific, concise, and technically accurate
-- Free from obvious AI-generated résumé language
+- Free from obvious AI-generated resume language
 
 The system must behave primarily as a **fact-selection, evidence-ranking, and editing engine**, not as an unrestricted text-generation engine.
 
@@ -21,7 +21,7 @@ The system must behave primarily as a **fact-selection, evidence-ranking, and ed
 
 The current system can generate CV content from a job description, but the output may appear AI-generated because it:
 
-- Uses generic résumé phrases
+- Uses generic resume phrases
 - Repeats the wording of the job description
 - Overuses keywords
 - Produces repetitive bullet structures
@@ -51,7 +51,7 @@ The application must enforce the following rules throughout the pipeline.
 5. Every generated experience bullet must be traceable to one or more verified facts.
 6. Every bullet must add distinct information.
 7. Prefer concrete actions, tools, systems, constraints, and outcomes over adjectives.
-8. Avoid exaggerated or generic résumé language.
+8. Avoid exaggerated or generic resume language.
 9. Keep ATS keyword usage natural and factually justified.
 10. The final CV must be defensible in a technical or behavioral interview.
 11. If the candidate does not have evidence for a requirement, do not fabricate it.
@@ -970,7 +970,7 @@ Your goal is to make the candidate's actual experience clear, relevant, specific
 Rules:
 1. Never invent metrics, responsibilities, employers, skills, tools, or outcomes.
 2. Do not copy phrases directly from the job description.
-3. Avoid generic résumé language such as:
+3. Avoid generic resume language such as:
    - results-driven
    - cutting-edge
    - spearheaded
@@ -1015,7 +1015,7 @@ For every bullet:
 - verify every tool
 - verify the candidate's level of ownership
 - check whether the bullet copies the job description
-- check whether the bullet contains vague résumé language
+- check whether the bullet contains vague resume language
 - check whether the candidate could defend the claim in an interview
 - approve, revise, or reject the bullet
 
@@ -1051,7 +1051,7 @@ Improve:
 - consistency with the candidate's writing profile
 
 Reduce:
-- generic résumé phrases
+- generic resume phrases
 - repetitive verbs
 - repetitive structures
 - unnecessary adjectives
@@ -1316,7 +1316,7 @@ The refinement is complete when the application can meet all of the following:
 
 ## Human Voice
 
-- No excessive use of generic résumé phrases.
+- No excessive use of generic resume phrases.
 - No obvious repetition of sentence structure.
 - No repeated starting verb more than an acceptable configured threshold.
 - Low exact phrase overlap with the job description.
@@ -1432,4 +1432,4 @@ The final output should be:
 - Easy to scan
 - Easy to defend
 - Free from fabricated claims
-- Clearly different from generic AI-generated résumé content
+- Clearly different from generic AI-generated resume content

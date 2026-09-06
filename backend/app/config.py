@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     daily_submit_cap: int = 10
     # Upload limits. Both upload routes read the file into memory to parse it,
     # and /public/scan takes NO access code, so an unbounded read is a free way
-    # to exhaust a serverless instance. A résumé is a couple of hundred kB; 10 MB
+    # to exhaust a serverless instance. A resume is a couple of hundred kB; 10 MB
     # is generous for a scan-heavy PDF and still nowhere near dangerous. The page
     # ceiling bounds pdfplumber, which is the expensive half — a master CV can
     # legitimately be ~30 rendered pages (PLAN 18.4), so 50 leaves real headroom
@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     # Stale-application nudges: an "applied" app with no status change for this
     # many days surfaces a "time to follow up" reminder on the tracker (<= 0 disables).
     stale_application_days: int = 7
-    # Tailored-résumé page budget. A master résumé holds everything the
+    # Tailored-resume page budget. A master resume holds everything the
     # candidate has ever built; one application needs a couple of pages of it.
     # The tailor aims for `resume_max_pages`; the deterministic length budget
     # guarantees `resume_hard_max_pages` — it will sit at the hard limit rather
@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     #
     # These are GUARD RAILS, not budgets: they must fire on a 500-page PDF and
     # never on a real CV. 256 KB is ~256k English or ~140k Hebrew characters,
-    # comfortably past the ~30 rendered pages a master résumé can legitimately
+    # comfortably past the ~30 rendered pages a master resume can legitimately
     # run (see resume_max_pages above). 32 KB is ~10x a long job ad and ~2.5x
     # company_brief's existing _PAGE_TEXT_CAP of 12,000. A legitimate document
     # that is still too big for the model is caught by ContextWindowExceeded

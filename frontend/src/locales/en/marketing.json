@@ -32,7 +32,7 @@
     "sub": "One shared design system, and every template a different SHAPE — header band, heading treatment, entry grammar, column count. Not one document in eleven colours.",
     "alt": "{{name}} template preview",
     "sample": {
-      "title": "Sample résumé page",
+      "title": "Sample resume page",
       "note": "Sample document. Maya Eldar is an invented person and every line is demo copy — this is not anyone's real CV."
     },
     "pdfOnly": "PDF only",
@@ -99,7 +99,7 @@
   "freeScan": {
     "kicker": "Free · no signup",
     "title": "Check your CV against any job — free",
-    "body": "Keyword match score, matched and missing keywords, and quick résumé checks. Hebrew or English, nothing stored. Tools like this cost ₪39/month elsewhere.",
+    "body": "Keyword match score, matched and missing keywords, and quick resume checks. Hebrew or English, nothing stored. Tools like this cost ₪39/month elsewhere.",
     "cta": "Scan my CV now",
     "note": "No account. No access code. Runs in seconds."
   },
@@ -127,7 +127,7 @@
   "features": {
     "kicker": "The toolkit",
     "title": "Everything for the search — honestly built",
-    "sub": "Six surfaces, one master résumé. Save it once and every tool reads from the same set of facts.",
+    "sub": "Six surfaces, one master resume. Save it once and every tool reads from the same set of facts.",
     "tailoring": {
       "title": "Resume tailoring",
       "body": "Rewrite for each job, with before/after match scores and a full changelog of every edit."
@@ -201,17 +201,17 @@
     "sub": "No stars, no user count, no quotes from people who don't exist. Here is what the code promises instead — and what enforces each promise.",
     "guard": {
       "quote": "If a claim isn't in your resume, you find out before the recruiter does.",
-      "body": "The guard rebuilds a facts ledger from the tailored résumé and diffs it against the one built from your original. Employers, titles, dates, credentials and numbers that appeared from nowhere are flagged one by one, and you see them before you download anything.",
+      "body": "The guard rebuilds a facts ledger from the tailored resume and diffs it against the one built from your original. Employers, titles, dates, credentials and numbers that appeared from nowhere are flagged one by one, and you see them before you download anything.",
       "source": "The fabrication guard — runs after every tailor, not only in tests"
     },
     "score": {
       "quote": "The match score can show its work, term by term.",
-      "body": "Keyword coverage is plain deterministic Python: which terms the job asked for, which ones your résumé already earned, and which ones the rewrite surfaced. Only the recruiter-fit half of the score ever asks a model.",
+      "body": "Keyword coverage is plain deterministic Python: which terms the job asked for, which ones your resume already earned, and which ones the rewrite surfaced. Only the recruiter-fit half of the score ever asks a model.",
       "source": "The scorer — measured before and after every tailor"
     },
     "ats": {
       "quote": "Eleven format checks, and not one of them needs an API key.",
-      "body": "Date formats, acronym pairing, pronouns, bullet length, résumé length weighed against your actual years of experience. Because it's deterministic it's instant, free, and identical every time you run it.",
+      "body": "Date formats, acronym pairing, pronouns, bullet length, resume length weighed against your actual years of experience. Because it's deterministic it's instant, free, and identical every time you run it.",
       "source": "The ATS scan — free and public, no code required"
     }
   },
@@ -229,7 +229,7 @@
     "q5": "Can I choose how the resume looks?",
     "a5": "Yes. Each template is its own palette, type hierarchy and vertical rhythm, and you switch at download time without re-running the tailor. They share one design system, so the DOCX and the PDF read as the same document rather than two cousins.",
     "q6": "Does it really handle Hebrew?",
-    "a6": "End to end: the interface, the parsing, the tailoring and both exports. The PDF has its own layout engine that line-breaks and bidi-reorders line by line instead of leaning on a direction-blind paragraph engine, and the Hebrew DOCX mirrors weight and size onto the complex-script properties Word actually reads. Mixed Hebrew/English résumés work too."
+    "a6": "End to end: the interface, the parsing, the tailoring and both exports. The PDF has its own layout engine that line-breaks and bidi-reorders line by line instead of leaning on a direction-blind paragraph engine, and the Hebrew DOCX mirrors weight and size onto the complex-script properties Word actually reads. Mixed Hebrew/English resumes work too."
   },
   "finalCta": {
     "title": "Send something you can defend.",
@@ -240,7 +240,7 @@
   },
   "footer": {
     "navLabel": "Site sections",
-    "blurb": "An honest résumé tailor. It rewrites for the job, renders ATS-safe DOCX and PDF, and flags anything it can't trace back to you.",
+    "blurb": "An honest resume tailor. It rewrites for the job, renders ATS-safe DOCX and PDF, and flags anything it can't trace back to you.",
     "honesty": "Everything claimed on this page is either visible in the product or checkable in its source. There are no user counts, star ratings or testimonials here, because there aren't any yet."
   }
 }

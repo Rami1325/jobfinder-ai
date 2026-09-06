@@ -56,7 +56,7 @@ export default {
         "glow-mint": "var(--shadow-glow-mint)",
         panel: "var(--shadow-panel)",
         card: "var(--shadow-card)",
-        // The résumé-page lift used by the landing's document thumbnails.
+        // The resume-page lift used by the landing's document thumbnails.
         doc: "var(--shadow-doc)",
       },
       backgroundImage: {

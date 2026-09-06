@@ -20,11 +20,11 @@ def detect_language(text: str) -> str:
 
 
 def resume_language(resume: ResumeModel) -> str:
-    """Detect the language a résumé is written in.
+    """Detect the language a resume is written in.
 
     Only prose fields count (summary, skills, titles, bullets, project /
     education text) — company names, locations, and contact info are excluded
-    so an English résumé at a Hebrew-named employer stays "en".
+    so an English resume at a Hebrew-named employer stays "en".
     """
     parts = [resume.summary, " ".join(resume.skills)]
     for exp in resume.experience:

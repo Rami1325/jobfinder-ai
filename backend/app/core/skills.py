@@ -45,7 +45,7 @@ _SKILL_SEPARATORS = frozenset(",;|·•\n\t")
 
 # ...and a separator INSIDE a bracket or a quoted run is not a separator at all.
 # `Cloud (AWS, GCP)` is ONE skill the user typed; splitting it wrote two
-# fragments nobody wrote — `Cloud (AWS` and `GCP)` — into the master résumé and
+# fragments nobody wrote — `Cloud (AWS` and `GCP)` — into the master resume and
 # into the downloaded PDF, at the one door that parses the user's own CV. A
 # depth counter is enough. This is not a parser and must not become one: an
 # entry whose delimiters never close simply keeps its separators, which is the
@@ -156,7 +156,7 @@ def normalize_skills(
 
 
 def normalize_resume_skills(resume: ResumeModel) -> ResumeModel:
-    """`normalize_skills` applied to a whole résumé — the ONE definition of the
+    """`normalize_skills` applied to a whole resume — the ONE definition of the
     two-field write.
 
     Callers get both fields written or neither. That placement is the same
@@ -235,10 +235,10 @@ def dedupe_skills(raw: object) -> object:
     It lives here, in the module both doors can import, and NOT in a
     `model_validator` — the
     reason the multi-skill splitter documents one door over: a validator runs on
-    every construction, i.e. every READ of every stored master, tracker résumé,
+    every construction, i.e. every READ of every stored master, tracker resume,
     saved kit and version snapshot, and would rewrite all of them without any of
     them being a write. This is the one place a raw TAILOR response becomes a
-    résumé.
+    resume.
 
     IT MAY ONLY EVER REMOVE. The first occurrence keeps its position and the
     model's own spelling: `shortlist_skills` selects in the model's order and
@@ -299,7 +299,7 @@ def regroup_skills(resume: ResumeModel, original: ResumeModel) -> ResumeModel:
     `ResumeModel`'s validator adds nothing on the next construction.
 
     Returns `resume` ITSELF when there is nothing to do — no master taxonomy, a
-    résumé that already carries groups, or not one shipped entry the master
+    resume that already carries groups, or not one shipped entry the master
     files anywhere — the identity convention `shortlist_skills`,
     `order_skills` and `preserve_keywords` all share, so the caller can gate on
     `is` rather than diffing.

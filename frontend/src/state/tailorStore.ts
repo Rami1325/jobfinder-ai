@@ -1,6 +1,6 @@
 // Module-level store for the Tailor flow so an in-flight tailor run survives
 // route changes: TailorPage unmounts when the user navigates away, but the
-// request promise and everything on screen (résumé, JD, results, tracker
+// request promise and everything on screen (resume, JD, results, tracker
 // state) live here, not in component state, and are intact when they return.
 import { analyzeJD, getMasterResume, saveMasterResume, tailor } from "../api/client";
 import { resetMasterCache } from "../hooks/useMasterResume";
@@ -24,7 +24,7 @@ export type TailorState = {
   jdText: string;
   jd: JDModel | null;
   result: TailorResult | null;
-  // Snapshot of the résumé the current `result` was tailored FROM — the diff
+  // Snapshot of the resume the current `result` was tailored FROM — the diff
   // baseline. `resume` can be replaced by a later upload; this cannot.
   tailoredFrom: ResumeModel | null;
   // Edit ids (lib/resumeDiff) the user rejected; everything else is accepted.
@@ -33,11 +33,11 @@ export type TailorState = {
    * The user's own edits to the TAILORED document, keyed by SOURCE ANCHOR and
    * NEVER by block path.
    *
-   * `mergeForReview` recomputes the effective résumé on every accept and
+   * `mergeForReview` recomputes the effective resume on every accept and
    * decline, and a rejected removal shifts every later index in its section, so
    * a path-keyed store writes the typed sentence onto a different bullet the
    * first time any decision in that section is toggled. The anchor is the
-   * block's coordinate in the original/tailored résumé, which is frozen while a
+   * block's coordinate in the original/tailored resume, which is frozen while a
    * result is up. See `lib/resumeOverrides.ts` for the executed proof.
    *
    * This is an OVERLAY on one application's CV. It never touches `resume`, it
@@ -82,7 +82,7 @@ export type TailorState = {
   applyClicked: boolean;
   applied: boolean;
   coverLetterText: string;
-  // Set when the JD's language differed from the loaded résumé and a saved
+  // Set when the JD's language differed from the loaded resume and a saved
   // master in the JD's language was swapped in ("he" | "en"); null otherwise.
   langSwitched: "he" | "en" | null;
   // "Check fit" before any tailoring: the reading, and the exact posting text it
@@ -213,7 +213,7 @@ export function setTargetJob(
 let seq = 0; // a restarted tailor must not be overwritten by a stale response
 
 /**
- * Tailor the MASTER résumé for the posting in `jdText`.
+ * Tailor the MASTER resume for the posting in `jdText`.
  *
  * The source is always `state.resume` — never `result.tailored_resume` — so
  * pressing Tailor a second time re-runs the pipeline on the same master and
@@ -223,7 +223,7 @@ let seq = 0; // a restarted tailor must not be overwritten by a stale response
  *
  * The reset below is therefore exactly `adoptMaster`'s list minus the six
  * master-identity keys (`resume`, `savedResume`, `ledger`, `masterLabel`,
- * `editUndo`, `editError`): a tailor replaces the REVIEW, not the résumé.
+ * `editUndo`, `editError`): a tailor replaces the REVIEW, not the resume.
  * check-mirrors 13 derives that sentence from `adoptMaster` rather than
  * restating it, so a key added there forces a decision here.
  */
@@ -259,7 +259,7 @@ export function startTailor(): void {
     tailorOverrides: {},
     clearedOverrides: null,
     saved: false,
-    // The tracker row holds the PREVIOUS tailored résumé for the PREVIOUS
+    // The tracker row holds the PREVIOUS tailored resume for the PREVIOUS
     // posting. Leaving the id made `save()` take its `savedAppId !== null`
     // short-circuit and toast "Already in your tracker" while writing nothing,
     // so the row kept a CV for a job the user is no longer applying to.
@@ -293,7 +293,7 @@ export function startTailor(): void {
     const analyzed = prior ?? (await analyzeJD(jdText));
     if (id !== seq) return;
     setTailorState({ jd: analyzed });
-    // Paired he/en masters: a Hebrew JD is tailored from the Hebrew résumé (and
+    // Paired he/en masters: a Hebrew JD is tailored from the Hebrew resume (and
     // vice versa) when one is saved — otherwise stick with what's loaded.
     let useResume = resume;
     const jdLang = analyzed.language === "he" ? "he" : "en";
@@ -312,7 +312,7 @@ export function startTailor(): void {
           });
         }
       } catch {
-        /* older backend or no paired master — keep the loaded résumé */
+        /* older backend or no paired master — keep the loaded resume */
       }
     }
     const r = await tailor(useResume, analyzed);
@@ -367,7 +367,7 @@ export function discardTailorResult(): void {
     // They are an overlay on a diff, and the diff is what this discards.
     //
     // DESTRUCTIVE, AND GUARDED IN THE UI. `TailorPage` arms-then-confirms the
-    // ghost "Back to my résumé" button whenever this map is non-empty, and says
+    // ghost "Back to my resume" button whenever this map is non-empty, and says
     // at rest — not only once armed — how many typed edits leaving costs. It
     // sits one button away from "Tailor for a different job", which destroys the
     // same map through `startTailor`, so a caller reaching either without that
@@ -393,14 +393,14 @@ export function discardTailorResult(): void {
  *
  *  · not `resume` — the master is not what is on screen, and writing the
  *    flattened tailored CV into it is the compounding this surface exists not
- *    to do (a tailored résumé carries `skill_groups: undefined`, so one write
+ *    to do (a tailored resume carries `skill_groups: undefined`, so one write
  *    would destroy the master's whole skills taxonomy);
  *  · not `editUndo` — the undo stack is the master's, and an application-only
  *    edit has no business on it;
  *  · and above all NOT `writeDraft` — the 22.11 local draft mirrors the MASTER,
  *    and `draftOver` spreads it over the master, so a per-application edit that
  *    reached it would have `DraftRestoreBar` offer to restore a tailored CV as
- *    the user's real résumé on their next visit.
+ *    the user's real resume on their next visit.
  *
  * `applyBlockEdit` does all three, which is exactly why the tailored path may
  * never call it: it also nulls `result` / `tailoredFrom` / `rejectedEdits`, so
@@ -473,24 +473,24 @@ export function restoreClearedOverrides(): void {
 }
 
 // --------------------------------------------------------------------------- //
-// A master résumé replaced somewhere else (23.6)
+// A master resume replaced somewhere else (23.6)
 // --------------------------------------------------------------------------- //
 
 /**
- * The STORED master résumé was replaced by another surface — a file dropped on
+ * The STORED master resume was replaced by another surface — a file dropped on
  * the Jobs page's Replace panel, a version restored from history, the skills
  * editor saving — and the document must BECOME it.
  *
  * This store is the app's second module-level copy of the master (the first is
  * `useMasterResume`'s cache), and nothing outside this file could reach it:
- * `TailorPage`'s loader early-returns the moment `resume` is set, so a résumé
+ * `TailorPage`'s loader early-returns the moment `resume` is set, so a resume
  * replaced anywhere else never arrived. The document surface kept painting the
  * old file, TAILORED it, and downloaded it — until a full page reload. That is
  * the same defect `resetMasterCache` exists for, one cache further along, and
  * it is why the call to this lives inside `useMasterResume`'s `setMaster`
  * rather than at each of its call sites.
  *
- * Everything cleared below describes the résumé being replaced: a fit reading,
+ * Everything cleared below describes the resume being replaced: a fit reading,
  * a tailor diff, a fabrication warning and a tracker row all say something
  * about a document that no longer exists. `checkedFor` has to go with `fit` or
  * the overlay suppresses the re-check that would fix it as "already read this
@@ -500,15 +500,15 @@ export function restoreClearedOverrides(): void {
  *
  * The TARGET JOB survives on purpose — `jdText`, `jd`, `jobUrl`, `jobTitle`,
  * `company`. Which posting the user is aiming at has nothing to do with which
- * file their résumé is in, and pressing Tailor straight afterwards using the
- * NEW résumé is the whole point.
+ * file their resume is in, and pressing Tailor straight afterwards using the
+ * NEW resume is the whole point.
  */
 export function adoptMaster(m: MasterResume): void {
-  seq++; // cancel an in-flight tailor — it is about the résumé that just went
+  seq++; // cancel an in-flight tailor — it is about the resume that just went
   setTailorState({
     resume: m.resume,
     // The dirty baseline is the incoming copy, never the document on screen:
-    // seeding it from what was there leaves the new résumé reading dirty.
+    // seeding it from what was there leaves the new resume reading dirty.
     savedResume: m.resume,
     ledger: m.ledger ?? null,
     masterLabel: m.label,
@@ -534,7 +534,7 @@ export function adoptMaster(m: MasterResume): void {
   });
   // The 22.11 draft mirrors the document that was just replaced. Leaving it
   // would have DraftRestoreBar offer to "restore unsaved changes" that are in
-  // fact the whole of the PREVIOUS résumé, pasted over the new one — and
+  // fact the whole of the PREVIOUS resume, pasted over the new one — and
   // `draftOver` spreads the draft over the master, so accepting would undo the
   // replacement the user just made.
   clearDraft();
@@ -545,12 +545,12 @@ export function adoptMaster(m: MasterResume): void {
 // --------------------------------------------------------------------------- //
 
 /**
- * Replace the master résumé with an edited copy.
+ * Replace the master resume with an edited copy.
  *
  * The invalidation here is the dangerous part, and every line of it is load
  * bearing: a fit reading and a tailor result both describe the document as it
  * was, and leaving either up after an edit means showing a number about a
- * résumé that no longer exists. `checkedFor` has to go too, or the overlay
+ * resume that no longer exists. `checkedFor` has to go too, or the overlay
  * suppresses the re-check that would fix it as "already read this posting".
  */
 export function applyBlockEdit(next: ResumeModel): void {
@@ -558,7 +558,7 @@ export function applyBlockEdit(next: ResumeModel): void {
   if (!prev) return;
   setTailorState({
     resume: next,
-    // Cap the stack: this is an undo, not a history, and a résumé is not small.
+    // Cap the stack: this is an undo, not a history, and a resume is not small.
     editUndo: [...state.editUndo, prev].slice(-30),
     editError: "",
     fit: null,
@@ -599,13 +599,13 @@ export function hasUnsavedEdits(): boolean {
  *
  * Deliberately NOT `useSaveMasterResume`: that hook's bare `catch {}` makes a
  * 401, a 502 and being offline indistinguishable, and returns null. It is fine
- * for its documented best-effort use — persisting a freshly parsed résumé — and
+ * for its documented best-effort use — persisting a freshly parsed resume — and
  * exactly wrong behind a Save button, where the user is relying on the result.
  *
- * No `ledger` is sent. The backend rebuilds it from the résumé when none is
- * given, which is what we want: the user typed these facts, so the résumé IS
+ * No `ledger` is sent. The backend rebuilds it from the resume when none is
+ * given, which is what we want: the user typed these facts, so the resume IS
  * the source of truth. Passing the LOADED ledger through would store facts
- * describing the PRE-edit résumé, and the fabrication guard reads the stored
+ * describing the PRE-edit resume, and the fabrication guard reads the stored
  * ledger — a corrected employer would then read as an invention forever.
  */
 export async function commitResumeEdits(label: string, fallbackError: string): Promise<boolean> {
@@ -624,11 +624,11 @@ export async function commitResumeEdits(label: string, fallbackError: string): P
       editError: "",
     });
     // The draft has served its purpose the moment the server has the content.
-    // Leaving it would offer to "restore" the résumé the user just saved.
+    // Leaving it would offer to "restore" the resume the user just saved.
     clearDraft();
     // `invalidateData` cannot reach useMasterResume's module-level cache, and
     // nine pages read the master from it — an X-ray run right after an edit
-    // would otherwise scan the résumé that was just replaced.
+    // would otherwise scan the resume that was just replaced.
     resetMasterCache();
     return true;
   } catch (e: unknown) {

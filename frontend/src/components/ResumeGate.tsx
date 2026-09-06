@@ -3,7 +3,7 @@ import { FileText } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button, Card } from "./ui";
 
-/** Shown when a feature needs the master résumé but none is saved yet.
+/** Shown when a feature needs the master resume but none is saved yet.
  * `feature` should already be translated by the caller. */
 export default function ResumeGate({ feature }: { feature: string }) {
   const { t } = useTranslation();

@@ -1,9 +1,9 @@
 {
   "kicker": "Free scan · no signup",
   "title": "How well does your CV match the job?",
-  "sub": "Drop your résumé, paste the job description, and see your keyword match instantly — Hebrew or English. No signup, no access code, and nothing is stored.",
-  "resumeLabel": "Your résumé",
-  "drop": "Drop your résumé here or click to browse",
+  "sub": "Drop your resume, paste the job description, and see your keyword match instantly — Hebrew or English. No signup, no access code, and nothing is stored.",
+  "resumeLabel": "Your resume",
+  "drop": "Drop your resume here or click to browse",
   "fileTypes": ".docx · .pdf · .txt",
   "fileReady": "Ready to scan",
   "jdLabel": "Job description",
@@ -19,7 +19,7 @@
     "matched": "Matched ({{count}})",
     "partial": "Partial ({{count}})",
     "missing": "Missing ({{count}})",
-    "checks": "Quick résumé checks",
+    "checks": "Quick resume checks",
     "noKeywords": "We couldn't extract keywords from that job description — try pasting more of it.",
     "check": {
       "email": { "good": "Email address found", "warn": "No email address found — add one" },
@@ -30,7 +30,7 @@
   },
   "cta": {
     "title": "Want the missing keywords fixed for you?",
-    "body": "The full app rewrites your résumé for this exact job — with a code-enforced guard that makes sure it never invents anything about you. Hebrew and English, ATS-safe DOCX & PDF.",
+    "body": "The full app rewrites your resume for this exact job — with a code-enforced guard that makes sure it never invents anything about you. Hebrew and English, ATS-safe DOCX & PDF.",
     "button": "Get the full tailored rewrite"
   }
 }

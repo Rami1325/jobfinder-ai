@@ -9,7 +9,7 @@
     },
     "screening": {
       "title": "Screening answers",
-      "body": "Honest, résumé-grounded answers to application questions like \"Why us?\" or \"Describe a time…\""
+      "body": "Honest, resume-grounded answers to application questions like \"Why us?\" or \"Describe a time…\""
     },
     "xray": {
       "title": "ATS X-ray",
@@ -30,7 +30,7 @@
   },
   "outreach": {
     "gateFeature": "Outreach Studio",
-    "subtitle": "The fastest path to an interview is a warm message to a real person — grounded only in your real résumé.",
+    "subtitle": "The fastest path to an interview is a warm message to a real person — grounded only in your real resume.",
     "targeting": "Outreach for {{role}} at {{company}}",
     "jdTitle": "Job description",
     "contactName": "Recipient name (optional)",
@@ -42,7 +42,7 @@
       "connection": "Existing connection"
     },
     "generate": "Generate outreach",
-    "honesty": "Every message uses only facts from your résumé — no invented connections or claims.",
+    "honesty": "Every message uses only facts from your resume — no invented connections or claims.",
     "connection": "LinkedIn connection note",
     "email": "InMail / cold email",
     "referral": "Referral request",
@@ -52,7 +52,7 @@
   },
   "screening": {
     "gateFeature": "the screening-answer helper",
-    "subtitle": "Draft an honest answer to any application or screening question — grounded only in your real résumé.",
+    "subtitle": "Draft an honest answer to any application or screening question — grounded only in your real resume.",
     "presetLabel": "Common questions",
     "presetPlaceholder": "Pick a common question…",
     "presets": {
@@ -72,7 +72,7 @@
   },
   "xray": {
     "gateFeature": "the ATS X-ray",
-    "subtitle": "Render your résumé, then read it back the way a parser does. Not a promise that it works — the actual text a machine recovers.",
+    "subtitle": "Render your resume, then read it back the way a parser does. Not a promise that it works — the actual text a machine recovers.",
     "pickTitle": "Which document should we x-ray?",
     "pickHint": "Pick the template and the file type you'd actually send. Two-column designs are worth checking here first.",
     "fmtLabel": "File format",
@@ -126,13 +126,13 @@
     "docxDiffers": "We x-rayed the PDF. Your Word file is a different document — Word cannot draw two columns without tables, so it renders the single-column sibling instead. X-ray that one from the ATS X-ray tool.",
     "limits": "This shows what our parser recovers from your file. Every ATS parses differently and none of them publishes its output — what we can show you is that the text is in there, in the right order, and not glued to its neighbour.",
     "scope": "We check the name, contact line, headline, job titles, employers, dates, bullets, institutions, degrees, military units, certifications, skills and languages. We do not check the summary, projects, or anything shorter than three characters.",
-    "empty": "There is nothing to check yet — this résumé has no facts long enough to look for.",
+    "empty": "There is nothing to check yet — this resume has no facts long enough to look for.",
     "error": "Couldn't read the file back just now.",
     "retry": "Try again"
   },
   "linkedin": {
     "gateFeature": "the LinkedIn optimizer",
-    "subtitle": "A keyword-rich headline, About, and bullets — built only from your real résumé.",
+    "subtitle": "A keyword-rich headline, About, and bullets — built only from your real resume.",
     "optimize": "Optimize my profile",
     "regenerate": "Regenerate",
     "copied": "Copied",
@@ -177,7 +177,7 @@
     "allEmployees": "Everyone who works there",
     "hiringInbox": "Hiring inbox found on the page",
     "message": "Your reach-out message",
-    "messageNote": "Short, grounded in your résumé, ends with a question. Review it, personalize it — then send it yourself.",
+    "messageNote": "Short, grounded in your resume, ends with a question. Review it, personalize it — then send it yourself.",
     "subject": "Subject: {{subject}}",
     "copied": "Copied"
   },

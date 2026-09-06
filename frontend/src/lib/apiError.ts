@@ -68,7 +68,7 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     return i18n.t(key, { ns: "common", cap: detail.cap });
   }
   if (isSizeLimit(detail)) {
-    // Keyed per kind: a résumé that is too big and a job ad that is too big
+    // Keyed per kind: a resume that is too big and a job ad that is too big
     // need different advice (trim the CV vs paste less of the posting).
     return i18n.t(`sizeLimit.${detail.kind === "jd" ? "jd" : "resume"}`, {
       ns: "common",

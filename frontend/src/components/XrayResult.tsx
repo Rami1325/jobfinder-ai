@@ -37,7 +37,7 @@ interface Props {
  * describing the same payload differently is the failure mode this component
  * exists to make impossible.
  *
- * Deliberately NO score, ring or percentage. A flawless single-column résumé
+ * Deliberately NO score, ring or percentage. A flawless single-column resume
  * reports a fifth of its facts `split` — that is what line wrapping IS — so any
  * ratio would read as damage on a perfect document. And `facts` is not a count
  * of distinct facts: two roles with the same title produce two entries pointing

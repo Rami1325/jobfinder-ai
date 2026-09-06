@@ -381,8 +381,8 @@ export async function deleteKit(id: number): Promise<void> {
 }
 
 /** Approve a reviewed kit into the tracker (PLAN 8.2). `resume` is the
- * effective résumé after per-bullet accept/reject; null keeps the kit's full
- * tailored résumé. */
+ * effective resume after per-bullet accept/reject; null keeps the kit's full
+ * tailored resume. */
 export async function approveKit(
   id: number,
   resume: ResumeModel | null,
@@ -463,7 +463,7 @@ export async function freeScan(file: File, jdText: string): Promise<FreeScanResu
   return data;
 }
 
-/** Render the résumé and read it back with our own parser — deterministic, uncapped. */
+/** Render the resume and read it back with our own parser — deterministic, uncapped. */
 export async function atsXray(
   resume: ResumeModel,
   template: ResumeTemplate = "standard",
@@ -536,15 +536,15 @@ export async function coverageOf(
  * 400 ms and aborts the in-flight request on every keystroke, the way
  * `useCoverage` does over `coverageOf`. Without it a fast typist stacks
  * requests and the LAST response to arrive wins, which is not the last one
- * asked for — findings for a résumé two edits ago, painted as current.
+ * asked for — findings for a resume two edits ago, painted as current.
  *
  * DELIBERATELY NOT in `lib/dataCache.ts`, and neither is `reviewRewrites`.
  * That cache exists for SERVER state several pages read and a mutating wrapper
- * invalidates (the master résumé, kits, history): a short string key, a 30 s
+ * invalidates (the master resume, kits, history): a short string key, a 30 s
  * fresh window. This is the opposite in all three respects — the input is an
  * in-memory `ResumeModel` recomputed per keystroke, so there is no honest key
  * short of hashing the whole document; a 30 s window would paint findings for
- * a résumé the user has already edited away, which is the one thing this panel
+ * a resume the user has already edited away, which is the one thing this panel
  * must never do; and no mutation exists to invalidate it, because the edits
  * that change the answer never touch the server. Debounce plus abort is the
  * right mechanism here, and it already exists. */
@@ -585,7 +585,7 @@ export async function reviewRewrites(
   return data;
 }
 
-/** Read a posting and score the résumé against it, before any tailoring.
+/** Read a posting and score the resume against it, before any tailoring.
  * COSTS ONE AI CREDIT — reading a posting is a model call, and there is no
  * version of this that is free. Returns the analysed JD so tailoring afterwards
  * does not pay to read the same posting again. */
@@ -615,7 +615,7 @@ export async function getMe(): Promise<Me> {
 }
 
 /** Privacy wipe (PLAN 7.5): deletes everything the current user stored —
- * résumés, applications, history, alerts, usage, feedback, kits. The invite
+ * resumes, applications, history, alerts, usage, feedback, kits. The invite
  * code keeps working. Returns per-table deleted-row counts. */
 export async function deleteMyData(): Promise<Record<string, number>> {
   const { data } = await api.delete<Record<string, number>>("/profile/data");
@@ -630,7 +630,7 @@ export async function deleteMyData(): Promise<Record<string, number>> {
  * empties the `dataCache` Map, while `useMasterResume` keeps the master in a
  * plain module-level binding that nothing else can reach — which is exactly
  * why `resetMasterCache` exists. Skipping it leaves nine pages still painting
- * the résumé of an account that no longer exists.
+ * the resume of an account that no longer exists.
  *
  * (This import makes api/client ↔ hooks/useMasterResume a cycle. It is safe
  * because both sides only ever call across it at runtime, never at module
@@ -704,8 +704,8 @@ export async function listMasterResumes(): Promise<MasterResume[]> {
   });
 }
 
-/** Restore points for the master résumé (PLAN 20.8/N1) — metadata only; the
- * full résumé comes from `getResumeVersion`. Not cached: after a save the list
+/** Restore points for the master resume (PLAN 20.8/N1) — metadata only; the
+ * full resume comes from `getResumeVersion`. Not cached: after a save the list
  * has changed by definition, and it's only fetched when the picker opens. */
 export async function listResumeVersions(lang?: "en" | "he"): Promise<ResumeVersion[]> {
   const { data } = await api.get<{ versions: ResumeVersion[] }>("/profile/resume/versions", {

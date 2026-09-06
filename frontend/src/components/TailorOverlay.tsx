@@ -197,7 +197,7 @@ export default function TailorOverlay({
 
         {/* The thing the app never said out loud: a second tailor starts again
             from the MASTER, and what it replaces is the review on screen — not
-            the saved résumé. Plain static markup, no reveal and no `animate`
+            the saved resume. Plain static markup, no reveal and no `animate`
             prop: a height tween here is check 11's defect in its eighth
             costume.
             IT REASSURED ABOUT THE WRONG THING while hand-edits existed. "Your

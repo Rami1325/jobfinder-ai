@@ -45,7 +45,7 @@ def tailor_resume(
 ) -> TailorResult:
     """`avoid_phrases`: wording this user rejected in past reviews (§26
     feedback loop) — injected into the tailor prompt as a hard avoid-list.
-    `template`: which résumé template the page budget measures against."""
+    `template`: which resume template the page budget measures against."""
     if ledger is None:
         ledger = build_facts_ledger(resume)
 
@@ -80,7 +80,7 @@ def tailor_resume(
 
     client = get_llm_client()
     data = client.complete_json(
-        # Hebrew résumé => tailor in Hebrew (note appended AFTER the Task tag).
+        # Hebrew resume => tailor in Hebrew (note appended AFTER the Task tag).
         prompts.with_resume_language(prompts.TAILOR_SYSTEM, resume_language(resume)),
         prompts.tailor_user(
             resume.model_dump_json(),
@@ -122,7 +122,7 @@ def tailor_resume(
     # gives the model a way to rescue a project it likes — promote it into
     # experience, where nothing may remove it — and the output then claims
     # employment that never happened. Cut those rows before anything measures
-    # or audits the résumé.
+    # or audits the resume.
     tailored, invented_roles = drop_invented_roles(tailored, ledger)
     if invented_roles:
         changelog.append(
@@ -143,7 +143,7 @@ def tailor_resume(
                 # and move it to the section the fabrication guard checks least
                 # (projects contribute numbers only), which is the opposite of
                 # what this repair exists to do.
-                reason="Not employers in your résumé — they were projects promoted into "
+                reason="Not employers in your resume — they were projects promoted into "
                 "job entries. If this was a project, it is in Projects only if the "
                 "rewrite kept it there.",
             )
@@ -206,11 +206,11 @@ def tailor_resume(
     # stage that can delete a keyword, and the conjunct above narrows that but
     # cannot close it (a gate is a comparison, not a constraint). A guard placed
     # earlier would leave the restore un-guaranteed. Before `score_after`, so it
-    # describes the résumé that actually ships.
+    # describes the resume that actually ships.
     pre_restore = tailored
     tailored, _, attempted = preserve_keywords(resume, tailored, jd)
     # THE GUARD'S OWN `restored` LIST IS DROPPED ON THE FLOOR HERE, deliberately.
-    # It describes the résumé `preserve_keywords` returned, and every line below
+    # It describes the resume `preserve_keywords` returned, and every line below
     # can still take an entry out of that — so quoting it produced "Put back: X"
     # in the changelog for keywords the refit had removed again, a sentence about
     # a document that no longer existed. What the user is told is MEASURED at the
@@ -261,7 +261,7 @@ def tailor_resume(
         #   The app's own `ats_scan` said so about the same document, in the
         #   same session: "19 of 30 entries are not mentioned by this posting."
         #
-        #   "Your master résumé lists 75 skills" — 75 is what the MODEL
+        #   "Your master resume lists 75 skills" — 75 is what the MODEL
         #   returned, and it over-produces on purpose (the master lists 66).
         #   The sentence named the wrong document.
         #
@@ -273,7 +273,7 @@ def tailor_resume(
         # model's list minus what the cap kept, and the model writes entries of
         # its own — "orchestration patterns", "tool use", "unstructured data
         # processing" — that no master lists. Sampling those under "stay in your
-        # master résumé" is the same class of false sentence as the two above.
+        # master resume" is the same class of false sentence as the two above.
         # Casefolded, because `dedupe_skills` is: an entry the model
         # returned as `python` against a master saying `Python` is the
         # same skill, and comparing raw would silently drop it from the
@@ -304,7 +304,7 @@ def tailor_resume(
                     + (
                         f" {sample}"
                         + (" and others" if len(recoverable) > 6 else "")
-                        + " stay in your master résumé."
+                        + " stay in your master resume."
                         if sample
                         else ""
                     )
@@ -344,7 +344,7 @@ def tailor_resume(
             # stated hard limit has traded a keyword for the one thing the page
             # budget exists to guarantee, so the guard retreats instead — and
             # what it gives back is reported, because the report is measured on
-            # what ships. Gated on the restore being what caused it: a résumé
+            # what ships. Gated on the restore being what caused it: a resume
             # already over the limit is not something giving skills back fixes.
             if page_count(tailored, template) > hard_max_pages >= pages_pre:
                 tailored, shed = shed_restored(
@@ -452,10 +452,10 @@ def tailor_resume(
         changelog.append(
             ChangeLogEntry(
                 section="skills",
-                change="Grouped your skills under the headings from your master résumé",
+                change="Grouped your skills under the headings from your master resume",
                 reason="Same skills, same words — only the arrangement. Your own "
                 "headings go back on, in your own order, and anything the tailoring "
-                "introduced that your master résumé does not list sits after them, "
+                "introduced that your master resume does not list sits after them, "
                 "unlabelled, where you can see it.",
             )
         )
@@ -502,7 +502,7 @@ def tailor_resume(
                 # behind it were ['REST', 'APIs'].
                 change="Put back: " + ", ".join(restored_entries()),
                 reason="This job asks for " + ", ".join(restored)
-                + ". Those entries are your own wording, from your own résumé, and "
+                + ". Those entries are your own wording, from your own resume, and "
                 "the rewrite had dropped them.",
             )
         )
@@ -529,7 +529,7 @@ def tailor_resume(
             ChangeLogEntry(
                 section="keywords",
                 change="Not carried over: " + ", ".join(k.keyword for k in prose_losses),
-                reason="Your résumé shows these only inside wording that was rewritten or "
+                reason="Your resume shows these only inside wording that was rewritten or "
                 + (f"trimmed ({where}). " if where else "trimmed. ")
                 + "We did not put them back: re-writing a sentence you did not write is "
                 "how a CV grows a claim you cannot defend.",
@@ -545,7 +545,7 @@ def tailor_resume(
                 # sentence above ("only inside wording") was false about them.
                 reason="Your skills list holds part of each of these, and those entries are "
                 "on the CV — but not the phrase this job uses. Writing the phrase itself "
-                "would be putting wording in your résumé that you never used.",
+                "would be putting wording in your resume that you never used.",
             )
         )
     if capped_losses:
@@ -565,7 +565,7 @@ def tailor_resume(
                 change="Not carried over: " + ", ".join(k.keyword for k in trimmed_losses),
                 reason="Putting your skills back cost more room than the page budget had, "
                 f"and the trim that followed removed these to hold {hard_max_pages} pages. "
-                "Your master résumé still has them.",
+                "Your master resume still has them.",
             )
         )
 

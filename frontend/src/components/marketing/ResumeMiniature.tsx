@@ -5,7 +5,7 @@ import type { ResumeTemplate } from "../../api/client";
 import { TEMPLATE_SPECS, bandFill, headingRuleFill } from "../../lib/templateSpecs";
 
 /**
- * Hand-drawn résumé thumbnails — the landing's most important asset.
+ * Hand-drawn resume thumbnails — the landing's most important asset.
  *
  * The competitor shows real documents on every screen and we showed none, so
  * the page now leads with the thing we actually sell: a rendered A4 page.
@@ -51,7 +51,7 @@ import { TEMPLATE_SPECS, bandFill, headingRuleFill } from "../../lib/templateSpe
  */
 
 /* -------------------------------------------------------------------------- */
-/* The demo résumé                                                             */
+/* The demo resume                                                             */
 /* -------------------------------------------------------------------------- */
 
 /**

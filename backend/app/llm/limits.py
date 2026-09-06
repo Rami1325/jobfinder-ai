@@ -1,6 +1,6 @@
 """Bounds on what reaches the model, and honest errors when a bound is hit.
 
-A production Sentry issue was a token-limit failure on a large master résumé.
+A production Sentry issue was a token-limit failure on a large master resume.
 The cause was not the model: NOTHING in this backend bounded prompt input. The
 only ceiling anywhere was `max_upload_mb = 10` — a FILE byte cap, not an input
 cap — and a 10 MB PDF extracts to megabytes of text that went into the prompt
@@ -11,7 +11,7 @@ THREE RULES, and the first is the one that decides the other two.
 
 1. NEVER TRUNCATE THE USER'S OWN DOCUMENT — REFUSE IT. Truncate only text the
    user neither wrote nor ever saw (a scraped careers page). A silently
-   shortened résumé is data loss in the most valuable object the user owns, and
+   shortened resume is data loss in the most valuable object the user owns, and
    in this app it does not stay a warning: the parsed `ResumeModel` is live in
    the store the moment it returns, `PUT /profile/resume` versions it into one
    of 20 evictable slots, `useSaveMasterResume` swallows every error, and nine
@@ -25,7 +25,7 @@ THREE RULES, and the first is the one that decides the other two.
    A character cap therefore silently grants a Hebrew CV far more tokens than an
    English one — under-protecting exactly the users this app is for. Bytes
    normalise that continuously, with no `detect_language` branch to get wrong on
-   the mixed Hebrew-prose/Latin-skills résumé that is the Israeli norm.
+   the mixed Hebrew-prose/Latin-skills resume that is the Israeli norm.
 
 3. A CAP IS A GUARD RAIL, NOT A BUDGET. It must fire on a 500-page PDF and never
    on a real CV — `config.py` already records that a master can legitimately run
@@ -68,7 +68,7 @@ class ContextWindowExceeded(Exception):
     big, which is the honest case for "your CV is legitimately enormous". Raised
     ONLY for `BadRequestError` carrying `code == "context_length_exceeded"` —
     keying on the exception type alone would report every malformed-parameter
-    bug to the user as "your résumé is too long", a guard firing on legitimate
+    bug to the user as "your resume is too long", a guard firing on legitimate
     input."""
 
 

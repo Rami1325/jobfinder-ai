@@ -13,11 +13,11 @@ WHY THERE IS NO `user_id`, and why this table must stay out of `_wipe_user_rows`
 A row here is posting metadata a BOARD published: which board, the title+company
 key, when we first and last saw it, its URLs, a count, and the earliest date the
 board itself stated. It is not user content — nothing in it is derived from a
-résumé, from a search context, or from anything the user typed — it is not
+resume, from a search context, or from anything the user typed — it is not
 per-user, and several users searching the same market legitimately share one row.
 
 `routes._wipe_user_rows` deletes rows `WHERE model.user_id == user.id` for eight
-tables (résumés, résumé versions, applications, search history, alerts, usage,
+tables (resumes, resume versions, applications, search history, alerts, usage,
 feedback, kits) and additionally clears the two user-content COLUMNS on the
 surviving `users` row (`search_prefs_json`, `writing_prefs_json`). This table has
 no `user_id`, so it cannot even be expressed in that helper — and wiping it on

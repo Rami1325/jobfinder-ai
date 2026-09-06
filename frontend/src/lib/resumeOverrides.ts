@@ -1,13 +1,13 @@
 // Per-application edits to a TAILORED document — the layer that lets `/app` be
 // typed on while a tailor result is up, without a single character reaching the
-// master résumé.
+// master resume.
 //
 // WHY THIS IS NOT KEYED BY BLOCK PATH, which is the obvious design and is the
-// one that corrupts data. `mergeForReview` rebuilds the effective résumé on
+// one that corrupts data. `mergeForReview` rebuilds the effective resume on
 // every accept and decline, and a rejected removal is spliced back in at
 // `k = Math.min(oi, list.length)` — so every later entry in that section
 // shifts. Proven by bundling and RUNNING the shipped merge: with a tailored
-// résumé that drops `experience[0]`,
+// resume that drops `experience[0]`,
 //     nothing rejected   →  resume.experience[1].company === "Gamma"
 //     exp.rm.0 rejected  →  resume.experience[1].company === "Beta"
 // `@exp.1` is a different job in the two states, and the identical splice runs
@@ -18,7 +18,7 @@
 // this codebase refuses outright.
 //
 // So the key is a SOURCE ANCHOR: the coordinate of the block in the ORIGINAL /
-// TAILORED résumé, emitted by the same walk that emits the paths (one walk, so
+// TAILORED resume, emitted by the same walk that emits the paths (one walk, so
 // they cannot disagree) and frozen for as long as a result is up. It carries NO
 // `@` prefix, which is the correct side of the boundary the path grammar draws
 // — an anchor names an original coordinate, a path names a rendered one, and
@@ -51,7 +51,7 @@ export interface RemovedBlock {
   /** Where it stood in this merge, immediately before it was removed. */
   path: string;
   /** Its own words, as the document still had them. Read from the PRE-override
-   * résumé, which is the last place they exist. */
+   * resume, which is the last place they exist. */
   text: string;
 }
 
@@ -77,7 +77,7 @@ export function blockText(fields: readonly { value?: string }[] | null | undefin
  * caller that spotlights the path it wrote to is naming a node that is no longer
  * there: the confirmation bloom silently does not play. `writeBlock` already
  * answers this (it hands the moved path back for exactly this reason) and it is
- * the single writer, so this asks it rather than re-deriving the key. The résumé
+ * the single writer, so this asks it rather than re-deriving the key. The resume
  * it is asked about is thrown away.
  */
 export function movedPath(resume: ResumeModel, path: string, values: Values): string {
@@ -138,7 +138,7 @@ function reindex<T>(map: Record<string, T>, removed: string): Record<string, T> 
  *
  * THE ORDER IS THE ALGORITHM:
  *  1. Invert `sources` to anchor → path, resolved against the PRE-override
- *     résumé. This is where the index instability dies: an anchor resolves to
+ *     resume. This is where the index instability dies: an anchor resolves to
  *     whatever path its block landed on in THIS merge.
  *  2. Partition into value writes and removals, reusing the empty-means-remove
  *     rule verbatim (`readBlock(...)?.removable` plus a blank value) rather

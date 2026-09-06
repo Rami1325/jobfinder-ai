@@ -16,14 +16,14 @@ from app.models import GapItem, JDModel, ResumeModel, Score
 
 # Word characters for keyword tokenization. Not ASCII-only: the Hebrew block
 # (U+0590-U+05FF — letters incl. finals ך ם ן ף ץ, niqqud, geresh) is included
-# so Hebrew JDs/résumés tokenize correctly. Hebrew has no case, so the lower()
+# so Hebrew JDs/resumes tokenize correctly. Hebrew has no case, so the lower()
 # calls below are simply no-ops for it. Mixed phrases like "ניסיון ב-Spark"
 # split on the hyphen into Hebrew + English tokens, each matched independently.
 _WORD_RE = re.compile("[a-z0-9+#.\\u0590-\\u05FF]+")
 
 
 def _resume_text(resume: ResumeModel) -> str:
-    """Every section of the résumé that is PRINTED, as one lowercased string.
+    """Every section of the resume that is PRINTED, as one lowercased string.
 
     "Printed" is the whole rule, and it is what this function got wrong for a
     long time: `headline`, `military_service` and `languages` were absent while
@@ -78,7 +78,7 @@ def _tokens(text: str) -> set[str]:
 
 # The verbatim-phrase branch of `_keyword_present` used to be a bare
 # `kw in resume_text` with no boundary of any kind. Measured against the real
-# module, that reported `Go`, `R`, `C` and `ORM` as COVERED on a résumé holding
+# module, that reported `Go`, `R`, `C` and `ORM` as COVERED on a resume holding
 # only django/mongodb/terraform/react — `Go` inside "django", `ORM` inside
 # "terraform" — and every one of those is an ordinary `jd.hard_skills` value.
 # Each spurious hit inflated coverage, therefore `overall`, therefore which
@@ -106,7 +106,7 @@ def _tokens(text: str) -> set[str]:
 _LEAD_CLASS = "a-z0-9+#."
 _TRAIL_CLASS = "a-z0-9+#\\u0590-\\u05FF"
 
-# A longer résumé token that STARTS with the keyword — `PostgreSQL` for
+# A longer resume token that STARTS with the keyword — `PostgreSQL` for
 # `Postgres` — is evidence, not the term, so it scores `partial` and never
 # `covered`. Dropping it entirely was the first attempt and it broke a pinned
 # invariant: `length_budget._drop_unmatched_skill` protects any entry the scorer

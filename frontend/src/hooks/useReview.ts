@@ -3,7 +3,7 @@ import { reviewResume } from "../api/client";
 import type { JDModel, ResumeModel, ReviewResult } from "../types";
 
 /**
- * The deterministic résumé review for the document as it stands RIGHT NOW.
+ * The deterministic resume review for the document as it stands RIGHT NOW.
  *
  * This is allowed to run on every keystroke for exactly the reason `useCoverage`
  * is: `POST /tools/review` is pure Python, deterministic and uncapped — it takes
@@ -19,7 +19,7 @@ import type { JDModel, ResumeModel, ReviewResult } from "../types";
  *
  * ONE DIFFERENCE from `useCoverage`, and it is deliberate: that hook bails on
  * `!jd` because coverage against no job is not a number. **This one must NOT.**
- * The review's home is the master résumé, where there is usually no job
+ * The review's home is the master resume, where there is usually no job
  * attached at all — twenty-five of the twenty-six checks (dates, placeholders,
  * weak openers, duplicate credentials, the measured page count) are properties
  * of the CV alone. `jd` is passed through as `null` and the one JD-gated check
@@ -45,7 +45,7 @@ export function useReview(
   const seen = useRef(false);
 
   useEffect(() => {
-    // NO `|| !jd` here — see the docstring. The review runs on a résumé with no
+    // NO `|| !jd` here — see the docstring. The review runs on a resume with no
     // job attached, which is the master-document case and the common one.
     if (!resume) return;
     setStale(seen.current);

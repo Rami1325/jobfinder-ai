@@ -2,7 +2,7 @@
 
 A variant that quietly breaks the output contract does not produce a bad score --
 it produces an exception in `ResumeModel.model_validate` or, worse, a valid
-résumé that silently lost a field, and either way the cell is wasted spend. So
+resume that silently lost a field, and either way the cell is wasted spend. So
 every variant is checked mechanically first, against the baseline it has to be
 comparable with.
 

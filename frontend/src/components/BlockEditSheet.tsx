@@ -15,12 +15,12 @@ interface Props {
   /** Which way the DOCUMENT reads — not the UI. See the `dir` note below. */
   paperDir: "ltr" | "rtl";
   onClose: () => void;
-  /** The edited résumé, plus the path to re-anchor to (a keyed rename moves it). */
+  /** The edited resume, plus the path to re-anchor to (a keyed rename moves it). */
   onApply: (next: ResumeModel, path: string) => void;
   /**
    * The TAILORED document: hand back the raw VALUES for this block instead of a
-   * whole résumé, because the page stores them as an override keyed by the
-   * block's source anchor rather than writing them into a résumé that is
+   * whole resume, because the page stores them as an override keyed by the
+   * block's source anchor rather than writing them into a resume that is
    * recomputed on every accept and decline. Entry granularity is exactly what
    * this sheet already edits ("the sheet edits an ENTRY, not a field"), so the
    * override grain and the panel's grain are the same thing.
@@ -33,7 +33,7 @@ interface Props {
 }
 
 /**
- * Edit one block of the résumé.
+ * Edit one block of the resume.
  *
  * COMPOUND BLOCKS ONLY, since 23.1. A block that is ONE model field is typed
  * on directly in the document; this panel is for the six that fuse several
@@ -126,7 +126,7 @@ export default function BlockEditSheet({
    *
    * REFUSED, rather than taught to mean removal, and the choice is the same one
    * the trash's own note already made: an anchor names a coordinate in the
-   * original/tailored résumé, where "not present" is ALREADY what a declined
+   * original/tailored resume, where "not present" is ALREADY what a declined
    * addition and an accepted removal mean, so a removal override would be a
    * second grammar for an idea the anchor space can already express — two
    * mechanisms answering "is this entry on the page", free to disagree. The
@@ -155,8 +155,8 @@ export default function BlockEditSheet({
 
   function save() {
     if (!draft || blankEntry) return;
-    // The tailored path never builds a résumé here: the page applies these
-    // values over a merge it recomputes itself, so handing it a finished résumé
+    // The tailored path never builds a resume here: the page applies these
+    // values over a merge it recomputes itself, so handing it a finished resume
     // would be handing it something the next accept/decline throws away.
     if (onApplyValues) return onApplyValues(values, draft.path);
     const r = writeBlock(resume, draft.path, values);
@@ -241,7 +241,7 @@ export default function BlockEditSheet({
                       // first strong character, so a Hebrew bullet that starts
                       // with "React" flips LTR under the caret and flips back
                       // when you delete it. The chrome follows the UI locale;
-                      // the paper follows the résumé's own language.
+                      // the paper follows the resume's own language.
                       dir={paperDir}
                       autoFocus={i === 0}
                       value={values[field.key] ?? ""}
@@ -283,7 +283,7 @@ export default function BlockEditSheet({
                   `removable` is false for every entry, so an entry deletion has
                   to go through `removeBlock` — and an override cannot express
                   it: the anchor names a coordinate in the original/tailored
-                  résumé, where "not present" is already what a declined
+                  resume, where "not present" is already what a declined
                   addition and an accepted removal mean. Offering it on the
                   per-application overlay would need a second, contradictory
                   grammar for the same idea. On the tailored document the trash

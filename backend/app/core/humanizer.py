@@ -47,7 +47,7 @@ def humanize_resume(tailored: ResumeModel, issues: list[VoiceIssue], jd: JDModel
         if not isinstance(revised, dict):
             return None
         # The SECOND door a raw LLM skills list comes through — see
-        # `skills.dedupe_skills`. `tailor_resume` accepts this résumé after
+        # `skills.dedupe_skills`. `tailor_resume` accepts this resume after
         # its own dedupe has already run, so without this a repeat the
         # polish pass introduced ships and buys a free cap slot.
         if isinstance(revised.get("skills"), list):

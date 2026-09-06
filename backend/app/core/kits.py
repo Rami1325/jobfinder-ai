@@ -6,7 +6,7 @@ each run is a single tailor pipeline call, so every invocation fits well
 inside a serverless function's time budget. No queue infrastructure needed.
 
 Each processed kit is a reviewable "application kit": the analyzed JD, the
-master résumé the tailor ran on (the diff baseline for the 8.2 review UI),
+master resume the tailor ran on (the diff baseline for the 8.2 review UI),
 and the full TailorResult. The fabrication guard runs inside `tailor_resume`
 as always; a kit with flags is marked (`flag_count > 0`) and must never be
 auto-approvable.
@@ -201,7 +201,7 @@ def enqueue_kits(
 
 
 def _pick_master(db: Session, user_id: int, jd_language: str) -> SavedResume | None:
-    """The master résumé to tailor: the JD's language slot when the user has a
+    """The master resume to tailor: the JD's language slot when the user has a
     paired master (mirrors the Tailor page's language swap), else the most
     recently updated one."""
     rows = db.execute(
@@ -263,13 +263,13 @@ def process_next_kit(
     try:
         master = _pick_master(db, user.id, detect_language(row.jd_text))
         if master is None:
-            raise ValueError("No master résumé saved — upload your résumé first.")
+            raise ValueError("No master resume saved — upload your resume first.")
         resume = ResumeModel.model_validate_json(master.resume_json)
         ledger = None
         if master.ledger_json:
             try:
                 ledger = FactsLedger.model_validate_json(master.ledger_json)
-            except Exception:  # noqa: BLE001 - tailor rebuilds it from the résumé
+            except Exception:  # noqa: BLE001 - tailor rebuilds it from the resume
                 ledger = None
         jd = analyze_fn(row.jd_text)
         result = tailor_fn(
@@ -320,8 +320,8 @@ def approve_kit(
     cover_letter: str = "",
 ) -> TailorKit:
     """Approve a reviewed kit (PLAN 8.2): create a tracker Application carrying
-    the final artifacts — the reviewer's effective résumé (after per-bullet
-    accept/reject; falls back to the kit's full tailored résumé) and cover
+    the final artifacts — the reviewer's effective resume (after per-bullet
+    accept/reject; falls back to the kit's full tailored resume) and cover
     letter — as "saved" = ready to send, and link it back to the kit.
 
     Only a "done" kit can be approved; this is the HUMAN approval step, so
@@ -334,7 +334,7 @@ def approve_kit(
         try:
             result = TailorResult.model_validate_json(row.result_json)
         except Exception:  # noqa: BLE001 - corrupt/legacy kit row
-            raise ValueError("This kit has no tailored résumé to approve.")
+            raise ValueError("This kit has no tailored resume to approve.")
         resume = result.tailored_resume
     # PLAN 17.3: carry what was sent onto the tracker row, read from the RAW
     # result so a pre-Phase-16 kit reports "unknown" instead of the schema

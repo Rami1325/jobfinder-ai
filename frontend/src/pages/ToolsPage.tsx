@@ -5,7 +5,7 @@ import { TiltedCard } from "../components/ui";
 
 // Six cards, which is hole-free at both 2 and 3 columns, so nothing here is
 // featured any more. The ATS scanner used to LEAD this grid as a wide
-// `sm:col-span-2` cell and the résumé health check sat beside it as an
+// `sm:col-span-2` cell and the resume health check sat beside it as an
 // ordinary card; the review replaced both, and it lives on the document at
 // /app rather than on a page of its own (PLAN 28.8).
 const tools = [

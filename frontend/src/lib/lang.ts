@@ -3,9 +3,9 @@ import type { ResumeModel } from "../types";
 // Hebrew block U+0590-U+05FF: letters incl. finals, niqqud, geresh.
 const HEBREW_RE = new RegExp("[\\u0590-\\u05FF]");
 
-/** Language a résumé is written in — mirrors backend `app/core/lang.py`:
+/** Language a resume is written in — mirrors backend `app/core/lang.py`:
  * only prose fields count (summary, skills, titles, bullets, project /
- * education text), so an English résumé at a Hebrew-named employer stays "en". */
+ * education text), so an English resume at a Hebrew-named employer stays "en". */
 export function resumeLanguage(resume: ResumeModel): "he" | "en" {
   const parts: string[] = [resume.summary, resume.skills.join(" ")];
   for (const exp of resume.experience) {

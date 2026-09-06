@@ -121,10 +121,10 @@
     "help": {
       "jobs": {
         "title": "Find matching jobs",
-        "desc": "Israeli boards + LinkedIn, ranked by fit to your résumé"
+        "desc": "Israeli boards + LinkedIn, ranked by fit to your resume"
       },
       "tailor": {
-        "title": "Tailor my résumé",
+        "title": "Tailor my resume",
         "desc": "Rewrite for a specific job — checked against your CV"
       },
       "interview": {

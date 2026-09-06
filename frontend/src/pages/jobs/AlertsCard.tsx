@@ -308,7 +308,7 @@ export function AlertsCard({
     setCustomOpen(checked);
     if (checked && !ctx && !prefilling) {
       // Seed from the search card's customized context when there is one,
-      // else derive from the résumé exactly like the search panel does.
+      // else derive from the resume exactly like the search panel does.
       const seed = seedContext();
       if (seed) {
         setCtx(seed);

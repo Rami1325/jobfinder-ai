@@ -17,24 +17,24 @@
     "notYet": "Not yet"
   },
   "upload": {
-    "title": "1 · Your résumé",
-    "buildLink": "No résumé yet? Build one from scratch →"
+    "title": "1 · Your resume",
+    "buildLink": "No resume yet? Build one from scratch →"
   },
   "jd": {
     "title": "2 · Target job description",
     "hint": "Paste the full posting from any job site."
   },
   "run": {
-    "cta": "Tailor my résumé",
+    "cta": "Tailor my resume",
     "loading": "Tailoring…",
-    "uploadFirst": "Upload a résumé to begin.",
+    "uploadFirst": "Upload a resume to begin.",
     "pasteJd": "Paste a job description.",
     "keepsRunning": "Keeps running if you switch tabs — come back anytime."
   },
   "langSwitch": {
-    "he": "This job is in Hebrew, so we tailored from your saved Hebrew résumé ({{label}}).",
-    "en": "This job is in English, so we tailored from your saved English résumé ({{label}}).",
-    "fallbackLabel": "master résumé",
+    "he": "This job is in Hebrew, so we tailored from your saved Hebrew resume ({{label}}).",
+    "en": "This job is in English, so we tailored from your saved English resume ({{label}}).",
+    "fallbackLabel": "master resume",
     "name": {
       "he": "Hebrew",
       "en": "English"
@@ -48,7 +48,7 @@
     "handoffFailed": "Couldn't load the saved job — it may have been deleted."
   },
   "download": {
-    "title": "Download tailored résumé",
+    "title": "Download tailored resume",
     "docx": "Download .docx",
     "pdf": "Download .pdf",
     "atsNote": "Output is single-column, ATS-safe (no tables, columns, or images).",
@@ -135,8 +135,8 @@
     "guardNoteClean": "We checked every name, date, credential and number against your original. Nothing new turned up.",
     "guardNoteCleanEdited_one": "Nothing new turned up in the AI's rewrite. The line you rewrote yourself wasn't checked.",
     "guardNoteCleanEdited_other": "Nothing new turned up in the AI's rewrite. The {{count}} lines you rewrote yourself weren't checked.",
-    "guardNoteFlags_one": "{{count}} claim we couldn't find in your résumé. It doesn't ship until you approve it.",
-    "guardNoteFlags_other": "{{count}} claims we couldn't find in your résumé. They don't ship until you approve them."
+    "guardNoteFlags_one": "{{count}} claim we couldn't find in your resume. It doesn't ship until you approve it.",
+    "guardNoteFlags_other": "{{count}} claims we couldn't find in your resume. They don't ship until you approve them."
   },
   "voice": {
     "title": "Human voice check",
@@ -147,7 +147,7 @@
     "fixed_one": "{{count}} AI-sounding phrase rewritten:",
     "fixed_other": "{{count}} AI-sounding phrases rewritten:",
     "cat": {
-      "banned_phrase": "résumé buzzword",
+      "banned_phrase": "resume buzzword",
       "repeated_verb": "repeated opening verb",
       "repeated_phrase": "repeated phrase",
       "outcome_clause": "repeated outcome clause",
@@ -155,7 +155,7 @@
       "uniform_bullets": "uniform bullet lengths",
       "keyword_stuffing": "keyword stuffing"
     },
-    "positioning": "The story this résumé tells:"
+    "positioning": "The story this resume tells:"
   },
   "report": {
     "title": "Keyword match report",
@@ -177,8 +177,8 @@
     "cleanBody": "Every employer, title, date, credential and number in the rewrite also appears in your original. It is a detector, not a proof — give anything that matters a second look.",
     "cleanBodyEdited_one": "Every employer, title, date, credential and number in the AI's rewrite also appears in your original. It is a detector, not a proof — and the line you rewrote yourself was never checked.",
     "cleanBodyEdited_other": "Every employer, title, date, credential and number in the AI's rewrite also appears in your original. It is a detector, not a proof — and the {{count}} lines you rewrote yourself were never checked.",
-    "flagged_one": "{{count}} item may not be supported by your résumé.",
-    "flagged_other": "{{count}} items may not be supported by your résumé.",
+    "flagged_one": "{{count}} item may not be supported by your resume.",
+    "flagged_other": "{{count}} items may not be supported by your resume.",
     "editsMade": "Edits made",
     "noChanges": "No changes recorded.",
     "why": "Why: {{reason}}"
@@ -202,7 +202,7 @@
     "rejectedNote": {
       "edited": "Original wording kept",
       "added": "Won't be included",
-      "removed": "Will stay in your résumé"
+      "removed": "Will stay in your resume"
     },
     "aiNotes": "The AI's own change notes",
     "flagResolved": "Resolved — not on your CV",
@@ -241,7 +241,7 @@
     }
   },
   "sections": {
-    "fallbackName": "Résumé",
+    "fallbackName": "Resume",
     "headline": "Headline",
     "summary": "Summary",
     "skills": "Skills",
@@ -286,9 +286,9 @@
   },
   "curation": {
     "title": "Left out of this version",
-    "count_one": "1 thing from your résumé isn't in this CV",
-    "count_other": "{{count}} things from your résumé aren't in this CV",
-    "complete": "This is everything from your résumé that isn't in this CV.",
+    "count_one": "1 thing from your resume isn't in this CV",
+    "count_other": "{{count}} things from your resume aren't in this CV",
+    "complete": "This is everything from your resume that isn't in this CV.",
     "ambiguity": "We can show you what's missing, not always who cut it — the AI curates for the job, and the page budget cuts what doesn't fit. Where the page budget recorded the cut, it says so.",
     "byBudget": "Cut to fit the page limit",
     "byPlan": "The plan for this job didn't select it",
@@ -315,7 +315,7 @@
   "doc": {
     "review": {
       "tool": "Check my CV",
-      "title": "Résumé review",
+      "title": "Resume review",
       "counts": "{{fix}} to fix · {{consider}} to consider · {{clean}} clean",
       "groupBad": "To fix",
       "groupWarn": "To consider",
@@ -323,7 +323,7 @@
       "rewriteDropped": "{{n}} suggestions were thrown away because they added a number or a claim your own wording does not make.",
       "useThis": "Use this",
       "empty": "Nothing to fix — every check ran clean on this version.",
-      "failed": "We couldn't check your résumé just now.",
+      "failed": "We couldn't check your resume just now.",
       "skipped": "Couldn't check: {{list}} — not counted either way.",
       "upTo": "up to {{pct}}%",
       "why": "Why this matters",
@@ -446,14 +446,14 @@
       "ats": "What the ATS reads"
     },
     "file": {
-      "note": "Rendered by the same call the Download button makes, from your résumé exactly as it stands — every change you have accepted or declined included.",
+      "note": "Rendered by the same call the Download button makes, from your resume exactly as it stands — every change you have accepted or declined included.",
       "download": "Download this PDF",
       "open": "Open the PDF",
       "mobile": "Phone browsers can't show a PDF inside a page. Open it — it's the same file.",
       "failed": "Couldn't build the PDF just now."
     },
     "ats": {
-      "note": "We render that PDF, then read it back with the same parser we run on résumés people upload. What follows is the file's own text — not a text version of the page above.",
+      "note": "We render that PDF, then read it back with the same parser we run on resumes people upload. What follows is the file's own text — not a text version of the page above.",
       "failed": "Couldn't read the file back just now."
     },
     "screen": {
@@ -463,9 +463,9 @@
       "footer": "It also prints your name at the foot of every page of the PDF, so a second page still says whose it is. The page above is one continuous sheet with no page breaks to foot, and the Word file leaves it out."
     },
     "replace": {
-      "tool": "Replace résumé",
-      "title": "Replace your résumé",
-      "body": "Upload a new file and it becomes your master résumé everywhere — this page, job matching, interview prep and every tool."
+      "tool": "Replace resume",
+      "title": "Replace your resume",
+      "body": "Upload a new file and it becomes your master resume everywhere — this page, job matching, interview prep and every tool."
     }
   },
   "overlay": {
@@ -473,9 +473,9 @@
     "openFor": "Tailor for {{title}}",
     "openDifferent": "Tailor for a different job",
     "retailor": "Tailor for this job instead",
-    "replaces": "This starts again from your master résumé. The review on screen is replaced; your saved master is not changed.",
-    "replacesEdited_one": "This starts again from your master résumé — and deletes the 1 line you typed onto this CV. Those edits live only in this browser tab, so there is no way to get them back. Your saved master is not changed either way.",
-    "replacesEdited_other": "This starts again from your master résumé — and deletes the {{count}} lines you typed onto this CV. Those edits live only in this browser tab, so there is no way to get them back. Your saved master is not changed either way.",
+    "replaces": "This starts again from your master resume. The review on screen is replaced; your saved master is not changed.",
+    "replacesEdited_one": "This starts again from your master resume — and deletes the 1 line you typed onto this CV. Those edits live only in this browser tab, so there is no way to get them back. Your saved master is not changed either way.",
+    "replacesEdited_other": "This starts again from your master resume — and deletes the {{count}} lines you typed onto this CV. Those edits live only in this browser tab, so there is no way to get them back. Your saved master is not changed either way.",
     "retailorDiscard_one": "Discard my 1 edit and tailor",
     "retailorDiscard_other": "Discard my {{count}} edits and tailor",
     "keepEdits": "Keep my edits",
@@ -485,7 +485,7 @@
     "checking": "Reading the posting…",
     "cost": "Reading the posting uses one AI credit. Tailoring afterwards doesn't charge again — it reuses what we already read.",
     "cached": "We've already read this posting. Checking it again would spend a credit to learn nothing.",
-    "tailor": "Tailor my résumé",
+    "tailor": "Tailor my resume",
     "close": "Close",
     "needsJd": "Paste a job description first.",
     "failed": "Couldn't read that posting just now.",
@@ -493,10 +493,10 @@
     "topPartial": "Close — but not in the posting's own words"
   },
   "discard": {
-    "cta": "Back to my résumé",
-    "title": "Close this review and edit your master résumé again",
-    "edited_one": "Leaving takes the 1 line you typed onto this CV with it. Your master résumé is unchanged either way.",
-    "edited_other": "Leaving takes the {{count}} lines you typed onto this CV with it. Your master résumé is unchanged either way.",
+    "cta": "Back to my resume",
+    "title": "Close this review and edit your master resume again",
+    "edited_one": "Leaving takes the 1 line you typed onto this CV with it. Your master resume is unchanged either way.",
+    "edited_other": "Leaving takes the {{count}} lines you typed onto this CV with it. Your master resume is unchanged either way.",
     "confirm_one": "Discard my 1 edit and leave",
     "confirm_other": "Discard my {{count}} edits and leave",
     "keep": "Stay here"
@@ -516,10 +516,10 @@
     "review_other": "Review {{count}} changes"
   },
   "edit": {
-    "hint": "Tap anything on your résumé to edit it.",
-    "tailoredHint": "Type anywhere to change this application's CV. Your master résumé is untouched — and these edits live only for this visit, in this tab.",
-    "tailoredNoAdd": "To add something new, edit your master résumé and tailor again.",
-    "tailoredNoBlankEntry": "Emptying every field would leave a blank entry on the CV, not remove it — and it would print that way. To take a whole role, project, degree or service out, edit your master résumé and tailor again.",
+    "hint": "Tap anything on your resume to edit it.",
+    "tailoredHint": "Type anywhere to change this application's CV. Your master resume is untouched — and these edits live only for this visit, in this tab.",
+    "tailoredNoAdd": "To add something new, edit your master resume and tailor again.",
+    "tailoredNoBlankEntry": "Emptying every field would leave a blank entry on the CV, not remove it — and it would print that way. To take a whole role, project, degree or service out, edit your master resume and tailor again.",
     "yours_one": "1 edit of your own",
     "yours_other": "{{count}} edits of your own",
     "yoursClear": "Clear my edits",
@@ -535,17 +535,17 @@
     "unsaved_other": "{{count}} unsaved changes",
     "local": "Changes are on this device until you save.",
     "undo": "Undo",
-    "save": "Save résumé",
+    "save": "Save resume",
     "saveShort": "Save",
     "saving": "Saving…",
-    "saved": "Résumé saved",
-    "saveErrorFallback": "Couldn't save your résumé. Your changes are still here — try again.",
+    "saved": "Resume saved",
+    "saveErrorFallback": "Couldn't save your resume. Your changes are still here — try again.",
     "retry": "Try again",
     "cancel": "Cancel",
-    "langWarnTitle": "This would save over your other résumé",
-    "langWarnBody": "Your résumé is stored one per language. These edits now read as {{lang}}, so saving would replace your {{lang}} résumé and leave this one unchanged.",
+    "langWarnTitle": "This would save over your other resume",
+    "langWarnBody": "Your resume is stored one per language. These edits now read as {{lang}}, so saving would replace your {{lang}} resume and leave this one unchanged.",
     "langWarnConfirm": "Save anyway",
-    "gone": "That part of your résumé is no longer there.",
+    "gone": "That part of your resume is no longer there.",
     "remove": "Remove",
     "blocks": {
       "name": "Your name",
@@ -607,7 +607,7 @@
   },
   "draft": {
     "title": "Unsaved changes from your last visit",
-    "body": "Edited {{when}} on this device, and never saved to your résumé.",
+    "body": "Edited {{when}} on this device, and never saved to your resume.",
     "keep": "Restore them",
     "discard": "Discard"
   }

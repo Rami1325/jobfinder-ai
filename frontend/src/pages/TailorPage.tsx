@@ -200,7 +200,7 @@ export default function TailorPage() {
           if (offerDraft(d, m.resume)) setDraft(d);
         }
       } catch {
-        /* no saved résumé yet */
+        /* no saved resume yet */
       }
     })();
   }, []);
@@ -218,7 +218,7 @@ export default function TailorPage() {
    *
    * The change guard is HERE, against the MODEL, not against the rendered text
    * — ResumeView already refuses an unchanged edit, but the two are not the
-   * same string everywhere: a nameless CV renders the "Résumé" placeholder over
+   * same string everywhere: a nameless CV renders the "Resume" placeholder over
    * an empty `contact.name`, so clearing that block would otherwise write ""
    * over "" and burn an undo slot on nothing. Comparing to `field.value`
    * catches every such case at once.
@@ -232,18 +232,18 @@ export default function TailorPage() {
     // that one sets `result: null, tailoredFrom: null, rejectedEdits: []` and
     // mirrors to the master's local draft, so a single keystroke would collapse
     // the review being edited AND leave DraftRestoreBar offering the flattened
-    // tailored CV back as the user's real résumé on their next visit.
+    // tailored CV back as the user's real resume on their next visit.
     //
     // Stored against the block's SOURCE ANCHOR, never its path. Committed on
     // BLUR, like the master path, and that is what keeps the caret alive: the
     // merged memo now depends on `tailorOverrides`, so a commit produces a new
-    // résumé object and re-renders the sheet. On input it would kill the caret
+    // resume object and re-renders the sheet. On input it would kill the caret
     // on the first keystroke.
     //
     // `if (result)` FIRST, then the null check INSIDE it, and the nesting is the
     // point. As `if (result && merged)` the fallthrough was the MASTER writer:
     // with a result up and `merged` somehow null, a keystroke on the tailored
-    // document would resolve a TAILORED path against the master résumé, call
+    // document would resolve a TAILORED path against the master resume, call
     // `applyBlockEdit`, write the master, mirror it into the master's local
     // draft and null the review — four wrong documents from one guard reading
     // false. Unreachable today (`merged` is non-null whenever `result` and
@@ -310,12 +310,12 @@ export default function TailorPage() {
    * (`@skills.python` IS the skill), so there is nothing to insert until the
    * user has typed something: `insertBlock` used to invent that text —
    * "New skill", "New certification", "New language" — which put a claim the
-   * user never made into the master résumé, live in the store with no Save,
+   * user never made into the master resume, live in the store with no Save,
    * rendered as a chip and present in the download. `check_fabrication` cannot
    * see it: the ledger is built FROM the master, so the app's own truthfulness
    * guard certifies the invented string clean. On a Hebrew CV it was English.
    *
-   * A duplicate is not an edit — `insertNamed` hands back the SAME résumé
+   * A duplicate is not an edit — `insertNamed` hands back the SAME resume
    * object, so the identity check keeps it off the undo stack and the chip that
    * already says it is scrolled to and bloomed instead. `addSkill`'s rule, for
    * `addSkill`'s reason: the honest answer to "add Python" on a CV that already
@@ -341,7 +341,7 @@ export default function TailorPage() {
    * for the reason `writeSkill` documents.
    *
    * A skill you already have is not an edit: `insertSkill` hands back the SAME
-   * résumé object, so the identity check keeps it off the undo stack. It is
+   * resume object, so the identity check keeps it off the undo stack. It is
    * still worth spotlighting — the honest answer to "add Python" on a CV that
    * already says Python is to show them where it already is.
    *
@@ -380,7 +380,7 @@ export default function TailorPage() {
    * only ever be minted against the master, but nothing used to CLEAR it when a
    * review arrived, and one stale value is all it takes: `@exp.2` in the master
    * and `@exp.2` in the tailored merge are different jobs, and cancelling that
-   * panel would delete a role from the saved résumé and take the review with it
+   * panel would delete a role from the saved resume and take the review with it
    * (`applyBlockEdit` nulls `result`). `onGone` clears it too, for the same
    * reason — it was the one dismissal path that left the flag set.
    */
@@ -498,16 +498,16 @@ export default function TailorPage() {
     setDraft(null);
   }
 
-  // The document is always on screen when a résumé exists, so there is no
+  // The document is always on screen when a resume exists, so there is no
   // stepper any more: `step` gated nothing and described a flow that no
   // longer happens. Tailoring is an action ON the document, not a stage.
   const canRun = !!resume && !loading;
 
-  // Per-bullet accept/reject: diff the tailored résumé against the one it was
-  // tailored from, and build the effective résumé the user actually ships.
+  // Per-bullet accept/reject: diff the tailored resume against the one it was
+  // tailored from, and build the effective resume the user actually ships.
   const original = tailoredFrom ?? resume;
   const rejectedSet = useMemo(() => new Set(rejectedEdits), [rejectedEdits]);
-  // ONE walk for all three: the edit list, the résumé the user ships, and where
+  // ONE walk for all three: the edit list, the resume the user ships, and where
   // each edit lands in it. Computing them separately is how they drift.
   //
   // The user's OWN edits ride on top, in a second pass rather than inside the
@@ -546,7 +546,7 @@ export default function TailorPage() {
   const edits = merged?.edits ?? [];
   const effectiveResume = merged?.resume ?? result?.tailored_resume ?? null;
   const editBlock = useMemo(() => (merged ? blocksByEdit(merged.blocks) : {}), [merged]);
-  // What the page shows: the tailored résumé once there is one, the master
+  // What the page shows: the tailored resume once there is one, the master
   // before that. This one expression is the whole of "the page always has a CV".
   const shown = effectiveResume ?? resume;
   // The document names its own page. The fallback is safe HERE and nowhere on
@@ -718,7 +718,7 @@ export default function TailorPage() {
   // reset either — the list is gated on `overrideCount`, so clearing the edits
   // takes the panel with them.
   const [yoursOpen, setYoursOpen] = useState(false);
-  // "Back to my résumé" is armed, having been tapped once while there were
+  // "Back to my resume" is armed, having been tapped once while there were
   // hand-edits to lose. State on THIS page and not shared with the overlay's own
   // arming, for the Settings danger zone's reason: two destructive controls
   // sharing one flag lets a user who armed one confirm under the other — and
@@ -731,7 +731,7 @@ export default function TailorPage() {
   // TWO FLAGS, and the split is the whole of 23.7.
   //
   // `isMaster` is the old `editable`, unchanged: the document on screen IS the
-  // saved master résumé, so a write here changes the file the user keeps. It
+  // saved master resume, so a write here changes the file the user keeps. It
   // still gates everything that touches the master — the draft restore bar, the
   // save/undo cluster, Replace — and everything that ADDS a claim, because a
   // claim typed after the tailor ran carries no fabrication-guard verdict while
@@ -745,7 +745,7 @@ export default function TailorPage() {
   // discarded with the result.
   const isMaster = !result && !!resume;
   const canEditDoc = !!shown;
-  // The paper's own direction, frozen from the résumé rather than the UI: the
+  // The paper's own direction, frozen from the resume rather than the UI: the
   // chrome follows the locale, the document follows its own language.
   const paperDir = shown && resumeLanguage(shown) === "he" ? ("rtl" as const) : ("ltr" as const);
   // `spot` carries a nonce for the same reason `focusEdit` below does: React
@@ -873,17 +873,17 @@ export default function TailorPage() {
     });
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
     // resetMasterCache() is NOT optional here, and leaving it out is why a
-    // freshly uploaded résumé "didn't take": saveMasterResume calls
+    // freshly uploaded resume "didn't take": saveMasterResume calls
     // invalidateData("master","masters"), which clears the dataCache Map and
     // CANNOT reach useMasterResume's module-level binding. Jobs, Interview and
     // every tool read the master from that binding, so they kept painting AND
-    // SENDING the résumé this upload just replaced — until a full page reload.
+    // SENDING the resume this upload just replaced — until a full page reload.
     if (m) {
       resetMasterCache();
       setTailorState({ masterLabel: m.label });
     } else {
       // Same reason as JobsPage: the hook only toasts on success, so a failed
-      // save would leave the page showing a résumé the server never stored.
+      // save would leave the page showing a resume the server never stored.
       toast("error", t("common:masterResume.saveFailed"));
     }
   }
@@ -903,7 +903,7 @@ export default function TailorPage() {
   }
 
   /** What was actually sent, recorded on the tracker row so the analytics can
-   * later say which résumé earned the replies (PLAN 17.3). */
+   * later say which resume earned the replies (PLAN 17.3). */
   function sentSignals() {
     return {
       template,
@@ -1040,7 +1040,7 @@ export default function TailorPage() {
       )}
 
       {/* Page level, not inside the result gate. `startTailor` can swap the
-          loaded résumé for its paired-language master, and now that the document
+          loaded resume for its paired-language master, and now that the document
           is always on screen that swap happens under the user's eyes — so the
           notice has to be visible before any result exists. */}
       {langSwitched && (
@@ -1105,7 +1105,7 @@ export default function TailorPage() {
         actions={
           <>
             {/* MASTER only, and it must stay that way. Its `edit.hint` says
-                "your résumé", and its Save writes `state.resume` — a different
+                "your resume", and its Save writes `state.resume` — a different
                 document from the one on screen while a result is up. */}
             {isMaster && shown && (
               <ResumeEditBar
@@ -1215,7 +1215,7 @@ export default function TailorPage() {
               )}
               {/* The tailored document is typed on and nothing said so. It
                   cannot ride ResumeEditBar's `edit.hint`: that bar stays
-                  master-only, and its "your résumé" plus a Save button would
+                  master-only, and its "your resume" plus a Save button would
                   both be about a different document from the one on screen. */}
               {result && <span className="text-xs text-ink-muted">{t("edit.tailoredHint")}</span>}
               {result && overrideCount > 0 && (
@@ -1334,7 +1334,7 @@ export default function TailorPage() {
         }
       />
 
-      {/* The document, or — with no résumé yet — the one thing there is to do. */}
+      {/* The document, or — with no resume yet — the one thing there is to do. */}
       {shown ? (
         <DocumentPanel
           ref={docRef}
@@ -1376,7 +1376,7 @@ export default function TailorPage() {
           // in afterwards carries no verdict at all, while ScoreCard below goes
           // on rendering `result.fabrication_flags` as though it described the
           // document on screen. An added block also exists in neither the
-          // original nor the tailored résumé, so it has no source anchor to be
+          // original nor the tailored resume, so it has no source anchor to be
           // stored against. Adds belong in their own change, with their own
           // guard story.
           onAddSkill={isMaster ? addSkill : undefined}
@@ -1400,7 +1400,7 @@ export default function TailorPage() {
           </div>
           {/* The cold start, and it is now the SAME surface as everything else:
               a blank page you type on. This replaced /builder — an 848-line
-              wizard that was a second editor for one résumé, and produced the
+              wizard that was a second editor for one resume, and produced the
               "which one is my real CV" question it existed to avoid. */}
           <button
             type="button"
@@ -1423,7 +1423,7 @@ export default function TailorPage() {
           // THE STAMP THAT BELONGS TO THE NUMBER ABOVE IT, picked by the same
           // condition and on the same line as the number, so the two cannot
           // drift. One field served both readings until 23.8: the tailor's
-          // success branch re-stamped it, so after "Back to my résumé" the tile
+          // success branch re-stamped it, so after "Back to my resume" the tile
           // paired the PRE-tailor fit reading with the TAILOR's clock — and the
           // timestamp is the entire honesty mechanism of that tile, which
           // deliberately shows one reading with no before/after and no delta.
@@ -1546,7 +1546,7 @@ export default function TailorPage() {
                   that a parser might interleave them — let the user SEE what one
                   actually reads back from this exact file. It used to navigate to
                   /tools/xray, which meant leaving the review to check the review;
-                  now it opens the ATS view in place, on the résumé as it stands
+                  now it opens the ATS view in place, on the resume as it stands
                   right now rather than on the saved master. */}
               <button
                 type="button"
@@ -1580,7 +1580,7 @@ export default function TailorPage() {
           onClose={closeEditSheet}
           // Exactly one of these two ever fires. With a result up the sheet
           // hands back raw VALUES and they become an override; without one it
-          // hands back a résumé and that résumé becomes the master.
+          // hands back a resume and that resume becomes the master.
           onApplyValues={result ? commitBlockValues : undefined}
           onApply={(next, path) => {
             applyBlockEdit(next);
@@ -1612,7 +1612,7 @@ export default function TailorPage() {
           hasResult={!!result}
           // The overlay's Tailor button destroys these, so it is the overlay
           // that has to arm-then-confirm and to name the count in its own
-          // "this starts again from your master résumé" note.
+          // "this starts again from your master resume" note.
           overrideCount={overrideCount}
           onChecked={(text, f) =>
             // `fitScoredAt`, never `scoredAt`: this stamp belongs to THIS
@@ -1626,7 +1626,7 @@ export default function TailorPage() {
             // the breadcrumb, the target card and `save()`'s `job_url` naming the
             // old one. This is the ONE place the rule inverts `adoptMaster`'s
             // ("the target job survives — which posting you are aiming at has
-            // nothing to do with which file your résumé is in"): here the posting
+            // nothing to do with which file your resume is in"): here the posting
             // is precisely what changed.
             //
             // Trimmed on BOTH sides: `setTargetJob` stores the JD untrimmed and

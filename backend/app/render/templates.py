@@ -1,4 +1,4 @@
-"""Résumé template registry shared by both renderers (PLAN 6).
+"""Resume template registry shared by both renderers (PLAN 6).
 
 A spec is DECLARATIVE: it varies page size, margins, fonts, type sizes, the
 palette, the vertical rhythm, and — since Phase 21 — the presentation vocabulary
@@ -86,7 +86,7 @@ class TemplateSpec:
     # normal, correct choice when no matching Hebrew serif is bundled.
     he_family: str = "NotoSansHebrew"
     docx_font: str = "Calibri"  # family name Word resolves locally (Latin)
-    # The COMPLEX-SCRIPT face Word is asked for on a Hebrew résumé. Word formats
+    # The COMPLEX-SCRIPT face Word is asked for on a Hebrew resume. Word formats
     # Hebrew through w:cs and ignores the plain font, so pinning a Latin-only
     # family here (Georgia, say) makes Word silently substitute something else
     # and the DOCX stops matching the PDF. Must be a family that actually has
@@ -322,7 +322,7 @@ class TemplateSpec:
     #               ahead of its own comma-joined items ("GenAI & LLMs: OpenAI,
     #               Anthropic Claude, …"). Same text and the same commas as
     #               "inline" — only the label's position differs — so a keyword
-    #               parser splits it identically. An ungrouped résumé renders
+    #               parser splits it identically. An ungrouped resume renders
     #               exactly what "inline" renders, there being no label to place.
     skills: str = "inline"
 

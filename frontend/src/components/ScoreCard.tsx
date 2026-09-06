@@ -24,7 +24,7 @@ function GuardTile({ flags, overrides }: { flags: FabricationFlag[]; overrides: 
   const { t } = useTranslation("tailor");
   const clean = flags.length === 0;
   // Only the CLEAN face makes a claim about the whole document. The flagged one
-  // says "N claims we couldn't find in your résumé", which stays true either way.
+  // says "N claims we couldn't find in your resume", which stays true either way.
   const edited = clean && overrides > 0;
   return (
     <button

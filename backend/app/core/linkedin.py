@@ -1,4 +1,4 @@
-"""LinkedIn profile optimizer — rewrites from real résumé facts only."""
+"""LinkedIn profile optimizer — rewrites from real resume facts only."""
 from __future__ import annotations
 
 from app.llm.client import get_llm_client

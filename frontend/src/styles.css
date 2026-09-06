@@ -133,7 +133,7 @@
   --shadow-glow-mint: 0 1px 2px rgb(38 34 47 / 0.06), 0 10px 30px -12px rgb(var(--mint) / 0.32);
   --shadow-panel: 0 1px 2px rgb(38 34 47 / 0.05), 0 26px 60px -30px rgb(38 34 47 / 0.3);
   --shadow-card: 0 1px 2px rgb(38 34 47 / 0.05), 0 14px 30px -22px rgb(38 34 47 / 0.24);
-  /* The résumé-page lift: crisp near shadow + a long soft one, like a sheet
+  /* The resume-page lift: crisp near shadow + a long soft one, like a sheet
      of A4 held a centimetre off the desk. */
   --shadow-doc: 0 1px 1px rgb(38 34 47 / 0.06), 0 2px 4px rgb(38 34 47 / 0.05),
     0 18px 40px -18px rgb(38 34 47 / 0.28);
@@ -144,7 +144,7 @@
 }
 
 /* ===========================================================================
-   SHEET — the résumé document's own palette (PLAN 22.5).
+   SHEET — the resume document's own palette (PLAN 22.5).
    ===========================================================================
    Same MECHANISM as .paper above — re-declare the tokens on a subtree and every
    `rgb(var(--x) / <alpha-value>)` utility underneath re-resolves, by inheritance
@@ -512,7 +512,7 @@ select {
 /* Placeholder for an EMPTY editable block on the paper.
    Drawn, never stored: a placeholder rendered as real text is committable, and
    on a nameless CV that means tapping the biggest target on the page and
-   tapping away would write "Résumé" in as the person's name. `::before` on an
+   tapping away would write "Resume" in as the person's name. `::before` on an
    :empty node has nothing for `innerText` to read, so there is no such hazard.
    `pointer-events: none` keeps the caret landing in the node, not on the hint. */
 .sheet [data-ph]:empty::before {

@@ -43,7 +43,7 @@
   },
   "empty": {
     "title": "No applications yet",
-    "body": "Find matching roles with <1>Jobs search</1>, or tailor a résumé in <3>Tailor</3> and click “Save to tracker”."
+    "body": "Find matching roles with <1>Jobs search</1>, or tailor a resume in <3>Tailor</3> and click “Save to tracker”."
   },
   "columnEmpty": "Nothing here yet",
   "interviewedToggle": "Did you interview for this job?",
@@ -61,10 +61,10 @@
   },
   "modal": {
     "loading": "Loading…",
-    "resumeFallback": "Résumé",
+    "resumeFallback": "Resume",
     "match": "Match {{pct}}%",
     "jobPosting": "Job posting",
-    "noResume": "No saved résumé for this entry.",
+    "noResume": "No saved resume for this entry.",
     "coverLetter": "Cover letter"
   },
   "view": {

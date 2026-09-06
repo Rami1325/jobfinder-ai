@@ -1,6 +1,6 @@
 """Model rewordings for the review's rewritable findings (PLAN 28.7).
 
-This is the ONE part of the résumé review that spends. Everything in
+This is the ONE part of the resume review that spends. Everything in
 `resume_review.py` is deterministic, free and uncapped, and runs on every
 keystroke; this runs behind a button, takes `Depends(llm_user)` and costs one
 AI credit. The split is deliberate and it is the shape the rest of this repo

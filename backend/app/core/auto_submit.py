@@ -270,13 +270,13 @@ def submit_kit(
     try:
         resume = ResumeModel.model_validate_json(app_row.tailored_resume_json)
     except Exception:  # noqa: BLE001 - corrupt row, user-facing
-        raise ValueError("This kit's approved résumé can't be read — re-approve it.")
+        raise ValueError("This kit's approved resume can't be read — re-approve it.")
 
     first, last = split_name(resume.contact.name.strip())
     email = resume.contact.email.strip()
     if not first or not email:
         raise ValueError(
-            "Your résumé needs a name and an email address before it can be "
+            "Your resume needs a name and an email address before it can be "
             "sent — fix the contact section and re-approve."
         )
 
@@ -340,7 +340,7 @@ def submit_kit(
     stamp = now.strftime("%Y-%m-%d %H:%M UTC")
     audit = (
         f"[auto-apply {stamp}] Sent to {kit.company or ref.slug} via Comeet's "
-        f"careers API (position {ref.position_uid}): tailored PDF résumé"
+        f"careers API (position {ref.position_uid}): tailored PDF resume"
         + (" + cover letter" if fields["comment"] else "")
         + f", from kit #{kit.id}."
     )

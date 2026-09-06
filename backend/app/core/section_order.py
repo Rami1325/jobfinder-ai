@@ -1,4 +1,4 @@
-"""Which order the résumé sections are laid out in (PLAN 17.5).
+"""Which order the resume sections are laid out in (PLAN 17.5).
 
 A fixed order serves the wrong reader half the time. Someone with eight years
 of work should lead with Experience; a student, a fresh graduate, or anyone
@@ -6,7 +6,7 @@ still studying should lead with Education, because that is the strongest thing
 on the page and a recruiter reads the top third.
 
 The rule is deterministic — dates and section contents, no LLM call — so the
-same résumé always lays out the same way and the choice is explainable. Both
+same resume always lays out the same way and the choice is explainable. Both
 renderers and the on-screen preview read this, so the download can never
 disagree with what the user was shown.
 """

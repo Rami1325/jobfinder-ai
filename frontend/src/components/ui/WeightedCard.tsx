@@ -7,7 +7,7 @@ import { cn } from "../../lib/cn";
  *
  * TiltedCard lifts: same cursor-following rotation, but it scales UP so the
  * whole surface reads as floating toward the viewer. This one does the
- * opposite, because a résumé is a sheet of paper lying on a desk, not a
+ * opposite, because a resume is a sheet of paper lying on a desk, not a
  * hologram. Put a finger on a sheet of paper and it doesn't rise: the corner
  * under the finger goes DOWN, the sheet pivots around the contact point, and
  * the shadow beneath that corner tightens and darkens as the gap closes. Lift

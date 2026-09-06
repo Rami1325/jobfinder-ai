@@ -234,8 +234,8 @@ def audit_voice(resume: ResumeModel, jd: JDModel | None = None) -> VoiceReport:
     # 5b. Keyword stuffing: a JD keyword repeated past any natural need. ATS
     # software penalizes this too (spec stage 9: critical keyword 1-3 uses).
     #
-    # Measured as repetition WITHIN a chunk, not a raw total across the résumé.
-    # One mention per bullet or per project is how a real CV reads — a résumé
+    # Measured as repetition WITHIN a chunk, not a raw total across the resume.
+    # One mention per bullet or per project is how a real CV reads — a resume
     # listing eight projects, each with its own tech-stack line, will name
     # "React" eight times without a word of stuffing in it. A raw total flagged
     # exactly that, and then sent the humanizer off to delete real technologies

@@ -280,7 +280,7 @@ def linkedin_closed_marker(html: str) -> str:
       closed page and fires on every open page. The class is the anchor, not the
       tag. Both fixtures carry that decoy.
     - **The substring "closed".** `disclosed`, `undisclosed salary`,
-      `closed-loop control` are all real résumé/JD vocabulary, which is why
+      `closed-loop control` are all real resume/JD vocabulary, which is why
       nothing here matches a bare "closed". The open fixture carries them.
     - **A commented-out banner.** Nothing a reader sees, and the guest page is
       full of LinkedIn's own `<!---->` template markers, so comments go before

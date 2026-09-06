@@ -152,7 +152,7 @@ export function StaleBadge({ stale, postedAt }: { stale?: boolean; postedAt?: st
  * adjudicates instead of trusting us. It cannot live in `title`: there is no
  * hover on a phone.
  *
- * `dir="auto"` is correct HERE (unlike on the résumé sheet, where it flips a
+ * `dir="auto"` is correct HERE (unlike on the resume sheet, where it flips a
  * whole document): the quote is in the POSTING's language, which need not be
  * the UI locale. `break-words` is load-bearing — `raw` is untrusted third-party
  * text. A Globe, never a warning triangle: at 12px in amber a triangle reads as

@@ -16,7 +16,7 @@
 //   * ATTRIBUTION (who cut something) reads the server's reports, is partial,
 //     and is allowed to say nothing. `length_report.dropped_projects` proves
 //     the page budget cut a project; its ABSENCE proves nothing, because
-//     `fit_to_pages` is handed the model's already-curated résumé and
+//     `fit_to_pages` is handed the model's already-curated resume and
 //     early-exits when that output already fits. A model-omitted project and a
 //     budget-dropped one are indistinguishable on the wire.
 //
@@ -82,7 +82,7 @@ export const isEntryAddition = (e: ResumeEdit): boolean => ENTRY_ADD.test(e.id);
 export type CurationCause = "budget" | "plan" | "unknown";
 
 /** Name a removed project by INDEX rather than by parsing `before`. The id
- * shape is stable (`proj.rm.${oi}`) and `oi` indexes the ORIGINAL résumé. */
+ * shape is stable (`proj.rm.${oi}`) and `oi` indexes the ORIGINAL resume. */
 const PROJ_RM = /^proj\.rm\.(\d+)$/;
 export function removedProjectName(e: ResumeEdit, original: ResumeModel | null): string {
   const m = PROJ_RM.exec(e.id);
@@ -119,7 +119,7 @@ export interface EditGroup {
   key: string;
   cls: EditClass;
   section: EditSection;
-  /** The résumé entry this group belongs to ("Engineer · Acme Corp"), or "". */
+  /** The resume entry this group belongs to ("Engineer · Acme Corp"), or "". */
   context: string;
   edits: ResumeEdit[];
   /** How many of these carry a fabrication flag — a group with any is never collapsed. */
@@ -189,7 +189,7 @@ export function groupEdits(
       else if (LIST_SECTIONS.has(e.section)) push(`add:${e.section}`, cls, e.section, "", false, e);
       else push(`add:${e.section}::${e.context}`, cls, e.section, e.context, false, e);
     } else {
-      // One card per résumé entry, so "Engineer · Acme Corp" holds its bullets.
+      // One card per resume entry, so "Engineer · Acme Corp" holds its bullets.
       push(`rw:${e.section}::${e.context}`, cls, e.section, e.context, false, e);
     }
   }
@@ -222,7 +222,7 @@ export function groupEdits(
  * them, they are the highest-stakes lines on the page, and a group header
  * already says what changed ("Reworded · Projects · The Daily Catch · 1
  * rewrite") so nothing is hidden by collapsing the rest. An earlier rule opened
- * every single-edit group, which on a real 8-project résumé meant seven project
+ * every single-edit group, which on a real 8-project resume meant seven project
  * rewrites unfurled at once — 2,100 px of default height for cards the user can
  * open in one click.
  *

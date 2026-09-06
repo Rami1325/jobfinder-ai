@@ -109,7 +109,7 @@ class Application(Base):
     interviewed: Mapped[bool] = mapped_column(Boolean, default=False)
     excitement: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unrated, 1-5 stars
     # What was actually sent (PLAN 17.3). Without these the tracker can show
-    # that a reply rate exists but never which résumé earned it. All three are
+    # that a reply rate exists but never which resume earned it. All three are
     # nullable/"" on purpose: rows written before 17.3 genuinely do not know,
     # and counting an unknown as "guard-clean, voice 0" would poison the report.
     template: Mapped[str] = mapped_column(String(32), default="")
@@ -149,8 +149,8 @@ class JobSearchHit(Base):
     logo_url: Mapped[str] = mapped_column(String(1000), default="")  # company logo; "" when none
     # PLAN 15.1: the same posting on other boards, [{"source","url"}] JSON
     also_on_json: Mapped[str] = mapped_column(Text, default="[]")
-    # sha256 of the résumé the scores were computed against (PLAN 12.4) — lets a
-    # re-search tell "same résumé, reuse the scores" from "different résumé,
+    # sha256 of the resume the scores were computed against (PLAN 12.4) — lets a
+    # re-search tell "same resume, reuse the scores" from "different resume,
     # rescore". "" on pre-12.4 rows (never treated as a full-reuse match).
     resume_hash: Mapped[str] = mapped_column(String(64), default="")
     searched_at: Mapped[datetime] = mapped_column(
@@ -172,7 +172,7 @@ class PostingSighting(Base):
     **NO `user_id`, deliberately — this is the one privacy decision in Phase 28.**
     A row here is metadata a BOARD published: which board, the title+company
     fingerprint, when we first and last saw it, its URLs, a count. It is not
-    user content, nothing in it is derived from a résumé, and several users
+    user content, nothing in it is derived from a resume, and several users
     searching the same market legitimately SHARE one row. It therefore does not
     belong in `routes._wipe_user_rows` and **must not be added there**: that
     helper deletes rows `WHERE model.user_id == user.id`, so a table with no
@@ -354,7 +354,7 @@ class JobAlert(Base):
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     email: Mapped[str] = mapped_column(String(320), default="")
-    context_json: Mapped[str] = mapped_column(Text, default="")  # SearchContext; "" = derive from résumé
+    context_json: Mapped[str] = mapped_column(Text, default="")  # SearchContext; "" = derive from resume
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     last_new_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str] = mapped_column(Text, default="")
@@ -386,7 +386,7 @@ class JobAlert(Base):
 
 
 class SavedResumeVersion(Base):
-    """A previous state of a master résumé (PLAN 20.8 / N1).
+    """A previous state of a master resume (PLAN 20.8 / N1).
 
     `PUT /profile/resume` overwrites `SavedResume` in place, so until this
     existed there was no undo for the single most valuable object a user owns —
@@ -417,19 +417,19 @@ class SavedResumeVersion(Base):
 
 
 class SavedResume(Base):
-    """The user's persisted master résumés, reused across Tailor / Interview / Job Match.
+    """The user's persisted master resumes, reused across Tailor / Interview / Job Match.
 
     One row per (user, language) so a paired Hebrew/English master can coexist —
-    saving a résumé upserts the row matching its detected language, and tailoring
+    saving a resume upserts the row matching its detected language, and tailoring
     picks the master matching the JD's language. The user's most-recently-updated
-    row is their default master; `label` leaves room for multiple named résumés.
+    row is their default master; `label` leaves room for multiple named resumes.
     """
 
     __tablename__ = "saved_resumes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
-    label: Mapped[str] = mapped_column(String(255), default="My résumé")
+    label: Mapped[str] = mapped_column(String(255), default="My resume")
     language: Mapped[str] = mapped_column(String(8), default="en")  # "en" | "he"
     resume_json: Mapped[str] = mapped_column(Text, default="")
     ledger_json: Mapped[str] = mapped_column(Text, default="")

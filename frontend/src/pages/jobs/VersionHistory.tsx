@@ -1,10 +1,10 @@
-// Master résumé restore points (PLAN 20.8 / N1). `PUT /profile/resume`
+// Master resume restore points (PLAN 20.8 / N1). `PUT /profile/resume`
 // overwrites in place and several paths save without the user thinking of it as
 // a save — the Builder, the Skills editor, a re-upload — so until this existed
 // one bad save was unrecoverable for the most valuable object a user owns.
 //
 // Restoring is itself undoable: the server snapshots the state it replaces, so
-// a mis-click here cannot be the thing that loses the résumé. The confirm step
+// a mis-click here cannot be the thing that loses the resume. The confirm step
 // is still there because "restore" reads as destructive even when it isn't.
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";

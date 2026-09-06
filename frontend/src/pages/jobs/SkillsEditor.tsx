@@ -1,5 +1,5 @@
-// "Skills I have that aren't on my résumé" (PLAN 15.10): edits the master
-// résumé's skills list directly. Added skills become part of the résumé itself
+// "Skills I have that aren't on my resume" (PLAN 15.10): edits the master
+// resume's skills list directly. Added skills become part of the resume itself
 // — match scoring counts them, tailoring may legitimately use them, and the
 // renderers print them — so the honesty note matters: only true skills belong
 // here. The fabrication guard is unaffected (it never tracked skills; it

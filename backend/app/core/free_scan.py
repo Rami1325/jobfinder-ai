@@ -1,6 +1,6 @@
 """Free public CV-vs-JD scan — 100% deterministic, zero LLM calls.
 
-The landing-page wedge (PLAN 6): a visitor drops a résumé and pastes a JD and
+The landing-page wedge (PLAN 6): a visitor drops a resume and pastes a JD and
 gets the keyword-coverage half of the scorer with no access code and no
 persistence. Because this path is free to serve, it must never call the LLM:
 JD keywords come from a pure frequency heuristic (not the JD analyzer), and
@@ -152,7 +152,7 @@ def _hebrew_prefix_variants(word: str) -> list[str]:
 
 def _prefix_rescue(keyword: str, resume_text: str) -> bool:
     """True when every word of a fully-missing Hebrew keyword appears in the
-    résumé once its glued prefix is stripped (JD "בפייתון" vs CV "פייתון")."""
+    resume once its glued prefix is stripped (JD "בפייתון" vs CV "פייתון")."""
     parts = _WORD_RE.findall(keyword.lower())
     if not parts:
         return False
@@ -176,7 +176,7 @@ def _recompute_coverage(gaps: list[GapItem]) -> float:
 
 
 # --------------------------------------------------------------------------- #
-# Raw-text résumé checks (the ats_scan spirit, without needing the LLM
+# Raw-text resume checks (the ats_scan spirit, without needing the LLM
 # structurer — ids are stable so the UI can translate them)
 # --------------------------------------------------------------------------- #
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
@@ -199,10 +199,10 @@ def _resume_checks(resume_text: str) -> list[FreeScanCheck]:
 
 def free_scan(resume_text: str, jd_text: str) -> FreeScanResult:
     """The whole free scan: extract keywords, run the scorer's deterministic
-    coverage on the raw résumé text, rescue prefix-glued Hebrew misses as
+    coverage on the raw resume text, rescue prefix-glued Hebrew misses as
     partial, and add the raw-text checks. Pure — no LLM, no DB, no network."""
     keywords = extract_jd_keywords(jd_text)
-    # Wrap the raw text so keyword_analysis (which reads structured résumés)
+    # Wrap the raw text so keyword_analysis (which reads structured resumes)
     # sees it verbatim — same containment + token matching as the paid path.
     _, gaps = keyword_analysis(ResumeModel(summary=resume_text), JDModel(keywords=keywords))
     lowered_resume = resume_text.lower()

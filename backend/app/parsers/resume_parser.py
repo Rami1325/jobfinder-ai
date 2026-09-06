@@ -99,7 +99,7 @@ def _assert_docx_expansion(data: bytes) -> None:
     # compressed, so an image-heavy .docx expands about 1:1 and `max_upload_mb`
     # is itself the largest expansion a legitimate CV can reach — measured at
     # 10.3 MB against the 10 MB upload cap. A cap below that would refuse a real
-    # photo-heavy résumé the upload cap had just admitted, which is the guard
+    # photo-heavy resume the upload cap had just admitted, which is the guard
     # firing on legitimate input. Deriving the floor keeps the two numbers
     # coupled: raising `max_upload_mb` cannot silently turn this into that guard.
     cap_mb = max(cap_mb, 3 * settings.max_upload_mb)
@@ -155,7 +155,7 @@ def _assert_page_count(pdf) -> None:  # noqa: ANN001 - pdfplumber.PDF
     `pdf.pages` is lazy, so counting is cheap while extraction is not — this is
     the cheapest place to stop a crafted PDF from burning an instance's CPU on
     the no-access-code /public/scan route. The ceiling is deliberately far above
-    any real résumé (a master CV runs ~30 rendered pages at the extreme).
+    any real resume (a master CV runs ~30 rendered pages at the extreme).
     """
     limit = get_settings().max_pdf_pages
     if len(pdf.pages) > limit:

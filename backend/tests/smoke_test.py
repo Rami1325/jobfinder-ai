@@ -320,7 +320,7 @@ check(
 )
 # DRIVEN through the shipped pipeline, not called — and the stub has to be made
 # to OVERSHOOT first. The first version of this check drove `tailor_resume` with
-# the plain stub, which returns a 4-skill résumé: the cap never fired, so it
+# the plain stub, which returns a 4-skill resume: the cap never fired, so it
 # passed green and would have gone on passing with the call site in `tailor.py`
 # deleted. That is the 21.7 failure mode, caught here only because the PASS line
 # printed the count.
@@ -374,7 +374,7 @@ check(
 # THE CHANGELOG MAY NOT DESCRIBE A DOCUMENT THAT DOES NOT EXIST. Two sentences
 # in this entry were false on a rendered CV: it announced the cut as "to the 30
 # this job asks for" while the app's OWN `ats_scan` said 19 of those 30 are not
-# mentioned by the posting, and it opened "Your master résumé lists 75 skills"
+# mentioned by the posting, and it opened "Your master resume lists 75 skills"
 # with a number that is what the MODEL returned (it over-produces on purpose)
 # against a 66-entry master. Pinned on the two claims, not on the wording:
 # the count named must be the pre-cut list, and the entries named as still being
@@ -384,7 +384,7 @@ _cap_entry = next(c for c in _capped.changelog
 check(
     "tailor: the skills changelog counts the DRAFT it cut, not the master",
     f"{len(_bloat_master.skills)} to {len(_capped.tailored_resume.skills)}" in _cap_entry.change
-    and "master résumé lists" not in _cap_entry.reason,
+    and "master resume lists" not in _cap_entry.reason,
     _cap_entry.change,
 )
 # THE SECOND CLAIM NEEDS ITS OWN FIXTURE, and finding that out is the reason
@@ -431,11 +431,11 @@ _mint_entry = next(c for c in _minted.changelog
 _mint_named = [
     n.strip()
     for n in _mint_entry.reason.split("was dropped.")[-1]
-    .replace(" and others", "").replace(" stay in your master résumé.", "").split(",")
+    .replace(" and others", "").replace(" stay in your master resume.", "").split(",")
     if n.strip()
 ]
 check(
-    "tailor: the changelog's 'stay in your master résumé' sample names ONLY master entries",
+    "tailor: the changelog's 'stay in your master resume' sample names ONLY master entries",
     _mint_named and all(n in {s.strip() for s in _mint_master.skills} for n in _mint_named),
     f"named {_mint_named}",
 )
@@ -550,7 +550,7 @@ check(
 # Without it, "group everything" is trivially satisfied.
 check(
     "regroup_skills returns the SAME object when there is nothing to do: no master "
-    "taxonomy, a résumé that already carries groups, or not one entry the master "
+    "taxonomy, a resume that already carries groups, or not one entry the master "
     "files anywhere",
     _regroup(_rg_shipped, ResumeModel()) is _rg_shipped
     and _regroup(_rg_out, _rg_master) is _rg_out
@@ -614,7 +614,7 @@ check(
     str([c.change for c in _minted.changelog if c.section == "skills"]),
 )
 
-# 4b-iv. THE SECOND DOOR. `humanizer.py` validates its OWN raw LLM résumé and
+# 4b-iv. THE SECOND DOOR. `humanizer.py` validates its OWN raw LLM resume and
 # `tailor_resume` accepts it AFTER the dedupe has already run, so a repeat the
 # polish pass introduces sails past a guard that finished earlier. The humanizer
 # is pointed straight at this list — `voice_audit` scans the joined skills for
@@ -850,7 +850,7 @@ check("guard flags fabricated employer", "FAKE Industries Ltd" in flagged_employ
 # experience, education, certifications, military and the summary but never
 # projects, so a metric invented into a project bullet passed silently — and
 # because the omission was symmetric (the guard rebuilds the ledger the same way
-# from the tailored résumé) nothing ever went red to reveal it. The false-
+# from the tailored resume) nothing ever went red to reveal it. The false-
 # positive cases are pinned alongside the catch: this must not start firing on
 # the rewording and re-homing the tailor is explicitly allowed to do.
 _pj_orig = ResumeModel(
@@ -894,7 +894,7 @@ check(
     "a metric moved from experience into a project is NOT flagged",
     _pj_numbers(_set_project_bullet("Cut latency 30% on the ordering path.")) == [],
 )
-check("an untouched résumé stays clean under the project guard", _pj_numbers(lambda r: None) == [])
+check("an untouched resume stays clean under the project guard", _pj_numbers(lambda r: None) == [])
 
 # 5b. Target-title headline (PLAN 17.2). The headline is a CLAIM, so the guard
 # reads it — but only for rank. Restating the same work in the target role's
@@ -1001,9 +1001,9 @@ check(
     "JD_FIT" in jd_fit_system("he")[:40].upper(),
 )
 
-# 10. The résumé review (PLAN 28.6) — one home for every check, each finding
+# 10. The resume review (PLAN 28.6) — one home for every check, each finding
 # anchored to the block it is about. It SUPERSEDES the ATS scanner and the
-# résumé health-check, and every behaviour those two pinned is re-pinned below
+# resume health-check, and every behaviour those two pinned is re-pinned below
 # on `ReviewFinding.id` rather than on an English label substring — a label is
 # copy, and pinning behaviour to copy is why those checks could not be
 # translated without breaking the suite.
@@ -1134,7 +1134,7 @@ check(
 
 # THE ANCHOR IS THE FEATURE. Every path a finding carries must match a shape the
 # document's own resolver knows, and every index in it must be in range on the
-# résumé it came from — an off-by-one renders identically and scrolls nowhere.
+# resume it came from — an off-by-one renders identically and scrolls nowhere.
 _rv_shape_re = [
     __import__("re").compile("^" + __import__("re").escape(s).replace(r"\*", "[^.]+") + "$")
     for s in _RV_SHAPES
@@ -1154,7 +1154,7 @@ check(
 
 
 def _rv_in_range(r: ResumeModel, path: str) -> bool:
-    """Resolve an emitted index against the résumé it was emitted from."""
+    """Resolve an emitted index against the resume it was emitted from."""
     import re as _re
 
     m = _re.match(r"^@(exp|proj|mil|edu)\.(\d+)(?:\.b\.(\d+))?$", path)
@@ -1174,7 +1174,7 @@ _rv_oob = [
     if f.path and not _rv_in_range(r, f.path)
 ]
 check(
-    "review: every index in an emitted path is IN RANGE on the résumé it came from "
+    "review: every index in an emitted path is IN RANGE on the resume it came from "
     "— an off-by-one anchor renders identically and scrolls nowhere",
     _rv_oob == [],
     f"out of range: {_rv_oob}",
@@ -1235,7 +1235,7 @@ check(
 )
 _rv_unasked = _rv_find(_inventory, "skills-unasked", _narrow_jd)
 check(
-    "review: the SAME résumé against a job it mostly does not match warns, with the "
+    "review: the SAME resume against a job it mostly does not match warns, with the "
     "counts and a sample rather than a bare verdict",
     len(_rv_unasked) == 1
     and _rv_unasked[0].args["total"] == 62
@@ -1266,7 +1266,7 @@ check(
 )
 
 # 10b. Deeper ATS checks (PLAN 17.4) — all deterministic, all explainable, and
-# all reporting rather than rewriting. Each is pinned on a résumé that trips it
+# all reporting rather than rewriting. Each is pinned on a resume that trips it
 # AND one that does not, so a check that silently always fires can't hide.
 from app.core.dates import ats_form, is_current, parse_date, years_of_experience  # noqa: E402
 
@@ -1330,7 +1330,7 @@ _tidy = ResumeModel(
 # THE FALSE-POSITIVE PIN, and the one that matters most on this whole surface: a
 # panel that always has something in it teaches the user to ignore the panel.
 check(
-    "review: a completely clean résumé produces ZERO findings — no always-on warning, "
+    "review: a completely clean resume produces ZERO findings — no always-on warning, "
     "which is the failure that teaches a user to ignore the panel",
     _rv_ids(_tidy) == set(),
     str(sorted(_rv_ids(_tidy))),
@@ -1384,7 +1384,7 @@ _sentence_skills_before = list(_sentence_skill_cv.skills)
 _rv_sentence = _rv_find(_sentence_skill_cv, "skills-sentence")
 check(
     "review (ats successor): a skill written as a sentence is REPORTED, anchored to "
-    "that chip, and the résumé is left untouched — while the owner's real four-word "
+    "that chip, and the resume is left untouched — while the owner's real four-word "
     "entries stay green (nothing may shorten the user's own text)",
     len(_rv_sentence) == 1
     and _rv_sentence[0].path == "@skills." + _rv_dkey(_sentence_skills_before[0])
@@ -1632,7 +1632,7 @@ check(
 )
 
 # 10c. Section order by profile (PLAN 17.5): education outranks experience for
-# an early-career résumé, and both renderers follow the same rule.
+# an early-career resume, and both renderers follow the same rule.
 from app.core.section_order import EARLY_CAREER_ORDER, EXPERIENCED_ORDER, is_early_career, section_order  # noqa: E402
 
 _senior = ResumeModel(
@@ -2047,7 +2047,7 @@ check(
     and '"RESUME_REVIEW" in head' not in _rv_client_src
     and '"REVIEW_RESUME" in head' not in _rv_client_src,
 )
-# ONE classifier, one answer. A second reader would classify the same résumé on
+# ONE classifier, one answer. A second reader would classify the same resume on
 # a different gate and contradict this one about the same document — the
 # geo-restriction correction, which this repo paid for once already.
 _RV_IMPORTERS = []
@@ -2067,7 +2067,7 @@ for _p in __import__("pathlib").Path("app").rglob("*.py"):
                 break
 check(
     "review: the only importers in the whole app are the route and the rewrite step — a "
-    "second reader would classify the same résumé on a different gate",
+    "second reader would classify the same resume on a different gate",
     sorted(_RV_IMPORTERS) == ["api/routes.py", "core/review_rewrites.py"]
     and _RV_SCANNED > 40,
     f"{sorted(_RV_IMPORTERS)} over {_RV_SCANNED} modules",
@@ -3412,7 +3412,7 @@ check(
 )
 
 # 14b-6. Prompt input bounds, output cap, and honest size errors.
-# A production Sentry issue was a token-limit failure on a large master résumé.
+# A production Sentry issue was a token-limit failure on a large master resume.
 # Nothing in the backend bounded prompt input: the only ceiling was a 10 MB FILE
 # cap, and a 10 MB PDF extracts to megabytes that went into the prompt whole.
 import inspect as _lim_inspect  # noqa: E402
@@ -3451,10 +3451,10 @@ check(
 )
 try:
     require_within("x" * (300 * 1024), 256, "resume")
-    check("limits: an oversize résumé raises InputTooLarge", False, "did not raise")
+    check("limits: an oversize resume raises InputTooLarge", False, "did not raise")
 except InputTooLarge as _e:
     check(
-        "limits: an oversize résumé raises InputTooLarge carrying both numbers",
+        "limits: an oversize resume raises InputTooLarge carrying both numbers",
         _e.kind == "resume" and _e.size_kb == 300 and _e.cap_kb == 256,
         f"{_e.kind} {_e.size_kb}/{_e.cap_kb}",
     )
@@ -3482,7 +3482,7 @@ check(
 
 # The classifier for a context overflow keys on `code`, never on the exception
 # type: every malformed-parameter bug is also a BadRequestError, and reporting
-# those as "your résumé is too long" is a guard firing on legitimate input.
+# those as "your resume is too long" is a guard firing on legitimate input.
 import httpx as _lim_httpx  # noqa: E402
 from openai import BadRequestError as _LimBadRequest  # noqa: E402
 
@@ -3626,10 +3626,10 @@ try:
 except ContextWindowExceeded:
     check("limits: a context overflow surfaces as ContextWindowExceeded", True)
 
-# The call sites that must refuse rather than truncate — the résumé is the
+# The call sites that must refuse rather than truncate — the resume is the
 # user's own document, and a silently shortened one is data loss they would
 # discover from a recruiter.
-# THE BOUNDARY PIN. Guarding the stored master résumé is NOT enough: 25 request
+# THE BOUNDARY PIN. Guarding the stored master resume is NOT enough: 25 request
 # models take a `resume: ResumeModel` straight from the client body, so the
 # stored row is one of twenty-six doors. Every model call builds its user
 # message with a prompts.*_user builder, so that is where the bound lives — and
@@ -3648,7 +3648,7 @@ _lim_undecorated = [
     and (_lim_decorator + name + "(") not in _lim_src
 ]
 check(
-    "limits: every prompt builder taking a résumé or JD argument is bounded",
+    "limits: every prompt builder taking a resume or JD argument is bounded",
     len(_lim_src) > 2000 and not _lim_undecorated,
     f"unbounded: {_lim_undecorated}" if _lim_undecorated else "all bounded",
 )
@@ -3666,11 +3666,11 @@ for _lim_name, _lim_call in (
     except InputTooLarge:
         _lim_fired.append(_lim_name)
 check(
-    "limits: the bound reaches the routes that bypass the stored résumé entirely",
+    "limits: the bound reaches the routes that bypass the stored resume entirely",
     _lim_fired == ["cover_letter", "jd_fit", "interview_chat", "linkedin"],
     str(_lim_fired),
 )
-# The false-positive half, in the same block: an ordinary résumé and job ad must
+# The false-positive half, in the same block: an ordinary resume and job ad must
 # sail through every one of them, or the guard is worse than no guard.
 check(
     "limits: ordinary inputs are untouched by the bound",
@@ -3751,7 +3751,7 @@ _he_score = score_resume(resume, _he_jd)
 check("hebrew jd scores without crashing", 0 <= _he_score.overall <= 100, str(_he_score.overall))
 check("hebrew keywords produce gap entries", len(_he_score.gaps) > 0)
 
-# Hebrew keyword coverage must MATCH, not just not-crash: a Hebrew résumé
+# Hebrew keyword coverage must MATCH, not just not-crash: a Hebrew resume
 # containing a Hebrew JD keyword scores it covered; an absent one is missing.
 _he_resume = ResumeModel(
     contact=Contact(name="דנה לוי", email="dana@example.com"),
@@ -4097,7 +4097,7 @@ check(
 )
 check("greenhouse registered in the fan-out", "greenhouse" in PROVIDERS and "greenhouse" in DEFAULT_SOURCES)
 
-# 14f. Israeli résumé conventions (3.4) + Hebrew/RTL rendering (3.3)
+# 14f. Israeli resume conventions (3.4) + Hebrew/RTL rendering (3.3)
 import io as _io  # noqa: E402
 import zipfile as _zipfile  # noqa: E402
 
@@ -4192,7 +4192,7 @@ check(
     and "15-25 INDIVIDUAL skills" in _prompts.TAILOR_SYSTEM,
 )
 # The budget must reach the model as concrete numbers — a vague "keep it short"
-# against a 20-project master résumé is exactly what produced 5 pages.
+# against a 20-project master resume is exactly what produced 5 pages.
 _budget_user = _prompts.tailor_user("{}", "{}", max_pages=2, source_pages=5, source_projects=21)
 check(
     "tailor_user states the real page/project numbers when the source is long",
@@ -4258,7 +4258,7 @@ from app.db.models import Application  # noqa: E402
 
 # Simulate a pre-existing DB whose applications table predates job_url/interviewed,
 # so init_db()'s ADD-COLUMN shim has real work to do (create_all won't touch it).
-# saved_resumes likewise predates `language` — and holds a HEBREW résumé the shim
+# saved_resumes likewise predates `language` — and holds a HEBREW resume the shim
 # will mis-stamp "en", so the lazy healing in routes has real work to do too.
 with engine.connect() as _conn:
     _conn.exec_driver_sql(
@@ -4478,7 +4478,7 @@ check(
     str(_statuses),
 )
 
-# 15b. Paired he/en master résumés: one row per detected language, upsert not
+# 15b. Paired he/en master resumes: one row per detected language, upsert not
 # duplicate, legacy rows healed to their real language on first read (PLAN 3.4)
 from app.api.routes import get_master_resume, list_master_resumes, save_master_resume  # noqa: E402
 from app.models import MasterResumeIn  # noqa: E402
@@ -4508,11 +4508,11 @@ check(
     str([(m.language, m.label) for m in _pair]),
 )
 
-# 15b-2. PLAN 15.3 (résumé builder): a ledger-less save derives the facts
-# ledger from the résumé itself — the user typed those facts, so the résumé IS
+# 15b-2. PLAN 15.3 (resume builder): a ledger-less save derives the facts
+# ledger from the resume itself — the user typed those facts, so the resume IS
 # the guard's source of truth and a built master never has an empty ledger.
 check(
-    "ledger-less master save derives the ledger from the résumé",
+    "ledger-less master save derives the ledger from the resume",
     _saved_en.ledger is not None
     and _saved_en.ledger.model_dump() == build_facts_ledger(resume).model_dump()
     and any(_saved_en.ledger.model_dump().values()),
@@ -4530,7 +4530,7 @@ check(
     _saved_explicit.ledger is not None
     and "Ledger-Pin Co" in _saved_explicit.ledger.employers,
 )
-# Restore the derived ledger so downstream master-résumé checks see clean state.
+# Restore the derived ledger so downstream master-resume checks see clean state.
 save_master_resume(MasterResumeIn(resume=resume, label="EN master v2"), db=_db, user=_admin_user)
 _he_master = get_master_resume(lang="he", db=_db, user=_admin_user)
 _en_master = get_master_resume(lang="en", db=_db, user=_admin_user)
@@ -4770,7 +4770,7 @@ check("alert re-run: nothing new (hits now in history)", _run2.new_count == 0, s
 
 # The saved customized SearchContext must be forwarded verbatim into the
 # search — the alerts-card Customize panel relies on this; a cleared context
-# must arrive as None ("derive from the résumé").
+# must arrive as None ("derive from the resume").
 _seen_ctx: list = []
 
 
@@ -5397,7 +5397,7 @@ _cov_div = [
 ]
 check(
     "scorer and resume_review read the SAME sections — two corpora, never two answers "
-    "about which parts of the résumé count",
+    "about which parts of the resume count",
     _cov_div == [],
     f"divergent: {_cov_div}",
 )
@@ -5418,7 +5418,7 @@ check(
     f"falsely covered: {_cov_fp}",
 )
 check(
-    "coverage: the terms the résumé really holds are still covered — the false-"
+    "coverage: the terms the resume really holds are still covered — the false-"
     "positive half, since a boundary is trivially satisfied by matching nothing",
     _cov_tp == [],
     f"wrongly missing: {_cov_tp}",
@@ -5591,7 +5591,7 @@ with TestClient(_fastapi_app) as _tc:
         f"{_ok_resp.status_code} {_ok_resp.text[:160]}",
     )
 
-# 18. Résumé templates (PLAN 6): every template × format × language renders,
+# 18. Resume templates (PLAN 6): every template × format × language renders,
 # stays ATS-safe (no tables/text-boxes/images/headers/footers in the DOCX
 # XML), and the content survives re-extraction — which is what an ATS
 # actually does. This is the executable proof behind "every template passes
@@ -5707,7 +5707,7 @@ check(
 )
 
 # 18a. A run taller than one frame must SPLIT, not raise. reportlab cannot place
-# a bare Flowable that does not implement split(), so before this a résumé with a
+# a bare Flowable that does not implement split(), so before this a resume with a
 # long summary (or one very long bullet) made POST /render raise LayoutError and
 # return a 500. It is a crash, not a layout nicety — pinned per template because
 # the page geometry that triggers it differs per template.
@@ -5786,8 +5786,8 @@ def _below_header(res, spec, rtl: bool) -> float:
     return (_band + 4.0) if _band else spec.margin_tb_pt
 
 
-# 18f. A dense résumé must not push main-column content into the rail. The
-# sidebar frame is 660pt and a 138-skill résumé's rail content measured 2,453pt;
+# 18f. A dense resume must not push main-column content into the rail. The
+# sidebar frame is 660pt and a 138-skill resume's rail content measured 2,453pt;
 # reportlab reacts to a full frame by advancing to the NEXT one -- the main
 # column -- so the overflow landed there and the FrameBreak then pushed the real
 # main content onto page 2, INTO page 2's side frame. Summary and Experience
@@ -5822,7 +5822,7 @@ for _tpl in (t for t, sp in TEMPLATES.items() if sp.layout == "sidebar"):
         _intruders = [(w["text"], round(w["x0"], 1)) for w in _p1.extract_words()
                       if w["text"] in _probe and w["top"] >= _cut and w["x0"] < _rail_right]
     check(
-        f"pdf[{_tpl}]: a dense résumé keeps main-column content OUT of the rail "
+        f"pdf[{_tpl}]: a dense resume keeps main-column content OUT of the rail "
         f"on page 1 (the sidebar demotes what will not fit instead of spilling)",
         # `_probe` is asserted non-empty: with every summary word filtered out
         # the scan would have nothing to look for and pass by never firing.
@@ -5843,7 +5843,7 @@ check(
 # timeline and 133 on compact (every list_cols>1 template, which is nine of the
 # eleven), and at 160 languages on minimal, 163 on executive and 169 on
 # timeline. Template-dependent, which is the worst shape this bug takes: the
-# same résumé rendered on `classic` and 500'd on `executive`, because chips route
+# same resume rendered on `classic` and 500'd on `executive`, because chips route
 # through `_Chips` and it already had one.
 #
 # The existing per-template split check (18a) could not see any of this — its
@@ -5944,7 +5944,7 @@ _LONG_TOKEN = "A" * 80
 _HE_LONG_SKILL = ("תכנון והפעלה של מערכות מבוזרות בקנה מידה גדול מאוד באזורים רבים "
                   "ובצוותים רבים ובאזורי זמן רבים בכל יום ויום")
 _HE_LONG_TOKEN = "א" * 80
-# The false-positive fixture: ordinary short skills, the shape 99% of résumés
+# The false-positive fixture: ordinary short skills, the shape 99% of resumes
 # have. Nothing here may move.
 _NORMAL_SKILLS = ["Python", "SQL", "Go", "Machine Learning", "Distributed Systems", "CI/CD"]
 
@@ -5985,7 +5985,7 @@ for _tpl, _sp in TEMPLATES.items():
                                        round(_widest_row, 2), round(_widest_line, 2)))
         # THE FALSE-POSITIVE HALF, in the same check on purpose: "make the long
         # skill fit" is trivially satisfied by wrapping EVERY chip, which would
-        # re-lay-out every résumé that never had a problem. A normal skills list
+        # re-lay-out every resume that never had a problem. A normal skills list
         # must still pack exactly what it packed before -- one line per chip,
         # every row exactly `chip_h`, every box `_adv(label) + 2*pad` wide, and
         # `wrap()` returning the pre-fix `n*(chip_h+gap) - gap`. Measured
@@ -6074,7 +6074,7 @@ for _tpl, _sp in TEMPLATES.items():
         _esc_seen.append((_tpl, _rtl))
         if _s1 or _e1:
             _esc_long.append((_tpl, _rtl, _s1[:2], _e1[:2]))
-    # The clean control: an ordinary résumé must be clean too, or the check is
+    # The clean control: an ordinary resume must be clean too, or the check is
     # passing because extraction broke rather than because the chip stayed home.
     for _base, _rtl in ((resume, False), (_he_full, True)):
         _s2, _e2 = _chip_escapes(_base, _tpl, _rtl)
@@ -6305,7 +6305,7 @@ check(
 # Interleaving is CONTENT-dependent, not automatic: it only happens where the
 # sidebar still has content at the same height as a main-column entry. The
 # shared `resume` fixture has a short sidebar and produces none, which is a real
-# and useful fact — so the true-positive case gets a résumé built to trigger it
+# and useful fact — so the true-positive case gets a resume built to trigger it
 # (a full sidebar running down beside three roles).
 _xr_deep = ResumeModel(
     contact=Contact(name="Column Collider", email="cc@example.com", phone="+972 50-000-0000",
@@ -6349,7 +6349,7 @@ check(
     and _xrd.polluted == 0 and _xrd.missing == 0,
     f"fallback={_xrd.docx_fallback} polluted={_xrd.polluted} missing={_xrd.missing}",
 )
-# The old pin here was `clean > 0` in both formats. A Hebrew résumé carries two
+# The old pin here was `clean > 0` in both formats. A Hebrew resume carries two
 # Latin facts (email, phone), so it passed while the OTHER 14 read `missing` —
 # a check that passed by never firing, on the honesty feature, in the primary
 # market. PDF extraction returns VISUAL (bidi-reordered) text while a fact from
@@ -6540,7 +6540,7 @@ _tf = ResumeModel(
                            start_date="2016", end_date="Present",
                            bullets=["Ran the platform team.", "Shipped the payments migration."])],
     projects=[Project(name="Ziko", bullets=["Built the dispatch service."],
-                      # Every word here is unique in this résumé on purpose: the
+                      # Every word here is unique in this resume on purpose: the
                       # rail check below locates the description POSITIONALLY by
                       # its words, and a token that also appears in the summary
                       # would be looked for in a section that has no rail.
@@ -7301,7 +7301,7 @@ try:
 
     # …and they really are drawn. Without this the check above would also pass
     # for icons that silently render nothing at all. Measured on a contact-only
-    # résumé so the count is unambiguous: no chips, no heading rules, no bullets
+    # resume so the count is unambiguous: no chips, no heading rules, no bullets
     # — every curve and line on that page is an icon.
     def _vectors(b: bytes) -> int:
         with _pdfplumber.open(_io.BytesIO(b)) as pdf:
@@ -7347,7 +7347,7 @@ check(
 _hl_he = _he_full.model_copy(deep=True)
 _hl_he.headline = "מהנדס תוכנה"
 check(
-    "headline renders right-to-left in a hebrew résumé",
+    "headline renders right-to-left in a hebrew resume",
     _get_display(_hl_he.headline, base_dir="R") in _pdf_text(render_pdf(_hl_he)),
 )
 
@@ -7389,7 +7389,7 @@ from app.core.skills import skill_blocks as _skill_blocks  # noqa: E402
 from app.models import SkillGroup as _SkillGroup  # noqa: E402
 
 # THE INVARIANT: `skills` stays the flat surface everything SCORES — the scorer's
-# keyword coverage, the ATS scan, the x-ray and résumé health all read it and
+# keyword coverage, the ATS scan, the x-ray and resume health all read it and
 # none of them knows groups exist. So a payload that carries only the grouping
 # must still come out with a full flat list.
 _sg_only = ResumeModel(skill_groups=[
@@ -7468,7 +7468,7 @@ from app.core.skills import normalize_skills as _norm_skills  # noqa: E402
 # The last four are the BRACKET case, and it was a live defect rather than a
 # hypothetical: a comma inside `()` is not a separator, and splitting on it wrote
 # `Cloud (AWS` and `GCP)` — two fragments the user never typed, with unbalanced
-# delimiters — into the master résumé and the downloaded PDF, at the one door
+# delimiters — into the master resume and the downloaded PDF, at the one door
 # that parses the user's own CV. The apostrophe entry is the guard on the guard:
 # `'` may NOT be read as a quote delimiter, or `Bachelor's` opens a run that
 # never closes and swallows every separator after it in the same entry.
@@ -7539,12 +7539,12 @@ check(
 # SOURCE-PINNED, because behaviour alone cannot tell the two placements apart —
 # a splitting `model_validator` produces split skills too. The whole risk here is
 # someone tidying the normaliser into `ResumeModel`, where it would run on every
-# CONSTRUCTION, i.e. every READ of every stored master, tracker résumé, saved kit
+# CONSTRUCTION, i.e. every READ of every stored master, tracker resume, saved kit
 # and version snapshot: rewriting all of them without any of them being a write,
 # bypassing `resume_versions.snapshot` (which only fires on a write) and breaking
 # its byte-identical dedupe, so the first save after deploy burns one of 20 undo
 # slots on a no-op. Same shape as the 22.10 /tools/ats-scan source pin. The
-# behavioural twin — a stored résumé PUT and read back verbatim — is in section
+# behavioural twin — a stored resume PUT and read back verbatim — is in section
 # 27, and it is what catches an inline COPY of the splitter that this grep would
 # not see.
 import inspect as _ns_inspect  # noqa: E402
@@ -7659,7 +7659,7 @@ for _gt in ("classic", "executive"):
 # file, re-reads it with our own parser and reports every protected fact.
 _gx = xray(_grouped, "classic", "pdf")
 check(
-    "x-ray: a grouped résumé still recovers every skill from the rendered PDF — "
+    "x-ray: a grouped resume still recovers every skill from the rendered PDF — "
     "the grouping changed the presentation, not the content",
     not [f for f in _gx.facts if f.kind == "skill" and f.status == "missing"],
     str([f.value for f in _gx.facts if f.kind == "skill" and f.status == "missing"]),
@@ -7677,7 +7677,7 @@ _trim_src = ResumeModel(skill_groups=[
 _trimmed = _dus(_trim_src, _SgJD(hard_skills=["Python"], keywords=["Python"]))
 check(
     "length budget: dropping a skill drops it from its GROUP too, so it does not "
-    "come back when the résumé round-trips through JSON",
+    "come back when the resume round-trips through JSON",
     _trimmed is not None
     and "COBOL on a mainframe" not in _trimmed.skills
     and "COBOL on a mainframe" not in ResumeModel.model_validate(_trimmed.model_dump()).skills,
@@ -7710,7 +7710,7 @@ check(
     resume.skill_groups == [] and structure_resume("Jane Roe\nEngineer").skill_groups == [],
 )
 
-# One page is the convention this product ships for. A résumé that overflows by
+# One page is the convention this product ships for. A resume that overflows by
 # a few lines is compressed until it fits; one that is genuinely long is left to
 # break naturally rather than squeezed into illegibility.
 from app.render.pdf_renderer import fit_squeeze  # noqa: E402
@@ -7724,7 +7724,7 @@ def _pdf_pages(b: bytes) -> int:
         return len(pdf.pages)
 
 
-# Grow the résumé a bullet at a time until it is the first size that no longer
+# Grow the resume a bullet at a time until it is the first size that no longer
 # fits — the near-miss the squeeze exists for. Self-calibrating, so changing the
 # fixture above cannot silently turn this check into a no-op.
 _long = resume.model_copy(deep=True)
@@ -7732,18 +7732,18 @@ while fit_squeeze(_long, _fit_spec, rtl=False) == 1.0 and len(_long.experience[0
     _long.experience[0].bullets.append("Shipped an internal tool the whole team now uses daily.")
 _long_squeeze = fit_squeeze(_long, _fit_spec, rtl=False)
 check(
-    "fit: a résumé that overflows slightly is squeezed onto one page",
+    "fit: a resume that overflows slightly is squeezed onto one page",
     _long_squeeze < 1.0 and _pdf_pages(render_pdf(_long)) == 1,
     f"squeeze={_long_squeeze:.3f} bullets={len(_long.experience[0].bullets)}",
 )
 _huge = resume.model_copy(deep=True)
 _huge.experience = [resume.experience[0].model_copy(deep=True) for _ in range(25)]
 check(
-    "fit: a genuinely long résumé is left at full size and flows onto more pages",
+    "fit: a genuinely long resume is left at full size and flows onto more pages",
     fit_squeeze(_huge, _fit_spec, rtl=False) == 1.0 and _pdf_pages(render_pdf(_huge)) > 1,
 )
 check(
-    "fit: a short résumé is never stretched",
+    "fit: a short resume is never stretched",
     fit_squeeze(resume, _fit_spec, rtl=False) == 1.0,
 )
 
@@ -7857,7 +7857,7 @@ with TestClient(_fastapi_app) as _tc:
 
     # Isolation: admin has masters/applications/history from section 15;
     # the friend must see none of it.
-    check("friend sees no master résumé", _tc.get("/profile/resume", headers=_FRIEND_H).json() is None)
+    check("friend sees no master resume", _tc.get("/profile/resume", headers=_FRIEND_H).json() is None)
     check("friend tracker is empty", _tc.get("/applications", headers=_FRIEND_H).json() == [])
     check("friend history is empty", _tc.get("/jobs/history", headers=_FRIEND_H).json()["hits"] == [])
     _admin_apps = _tc.get("/applications", headers=_ADMIN_H).json()
@@ -7866,7 +7866,7 @@ with TestClient(_fastapi_app) as _tc:
     # Friend writes their own data; the admin's view is unchanged.
     _resume_json = resume.model_dump()
     check(
-        "friend saves their own master résumé",
+        "friend saves their own master resume",
         _tc.put(
             "/profile/resume", json={"resume": _resume_json, "label": "Noa CV"}, headers=_FRIEND_H
         ).status_code == 200,
@@ -7891,7 +7891,7 @@ with TestClient(_fastapi_app) as _tc:
     )
 
     # "Save for later" from a search result: the shape the Jobs card posts. It
-    # has no tailored résumé and no cover letter BY DEFINITION — that is what
+    # has no tailored resume and no cover letter BY DEFINITION — that is what
     # saving a job you have not acted on yet means — and it must land as
     # `saved`, the one status `hideApplied` deliberately does not hide. The
     # frontend wrapper used to type both as required, over-constraining the
@@ -7906,7 +7906,7 @@ with TestClient(_fastapi_app) as _tc:
         headers=_ADMIN_H,
     )
     check(
-        "save for later: a job saves with no tailored résumé and defaults to 'saved'",
+        "save for later: a job saves with no tailored resume and defaults to 'saved'",
         _saved_row.status_code == 200
         and _saved_row.json()["status"] == "saved"
         and _saved_row.json()["job_url"] == "https://later.test/job-1",
@@ -7921,7 +7921,7 @@ with TestClient(_fastapi_app) as _tc:
     )
 
     # Outcome feedback loop (PLAN 17.3): the tracker records WHAT WAS SENT, so
-    # the analytics can attribute replies to a résumé instead of guessing. The
+    # the analytics can attribute replies to a resume instead of guessing. The
     # unknown case is the one that matters — an old row must stay unknown, not
     # become "guard-clean with a voice score of zero".
     _sent = _tc.post(
@@ -8036,7 +8036,7 @@ with TestClient(_fastapi_app) as _tc:
     # Delete-my-data (PLAN 7.5): friend leaves cleanly, admin data untouched.
     _del = _tc.request("DELETE", "/profile/data", headers=_FRIEND_H)
     check(
-        "delete-my-data wipes the friend's rows (résumé, app, usage, feedback)",
+        "delete-my-data wipes the friend's rows (resume, app, usage, feedback)",
         _del.status_code == 200
         and _del.json()["resumes"] == 1
         and _del.json()["applications"] == 1
@@ -8152,7 +8152,7 @@ with TestClient(_fastapi_app) as _tc:
     )
 
 # 19b. Per-user alerts (PLAN 7.3): the cron loop runs every enabled user's
-# alert against their OWN master résumé and history.
+# alert against their OWN master resume and history.
 from app.core.alerts import run_all_alerts  # noqa: E402
 from app.db.models import SavedResume as _SR  # noqa: E402
 from app.db.users import mint_user  # noqa: E402
@@ -8655,8 +8655,8 @@ finally:
     _PROV.pop("fake_stale", None)
 
 # 21b. Two-tier score cache (PLAN 12.4): a fresh history row scored against
-# the SAME résumé rebuilds the match with ZERO LLM calls and ZERO fetches
-# (tier 1); a fresh row for a DIFFERENT résumé still spares the description
+# the SAME resume rebuilds the match with ZERO LLM calls and ZERO fetches
+# (tier 1); a fresh row for a DIFFERENT resume still spares the description
 # fetch but rescores with exactly one LLM call (tier 2); a stale (>TTL) row is
 # ignored entirely (full path). resume_hash round-trips through the DB.
 from datetime import datetime as _c_dt, timedelta as _c_td, timezone as _c_tz  # noqa: E402
@@ -8668,7 +8668,7 @@ from app.llm.client import get_llm_client as _get_llm  # noqa: E402
 _C_URL = "https://fake.cache/1"
 _c_hash = _resume_hash(resume)
 check(
-    "resume_hash is a stable sha256 hex of the résumé",
+    "resume_hash is a stable sha256 hex of the resume",
     len(_c_hash) == 64 and _c_hash == _resume_hash(resume) and _c_hash != _resume_hash(_he_resume),
     _c_hash[:16],
 )
@@ -8727,7 +8727,7 @@ try:
     check("rows without jd_text never enter the cache", "https://bulk/104" not in _c_cache)
     _c_other = _load_cache(_cache_db, _admin_id, "some-other-resume-hash")
     check(
-        "different résumé hash → text-reuse entry, not a full match",
+        "different resume hash → text-reuse entry, not a full match",
         _C_URL in _c_other and _c_other[_C_URL].is_full_match is False,
     )
 
@@ -8736,7 +8736,7 @@ try:
     _c_ctx = _AlertCtx(job_title="Python", sources=["fake_cache"], max_age_days=0)
     _c_stub.complete_json = _c_counting_cjson
 
-    # Tier 1: same résumé → zero LLM, zero fetch; scores come from the row;
+    # Tier 1: same resume → zero LLM, zero fetch; scores come from the row;
     # the fresh card's title/posted_at win; company/logo fall back to the row.
     _c_events: list[dict] = []
     _t1 = _fan_search(resume, _c_ctx, progress=_c_events.append, cache=_c_cache)
@@ -8767,7 +8767,7 @@ try:
         str(_c_events)[:200],
     )
 
-    # Tier 2: different résumé hash → jd_text reused (no fetch), ONE LLM call.
+    # Tier 2: different resume hash → jd_text reused (no fetch), ONE LLM call.
     _c_llm_tasks.clear()
     _t2 = _fan_search(resume, _c_ctx, cache=_c_other)
     check(
@@ -9101,7 +9101,7 @@ finally:
 # NO `user_id`, AND THAT IS THE ONE PRIVACY DECISION IN PHASE 28. A row here is
 # metadata a BOARD published — which board, the title+company fingerprint, when
 # we first and last saw it, its URLs, a count. Nothing in it is derived from a
-# résumé or from anything the user typed, and several users searching the same
+# resume or from anything the user typed, and several users searching the same
 # market legitimately SHARE one row. So it must stay out of `_wipe_user_rows`,
 # which deletes `WHERE model.user_id == user.id`: wiping this table on any other
 # key would destroy market memory OTHER users' searches wrote while saying
@@ -9475,7 +9475,7 @@ with TestClient(_fastapi_app) as _tc:
     )
     _kd = _tc.get(f"/kits/{_p1['kit']['id']}", headers=_KIM_H).json()
     check(
-        "kit detail carries the full review payload (jd, base résumé, TailorResult)",
+        "kit detail carries the full review payload (jd, base resume, TailorResult)",
         _kd["jd"] is not None
         and _kd["base_resume"] is not None
         and _kd["result"] is not None
@@ -9498,7 +9498,7 @@ with TestClient(_fastapi_app) as _tc:
     )
 
     # Review (PLAN 8.2): approve lands in the tracker as ready-to-send with the
-    # reviewer's effective résumé; reject records why. Kim's kit 2 is "done".
+    # reviewer's effective resume; reject records why. Kim's kit 2 is "done".
     _kit2 = _p2["kit"]
     check(
         "approving someone else's kit 404s",
@@ -9520,7 +9520,7 @@ with TestClient(_fastapi_app) as _tc:
     )
     _kit_app = _tc.get(f"/applications/{_apr.json()['application_id']}", headers=_KIM_H).json()
     check(
-        "approved application: ready-to-send with effective résumé + cover letter",
+        "approved application: ready-to-send with effective resume + cover letter",
         _kit_app["status"] == "saved"
         and _kit_app["company"] == "KitCo"
         and _kit_app["cover_letter"] == "Dear KitCo"
@@ -9574,16 +9574,16 @@ with TestClient(_fastapi_app) as _tc:
         _tc.post(f"/kits/{_admin_kit['id']}/approve", json={}, headers=_ADMIN_H).status_code == 400,
     )
 
-    # No master résumé → the kit fails with a clear error, the loop keeps 200ing.
+    # No master resume → the kit fails with a clear error, the loop keeps 200ing.
     _noam = _tc.post("/admin/users", json={"name": "Noam"}, headers=_ADMIN_H).json()
     _NOAM_H = {"X-App-Key": _noam["invite_code"]}
     _tc.post("/kits/batch", json={"jobs": [_kit_job(9)]}, headers=_NOAM_H)
     _np = _tc.post("/kits/process-next", headers=_NOAM_H).json()
     check(
-        "kit without a master résumé fails softly (status=failed, loop continues)",
+        "kit without a master resume fails softly (status=failed, loop continues)",
         _np["kit"] is not None
         and _np["kit"]["status"] == "failed"
-        and "master résumé" in _np["kit"]["error"]
+        and "master resume" in _np["kit"]["error"]
         and _np["remaining"] == 0,
         str(_np)[:200],
     )
@@ -10052,7 +10052,7 @@ check(
     any(i.category == "keyword_stuffing" and i.value.lower() == "python" for i in _s_report.issues),
     str([(i.category, i.value) for i in _s_report.issues]),
 )
-# ...but naming a technology once per project is how a real CV reads. A résumé
+# ...but naming a technology once per project is how a real CV reads. A resume
 # with eight projects, each carrying its own tech-stack line, says "Python"
 # eight times without stuffing anything — flagging that sent the humanizer off
 # to delete real technologies from real projects.
@@ -10134,7 +10134,7 @@ check(
 )
 
 # ---------------------------------------------------------------------------
-# 18. Page budget: a master résumé must not tailor into a 5-pager.
+# 18. Page budget: a master resume must not tailor into a 5-pager.
 # ---------------------------------------------------------------------------
 from app.core.cv_planner import plan_cv as _plan_cv_b  # noqa: E402
 from app.core.length_budget import (  # noqa: E402
@@ -10165,7 +10165,7 @@ _BLURB = (
 
 
 def _master_resume(n_projects: int = 20):
-    """A master-CV-shaped résumé: every role kept, dozens of projects."""
+    """A master-CV-shaped resume: every role kept, dozens of projects."""
     return _Resume_b(
         contact=_Contact_b(name="Master Candidate", email="master@example.com", phone="+972-5-0000000"),
         headline="AI Automation Engineer",
@@ -10194,7 +10194,7 @@ def _master_resume(n_projects: int = 20):
 
 _big = _master_resume()
 _big_pages = page_count(_big)
-check("master-shaped résumé really is long", _big_pages >= 4, f"{_big_pages} pages")
+check("master-shaped resume really is long", _big_pages >= 4, f"{_big_pages} pages")
 
 _jd_b = _JDModel_b(
     job_title="Backend Engineer",
@@ -10203,7 +10203,7 @@ _jd_b = _JDModel_b(
 )
 _fit, _rep = fit_to_pages(_big, _jd_b, plan=None, max_pages=2, hard_max_pages=3)
 _fit_pages = page_count(_fit)
-check("length budget brings a master résumé inside the hard limit", _fit_pages <= 3,
+check("length budget brings a master resume inside the hard limit", _fit_pages <= 3,
       f"{_big_pages} -> {_fit_pages} pages")
 check("length budget hits the 2-page target here", _fit_pages <= 2, f"{_fit_pages} pages")
 check("length report records the trim", _rep.trimmed and _rep.pages_after == _fit_pages)
@@ -10260,7 +10260,7 @@ _real_ledger = _build_ledger(_real)
 _promoted = _real.model_copy(deep=True)
 _promoted.experience.append(
     _Experience_b(company="JobFinder AI", title="Founder", start_date="2026",
-                  end_date="Present", bullets=["Shipped a résumé tailoring app."])
+                  end_date="Present", bullets=["Shipped a resume tailoring app."])
 )
 _cleaned, _removed = _drop_roles(_promoted, _real_ledger)
 check(
@@ -10287,7 +10287,7 @@ check(
 
 # A long project description must WRAP, not run off the page and get clipped.
 # It used to ride in the single-line "Company · Location" meta slot, so a master
-# résumé's prose descriptions were silently cut at the right margin.
+# resume's prose descriptions were silently cut at the right margin.
 import io as _io_b  # noqa: E402
 
 import pdfplumber as _pdfplumber_b  # noqa: E402
@@ -10311,7 +10311,7 @@ check(
     _wrap_text[-90:],
 )
 
-# The master résumé is an inventory and may grow without limit — only the
+# The master resume is an inventory and may grow without limit — only the
 # TAILORED output is capped. Dropping one project at a time cost one render per
 # drop and blew the measurement budget: a 126-project master shipped 7 pages,
 # silently over the hard limit. The binary search has to hold at any size.
@@ -10331,7 +10331,7 @@ for _n_proj in (60, 150):
         and len(_huge_fit.languages) == len(_huge.languages),
     )
 # When it genuinely cannot fit, it must SAY so rather than return a quiet
-# over-length résumé.
+# over-length resume.
 _unfittable = _master_resume(n_projects=1)
 _unfittable.experience = [
     _Experience_b(company=f"Company {i}", title="Engineer", start_date="2010",
@@ -10340,7 +10340,7 @@ _unfittable.experience = [
 ]
 _uf_fit, _uf_rep = fit_to_pages(_unfittable, _jd_b, max_pages=2, hard_max_pages=3)
 check(
-    "an impossible résumé reports the overflow instead of hiding it",
+    "an impossible resume reports the overflow instead of hiding it",
     page_count(_uf_fit) <= 3 or any("could not get below" in n for n in _uf_rep.notes),
     f"{page_count(_uf_fit)} pages, notes={_uf_rep.notes}",
 )
@@ -10412,11 +10412,11 @@ check(
     and "THE MORE YOU KEEP, THE SHORTER EACH MUST BE" in _prompts.TAILOR_SYSTEM,
 )
 
-# A résumé already inside the budget is returned untouched.
+# A resume already inside the budget is returned untouched.
 _small = _master_resume(n_projects=2)
 _small.skills = _small.skills[:2]
 _small_fit, _small_rep = fit_to_pages(_small, _jd_b, max_pages=3, hard_max_pages=3)
-check("short résumé passes through untouched",
+check("short resume passes through untouched",
       not _small_rep.trimmed and len(_small_fit.projects) == len(_small.projects))
 
 # The stub planner echoes real project names into the select/drop split.
@@ -10429,7 +10429,7 @@ check("stub PLAN_CV splits real project names into select/drop",
 # End to end through the real pipeline.
 _e2e = _tailor_b(_master_resume(12), _jd_b)
 check("tailor result carries a length report", _e2e.length_report is not None)
-check("tailored résumé is within the hard page limit",
+check("tailored resume is within the hard page limit",
       page_count(_e2e.tailored_resume) <= 3, f"{page_count(_e2e.tailored_resume)} pages")
 
 # ---------------------------------------------------------------------------
@@ -10495,7 +10495,7 @@ check(
     f"{_kg_res.score_before.keyword_coverage} -> {_kg_res.score_after.keyword_coverage}",
 )
 # ...and REPORTED, pinned separately so deleting the changelog write goes red on
-# its own rather than hiding behind the résumé mutation.
+# its own rather than hiding behind the resume mutation.
 _kg_put_back = [c for c in _kg_res.changelog if c.section == "skills" and "Put back" in c.change]
 check(
     "the restore says what it did, in the changelog",
@@ -10562,7 +10562,7 @@ _kg_clean_t = _kg_orig.model_copy(deep=True)
 _kg_clean_t.skills = ["Python", "Kubernetes", "Terraform"]
 _kg_out, _kg_r, _kg_k = _preserve(_kg_orig, _kg_clean_t, _kg_jd)
 check(
-    "an unharmed tailored résumé is returned untouched — the SAME object, no copy",
+    "an unharmed tailored resume is returned untouched — the SAME object, no copy",
     _kg_out is _kg_clean_t and _kg_r == [] and _kg_k == [],
     f"same={_kg_out is _kg_clean_t} restored={_kg_r} kept={_kg_k}",
 )
@@ -10621,7 +10621,7 @@ check(
 )
 
 # PROSE CLASS IS REPORTED, NEVER REPAIRED. Re-inserting a sentence into a
-# rewritten résumé either duplicates a claim or grafts a token into the model's
+# rewritten resume either duplicates a claim or grafts a token into the model's
 # own prose — new writing the fabrication guard structurally cannot see.
 _kg_prose_o = _Resume_b(
     contact=_Contact_b(name="Prose", email="p@example.com"),
@@ -10784,7 +10784,7 @@ _kg_he_fp_out, _kg_he_fp_r, _ = _preserve(
     _JDModel_b(language="he", hard_skills=["קוברנטיס"], keywords=["פייתון"]),
 )
 check(
-    "a Hebrew term the résumé never claimed is never written in",
+    "a Hebrew term the resume never claimed is never written in",
     _kg_he_fp_r == ["פייתון"]
     and "קוברנטיס" not in _kg_resume_text(_kg_he_fp_out),
     f"restored={_kg_he_fp_r} skills={_kg_he_fp_out.skills}",
@@ -10889,7 +10889,7 @@ try:
 finally:
     _kg_stub.complete_json = _kg_orig_cjson
 check(
-    "the returned voice report describes the RESTORED résumé, and still records the "
+    "the returned voice report describes the RESTORED resume, and still records the "
     "humanizer revision that produced it",
     "Cutting-edge Kubernetes tooling" in _kg_voice_res.tailored_resume.skills
     and any(i.category == "banned_phrase" and "utting-edge" in i.value
@@ -10987,7 +10987,7 @@ check(
 # a branch nothing else reaches: `if page_count(...) > max(pages_after, max_pages)`.
 # The default stub tailor is a one-pager, so a fixture built on it would never
 # enter that branch and would pass by never firing — the 21.7 failure mode. TAILOR
-# is therefore canned with a 2-page résumé whose restore genuinely spills onto a
+# is therefore canned with a 2-page resume whose restore genuinely spills onto a
 # third page, and THAT is asserted first: a render change that stops the fixture
 # crossing the boundary must go red as "stale fixture", never quietly green.
 # THE PAGE-BUDGET FIXTURES BELOW NAME THEIR TEMPLATE, and that is deliberate.
@@ -11017,7 +11017,7 @@ _kg_e2e_blurb = (
 _kg_e2e_kw = [f"Zephyr{i} orchestration, telemetry and capacity planning tooling" for i in range(25)]
 # The LAST bullet carries a term that lives nowhere else, and the refit is what
 # trims it — which is the whole reason the report is recomputed AFTER the refit
-# rather than before. Judged on the pre-refit résumé this keyword was present, so
+# rather than before. Judged on the pre-refit resume this keyword was present, so
 # a single-pass report would say nothing about a loss that shipped.
 _kg_e2e_master = _Resume_b(
     contact=_Contact_b(name="Refit", email="refit@example.com"),
@@ -11060,12 +11060,12 @@ check(
     > page_count(_kg_e2e_pre, template=_KG_TPL)                  # fixture still bites
     and all(k in _kg_e2e_final.skills for k in _kg_e2e_kw)       # the refit undid nothing
     # The promise the pipeline already made about size is the one it has to keep.
-    # `<= hard_max` would pass on a résumé that quietly grew a page, which is the
+    # `<= hard_max` would pass on a resume that quietly grew a page, which is the
     # whole thing the refit exists to prevent.
     and page_count(_kg_e2e_final, template=_KG_TPL) <= _kg_e2e_budget
     and _kg_e2e_res.length_report.pages_after == page_count(_kg_e2e_final, template=_KG_TPL)
     and _kg_e2e_res.length_report.pages_before == page_count(_kg_e2e_pre, template=_KG_TPL)
-    # CONVERGENCE: a second pass over the shipped résumé finds no SKILL-class
+    # CONVERGENCE: a second pass over the shipped resume finds no SKILL-class
     # loss, i.e. the refit undid none of the restore. (Its prose-class finding is
     # the deliberate "Quicksilver" trim below; the pure form — both lists empty —
     # is pinned on the component-level fixture above.)
@@ -11093,7 +11093,7 @@ check(
 # shipped missing, unrepaired AND unreported — in the one code path this module
 # creates. `preserve_keywords` answers with the losses IT COULD NOT REPAIR, in a
 # copy it then discards, on a fresh `MAX_RESTORED` budget. Point it at the
-# résumé that SHIPPED and it says "nothing was lost" about a keyword the refit
+# resume that SHIPPED and it says "nothing was lost" about a keyword the refit
 # has just deleted: it restores it into the copy, files it under `restored`, and
 # throws the copy away. Meanwhile the caller's own `restored` list was computed
 # BEFORE the refit and still reads "Put back: X". Neither list names it.
@@ -11162,7 +11162,7 @@ _kg_ns_before = _Resume_b(contact=_Contact_b(name="No Skills", email="ns@example
 _kg_ns_after = _kg_ns_before.model_copy(deep=True)
 _kg_ns_after.experience[0].bullets = ["Ran the data path."]
 check(
-    "lost_keywords measures a résumé with an empty skills list — 'nothing to repair "
+    "lost_keywords measures a resume with an empty skills list — 'nothing to repair "
     "from' is not 'nothing was lost'",
     _kg_ns_before.skills == []
     and _lost_keywords(_kg_ns_before, _kg_ns_after,
@@ -11176,7 +11176,7 @@ check(
 # everything trimmable can be at its floor and the skills trim is forbidden from
 # touching a restored entry — so the guard hands entries back itself, LONGEST
 # first, and stops the moment the budget holds rather than giving everything up.
-# The identity half is the false-positive pin: a résumé that already fits is
+# The identity half is the false-positive pin: a resume that already fits is
 # returned as the SAME object, so nothing is ever traded for nothing.
 _kg_shed_src = _Resume_b(
     contact=_Contact_b(name="Shed", email="sh@example.com"),
@@ -11191,7 +11191,7 @@ _kg_shed_same, _kg_shed_nothing = _shed_restored(
 )
 check(
     "the back-off gives restored entries back longest-first, stops as soon as it fits, "
-    "and touches nothing at all when the résumé already fits",
+    "and touches nothing at all when the resume already fits",
     _kg_shed_out.skills == ["Python", "Short one"]
     and _kg_shed_gone == ["A very long restored entry indeed"]
     and _kg_shed_same is _kg_shed_src and _kg_shed_nothing == [],
@@ -11264,7 +11264,7 @@ check(
     f"kept {len(_kg_bo_kept)}/{len(_kg_e2e_kw)}, refit notes={_kg_bo_refit_rep.notes}",
 )
 check(
-    "...and the changelog describes THAT résumé: every entry it says it put back is on "
+    "...and the changelog describes THAT resume: every entry it says it put back is on "
     "the CV, every entry given back is reported as not carried over, and the budget's "
     "'could not get below' note is retracted because it stopped being true",
     # NAMED ⟺ SHIPPED, both directions, entry by entry. Splitting the sentence on
@@ -11442,7 +11442,7 @@ check(
 )
 
 # DETERMINISM, SOURCE-PINNED — the 22.10 / geo shape. Behaviour alone cannot pin
-# this: an LLM-backed restorer returns a résumé and two lists exactly like this
+# this: an LLM-backed restorer returns a resume and two lists exactly like this
 # one, passes every check above, and puts a temperature=0.3 sample in charge of
 # what the CV says. The length floor makes an unreadable module go red instead
 # of passing by never firing.
@@ -11509,7 +11509,7 @@ check(
 # `keyword_guard` could go wrong is a way this can: reaching the model would put
 # an LLM in charge of which skills ship, and carrying its own matcher would make
 # it disagree with the guard about the same entry while both run on the same
-# résumé, one line apart.
+# resume, one line apart.
 import app.core.skills_shortlist as _ss_mod  # noqa: E402
 
 _SS_SRC = _kg_inspect.getsource(_ss_mod)
@@ -11599,7 +11599,7 @@ check(
 # ONE CALL SITE, inside `tailor_resume`. Not `routes.py` ("thin FastAPI
 # handlers... No business logic here"), not `kits.py` (which reaches the same
 # function through `tailor_fn`). A second site would classify on a DIFFERENT gate
-# and contradict this one about the same résumé — the geo-restriction correction,
+# and contradict this one about the same resume — the geo-restriction correction,
 # which CLAUDE.md records as the one that mattered most.
 #
 # The importer set is COMPUTED by walking every module the app ships rather than
@@ -11845,7 +11845,7 @@ with TestClient(_fastapi_app) as _tc:
     )
     _size_detail = _size_resp.json().get("detail")
     check(
-        "an oversize résumé is a 413 with a structured detail, not an 'LLM error' 502",
+        "an oversize resume is a 413 with a structured detail, not an 'LLM error' 502",
         _size_resp.status_code == 413
         and isinstance(_size_detail, dict)
         and _size_detail.get("code") == "input_too_large"
@@ -11857,7 +11857,7 @@ with TestClient(_fastapi_app) as _tc:
         "/jd/analyze", json={"jd_text": "x" * (40 * 1024)}, headers=_ADMIN_H
     )
     check(
-        "an oversize pasted JD is a 413 naming the JD, not the résumé",
+        "an oversize pasted JD is a 413 naming the JD, not the resume",
         _jd_resp.status_code == 413
         and (_jd_resp.json().get("detail") or {}).get("kind") == "jd",
         f"{_jd_resp.status_code} {_jd_resp.json().get('detail')}",
@@ -12004,7 +12004,7 @@ with TestClient(_fastapi_app) as _tc:
                  headers=_CAP_H).status_code == 422,
     )
     check(
-        "review accepts a null jd — the master-résumé case, where the JD-gated check is "
+        "review accepts a null jd — the master-resume case, where the JD-gated check is "
         "SKIPPED rather than passed",
         (lambda r: r.status_code == 200 and "skills-unasked" in r.json()["skipped"])(
             _tc.post("/tools/review", json={"resume": _resume_json, "jd": None}, headers=_CAP_H)
@@ -12181,7 +12181,7 @@ with TestClient(_fastapi_app) as _tc:
     )
 
 # ---------------------------------------------------------------------------
-# 27. Master résumé version history (PLAN 20.8 / N1): PUT /profile/resume
+# 27. Master resume version history (PLAN 20.8 / N1): PUT /profile/resume
 # overwrites in place, so these are the undo.
 # ---------------------------------------------------------------------------
 from app.db.resume_versions import MAX_VERSIONS as _MAX_VERSIONS  # noqa: E402
@@ -12217,7 +12217,7 @@ with TestClient(_fastapi_app) as _tc:
     )
 
     # Restore must bring back the old content AND keep the current one reachable,
-    # so a mis-click in the picker can't be what loses the résumé.
+    # so a mis-click in the picker can't be what loses the resume.
     _restore = _tc.post(f"/profile/resume/versions/{_v[0]['id']}/restore", headers=_VH)
     check(
         "restore makes the old content current again",
@@ -12256,7 +12256,7 @@ with TestClient(_fastapi_app) as _tc:
         == "מהנדסת תוכנה",
     )
 
-    # Another user's version is invisible AND unrestorable — it holds a full résumé.
+    # Another user's version is invisible AND unrestorable — it holds a full resume.
     _other = _tc.post("/admin/users", json={"name": "Other"}, headers=_ADMIN_H).json()
     _OH = {"X-App-Key": _other["invite_code"]}
     _victim_id = _v[0]["id"]
@@ -12282,7 +12282,7 @@ with TestClient(_fastapi_app) as _tc:
         str([x["headline"] for x in _en_versions[:3]]),
     )
 
-    # Privacy: these rows hold full past résumés, so the wipe must take them.
+    # Privacy: these rows hold full past resumes, so the wipe must take them.
     _wiped = _tc.delete("/profile/data", headers=_VH)
     check(
         "delete-my-data wipes version history too",
@@ -12310,7 +12310,7 @@ with TestClient(_fastapi_app) as _tc:
     _ns_back = _tc.get("/profile/resume", headers=_NSH).json()["resume"]["skills"]
     _tc.put("/profile/resume", json=_ns_body, headers=_NSH)  # byte-identical re-save
     check(
-        "a STORED résumé is never re-written: the un-split entry comes back "
+        "a STORED resume is never re-written: the un-split entry comes back "
         "verbatim and the identical re-save still burns no undo slot",
         _ns_back == ["Python, SQL", "Go"]
         and _tc.get("/profile/resume/versions", headers=_NSH).json()["versions"] == [],

@@ -20,9 +20,9 @@ from the same true facts — tailor, apply, track, follow up.
 
 ## Product Purpose
 
-JobFinder tailors a master résumé to specific job descriptions, scores the match before
+JobFinder tailors a master resume to specific job descriptions, scores the match before
 and after, and — its one differentiator no competitor shows — runs a **fabrication guard**
-that diffs every tailored claim against a facts ledger derived from the original résumé.
+that diffs every tailored claim against a facts ledger derived from the original resume.
 It also finds jobs across boards, ranks them by fit, builds application kits, auto-submits
 guard-clean Comeet kits, preps interviews, and tracks the pipeline. Success looks like:
 interviews booked, zero fabricated claims ever shipped.

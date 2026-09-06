@@ -560,13 +560,13 @@ def run_alert(
         return AlertRunResult(user_id=user_id, ran=False, error="Alerts are disabled.")
     resume = _master_resume(db, user_id)
     if resume is None:
-        row.last_error = "No master résumé saved yet."
+        row.last_error = "No master resume saved yet."
         db.commit()
         return AlertRunResult(user_id=user_id, ran=False, error=row.last_error)
 
     # PLAN 12.4: the daily cron re-surfaces mostly the SAME postings every
     # morning — the score cache turns those into zero-LLM, zero-fetch reuse
-    # when the master résumé hasn't changed since they were last scored.
+    # when the master resume hasn't changed since they were last scored.
     master_hash = resume_hash(resume)
     try:  # the cache is an optimization — an unreadable history must not kill the run
         cache = load_score_cache(db, user_id, master_hash)

@@ -1,4 +1,4 @@
-"""Undo buffer for the master résumé (PLAN 20.8 / N1).
+"""Undo buffer for the master resume (PLAN 20.8 / N1).
 
 `PUT /profile/resume` overwrites `saved_resumes` in place. The Builder saves,
 the Skills editor saves, a re-upload replaces — and until this module existed a
@@ -7,7 +7,7 @@ bad one was unrecoverable, for the single most valuable object a user owns.
 Shape, deliberately small: snapshot the OUTGOING row just before each overwrite,
 keep the newest `MAX_VERSIONS` per (user, language), and offer a restore that
 snapshots the current state on its way past — so restoring is itself undoable
-and a mis-click can't be the thing that loses the résumé.
+and a mis-click can't be the thing that loses the resume.
 
 All reads and writes are scoped to one user, same as `db.history`.
 """
@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.db.models import SavedResume, SavedResumeVersion
 
 # Newest kept per (user, language). An undo buffer, not an archive: these rows
-# hold a full résumé each, and nobody is scrolling back past twenty saves.
+# hold a full resume each, and nobody is scrolling back past twenty saves.
 MAX_VERSIONS = 20
 
 

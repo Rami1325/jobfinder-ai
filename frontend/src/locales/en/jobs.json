@@ -13,14 +13,14 @@
   },
   "versions": {
     "open": "Version history",
-    "title": "Résumé version history",
-    "body": "Every time your master résumé is replaced, the previous one is kept here. Restoring brings it back — and the version you're on now is kept too, so you can always come back.",
-    "empty": "No earlier versions yet. One is saved the first time your résumé is replaced.",
-    "untitled": "Untitled résumé",
+    "title": "Resume version history",
+    "body": "Every time your master resume is replaced, the previous one is kept here. Restoring brings it back — and the version you're on now is kept too, so you can always come back.",
+    "empty": "No earlier versions yet. One is saved the first time your resume is replaced.",
+    "untitled": "Untitled resume",
     "counts": "{{roles}} roles · {{projects}} projects",
     "restore": "Restore",
     "confirm": "Restore this one",
-    "restored": "Résumé restored.",
+    "restored": "Resume restored.",
     "restoreError": "Couldn't restore that version.",
     "loadError": "Couldn't load your version history.",
     "note": "The 20 most recent versions per language are kept."
@@ -28,14 +28,14 @@
   "skillsEditor": {
     "open": "Add skills",
     "title": "Your skills",
-    "body": "Add skills you actually have that your résumé doesn't mention. They become part of your master résumé — match scores count them and tailoring may use them.",
-    "honesty": "Only add skills you truly have — they will appear on your résumé as facts.",
-    "empty": "No skills on this résumé yet.",
+    "body": "Add skills you actually have that your resume doesn't mention. They become part of your master resume — match scores count them and tailoring may use them.",
+    "honesty": "Only add skills you truly have — they will appear on your resume as facts.",
+    "empty": "No skills on this resume yet.",
     "placeholder": "e.g. Docker, SQL — Enter or comma to add",
     "add": "Add",
     "remove": "Remove",
-    "save": "Save to my résumé",
-    "savedToast": "Skills saved to your master résumé.",
+    "save": "Save to my resume",
+    "savedToast": "Skills saved to your master resume.",
     "saveError": "Couldn't save — try again."
   },
   "tabs": {
@@ -304,7 +304,7 @@
     "lastRun": "Last run {{date}} — {{count}} new jobs",
     "customize": "Customize the alert search",
     "customizeHint": "The daily alert always runs this exact search — edit and save to change it.",
-    "autoNote": "The daily search is derived automatically from your résumé. Customize it to pin exact keywords, location, or boards.",
+    "autoNote": "The daily search is derived automatically from your resume. Customize it to pin exact keywords, location, or boards.",
     "unsaved": "Unsaved changes — save to apply them to the daily alert.",
     "noSmtp": "Email sending isn't set up on the server yet (ALERT_SMTP_* in backend/.env) — runs will refresh your history but can't email."
   },

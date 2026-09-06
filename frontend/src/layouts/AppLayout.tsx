@@ -90,7 +90,7 @@ const toolsSubNav = [
  * Forgetting the access code is only half of it: every store in this app is a
  * module-level binding that outlives the router — tailorStore, kitsStore,
  * jobSearchStore and useMasterResume's cache all still hold the previous user's
- * résumé and search results — so this ends in a DOCUMENT LOAD, never a
+ * resume and search results — so this ends in a DOCUMENT LOAD, never a
  * <Navigate>. A route change would repaint the marketing page with the last
  * person's CV one tab away.
  *
@@ -112,7 +112,7 @@ export function signOut(): void {
 /** Escape, or a pointerdown anywhere outside `ref`, closes an open popover.
  *
  * `pointerdown` in the CAPTURE phase, not `click`: a page handler that calls
- * stopPropagation() — the résumé sheet has several — must not be able to strand
+ * stopPropagation() — the resume sheet has several — must not be able to strand
  * an open menu on screen, and capture runs before any of them. The trigger
  * button lives INSIDE `ref` on purpose, so its own onClick toggle is the only
  * thing that reacts to a click on it; handling it here too would close and

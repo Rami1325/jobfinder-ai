@@ -113,7 +113,7 @@ this — and here is exactly what it wrote."
 
 **B4. Guard microcopy (Fable voice).** Deadpan lines where the guard reports:
 clean → "Nothing invented. We checked." · flagged → "2 claims we couldn't find in your
-résumé. They don't ship until you approve them." Copy lives in i18n files, EN + HE.
+resume. They don't ship until you approve them." Copy lives in i18n files, EN + HE.
 → `frontend/src/locales/*` · S · **P1**
 
 ### Phase C — Tracker as departures board (Terminus + Helios)

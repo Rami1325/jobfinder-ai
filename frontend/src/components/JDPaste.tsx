@@ -134,7 +134,7 @@ export default function JDPaste({ value, onChange }: Props) {
                   one line wraps unpredictably when a Latin title sits beside a
                   Hebrew company, and `dir="auto"` per string is right HERE
                   precisely because these are read-only and have no caret — the
-                  explicit-dir rule exists for editable résumé fields. */}
+                  explicit-dir rule exists for editable resume fields. */}
               <span dir="auto" className="block truncate text-sm font-medium text-ink">
                 {a.job_title || "—"}
               </span>

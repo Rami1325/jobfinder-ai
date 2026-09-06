@@ -1,6 +1,6 @@
-"""ATS X-ray: render the résumé, then read it back the way a parser does.
+"""ATS X-ray: render the resume, then read it back the way a parser does.
 
-Every other résumé builder ASSERTS its templates are ATS-safe. We already own
+Every other resume builder ASSERTS its templates are ATS-safe. We already own
 both halves of the machinery — the renderer that makes the file and the parser
 that reads one — so instead of asserting, this shows the user the actual text a
 parser recovers from their own document and marks every protected fact as it
@@ -44,7 +44,7 @@ def _candidates(needle: str) -> list[str]:
 
     A correctly rendered Hebrew PDF stores its glyphs already bidi-reordered —
     that is exactly what `_draw_line` does via `_visual` at draw time — so
-    pdfminer returns VISUAL text while a fact from the résumé model is LOGICAL.
+    pdfminer returns VISUAL text while a fact from the resume model is LOGICAL.
     Searching one for the other matches nothing.
 
     Measured before this existed: a clean Hebrew `classic` PDF reported 14 of 16

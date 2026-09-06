@@ -3,7 +3,7 @@ in the rewrite. 100% deterministic.
 
 `score_after` already MEASURES the loss — it is the second half of the two
 numbers the result carries — and until now nothing repaired it. Five separate
-mechanisms can delete a keyword the résumé genuinely owned:
+mechanisms can delete a keyword the resume genuinely owned:
 
 1. the model's own skills shortlist (the dominant one). TAILOR rule 2 orders
    curation — "drop irrelevant noise", "roughly 15-25 INDIVIDUAL skills",
@@ -23,11 +23,11 @@ docstring describes: "The LLM is *asked* to curate... but asked is not
 guaranteed." This module is the floor.
 
 WHAT IT MAY WRITE, and this is the whole no-fabrication argument: the ONLY
-strings it can put into a résumé are entries that already exist byte-for-byte in
+strings it can put into a resume are entries that already exist byte-for-byte in
 `original.skills`. It never synthesizes a term, never adopts the JD's spelling
 for something the candidate lacks, and never writes prose. A keyword whose only
 home in the original was a sentence is REPORTED, never repaired — re-inserting a
-sentence into a rewritten résumé either duplicates a claim (which TAILOR bans and
+sentence into a rewritten resume either duplicates a claim (which TAILOR bans and
 `voice_audit` flags as `repeated_phrase`) or grafts a token into the model's own
 prose, which is new writing the fabrication guard structurally cannot see.
 
@@ -46,8 +46,8 @@ skill in a trailing unlabelled block, so nothing is hidden.
 A REPAIR IS NOT A MEASUREMENT, and this module now says so in its shape. Three
 functions, three jobs:
 
-* `preserve_keywords` REPAIRS, and its two lists describe the résumé IT
-  returned. The caller refits that résumé afterwards, so those lists are a
+* `preserve_keywords` REPAIRS, and its two lists describe the resume IT
+  returned. The caller refits that resume afterwards, so those lists are a
   claim about a document that may not be the one that ships.
 * `lost_keywords` MEASURES, and does nothing else: a rank comparison, no copy,
   no budget, no carrier search. It is the humanizer gate's detector and the
@@ -65,7 +65,7 @@ changelog naming 7.
 
 Never the LLM and never the network, both source-pinned by the smoke test for
 the reason `geo_restriction.py` is: behaviour alone cannot tell the two apart,
-because an LLM-backed restorer also returns a résumé and a list — and would pass
+because an LLM-backed restorer also returns a resume and a list — and would pass
 every behavioural check while putting a temperature=0.3 sample in charge of what
 the CV says. The renderer is out too, which is why `shed_restored` takes its
 page measurement as a callable instead of importing one.
@@ -130,7 +130,7 @@ _SECTIONS: tuple[str, ...] = ("skills", "experience", "projects", "summary",
 
 @dataclass(frozen=True)
 class LostKeyword:
-    """A JD keyword the original covered better than the shipped résumé does.
+    """A JD keyword the original covered better than the shipped resume does.
 
     Deliberately a local dataclass and NOT a field on `TailorResult`. A
     `kept_back: list[...]` defaulting to `[]` would read as "nothing was lost"
@@ -148,7 +148,7 @@ class LostKeyword:
     #             NOT "prose": that sentence ("only inside wording that was
     #             rewritten") contradicts itself about a skills entry.
     # "cap"     — `MAX_RESTORED` was already spent.
-    # "trimmed" — it was on the résumé this module produced and the page budget
+    # "trimmed" — it was on the resume this module produced and the page budget
     #             took it back out. The one class WE caused rather than the
     #             user's wording, which is why it is not folded into "prose".
     reason: Literal["prose", "partial", "cap", "trimmed"] = "prose"
@@ -189,7 +189,7 @@ def _read(resume: ResumeModel) -> tuple[str, set[str]]:
 def _where(original: ResumeModel, keyword: str) -> str:
     """Which section of the ORIGINAL covers this keyword on its own.
 
-    Only ever used for the changelog sentence — "your résumé shows this inside
+    Only ever used for the changelog sentence — "your resume shows this inside
     wording that was rewritten". It answers with the original's own structure,
     so it stays true no matter what the tailor did.
     """
@@ -221,7 +221,7 @@ def lost_keywords(original: ResumeModel, shipped: ResumeModel, jd: JDModel) -> l
       and the humanizer gate ACCEPTED a revision that deleted both of the JD's
       hard skills from a bullet.
 
-    Both callers pass "the résumé we owe" and "the résumé we have": the guard
+    Both callers pass "the resume we owe" and "the resume we have": the guard
     passes (master, what ships), the humanizer gate passes (tailored, revised) —
     it answers only for what IT deleted.
     """
@@ -242,7 +242,7 @@ def preserve_keywords(
     """Put back the JD keywords the rewrite deleted — from the candidate's own
     skills list, and from nowhere else.
 
-    Returns `(resume, restored, kept_back)`. Both lists describe THE RÉSUMÉ THIS
+    Returns `(resume, restored, kept_back)`. Both lists describe THE RESUME THIS
     FUNCTION RETURNED, which is not yet the one that ships: the caller refits it
     for the page budget, and that refit can trim prose or (via `shed_restored`)
     hand entries back. So neither list may be quoted at the user — `restored`
@@ -254,14 +254,14 @@ def preserve_keywords(
     On a clean pair it returns `tailored` ITSELF — the same object, no deep copy,
     no allocation. That is not a micro-optimisation: the caller keys the refit,
     the voice re-audit and the changelog entry off that identity, and a guard
-    that quietly rewrites a résumé it had nothing to say about is the
+    that quietly rewrites a resume it had nothing to say about is the
     fires-on-legitimate-input failure this codebase treats as worse than no guard
     at all.
     """
     keywords = _jd_keywords(jd)
     if not keywords:
         return tailored, [], []
-    # NO `not original.skills` SHORT CUT. It saved one pass over a résumé with an
+    # NO `not original.skills` SHORT CUT. It saved one pass over a resume with an
     # empty skills list and cost a total classification: `report_restore` reads
     # "absent from kept_back" as "the refit took it", so a prose loss on a
     # skill-less master would have been reported as our trim. Without carriers
@@ -330,7 +330,7 @@ def preserve_keywords(
             work.skills = [*work.skills, *carriers]
             present.update(e.strip().casefold() for e in carriers)
             budget -= len(carriers)
-            # Re-read the REAL résumé rather than trusting the appended-probe
+            # Re-read the REAL resume rather than trusting the appended-probe
             # string. The probe puts the entry at the very end of the text while
             # the real one inserts it among the skills, so a phrase straddling
             # the skills → certifications boundary can read differently in the
@@ -362,9 +362,9 @@ def report_restore(
     jd: JDModel,
     attempted: list[LostKeyword],
 ) -> tuple[list[str], list[LostKeyword]]:
-    """The changelog's two lists, measured on the résumé that ACTUALLY SHIPS.
+    """The changelog's two lists, measured on the resume that ACTUALLY SHIPS.
 
-    `before` is the tailored résumé as the restore found it, `shipped` is what
+    `before` is the tailored resume as the restore found it, `shipped` is what
     the user will download — after the page refit and any back-off — and
     `attempted` is `preserve_keywords`' own `kept_back`.
 
@@ -418,7 +418,7 @@ def shed_restored(
     and a check can drive both directions with a two-line predicate.
 
     The removal is flat-only, and that is exact rather than a shortcut: a
-    carrier is by construction absent from the tailored résumé's skill GROUPS,
+    carrier is by construction absent from the tailored resume's skill GROUPS,
     because `preserve_keywords` skips any entry already in `skills` and
     `ResumeModel` keeps `skills` ⊇ every grouped item on every construction.
     """

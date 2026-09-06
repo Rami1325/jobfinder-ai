@@ -42,13 +42,13 @@
     "message": "Assisted apply"
   },
   "applyHint": {
-    "message": "Fills this page's application form from your approved kit — contact details, tailored résumé file, cover letter. You review everything and click Send yourself."
+    "message": "Fills this page's application form from your approved kit — contact details, tailored resume file, cover letter. You review everything and click Send yourself."
   },
   "applyKitLabel": {
     "message": "Application kit"
   },
   "applyFormatLabel": {
-    "message": "Résumé file format"
+    "message": "Resume file format"
   },
   "btnAutofill": {
     "message": "Autofill this page"
@@ -68,7 +68,7 @@
     }
   },
   "autofillFileAttached": {
-    "message": "résumé attached"
+    "message": "resume attached"
   },
   "autofillCoverAdded": {
     "message": "cover letter added"

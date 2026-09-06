@@ -25,7 +25,7 @@ def record_search_hits(
     db: Session, matches: list[JobMatch], user_id: int, resume_hash: str = ""
 ) -> None:
     """Upsert scraped matches into the user's history (deduped by URL), then
-    trim that user's rows to MAX_HISTORY. `resume_hash` identifies the résumé
+    trim that user's rows to MAX_HISTORY. `resume_hash` identifies the resume
     the scores were computed against (see load_score_cache)."""
     now = datetime.now(timezone.utc)
     pending: dict[str, JobSearchHit] = {}  # dedupe within this batch (session has autoflush=False)
@@ -92,7 +92,7 @@ def load_score_cache(
     rows (searched_at within CACHE_TTL_DAYS) with a non-empty jd_text qualify;
     freshness is decided HERE so core never has to reason about TTLs. A row is
     a full match (scores reusable, not just text) only when it was scored
-    against the current résumé — pre-12.4 rows have resume_hash "" and never
+    against the current resume — pre-12.4 rows have resume_hash "" and never
     fully match. At most MAX_HISTORY rows exist per user, so this is one small
     read per search.
     """

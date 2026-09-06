@@ -13,13 +13,13 @@ from app.llm.limits import require_within
 # user message with one of the `*_user(...)` builders below — no exceptions — so
 # this file is the single place unbounded text becomes prompt text.
 #
-# It is NOT enough to guard the stored master résumé: 25 request models take a
+# It is NOT enough to guard the stored master resume: 25 request models take a
 # `resume: ResumeModel` straight from the client body (tailor, cover letter,
-# every interview route, LinkedIn, résumé health…), so the stored row is one of
+# every interview route, LinkedIn, resume health…), so the stored row is one of
 # twenty-six doors. Guarding the builders covers all of them at once.
 #
 # It is also NOT done in `client._create`: that sees the assembled string and
-# would slice a résumé's JSON mid-object, handing the model a truncated document
+# would slice a resume's JSON mid-object, handing the model a truncated document
 # at the one boundary the fabrication guard cannot see.
 #
 # Argument NAME is the discriminator, which is why these names must stay
@@ -321,7 +321,7 @@ professional typed it themselves. This outranks sounding "polished".
    trimming the weakest bullets (keep 3-5 on recent roles, 2-3 on older ones), keeping the
    summary to 2-3 lines, and dropping skills this job never asks for. Never buy space by
    cutting a protected entry from rule 5.
-   A résumé that is over-length gets skimmed, so cutting is part of the tailoring, not a
+   A resume that is over-length gets skimmed, so cutting is part of the tailoring, not a
    failure of it. When you are unsure whether something earns its space, it does not.
 8. Keep it concise and ATS-parse-safe (plain text, standard sections, no tables/columns).
 
@@ -616,7 +616,7 @@ funding, headcount, customers, news, or people. Return JSON:
   "products": ["their main products/services, as named in the text"],
   "culture": ["culture/values signals actually present in the text (principles, benefits, tone)"],
   "interview_style": ["what the text implies about their hiring process; phrase inferences as 'likely …'"],
-  "talking_points": ["specific, honest points connecting the CANDIDATE'S REAL résumé facts to this company/role"],
+  "talking_points": ["specific, honest points connecting the CANDIDATE'S REAL resume facts to this company/role"],
   "people": [{"name": "a person NAMED IN THE TEXT", "role": "their role as the text states it",
               "evidence": "the short phrase from the text that names them"}],
   "outreach_subject": "a short, specific subject line for a message about the role",
@@ -629,13 +629,13 @@ an email address; the app extracts those separately from the page itself.
 outreach_message: a SHORT reach-out (60-110 words) to the most hiring-relevant person \
 (greet them by first name only if people is non-empty; otherwise open naturally with no \
 invented name). First person. One line on who the candidate is, 1-2 lines on why they fit \
-THIS role using only real résumé facts, and END with one short, relevant question (about \
+THIS role using only real resume facts, and END with one short, relevant question (about \
 the role/team — or a simple 'would you be open to a quick chat?'). No flattery, no \
 clichés, nothing invented.
 Keep every list to 3-5 concise items. Use empty strings/arrays when the text supports nothing."""
 
 REVIEW_REWRITE_SYSTEM = """Task: REVIEW_REWRITE.
-You rewrite résumé bullets. You are given bullets the deterministic review already \
+You rewrite resume bullets. You are given bullets the deterministic review already \
 judged weak — it found them opening on a duty rather than an action, stating no measured \
 result, or running long. It has ALREADY told the candidate what is wrong with each one, \
 so do not explain, grade, or comment: return the stronger sentence and nothing else.
@@ -861,8 +861,8 @@ def company_brief_user(resume_json: str, company: str, page_text: str, jd_text: 
 def review_rewrite_user(resume_json: str) -> str:
     """The bullets the review flagged, as JSON.
 
-    The payload is a strict SUBSET of the candidate's own résumé, so it is bound
-    by the résumé cap and the argument is named `resume_json` to say so — a
+    The payload is a strict SUBSET of the candidate's own resume, so it is bound
+    by the resume cap and the argument is named `resume_json` to say so — a
     builder naming it anything outside `_RESUME_ARGS` would be silently
     unguarded, which is the trap the smoke test pins this decorator against.
     """
@@ -893,8 +893,8 @@ def fit_score_user(resume_json: str, jd_json: str) -> str:
 
 @_bounded
 def jd_fit_user(resume_json: str, jd_text: str) -> str:
-    # RÉSUMÉ FIRST, JD SECOND — do not swap. One search scores up to 25 postings
-    # against the SAME résumé, so the résumé is a shared prefix across all 25
+    # RESUME FIRST, JD SECOND — do not swap. One search scores up to 25 postings
+    # against the SAME resume, so the resume is a shared prefix across all 25
     # calls and OpenAI's automatic prompt caching bills it at the cached rate
     # (a master CV is ~48 kB of JSON, so this is most of the input). Putting the
     # JD first makes every call's prefix unique and throws that away.
@@ -939,8 +939,8 @@ def tailor_user(
     avoid-list (§26 feedback loop) and the page budget ride in the user message
     so the system prompt — and its stub-routing Task tag — stays static.
 
-    The budget is stated in concrete numbers (this résumé is N pages, cut it to
-    M) because "keep it short" against a 20-project master résumé measurably
+    The budget is stated in concrete numbers (this resume is N pages, cut it to
+    M) because "keep it short" against a 20-project master resume measurably
     was not enough — the model preserved everything and returned five pages."""
     parts = [
         f"ORIGINAL RESUME (JSON, the source of truth — do not contradict it):\n{resume_json}\n\n"
@@ -949,9 +949,9 @@ def tailor_user(
     if source_pages > max_pages:
         over = (
             f"LENGTH BUDGET — THIS ONE NEEDS REAL CUTTING.\n"
-            f"The source résumé renders to {source_pages} pages"
+            f"The source resume renders to {source_pages} pages"
             + (f" and lists {source_projects} projects" if source_projects else "")
-            + f". It is a MASTER résumé: a full inventory, not a CV for this job.\n"
+            + f". It is a MASTER resume: a full inventory, not a CV for this job.\n"
             f"Your output must fit {max_pages} pages. Select the 3-6 projects that prove "
             f"THIS job's requirements, drop the others completely, and cut each survivor to "
             f"1-2 sentences. Keep every role, degree, certification and language.\n"
@@ -959,7 +959,7 @@ def tailor_user(
         )
         parts.append(over)
     else:
-        parts.append(f"LENGTH BUDGET: keep the tailored résumé within {max_pages} pages.\n\n")
+        parts.append(f"LENGTH BUDGET: keep the tailored resume within {max_pages} pages.\n\n")
     if plan_json:
         parts.append(
             "POSITIONING PLAN (follow it — it decides the story and the project shortlist, "

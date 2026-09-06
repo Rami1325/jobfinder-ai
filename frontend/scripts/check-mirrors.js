@@ -5,7 +5,7 @@
 // assertions — so a whole class of defect had nothing watching it. Every check
 // below is pinned to a bug that actually shipped:
 //
-//   1. `mergeResumes` (resumeDiff.ts) rebuilds the résumé field by field. When
+//   1. `mergeResumes` (resumeDiff.ts) rebuilds the resume field by field. When
 //      `headline` and `skill_groups` were added to `ResumeModel`, nobody added
 //      them here, so `applyEditDecisions` SILENTLY DELETED them — reject one AI
 //      suggestion and your headline vanished from the download, the tracker row
@@ -108,7 +108,7 @@ try {
     fail(
       `resumeDiff.ts: mergeResumes drops ${missing.map((f) => `\`${f}\``).join(", ")} — ` +
         `applyEditDecisions() will silently delete ${missing.length > 1 ? "them" : "it"} from the ` +
-        `résumé the user downloads. Add ${missing.length > 1 ? "them" : "it"} to the returned object.`,
+        `resume the user downloads. Add ${missing.length > 1 ? "them" : "it"} to the returned object.`,
     );
   }
 } catch (e) {
@@ -469,7 +469,7 @@ try {
       fail(
         `lib/keywords.ts: "${k}" in "${text}" counted ${got}, expected ${want}. ` +
           (want === 1
-            ? "A keyword the backend reports as covered would show a résumé/JD count of zero beside it."
+            ? "A keyword the backend reports as covered would show a resume/JD count of zero beside it."
             : "The boundary guard stopped firing — this matcher would report a substring as a match."),
       );
     }
@@ -487,7 +487,7 @@ try {
 //
 // This shipped SEVEN times. Disclosure documented the defect and was fixed;
 // the pattern then came back in JobsPage (the Replace panel froze at 80px over
-// a 287px dropzone, so the master résumé could not be changed at all, and the
+// a 287px dropzone, so the master resume could not be changed at all, and the
 // Customize panel froze at 78px over 280px of fields, so the search settings
 // read as deleted), AlertsCard x2, TailorPage, MatchReport and marketing/FAQ.
 // tsc cannot see it — it is a string inside a prop object.
@@ -534,8 +534,8 @@ try {
   fail(`height-animation check could not run: ${e.message}`);
 }
 
-// ---- 12. a replaced master résumé reaches the document -------------------- //
-// The master résumé is cached in TWO module-level bindings: `useMasterResume`'s
+// ---- 12. a replaced master resume reaches the document -------------------- //
+// The master resume is cached in TWO module-level bindings: `useMasterResume`'s
 // `cache` and `tailorStore`'s `resume`. Only the first had a way in from
 // outside, and `TailorPage`'s loader early-returns the moment the second is
 // set — so uploading a new CV on the Jobs page (Replace), restoring a version
@@ -551,7 +551,7 @@ try {
 // The third assertion is the one that will still be true in a year: the reset
 // list is DERIVED from `applyBlockEdit`, not restated here. Both functions
 // answer the same question ("the document changed — what on screen is now
-// describing a résumé that no longer exists?"), so a field added to one and
+// describing a resume that no longer exists?"), so a field added to one and
 // forgotten in the other is the next `mergeResumes` bug in a new costume.
 try {
   const store = read("state/tailorStore.ts");
@@ -560,7 +560,7 @@ try {
   if (!/export function adoptMaster\s*\(/.test(store)) {
     fail(
       "state/tailorStore.ts: no exported `adoptMaster` — the document surface has " +
-        "no way to be told the stored master résumé was replaced.",
+        "no way to be told the stored master resume was replaced.",
     );
   }
 
@@ -572,7 +572,7 @@ try {
   }
   if (!/\badoptMaster\s*\(/.test(setMasterBody)) {
     fail(
-      "hooks/useMasterResume.ts: setMaster does not call adoptMaster. A résumé " +
+      "hooks/useMasterResume.ts: setMaster does not call adoptMaster. A resume " +
         "replaced anywhere but /app (upload / version restore / skills editor) will " +
         "not reach the document — it keeps painting, tailoring and downloading the " +
         "old file until a full page reload.",
@@ -588,7 +588,7 @@ try {
   if (missed.length) {
     fail(
       `state/tailorStore.ts: adoptMaster leaves ${missed.map((k) => `\`${k}\``).join(", ")} ` +
-        "set from the résumé it just replaced, while applyBlockEdit clears " +
+        "set from the resume it just replaced, while applyBlockEdit clears " +
         `${missed.length > 1 ? "them" : "it"} for the same reason. A fit score, a tailor ` +
         "diff or a fabrication warning would stay on screen describing a document that " +
         "no longer exists.",
@@ -604,7 +604,7 @@ try {
     fail("check 12 reports a missing reset field when none is missing");
   }
 } catch (e) {
-  fail(`master-résumé adoption check could not run: ${e.message}`);
+  fail(`master-resume adoption check could not run: ${e.message}`);
 }
 
 // ---- 13. a re-tailor clears everything describing the PREVIOUS run -------- //
@@ -617,17 +617,17 @@ try {
 // The sharpest of them shipped: with `savedAppId` still set, `save()` takes its
 // `savedAppId !== null` short-circuit and toasts "Already in your tracker"
 // while writing NOTHING — so the tracker row keeps the PREVIOUS tailored
-// résumé, for the PREVIOUS job, and the green toast says it worked.
+// resume, for the PREVIOUS job, and the green toast says it worked.
 //
 // DERIVED from `adoptMaster`, never restated. Both functions answer the same
 // question — "what on screen now describes something that no longer exists?" —
-// and the only difference is that a résumé swap also replaces the master while
+// and the only difference is that a resume swap also replaces the master while
 // a tailor replaces only the review. So the expected list is adoptMaster's
 // minus the six master-identity keys, and a field added to adoptMaster forces a
 // decision here instead of quietly going stale. Same shape as check 12; `tsc`
 // sees none of it, because every key is correctly typed and correctly optional.
 try {
-  // The six keys that identify the MASTER RÉSUMÉ. `adoptMaster` clears them
+  // The six keys that identify the MASTER RESUME. `adoptMaster` clears them
   // because the file itself was replaced; `startTailor` must NOT, because
   // tailoring never writes the master (Phase 22: master ⇒ edit, tailored ⇒
   // review). Everything else adoptMaster clears is a statement about a finished
@@ -646,7 +646,7 @@ try {
         `${stale.length > 1 ? "them" : "it"} for the same reason. This is the shipped ` +
         'defect: with `savedAppId` still set, save() short-circuits and toasts "Already ' +
         'in your tracker" while writing NOTHING — the tracker row keeps the previous ' +
-        "tailored résumé, for the previous job.",
+        "tailored resume, for the previous job.",
     );
   }
 
@@ -851,9 +851,9 @@ try {
 // The one check in this file that RUNS the shipped code, because the property
 // it pins cannot be seen by reading either module.
 //
-// `mergeForReview` rebuilds the effective résumé on every accept and decline,
+// `mergeForReview` rebuilds the effective resume on every accept and decline,
 // and a rejected removal is spliced back at `k = Math.min(oi, list.length)` —
-// so every later entry in that section shifts. With a tailored résumé that
+// so every later entry in that section shifts. With a tailored resume that
 // drops experience[0]:
 //     nothing rejected   →  resume.experience[1].company === "Gamma"
 //     exp.rm.0 rejected  →  resume.experience[1].company === "Beta"
@@ -992,7 +992,7 @@ try {
   }
 
   // Idempotent: applying the same map twice is the same document. The page
-  // re-runs this on every render of a merged résumé.
+  // re-runs this on every render of a merged resume.
   const twice = applyOverrides(oa.resume, oa.sources, byAnchor, oa.blocks);
   if (!eq(twice.resume, oa.resume))
     fail("lib/resumeOverrides.ts: applyOverrides is not idempotent — a re-render would keep changing the document.");
@@ -1232,7 +1232,7 @@ try {
 // (b) `setBlockOverride` sets `tailorOverrides` and NOTHING else. `writeDraft`
 //     mirrors the MASTER's local draft and `draftOver` spreads that draft over
 //     the master, so a per-application edit reaching it would have
-//     DraftRestoreBar offer to restore a tailored CV as the user's real résumé.
+//     DraftRestoreBar offer to restore a tailored CV as the user's real resume.
 //     `applyBlockEdit` is worse still: it nulls result/tailoredFrom/
 //     rejectedEdits, so one keystroke through it destroys the review.
 //
@@ -1334,7 +1334,7 @@ try {
     fail(
       `state/tailorStore.ts: setBlockOverride calls ${found.join(" and ")}. An application-only edit ` +
         "must not reach the master's local draft (DraftRestoreBar would offer to restore a tailored " +
-        "CV as the real résumé) and must never reach applyBlockEdit (which nulls `result` and " +
+        "CV as the real resume) and must never reach applyBlockEdit (which nulls `result` and " +
         "destroys the review being edited).",
     );
   const patch = patchKeys(blockAfter(body, "setTailorState(", "setBlockOverride patch"));
@@ -1348,7 +1348,7 @@ try {
     fail(
       `state/tailorStore.ts: setBlockOverride also sets ${extra.map((k) => `\`${k}\``).join(", ")}. ` +
         "It may set `tailorOverrides` and nothing else — writing `resume` would copy the flattened " +
-        "tailored CV over the master (a tailored résumé carries no skill_groups), and touching " +
+        "tailored CV over the master (a tailored resume carries no skill_groups), and touching " +
         "`editUndo` would put an application-only edit on the master's undo stack.",
     );
   if (taints("setTailorState({ tailorOverrides: next }); writeDraft(next);").length !== 1)
@@ -1385,13 +1385,13 @@ try {
 }
 
 // ---- 21. adding stays MASTER-only on the document ------------------------- //
-// 23.7 split `editable` into `isMaster` (this document IS the saved résumé) and
+// 23.7 split `editable` into `isMaster` (this document IS the saved resume) and
 // `canEditDoc` (there is a document at all). Typing on the paper moved to the
 // second; ADDING must stay on the first, and the reason is the fabrication
 // guard rather than caution: it ran against `result.tailored_resume`, so a
 // claim typed in afterwards carries no verdict at all while ScoreCard goes on
 // rendering `result.fabrication_flags` beside it. An added block also exists in
-// neither the original nor the tailored résumé, so it has no source anchor to
+// neither the original nor the tailored resume, so it has no source anchor to
 // be stored against.
 //
 // `tsc` sees nothing here: both flags are booleans and every prop is optional.
@@ -1483,7 +1483,7 @@ try {
 // three, and nothing scanned either: deleting `edit.langWarnTitle` from BOTH
 // locales left the build green — and that key is the TITLE of the confirm
 // dialog standing between the user and overwriting the wrong-language master
-// résumé, so the dialog would ask for that decision under the string
+// resume, so the dialog would ask for that decision under the string
 // "edit.langWarnTitle", at 12px, in Hebrew. `edit.apply` and `edit.remove` — the
 // sheet's two verbs, one of them destructive — were green as well. A per-file
 // floor is no protection when the file is not in the list at all.
@@ -2130,7 +2130,7 @@ try {
 
 // ---- 25. a new item arrives EMPTY (EXECUTED, not parsed) ----------------- //
 // The foot-of-paper add control wrote English placeholder text into the user's
-// own résumé. Three of the seven rows — skill, certification, language — are
+// own resume. Three of the seven rows — skill, certification, language — are
 // addressed by their VALUE (`@skills.python` IS the skill), so an empty one has
 // no path at all: `dkey("")` is `""` and `RE_KEYED` needs a character after the
 // dot. `insertBlock` answered that by inventing a key it could use, appending
@@ -2150,7 +2150,7 @@ try {
 // property is about what ends up in the MODEL, and reading the source cannot
 // tell an honest insert from one that writes a string somewhere the reader is
 // not looking. So the shipped module is bundled and driven, and the assertion
-// is made on the résumé that comes back rather than on the code that made it.
+// is made on the resume that comes back rather than on the code that made it.
 //
 // FOUR PROPERTIES, and each is a different way this could regress:
 //
@@ -2159,7 +2159,7 @@ try {
 //      pass" is satisfied by quietly dropping a kind out of both lists — the
 //      row keeps rendering, and nothing below ever looks at it.
 //  (b) AN ENTRY IS BORN BLANK, measured over the WHOLE MODEL, not over the
-//      fields this check happens to know about. Every string in the résumé
+//      fields this check happens to know about. Every string in the resume
 //      before and after the insert has to be the same multiset of non-empty
 //      values, so a placeholder in ANY field of ANY entry kind — including a
 //      field added years from now — fires this.
@@ -2167,7 +2167,7 @@ try {
 //      out (not an empty item either: both renderers draw a bullet glyph for a
 //      blank list item and a chip for a blank skill, which is why
 //      `BlockDraft.removable` exists). Typed in, and the ONLY non-empty string
-//      anywhere in the résumé is the one the user typed.
+//      anywhere in the resume is the one the user typed.
 //  (d) EVERY PATH THESE RETURN RESOLVES. This is the trap the placeholder
 //      existed to avoid, so it is the one a fix is most likely to fall into:
 //      inserting `""` instead makes the path `@skills.`, `readBlock` returns
@@ -2241,7 +2241,7 @@ try {
     languages: [],
     military_service: [],
   };
-  // The premise: a résumé with nothing in it says nothing. If this ever stops
+  // The premise: a resume with nothing in it says nothing. If this ever stops
   // holding, every comparison below is measuring the fixture, not the insert.
   if (textOf(BLANK).length !== 0) throw new Error("the blank fixture is not blank — this check's premise is gone");
 
@@ -2260,7 +2260,7 @@ try {
     if (said.length) {
       fail(
         `lib/resumeBlocks.ts: insertBlock("${kind}") put ${said.map((s) => `"${s}"`).join(", ")} into the ` +
-          "résumé. A new item must arrive EMPTY — a placeholder is a fabricated claim the moment it " +
+          "resume. A new item must arrive EMPTY — a placeholder is a fabricated claim the moment it " +
           "reaches a renderer, it is committed to the store with no Save, it is in the download, and " +
           "check_fabrication cannot flag it because the ledger is built FROM the master.",
       );
@@ -2277,7 +2277,7 @@ try {
       if (after.length)
         fail(
           `lib/resumeBlocks.ts: insertNamed("${kind}", ${JSON.stringify(blank)}) wrote ` +
-            `${after.map((s) => `"${s}"`).join(", ")} to the résumé. Nothing typed means nothing added — ` +
+            `${after.map((s) => `"${s}"`).join(", ")} to the resume. Nothing typed means nothing added — ` +
             "an add the user abandons must cost the document nothing.",
         );
     }
@@ -2290,7 +2290,7 @@ try {
         `lib/resumeBlocks.ts: insertNamed("${kind}") also wrote ${minted.map((s) => `"${s}"`).join(", ")}, ` +
           "which the user did not type. The only string a keyed add may put on the CV is the one it " +
           "was handed — anything else is a claim invented on the user's behalf, in English, on a " +
-          "résumé that may be Hebrew.",
+          "resume that may be Hebrew.",
       );
     if (!said.includes(MINE))
       fail(`lib/resumeBlocks.ts: insertNamed("${kind}") did not store the text it was given.`);
@@ -2305,7 +2305,7 @@ try {
     const again = insertNamed(res.resume, kind, MINE);
     if (!again.ok || again.resume !== res.resume)
       fail(
-        `lib/resumeBlocks.ts: adding "${MINE}" twice as a ${kind} did not return the SAME résumé object, ` +
+        `lib/resumeBlocks.ts: adding "${MINE}" twice as a ${kind} did not return the SAME resume object, ` +
           "so a duplicate would burn an undo slot and the caller cannot tell 'already there' from 'added'.",
       );
   }
@@ -2315,7 +2315,7 @@ try {
   // passes for ever.
   const placebo = { ...BLANK, skills: ["New skill"] };
   if (!textOf(placebo).includes("New skill"))
-    fail("check 25's text scraper cannot see a placeholder that WAS written into the résumé");
+    fail("check 25's text scraper cannot see a placeholder that WAS written into the resume");
   if (textOf({ ...BLANK, experience: [{ company: "", title: "", bullets: [] }] }).length)
     fail("check 25's text scraper reports content in a genuinely blank entry — it would fire on correct code");
 } catch (e) {

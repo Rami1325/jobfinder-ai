@@ -46,7 +46,7 @@ function BouncingDot() {
 }
 
 /**
- * Brand mark — a tailored-résumé monogram (document + verified check) in the
+ * Brand mark — a tailored-resume monogram (document + verified check) in the
  * accent→mint gradient, optionally followed by the wordmark and its accent
  * dot. Reused across the app shell, marketing header, and access gate so the
  * identity stays coherent.

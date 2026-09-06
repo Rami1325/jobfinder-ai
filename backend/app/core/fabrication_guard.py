@@ -86,7 +86,7 @@ def drop_invented_roles(tailored: ResumeModel, ledger: FactsLedger) -> tuple[Res
     `_known` tolerates rephrasing in both directions, so a lightly reworded real
     employer is never touched.
 
-    Returns the cleaned résumé and the names removed (for the changelog: content
+    Returns the cleaned resume and the names removed (for the changelog: content
     must never disappear silently).
     """
     if not tailored.experience:

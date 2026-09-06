@@ -3,7 +3,7 @@ import { coverageOf } from "../api/client";
 import type { CoverageResult, JDModel, ResumeModel } from "../types";
 
 /**
- * Keyword coverage for the résumé as it stands RIGHT NOW.
+ * Keyword coverage for the resume as it stands RIGHT NOW.
  *
  * This is the one half of the match score that can honestly move as the user
  * accepts and declines edits: it is pure Python, deterministic and free. The

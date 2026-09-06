@@ -16,7 +16,7 @@ _NUMBER_RE = re.compile(r"\$?\d[\d,.]*\s*(?:%|x|\+|k|m|bn|b|years?|yrs?)?", re.I
 
 
 def structure_resume(raw_text: str) -> ResumeModel:
-    # Refused, not truncated: this text becomes the user's master résumé, and a
+    # Refused, not truncated: this text becomes the user's master resume, and a
     # silently shortened CV is data loss they would discover from a recruiter.
     # Checked BEFORE the call so an oversize upload costs nothing. Read at call
     # time so the smoke test can env-override it (the max_upload_mb precedent).
@@ -30,11 +30,11 @@ def structure_resume(raw_text: str) -> ResumeModel:
     # whole of the decision. This is the LLM's fresh output — a CV that listed
     # "Python, SQL, Go" on one line arrives here as a single skill, and nothing
     # downstream can tell that apart from a genuinely long skill. It is also the
-    # last moment the résumé is not yet anything the user owns.
+    # last moment the resume is not yet anything the user owns.
     #
     # NOT a `model_validator` on `ResumeModel`, which is where it would look
     # tidiest. A validator runs on every construction — i.e. every READ of every
-    # stored master, tracker résumé, saved kit and version snapshot — so it would
+    # stored master, tracker resume, saved kit and version snapshot — so it would
     # silently rewrite all of them without any of them being a write: bypassing
     # `resume_versions.snapshot` (which only fires on a write) and breaking its
     # byte-identical dedupe, so the first save after deploy burns one of 20 undo
@@ -73,7 +73,7 @@ def build_facts_ledger(resume: ResumeModel) -> FactsLedger:
     # Projects contribute NUMBERS only — no employer/title/date claim lives here,
     # and PLAN 18.3 already cuts projects the tailor promoted into Experience.
     # They were missing entirely until PLAN 20.5/C1: the omission was symmetric
-    # (the guard rebuilds a ledger the same way from the tailored résumé, so it
+    # (the guard rebuilds a ledger the same way from the tailored resume, so it
     # produced no false positives) which is exactly why it went unnoticed — a
     # metric invented into a project bullet simply passed. Projects are the
     # section the tailor rewrites most freely, so that was the wrong section to

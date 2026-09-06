@@ -11,7 +11,7 @@ TWO SETS, chosen per template by `TemplateSpec.label_set`:
 * **"full"** — the longer business wording ("Professional Summary", "Core
   Expertise"), which `standard` prints. **Chosen explicitly by the owner on
   2026-09-06**, over exactly this objection: "Core Expertise" is not a name a
-  keyword parser is written to look for, and a parser that sections a résumé by
+  keyword parser is written to look for, and a parser that sections a resume by
   heading may not read the list under it as skills. It is recorded here rather
   than argued again, because the trade is real and someone will re-open it.
 

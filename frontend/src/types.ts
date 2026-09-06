@@ -31,7 +31,7 @@ export interface Project {
   bullets: string[];
 }
 
-// Israeli-résumé sections (optional: older saved résumés predate them).
+// Israeli-resume sections (optional: older saved resumes predate them).
 export interface MilitaryService {
   unit: string;
   role: string;
@@ -165,7 +165,7 @@ export interface CVPlan {
 }
 
 /**
- * What the page budget had to do to fit the résumé (app/core/length_budget.py).
+ * What the page budget had to do to fit the resume (app/core/length_budget.py).
  *
  * Only `dropped_projects` is safe to read. Its presence proves the budget cut a
  * project; its ABSENCE proves nothing, because `fit_to_pages` is handed the
@@ -247,7 +247,7 @@ export interface MasterResume {
   updated_at: string;
 }
 
-/** One restore point for the master résumé (PLAN 20.8/N1). Metadata only — the
+/** One restore point for the master resume (PLAN 20.8/N1). Metadata only — the
  * backend deliberately omits `resume` here so the picker stays light; fetch the
  * full version with `getResumeVersion` when one is opened. */
 export interface ResumeVersion {
@@ -533,7 +533,7 @@ export interface KitOut {
   score_before: number; // meaningful only when status === "done"
   score_after: number;
   flag_count: number; // > 0 ⇒ fabrication flags; never auto-approvable
-  base_language: string; // which master résumé slot was tailored ("en" | "he")
+  base_language: string; // which master resume slot was tailored ("en" | "he")
   error: string;
   reject_reason: string; // set when the reviewer rejected the kit
   application_id: number | null; // tracker row created on approve
@@ -624,7 +624,7 @@ export interface CompanyBriefResult {
   grounded: boolean;
 }
 
-/** One thing to fix on the résumé, anchored to the block it is about.
+/** One thing to fix on the resume, anchored to the block it is about.
  *
  * `path` is a BLOCK PATH the document resolves through `lib/resumeBlocks.ts`
  * (`@exp.2.b.1`, `@summary`, `@skills.<verbatim text>`, `@edu.0`), or "" for a
@@ -660,7 +660,7 @@ export interface ReviewFinding {
  * JD-gated checks need a JD) — and unknown is never shown as clean, the same
  * rule the tracker's nullable `voice_score` and the alert bar's
  * `last_above_min` follow. Folding `skipped` into `passed` would have the panel
- * assert a résumé is clean on a check that never looked.
+ * assert a resume is clean on a check that never looked.
  *
  * Every check always runs, so `passed ∪ skipped ∪ ids(findings)` is the entire
  * check set: there are no toggles, and therefore no way for an empty result to
@@ -675,7 +675,7 @@ export interface ReviewResult {
 
 /** One model-suggested rewording of a real bullet.
  *
- * `before` is copied VERBATIM out of the résumé, and that exact match is what
+ * `before` is copied VERBATIM out of the resume, and that exact match is what
  * yields `path` — a rewrite whose `before` matches no bullet is dropped
  * server-side rather than shown, because "Use this" writes through the same
  * block path as every other edit on this surface and a path nothing produced

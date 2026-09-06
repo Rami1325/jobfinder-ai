@@ -1,13 +1,13 @@
-"""Résumé date parsing, shared by the ATS scanner and the section-order rule.
+"""Resume date parsing, shared by the ATS scanner and the section-order rule.
 
-Résumé dates arrive as whatever the candidate typed. ATS parsers are far more
+Resume dates arrive as whatever the candidate typed. ATS parsers are far more
 reliable on `Mar 2020` / `03/2020` / `2020` than on "summer of 2019", and a
 date it cannot read is a role it may date wrong or drop. So this module does
 two jobs: read a date well enough to do arithmetic with it, and say what the
 ATS-safe way to write it would have been.
 
-Nothing here mutates a résumé — the scanner reports the suggestion and the
-user decides. Hebrew résumés are first-class: Hebrew month names and the
+Nothing here mutates a resume — the scanner reports the suggestion and the
+user decides. Hebrew resumes are first-class: Hebrew month names and the
 "still there" words are recognised alongside the English ones.
 """
 from __future__ import annotations
@@ -70,7 +70,7 @@ def _parse(value: str) -> tuple[int, int, bool] | None:
 
 
 def parse_date(value: str) -> tuple[int, int] | None:
-    """(year, month) for a résumé date, or None when it cannot be read. Month
+    """(year, month) for a resume date, or None when it cannot be read. Month
     defaults to 1 when only a year is given — good enough for the duration
     arithmetic this module exists to support."""
     parsed = _parse(value)

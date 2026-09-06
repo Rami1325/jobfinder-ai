@@ -4,10 +4,10 @@ import type { PageCountResult, ResumeModel } from "../types";
 import type { ResumeTemplate } from "../api/client";
 
 /**
- * How many pages the résumé the user is about to download actually renders to.
+ * How many pages the resume the user is about to download actually renders to.
  *
  * MEASURED, never derived. Restoring something the page budget cut produces a
- * document nothing has ever measured — the trimmed résumé plus the *master's*
+ * document nothing has ever measured — the trimmed resume plus the *master's*
  * full version of the restored item, which is larger than the compressed one
  * the budget was looking at. Arithmetic on `length_report.pages_before/after`
  * would be a guess, and the whole point of the badge is that it isn't one.

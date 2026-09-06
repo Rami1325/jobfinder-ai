@@ -26,7 +26,7 @@ interface Props {
  *      by then evicted the uploaded original and every restore point that meant
  *      anything.
  *   2. `PUT /profile/resume` picks the row by DETECTED language and carries no
- *      id. One Hebrew word typed into an English résumé saves over the Hebrew
+ *      id. One Hebrew word typed into an English resume saves over the Hebrew
  *      one and leaves the row you were editing untouched.
  *   3. There is no conflict check at any layer, so two tabs are last-write-wins.
  *
@@ -119,7 +119,7 @@ export default function ResumeEditBar({ resume, savedResume, masterLabel, unsave
           aria-label={t("edit.undo")}
           title={t("edit.undo")}
         />
-        {/* "Save", not "Save résumé": the label sits inches from the CV and
+        {/* "Save", not "Save resume": the label sits inches from the CV and
             next to its own unsaved count, and the long form is what pushes the
             cluster onto its own row on a phone. The full wording stays as the
             tooltip rather than as an aria-label, so the accessible name still

@@ -29,7 +29,7 @@ def _is_context_overflow(e: Exception) -> bool:
     """True only for a genuine context-window rejection.
 
     Keys on `code`, not the exception type: every malformed-parameter bug is
-    also a BadRequestError, and reporting those to the user as "your résumé is
+    also a BadRequestError, and reporting those to the user as "your resume is
     too long" would be a guard that fires on legitimate input. The message
     fallback covers providers whose error body omits `code`."""
     if getattr(e, "code", None) == "context_length_exceeded":
@@ -324,7 +324,7 @@ class StubClient:
     #   * the comma is required, so a one-value "Email: x@y.com" contact line
     #     cannot pass for a group;
     #   * quotes and brackets are excluded, because `_stub_tailor` feeds this the
-    #     TAILOR user payload — résumé JSON *and* JD JSON — and a loose pattern
+    #     TAILOR user payload — resume JSON *and* JD JSON — and a loose pattern
     #     matched `"hard_skills": ["Python", "REST APIs", ...]`, quietly grafting
     #     the JOB's skills onto the candidate. It surfaced as a keyword-stuffing
     #     voice issue three sections later.
@@ -481,7 +481,7 @@ class StubClient:
     @staticmethod
     def _first_json_object(text: str) -> dict[str, Any]:
         """Pull the first embedded JSON object out of a user message. Lets the
-        stub react to the REAL résumé it was handed instead of a fixture."""
+        stub react to the REAL resume it was handed instead of a fixture."""
         decoder = json.JSONDecoder()
         start = text.find("{")
         while start != -1:
@@ -496,7 +496,7 @@ class StubClient:
         return {}
 
     def _stub_plan_cv(self, user: str) -> dict[str, Any]:
-        """Echoes the résumé's real project names into the select/drop split so
+        """Echoes the resume's real project names into the select/drop split so
         the offline pipeline exercises project curation instead of always
         planning against a fixed fixture with no projects."""
         projects = self._first_json_object(user).get("projects") or []

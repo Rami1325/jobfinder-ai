@@ -1,4 +1,4 @@
-// Reading and writing one block of the résumé, addressed by the same path the
+// Reading and writing one block of the resume, addressed by the same path the
 // document renders (`@exp.2`, `@skills.python`, `@proj.0.b.1`).
 //
 // THE DECISION THAT MAKES THIS SMALL: the editor edits an ENTRY, not a field.
@@ -692,21 +692,21 @@ export function insertSkill(resume: ResumeModel, groupLabel: string, text: strin
 
 /**
  * Add a skill, a certification or a language BY NAME — the only way one of the
- * three keyed kinds reaches the résumé.
+ * three keyed kinds reaches the resume.
  *
  * Text first, model second, and that order is the whole change: the item's path
  * is derived from its own value, so it is not addressable until it has one, and
  * a placeholder minted here to paper over that is a claim the user never made
  * sitting in the document they are about to send. Blank text is REFUSED rather
  * than stored — which is also what makes an abandoned add cost nothing: the
- * user closes the field and the résumé was never touched, so there is no litter
+ * user closes the field and the resume was never touched, so there is no litter
  * for `commitInline`'s empty-means-remove rule to clean up after.
  *
  * `skill` delegates to `insertSkill` rather than repeating it: that one is the
  * two-field write (`skills` AND the group), and an empty label means the flat
  * list, which is exactly what the foot-of-paper control adds to (23.5).
  *
- * A duplicate returns the SAME résumé object, `insertSkill`'s rule for
+ * A duplicate returns the SAME resume object, `insertSkill`'s rule for
  * `insertSkill`'s reason: adding something you already have is not an edit and
  * must not burn an undo slot. It still returns `ok` with the existing path, so
  * the caller can point at the chip that already says it.

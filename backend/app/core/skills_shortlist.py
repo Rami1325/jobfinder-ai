@@ -71,7 +71,7 @@ def _jd_terms(jd: JDModel) -> list[str]:
     Wider than `scorer.keyword_analysis`, which reads `keywords + hard_skills`
     only: a preferred skill the candidate genuinely has still earns its place on
     the page, and dropping it because the coverage denominator ignores it would
-    be optimising for the number instead of the résumé.
+    be optimising for the number instead of the resume.
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -87,7 +87,7 @@ def _jd_terms(jd: JDModel) -> list[str]:
 def relevance(entry: str, terms: list[str]) -> str:
     """`covered` / `partial` / `missing` — does THIS job ask for this one entry?
 
-    Note the direction: the scorer asks "does the résumé carry this JD keyword",
+    Note the direction: the scorer asks "does the resume carry this JD keyword",
     and this asks "does any JD keyword describe this entry". Same matcher, one
     entry at a time, exactly as `_drop_unmatched_skill` uses it.
     """

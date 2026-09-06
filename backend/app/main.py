@@ -24,7 +24,7 @@ app = FastAPI(title="JobFinder API", version="0.1.0", lifespan=lifespan)
 
 settings = get_settings()
 
-# Error tracking (PLAN 7.0): opt-in via SENTRY_DSN. Résumé/JD text travels in
+# Error tracking (PLAN 7.0): opt-in via SENTRY_DSN. Resume/JD text travels in
 # request bodies, so bodies are never captured and PII stays off.
 if settings.sentry_dsn:
     import sentry_sdk
@@ -72,7 +72,7 @@ async def _context_exceeded(request: Request, exc: ContextWindowExceeded) -> JSO
 @app.exception_handler(OutputTruncated)
 async def _output_truncated(request: Request, exc: OutputTruncated) -> JSONResponse:
     # 503, not 413: nothing about the REQUEST was too big — the answer was. A
-    # retry or a shorter résumé is the action, and it is our ceiling that was
+    # retry or a shorter resume is the action, and it is our ceiling that was
     # hit, so this one SHOULD stay visible in Sentry.
     return JSONResponse(
         status_code=503, content={"detail": {"code": "output_truncated"}}

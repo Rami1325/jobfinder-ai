@@ -157,7 +157,7 @@ interface Props {
    *
    * This is the caller's own inline-commit function, unchanged: master ⇒
    * `applyBlockEdit`, tailored draft ⇒ `setBlockOverride`. Nothing in this
-   * component or in `ReviewPanel` writes a résumé.
+   * component or in `ReviewPanel` writes a resume.
    */
   onUseRewrite?: (path: string, text: string) => void;
   activeBlock?: string | null;
@@ -177,7 +177,7 @@ interface Props {
   /** Passed straight through to ResumeView — one line at the foot of the paper
    * for a surface that cannot add. */
   footNote?: string;
-  /** Swap the master résumé for a newly uploaded file. Given only when the
+  /** Swap the master resume for a newly uploaded file. Given only when the
    * document IS the master — replacing the file under a tailor review would be
    * replacing the thing being reviewed. Its absence hides the tool entirely,
    * the same way `onTemplate` gates the picker. */
@@ -273,7 +273,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
 
      The call is made here rather than passed in because it is the panel's own
      button, not the page's: `POST /tools/review/rewrites` needs nothing the
-     page owns beyond the résumé this component already renders. What the page
+     page owns beyond the resume this component already renders. What the page
      DOES own is the write — `onUseRewrite` — because master-vs-tailored is its
      rule and nothing here may reimplement it. */
   const [rewrites, setRewrites] = useState<ReviewRewrite[] | null>(null);
@@ -357,7 +357,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
     },
     // Replacing the file used to be possible ONLY from the Jobs page, because
     // /app offers the dropzone in its empty state and nowhere else — so the
-    // one page that IS the résumé was the one page that could not change it.
+    // one page that IS the resume was the one page that could not change it.
     // It rides the shared tool list rather than the toolbar for the reason the
     // list exists: a control defined once is mounted in both the phone row and
     // the desktop rail, and cannot exist in one viewport only.

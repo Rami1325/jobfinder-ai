@@ -49,13 +49,13 @@ function highlightNodes(text: string, keyword: string): (string | JSX.Element)[]
  * POSTING mentions the term; clicking a chip highlights it inside the job
  * description text.
  *
- * There is deliberately no résumé-side count. The chip's status is the
+ * There is deliberately no resume-side count. The chip's status is the
  * backend's answer, and `_keyword_present` tries the verbatim phrase first —
  * so a second count computed here could disagree with the word printed beside
  * it, which is exactly how a chip in the green "Matched" group came to read
  * "משרה 2 · אתם 0". The JD count survives because it is about the posting the
- * user is looking at and can click to verify; a count about the résumé is a
- * claim, and claims about the résumé are the server's to make.
+ * user is looking at and can click to verify; a count about the resume is a
+ * claim, and claims about the resume are the server's to make.
  */
 export default function MatchReport({ gaps, jdText }: Props) {
   const { t } = useTranslation("tailor");

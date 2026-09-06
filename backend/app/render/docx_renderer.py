@@ -192,7 +192,7 @@ def _bullet_numbering(doc, spec: TemplateSpec) -> int:
     Two properties on the level's `w:rPr` are load-bearing and easy to miss:
     `w:szCs` must be written HERE, because `_set_rtl`'s sweep walks
     `doc.paragraphs` and a numbering level is not a paragraph — without it a
-    Hebrew résumé's bullets render at Word's default size while every other run
+    Hebrew resume's bullets render at Word's default size while every other run
     is mirrored. And `w:cs` must name `docx_font_he` for the same reason the
     Normal style does: Word resolves a complex-script run through `w:cs` and
     substitutes its own face when the family named there has no Hebrew.
@@ -333,7 +333,7 @@ class _Sheet:
         type, and leaving Word on its own single spacing would set the Word file
         at a density the PDF is not.
 
-        For every other template it is set only when the résumé has to be
+        For every other template it is set only when the resume has to be
         squeezed onto one page. At full size Word's own single spacing is left
         alone — forcing an exact height there would only make the file taller
         than the PDF."""
@@ -641,7 +641,7 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
         p = para(before=0.0 if first else s.entry_before, keep=True)
         # Dates go to the far margin on a right tab stop. In a bidi paragraph
         # Word measures tab stops from the right margin, so the same stop puts
-        # the dates at the left edge of a Hebrew résumé — which is correct.
+        # the dates at the left edge of a Hebrew resume — which is correct.
         if meta:
             p.paragraph_format.tab_stops.add_tab_stop(Pt(s.column_pt), WD_TAB_ALIGNMENT.RIGHT)
         text(p, primary, size=spec.body_size, color=s.ink, bold=True)
@@ -654,7 +654,7 @@ def render_docx(resume: ResumeModel, template: str = DEFAULT_TEMPLATE) -> bytes:
 
     # --- content ----------------------------------------------------------
     # One builder per section key; the ORDER comes from section_order(), which
-    # puts Education above Experience for an early-career résumé. Mirrors the
+    # puts Education above Experience for an early-career resume. Mirrors the
     # PDF exactly — the two must never disagree about layout.
     def build_summary() -> None:
         if resume.summary:

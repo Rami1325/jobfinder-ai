@@ -84,7 +84,7 @@ export default function ScanPage() {
           </motion.div>
 
           <div className="mt-8 grid gap-4 md:grid-cols-2">
-            {/* Résumé drop zone */}
+            {/* Resume drop zone */}
             <Card>
               <SectionLabel className="mb-2">{t("resumeLabel")}</SectionLabel>
               <div

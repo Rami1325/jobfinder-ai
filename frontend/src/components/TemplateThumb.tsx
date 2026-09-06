@@ -3,7 +3,7 @@ import { cn } from "../lib/cn";
 import type { ResumeTemplate } from "../api/client";
 
 /**
- * A hand-drawn SVG miniature of one résumé template.
+ * A hand-drawn SVG miniature of one resume template.
  *
  * Pure and dependency-free on purpose: no <img>, no network request, no
  * framer-motion — it renders eleven pages of vector text, so the picker costs
@@ -14,13 +14,13 @@ import type { ResumeTemplate } from "../api/client";
  *
  * It draws REAL TEXT, not grey bars. A picker full of wireframes tells you
  * nothing about what you are picking; a picker full of documents does. Every
- * template shows the SAME invented résumé (`MAYA ELDAR`, below) so the eleven
+ * template shows the SAME invented resume (`MAYA ELDAR`, below) so the eleven
  * thumbnails differ in design and only in design. The person is fictional on
  * purpose — nothing here should read as a claim about anyone real.
  *
  * At 116 px wide the type is around 2.5 px tall and reads as texture, which is
  * exactly what a page looks like from across the room; zoomed in it still has
- * to hold up as a plausible résumé, so the words are the real words.
+ * to hold up as a plausible resume, so the words are the real words.
  *
  * The whole sheet is mirrored under RTL (`rtl:-scale-x-100`) so a rail that
  * hugs the text start in Hebrew hugs the right edge, exactly like the rendered
@@ -84,7 +84,7 @@ const UNMIRROR: CSSProperties = {
 };
 
 /* ------------------------------------------------------------------ *
- * The demo résumé. Invented, generic, and identical across all eleven.
+ * The demo resume. Invented, generic, and identical across all eleven.
  * ------------------------------------------------------------------ */
 
 const NAME = "MAYA ELDAR";
