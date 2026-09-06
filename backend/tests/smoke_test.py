@@ -5628,6 +5628,29 @@ check(
     "unknown/empty template names fall back to the default (old clients unaffected)",
     get_template("no-such-template").id == DEFAULT_TEMPLATE and get_template(None).id == DEFAULT_TEMPLATE,
 )
+# ...and every REQUEST MODEL that carries a template says "" rather than naming
+# one. `RenderRequest` said "classic" — the id that happened to be the default
+# when it was written — so the day `standard` took over, a client omitting the
+# field kept downloading the old template while the preview beside it drew the
+# new one. Pinned on the SOURCE as well as on the behaviour: a re-added literal
+# that happens to equal today's default would pass a driven check for as long as
+# it stayed the default, which is precisely the window in which it is invisible.
+import app.models as _tpl_models_mod  # noqa: E402
+from pydantic import BaseModel as _TplBaseModel  # noqa: E402
+
+_tpl_defaults = {
+    name: field.default
+    for name, model in vars(_tpl_models_mod).items()
+    if isinstance(model, type) and issubclass(model, _TplBaseModel) and model.__module__.startswith("app.models")
+    for fname, field in model.model_fields.items()
+    if fname == "template"
+}
+check(
+    "no request model DEFAULTS its template to a named id — \"\" is the one way to say "
+    "\"the default\", and a literal is a second declaration of DEFAULT_TEMPLATE",
+    _tpl_defaults and all(v == "" for v in _tpl_defaults.values()),
+    str({k: v for k, v in _tpl_defaults.items() if v != ""}) or str(sorted(_tpl_defaults)),
+)
 # Three BOOLEANS used to stand beside the enums that already said the same
 # thing, and they are how the renderers drifted from the declaration:
 # `header_rule` / `heading_rule` are what the hairlines actually keyed off while

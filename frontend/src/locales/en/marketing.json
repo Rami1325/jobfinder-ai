@@ -22,6 +22,10 @@
     }
   },
   "templates": {
+    "standard": {
+      "name": "Standard",
+      "desc": "Centred name, all-caps headings on a hairline, no colour. The default."
+    },
     "nav": "Templates",
     "kicker": "The output",
     "title": "This is the thing you actually send",

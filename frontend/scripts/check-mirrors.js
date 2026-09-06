@@ -1611,8 +1611,8 @@ try {
   if (typeof PDF_ONLY !== "function") throw new Error("lib/templateSpecs.ts did not export PDF_ONLY");
   if (!Array.isArray(TEMPLATE_IDS)) throw new Error("lib/templateSpecs.ts did not export TEMPLATE_IDS");
   const ids = Object.keys(TEMPLATE_SPECS);
-  if (ids.length < 11) throw new Error(`TEMPLATE_SPECS carries only ${ids.length} templates`);
-  if (Object.keys(TEMPLATE_SPECS[ids[0]]).length < 30)
+  if (ids.length < 12) throw new Error(`TEMPLATE_SPECS carries only ${ids.length} templates`);
+  if (Object.keys(TEMPLATE_SPECS[ids[0]]).length < 45)
     throw new Error(`TEMPLATE_SPECS["${ids[0]}"] carries only ${Object.keys(TEMPLATE_SPECS[ids[0]]).length} fields`);
 
   const missingFrom = (a, b) => a.filter((x) => !b.includes(x));
@@ -1626,7 +1626,7 @@ try {
   const client = /export const RESUME_TEMPLATES = \[([\s\S]*?)\]/.exec(read("api/client.ts"));
   if (!client) throw new Error("could not find RESUME_TEMPLATES in api/client.ts");
   const picker = [...client[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-  if (picker.length < 11) throw new Error(`parsed only ${picker.length} RESUME_TEMPLATES ids`);
+  if (picker.length < 12) throw new Error(`parsed only ${picker.length} RESUME_TEMPLATES ids`);
   for (const [what, gone] of [
     ["lib/templateSpecs.ts has no spec for", missingFrom(picker, ids)],
     ["api/client.ts's RESUME_TEMPLATES does not list", missingFrom(ids, picker)],
@@ -1665,6 +1665,53 @@ try {
         `say [${twoColumn.join(", ")}] render two columns. Every surface that offers a .docx warns ` +
         "off this one list, so a missing id silently drops four warnings at once.",
     );
+
+  // --- (f2) both locales carry every LABEL SET a template prints ----------
+  // `TemplateSpec.label_set` chooses which table of section names a template
+  // renders, and the document on /app has to print the same ones the file does.
+  // Check 8 cannot see a gap here: a key missing from BOTH locales leaves them
+  // in perfect parity with each other, and the heading renders as
+  // `sections.full.skills` at 12px, in Hebrew.
+  //
+  // The eight keys are the eight sections `section_order` emits. `militaryService`
+  // is camelCase here and `military` in Python — the only name that differs, and
+  // it differs because this side reads i18next keys and that side reads
+  // `labels.py`. The floor below is what stops a typo silently checking nothing.
+  const SECTION_KEYS = [
+    "summary",
+    "skills",
+    "experience",
+    "projects",
+    "education",
+    "militaryService",
+    "certifications",
+    "languages",
+  ];
+  const labelSets = [...new Set(ids.map((id) => TEMPLATE_SPECS[id].labelSet))];
+  if (!labelSets.includes("short") || labelSets.length < 2)
+    throw new Error(
+      `lib/templateSpecs.ts declares label sets [${labelSets.join(", ")}] — this check is ` +
+        "pointed at a field that has stopped having more than one value",
+    );
+  for (const loc of ["en", "he"]) {
+    const tailor = JSON.parse(read(`locales/${loc}/tailor.json`));
+    for (const key of SECTION_KEYS) {
+      if (!resolvesIn(tailor, `sections.${key}`))
+        throw new Error(
+          `locales/${loc}/tailor.json has no "sections.${key}" — this check's key list has ` +
+            "stopped matching the sections the document renders",
+        );
+      for (const set of labelSets) {
+        if (set === "short") continue;
+        if (!resolvesIn(tailor, `sections.${set}.${key}`))
+          fail(
+            `locales/${loc}/tailor.json is missing "sections.${set}.${key}". A template ` +
+              `declaring labelSet="${set}" would render that raw key as its section heading, ` +
+              "and check 8 stays green because en and he are missing it together.",
+          );
+      }
+    }
+  }
 
   // --- (f) both locales name every template -------------------------------
   // Check 8 only proves en and he agree WITH EACH OTHER, so a template added to
@@ -1787,15 +1834,31 @@ try {
       return out.map((s) => s.trim()).filter(Boolean);
     };
 
+    const py = decommentPy(raw);
     // Two sentinels rather than `undefined`, so "templates.py gives this no
     // default" and "this parser cannot read that literal" stay distinguishable
     // from "the value is absent" all the way to the comparison.
     const NO_DEFAULT = Symbol("no default");
     const UNREAD = Symbol("unread literal");
+    // templates.py's own module-level numeric constants — `A4_W, A4_H = ...` and
+    // `LETTER_W, LETTER_H = ...`. Parsed rather than restated: page size became
+    // mirrorable when `standard` arrived on US Letter, and a hard-coded copy of
+    // 595.276 here would be a second declaration of the very thing this check
+    // exists to compare. Anything else stays UNREAD and throws if mirrored.
+    const CONSTS = new Map();
+    for (const m of py.matchAll(/^([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)*)\s*=\s*(.+)$/gm)) {
+      const names = m[1].split(",").map((n) => n.trim());
+      const values = m[2].split(",").map((v) => v.trim());
+      if (names.length !== values.length) continue;
+      names.forEach((n, i) => {
+        if (/^-?\d+(?:\.\d+)?$/.test(values[i])) CONSTS.set(n, Number(values[i]));
+      });
+    }
     const literal = (text) => {
       const s = text.trim();
       if (/^"[^"]*"$/.test(s) || /^'[^']*'$/.test(s)) return s.slice(1, -1);
       if (/^-?\d+(?:\.\d+)?$/.test(s)) return Number(s);
+      if (CONSTS.has(s)) return CONSTS.get(s);
       if (s === "True") return true;
       if (s === "False") return false;
       if (s.startsWith("(") && s.endsWith(")")) {
@@ -1805,7 +1868,6 @@ try {
       return UNREAD; // `A4_W`, and anything else this parser deliberately does not read
     };
 
-    const py = decommentPy(raw);
     const classAt = py.indexOf("class TemplateSpec:");
     const dictAt = py.search(/^TEMPLATES\s*:\s*dict\[[^\]]*\]\s*=\s*\{/m);
     if (classAt === -1) throw new Error("templates.py has no `class TemplateSpec:`");
@@ -1819,7 +1881,7 @@ try {
       if (m) fields.set(m[1], m[3] === undefined ? NO_DEFAULT : literal(m[3]));
     }
     const defaults = [...fields].filter(([, v]) => v !== NO_DEFAULT).length;
-    if (fields.size < 40 || defaults < 30)
+    if (fields.size < 55 || defaults < 45)
       throw new Error(
         `parsed only ${fields.size} TemplateSpec fields (${defaults} with defaults) out of templates.py — ` +
           "the dataclass body has stopped matching this parser",
@@ -1839,7 +1901,7 @@ try {
       overrides[m[1]] = kw;
     }
     const pyIds = Object.keys(overrides);
-    if (pyIds.length < 11)
+    if (pyIds.length < 12)
       throw new Error(`parsed only ${pyIds.length} entries out of templates.py's TEMPLATES dict`);
 
     for (const [what, gone] of [
@@ -1862,6 +1924,7 @@ try {
     const FIELD = {
       mx: "margin_lr_pt",
       my: "margin_tb_pt",
+      pageW: "page_w_pt",
       body: "body_size",
       head: "heading_size",
       name: "name_size",
@@ -1877,7 +1940,11 @@ try {
     // Both sets are listed so a family the frontend has never heard of throws
     // instead of being silently sorted into sans.
     const SERIF_FAMILIES = new Set(["Spectral"]);
-    const SANS_FAMILIES = new Set(["Lato"]);
+    // "Helvetica" names no font FILE: it resolves through the base-14 fallback,
+    // which is how `standard` gets Arial/Liberation Sans metrics. Still a sans,
+    // and still a face this screen cannot load — the mirror reproduces the
+    // CATEGORY for it exactly as it does for the two bundled families.
+    const SANS_FAMILIES = new Set(["Lato", "Helvetica"]);
     const DERIVE = { serif: (v) => SERIF_FAMILIES.has(v) };
     for (const id of pyIds) {
       const family = overrides[id].pdf_family ?? fields.get("pdf_family");

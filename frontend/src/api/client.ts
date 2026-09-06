@@ -114,10 +114,13 @@ export function resumeFilename(candidateName: string, company: string): string {
 }
 
 /** Visual templates the backend renderers support (see app/render/templates.py).
- * Order is the picker's display order. `split` and `panel` are two-column PDF
+ * Order is the picker's display order, and `standard` leads it because it is
+ * `DEFAULT_TEMPLATE` — an id the backend falls back to for any name it does not
+ * know, so every one of these defaults has to name it. `split` and `panel` are two-column PDF
  * designs — their .docx falls back to the closest single-column sibling
  * (see `isPdfOnlyTemplate` in components/TemplatePicker). */
 export const RESUME_TEMPLATES = [
+  "standard",
   "classic",
   "modern",
   "split",
@@ -136,7 +139,7 @@ export async function downloadResume(
   resume: ResumeModel,
   fmt: "docx" | "pdf",
   filename?: string,
-  template: ResumeTemplate = "classic",
+  template: ResumeTemplate = "standard",
 ): Promise<void> {
   const resp = await api.post("/render", { resume, fmt, template }, { responseType: "blob" });
   const url = URL.createObjectURL(resp.data as Blob);
@@ -463,7 +466,7 @@ export async function freeScan(file: File, jdText: string): Promise<FreeScanResu
 /** Render the résumé and read it back with our own parser — deterministic, uncapped. */
 export async function atsXray(
   resume: ResumeModel,
-  template: ResumeTemplate = "classic",
+  template: ResumeTemplate = "standard",
   fmt: "pdf" | "docx" = "pdf",
   signal?: AbortSignal,
 ): Promise<ATSXrayResult> {
@@ -484,7 +487,7 @@ export async function atsXray(
 export async function renderResumeBlob(
   resume: ResumeModel,
   fmt: "docx" | "pdf",
-  template: ResumeTemplate = "classic",
+  template: ResumeTemplate = "standard",
   signal?: AbortSignal,
 ): Promise<Blob> {
   const resp = await api.post("/render", { resume, fmt, template }, { responseType: "blob", signal });
@@ -500,7 +503,7 @@ export async function renderResumeBlob(
  * reportlab build (~15 ms), so callers debounce and pass an AbortSignal. */
 export async function pageCount(
   resume: ResumeModel,
-  template: ResumeTemplate = "classic",
+  template: ResumeTemplate = "standard",
   signal?: AbortSignal,
 ): Promise<PageCountResult> {
   const { data } = await api.post<PageCountResult>("/tools/page-count", { resume, template }, { signal });

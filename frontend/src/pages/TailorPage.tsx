@@ -148,7 +148,7 @@ export default function TailorPage() {
   } = useSyncExternalStore(subscribeTailor, getTailorState);
   const toast = useToast();
   // Download-card template choice (visual only — every option is ATS-safe).
-  const [template, setTemplate] = useState<ResumeTemplate>("classic");
+  const [template, setTemplate] = useState<ResumeTemplate>("standard");
   const persistMaster = useSaveMasterResume();
 
   // Deep handoff from the Chrome extension ("Save & tailor"): ?tailor_app=<id>

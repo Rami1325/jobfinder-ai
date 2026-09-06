@@ -314,9 +314,15 @@ class CoverLetterResponse(BaseModel):
 class RenderRequest(BaseModel):
     resume: ResumeModel
     fmt: str = "docx"  # docx | pdf
-    # Visual template (see app/render/templates.py). Unknown names fall back
-    # to the default, so old clients keep today's output.
-    template: str = "classic"  # classic | modern | compact
+    # Visual template (see app/render/templates.py). "" falls back to the
+    # default, like every other render call — and unlike the literal "classic"
+    # this carried until 2026-09-06, which was the id that HAPPENED to be the
+    # default when it was written. It stopped being one when `standard` took
+    # over, so a client that omitted the field silently kept downloading the old
+    # template while the preview beside it drew the new one. A default that
+    # NAMES a template is a second declaration of `DEFAULT_TEMPLATE`; the six
+    # other request models that carry this field all say "" for that reason.
+    template: str = ""
 
 
 class ResumeUploadResponse(BaseModel):

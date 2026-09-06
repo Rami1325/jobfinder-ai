@@ -14,7 +14,7 @@ import type { ATSXrayResult } from "../../types";
 export default function XrayToolPage() {
   const { t } = useTranslation("tools");
   const { master, loading } = useMasterResume();
-  const [template, setTemplate] = useState<ResumeTemplate>("classic");
+  const [template, setTemplate] = useState<ResumeTemplate>("standard");
   const [fmt, setFmt] = useState<"pdf" | "docx">("pdf");
   const [result, setResult] = useState<ATSXrayResult | null>(null);
   const [running, setRunning] = useState(false);

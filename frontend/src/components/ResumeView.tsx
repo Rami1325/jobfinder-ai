@@ -7,6 +7,7 @@ import { Badge } from "./ui";
 import { cn } from "../lib/cn";
 import {
   CONTACT_FIELDS,
+  type ContactField,
   dkey,
   inlineField,
   INSERT_KINDS,
@@ -322,11 +323,14 @@ function mixed(a: string, b: string, t: number): string {
  * one real pixel here. */
 const rulePx = (pt: number) => `${Math.max(1, Math.round((pt * 4) / 3))}px`;
 
-/** A4, the page size of every template — which is why the mirror does not carry
- * `page_w_pt`. Used only to turn a width in points into a share of the text
- * column, so the "short" heading mark keeps its proportion at 390px instead of
- * being a fixed 42px on a 336px page. */
-const PAGE_W_PT = 595.276;
+/** Turns a width in points into a share of the text column, so the "short"
+ * heading mark keeps its proportion at 390px instead of being a fixed 42px on a
+ * 336px page. It reads the template's OWN page width because eleven templates
+ * are A4 and `standard` is US Letter — this used to be a hard-coded 595.276
+ * under a comment claiming every template was A4, which stopped being true the
+ * moment a Letter template existed. `pageW` is mirrored for exactly this. */
+const headingMarkPct = (spec: TemplateSpec) =>
+  ((spec.headingShortPt / (spec.pageW - 2 * spec.mx)) * 100).toFixed(1);
 
 /**
  * Section heading, in the six shapes `TemplateSpec.heading` names — rule,
@@ -409,7 +413,7 @@ function SectionHead({
           className="mt-1 block"
           style={{
             height: rulePx(spec.headingRulePt),
-            width: `${((spec.headingShortPt / (PAGE_W_PT - 2 * spec.mx)) * 100).toFixed(1)}%`,
+            width: `${headingMarkPct(spec)}%`,
             background: headingRuleFill(spec),
           }}
         />
@@ -424,14 +428,23 @@ function SectionHead({
  * the accent, the rest is muted, and separators only appear BETWEEN parts (a
  * dot in front of the first surviving bit is the easy bug here).
  */
-function MetaLine({ lead = "", bits = [] }: { lead?: string; bits?: (string | undefined)[] }) {
+function MetaLine({
+  lead = "",
+  bits = [],
+  sep = "·",
+}: {
+  lead?: string;
+  bits?: (string | undefined)[];
+  /** `TemplateSpec.meta_sep`, trimmed — the markup supplies the spacing. */
+  sep?: string;
+}) {
   const parts = [lead, ...bits].filter((b): b is string => Boolean(b && b.trim()));
   if (parts.length === 0) return null;
   return (
     <div className="text-xs text-ink-muted">
       {parts.map((bit, i) => (
         <span key={`${bit}-${i}`}>
-          {i > 0 && <span className="mx-1.5 text-ink-faint">·</span>}
+          {i > 0 && <span className="mx-1.5 text-ink-faint">{sep}</span>}
           <span className={i === 0 && lead ? "font-semibold text-accent-soft" : undefined}>{bit}</span>
         </span>
       ))}
@@ -732,7 +745,38 @@ export default function ResumeView({
   const centred = styled && !band && spec.nameCentered;
   const railed = styled && spec.rail;
   const splitEntry = styled && spec.entry === "split";
-  const inlineSkills = styled && spec.skills === "inline";
+  /** `entry="run"` — the whole entry head on ONE wrapping line: the bold
+   *  identity, then the italic circumstance. `_flow.entry`'s third grammar. */
+  const runEntry = styled && spec.entry === "run";
+  const labeledSkills = styled && spec.skills === "labeled";
+  /** Both grammars set the items as a comma-joined RUN, which is exactly what an
+   *  ATS keyword parser splits on; "labeled" only moves the group's label onto
+   *  the front of that same run. */
+  const inlineSkills = styled && (spec.skills === "inline" || spec.skills === "labeled");
+  /** The section heading this template prints for `key`.
+   *
+   * `TemplateSpec.label_set` chooses between two tables — the standard short
+   * names every other template prints, and the longer business wording
+   * `standard` prints ("Professional Summary", "Core Expertise"). It mirrors
+   * `backend/app/render/labels.py`, which is where the ATS note about the longer
+   * set lives, and check-mirrors requires both sets in both locales: a missing
+   * key here renders the raw key at 12px in Hebrew, and check 8 stays green
+   * because en and he would be missing it together.
+   *
+   * The `defaultValue` is the SHORT label rather than the raw key, so the worst
+   * a gap can do is print a correct heading from the other set. */
+  const sectionLabel = (key: string, fallback?: string) =>
+    styled && spec.labelSet !== "short"
+      ? t(`sections.${spec.labelSet}.${key}`, {
+          defaultValue: t(`sections.${key}`, fallback ?? key),
+        })
+      : t(`sections.${key}`, fallback ?? key);
+  /** `meta_sep` — "" keeps each site's own default, which is not one string. */
+  const sep = (styled && spec.metaSep) || " · ";
+  /** The three sites the renderers join with `meta_sep` write it TRIMMED and let
+   *  the markup supply the spacing, so a wrapped line never opens with padding.
+   *  `standard`'s "  |  " becomes a "|" between two flex gaps. */
+  const sepGlyph = sep.trim() || "·";
   /** Body copy. Both renderers set prose in `ink` and keep `muted` for META —
    * dates, locations, the contact line, a project's description — while this
    * sheet used ONE token for both, so the two PDF colours could not be told
@@ -763,8 +807,10 @@ export default function ResumeView({
         "--ink": triplet(spec.ink),
         "--ink-muted": triplet(spec.muted),
         // `s.sep` — separators sit between the hairline and the body grey so
-        // they read as punctuation rather than as content.
-        "--ink-faint": mixed(spec.muted, spec.rule, 0.55),
+        // they read as punctuation rather than as content, unless the template
+        // says otherwise: `standard` prints its "|" inside the same black
+        // sentence, and a greyed one is a different document.
+        "--ink-faint": spec.sepColor ? triplet(spec.sepColor) : mixed(spec.muted, spec.rule, 0.55),
         // `page_bg` is the second ORNAMENT carve-out in templates.py: the PDF
         // paints executive's cream and the DOCX prints white. The screen is a
         // preview of the PDF, so it paints it.
@@ -780,6 +826,15 @@ export default function ResumeView({
         "--doc-name-tracking": `${((spec.nameTracking / spec.name) * (paperDir === "rtl" ? 0.5 : 1)).toFixed(3)}em`,
         // Read by ONE zero-specificity `::marker` rule in styles.css — see
         // `listStyle` below for why the glyph may not be an element.
+        // `name_color` / `headline_color` — each may sit a shade off the body
+        // text without dragging `ink` or `accent`, which nine other things on
+        // this page read, along with it. They travel as TOKENS rather than as an
+        // inline style because `blkProps` takes a className, not a style object,
+        // and the name and the headline are both editable blocks: their colour
+        // has to arrive the way the band's does, through inheritance, or the
+        // block markup starts branching on the template.
+        "--doc-name": triplet(spec.nameColor || spec.ink),
+        "--doc-headline": triplet(spec.headlineColor || spec.accent),
         "--doc-bullet": triplet(spec.bulletAccent ? spec.accent : spec.muted),
         "--doc-bullet-size": `${spec.bulletScale}em`,
       } as CSSProperties)
@@ -805,6 +860,13 @@ export default function ResumeView({
         "--ink-faint": mixed(spec.bandMeta, bandFill(spec), 0.45),
         "--accent": triplet(spec.bandSub),
         "--accent-soft": triplet(spec.bandSub),
+        // A band reverses the header out of a filled rectangle, so the name and
+        // the headline take the band's own palette — exactly as `_flow` does,
+        // where `band_ink` / `band_sub` win over `name_color` / `headline_color`.
+        // Miss this and the two tokens above paint the header in the sheet's
+        // colours on top of the rectangle.
+        "--doc-name": triplet(spec.bandInk),
+        "--doc-headline": triplet(spec.bandSub),
       } as CSSProperties)
     : undefined;
 
@@ -1134,7 +1196,26 @@ export default function ResumeView({
           : {}),
     };
   };
-  const contactBits = [c.email, c.phone, c.location, c.linkedin, c.website].filter(Boolean);
+  /** `contact_order` — which contact details the header prints, in order.
+   *
+   * A PERMUTATION, never a filter: any field the spec leaves out is appended
+   * rather than dropped. On the editable document these five blocks are the ONLY
+   * way to reach a phone number or a location — each renders even when empty, as
+   * a CSS placeholder — so a spec that named four would make the fifth
+   * unreachable. The renderers can skip an empty value because a value that does
+   * not exist has nothing to edit; this surface cannot.
+   *
+   * `CONTACT_FIELDS` itself stays in its declared order: `RE_CONTACT` is BUILT
+   * from it, so reordering the constant would be reordering the grammar. */
+  const contactFields = styled
+    ? [
+        ...spec.contactOrder.filter((k): k is ContactField =>
+          (CONTACT_FIELDS as readonly string[]).includes(k),
+        ),
+        ...CONTACT_FIELDS.filter((k) => !spec.contactOrder.includes(k)),
+      ]
+    : [...CONTACT_FIELDS];
+  const contactBits = contactFields.map((k) => c[k]).filter(Boolean);
   const military = resume.military_service ?? [];
   const languages = resume.languages ?? [];
   const skillBlocks = skillBlocksOf(resume);
@@ -1143,7 +1224,7 @@ export default function ResumeView({
     summary:
       resume.summary || editable ? (
         <section key="summary">
-          <SectionHead spec={headSpec} dir={paperDir}>{t("sections.summary")}</SectionHead>
+          <SectionHead spec={headSpec} dir={paperDir}>{sectionLabel("summary")}</SectionHead>
           <p
             {...blkProps(
               "@summary",
@@ -1164,7 +1245,7 @@ export default function ResumeView({
     // gives the chip somewhere to live.
     skills: skillBlocks.length > 0 || onAddSkill ? (
       <section key="skills">
-        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.skills")}</SectionHead>
+        <SectionHead spec={headSpec} dir={paperDir}>{sectionLabel("skills")}</SectionHead>
         <div className="space-y-2">
           {(skillBlocks.length ? skillBlocks : ([["", []]] as [string, string[]][])).map(([label, items], i) => (
             <div
@@ -1178,7 +1259,9 @@ export default function ResumeView({
               {/* Not uppercased, unlike the section heading above it: a group
                   label is the user's own taxonomy, copied verbatim from their
                   résumé, and both renderers print it as written. */}
-              {label && <p className="mb-1 text-xs font-semibold text-accent">{label}</p>}
+              {label && !labeledSkills && (
+                <p className="mb-1 text-xs font-semibold text-accent">{label}</p>
+              )}
               {/* `skills="inline"` is a comma-joined RUN, which is also exactly
                   what an ATS keyword parser splits on; `skills="chips"` is the
                   bordered row. Five templates carry the first and six the
@@ -1189,6 +1272,14 @@ export default function ResumeView({
                   with punctuation. */}
               {inlineSkills ? (
                 <p className={cn("text-sm", prose)}>
+                  {/* `skills="labeled"` puts the group's label BOLD and INLINE
+                      ahead of its own items instead of on a line above them. The
+                      items, and the commas between them, are byte for byte what
+                      "inline" emits — only the label moves — so a keyword parser
+                      splits the run identically. */}
+                  {label && labeledSkills && (
+                    <strong className="font-semibold text-ink">{label}: </strong>
+                  )}
                   {/* `key={i}`, not `key={s}`: two skills that differ only in
                       case or punctuation share a `dkey`, so they would carry
                       the SAME data-block and `readBlock`'s `.find()` would send
@@ -1239,7 +1330,7 @@ export default function ResumeView({
 
     experience: resume.experience.length > 0 ? (
       <section key="experience">
-        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.experience")}</SectionHead>
+        <SectionHead spec={headSpec} dir={paperDir}>{sectionLabel("experience")}</SectionHead>
         <div className={cn("space-y-3", railed && RAIL)}>
           {/* The two entry grammars, both from `_flow.entry`:
               "stack" (9 of the 11 templates) puts the title on its own line and
@@ -1256,18 +1347,39 @@ export default function ResumeView({
             const dates = [e.start_date, e.end_date].filter(Boolean).join(" – ");
             return (
             <div key={i} {...blkProps(`@exp.${i}`, "block", railed ? RAIL_DOT : undefined)}>
-              {splitEntry ? (
+              {runEntry ? (
+                /* `entry="run"` — ONE wrapping line. The bold half is the
+                   entry's identity (the title, then the employer joined by the
+                   template's own separator); the italic half is its
+                   circumstance. `<em>` rather than a class, because that IS the
+                   semantic here and both renderers set it in the italic face.
+                   Everything stays inside the single `@exp.i` block: no field
+                   gains a data-block of its own, so `readBlock` still returns
+                   five fields and the entry still routes to BlockEditSheet. */
+                <p className="text-sm">
+                  <strong className="font-semibold text-ink">
+                    {[e.title || e.company, e.title ? e.company : ""]
+                      .filter(Boolean)
+                      .join(` ${sepGlyph} `)}
+                  </strong>
+                  {[e.location, dates].filter(Boolean).length > 0 && (
+                    <em className="ms-2 text-xs text-ink-muted">
+                      {[e.location, dates].filter(Boolean).join(` ${sepGlyph} `)}
+                    </em>
+                  )}
+                </p>
+              ) : splitEntry ? (
                 <>
                   <div className="flex items-baseline justify-between gap-3">
                     <strong className="text-sm font-semibold text-ink">{e.title || e.company}</strong>
                     {dates && <span className="shrink-0 text-xs text-ink-muted">{dates}</span>}
                   </div>
-                  <MetaLine lead={e.title ? e.company : ""} bits={[e.location]} />
+                  <MetaLine lead={e.title ? e.company : ""} bits={[e.location]} sep={sepGlyph} />
                 </>
               ) : (
                 <>
                   <strong className="block text-sm font-semibold text-ink">{e.title || e.company}</strong>
-                  <MetaLine lead={e.title ? e.company : ""} bits={[e.location, dates]} />
+                  <MetaLine lead={e.title ? e.company : ""} bits={[e.location, dates]} sep={sepGlyph} />
                 </>
               )}
               <ul className={cn("mt-1 list-disc space-y-0.5 ps-5 text-sm", prose)} style={listStyle}>
@@ -1297,14 +1409,30 @@ export default function ResumeView({
 
     projects: resume.projects.length > 0 ? (
       <section key="projects">
-        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.projects")}</SectionHead>
+        <SectionHead spec={headSpec} dir={paperDir}>{sectionLabel("projects")}</SectionHead>
         <div className={cn("space-y-3", railed && RAIL)}>
           {resume.projects.map((p, i) => (
             <div key={i} {...blkProps(`@proj.${i}`, "block", railed ? RAIL_DOT : undefined)}>
               <strong className="text-sm font-semibold text-ink">{p.name}</strong>
               {/* A project's description stays MUTED in both renderers — it is
-                  the one piece of body copy `_flow` colours `s.muted`. */}
-              {p.description && <span className="text-sm text-ink-muted"> — {p.description}</span>}
+                  the one piece of body copy `_flow` colours `s.muted`. On a
+                  "run" entry the head is one line and cannot absorb prose, so
+                  the description is its own indented paragraph underneath,
+                  exactly as `_flow.build_projects` sets it. `desc_indent_pt`
+                  arrives as an inline style, never a computed class: Tailwind
+                  generates from a SOURCE SCAN, so an arbitrary value assembled
+                  at runtime resolves to nothing at all. */}
+              {p.description &&
+                (runEntry ? (
+                  <p
+                    className="text-sm text-ink-muted"
+                    style={{ marginInlineStart: `${(spec.descIndentPt * 4) / 3}px` }}
+                  >
+                    {p.description}
+                  </p>
+                ) : (
+                  <span className="text-sm text-ink-muted"> — {p.description}</span>
+                ))}
               <ul className={cn("mt-1 list-disc space-y-0.5 ps-5 text-sm", prose)} style={listStyle}>
                 {p.bullets.map((b, j) => (
                   <li key={j} {...blkProps(`@proj.${i}.b.${j}`, "item")}>
@@ -1331,20 +1459,46 @@ export default function ResumeView({
 
     education: resume.education.length > 0 ? (
       <section key="education">
-        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.education")}</SectionHead>
+        <SectionHead spec={headSpec} dir={paperDir}>{sectionLabel("education")}</SectionHead>
         <div className={cn("space-y-2", railed && RAIL)}>
           {resume.education.map((e, i) => (
             <div key={i} {...blkProps(`@edu.${i}`, "block", cn("text-sm", railed && RAIL_DOT))}>
+              {/* On a "run" entry the institution joins the BOLD half (it is the
+                  entry's other proper noun), the dates are the italic
+                  circumstance, and the course list rides the SAME line after
+                  them — a course list is a sentence, not a bullet, which is
+                  what `_flow.entry`'s `detail` slot exists to absorb. Every
+                  other grammar keeps the two-line shape it has always had. */}
               <strong className="font-semibold text-ink">
-                {[e.degree, e.field].filter(Boolean).join(", ") || e.institution}
-              </strong>
-              <span className="text-ink-muted">
-                {" "}
-                {[e.institution, [e.start_date, e.end_date].filter(Boolean).join(" – ")]
+                {[
+                  [e.degree, e.field].filter(Boolean).join(", ") || e.institution,
+                  runEntry && [e.degree, e.field].filter(Boolean).length ? e.institution : "",
+                ]
                   .filter(Boolean)
-                  .join(" | ")}
-              </span>
-              {e.details && <div className="text-ink-muted">{e.details}</div>}
+                  .join(` ${sepGlyph} `)}
+              </strong>
+              {runEntry ? (
+                <>
+                  {[e.start_date, e.end_date].filter(Boolean).length > 0 && (
+                    <em className="ms-2 text-xs text-ink-muted">
+                      {[e.start_date, e.end_date].filter(Boolean).join(" – ")}
+                    </em>
+                  )}
+                  {e.details && (
+                    <span className="text-ink-muted">{` ${sepGlyph} ${e.details}`}</span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span className="text-ink-muted">
+                    {" "}
+                    {[e.institution, [e.start_date, e.end_date].filter(Boolean).join(" – ")]
+                      .filter(Boolean)
+                      .join(" | ")}
+                  </span>
+                  {e.details && <div className="text-ink-muted">{e.details}</div>}
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -1354,7 +1508,7 @@ export default function ResumeView({
     military: military.length > 0 ? (
       <section key="military">
         {/* defaultValue fallbacks: catalog keys pending (locale files owned by the frontend pass) */}
-        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.militaryService", "Military Service")}</SectionHead>
+        <SectionHead spec={headSpec} dir={paperDir}>{sectionLabel("militaryService", "Military Service")}</SectionHead>
         <div className={cn("space-y-3", railed && RAIL)}>
           {military.map((m, i) => (
             <div key={i} {...blkProps(`@mil.${i}`, "block", railed ? RAIL_DOT : undefined)}>
@@ -1394,7 +1548,7 @@ export default function ResumeView({
 
     certifications: resume.certifications.length > 0 ? (
       <section key="certifications">
-        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.certifications")}</SectionHead>
+        <SectionHead spec={headSpec} dir={paperDir}>{sectionLabel("certifications")}</SectionHead>
         {/* `list_cols` reaches CERTIFICATIONS and nothing else in the PDF
             (`build_certifications`), and it is capped at 2 there because wider
             grids interleave badly on text extraction. Two columns of short
@@ -1417,7 +1571,7 @@ export default function ResumeView({
 
     languages: languages.length > 0 ? (
       <section key="languages">
-        <SectionHead spec={headSpec} dir={paperDir}>{t("sections.languages", "Languages")}</SectionHead>
+        <SectionHead spec={headSpec} dir={paperDir}>{sectionLabel("languages", "Languages")}</SectionHead>
         {/* "Languages ride the skills treatment" — `build_languages` draws
             chips exactly when the skills block does, and a `·`-joined line
             otherwise. Same separator rule as everywhere else on this page: it
@@ -1431,7 +1585,7 @@ export default function ResumeView({
                 </span>
                 {i < languages.length - 1 && (
                   <span aria-hidden="true" className="mx-1.5 text-ink-faint">
-                    ·
+                    {sepGlyph}
                   </span>
                 )}
               </span>
@@ -1523,7 +1677,12 @@ export default function ResumeView({
           "block",
           // `name_tracking` is negative on every template — names are set tight
           // — and it is halved in Hebrew exactly as the renderers halve it.
-          cn("text-xl font-bold text-ink", styled && "tracking-[var(--doc-name-tracking)]"),
+          cn(
+            "text-xl font-bold",
+            styled
+              ? "text-[rgb(var(--doc-name))] tracking-[var(--doc-name-tracking)]"
+              : "text-ink",
+          ),
         )}
         data-ph={editable ? t("sections.fallbackName") : undefined}
       >
@@ -1534,7 +1693,17 @@ export default function ResumeView({
           and a section that renders nothing cannot be tapped into. */}
       {(resume.headline || editable) && (
         <div
-          {...blkProps("@headline", "block", "mt-0.5 text-sm font-medium text-accent-soft")}
+          {...blkProps(
+            "@headline",
+            "block",
+            cn(
+              "mt-0.5 text-sm",
+              // `headline_bold` — the target-title line is set in the bold face
+              // on `standard` and in the regular one everywhere else.
+              styled && spec.headlineBold ? "font-semibold" : "font-medium",
+              styled ? "text-[rgb(var(--doc-headline))]" : "text-accent-soft",
+            ),
+          )}
           data-ph={editable ? t("edit.fields.headline") : undefined}
         >
           {resume.headline}
@@ -1566,7 +1735,7 @@ export default function ResumeView({
             centred && "justify-center",
           )}
         >
-          {CONTACT_FIELDS.map((k, i) => (
+          {contactFields.map((k, i) => (
             <span key={k} className="inline-flex min-w-0 items-baseline gap-1">
               <span
                 {...blkProps(`@contact.${k}`, "block", "min-w-0 break-words")}
@@ -1574,9 +1743,9 @@ export default function ResumeView({
               >
                 {c[k]}
               </span>
-              {i < CONTACT_FIELDS.length - 1 && (
+              {i < contactFields.length - 1 && (
                 <span aria-hidden="true" className="text-ink-faint">
-                  ·
+                  {sepGlyph}
                 </span>
               )}
             </span>
@@ -1585,7 +1754,7 @@ export default function ResumeView({
       ) : (
         contactBits.length > 0 && (
           <div {...blkProps("@contact", "block", "mt-0.5 text-xs text-ink-muted")}>
-            {contactBits.join(" · ")}
+            {contactBits.join(` ${sepGlyph} `)}
           </div>
         )
       )}

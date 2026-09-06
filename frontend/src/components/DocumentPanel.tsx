@@ -584,6 +584,12 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
                 one that hides a difference that is — just pointing the other
                 way. */}
             {(spec.contactIcons || spec.dateIcon) && ` ${t("doc.screen.icons")}`}
+            {/* The page footer is the ONE place the PDF and the DOCX genuinely
+                disagree, because it carries TEXT — it is not one of the ornament
+                carve-outs, and it is said out loud here for that reason. This
+                surface has no page boundaries to foot either. Gated like the
+                sentence above it: eleven templates draw none. */}
+            {spec.footerName && ` ${t("doc.screen.footer")}`}
             {PDF_ONLY(template) && ` ${t("doc.screen.twoColumn")}`}
           </p>
         </div>

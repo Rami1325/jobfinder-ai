@@ -68,6 +68,29 @@ export interface TemplateSpec {
   /** name_tracking, pt — negative on every template; names are set tight. */
   nameTracking: number;
   nameCentered: boolean;
+  /** page_w_pt. Eleven templates are A4; `standard` is US Letter, because the
+   *  document it reproduces is. Only the "short" heading mark reads it — its
+   *  width is a SHARE of the text column — but it is mirrored rather than
+   *  hard-coded so that claim cannot quietly stop being true. */
+  pageW: number;
+  /** leading_ratio: the body line height as a multiple of `body`. 0 = the
+   *  tight/normal rule both renderers apply (1.26 when `tight`, else 1.36). */
+  leadingRatio: number;
+  /** rhythm, pt: [section-before, section-after, entry-before, bullet-after,
+   *  heading-to-its-rule, header-after]. [] = the renderers' own constants; a
+   *  SHORTER array states only its leading elements. */
+  rhythm: readonly number[];
+  /** name_color; "" = `ink`. */
+  nameColor: string;
+  /** The target-title line under the name. `headlineSize` 0 = the derived size
+   *  (body + 1.2 on a band, + 0.8 otherwise); `headlineColor` "" = `accent`. */
+  headlineBold: boolean;
+  headlineColor: string;
+  headlineSize: number;
+  headlineTracking: number;
+  /** Which contact details the header prints, in order. [] = the built-in
+   *  email, phone, location, linkedin, website. */
+  contactOrder: readonly string[];
   /** DERIVED from pdf_family: true where the bundled Latin face is a serif. */
   serif: boolean;
   /** Compact vertical rhythm (the Israeli one-pager convention). */
@@ -99,10 +122,24 @@ export interface TemplateSpec {
   headingHangPt: number;
   /** A no-op in Hebrew either way — both renderers branch on direction first. */
   headingCase: "upper" | "title";
+  /** Which set of section names this template prints — see
+   *  `backend/app/render/labels.py`. "short" is the standard one; "full" is the
+   *  longer business wording ("Professional Summary", "Core Expertise"). */
+  labelSet: "short" | "full";
+  /** The inline separator between the parts of the contact line, an entry's
+   *  meta run and the languages line. "" = each site's own default, which is
+   *  not one string. */
+  metaSep: string;
+  /** The separator's colour; "" = the mix of `muted` and `rule` both renderers
+   *  compute. */
+  sepColor: string;
 
   /* --- body grammar ------------------------------------------------------- */
-  entry: "split" | "stack";
-  skills: "inline" | "chips";
+  entry: "split" | "stack" | "run";
+  skills: "inline" | "chips" | "labeled";
+  /** A project's description paragraph. `descSize` 0 = `body`. */
+  descSize: number;
+  descIndentPt: number;
   /** Certifications / languages in N columns. Capped at 2. */
   listCols: 1 | 2;
   bulletGlyph: string;
@@ -128,6 +165,14 @@ export interface TemplateSpec {
   dateIcon: boolean;
   /** A full-bleed paper tint; "" = white. */
   pageBg: string;
+  /** The candidate's name at the foot of every page. PDF ONLY, and NOT an
+   *  ornament carve-out — it carries text, so the Word file genuinely says one
+   *  thing less. A deliberate, user-made divergence; see `footer_name` in
+   *  templates.py. This surface draws none either: the document on screen is
+   *  one continuous sheet with no page boundaries to foot. */
+  footerName: boolean;
+  footerSize: number;
+  footerColor: string;
 }
 
 /**
@@ -149,6 +194,15 @@ export const TEMPLATE_SPEC_DEFAULTS: Omit<TemplateSpec, "accent"> = {
   tracking: 1,
   nameTracking: 1,
   nameCentered: true,
+  pageW: 595.276,
+  leadingRatio: 0,
+  rhythm: [],
+  nameColor: "",
+  headlineBold: false,
+  headlineColor: "",
+  headlineSize: 0,
+  headlineTracking: 0.3,
+  contactOrder: [],
   serif: false,
   tight: false,
   header: "rule",
@@ -166,8 +220,13 @@ export const TEMPLATE_SPEC_DEFAULTS: Omit<TemplateSpec, "accent"> = {
   headingShortPt: 32,
   headingHangPt: 44,
   headingCase: "upper",
+  labelSet: "short",
+  metaSep: "",
+  sepColor: "",
   entry: "split",
   skills: "inline",
+  descSize: 0,
+  descIndentPt: 0,
   listCols: 1,
   bulletGlyph: "•",
   bulletScale: 1,
@@ -182,16 +241,37 @@ export const TEMPLATE_SPEC_DEFAULTS: Omit<TemplateSpec, "accent"> = {
   contactIcons: false,
   dateIcon: false,
   pageBg: "",
+  footerName: false,
+  footerSize: 7.5,
+  footerColor: "#787878",
 };
 
 const D = TEMPLATE_SPEC_DEFAULTS;
 
 /**
- * Eleven templates, in the picker's display order (`RESUME_TEMPLATES` in
+ * Twelve templates, in the picker's display order (`RESUME_TEMPLATES` in
  * api/client.ts). Each entry states exactly what its Python twin overrides and
  * nothing else, so the two tables read side by side.
  */
 export const TEMPLATE_SPECS: Record<ResumeTemplate, TemplateSpec> = {
+  // The DEFAULT since 2026-09-06, and the one entry here that mirrors a
+  // REPRODUCTION rather than a design: every number came off a real document.
+  // `pdf_family` is base-14 Helvetica, which is a sans, so `serif` stays false —
+  // and the face itself is the file's, exactly as it is for Lato and Spectral.
+  standard: {
+    ...D, accent: "#232323", ink: "#000000", muted: "#000000", rule: "#A8A8A8", accentSoft: "#F0F0F0",
+    mx: 40.3, my: 36, body: 9.0, head: 10.0, name: 19, meta: 8.5, tracking: 0, nameTracking: 0,
+    pageW: 612, leadingRatio: 1.167, rhythm: [6.3, 5.9, 4.3, 1.7, 0, 0],
+    nameColor: "#191919",
+    headlineBold: true, headlineColor: "#414141", headlineSize: 10.5, headlineTracking: 0,
+    contactOrder: ["location", "phone", "email", "linkedin", "website"],
+    header: "plain",
+    heading: "rule", headingRulePt: 0.75, headingRuleColor: "#A8A8A8",
+    labelSet: "full", metaSep: "  |  ", sepColor: "#000000",
+    entry: "run", skills: "labeled", listCols: 1,
+    descSize: 8.5, descIndentPt: 8.65,
+    footerName: true,
+  },
   classic: {
     ...D, accent: "#1F3A5F", ink: "#111827", muted: "#5C6470", rule: "#DFE3E9", accentSoft: "#E9EEF4",
     mx: 58, my: 46, body: 10.4, head: 11.0, name: 27, meta: 8.8, tracking: 0.8, nameTracking: -0.3,

@@ -436,6 +436,7 @@ TEMPLATES: dict[str, TemplateSpec] = {
         name_centered=True, name_tracking=0.0, heading_tracking=0.0,
         name_color="191919",
         headline_bold=True, headline_color="414141", headline_size=10.5,
+        headline_tracking=0.0,
         rhythm=(6.3, 5.9, 4.3, 1.7, 0.0, 0.0),
         header="plain",
         heading="rule", heading_rule_pt=0.75, heading_rule_color="A8A8A8",

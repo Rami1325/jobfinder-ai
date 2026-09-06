@@ -56,6 +56,10 @@
     "pdfOnlyBadge": "PDF only",
     "docxFallback": "{{name}} is a two-column PDF design. The Word file downloads as the single-column version — and both stay ATS-safe: no tables, text boxes or images.",
     "templates": {
+      "standard": {
+        "name": "Standard",
+        "desc": "The default. Centred header, ruled section headings, one dense column — the plain professional CV, on US Letter."
+      },
       "classic": {
         "name": "Classic",
         "desc": "The CV Israeli recruiters expect, with every fact exactly where they look."
@@ -247,7 +251,17 @@
     "certifications": "Certifications",
     "militaryService": "Military Service",
     "languages": "Languages",
-    "contact": "Contact details"
+    "contact": "Contact details",
+    "full": {
+      "summary": "Professional Summary",
+      "skills": "Core Expertise",
+      "experience": "Professional Experience",
+      "projects": "Selected Projects",
+      "education": "Education",
+      "militaryService": "Military Service",
+      "certifications": "Certifications",
+      "languages": "Languages"
+    }
   },
   "groups": {
     "rewrite": {
@@ -445,7 +459,8 @@
     "screen": {
       "note": "This page is drawn in the template you picked — its colours, headings, header, entry layout and bullets. What it can't copy is the typeface: the file carries its own, so you get the same serif or sans here, not the exact letters.",
       "icons": "This one also draws small marks beside your contact details in the PDF; the page above leaves them out.",
-      "twoColumn": "This template also prints as two columns, with a rail beside the main story. Which sections land in that rail is decided while the file is built, so the page above shows one column rather than guessing wrong."
+      "twoColumn": "This template also prints as two columns, with a rail beside the main story. Which sections land in that rail is decided while the file is built, so the page above shows one column rather than guessing wrong.",
+      "footer": "It also prints your name at the foot of every page of the PDF, so a second page still says whose it is. The page above is one continuous sheet with no page breaks to foot, and the Word file leaves it out."
     },
     "replace": {
       "tool": "Replace résumé",

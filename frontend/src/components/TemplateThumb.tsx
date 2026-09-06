@@ -39,6 +39,9 @@ const BLACK = "#141414";
 
 /** Accent per template — the same colours the renderers print with. */
 export const TEMPLATE_ACCENTS: Record<ResumeTemplate, string> = {
+  // Monochrome by design — `standard` reproduces a document that has no accent
+  // colour at all, so its "accent" is the near-black its headings are set in.
+  standard: "#232323",
   classic: "#1F3A5F",
   modern: "#0E7A5F",
   split: "#15476B",
@@ -225,6 +228,9 @@ interface TxtOpt {
   ls?: number;
   anchor?: "start" | "middle" | "end";
   fam?: string;
+  /** The italic tail of a `entry="run"` head — the one place this sheet sets
+   *  a second style on one line, exactly as the renderers do. */
+  italic?: boolean;
 }
 
 /** One run of text on the current (or an explicit) baseline. */
@@ -237,6 +243,7 @@ function txt(f: Flow, text: string, o: TxtOpt = {}) {
       fontFamily={o.fam ?? f.fam}
       fontWeight={o.weight}
       letterSpacing={o.ls}
+      fontStyle={o.italic ? "italic" : undefined}
       textAnchor={o.anchor}
       fill={o.fill ?? f.ink}
       style={UNMIRROR}
@@ -278,8 +285,22 @@ function bullets(
 }
 
 /** Title + dates. `split` flushes the dates to the far edge of the column. */
-function entry(f: Flow, r: Role, split: boolean) {
+function entry(f: Flow, r: Role, split: boolean, run = false) {
   if (f.y > f.bottom - f.gap) return;
+  if (run) {
+    // entry="run": the whole head on ONE line — the bold identity, then the
+    // italic circumstance immediately after it. At this size the difference
+    // that reads is the density: one line per role instead of two.
+    txt(f, r.title, { s: f.s + 0.35, weight: 700, fill: f.strong });
+    txt(f, `  ${r.place} | ${r.dates}`, {
+      x: f.x + (r.title.length + 1) * (f.s + 0.35) * f.cw,
+      s: f.s - 0.15,
+      italic: true,
+      fill: f.strong,
+    });
+    f.y += f.gap;
+    return;
+  }
   txt(f, r.title, { s: f.s + 0.35, weight: 700, fill: f.strong });
   if (split) {
     txt(f, r.dates, { x: f.x + f.width, anchor: "end", s: f.s - 0.15, fill: f.muted });
@@ -397,6 +418,12 @@ interface BodyOpt {
   education?: boolean;
   title?: boolean;
   sectionGap?: number;
+  /** `TemplateSpec.label_set` — the longer business wording `standard` prints.
+   *  Only the four headings the two sets disagree about are listed; the rest are
+   *  the same word in both. */
+  full?: boolean;
+  /** entry="run": the whole entry head on one line. */
+  run?: boolean;
 }
 
 /** The main column: the same document, told in one template's grammar. */
@@ -404,14 +431,14 @@ function body(f: Flow, h: Head, o: BodyOpt = {}) {
   const sg = o.sectionGap ?? 3.2;
   const L = (upper: string, title: string) => (o.title ? title : upper);
 
-  h(L("SUMMARY", "Summary"));
+  h(o.full ? "PROFESSIONAL SUMMARY" : L("SUMMARY", "Summary"));
   para(f, SUMMARY);
   f.y += sg;
 
-  h(L("EXPERIENCE", "Experience"));
+  h(o.full ? "PROFESSIONAL EXPERIENCE" : L("EXPERIENCE", "Experience"));
   for (const r of ROLES) {
     if (f.y > f.bottom - f.gap * 2) break;
-    entry(f, r, !!o.split);
+    entry(f, r, !!o.split, !!o.run);
     bullets(f, r.bullets, { glyph: o.glyph, hang: o.hang, cap: o.cap ?? 2 });
     f.y += 1.2;
   }
@@ -420,12 +447,12 @@ function body(f: Flow, h: Head, o: BodyOpt = {}) {
   // Each remaining section is emitted only if its heading would get content
   // under it: a heading orphaned at the page break reads as a rendering bug.
   if (o.projects && room(f, f.gap * 2)) {
-    h(L("PROJECTS", "Projects"));
+    h(o.full ? "SELECTED PROJECTS" : L("PROJECTS", "Projects"));
     bullets(f, PROJECTS, { glyph: o.glyph, hang: o.hang });
     f.y += sg;
   }
   if (o.skills !== false && room(f, f.gap)) {
-    h(L("SKILLS", "Skills"));
+    h(o.full ? "CORE EXPERTISE" : L("SKILLS", "Skills"));
     for (const [group, list] of SKILL_GROUPS) para(f, `${group}: ${list}`);
     f.y += sg;
   }
@@ -722,6 +749,35 @@ function art(id: ResumeTemplate, a: string) {
     }
 
     // 1col, no colour, headings hung in the start margin, en-dash bullets.
+    // 1col, centred monochrome header with NO rule under it, full-width
+    // hairlines under all-caps headings, the longer business section names, and
+    // one dense column. The default, and the one thumbnail that draws a
+    // reproduction rather than a design.
+    case "standard": {
+      const f = flow({
+        x: 9,
+        width: 114,
+        y: 40,
+        accent: a,
+        s: 2.7,
+        gap: 3.9,
+        head: 3.1,
+        ink: "#141414",
+        strong: BLACK,
+        muted: "#141414",
+      });
+      txt(f, NAME, { x: 66, y: 17, anchor: "middle", s: 6.4, weight: 700, fill: "#191919" });
+      txt(f, HEADLINE, { x: 66, y: 24, anchor: "middle", s: 3.1, weight: 700, fill: "#414141" });
+      txt(f, CONTACT, { x: 66, y: 30.5, anchor: "middle", s: 2.3, fill: BLACK });
+      body(f, headings(f, "rule", { color: "#232323", ruleColor: "#A8A8A8", ruleH: 0.55 }), {
+        full: true,
+        run: true,
+        cap: 2,
+        sectionGap: 2.8,
+      });
+      return keyed(f.out);
+    }
+
     case "minimal": {
       const f = flow({
         x: 39,
