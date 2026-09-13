@@ -114,7 +114,10 @@ export default function LandingHero({ mode }: { mode: LandingMode }) {
           className="lp-in mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center"
           style={{ animationDelay: "300ms" }}
         >
-          <Cta to="/app" arrow>
+          {/* To /signup, not /app: /app would bounce a new visitor through the
+              auth guard to /login, which is the wrong door for someone who has
+              no account yet. */}
+          <Cta to="/signup" arrow>
             {t("landing.hero.ctaPrimary")}
           </Cta>
           <Cta to="/scan" variant="secondary">

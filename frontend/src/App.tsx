@@ -13,6 +13,13 @@ import { prefetchAppRoutes } from "./lib/prefetchRoutes";
 // visitor doesn't download the whole app. Module paths must stay in sync with
 // src/lib/prefetchRoutes.ts so Vite reuses the same chunks.
 const ScanPage = lazy(() => import("./pages/ScanPage"));
+const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
+const AuthLayout = lazy(() => import("./layouts/AuthLayout"));
+const LoginPage = lazy(() => import("./pages/auth/LoginPage"));
+const SignupPage = lazy(() => import("./pages/auth/SignupPage"));
+const VerifyPage = lazy(() => import("./pages/auth/VerifyPage"));
+const ForgotPage = lazy(() => import("./pages/auth/ForgotPage"));
+const ResetPage = lazy(() => import("./pages/auth/ResetPage"));
 const AppLayout = lazy(() => import("./layouts/AppLayout"));
 const TailorPage = lazy(() => import("./pages/TailorPage"));
 const TrackerPage = lazy(() => import("./pages/TrackerPage"));
@@ -55,6 +62,22 @@ export default function App() {
           <Route path="/" element={<Landing />} />
           <Route element={<MarketingLayout />}>
             <Route path="/scan" element={<ScanPage />} />
+            {/* Public, and read before signing up as often as after: the
+                signup form links here. */}
+            <Route path="/privacy" element={<PrivacyPage />} />
+          </Route>
+          {/* The account pages, OUTSIDE the AppLayout group. That layout runs
+              the auth guard, loads the kits and mounts the onboarding modal,
+              and every one of those assumes an account the app can already
+              serve — a visitor on these pages is by definition not one yet.
+              Every <Route> keeps `path` as its FIRST attribute: check-mirrors
+              9 reads routes with exactly that shape. */}
+          <Route element={<AuthLayout />}>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/verify" element={<VerifyPage />} />
+            <Route path="/forgot" element={<ForgotPage />} />
+            <Route path="/reset" element={<ResetPage />} />
           </Route>
           <Route element={<AppLayout />}>
             <Route path="/app" element={<TailorPage />} />

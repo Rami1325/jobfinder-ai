@@ -1,5 +1,5 @@
 import axios from "axios";
-import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT } from "../lib/accessCode";
+import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT, UNVERIFIED_EVENT } from "../lib/accessCode";
 import { cachedFetch, clearDataCache, invalidateData } from "../lib/dataCache";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import type {
@@ -7,6 +7,9 @@ import type {
   AlertSettings,
   ApplicationDetail,
   ApplicationOut,
+  AuthMe,
+  ResendResult,
+  VerifyEmailResult,
   CompanyBriefResult,
   ChatTurn,
   CoverageResult,
@@ -15,6 +18,10 @@ import type {
   FeedbackOut,
   FollowUpResult,
   FreeScanResult,
+  InboxDisconnectResult,
+  InboxEvent,
+  InboxStatus,
+  InboxSyncResult,
   InterviewAnswerResult,
   InterviewChatResult,
   InterviewFeedbackResult,
@@ -52,7 +59,26 @@ import type {
 // In dev, requests go through the Vite proxy at /api -> http://localhost:8000.
 // In production (Vercel), set VITE_API_BASE_URL to the deployed backend URL
 // (e.g. https://jobfinder-api.onrender.com) so the frontend calls it directly.
-const api = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || "/api" });
+//
+// The account cookie needs no code here: /api is same-origin in both places
+// (the Vite proxy, the Vercel rewrite), so the browser attaches it to every
+// request by itself. Pointing VITE_API_BASE_URL at another origin would
+// silently stop that, and would need `withCredentials` and a SameSite=None
+// cookie.
+//
+// CSRF_HEADER rides on EVERY request, the SSE fetch included. The backend
+// refuses a POST/PUT/PATCH/DELETE without it (403 `csrf`) unless the request
+// carries an invite code. The cookie is attached automatically, so without a
+// check a page on another site could post a form that spends it. A custom
+// header is the check because a cross-origin page cannot add one without a
+// CORS preflight this origin never grants. Sending it on GETs as well costs
+// nothing, and no call site has to know which methods need it.
+const CSRF_HEADER = { "X-Requested-With": "jobfinder" } as const;
+
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "/api",
+  headers: CSRF_HEADER,
+});
 
 api.interceptors.request.use((config) => {
   const code = localStorage.getItem(ACCESS_CODE_KEY);
@@ -60,11 +86,54 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-api.interceptors.response.use(undefined, (error) => {
-  if (error?.response?.status === 401) {
-    clearDataCache(); // a different code may sign in next — never leak across users
+/**
+ * What a rejected request means for the whole app, as opposed to the page that
+ * made it. Shared by the axios path and the SSE fetch, so the two cannot drift
+ * (the SSE path used to skip `clearDataCache` on a 401).
+ *
+ * 401: nobody the server recognises. The data cache goes, because a different
+ * account may sign in next, and AccessGate sends the visitor to /login. A 401
+ * on a request that CARRIED an invite code also proves that code dead, so it
+ * is forgotten here. The code outranks the account cookie on every protected
+ * route, so a stale one left in storage would 401 the account that signs in
+ * next, and that 401 would send it straight back to /login, for ever.
+ *
+ * Every 401 counts, /auth/* included. The only /auth/* routes that can return
+ * one are protected ones (changing a password, reading the extension key), and
+ * on Settings a 401 there means the session died, so the redirect is right. On
+ * an auth page AccessGate ignores the event, so the login form cannot bounce
+ * itself.
+ *
+ * 403 `email_unverified`: an account that has not confirmed its address, sent
+ * to /verify. NOT for /auth/* URLs. Those routes answer an unverified account
+ * themselves, and the verify page is what calls them.
+ */
+function onRejected(
+  status: number | undefined,
+  url: string,
+  detail: unknown,
+  sentCode: boolean,
+): void {
+  if (status === 401) {
+    clearDataCache();
+    if (sentCode) localStorage.removeItem(ACCESS_CODE_KEY);
     window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    return;
   }
+  const code = (detail as { code?: unknown } | null | undefined)?.code;
+  const path = url.startsWith("/") ? url.slice(1) : url;
+  if (status === 403 && code === "email_unverified" && !path.startsWith("auth/")) {
+    window.dispatchEvent(new Event(UNVERIFIED_EVENT));
+  }
+}
+
+api.interceptors.response.use(undefined, (error) => {
+  onRejected(
+    error?.response?.status,
+    error?.config?.url ?? "",
+    error?.response?.data?.detail,
+    Boolean(error?.config?.headers?.["X-App-Key"]),
+  );
   return Promise.reject(error);
 });
 
@@ -264,7 +333,8 @@ export interface SearchProgressEvent {
 // stream in before the terminal `result`; older backends simply never send
 // them. axios can't consume SSE, so this uses fetch and re-throws failures in
 // the axios error shape ({response: {status, data}}) to keep apiErrorMessage
-// and the 401 gate event working. A 404/405 means an older backend without
+// working, and sends the failure through `onRejected` exactly as the axios path
+// does, so a dead session or an unverified account redirects from here too. A 404/405 means an older backend without
 // the endpoint — callers fall back to searchJobs.
 export async function searchJobsStream(
   resume: ResumeModel,
@@ -276,11 +346,16 @@ export async function searchJobsStream(
   const code = localStorage.getItem(ACCESS_CODE_KEY);
   const resp = await fetch(`${api.defaults.baseURL}/jobs/search/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(code ? { "X-App-Key": code } : {}) },
+    // The same headers the axios instance sends. This POST is a spend, and
+    // without CSRF_HEADER a session-authenticated search is a 403 `csrf`.
+    headers: {
+      "Content-Type": "application/json",
+      ...CSRF_HEADER,
+      ...(code ? { "X-App-Key": code } : {}),
+    },
     body: JSON.stringify({ resume, customize: customize ?? null }),
     signal,
   });
-  if (resp.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   const isSse = (resp.headers.get("content-type") || "").includes("text/event-stream");
   if (!resp.ok || !isSse || !resp.body) {
     let detail: unknown;
@@ -289,6 +364,7 @@ export async function searchJobsStream(
     } catch {
       /* non-JSON body */
     }
+    onRejected(resp.status, "/jobs/search/stream", detail, Boolean(code));
     throw { response: { status: resp.status, data: { detail } } };
   }
 
@@ -605,26 +681,155 @@ export async function sendFeedback(page: string, text: string): Promise<Feedback
   return data;
 }
 
-/** Who this device's access code belongs to — the Settings Account section.
- * Deliberately un-cached: it is one small row read once per page visit, and
- * the alternative (a cache entry) would go stale against an admin rename with
- * nothing to invalidate it. */
+/** Who the current request belongs to (GET /profile/me). Deliberately
+ * un-cached: it is one small row read once per page visit, and the alternative
+ * (a cache entry) would go stale against an admin rename with nothing to
+ * invalidate it. The app shell and Settings read `getAuthMe` instead, which
+ * carries the same three fields plus how the request was recognised. */
 export async function getMe(): Promise<Me> {
   const { data } = await api.get<Me>("/profile/me");
   return data;
 }
 
+// ---- accounts: the /auth routes -------------------------------------------- //
+
+/** Who this browser is, and whether that account may use the app. Always 200.
+ *
+ * Un-cached, for getMe's reason and a sharper one: every auth page and the app
+ * shell's guard ask this on the way in, and a cached "signed out" would outlive
+ * the login that just changed it.
+ *
+ * A stored invite code the server did NOT recognise is forgotten here. On this
+ * route an unknown code falls through to the cookie instead of returning 401,
+ * so the response interceptor never sees it fail. Left in storage, it would
+ * 401 the first protected call of whichever account signs in next. "dev" is
+ * the gate being off locally, where every request is the admin and a code
+ * means nothing either way. */
+export async function getAuthMe(): Promise<AuthMe> {
+  const { data } = await api.get<AuthMe>("/auth/me");
+  if (data.method !== "invite_code" && data.method !== "dev" && localStorage.getItem(ACCESS_CODE_KEY))
+    localStorage.removeItem(ACCESS_CODE_KEY);
+  return data;
+}
+
+/** Everything a successful sign-in must forget from before it.
+ *
+ * The stored invite code goes. It outranks the account cookie on every
+ * protected route, so a stale one would 401 the account that just signed in,
+ * and that 401 would send it straight back to /login. Both caches go too, for
+ * `deleteAccount`'s reason: a different person may be signing in on this
+ * device, and nine pages read the master resume from a module binding that
+ * `clearDataCache` cannot reach. */
+function adoptSession(): void {
+  localStorage.removeItem(ACCESS_CODE_KEY);
+  clearDataCache();
+  resetMasterCache();
+}
+
+/** Creates the account and signs this browser in UNVERIFIED: every feature
+ * route refuses it until the emailed code or link confirms the address. */
+export async function signup(payload: {
+  name: string;
+  email: string;
+  password: string;
+  locale: string;
+}): Promise<AuthMe> {
+  const { data } = await api.post<AuthMe>("/auth/signup", payload);
+  adoptSession();
+  return data;
+}
+
+/** A wrong password and an unknown address fail identically (400
+ * `invalid_credentials`): the server never says which one it was. */
+export async function login(payload: { email: string; password: string }): Promise<AuthMe> {
+  const { data } = await api.post<AuthMe>("/auth/login", payload);
+  adoptSession();
+  return data;
+}
+
+/** Ends this browser's session on the server. Callers ignore a failure,
+ * because forgetting this device still has to happen (see `signOut`). */
+export async function logout(): Promise<void> {
+  await api.post("/auth/logout");
+}
+
+/** Either a 6-digit `code`, which needs this browser's pending session, or the
+ * email link's `token`, which needs no session and never creates one. */
+export async function verifyEmail(payload: {
+  code?: string;
+  token?: string;
+}): Promise<VerifyEmailResult> {
+  const { data } = await api.post<VerifyEmailResult>("/auth/verify", payload);
+  if (data.signed_in) adoptSession();
+  return data;
+}
+
+export async function resendVerification(): Promise<ResendResult> {
+  const { data } = await api.post<ResendResult>("/auth/resend");
+  return data;
+}
+
+/** Fix a typo in an address that is not verified yet. A new code goes to the
+ * new address, and every code sent to the old one stops working. */
+export async function changeEmail(email: string): Promise<AuthMe> {
+  const { data } = await api.post<AuthMe>("/auth/change-email", { email });
+  return data;
+}
+
+/** Resolves for any address, known or not: the server never says whether an
+ * account exists for it. */
+export async function forgotPassword(email: string): Promise<void> {
+  await api.post("/auth/forgot", { email });
+}
+
+/** Sets a new password from an emailed link and signs this browser in. Every
+ * other session on the account ends, and the extension key is replaced. */
+export async function resetPassword(token: string, password: string): Promise<AuthMe> {
+  const { data } = await api.post<AuthMe>("/auth/reset", { token, password });
+  adoptSession();
+  return data;
+}
+
+/** Changing the password ends every OTHER session on the account. */
+export async function changePassword(payload: {
+  current_password?: string;
+  new_password: string;
+}): Promise<void> {
+  await api.post("/auth/password", payload);
+}
+
+export async function logoutOtherDevices(): Promise<void> {
+  await api.post("/auth/logout-others");
+}
+
+/** The key the Chrome extension signs in with. For an invite-code account it IS
+ * the invite code. */
+export async function getExtensionKey(): Promise<string> {
+  const { data } = await api.get<{ key: string }>("/auth/extension-key");
+  return data.key;
+}
+
+/** Replace the extension key. The old key stops working at once. The response
+ * should carry the new key, and it is read back if it does not, so the page is
+ * never left showing a key that has just been switched off. */
+export async function rotateExtensionKey(): Promise<string> {
+  const { data } = await api.post<{ key?: string }>("/auth/extension-key/rotate");
+  return data?.key || (await getExtensionKey());
+}
+
 /** Privacy wipe (PLAN 7.5): deletes everything the current user stored —
- * resumes, applications, history, alerts, usage, feedback, kits. The invite
- * code keeps working. Returns per-table deleted-row counts. */
+ * resumes, applications, history, alerts, usage, feedback, kits. The account
+ * keeps working: this browser stays signed in and an invite code stays valid.
+ * Returns per-table deleted-row counts. */
 export async function deleteMyData(): Promise<Record<string, number>> {
   const { data } = await api.delete<Record<string, number>>("/profile/data");
   clearDataCache();
   return data;
 }
 
-/** Close the account (PLAN 23.5): the same wipe, and then the access code
- * stops resolving — every later request 401s into the AccessGate.
+/** Close the account (PLAN 23.5): the same wipe, and then the account stops
+ * resolving. Its sessions end, an invite code dies, and every later request
+ * 401s into the login redirect.
  *
  * Clears BOTH caches, and that is not belt-and-braces: `clearDataCache` only
  * empties the `dataCache` Map, while `useMasterResume` keeps the master in a
@@ -791,4 +996,114 @@ export async function updateApplication(
 export async function deleteApplication(id: number): Promise<void> {
   await api.delete(`/applications/${id}`);
   invalidateData("applications", "nudges");
+}
+
+// ---- Gmail sync: the /inbox routes ----------------------------------------- //
+//
+// EVERY write below invalidates "applications" and "nudges", including the
+// ones that look like they touch no tracker row. A sync creates and moves rows;
+// an undo deletes one or moves it back; resolving adds or links one; a purging
+// disconnect removes the emails a card's badge is drawn from. The tracker reads
+// both lists through `cachedFetch`, so a write that skipped this would leave
+// the board painting rows the server has already changed, for up to 30 s after
+// the change the user just watched happen. One rule for all of them is cheaper
+// than deciding per route which invalidation is safe to skip.
+//
+// Nothing here is cached either. The status and the event lists change on a
+// cron the page cannot see, and a 30 s-old "3 to review" is a count nobody
+// believes after resolving two of them.
+
+/** Whether this account can use Gmail sync, and how its connection is doing. */
+export async function getInboxStatus(): Promise<InboxStatus> {
+  const { data } = await api.get<InboxStatus>("/inbox/status");
+  return data;
+}
+
+/** The Google consent URL for connecting Gmail. The caller sends the whole
+ * document there (`location.assign`), and Google sends it back to
+ * `/tracker?inbox=connected` or `/settings?inbox=<error code>`. */
+export async function startInboxGoogle(backfillDays?: number): Promise<string> {
+  const { data } = await api.post<{ url: string }>(
+    "/inbox/google/start",
+    backfillDays ? { backfill_days: backfillDays } : {},
+  );
+  invalidateData("applications", "nudges");
+  return data.url;
+}
+
+/** Connect the canned demo mailbox (only exists where the server enables it),
+ * importing `backfillDays` of its sample history. */
+export async function connectFakeInbox(backfillDays?: number): Promise<InboxStatus> {
+  const { data } = await api.post<InboxStatus>(
+    "/inbox/fake/connect",
+    backfillDays ? { backfill_days: backfillDays } : {},
+  );
+  invalidateData("applications", "nudges");
+  return data;
+}
+
+/** One sync run. It stops at its own time budget, so an import of past mail
+ * can take several runs: `has_more` says whether another one would read more. */
+export async function syncInbox(): Promise<InboxSyncResult> {
+  const { data } = await api.post<InboxSyncResult>("/inbox/sync");
+  invalidateData("applications", "nudges");
+  return data;
+}
+
+/** `review`: emails waiting for the user to say where they belong. `recent`:
+ * what emails changed on the board, newest first: a card created, a status
+ * moved, an interviewed flag set. Every one of those is undoable. */
+export async function listInboxEvents(view: "review" | "recent", limit = 50): Promise<InboxEvent[]> {
+  const { data } = await api.get<InboxEvent[]>("/inbox/events", { params: { view, limit } });
+  return data;
+}
+
+// The three event actions answer with the event as it now stands. A REFUSAL is
+// a 409 carrying `{"code": "inbox_..."}` (`inbox_changed_since`: the card was
+// moved by hand after the email, so undoing would overwrite the user;
+// `inbox_not_review`: already filed) or a 404 (`inbox_not_found`,
+// `inbox_application_not_found`). components/inbox/shared.tsx translates them.
+
+/** Put a card back the way this email found it. An email that CREATED a card
+ * nobody has touched since deletes that card. */
+export async function undoInboxEvent(id: number): Promise<InboxEvent> {
+  const { data } = await api.post<InboxEvent>(`/inbox/events/${id}/undo`);
+  invalidateData("applications", "nudges");
+  return data;
+}
+
+/** Leave a needs-review email off the board for good. */
+export async function dismissInboxEvent(id: number): Promise<InboxEvent> {
+  const { data } = await api.post<InboxEvent>(`/inbox/events/${id}/dismiss`);
+  invalidateData("applications", "nudges");
+  return data;
+}
+
+/** File a needs-review email: onto an application the user picked, or as a new
+ * card. */
+export async function resolveInboxEvent(
+  id: number,
+  target: { application_id: number } | { create: true },
+): Promise<InboxEvent> {
+  const { data } = await api.post<InboxEvent>(`/inbox/events/${id}/resolve`, target);
+  invalidateData("applications", "nudges");
+  return data;
+}
+
+/** Answers with the whole status, so the caller can adopt the server's copy. */
+export async function updateInboxSettings(patch: {
+  auto_sync?: boolean;
+  backfill_days?: number;
+}): Promise<InboxStatus> {
+  const { data } = await api.patch<InboxStatus>("/inbox/settings", patch);
+  invalidateData("applications", "nudges");
+  return data;
+}
+
+/** Remove the connection and its stored Google grant. `purge` also deletes the
+ * emails already detected; tracker cards stay either way. */
+export async function disconnectInbox(purge: boolean): Promise<InboxDisconnectResult> {
+  const { data } = await api.delete<InboxDisconnectResult>("/inbox/connection", { params: { purge } });
+  invalidateData("applications", "nudges");
+  return data;
 }

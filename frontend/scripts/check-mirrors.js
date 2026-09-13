@@ -2707,6 +2707,61 @@ try {
   fail(`review check-id copy check could not run: ${e.message}`);
 }
 
+// ---- literal t() calls, by the namespace their binding names ------------- //
+// ONE definition, shared by checks 28 and 29, for `resolvesIn`'s reason: two
+// scrapes of different files asking the same question ("which bundle does
+// this call read?") must not be free to answer it differently. Check 28 wrote
+// this reader for the landing, and the account pages need exactly the same one.
+//
+// THE NAMESPACE IS READ OFF THE BINDING, not guessed from the key's prefix.
+// A prefix table was the first attempt and it is wrong in a way this repo has
+// paid for before: `footer` exists in BOTH bundles (common carries the link
+// labels, marketing the nav landmark and the blurb), so the table reported a
+// key that resolves perfectly as missing. The binder does know — `useTranslation()`
+// is the `common` default and `useTranslation("marketing")` is not — so the
+// declaration is parsed and every call is looked up in ITS OWN namespace.
+const BIND = /const\s*\{\s*t(?:\s*:\s*(\w+))?\s*\}\s*=\s*useTranslation\(\s*(?:"(\w+)")?\s*\)/g;
+// Literal calls only: a template literal has no fixed key to look up, and the
+// two on the landing (`templates.${id}.name`, `landing.faq.q${k}`) are pinned
+// elsewhere — by check 23, and by keeping every FAQ row's keys in parity.
+const CALL = /\b(\w+)\(\s*"([A-Za-z][\w.]*)"\s*[,)]/g;
+
+/** `[file, namespace, key]` for every literal translation call in `f`.
+ *
+ * Throws — each check's own try turns that into a loud `fail` — when the file
+ * declares no binding, binds one identifier to two namespaces, or yields fewer
+ * calls than its `floor`. A per-file floor, for check 22's reason: a floor on
+ * the sum is not fail-loud, because the other files carry the total past it
+ * while one file's call shape has gone dark. */
+function boundCalls(f, floor) {
+  const src = decomment(read(f));
+  const binders = new Map();
+  for (const m of src.matchAll(BIND)) {
+    const name = m[1] || "t";
+    const ns = m[2] || "common";
+    // One identifier, two namespaces in the same file — a second component
+    // in the file binding `t` to `marketing` while the exported one binds it
+    // to `common`. Nothing here can tell those calls apart, and quietly
+    // picking the last declaration checks half the file against the wrong
+    // bundle, so it is refused rather than guessed. Rename the second binder.
+    if (binders.has(name) && binders.get(name) !== ns)
+      throw new Error(
+        `${f} binds \`${name}\` to both "${binders.get(name)}" and "${ns}" — ` +
+          "rename one so each identifier means one namespace",
+      );
+    binders.set(name, ns);
+  }
+  if (binders.size === 0)
+    throw new Error(`${f} declares no useTranslation binding — the call shape changed`);
+  const here = [...src.matchAll(CALL)].filter((m) => binders.has(m[1]));
+  if (here.length < floor)
+    throw new Error(
+      `scraped only ${here.length} literal translation calls from ${f} ` +
+        `(expected at least ${floor}) — the call shape changed`,
+    );
+  return here.map((m) => [f, binders.get(m[1]), m[2]]);
+}
+
 // ---- 28. the landing's own copy resolves in both locales ----------------- //
 // The landing is the largest surface in the app whose strings were guarded by
 // NOTHING. Check 8 is parity-only, so a key missing from en AND he is green;
@@ -2740,47 +2795,8 @@ try {
     ["components/landing/LandingFaq.tsx", 2],
     ["components/landing/ClosingSection.tsx", 9],
   ];
-  // THE NAMESPACE IS READ OFF THE BINDING, not guessed from the key's prefix.
-  // A prefix table was the first attempt and it is wrong in a way this repo has
-  // paid for before: `footer` exists in BOTH bundles (common carries the link
-  // labels, marketing the nav landmark and the blurb), so the table reported a
-  // key that resolves perfectly as missing. The binder does know — `useTranslation()`
-  // is the `common` default and `useTranslation("marketing")` is not — so the
-  // declaration is parsed and every call is looked up in ITS OWN namespace.
-  const BIND = /const\s*\{\s*t(?:\s*:\s*(\w+))?\s*\}\s*=\s*useTranslation\(\s*(?:"(\w+)")?\s*\)/g;
-  // Literal calls only: a template literal has no fixed key to look up, and the
-  // two that exist here (`templates.${id}.name`, `landing.faq.q${k}`) are
-  // already pinned by check 23 and by this check's own q1/a1 siblings.
-  const CALL = /\b(\w+)\(\s*"([A-Za-z][\w.]*)"\s*[,)]/g;
   const seen = [];
-  for (const [f, floor] of files) {
-    const src = decomment(read(f));
-    const binders = new Map();
-    for (const m of src.matchAll(BIND)) {
-      const name = m[1] || "t";
-      const ns = m[2] || "common";
-      // One identifier, two namespaces in the same file — a second component
-      // in the file binding `t` to `marketing` while the exported one binds it
-      // to `common`. Nothing here can tell those calls apart, and quietly
-      // picking the last declaration checks half the file against the wrong
-      // bundle, so it is refused rather than guessed. Rename the second binder.
-      if (binders.has(name) && binders.get(name) !== ns)
-        throw new Error(
-          `${f} binds \`${name}\` to both "${binders.get(name)}" and "${ns}" — ` +
-            "rename one so each identifier means one namespace",
-        );
-      binders.set(name, ns);
-    }
-    if (binders.size === 0)
-      throw new Error(`${f} declares no useTranslation binding — the call shape changed`);
-    const here = [...src.matchAll(CALL)].filter((m) => binders.has(m[1]));
-    if (here.length < floor)
-      throw new Error(
-        `scraped only ${here.length} literal translation calls from ${f} ` +
-          `(expected at least ${floor}) — the call shape changed`,
-      );
-    for (const m of here) seen.push([f, binders.get(m[1]), m[2]]);
-  }
+  for (const [f, floor] of files) seen.push(...boundCalls(f, floor));
 
   const bundles = {};
   for (const loc of ["en", "he"])
@@ -2815,6 +2831,159 @@ try {
     fail("check 28 cannot read a renamed namespace binding, so every key behind one goes unchecked");
 } catch (e) {
   fail(`landing copy check could not run: ${e.message}`);
+}
+
+// ---- 29. the account pages' own copy resolves in both locales ----------- //
+// Phase 29 added /login, /signup, /verify, /forgot, /reset and /privacy, and
+// gave Settings an account half: well over a hundred strings in a new `auth`
+// namespace and in `settings`, and NOTHING resolved either namespace against
+// the code that reads it. Check 8 is parity-only, so a key missing from en AND
+// he is green; 16 and 22 read tailor.json; 28 reads the landing's two bundles;
+// 9 is scoped to AppLayout.tsx. The login form is the first screen a new user
+// sees, often in Hebrew, and a raw `login.forgot` at 14px on it would be check
+// 28's `faq.kicker` one page over.
+//
+// The same reader as check 28 (`boundCalls`), plus three things the landing
+// did not need:
+//   - Bundles load ON DEMAND, by the namespace each binding names. These files
+//     read `auth`, `settings`, `tracker` and `common`, and a file that starts
+//     reading another namespace has to be resolved against it, not waved
+//     through.
+//   - EVERY file under pages/auth/ must be registered below. A floor table
+//     lists files, so a page added next to the others would be guarded by
+//     nothing while the build stayed green. Walking the directory turns an
+//     unregistered file into a failure instead of a gap.
+//   - THE ERROR TABLE. The pages show server codes through lib/apiError.ts,
+//     which looks each sentence up by a key held in a table. A code mapped to
+//     a key that exists in neither locale would put the raw key in a form's
+//     error slot, and no scrape of the pages can see that. Every "errors.*"
+//     literal in that file is resolved against auth.json as well.
+//
+// THE INBOX UI (components/inbox/, Phase 29 F2) is registered and walked the
+// same way. It reads `tracker` and `settings`, which nothing resolved before
+// either, and its labels are exactly the strings this check exists for: an
+// email-kind badge on a tracker card at 12px, where a raw
+// `inbox.kinds.interview` is the first thing a Hebrew reader would see after a
+// sync. Its kind and status labels are LITERAL calls inside a `switch`
+// (components/inbox/shared.tsx) so that this scrape can resolve every one; a
+// template literal would be invisible here.
+//
+// A floor is never registered ahead of its file: `read` throws on a missing
+// file, and this check would go red on a tree with nothing wrong in it.
+try {
+  // Floors sit just under what each file carries today, so adding or removing
+  // a string does not trip them but a call shape going dark does.
+  const files = [
+    ["pages/auth/shared.tsx", 2],
+    ["pages/auth/LoginPage.tsx", 15],
+    ["pages/auth/SignupPage.tsx", 16],
+    ["pages/auth/VerifyPage.tsx", 28],
+    ["pages/auth/ForgotPage.tsx", 8],
+    ["pages/auth/ResetPage.tsx", 10],
+    ["layouts/AuthLayout.tsx", 2],
+    ["pages/PrivacyPage.tsx", 20],
+    ["pages/SettingsPage.tsx", 55],
+    ["components/inbox/shared.tsx", 30],
+    ["components/inbox/InboxBar.tsx", 22],
+    ["components/inbox/InboxReviewSheet.tsx", 20],
+    ["components/inbox/InboxSettingsCard.tsx", 38],
+    ["components/inbox/EmailTimeline.tsx", 3],
+  ];
+
+  // Every source file under these directories must be in the table above.
+  // Each carries the fewest files it can hold before the walk is reading the
+  // wrong place: a directory that moved would otherwise walk nothing, flag
+  // nothing, and pass for ever.
+  const WALKED = [
+    ["pages/auth", 6],
+    ["components/inbox", 5],
+  ];
+  const SOURCE_FILE = /\.tsx?$/;
+  const registered = new Set(files.map(([f]) => f));
+  for (const [dir, least] of WALKED) {
+    const found = fs
+      .readdirSync(path.join(SRC, ...dir.split("/")))
+      .filter((name) => SOURCE_FILE.test(name))
+      .map((name) => `${dir}/${name}`);
+    if (found.length < least)
+      throw new Error(`found only ${found.length} source files under ${dir} — the files moved`);
+    for (const f of found)
+      if (!registered.has(f))
+        fail(
+          `${f} is not registered in check 29, so its copy is resolved against nothing — ` +
+            "a missing key would render raw on a green build. Add it to the table with a floor.",
+        );
+  }
+
+  const seen = [];
+  for (const [f, floor] of files) seen.push(...boundCalls(f, floor));
+
+  const bundles = new Map();
+  const bundle = (loc, ns) => {
+    const id = `${loc}/${ns}`;
+    if (!bundles.has(id)) {
+      const p = path.join(SRC, "locales", loc, `${ns}.json`);
+      bundles.set(id, fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf8")) : null);
+    }
+    return bundles.get(id);
+  };
+
+  const reportedBundles = new Set();
+  for (const [f, ns, key] of seen)
+    for (const loc of ["en", "he"]) {
+      const b = bundle(loc, ns);
+      if (!b) {
+        // Once per file and bundle, not once per key: one wrong namespace is
+        // one defect, and twenty copies of the sentence would bury the rest.
+        const id = `${f}|${loc}/${ns}`;
+        if (!reportedBundles.has(id))
+          fail(`${f} reads namespace "${ns}", but locales/${loc}/${ns}.json does not exist.`);
+        reportedBundles.add(id);
+        continue;
+      }
+      if (!resolvesIn(b, key))
+        fail(
+          `locales/${loc}/${ns}.json is missing "${key}" (used by ${f}) — the page would render ` +
+            "the raw key. Check 8 stays green while both locales are equally wrong.",
+        );
+    }
+
+  const ERROR_KEY = /"(errors\.[A-Za-z][\w.]*)"/g;
+  const errorKeys = [...decomment(read("lib/apiError.ts")).matchAll(ERROR_KEY)].map((m) => m[1]);
+  if (errorKeys.length < 20)
+    throw new Error(
+      `scraped only ${errorKeys.length} "errors.*" keys from lib/apiError.ts (expected at least 20) — ` +
+        "the error table changed shape",
+    );
+  for (const loc of ["en", "he"]) {
+    const b = bundle(loc, "auth");
+    if (!b) {
+      fail(`locales/${loc}/auth.json does not exist, and lib/apiError.ts reads every account error from it.`);
+      continue;
+    }
+    for (const key of new Set(errorKeys))
+      if (!resolvesIn(b, key))
+        fail(
+          `locales/${loc}/auth.json is missing "${key}" (mapped in lib/apiError.ts) — that server ` +
+            "error would put the raw key in the form's error slot.",
+        );
+  }
+
+  // Both directions, for every matcher this check adds: each must fire on the
+  // shape it guards and stay quiet on the shape it must not read.
+  ERROR_KEY.lastIndex = 0;
+  if (!ERROR_KEY.test('i18n.t("errors.weakPassword.tooShort", { ns: "auth" })'))
+    fail("check 29 cannot detect a key in the error table");
+  ERROR_KEY.lastIndex = 0;
+  if (ERROR_KEY.test('i18n.t("dailyLimit.search", { ns: "common" })'))
+    fail("check 29 reads keys from outside the error table");
+  if (!SOURCE_FILE.test("VerifyPage.tsx") || !SOURCE_FILE.test("shared.ts") || SOURCE_FILE.test("notes.md"))
+    fail("check 29's directory walk would miss a page, or count a file that is not one");
+  const authBundle = bundle("en", "auth");
+  if (!authBundle || !resolvesIn(authBundle, "login.title") || resolvesIn(authBundle, "login.__no_such_key__"))
+    fail("check 29's lookup cannot tell a present key from a missing one, so it would pass for ever");
+} catch (e) {
+  fail(`account copy check could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

@@ -1,0 +1,173 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { getAuthMe, signup } from "../../api/client";
+import { Button } from "../../components/ui";
+import i18n from "../../i18n";
+import { apiErrorCode, apiErrorMessage } from "../../lib/apiError";
+import { cn } from "../../lib/cn";
+import { withNext } from "../../lib/safeNext";
+import {
+  AuthCard,
+  EmailInput,
+  Field,
+  FormError,
+  PasswordInput,
+  authInputCls,
+  authLinkCls,
+  charCount,
+  looksLikeEmail,
+  primaryLinkCls,
+  useNext,
+} from "./shared";
+
+/**
+ * /signup.
+ *
+ * Success goes to /verify with a CLIENT-SIDE navigation, unlike every other
+ * auth success. Nothing has been loaded for anyone yet, so there is no store to
+ * clear, and the verify page reads `sentAt` from the router state to start its
+ * resend countdown. A document load would drop that state.
+ *
+ * The client pre-checks (name, address shape, 8 characters) only save a round
+ * trip for the obvious cases, in the user's language. The server's answer
+ * decides, and its codes arrive through the same translation table.
+ */
+export default function SignupPage() {
+  const { t } = useTranslation("auth");
+  const next = useNext();
+  const navigate = useNavigate();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [taken, setTaken] = useState(false);
+  const [closed, setClosed] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    getAuthMe()
+      .then((me) => {
+        if (!live) return;
+        if (me.authenticated && me.verified) window.location.assign(next);
+        else if (me.signup_open === false) setClosed(true);
+      })
+      .catch(() => {
+        /* the form still works; the server answers the submit */
+      });
+    return () => {
+      live = false;
+    };
+  }, [next]);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setTaken(false);
+    if (!name.trim()) {
+      setError(t("errors.nameRequired"));
+      return;
+    }
+    if (!looksLikeEmail(email)) {
+      setError(t("errors.invalidEmail"));
+      return;
+    }
+    if (charCount(password) < 8) {
+      setError(t("errors.weakPassword.tooShort"));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await signup({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        // The verification mail is written in this language.
+        locale: i18n.resolvedLanguage === "he" ? "he" : "en",
+      });
+      navigate(withNext("/verify", next), { state: { sentAt: Date.now() } });
+    } catch (err) {
+      const code = apiErrorCode(err);
+      if (code === "signup_closed") {
+        setClosed(true);
+      } else {
+        setTaken(code === "email_taken");
+        setError(apiErrorMessage(err, t("errors.generic")));
+      }
+      setBusy(false);
+    }
+  }
+
+  if (closed) {
+    return (
+      <AuthCard title={t("signup.closedTitle")} sub={t("signup.closedBody")}>
+        <Link to={withNext("/login", next)} className={primaryLinkCls}>
+          {t("signup.logIn")}
+        </Link>
+      </AuthCard>
+    );
+  }
+
+  return (
+    <AuthCard title={t("signup.title")} sub={t("signup.sub")}>
+      <form onSubmit={submit} noValidate>
+        <div className="space-y-4">
+          <Field id="signup-name" label={t("fields.name")}>
+            <input
+              id="signup-name"
+              type="text"
+              autoComplete="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={busy}
+              className={authInputCls}
+            />
+          </Field>
+          <Field id="signup-email" label={t("fields.email")}>
+            <EmailInput id="signup-email" value={email} onChange={setEmail} disabled={busy} />
+          </Field>
+          <Field id="signup-password" label={t("fields.password")} hint={t("fields.passwordHint")}>
+            <PasswordInput
+              id="signup-password"
+              value={password}
+              onChange={setPassword}
+              autoComplete="new-password"
+              disabled={busy}
+            />
+          </Field>
+        </div>
+        <FormError message={error} />
+        {taken && (
+          <Link
+            to={withNext("/login", next)}
+            state={{ email: email.trim() }}
+            className={cn(authLinkCls, "text-sm")}
+          >
+            {t("signup.logInInstead")}
+          </Link>
+        )}
+        {/* mt-1, not mt-4: the link's own 44px line box already supplies the
+            room above the text, and mt-4 on top of it read as a gap twice the
+            field spacing. */}
+        <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+          {t("signup.privacyNote")}{" "}
+          <Link to="/privacy" className={cn(authLinkCls, "text-xs")}>
+            {t("signup.privacyLink")}
+          </Link>
+        </p>
+        <Button type="submit" loading={busy} className="mt-2 min-h-[44px] w-full">
+          {t("signup.submit")}
+        </Button>
+      </form>
+
+      <p className="mt-3 flex flex-wrap items-center justify-center gap-x-1.5 text-sm text-ink-muted">
+        {t("signup.haveAccount")}
+        <Link to={withNext("/login", next)} className={authLinkCls}>
+          {t("signup.logIn")}
+        </Link>
+      </p>
+    </AuthCard>
+  );
+}

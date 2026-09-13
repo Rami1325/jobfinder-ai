@@ -1,64 +1,54 @@
-import { type FormEvent, useEffect, useState } from "react";
-import { createPortal } from "react-dom";
-import { KeyRound } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { useEffect } from "react";
 // From lib/, not api/client: importing it from there pulls axios + the whole
 // typed API surface into the eager entry chunk (see lib/accessCode.ts).
-import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT } from "../lib/accessCode";
-import { Button } from "./ui";
-import Logo from "./Logo";
+import { UNAUTHORIZED_EVENT, UNVERIFIED_EVENT } from "../lib/accessCode";
+import { authRedirectUrl, isAuthPage, type AuthPage } from "../lib/safeNext";
 
-/** Full-screen overlay shown when the API rejects a request with 401
- * (deployed instances require an access code). The code is stored per
- * device; submitting reloads so the failed page re-fetches cleanly. */
+/**
+ * Where a rejected request sends the visitor. It renders nothing.
+ *
+ * It used to be a full-screen overlay asking for the access code. With
+ * accounts, a 401 means "sign in" and a 403 `email_unverified` means "confirm
+ * your email", and each of those is a page (/login, /verify), not a dialog
+ * over whatever page failed.
+ *
+ * A DOCUMENT LOAD, never <Navigate>. Every store in this app is a module-level
+ * binding that outlives the router (tailorStore, kitsStore, jobSearchStore,
+ * useMasterResume's cache), and a 401 is exactly the moment one of them may
+ * hold the previous session's data. A route change would carry that data into
+ * whichever account signs in next.
+ *
+ * Nothing happens on an auth page itself. The verify page asks for a resend
+ * with a session that may be gone, and bouncing it to /login from there would
+ * nest one auth page's `next` inside another's.
+ *
+ * ONCE per page. A signed-out app fires several requests at mount and each one
+ * 401s. `pageshow` re-arms the flag, because a page restored from the
+ * back/forward cache keeps its JS state and would otherwise never redirect
+ * again.
+ */
 export default function AccessGate() {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [code, setCode] = useState("");
-
   useEffect(() => {
-    const show = () => setOpen(true);
-    window.addEventListener(UNAUTHORIZED_EVENT, show);
-    return () => window.removeEventListener(UNAUTHORIZED_EVENT, show);
+    let leaving = false;
+    const go = (page: AuthPage) => () => {
+      if (leaving || isAuthPage(window.location.pathname)) return;
+      leaving = true;
+      window.location.assign(authRedirectUrl(page));
+    };
+    const toLogin = go("/login");
+    const toVerify = go("/verify");
+    const rearm = () => {
+      leaving = false;
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, toLogin);
+    window.addEventListener(UNVERIFIED_EVENT, toVerify);
+    window.addEventListener("pageshow", rearm);
+    return () => {
+      window.removeEventListener(UNAUTHORIZED_EVENT, toLogin);
+      window.removeEventListener(UNVERIFIED_EVENT, toVerify);
+      window.removeEventListener("pageshow", rearm);
+    };
   }, []);
 
-  if (!open) return null;
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!code.trim()) return;
-    localStorage.setItem(ACCESS_CODE_KEY, code.trim());
-    window.location.reload();
-  };
-
-  return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-sm rounded-xl2 border border-line bg-gradient-to-b from-panel to-panel/85 p-7 shadow-panel"
-      >
-        <div className="mb-5 flex flex-col items-center gap-3 text-center">
-          <Logo size={38} withWordmark={false} />
-          <div>
-            <div className="flex items-center justify-center gap-2 text-lg font-semibold text-ink">
-              <KeyRound size={17} className="text-accent" /> {t("accessGate.title")}
-            </div>
-            <p className="mt-1.5 text-sm text-ink-muted">{t("accessGate.body")}</p>
-          </div>
-        </div>
-        <input
-          autoFocus
-          type="password"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder={t("accessGate.placeholder")}
-          className="mb-4 w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
-        />
-        <Button type="submit" className="w-full">
-          {t("accessGate.unlock")}
-        </Button>
-      </form>
-    </div>,
-    document.body,
-  );
+  return null;
 }

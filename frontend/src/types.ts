@@ -275,6 +275,20 @@ export interface ApplicationOut {
   voice_score: number | null;
   fabrication_flag_count: number | null;
   created_at: string;
+  /** The inbox fields (Phase 29). All optional: a backend without the inbox
+   * sends none of them, and every reader treats absent as unknown. */
+  /** "email" when the inbox scanner created the row; "" for every other writer. */
+  source?: string;
+  /** When the application was SENT, with an explicit offset. null is unknown,
+   * never "not sent": a row saved before the field existed, or one whose first
+   * email was a rejection, has no date it was sent on. The card and the
+   * analytics file a row under this and fall back to `created_at`
+   * (`dateOfRecord`), so the two cannot disagree about which week it is in. */
+  applied_at?: string | null;
+  /** The newest email linked to this row. */
+  last_email_at?: string | null;
+  /** That email's kind (see `InboxEvent.kind`); "" when none is linked. */
+  last_email_kind?: string;
 }
 
 export interface ApplicationDetail {
@@ -291,6 +305,108 @@ export interface ApplicationDetail {
   interviewed: boolean;
   excitement: number;
   created_at: string;
+  source?: string;
+  applied_at?: string | null;
+  last_email_at?: string | null;
+  last_email_kind?: string;
+  /** Every email the scanner tied to this row, newest first. Absent on a
+   * backend without the inbox. */
+  email_events?: InboxEvent[];
+}
+
+/** GET /inbox/status: whether this account can use Gmail sync, and how the
+ * connection is doing.
+ *
+ * `ready` answers "may THIS account connect", not "is the feature built":
+ * with the allowlist on, a user who is not on it reads `ready: false` with
+ * `reason: "invite_only"`, and the UI says so in one line instead of offering a
+ * Connect button that Google's own page would refuse. `ready: false` with any
+ * other reason means the server has no Gmail set up at all, and the inbox UI
+ * renders nothing.
+ *
+ * `status`, `provider` and `reason` are plain strings, not unions, for the
+ * reason `GeoRestriction` gives: a newer backend value must not break the
+ * build. */
+export interface InboxStatus {
+  ready: boolean;
+  reason: string; // "invite_only" | "" — why `ready` is false
+  google_ready: boolean; // false with `ready` true = only the demo mailbox exists
+  connected: boolean;
+  provider: string; // gmail | fake | ""
+  email: string;
+  status: string; // active | needs_reauth | error | ""
+  last_sync_at: string | null; // explicit offset; null/"" = never synced
+  auto_sync: boolean;
+  backfill_days: number;
+  review_count: number;
+  events_total: number;
+  /** The last run's failure. The connection stays "active" through an ordinary
+   * failed run, so THIS is where one shows; a successful run clears it. */
+  last_error_code: string;
+  /** While Google keeps the app in testing it ends the grant every 7 days:
+   * connected_at + 7d. null = no weekly expiry applies. */
+  reauth_due_at: string | null;
+  /** The server's GOOGLE_OAUTH_TESTING, so the connect screen can say the
+   * 7-day reconnect BEFORE anyone connects. */
+  oauth_testing: boolean;
+  /** An import of past mail is still unfinished and the cron carries it on, so
+   * "importing" holds on a later visit too, not only during the foreground
+   * rounds that started it. */
+  backfilling: boolean;
+}
+
+/** One email the scanner stored: the extraction, never the body.
+ *
+ * `kind` and `action` are plain strings for `GeoRestriction`'s reason; the UI
+ * labels the values it knows and falls back to a neutral label for any other.
+ *   kind:   confirmation | viewed | interview | assessment | offer | rejection | recruiter | other
+ *   action: created | updated | linked | review | dismissed | undone
+ * `prev_status`/`new_status` are tracker status keys, set on `updated`. */
+export interface InboxEvent {
+  id: number;
+  received_at: string; // explicit offset
+  from_name: string;
+  from_email: string;
+  subject: string;
+  snippet: string;
+  kind: string;
+  company: string;
+  job_title: string;
+  confidence: number;
+  method: string; // rule | llm
+  interview_at: string;
+  evidence: string; // a verbatim quote from the email, or ""
+  application_id: number | null;
+  action: string;
+  prev_status: string;
+  new_status: string;
+  set_interviewed: boolean;
+  created_at: string;
+  gmail_url: string; // "" when the message has no Message-ID or is not in Gmail
+}
+
+/** POST /inbox/sync. Never an exception for a mailbox problem: a refused
+ * refresh or a spent daily cap comes back in `error_code`. `has_more` means
+ * this run stopped with mail still to read — the budget, not the mailbox, ran
+ * out. */
+export interface InboxSyncResult {
+  user_id: number;
+  scanned: number;
+  noise: number;
+  rule_hits: number;
+  llm_calls: number;
+  events: number;
+  created: number;
+  updated: number;
+  review: number;
+  has_more: boolean;
+  error_code: string;
+}
+
+/** DELETE /inbox/connection. */
+export interface InboxDisconnectResult {
+  disconnected: boolean;
+  events_deleted: number;
 }
 
 // Interview prep
@@ -738,6 +854,52 @@ export interface Me {
   name: string;
   email: string;
   is_admin: boolean;
+}
+
+/** The account behind `AuthMe`. */
+export interface AuthUser {
+  id: number;
+  name: string;
+  email: string;
+  is_admin: boolean;
+  /** An email sign-in exists (which means a current password to confirm before changing it). */
+  has_password: boolean;
+  google_linked: boolean;
+  /** "" = invite code / admin (grandfathered as verified), "email" = self-signup. */
+  signup_source: string;
+}
+
+/** GET /auth/me: who this browser is, and whether that account may use the app.
+ *
+ * Always a 200. A signed-out visitor is `authenticated: false`, never a 401:
+ * any 401 sends the app to /login, and this is the question the login page
+ * itself asks on the way in. */
+export interface AuthMe {
+  authenticated: boolean;
+  /** Signed in but not confirmed yet: every feature route answers such an
+   * account with 403 `email_unverified`. */
+  verified: boolean;
+  /** How the request was recognised: an account session (cookie), an invite
+   * code (`X-App-Key`), or "dev" — the gate is off locally and every request is
+   * the admin. Empty when nobody was recognised. */
+  method: "session" | "invite_code" | "dev" | "" | null;
+  signup_open: boolean;
+  google_enabled: boolean;
+  user: AuthUser | null;
+}
+
+/** POST /auth/verify. `signed_in` says whether THIS browser holds the session
+ * that just became verified. A link opened elsewhere verifies the account but
+ * signs nobody in there. */
+export interface VerifyEmailResult {
+  verified: boolean;
+  signed_in: boolean;
+}
+
+/** POST /auth/resend. */
+export interface ResendResult {
+  sent: boolean;
+  cooldown_s: number;
 }
 
 /** DELETE /profile/account — the same per-table wipe counts as

@@ -67,6 +67,125 @@
     "noResume": "No saved resume for this entry.",
     "coverLetter": "Cover letter"
   },
+  "inbox": {
+    "provider": {
+      "gmail": "Gmail",
+      "fake": "Demo mailbox"
+    },
+    "kinds": {
+      "confirmation": "Received",
+      "viewed": "Viewed",
+      "interview": "Interview",
+      "assessment": "Assessment",
+      "offer": "Offer",
+      "rejection": "Declined",
+      "recruiter": "Recruiter",
+      "other": "Email"
+    },
+    "card": {
+      "applied": "Applied {{date}}",
+      "latestEmail": "Latest email: {{kind}}"
+    },
+    "ago": {
+      "justNow": "just now",
+      "minutes_one": "{{count}} min ago",
+      "minutes_other": "{{count}} min ago",
+      "hours_one": "{{count}} hour ago",
+      "hours_other": "{{count}} hours ago",
+      "days_one": "{{count}} day ago",
+      "days_other": "{{count}} days ago"
+    },
+    "bar": {
+      "label": "Gmail sync",
+      "inviteOnly": "Gmail sync is invite-only for now. Ask to have your Gmail address added.",
+      "connectPitch": "Let the replies in your Gmail keep this board up to date.",
+      "connectCta": "Connect Gmail",
+      "demoPitch": "Watch this board fill itself in from a demo mailbox.",
+      "demoCta": "Try the demo",
+      "dismiss": "Hide",
+      "synced": "synced {{when}}",
+      "neverSynced": "not synced yet",
+      "reconnectBy": "Reconnect by {{date}}",
+      "needsReauth": "Gmail needs reconnecting. Syncing is paused.",
+      "reconnect": "Reconnect",
+      "sync": "Sync",
+      "updates": "Updates",
+      "review_one": "{{count}} to review",
+      "review_other": "{{count}} to review",
+      "importing": "Importing your last {{days}} days — you can leave this page.",
+      "read_one": "{{count}} email read so far.",
+      "read_other": "{{count}} emails read so far."
+    },
+    "errors": {
+      "reauth": "Google ended the connection. Reconnect to keep syncing.",
+      "reauthDue": "Google asks apps in testing to reconnect every 7 days, and this week is up.",
+      "missingScope": "Gmail access was turned off on Google's side. Reconnect and allow reading your email.",
+      "dailyLimit": "Today's email sorting limit is reached. The rest are read tomorrow.",
+      "inProgress": "A sync is already running. The board updates when it finishes.",
+      "server": "Gmail sync isn't working on the server right now. Nothing is lost, and it picks up again once that's fixed.",
+      "generic": "The last sync ran into a problem. It tries again on the next sync."
+    },
+    "refusals": {
+      "changedSince": "This card was moved by hand after that email, so nothing was undone.",
+      "notUndoable": "That change can't be undone any more.",
+      "notReview": "That email was already filed.",
+      "applicationGone": "That application no longer exists. Choose another one.",
+      "eventGone": "That email is no longer here."
+    },
+    "outcome": {
+      "created": "Added to your tracker as {{status}}",
+      "createdPlain": "Added to your tracker",
+      "updated": "Moved: {{from}} → {{to}}",
+      "movedTo": "Moved to {{to}}",
+      "linked": "Attached to the application",
+      "review": "Waiting for your review",
+      "dismissed": "Ignored",
+      "undone": "Undone",
+      "interviewed": "marked as interviewed"
+    },
+    "sheet": {
+      "title": "Email updates",
+      "reviewTitle": "Needs review",
+      "reviewHint": "We weren't sure where these belong, so nothing on your board changed.",
+      "reviewEmpty": "Nothing needs your review.",
+      "recentTitle": "Recent automatic updates",
+      "recentHint": "What emails changed on your board. Undo puts a card back the way it was.",
+      "recentEmpty": "No automatic updates yet.",
+      "noCompany": "Company not detected",
+      "add": "Add to tracker",
+      "link": "Link to existing",
+      "linkLabel": "Which application is this email about?",
+      "linkPlaceholder": "Choose an application",
+      "linkAll": "No application matches this company, so all of them are listed.",
+      "noApps": "Your tracker is empty, so there is nothing to link to yet.",
+      "linkConfirm": "Link",
+      "ignore": "Ignore",
+      "added": "Added to your tracker.",
+      "linked": "Linked to the application.",
+      "ignored": "Ignored. It stays off your board.",
+      "actionError": "Couldn't do that. Please try again.",
+      "loadError": "Couldn't load the email updates. Please try again."
+    },
+    "timeline": {
+      "title": "Emails",
+      "all_one": "Show all {{count}}",
+      "all_other": "Show all {{count}}",
+      "fewer": "Show fewer"
+    },
+    "toasts": {
+      "connected": "Connected. Reading your recent job replies.",
+      "importDone": "Import finished. Your board is up to date.",
+      "updates_one": "{{count}} update from your inbox.",
+      "updates_other": "{{count}} updates from your inbox.",
+      "nothingNew": "Nothing new in your inbox.",
+      "syncError": "Couldn't sync. Please try again.",
+      "reconnectError": "Couldn't start reconnecting. Please try again.",
+      "undone": "Undone.",
+      "undoError": "Couldn't undo that. Please try again."
+    },
+    "undo": "Undo",
+    "openInGmail": "Open in Gmail"
+  },
   "view": {
     "board": "Board",
     "analytics": "Analytics"
@@ -74,7 +193,7 @@
   "analytics": {
     "weekly": {
       "title": "Applications per week",
-      "hint": "Added to the tracker over the last 8 weeks — the highlighted part was actually submitted.",
+      "hint": "The last 8 weeks, by the date you applied (or added the job, when that is unknown) — the highlighted part was actually submitted.",
       "submitted": "Submitted",
       "savedOnly": "Saved only",
       "empty": "No applications yet — the chart fills up as you add them."
@@ -104,7 +223,7 @@
       "allQuiet": "all quiet",
       "appsPerWeek": "Applications / wk",
       "responsesPerWeek": "Responses / wk",
-      "trendHint": "Last 8 weeks · responses are counted in the week the application was added."
+      "trendHint": "Last 8 weeks · responses count in the week you applied, or added the job when that is unknown."
     },
     "activity": {
       "title": "Recent activity",

@@ -1,14 +1,48 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { BellRing, LogOut, Palette, ShieldAlert, Trash2, UserRound } from "lucide-react";
-import { deleteAccount, deleteMyData, getMe } from "../api/client";
+import {
+  BadgeCheck,
+  BellRing,
+  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LogOut,
+  MonitorSmartphone,
+  Palette,
+  Puzzle,
+  RefreshCw,
+  ShieldAlert,
+  Trash2,
+  UserRound,
+} from "lucide-react";
+import {
+  changePassword,
+  deleteAccount,
+  deleteMyData,
+  getAuthMe,
+  getExtensionKey,
+  logoutOtherDevices,
+  rotateExtensionKey,
+} from "../api/client";
 import { signOut } from "../layouts/AppLayout";
 import { ACCESS_CODE_KEY } from "../lib/accessCode";
+import { apiErrorMessage } from "../lib/apiError";
 import LanguageSwitch from "../components/LanguageSwitch";
 import ThemeToggle from "../components/ThemeToggle";
-import { Button, Card, CardTitle, useToast } from "../components/ui";
-import type { Me } from "../types";
+import InboxSettingsCard from "../components/inbox/InboxSettingsCard";
+import { Badge, Button, Card, CardTitle, useToast } from "../components/ui";
+import { FormError, PasswordInput, charCount } from "./auth/shared";
+import type { AuthMe } from "../types";
+
+/** The hint beside an account action (Sign out, Change password, Sign out
+ * other devices). `min-w-[12rem]`, not `min-w-0`. With `min-w-0` the hint could
+ * shrink without limit, so it never pushed a long button onto its own row, and
+ * at 390px "Sign out other devices" squeezed its hint into a four-line column
+ * of one or two words per line. With a floor the row wraps and the button drops
+ * underneath instead; on wider screens both still sit side by side. */
+const ACTION_HINT = "min-w-[12rem] flex-1 text-xs leading-relaxed text-ink-muted";
 
 /** One labelled setting: name + hint on the start side, control on the end.
  * `flex-wrap`, not a two-column grid — at 390px the Hebrew hints run to two
@@ -59,10 +93,9 @@ function DangerAction({
     try {
       // Only a FAILURE re-enables. A blanket `finally { setRunning(false) }`
       // reopened the button for the whole 800ms the success path spends
-      // waiting to redirect, and a second tap in that window goes out with the
-      // access code already removed from localStorage: a 401, the client's
-      // UNAUTHORIZED_EVENT, and the AccessGate covering the screen asking for
-      // the one string guaranteed never to work again — over the top of the
+      // waiting to redirect, and a second tap in that window goes out against
+      // an account the server has already switched off: a 401, the client's
+      // UNAUTHORIZED_EVENT, and a redirect to /login over the top of the
       // success toast.
       if (!(await onConfirm())) setRunning(false);
     } catch {
@@ -83,7 +116,7 @@ function DangerAction({
 
   // The description is NOT held back until the confirm step, and that is the
   // whole reason both actions can ship side by side: their labels differ by
-  // three words, and what actually separates them -- whether your access code
+  // three words, and what actually separates them -- whether your account
   // survives -- is unreadable from "Delete all my data" vs "Close my account".
   // Held back, the choice can only be made by arming one and reading what it
   // then admits to, which is the wrong order for an irreversible action. It
@@ -124,23 +157,324 @@ function DangerAction({
   );
 }
 
-/** The account surface: appearance, who you are, and the two ways out.
+/**
+ * Change password, inline in the account card.
  *
- * There are no passwords here — a deployed instance is gated by an access code
- * that maps to a User row, so "sign out" means forgetting the code on this
- * device and the two destructive actions are genuinely different things:
- * "Delete all my data" empties the account and leaves the code working,
- * "Close my account" also switches the code off. Both ship, clearly separated,
- * because a tester wanting a clean slate and someone leaving for good are not
- * the same person. */
+ * Opens IN PLACE with an opacity/transform entrance. Never a height tween
+ * (check-mirrors 11), and never a modal: a two-field form does not earn an
+ * overlay on a phone.
+ *
+ * The hidden username field is for password managers. Without it, a manager
+ * saving the new password cannot tell which account it belongs to and files it
+ * under the site with no username.
+ */
+function PasswordChange({ email }: { email: string }) {
+  const { t } = useTranslation("settings");
+  const { t: ta } = useTranslation("auth");
+  const { t: tCommon } = useTranslation();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState("");
+  const [fresh, setFresh] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  function close() {
+    setOpen(false);
+    setCurrent("");
+    setFresh("");
+    setError("");
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    if (charCount(fresh) < 8) {
+      setError(ta("errors.weakPassword.tooShort"));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await changePassword({ current_password: current, new_password: fresh });
+      toast("success", t("account.password.done"));
+      close();
+    } catch (err) {
+      setError(apiErrorMessage(err, ta("errors.generic")));
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      {!open ? (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <p className={ACTION_HINT}>
+            {t("account.password.hint")}
+          </p>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setOpen(true)}
+            icon={<KeyRound size={14} />}
+          >
+            {t("account.password.cta")}
+          </Button>
+        </div>
+      ) : (
+        <form onSubmit={save} noValidate className="animate-fade-up space-y-3">
+          <input
+            type="email"
+            autoComplete="username"
+            value={email}
+            readOnly
+            tabIndex={-1}
+            aria-hidden
+            className="hidden"
+          />
+          <div>
+            <label htmlFor="settings-current-password" className="mb-1.5 block text-sm font-medium text-ink">
+              {ta("fields.currentPassword")}
+            </label>
+            <PasswordInput
+              id="settings-current-password"
+              value={current}
+              onChange={setCurrent}
+              autoComplete="current-password"
+              disabled={busy}
+            />
+          </div>
+          <div>
+            <label htmlFor="settings-new-password" className="mb-1.5 block text-sm font-medium text-ink">
+              {ta("fields.newPassword")}
+            </label>
+            <PasswordInput
+              id="settings-new-password"
+              value={fresh}
+              onChange={setFresh}
+              autoComplete="new-password"
+              disabled={busy}
+            />
+            <p className="mt-1.5 text-xs text-ink-muted">{ta("fields.passwordHint")}</p>
+          </div>
+          <FormError message={error} />
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button type="submit" size="sm" loading={busy}>
+              {t("account.password.save")}
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={close} disabled={busy}>
+              {tCommon("actions.cancel")}
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+/** One button: every other session on this account ends, this one stays. No
+ * confirm step, because nothing is lost. The other devices just sign in again. */
+function OtherDevices() {
+  const { t } = useTranslation("settings");
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+
+  async function go() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await logoutOtherDevices();
+      toast("success", t("account.others.done"));
+    } catch {
+      toast("error", t("account.others.error"));
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-line pt-4">
+      <p className={ACTION_HINT}>{t("account.others.hint")}</p>
+      <Button
+        size="sm"
+        variant="secondary"
+        loading={busy}
+        onClick={go}
+        icon={<MonitorSmartphone size={14} />}
+      >
+        {t("account.others.cta")}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The key the Chrome extension signs in with.
+ *
+ * MASKED until asked for, and fetched only then. It is a credential: a key on
+ * screen by default is a key in every screenshot of this page.
+ *
+ * Replacing it states its cost AT REST, the danger zone's rule, because the
+ * cost is invisible at the moment of the tap: the extension, and for an
+ * invite-code account every other device using that code, stops working until
+ * the new key is pasted in. For an invite-code account the key IS the code this
+ * device signs in with, so a successful replace also stores the new code here.
+ * Otherwise this device's next request would 401 on the code it just replaced.
+ *
+ * The admin cannot replace it here. Its key is APP_ACCESS_CODE, which the
+ * server rewrites on every cold start, so a replace would be undone
+ * unannounced. The note says where it is changed instead.
+ */
+function ExtensionKeyCard({ method, isAdmin }: { method: AuthMe["method"]; isAdmin: boolean }) {
+  const { t } = useTranslation("settings");
+  const { t: tCommon } = useTranslation();
+  const toast = useToast();
+  const [key, setKey] = useState<string | null>(null);
+  const [shown, setShown] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [arming, setArming] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+
+  async function load(): Promise<string | null> {
+    if (key) return key;
+    setLoading(true);
+    setError("");
+    try {
+      const k = await getExtensionKey();
+      setKey(k);
+      return k;
+    } catch (err) {
+      setError(apiErrorMessage(err, t("extension.loadError")));
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function toggle() {
+    if (shown) {
+      setShown(false);
+      return;
+    }
+    if (await load()) setShown(true);
+  }
+
+  async function copy() {
+    const k = await load();
+    if (!k) return;
+    try {
+      await navigator.clipboard.writeText(k);
+      toast("success", tCommon("actions.copied"));
+    } catch {
+      toast("error", t("extension.copyError"));
+    }
+  }
+
+  async function replace() {
+    if (replacing) return;
+    setReplacing(true);
+    setError("");
+    try {
+      const k = await rotateExtensionKey();
+      if (method === "invite_code") localStorage.setItem(ACCESS_CODE_KEY, k);
+      setKey(k);
+      setShown(true);
+      setArming(false);
+      toast("success", t("extension.rotated"));
+    } catch (err) {
+      setError(apiErrorMessage(err, t("extension.rotateError")));
+    }
+    setReplacing(false);
+  }
+
+  return (
+    <Card>
+      <CardTitle className="flex items-center gap-2">
+        <Puzzle size={16} className="text-accent-soft" /> {t("extension.title")}
+      </CardTitle>
+      <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t("extension.body")}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <code
+          dir="ltr"
+          className="min-w-0 basis-full truncate rounded-lg border border-line bg-bg-soft px-3 py-2 font-mono text-sm text-ink sm:flex-1 sm:basis-0"
+        >
+          {shown && key ? key : "••••••••••••"}
+        </code>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={toggle}
+          loading={loading && !shown}
+          icon={shown ? <EyeOff size={14} /> : <Eye size={14} />}
+        >
+          {shown ? t("extension.hide") : t("extension.reveal")}
+        </Button>
+        <Button size="sm" variant="secondary" onClick={copy} icon={<Copy size={14} />}>
+          {tCommon("actions.copy")}
+        </Button>
+      </div>
+      {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+      <div className="mt-4 border-t border-line pt-4">
+        {isAdmin ? (
+          <p className="text-xs leading-relaxed text-ink-muted">{t("extension.adminNote")}</p>
+        ) : (
+          <div className="space-y-2">
+            {!arming ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setArming(true)}
+                icon={<RefreshCw size={14} />}
+              >
+                {t("extension.rotate")}
+              </Button>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="danger" onClick={replace} loading={replacing}>
+                  {t("extension.rotateConfirm")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setArming(false)}
+                  disabled={replacing}
+                >
+                  {t("extension.rotateCancel")}
+                </Button>
+              </div>
+            )}
+            <p className={`text-xs leading-relaxed ${arming ? "text-danger" : "text-ink-muted"}`}>
+              {method === "invite_code" ? t("extension.rotateBodyCode") : t("extension.rotateBody")}
+            </p>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/** The account surface: appearance, who you are, the extension key, and the
+ * two ways out.
+ *
+ * An account now signs in one of two ways, and the page says which. With an
+ * email sign-in ("session") it can change its password and sign out its other
+ * devices. With an invite code (the friends beta, and every device still using
+ * one) there is no password to change and no session list to end, so neither
+ * control appears.
+ *
+ * The two destructive actions stay genuinely different things. "Delete all my
+ * data" empties the account and leaves it signed in, and "Close my account"
+ * also switches it off everywhere. Both ship, clearly separated, because a
+ * tester wanting a clean slate and someone leaving for good are not the same
+ * person. */
 export default function SettingsPage() {
   const { t } = useTranslation("settings");
   // The wipe copy is reused VERBATIM from common.json rather than restated
-  // here: it is the sentence that promises the code keeps working, and two
+  // here: it is the sentence that promises the account keeps working, and two
   // translations of one promise is how they drift apart.
   const { t: tCommon } = useTranslation();
   const toast = useToast();
-  const [me, setMe] = useState<Me | null>(null);
+  const [auth, setAuth] = useState<AuthMe | null>(null);
   const { hash, key } = useLocation();
 
   /** Honour `#danger`, because nothing else does.
@@ -158,9 +492,9 @@ export default function SettingsPage() {
    * path, and that is what re-fires this.
    *
    * `scroll-padding-top: 5rem` in styles.css clears the sticky header. The
-   * card, not a button, is the target: `getMe` can add an identity line above
-   * it a moment later, and a whole card absorbs that shift where a 32px
-   * control would be pushed out from under the scroll.
+   * card, not a button, is the target: `getAuthMe` can add identity lines and
+   * the account controls above it a moment later, and a whole card absorbs
+   * that shift where a 32px control would be pushed out from under the scroll.
    */
   useEffect(() => {
     if (hash !== "#danger") return;
@@ -172,24 +506,39 @@ export default function SettingsPage() {
     });
   }, [hash, key]);
 
-  // Best-effort: the identity line is a nicety, so a failure hides it and
-  // leaves every other section — including Sign out — fully usable. Nothing on
-  // this page waits on it.
+  // Best-effort: the identity lines and the account controls are niceties, so
+  // a failure hides them and leaves every other section — including Sign out —
+  // fully usable. Nothing on this page waits on it.
   useEffect(() => {
     let live = true;
-    getMe()
-      .then((m) => live && setMe(m))
+    getAuthMe()
+      .then((a) => {
+        if (live) setAuth(a);
+      })
       .catch(() => {});
     return () => {
       live = false;
     };
   }, []);
 
-  // `signOut` is IMPORTED, not re-implemented. It was four byte-identical
-  // lines in both files, and "forget this user" is precisely the pair that
-  // drifts: the day a fifth module-level store is added, only one of the two
-  // copies gets it and the other repaints the marketing page with the previous
-  // user's CV one tab away.
+  const user = auth?.user ?? null;
+  const method = auth?.method ?? null;
+  // An email sign-in is exactly a session-authenticated request: invite-code
+  // accounts have no login, and "dev" is the gate being off locally.
+  const hasEmailLogin = method === "session";
+  const methodLine =
+    method === "session"
+      ? t("account.methodSession")
+      : method === "invite_code"
+        ? t("account.methodCode")
+        : method === "dev"
+          ? t("account.methodDev")
+          : "";
+
+  // `signOut` is IMPORTED, not re-implemented: "forget this user" is precisely
+  // the list that drifts. The day a fifth module-level store is added, only one
+  // of two copies would get it, and the other would repaint the marketing page
+  // with the previous user's CV one tab away.
 
   async function wipe() {
     try {
@@ -209,12 +558,16 @@ export default function SettingsPage() {
   async function close() {
     try {
       await deleteAccount();
-      // The code is dead on the server now, so drop it here too — leaving it
-      // would pop the AccessGate and invite the user to retype the one string
-      // guaranteed never to work again.
+      // The account is switched off on the server now, so an invite code goes
+      // at once. Leaving it would 401 any request in the next 800ms and send
+      // the user to /login to retype a code guaranteed never to work again.
       localStorage.removeItem(ACCESS_CODE_KEY);
       toast("success", t("danger.closed"));
-      setTimeout(() => window.location.assign("/"), 800);
+      // Then the ONE sign-out, once the toast has been seen. It forgets this
+      // device's account-scoped state (the resume draft, the onboarding
+      // answers, both caches) and ends in a document load to the landing, so
+      // a closed account leaves nothing behind for the next person to sign in.
+      setTimeout(() => void signOut(), 800);
       return true;
     } catch {
       toast("error", t("danger.closeError"));
@@ -251,33 +604,45 @@ export default function SettingsPage() {
           <UserRound size={16} className="text-accent-soft" /> {t("account.title")}
         </CardTitle>
         <div className="mt-3 space-y-1 text-sm">
-          {me?.name && (
+          {user?.name && (
             <p className="text-ink">
               <span className="text-ink-muted">{t("account.name")}: </span>
-              {me.name}
+              {user.name}
             </p>
           )}
-          {me?.email && (
-            // Wrapped in a bidi isolate: an address is Latin text inside a
-            // Hebrew line, and without this the RTL paragraph reorders the
-            // punctuation around it.
-            <p className="break-all text-ink">
-              <span className="text-ink-muted">{t("account.email")}: </span>
-              <bdi>{me.email}</bdi>
+          {user?.email && (
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-ink">
+              {/* Wrapped in a bidi isolate: an address is Latin text inside a
+                  Hebrew line, and without this the RTL paragraph reorders the
+                  punctuation around it. */}
+              <span className="min-w-0 break-all">
+                <span className="text-ink-muted">{t("account.email")}: </span>
+                <bdi>{user.email}</bdi>
+              </span>
+              {hasEmailLogin && auth?.verified && (
+                <Badge tone="mint">
+                  <BadgeCheck size={12} aria-hidden />
+                  {t("account.verified")}
+                </Badge>
+              )}
             </p>
           )}
         </div>
-        <p className="mt-3 text-xs leading-relaxed text-ink-muted">{t("account.device")}</p>
+        {methodLine && <p className="mt-3 text-xs leading-relaxed text-ink-muted">{methodLine}</p>}
+
+        {hasEmailLogin && user?.has_password && <PasswordChange email={user.email} />}
+        {hasEmailLogin && <OtherDevices />}
+
         {/* Not a <Row>: the hint IS the label here, and a Row would print
             "Sign out" twice — once as the row name, once on the button. */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-line pt-4">
-          <p className="min-w-0 flex-1 text-xs leading-relaxed text-ink-muted">
+          <p className={ACTION_HINT}>
             {t("account.signOutHint")}
           </p>
           <Button
             size="sm"
             variant="secondary"
-            onClick={signOut}
+            onClick={() => void signOut()}
             // The door glyph points out to the right; in RTL "out" is the other
             // way, so it mirrors with the reading direction.
             icon={<LogOut size={14} className="rtl:-scale-x-100" />}
@@ -286,6 +651,13 @@ export default function SettingsPage() {
           </Button>
         </div>
       </Card>
+
+      {auth?.verified && user && <ExtensionKeyCard method={method} isAdmin={user.is_admin} />}
+
+      {/* Gmail sync. It reads its own status and renders nothing when the
+          server has no Gmail set up, so it needs no gate here. `id="inbox"` is
+          the tracker's Connect link target, scrolled to by the card itself. */}
+      <InboxSettingsCard />
 
       <Card>
         <CardTitle className="flex items-center gap-2">
@@ -337,7 +709,7 @@ export default function SettingsPage() {
               // the only way back into a deployed instance). Showing the reason
               // up front beats letting the user arm the confirm, tap "Yes", and
               // meet an error toast for a decision that was never theirs to make.
-              disabledReason={me?.is_admin ? t("danger.closeAdminBlocked") : undefined}
+              disabledReason={user?.is_admin ? t("danger.closeAdminBlocked") : undefined}
             />
           </div>
         </div>

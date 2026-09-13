@@ -79,6 +79,9 @@ export default function ClosingSection({ mode }: { mode: LandingMode }) {
             <a href="#faq" className="inline-flex min-h-[44px] items-center rounded hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
               {t("footer.faq")}
             </a>
+            <Link to="/privacy" className="inline-flex min-h-[44px] items-center rounded hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+              {t("footer.privacy")}
+            </Link>
           </nav>
         </div>
       </footer>

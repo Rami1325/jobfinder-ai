@@ -21,6 +21,12 @@ import type { LandingMode } from "../../hooks/useLandingTheme";
  * own button on Escape — which is exactly what it does. Every link, the
  * language switch and the theme control are inside it, so nothing is reachable
  * on a wide screen only.
+ *
+ * THE FULL BAR STARTS AT `lg`, not `md`, since accounts. "Sign up" is always in
+ * the bar and "Log in" joined it, and at 768px the bar was already at its width
+ * budget with "Open app" alone (logo, four nav links, language, theme). Rather
+ * than squeeze a fifth item into a row that cannot wrap, tablets get the
+ * compact bar the phones already have, where "Log in" lives in the menu.
  */
 
 interface NavItem {
@@ -125,7 +131,7 @@ export default function LandingHeader({
           <Logo size={26} />
         </Link>
 
-        <nav aria-label={tm("footer.navLabel")} className="hidden items-center gap-8 md:flex">
+        <nav aria-label={tm("footer.navLabel")} className="hidden items-center gap-8 lg:flex">
           {NAV.map((n) => (
             <a key={n.href} href={n.href} className={navLink}>
               {label(n)}
@@ -137,15 +143,21 @@ export default function LandingHeader({
           <Link to="/scan" className={cn(navLink, "hidden lg:inline-block")}>
             {t("header.freeScan")}
           </Link>
-          <div className="hidden items-center gap-1 md:flex">
+          <div className="hidden items-center gap-1 lg:flex">
             <LanguageSwitch className="h-11 min-w-11 rounded-full border-0 text-[13px] hover:bg-ink/[0.08]" />
             <ThemeButton mode={mode} toggle={toggleTheme} />
           </div>
+          <Link to="/login" className={cn(navLink, "hidden lg:inline-block")}>
+            {t("header.logIn")}
+          </Link>
+          {/* The one filled control in the bar, at every width: the inverted
+              pill the hero's primary action uses, so the header and the hero
+              point at the same next step. */}
           <Link
-            to="/app"
-            className="inline-flex min-h-[44px] items-center rounded-full border border-ink/25 px-4 text-sm font-medium text-ink transition-colors hover:border-ink/50 hover:bg-ink/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            to="/signup"
+            className="inline-flex min-h-[44px] items-center rounded-full bg-[rgb(var(--cta-fill))] px-4 text-sm font-medium text-[rgb(var(--cta-ink))] transition-colors hover:bg-[rgb(var(--cta-fill)/0.88)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
           >
-            {t("header.openApp")}
+            {t("header.signUp")}
           </Link>
           <button
             ref={buttonRef}
@@ -154,7 +166,7 @@ export default function LandingHeader({
             aria-expanded={open}
             aria-controls={panelId}
             aria-label={open ? tm("landing.nav.close") : t("nav.menu")}
-            className="grid h-11 w-11 place-items-center rounded-full text-ink-muted transition-colors hover:bg-ink/[0.08] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent md:hidden"
+            className="grid h-11 w-11 place-items-center rounded-full text-ink-muted transition-colors hover:bg-ink/[0.08] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent lg:hidden"
           >
             {open ? <X size={20} aria-hidden /> : <Menu size={20} aria-hidden />}
           </button>
@@ -168,7 +180,7 @@ export default function LandingHeader({
         <div
           id={panelId}
           ref={panelRef}
-          className="lp-in border-b border-line bg-bg/97 backdrop-blur-xl md:hidden"
+          className="lp-in border-b border-line bg-bg/97 backdrop-blur-xl lg:hidden"
         >
           <nav aria-label={tm("footer.navLabel")} className="mx-auto max-w-[1160px] px-5 pb-5 pt-1 sm:px-8">
             <ul className="flex flex-col">
@@ -187,9 +199,18 @@ export default function LandingHeader({
                 <Link
                   to="/scan"
                   onClick={() => setOpen(false)}
-                  className="flex min-h-[48px] items-center text-[16px] text-ink-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  className="flex min-h-[48px] items-center border-b border-line/70 text-[16px] text-ink-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   {t("header.freeScan")}
+                </Link>
+              </li>
+              <li>
+                <Link
+                  to="/login"
+                  onClick={() => setOpen(false)}
+                  className="flex min-h-[48px] items-center text-[16px] text-ink-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                >
+                  {t("header.logIn")}
                 </Link>
               </li>
             </ul>

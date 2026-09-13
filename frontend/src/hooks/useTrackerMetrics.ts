@@ -6,6 +6,21 @@ export const SUBMITTED = new Set(["applied", "interview", "offer", "rejected"]);
 /** Statuses that mean the company answered (any outcome). */
 export const RESPONDED = new Set(["interview", "offer", "rejected"]);
 
+/**
+ * The date an application is filed under: when it was SENT, or — when that is
+ * unknown — when it was added.
+ *
+ * ONE definition, read by the card's date and by every date bucket in
+ * TrackerAnalytics. `created_at` alone is the SAVE date for anything saved from
+ * Jobs, a kit or the extension and applied to later, so an application sent
+ * today after sitting in Saved for three weeks landed in a bar three weeks
+ * back. Two readers of two different fields would put the same card in two
+ * different weeks.
+ */
+export function dateOfRecord(a: { applied_at?: string | null; created_at: string }): string {
+  return a.applied_at || a.created_at;
+}
+
 export interface TrackerMetrics {
   total: number;
   applied: number;

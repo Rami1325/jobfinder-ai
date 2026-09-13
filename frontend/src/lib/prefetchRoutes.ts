@@ -23,6 +23,12 @@ export function prefetchAppRoutes(): void {
     quiet(import("../pages/JobsPage"));
     quiet(import("../pages/TailorPage"));
     quiet(import("../pages/TrackerPage"));
+    // The landing's primary action and its header now lead to /signup and
+    // /login, because a visitor with no account cannot use /app. The auth shell
+    // and both forms are warmed too: that first tap is the one that matters.
+    quiet(import("../layouts/AuthLayout"));
+    quiet(import("../pages/auth/SignupPage"));
+    quiet(import("../pages/auth/LoginPage"));
   };
 
   if (typeof window.requestIdleCallback === "function") {

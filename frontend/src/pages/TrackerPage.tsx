@@ -32,6 +32,9 @@ import {
 } from "../api/client";
 import ResumeView from "../components/ResumeView";
 import TrackerAnalytics from "../components/TrackerAnalytics";
+import EmailTimeline from "../components/inbox/EmailTimeline";
+import InboxBar from "../components/inbox/InboxBar";
+import { AppliedBadge, CardDate, CardEmailBadge } from "../components/inbox/shared";
 import { Badge, Button, Card, CardTitle, CountUp, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
@@ -282,6 +285,19 @@ export default function TrackerPage() {
     }
   }
 
+  /** Re-read the open application after an email on it was undone. Only the
+   * detail is replaced, never `notesDraft`: a half-typed note survives an undo.
+   * Undoing the email that CREATED the card deletes the application, and a 404
+   * then closes the modal, which has nothing left to show. */
+  async function reloadDetail(id: number) {
+    try {
+      const d = await getApplication(id);
+      setDetail((cur) => (cur?.id === id ? d : cur));
+    } catch (e) {
+      if ((e as { response?: { status?: number } })?.response?.status === 404) setOpen(false);
+    }
+  }
+
   async function saveNotes() {
     if (!detail) return;
     setNotesSaving(true);
@@ -441,6 +457,11 @@ export default function TrackerPage() {
         </Card>
       )}
 
+      {/* Gmail sync (Phase 29). Outside the `loading` ternary for the nudges
+          strip's reason: its own fetch and its own failure, never the board's.
+          It calls `refresh` only when a sync actually wrote something. */}
+      <InboxBar apps={apps} onChanged={refresh} />
+
       {/* ── Board / Analytics ──────────────────────────────────────────── */}
       {!loading && tab === "analytics" ? (
         <TrackerAnalytics apps={apps} />
@@ -556,20 +577,29 @@ export default function TrackerPage() {
 
                           <div className="mt-2 flex items-center justify-between gap-2">
                             <Stars value={a.excitement || 0} onRate={(n) => rate(a, n)} />
-                            {a.notes && (
-                              <button
-                                onClick={() => view(a.id)}
-                                title={t("notes.indicator")}
-                                className="inline-flex items-center gap-1 rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors hover:border-accent/40 hover:text-ink"
-                              >
-                                <StickyNote size={11} />
-                                {t("notes.chip")}
-                              </button>
-                            )}
+                            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+                              {/* The newest email's kind, only when it adds to the
+                                  column (see CardEmailBadge). Static: nothing
+                                  inside a card may open over it, and the eye
+                                  button below already opens the timeline. */}
+                              <CardEmailBadge app={a} />
+                              {a.notes && (
+                                <button
+                                  onClick={() => view(a.id)}
+                                  title={t("notes.indicator")}
+                                  className="inline-flex items-center gap-1 rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors hover:border-accent/40 hover:text-ink"
+                                >
+                                  <StickyNote size={11} />
+                                  {t("notes.chip")}
+                                </button>
+                              )}
+                            </div>
                           </div>
 
                           <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
-                            <span className="text-[11px] text-ink-faint">{a.created_at?.slice(0, 10)}</span>
+                            {/* "Applied <date>" when the date it was sent is
+                                known, else the day it was added (I3). */}
+                            <CardDate app={a} />
                             <div className="flex items-center gap-1.5">
                               <FlipStatusChip id={a.id} status={a.status || "saved"} />
                               {submitted && (
@@ -666,6 +696,7 @@ export default function TrackerPage() {
                   <MessageSquare size={11} /> {t("interviewed")}
                 </Badge>
               )}
+              <AppliedBadge appliedAt={detail.applied_at} />
               {detail.job_url && (
                 <a
                   href={detail.job_url}
@@ -726,6 +757,16 @@ export default function TrackerPage() {
                 </>
               )}
             </div>
+            {/* ABOVE the resume view: see EmailTimeline for why. */}
+            {detail.email_events?.length ? (
+              <EmailTimeline
+                events={detail.email_events}
+                onUndone={() => {
+                  void refresh();
+                  void reloadDetail(detail.id);
+                }}
+              />
+            ) : null}
             <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
               {t("notes.label")}
             </h3>

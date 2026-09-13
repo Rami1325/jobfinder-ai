@@ -38,11 +38,14 @@ import FeedbackButton from "../components/FeedbackButton";
 import LanguageSwitch from "../components/LanguageSwitch";
 import OnboardingModal from "../components/OnboardingModal";
 import ThemeToggle from "../components/ThemeToggle";
-import { getMe } from "../api/client";
+import { getAuthMe, logout } from "../api/client";
 import { clearDataCache } from "../lib/dataCache";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { ACCESS_CODE_KEY } from "../lib/accessCode";
-import { isOnboarded } from "../lib/onboarding";
+import { clearDraft } from "../lib/draft";
+import { clearInboxHints } from "../lib/inboxHint";
+import { clearOnboarding, isOnboarded } from "../lib/onboarding";
+import { authRedirectUrl } from "../lib/safeNext";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 import { getKitsState, loadKits, subscribeKits } from "../state/kitsStore";
 import type { Me } from "../types";
@@ -101,9 +104,26 @@ const toolsSubNav = [
  * page with the previous user's CV one tab away. A page importing from a layout
  * is the odd part; the tidier home is a `lib/session.ts` both sides import, and
  * that is a file move, not a behaviour change, whenever a third caller appears.
+ *
+ * With accounts there is a server half, and it goes FIRST: `logout()` ends this
+ * session, so the cookie cannot sign anyone back in. Its failure is ignored. An
+ * expired session or a dropped connection must not strand someone who asked to
+ * leave, and everything after it is local. The local half now forgets more
+ * than the code: the resume draft (lib/draft.ts — DraftRestoreBar would offer
+ * it to the next account on this device as that account's own CV) and the
+ * onboarding answers (whose target role would prefill that account's search),
+ * and the Gmail-sync hints that account hid on the tracker.
  */
-export function signOut(): void {
+export async function signOut(): Promise<void> {
+  try {
+    await logout();
+  } catch {
+    /* the session may already be gone; forgetting this device still happens */
+  }
   localStorage.removeItem(ACCESS_CODE_KEY);
+  clearDraft();
+  clearOnboarding();
+  clearInboxHints();
   clearDataCache();
   resetMasterCache();
   window.location.assign("/");
@@ -405,7 +425,7 @@ function AccountMenu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   useDismiss(ref, open, onClose);
 
-  // getMe() is best-effort (see the fetch in AppLayout), so the avatar has to
+  // `me` is best-effort (the guard in AppLayout fails open), so the avatar has to
   // read as an account button with no name at all — hence the User glyph rather
   // than a placeholder letter, which would be a fabricated initial.
   const initial = me?.name?.trim()?.[0]?.toUpperCase();
@@ -486,7 +506,7 @@ function AccountMenu({
             </Link>
             <button
               type="button"
-              onClick={signOut}
+              onClick={() => void signOut()}
               className={cn(item, "text-ink-muted hover:bg-panel-2/60 hover:text-ink")}
             >
               {/* The door glyph points out to the right; in RTL "out" is the
@@ -627,27 +647,61 @@ export default function AppLayout() {
   // (startKitBatch and resumeKitQueue both call loadKits(true) when a batch
   // finishes), so the badge updates the moment a background batch lands.
   const { kits } = useSyncExternalStore(subscribeKits, getKitsState);
-  useEffect(() => {
-    void loadKits(); // best-effort: a failure just leaves the badge off
-  }, []);
-  // "done" is tailored-and-waiting-for-a-human, and it is the exact status
-  // approveKit requires — a queued or failed kit is not something to review.
-  const awaitingKits = kits?.filter((k) => k.status === "done").length ?? 0;
-  const [onboardOpen, setOnboardOpen] = useState(() => !isOnboarded());
 
-  // Who this device's code belongs to. Best-effort and never awaited by
-  // anything: a failure leaves the avatar as a generic User glyph and hides the
-  // "Signed in as" line, and every other control in the header still works.
+  // THE AUTH GUARD. One /auth/me on mount, and the shell does not render until
+  // it answers. A signed-out visitor goes to /login and an unverified account
+  // to /verify, each carrying where it was, so the extension's
+  // `/app?tailor_app=<id>` survives the round trip. Both are DOCUMENT loads, for
+  // AccessGate's reason. Until the answer arrives this paints the same
+  // full-screen spinner App.tsx's Suspense does, so the hand-off from the lazy
+  // chunk to the guard is one spinner, not a spinner, a shell and a redirect.
+  //
+  // It FAILS OPEN. If /auth/me cannot be read (no network, a server error), the
+  // shell renders anyway. That is safe because the guard is a courtesy, not the
+  // lock: the server enforces every route the shell calls, and a 401 or 403
+  // from any of them redirects through AccessGate. Failing closed would leave a
+  // spinner for ever on the one day this check itself is what broke.
+  //
+  // With the gate off locally, /auth/me answers with the dev admin, which is
+  // authenticated and verified, so nothing redirects.
+  const [authed, setAuthed] = useState(false);
+  // Who is signed in, from that same answer: the avatar initial and the
+  // "Signed in as" line. Null when the guard failed open, and then the avatar
+  // is a generic User glyph and every other control in the header still works.
   const [me, setMe] = useState<Me | null>(null);
   useEffect(() => {
     let live = true;
-    getMe()
-      .then((m) => live && setMe(m))
-      .catch(() => {});
+    getAuthMe()
+      .then((a) => {
+        if (!live) return;
+        if (!a.authenticated) {
+          window.location.assign(authRedirectUrl("/login"));
+          return;
+        }
+        if (!a.verified) {
+          window.location.assign(authRedirectUrl("/verify"));
+          return;
+        }
+        if (a.user) setMe({ name: a.user.name, email: a.user.email, is_admin: a.user.is_admin });
+        setAuthed(true);
+      })
+      .catch(() => {
+        if (live) setAuthed(true);
+      });
     return () => {
       live = false;
     };
   }, []);
+
+  useEffect(() => {
+    // Only once the guard has passed: a signed-out visit must not fire a
+    // request whose 401 races the guard's own redirect.
+    if (authed) void loadKits(); // best-effort: a failure just leaves the badge off
+  }, [authed]);
+  // "done" is tailored-and-waiting-for-a-human, and it is the exact status
+  // approveKit requires — a queued or failed kit is not something to review.
+  const awaitingKits = kits?.filter((k) => k.status === "done").length ?? 0;
+  const [onboardOpen, setOnboardOpen] = useState(() => !isOnboarded());
 
   // Two popovers, one at a time — opening either closes the other, so the panel
   // and the account card can never overlap at the top-end corner on a phone.
@@ -686,6 +740,16 @@ export default function AppLayout() {
     pathname.startsWith("/interview") ||
     pathname.startsWith("/tools") ||
     pathname.startsWith("/settings");
+
+  // After every hook, so the hook order is the same on the render that shows
+  // the spinner and the render that shows the shell.
+  if (!authed) {
+    return (
+      <div className="grid min-h-dvh place-items-center bg-bg">
+        <Loader2 className="h-6 w-6 animate-spin text-ink-muted" aria-hidden />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-dvh bg-bg text-ink">

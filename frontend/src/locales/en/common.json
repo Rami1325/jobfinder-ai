@@ -24,14 +24,17 @@
     "features": "Features",
     "faq": "FAQ",
     "openApp": "Open app",
-    "freeScan": "Free CV scan"
+    "freeScan": "Free CV scan",
+    "logIn": "Log in",
+    "signUp": "Sign up"
   },
   "footer": {
     "tagline": "· Honest AI resume tailoring",
     "app": "App",
     "how": "How it works",
     "faq": "FAQ",
-    "freeScan": "Free CV scan"
+    "freeScan": "Free CV scan",
+    "privacy": "Privacy"
   },
   "actions": {
     "cancel": "Cancel",
@@ -83,7 +86,7 @@
   "privacy": {
     "title": "Privacy",
     "wipeCta": "Delete all my data",
-    "wipeConfirmBody": "This permanently deletes your resumes, applications, search history, alerts, and kits from the server. Your access code keeps working. This can't be undone.",
+    "wipeConfirmBody": "This permanently deletes your resumes, applications, search history, alerts, kits and detected emails from the server, and disconnects Gmail. Your account keeps working. This can't be undone.",
     "wipeConfirm": "Yes, delete everything",
     "wipeCancel": "Keep my data",
     "wiped": "All your data was deleted.",
@@ -94,13 +97,8 @@
     "tailor": "Daily limit reached — you've used all {{cap}} tailorings for today. Try again tomorrow.",
     "llm": "Daily limit reached — you've used all {{cap}} AI requests for today. Try again tomorrow.",
     "submit": "Daily limit reached — you've sent all {{cap}} applications for today. Try again tomorrow.",
+    "inbox": "Daily limit reached — {{cap}} emails were sorted today. The rest are read tomorrow.",
     "generic": "Daily limit reached — you've used your {{cap}} for today. Try again tomorrow."
-  },
-  "accessGate": {
-    "title": "Access code",
-    "body": "This JobFinder instance is private. Enter the access code to continue — it's remembered on this device.",
-    "placeholder": "Access code",
-    "unlock": "Unlock"
   },
   "placeholder": {
     "body": "This section is being built. Check back shortly."

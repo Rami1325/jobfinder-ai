@@ -1,14 +1,15 @@
 import { useId, useState } from "react";
+import { Link } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Eyebrow, Rise } from "./ui";
 
 /**
- * Six topics: accuracy, export behaviour, access, auto-apply, templates,
- * Hebrew. The answers are rewritten in product language — the previous set
- * explained the fabrication guard, the bidi line-breaker and the complex-script
- * properties Word reads, which are true and are not what a visitor deciding
- * whether to upload a CV needs.
+ * Seven topics: accuracy, export behaviour, accounts, auto-apply, templates,
+ * Hebrew, and what connecting Gmail reads. The answers are rewritten in product
+ * language — the previous set explained the fabrication guard, the bidi
+ * line-breaker and the complex-script properties Word reads, which are true and
+ * are not what a visitor deciding whether to upload a CV needs.
  *
  * Two disclosures are kept because they are limitations the reader has to
  * know: formatting checks cannot promise a specific employer's screener will
@@ -16,14 +17,21 @@ import { Eyebrow, Rise } from "./ui";
  * Word. The old wording said every layout was identical across both files,
  * which the gallery contradicted one section earlier.
  *
+ * The accounts answer (q3) went false the day accounts shipped: it said there
+ * were none. Nothing caught it coming, because every row renders through a
+ * RUNTIME key (`landing.faq.a${k}`) that check-mirrors 28 cannot read. The Gmail
+ * row (q7) links /privacy. The landing is where a visitor decides whether to
+ * trust the app with their mail, so the full account of what is kept is one tap
+ * from the question.
+ *
  * The panel is rendered CONDITIONALLY and animated with opacity and transform
  * only. This accordion is where the `height: "auto"` tween that wedged seven
  * shipped reveals came from; check-mirrors 11 exists because of it.
  */
 
-const KEYS = ["1", "2", "3", "4", "5", "6"] as const;
+const KEYS = ["1", "2", "3", "4", "5", "6", "7"] as const;
 
-function Row({ q, a }: { q: string; a: string }) {
+function Row({ q, a, more }: { q: string; a: string; more?: { to: string; label: string } }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   return (
@@ -49,9 +57,21 @@ function Row({ q, a }: { q: string; a: string }) {
       </h3>
       {open && (
         <div id={`${id}-p`} role="region" aria-labelledby={`${id}-b`} className="lp-in">
-          <p className="max-w-[68ch] pb-6 pe-8 text-[15px] leading-relaxed text-ink-muted sm:text-base">
+          <p
+            className={`max-w-[68ch] pe-8 text-[15px] leading-relaxed text-ink-muted sm:text-base ${
+              more ? "pb-2" : "pb-6"
+            }`}
+          >
             {a}
           </p>
+          {more && (
+            <Link
+              to={more.to}
+              className="mb-4 inline-flex min-h-[44px] items-center rounded text-[15px] font-medium text-ink underline underline-offset-4 hover:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:text-base"
+            >
+              {more.label}
+            </Link>
+          )}
         </div>
       )}
     </div>
@@ -76,7 +96,12 @@ export default function LandingFaq() {
         </Rise>
         <Rise className="mt-10 border-t border-line">
           {KEYS.map((k) => (
-            <Row key={k} q={t(`landing.faq.q${k}`)} a={t(`landing.faq.a${k}`)} />
+            <Row
+              key={k}
+              q={t(`landing.faq.q${k}`)}
+              a={t(`landing.faq.a${k}`)}
+              more={k === "7" ? { to: "/privacy", label: t("landing.faq.privacyLink") } : undefined}
+            />
           ))}
         </Rise>
       </div>

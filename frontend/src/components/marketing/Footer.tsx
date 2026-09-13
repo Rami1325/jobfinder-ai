@@ -22,6 +22,7 @@ export default function Footer() {
             <a href="#templates" className="hover:text-ink">{tm("templates.nav")}</a>
             <a href="#how" className="hover:text-ink">{t("footer.how")}</a>
             <a href="#faq" className="hover:text-ink">{t("footer.faq")}</a>
+            <Link to="/privacy" className="hover:text-ink">{t("footer.privacy")}</Link>
           </nav>
         </div>
         <p className="mt-10 border-t border-line pt-6 text-[13px] leading-relaxed text-ink-faint">

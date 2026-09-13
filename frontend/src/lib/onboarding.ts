@@ -23,6 +23,17 @@ export function saveOnboarding(answers: OnboardingAnswers): void {
   }
 }
 
+/** Forget the answers. Called on sign-out: the target role belongs to one
+ * person, and on a shared device it would otherwise prefill the NEXT account's
+ * job search and skip that account's own onboarding. */
+export function clearOnboarding(): void {
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    /* storage unavailable — nothing was stored either */
+  }
+}
+
 /** The target role from onboarding, "" when unanswered. */
 export function onboardingRole(): string {
   try {

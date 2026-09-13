@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { Card, CardTitle, CountUp, SectionLabel, Sparkline } from "./ui";
 import { cn } from "../lib/cn";
+import { dateOfRecord } from "../hooks/useTrackerMetrics";
 import type { ApplicationOut } from "../types";
 
 /** Statuses that mean the application was actually submitted (matches TrackerPage). */
@@ -93,8 +94,12 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
     });
     const byStart = new Map(buckets.map((b) => [b.start, b]));
     for (const a of apps) {
-      if (!a.created_at) continue;
-      const b = byStart.get(weekStart(new Date(a.created_at)));
+      // Filed under the date it was SENT, else the date it was added
+      // (`dateOfRecord`, the card's own date). On created_at alone, a job saved
+      // three weeks ago and applied to today counted three weeks back.
+      const when = dateOfRecord(a);
+      if (!when) continue;
+      const b = byStart.get(weekStart(new Date(when)));
       if (!b) continue; // older than the window
       b.total += 1;
       if (SUBMITTED.has(a.status || "saved")) b.submitted += 1;
@@ -113,12 +118,13 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
     [apps],
   );
 
-  /** Newest additions first — created_at is the only timestamp the API exposes. */
+  /** Newest first, by the same date the weekly chart files each row under, so
+   * the log and the bars cannot disagree about when something happened. */
   const recent = useMemo(
     () =>
       [...apps]
-        .filter((a) => a.created_at)
-        .sort((x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime())
+        .filter((a) => dateOfRecord(a))
+        .sort((x, y) => new Date(dateOfRecord(y)).getTime() - new Date(dateOfRecord(x)).getTime())
         .slice(0, ACTIVITY_ROWS),
     [apps],
   );
@@ -494,7 +500,7 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
                     {t(`status.${status}`)}
                   </span>
                   <span className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-ink-faint">
-                    {relativeTime(a.created_at, locale)}
+                    {relativeTime(dateOfRecord(a), locale)}
                   </span>
                 </li>
               );
