@@ -3,6 +3,14 @@ import type { ResumeModel } from "../types";
 // Hebrew block U+0590-U+05FF: letters incl. finals, niqqud, geresh.
 const HEBREW_RE = new RegExp("[\\u0590-\\u05FF]");
 
+/** "he" when the text contains ANY Hebrew letter, else "en" — the rule backend
+ * `app/core/lang.py::detect_language` stamps `JDModel.language` with. One
+ * Hebrew word is enough, which is why a caller adding text to a posting has to
+ * ask this before it adds any. */
+export function textLanguage(text: string): "he" | "en" {
+  return HEBREW_RE.test(text) ? "he" : "en";
+}
+
 /** Language a resume is written in — mirrors backend `app/core/lang.py`:
  * only prose fields count (summary, skills, titles, bullets, project /
  * education text), so an English resume at a Hebrew-named employer stays "en". */
@@ -20,5 +28,5 @@ export function resumeLanguage(resume: ResumeModel): "he" | "en" {
   for (const ms of resume.military_service ?? []) {
     parts.push(ms.role, ...ms.bullets);
   }
-  return HEBREW_RE.test(parts.join(" ")) ? "he" : "en";
+  return textLanguage(parts.join(" "));
 }

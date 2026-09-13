@@ -2,6 +2,7 @@ import axios from "axios";
 import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT, UNVERIFIED_EVENT } from "../lib/accessCode";
 import { cachedFetch, clearDataCache, invalidateData } from "../lib/dataCache";
 import { resetMasterCache } from "../hooks/useMasterResume";
+import { noteDraftOwner } from "../lib/draft";
 import type {
   AlertRunResult,
   AlertSettings,
@@ -45,6 +46,7 @@ import type {
   PageCountResult,
   RecruiterScreenResult,
   ResumeModel,
+  ResumePrefs,
   ResumeUploadResponse,
   ResumeVersion,
   ReviewResult,
@@ -691,6 +693,29 @@ export async function getMe(): Promise<Me> {
   return data;
 }
 
+/** What a tailored resume may leave out (GET /profile/resume-prefs). Off for
+ * every account until the user turns it on in Settings.
+ *
+ * Un-cached, for getMe's reason: Settings reads it once per visit. A response
+ * without the flag is REFUSED rather than read as "off". For a switch the user
+ * turned on, showing it off is a false statement about their own setting, so
+ * the Settings card says it could not load instead. */
+export async function getResumePrefs(): Promise<ResumePrefs> {
+  const { data } = await api.get<Partial<ResumePrefs> | null>("/profile/resume-prefs");
+  const hide = data?.hide_arabic_in_israel;
+  if (typeof hide !== "boolean") throw new Error("resume-prefs response carries no hide_arabic_in_israel");
+  return { hide_arabic_in_israel: hide };
+}
+
+/** Save the preferences and return what the server STORED. A response without
+ * the flag is read back rather than trusted, `rotateExtensionKey`'s rule: the
+ * switch must show what is stored, not what was asked for. */
+export async function updateResumePrefs(prefs: ResumePrefs): Promise<ResumePrefs> {
+  const { data } = await api.put<Partial<ResumePrefs> | null>("/profile/resume-prefs", prefs);
+  const hide = data?.hide_arabic_in_israel;
+  return typeof hide === "boolean" ? { hide_arabic_in_israel: hide } : getResumePrefs();
+}
+
 // ---- accounts: the /auth routes -------------------------------------------- //
 
 /** Who this browser is, and whether that account may use the app. Always 200.
@@ -709,7 +734,18 @@ export async function getAuthMe(): Promise<AuthMe> {
   const { data } = await api.get<AuthMe>("/auth/me");
   if (data.method !== "invite_code" && data.method !== "dev" && localStorage.getItem(ACCESS_CODE_KEY))
     localStorage.removeItem(ACCESS_CODE_KEY);
+  // The resume draft remembers which account wrote it, and is offered to no
+  // one else (lib/draft.ts). Every answer updates it, signed out included.
+  noteDraftOwner(data.user?.id ?? null);
   return data;
+}
+
+/** POST /auth/password, /auth/logout-others and /auth/reset: whether the
+ * extension key was replaced too, and the new key when the server returns it.
+ * Read through `readKeyRotation` (lib/authResults.ts), never directly. */
+export interface KeyRotationFields {
+  extension_key_rotated?: boolean;
+  key?: string;
 }
 
 /** Everything a successful sign-in must forget from before it.
@@ -784,8 +820,8 @@ export async function forgotPassword(email: string): Promise<void> {
 
 /** Sets a new password from an emailed link and signs this browser in. Every
  * other session on the account ends, and the extension key is replaced. */
-export async function resetPassword(token: string, password: string): Promise<AuthMe> {
-  const { data } = await api.post<AuthMe>("/auth/reset", { token, password });
+export async function resetPassword(token: string, password: string): Promise<AuthMe & KeyRotationFields> {
+  const { data } = await api.post<AuthMe & KeyRotationFields>("/auth/reset", { token, password });
   adoptSession();
   return data;
 }
@@ -794,12 +830,14 @@ export async function resetPassword(token: string, password: string): Promise<Au
 export async function changePassword(payload: {
   current_password?: string;
   new_password: string;
-}): Promise<void> {
-  await api.post("/auth/password", payload);
+}): Promise<KeyRotationFields> {
+  const { data } = await api.post<KeyRotationFields>("/auth/password", payload);
+  return data ?? {};
 }
 
-export async function logoutOtherDevices(): Promise<void> {
-  await api.post("/auth/logout-others");
+export async function logoutOtherDevices(): Promise<KeyRotationFields> {
+  const { data } = await api.post<KeyRotationFields>("/auth/logout-others");
+  return data ?? {};
 }
 
 /** The key the Chrome extension signs in with. For an invite-code account it IS

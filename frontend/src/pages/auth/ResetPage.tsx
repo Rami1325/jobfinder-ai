@@ -3,6 +3,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { resetPassword } from "../../api/client";
 import { Button } from "../../components/ui";
+import { markKeyRotated, readKeyRotation } from "../../lib/authResults";
+import { takeResetNext } from "../../lib/safeNext";
 import { apiErrorCode, apiErrorMessage } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
 import {
@@ -49,8 +51,13 @@ export default function ResetPage() {
     setBusy(true);
     setError("");
     try {
-      await resetPassword(token, password);
-      window.location.assign("/app");
+      const r = await resetPassword(token, password);
+      // Settings is not on screen after a reset, so the news that the
+      // extension key changed waits there for the user (lib/authResults.ts).
+      if (readKeyRotation(r).rotated) markKeyRotated();
+      // Where the visitor was going when they asked for the link on this
+      // device, validated again on the way out; otherwise /app.
+      window.location.assign(takeResetNext());
     } catch (err) {
       const code = apiErrorCode(err);
       if (code === "expired" || code === "used") setDead(true);

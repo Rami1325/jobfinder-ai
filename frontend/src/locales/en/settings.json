@@ -22,13 +22,15 @@
       "cta": "Change password",
       "hint": "Changing your password signs you out on your other devices.",
       "save": "Save new password",
-      "done": "Password changed. Your other devices were signed out."
+      "done": "Password changed. Your other devices were signed out.",
+      "doneKey": "Password changed. Your other devices were signed out, and your extension key was replaced."
     },
     "others": {
       "cta": "Sign out other devices",
       "hint": "Ends every other session on this account. This device stays signed in.",
       "done": "Your other devices were signed out.",
-      "error": "Couldn't sign out your other devices. Please try again."
+      "error": "Couldn't sign out your other devices. Please try again.",
+      "doneKey": "Your other devices were signed out, and your extension key was replaced."
     }
   },
   "extension": {
@@ -45,7 +47,8 @@
     "rotateCancel": "Keep this key",
     "rotated": "New key created. Paste it into the extension's options.",
     "rotateError": "Couldn't replace the key. Please try again.",
-    "adminNote": "This is the admin key. It comes from the server's APP_ACCESS_CODE setting, so it is changed there, not here."
+    "adminNote": "This is the admin key. It comes from the server's APP_ACCESS_CODE setting, so it is changed there, not here.",
+    "rotatedNotice": "Your extension key was replaced. Show or copy the new key and paste it into the extension's options."
   },
   "inbox": {
     "title": "Gmail sync",
@@ -53,7 +56,7 @@
     "inviteOnly": "Gmail sync is invite-only for now. Ask to have your Gmail address added.",
     "readTitle": "What we read",
     "read1": "Only mail that looks like a reply about a job: its sender, subject, date and a short preview.",
-    "read2": "Job alerts and all other mail are skipped before any AI sees them. Replies our rules can't sort go to OpenAI to be classified.",
+    "read2": "Job-alert digests and mail that is clearly not about an application are skipped before any AI sees them. Other emails that might be about a job are read by an AI model (OpenAI) to decide.",
     "read3": "Read-only, and whole emails are never stored: we keep the sender, subject, date, a short preview and what we found.",
     "privacyLink": "How your data is handled",
     "lookBack": "How far back to import replies",
@@ -78,7 +81,7 @@
     "needsReauth": "Google ended the connection, so syncing is paused. Reconnect to carry on where it stopped.",
     "reconnect": "Reconnect",
     "autoSync": "Sync automatically",
-    "autoSyncHint": "Twice a day, and whenever you open the tracker.",
+    "autoSyncHint": "Twice a day, and when you open the tracker if it hasn't synced in the last 30 minutes.",
     "saveError": "Couldn't save that. Please try again.",
     "disconnect": "Disconnect",
     "disconnectBody": "Stops reading your mail and removes our access to it. Every card on your tracker stays.",
@@ -92,8 +95,18 @@
       "stateMismatch": "That connection attempt expired or started in another browser. Start it again from here.",
       "accessDenied": "You cancelled on Google's screen, so nothing was connected.",
       "noRefreshToken": "Google didn't grant lasting access. In your Google Account, remove JobFinder from third-party access, then connect again.",
-      "generic": "Couldn't connect Gmail. Please try again."
-    }
+      "generic": "Couldn't connect Gmail. Please try again.",
+      "notConfigured": "Gmail sync isn't set up on this server right now, so nothing was connected."
+    },
+    "revokeFailed": "Disconnected, but Google didn't confirm that JobFinder's access was removed. Remove it in your Google Account permissions.",
+    "revokeLink": "Google Account permissions"
+  },
+  "resumePrivacy": {
+    "title": "Resume privacy",
+    "arabic": "Leave Arabic off tailored resumes for jobs in Israel",
+    "arabicHint": "Your master resume keeps it. If a job ad asks for Arabic, it stays.",
+    "saveError": "Couldn't save that. Please try again.",
+    "loadError": "Couldn't load this setting. Reload the page to try again."
   },
   "alerts": {
     "title": "Job alerts",

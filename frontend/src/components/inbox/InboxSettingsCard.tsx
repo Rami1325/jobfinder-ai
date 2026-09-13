@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Check, Inbox, RefreshCw, Unplug } from "lucide-react";
@@ -11,6 +11,7 @@ import {
 } from "../../api/client";
 import { Badge, Button, Card, CardTitle, useToast } from "../ui";
 import { apiErrorMessage } from "../../lib/apiError";
+import { GOOGLE_PERMISSIONS_URL, readGoogleRevoked } from "../../lib/authResults";
 import { cn } from "../../lib/cn";
 import type { InboxStatus } from "../../types";
 import { formatDay, useAgo, useInboxRefusalText, useLocaleTag, useMinuteTick, useSyncErrorText } from "./shared";
@@ -59,9 +60,45 @@ export default function InboxSettingsCard() {
   const [armed, setArmed] = useState(false);
   const [purge, setPurge] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  // Google did not confirm the revoke: the grant may still be live there.
+  const [revokeFailed, setRevokeFailed] = useState(false);
+  // StrictMode runs the mount effect twice in development; one toast is enough.
+  const callbackShown = useRef(false);
+
+  function callbackMessage(code: string): string {
+    switch (code) {
+      case "missing_scope":
+        return t("inbox.callback.missingScope");
+      // The callback's three ways a flow can be stale or not this browser's
+      // (app/api/inbox_routes.py), and one remedy for all of them.
+      case "state_mismatch":
+      case "state_invalid":
+      case "state_expired":
+        return t("inbox.callback.stateMismatch");
+      case "access_denied":
+        return t("inbox.callback.accessDenied");
+      case "invite_only":
+        return t("inbox.inviteOnly");
+      case "no_refresh_token":
+        return t("inbox.callback.noRefreshToken");
+      case "not_configured":
+        return t("inbox.callback.notConfigured");
+      default:
+        return t("inbox.callback.generic");
+    }
+  }
 
   useEffect(() => {
     let live = true;
+    // A failed connect is a TOAST, raised here before anything can return
+    // early. The flag is removed from the address just below, and this card
+    // renders nothing when the status read fails or the server has no Gmail
+    // set up ("not_configured" is exactly that state), so a message kept inside
+    // the card would be consumed and never shown.
+    if (callback && callback !== "connected" && !callbackShown.current) {
+      callbackShown.current = true;
+      toast("error", callbackMessage(callback));
+    }
     if (params.has("inbox")) {
       const next = new URLSearchParams(params);
       next.delete("inbox");
@@ -114,27 +151,6 @@ export default function InboxSettingsCard() {
   const due = formatDay(status.reauth_due_at, locale);
   const when = ago(status.last_sync_at);
 
-  function callbackMessage(code: string): string {
-    switch (code) {
-      case "missing_scope":
-        return t("inbox.callback.missingScope");
-      // The callback's three ways a flow can be stale or not this browser's
-      // (app/api/inbox_routes.py), and one remedy for all of them.
-      case "state_mismatch":
-      case "state_invalid":
-      case "state_expired":
-        return t("inbox.callback.stateMismatch");
-      case "access_denied":
-        return t("inbox.callback.accessDenied");
-      case "invite_only":
-        return t("inbox.inviteOnly");
-      case "no_refresh_token":
-        return t("inbox.callback.noRefreshToken");
-      default:
-        return t("inbox.callback.generic");
-    }
-  }
-
   async function connect() {
     if (connecting) return;
     setConnecting(true);
@@ -180,8 +196,13 @@ export default function InboxSettingsCard() {
     if (disconnecting) return;
     setDisconnecting(true);
     try {
-      await disconnectInbox(purge);
-      toast("success", t("inbox.disconnected"));
+      const result = await disconnectInbox(purge);
+      // Only a literal false is a failed revoke; a response that does not say
+      // is unknown, and warning on it would be a guard firing on nothing.
+      const revoked = readGoogleRevoked(result);
+      setRevokeFailed(revoked === false);
+      if (revoked === false) toast("error", t("inbox.revokeFailed"));
+      else toast("success", t("inbox.disconnected"));
       setArmed(false);
       setPurge(false);
       const fresh = await getInboxStatus().catch(() => null);
@@ -199,12 +220,22 @@ export default function InboxSettingsCard() {
       </CardTitle>
       <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t("inbox.body")}</p>
 
-      {callback && callback !== "connected" && (
+      {/* A toast cannot hold a link, so the way to remove the grant by hand
+          stays here after a revoke Google did not confirm. */}
+      {revokeFailed && (
         <p
           role="alert"
-          className="mt-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm leading-relaxed text-danger"
+          className="mt-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm leading-relaxed text-warn"
         >
-          {callbackMessage(callback)}
+          {t("inbox.revokeFailed")}{" "}
+          <a
+            href={GOOGLE_PERMISSIONS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium underline"
+          >
+            {t("inbox.revokeLink")}
+          </a>
         </p>
       )}
 

@@ -5,6 +5,7 @@ import { forgotPassword } from "../../api/client";
 import { Button } from "../../components/ui";
 import { apiErrorMessage } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
+import { rememberResetNext, withNext } from "../../lib/safeNext";
 import {
   AuthCard,
   EmailInput,
@@ -13,6 +14,7 @@ import {
   authLinkCls,
   looksLikeEmail,
   primaryLinkCls,
+  useNext,
 } from "./shared";
 
 /**
@@ -27,6 +29,7 @@ import {
 export default function ForgotPage() {
   const { t } = useTranslation("auth");
   const { state } = useLocation();
+  const next = useNext();
   const [email, setEmail] = useState<string>(() => (state as { email?: string } | null)?.email ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -44,6 +47,9 @@ export default function ForgotPage() {
     setError("");
     try {
       await forgotPassword(value);
+      // The mail link carries no `next`. Remembered here, it is picked up by
+      // /reset when the link is opened on this device (lib/safeNext.ts).
+      rememberResetNext(next);
       setSentTo(value);
     } catch (err) {
       setError(apiErrorMessage(err, t("errors.generic")));
@@ -58,7 +64,7 @@ export default function ForgotPage() {
         <p className="mt-2 break-all text-sm font-medium text-ink">
           <bdi>{sentTo}</bdi>
         </p>
-        <Link to="/login" state={{ email: sentTo }} className={cn(primaryLinkCls, "mt-5")}>
+        <Link to={withNext("/login", next)} state={{ email: sentTo }} className={cn(primaryLinkCls, "mt-5")}>
           {t("forgot.back")}
         </Link>
       </AuthCard>
@@ -77,7 +83,7 @@ export default function ForgotPage() {
         </Button>
       </form>
       <p className="mt-2 text-center">
-        <Link to="/login" state={{ email: email.trim() }} className={cn(authLinkCls, "text-sm")}>
+        <Link to={withNext("/login", next)} state={{ email: email.trim() }} className={cn(authLinkCls, "text-sm")}>
           {t("forgot.back")}
         </Link>
       </p>

@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { Card, CardTitle, CountUp, SectionLabel, Sparkline } from "./ui";
 import { cn } from "../lib/cn";
-import { dateOfRecord } from "../hooks/useTrackerMetrics";
+import { dateOfRecord, isInterviewed } from "../hooks/useTrackerMetrics";
 import type { ApplicationOut } from "../types";
 
 /** Statuses that mean the application was actually submitted (matches TrackerPage). */
@@ -134,7 +134,7 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
     return [
       { key: "submitted", count: submitted.length, tone: "bg-accent" },
       { key: "responses", count: apps.filter(responded).length, tone: "bg-accent/60" },
-      { key: "interviews", count: apps.filter((a) => a.interviewed || a.status === "interview").length, tone: "bg-warn" },
+      { key: "interviews", count: apps.filter(isInterviewed).length, tone: "bg-warn" },
       { key: "offers", count: apps.filter((a) => a.status === "offer").length, tone: "bg-mint" },
     ];
   }, [apps]);

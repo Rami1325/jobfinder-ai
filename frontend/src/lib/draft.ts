@@ -16,6 +16,19 @@ export interface ResumeDraft {
   language: "he" | "en";
   resume: ResumeModel;
   savedAt: number;
+  /** The account that wrote it (GET /auth/me `user.id`). Absent on a draft
+   * written before owners were recorded, and on one written while nobody was
+   * known to be signed in. See `offerDraft`. */
+  owner?: number | null;
+}
+
+/** Who is signed in on this device, as far as this module knows. Set by
+ * `getAuthMe` on every answer, so it follows sign-in, sign-out and an
+ * expired session without any page having to remember to tell it. */
+let currentOwner: number | null = null;
+
+export function noteDraftOwner(id: number | null | undefined): void {
+  currentOwner = typeof id === "number" ? id : null;
 }
 
 /** Key-order-independent equality, so a round trip through JSON cannot make an
@@ -38,7 +51,12 @@ export function sameResume(a: ResumeModel, b: ResumeModel): boolean {
  * in-session bar still covers everything except closing the tab. */
 export function writeDraft(resume: ResumeModel): void {
   try {
-    const draft: ResumeDraft = { language: resumeLanguage(resume), resume, savedAt: Date.now() };
+    const draft: ResumeDraft = {
+      language: resumeLanguage(resume),
+      resume,
+      savedAt: Date.now(),
+      owner: currentOwner,
+    };
     localStorage.setItem(KEY, JSON.stringify(draft));
   } catch {
     /* no draft this session; the document on screen is unaffected */
@@ -83,6 +101,15 @@ export function readDraft(): ResumeDraft | null {
       clearDraft();
       return null;
     }
+    // Another account's draft is DISCARDED, not just withheld. Only a session
+    // ending by expiry, "sign out other devices" or a reset elsewhere leaves
+    // one behind (signOut clears it), and whoever signs in next on this device
+    // must never be offered it as their own resume. Discarded only on a PROVEN
+    // mismatch: while the signed-in account is unknown, nothing is deleted.
+    if (typeof d.owner === "number" && currentOwner !== null && d.owner !== currentOwner) {
+      clearDraft();
+      return null;
+    }
     return d;
   } catch {
     clearDraft();
@@ -103,6 +130,10 @@ export function readDraft(): ResumeDraft | null {
  */
 export function offerDraft(draft: ResumeDraft | null, master: ResumeModel): boolean {
   if (!draft) return false;
+  // Offered only to the account that wrote it. Unknown is not a match: with
+  // nobody known to be signed in, or a draft written before owners were
+  // recorded, nothing is offered (and the draft expires on its own).
+  if (currentOwner === null || draft.owner !== currentOwner) return false;
   if (draft.language !== resumeLanguage(master)) return false;
   return !sameResume(draft.resume, master);
 }

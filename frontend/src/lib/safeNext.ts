@@ -83,7 +83,52 @@ export function safeNext(value: string | null | undefined): string {
   }
   if (url.origin !== window.location.origin) return FALLBACK;
   if (isAuthPage(url.pathname)) return FALLBACK;
-  return url.pathname + url.search + url.hash;
+  const out = url.pathname + url.search + url.hash;
+  // The RESULT is checked again, not only the input. The parser normalises
+  // dot segments: `/.//evil.com`, `/%2e//evil.com` and `/app/..//evil.com`
+  // all start with one slash and resolve on this origin, and all come back as
+  // the path `//evil.com`, which `location.assign` reads as another site.
+  if (unsafeShape(out)) return FALLBACK;
+  return out;
+}
+
+/** Where a validated `next` waits between /forgot and /reset on this device. */
+export const RESET_NEXT_KEY = "jobfinder.resetNext";
+/** The reset link's own lifetime: a destination older than the link is stale. */
+const RESET_NEXT_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * Remember `next` at /forgot, so the reset that follows lands where the visitor
+ * was going. The mail link carries no `next`, so without this a reset always
+ * ends on /app and the extension's `/app?tailor_app=<id>` handoff is lost.
+ *
+ * Stored already validated, and validated AGAIN when taken: storage is not a
+ * trusted source. Only on this device, which is fine: a link opened on another
+ * device has no handoff to resume there anyway.
+ */
+export function rememberResetNext(next: string): void {
+  try {
+    const safe = safeNext(next);
+    if (safe === FALLBACK) localStorage.removeItem(RESET_NEXT_KEY);
+    else localStorage.setItem(RESET_NEXT_KEY, JSON.stringify({ next: safe, at: Date.now() }));
+  } catch {
+    /* private mode: the reset lands on /app, as before */
+  }
+}
+
+/** The remembered destination, once, or `/app`. */
+export function takeResetNext(): string {
+  try {
+    const raw = localStorage.getItem(RESET_NEXT_KEY);
+    localStorage.removeItem(RESET_NEXT_KEY);
+    if (!raw) return FALLBACK;
+    const v = JSON.parse(raw) as { next?: unknown; at?: unknown };
+    if (typeof v.next !== "string" || typeof v.at !== "number") return FALLBACK;
+    if (Date.now() - v.at > RESET_NEXT_MAX_AGE_MS) return FALLBACK;
+    return safeNext(v.next);
+  } catch {
+    return FALLBACK;
+  }
 }
 
 /**

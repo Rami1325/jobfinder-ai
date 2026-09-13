@@ -17,8 +17,28 @@ export const RESPONDED = new Set(["interview", "offer", "rejected"]);
  * back. Two readers of two different fields would put the same card in two
  * different weeks.
  */
-export function dateOfRecord(a: { applied_at?: string | null; created_at: string }): string {
-  return a.applied_at || a.created_at;
+export function dateOfRecord(a: {
+  applied_at?: string | null;
+  created_at: string;
+  source?: string;
+}): string {
+  if (a.applied_at) return a.applied_at;
+  // A card the inbox made is dated by its earliest email (I3), and the server
+  // writes that as a UTC instant serialised WITHOUT an offset. Parsed as local
+  // time it lands on the UTC calendar day, while the same email in the card's
+  // own timeline (which carries its offset) reads the local day. So it is read
+  // as the UTC instant it is. Scoped to inbox rows: every other row keeps the
+  // value it always had, and a value that states an offset is left alone.
+  if (a.source === "email" && a.created_at && !/(?:Z|[+-]\d\d:?\d\d)$/.test(a.created_at)) return `${a.created_at}Z`;
+  return a.created_at;
+}
+
+/** Whether a row counts as interviewed. ONE definition for the Interviews tile
+ * and the analytics funnel: a card dragged to the Interview column never sets
+ * the flag (a status change sends only `status`), and the two numbers used to
+ * disagree about exactly that card. */
+export function isInterviewed(a: { interviewed?: boolean; status?: string }): boolean {
+  return !!a.interviewed || a.status === "interview";
 }
 
 export interface TrackerMetrics {
@@ -42,7 +62,7 @@ export function useTrackerMetrics(apps: ApplicationOut[]): TrackerMetrics {
   return useMemo(() => {
     const total = apps.length;
     const applied = apps.filter((a) => SUBMITTED.has(a.status || "saved")).length;
-    const interviews = apps.filter((a) => a.interviewed).length;
+    const interviews = apps.filter(isInterviewed).length;
     const offers = apps.filter((a) => a.status === "offer").length;
     const declined = apps.filter((a) => a.status === "rejected").length;
     // A "response" = the company answered at all: moved to interview/offer/

@@ -33,6 +33,7 @@ import {
   avatarTone,
   companyDomain,
   isNewPosting,
+  jdTextWithLocation,
   kitJobFromMatch,
   postedAgo,
   sourceLabel,
@@ -575,7 +576,7 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
           onClick={() =>
             nav("/app", {
               state: {
-                jdText: m.jd_text,
+                jdText: jdTextWithLocation(m.jd_text, m.location),
                 jobUrl: m.url || undefined,
                 jobTitle: m.title,
                 company: m.company,
@@ -632,7 +633,7 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
           icon={<Send size={14} className="rtl:-scale-x-100" />}
           onClick={() =>
             nav("/tools/outreach", {
-              state: { jdText: m.jd_text, company: m.company, jobTitle: m.title },
+              state: { jdText: jdTextWithLocation(m.jd_text, m.location), company: m.company, jobTitle: m.title },
             })
           }
         >
@@ -644,7 +645,7 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
           icon={<Building2 size={14} />}
           onClick={() =>
             nav("/tools/company-brief", {
-              state: { jdText: m.jd_text, company: m.company, jobTitle: m.title },
+              state: { jdText: jdTextWithLocation(m.jd_text, m.location), company: m.company, jobTitle: m.title },
             })
           }
         >
@@ -716,7 +717,7 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
           onClick={() =>
             nav("/app", {
               state: {
-                jdText: hit.jd_text,
+                jdText: jdTextWithLocation(hit.jd_text, hit.location),
                 jobUrl: hit.url || undefined,
                 jobTitle: hit.title,
                 company: hit.company,
@@ -729,7 +730,7 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
         <button
           onClick={() =>
             nav("/tools/outreach", {
-              state: { jdText: hit.jd_text, company: hit.company, jobTitle: hit.title },
+              state: { jdText: jdTextWithLocation(hit.jd_text, hit.location), company: hit.company, jobTitle: hit.title },
             })
           }
           title={t("card.outreach")}
@@ -740,7 +741,7 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
         <button
           onClick={() =>
             nav("/tools/company-brief", {
-              state: { jdText: hit.jd_text, company: hit.company, jobTitle: hit.title },
+              state: { jdText: jdTextWithLocation(hit.jd_text, hit.location), company: hit.company, jobTitle: hit.title },
             })
           }
           title={t("card.brief")}

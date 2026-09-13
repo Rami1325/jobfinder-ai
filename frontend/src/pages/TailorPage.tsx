@@ -7,6 +7,7 @@ import {
   downloadResume,
   resumeFilename,
   getApplication,
+  getAuthMe,
   getMasterResume,
   recordRejectedPhrases,
   type ResumeTemplate,
@@ -186,7 +187,10 @@ export default function TailorPage() {
     if (getTailorState().resume) return; // already loaded (or uploaded) this session
     (async () => {
       try {
-        const m = await getMasterResume();
+        // /auth/me alongside the master, because the draft is offered only to
+        // the account that wrote it and that answer is what names the account
+        // (lib/draft.ts). A failed read offers nothing and deletes nothing.
+        const [m] = await Promise.all([getMasterResume(), getAuthMe().catch(() => null)]);
         if (m?.resume && !getTailorState().resume) {
           setTailorState({
             resume: m.resume,

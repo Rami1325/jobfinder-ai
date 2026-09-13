@@ -2882,7 +2882,7 @@ try {
     ["pages/auth/ResetPage.tsx", 10],
     ["layouts/AuthLayout.tsx", 2],
     ["pages/PrivacyPage.tsx", 20],
-    ["pages/SettingsPage.tsx", 55],
+    ["pages/SettingsPage.tsx", 60],
     ["components/inbox/shared.tsx", 30],
     ["components/inbox/InboxBar.tsx", 22],
     ["components/inbox/InboxReviewSheet.tsx", 20],
@@ -2985,6 +2985,433 @@ try {
 } catch (e) {
   fail(`account copy check could not run: ${e.message}`);
 }
+
+// ---- 30. the account + tracker fixes from the Phase 29 review ------------- //
+//
+// Each probe below reproduced its defect on the committed code (it went red
+// first) and pins the legitimate case beside the catch, because a guard that
+// also fires on real input is worse than none. EXECUTED where the logic is a
+// function (check 17's mechanism), a source pin only where the defect is a
+// component's wiring that no node process can render.
+//
+//   F1 safeNext returned the browser-NORMALISED path, so `/.//evil.com` came
+//      back as `//evil.com`, which `location.assign` follows off-site.
+//   F2 the privacy, Settings and landing copy said non-job mail never reaches
+//      any AI; mail with a job word in it does, to decide.
+//   F3 the Interviews tile counted `interviewed` alone while the funnel beside
+//      it counted `interviewed || status === "interview"`.
+//   F4 a resume draft left by one account was offered to the next account to
+//      sign in on the same device.
+//   F5 a dead session on /verify printed the gate's raw English 401 detail.
+//   F6 a password reset dropped `next` and always landed on /app.
+//   F7 an inbox-made card was dated by the UTC day while its own emails were
+//      dated by the local day.
+//   F8 a failed Gmail connect was consumed from the URL and never shown when
+//      the Settings card rendered nothing.
+//   F9 the extension-key rotation and the Google revoke result were dropped.
+
+/** Bundle `contents` (resolved from src/) and run it. `stubs` maps an import
+ * path as written to the object it should return: `../i18n` cannot run in
+ * node (import.meta.glob), and none of these probes needs a real catalogue. */
+function runProbeBundle(name, contents, stubs = {}) {
+  const esbuild = createRequire(import.meta.url)("esbuild");
+  const built = esbuild.buildSync({
+    stdin: { contents, resolveDir: SRC, sourcefile: `check-mirrors-${name}.ts`, loader: "tsx" },
+    bundle: true,
+    write: false,
+    format: "cjs",
+    platform: "node",
+    target: "node18",
+    logLevel: "silent",
+    external: Object.keys(stubs),
+    jsx: "automatic",
+  });
+  const mod = { exports: {} };
+  const req = createRequire(import.meta.url);
+  new Function("module", "exports", "require", built.outputFiles[0].text)(mod, mod.exports, (id) =>
+    id in stubs ? stubs[id] : req(id),
+  );
+  return mod.exports;
+}
+
+/** The whole source of the function declared at `marker`, to its closing brace
+ * at the declaration's own indent. Not `blockAfter`: that stops at the FIRST
+ * `{`, which for `function X({ a }: { a: T }) {` is the destructured props, so
+ * a pin reading the body would read the parameter list and pass or fail on
+ * nothing. Throws when the marker is gone, rather than pinning an empty string. */
+function fnSource(src, marker) {
+  const s = src.replace(/\r\n/g, "\n");
+  const at = s.indexOf(marker);
+  if (at === -1) throw new Error(`could not find ${marker}`);
+  const lineStart = s.lastIndexOf("\n", at) + 1;
+  const indent = s.slice(lineStart, at).match(/^[ \t]*/)[0];
+  // A brace that ENDS its line: a multi-line props type closes with `}: {` at
+  // the same indent, and stopping there would read the signature, not the body.
+  const close = new RegExp(`\\n${indent}\\}(?=\\n|$)`, "g");
+  close.lastIndex = at;
+  const m = close.exec(s);
+  if (!m) throw new Error(`no closing brace at the indent of ${marker}`);
+  return s.slice(at, m.index);
+}
+
+// fnSource's own two directions: it must reach past a multi-line props type to
+// the body, and must stop at the function's end rather than the file's.
+{
+  const probe =
+    "function A({\n  x,\n}: {\n  x: number;\n}) {\n  const body = 1;\n}\nfunction B() {\n  const other = 2;\n}\n";
+  const a = fnSource(probe, "function A");
+  if (!a.includes("const body") || a.includes("const other"))
+    fail("check 30's fnSource cannot slice a function with a multi-line signature");
+}
+
+/** A Storage stand-in, so the localStorage-backed helpers run in node. */
+function memoryStorage() {
+  const m = new Map();
+  return {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => void m.set(k, String(v)),
+    removeItem: (k) => void m.delete(k),
+    clear: () => m.clear(),
+    _map: m,
+  };
+}
+
+const ORIGIN = "https://app.example";
+const savedGlobals = { window: globalThis.window, localStorage: globalThis.localStorage };
+globalThis.window = { location: { origin: ORIGIN, pathname: "/login", search: "", hash: "" } };
+globalThis.localStorage = memoryStorage();
+globalThis.window.localStorage = globalThis.localStorage;
+
+// F1 + F6: lib/safeNext.ts
+try {
+  const sn = runProbeBundle("safenext", `export * from "./lib/safeNext";\n`);
+  if (typeof sn.safeNext !== "function") throw new Error("lib/safeNext.ts no longer exports safeNext");
+  // Every one of these resolves to `//evil.com` in a browser's URL parser.
+  for (const evil of ["/.//evil.com", "/%2e//evil.com", "/..//evil.com", "/app/..//evil.com", "/%2E%2E//evil.com"]) {
+    const got = sn.safeNext(evil);
+    if (got !== "/app")
+      fail(
+        `safeNext(${JSON.stringify(evil)}) returned ${JSON.stringify(got)} — location.assign follows ` +
+          "that off this origin after sign-in. It must be /app.",
+      );
+  }
+  // The legitimate half: a real in-app destination survives whole, the query
+  // the extension hands off through included.
+  for (const [value, want] of [
+    ["/app?tailor_app=42", "/app?tailor_app=42"],
+    ["/settings#danger", "/settings#danger"],
+    ["/tracker?inbox=connected", "/tracker?inbox=connected"],
+    ["/jobs/../tracker", "/tracker"],
+  ]) {
+    const got = sn.safeNext(value);
+    if (got !== want)
+      fail(`safeNext(${JSON.stringify(value)}) returned ${JSON.stringify(got)}, not ${JSON.stringify(want)} — the fix refuses a real destination`);
+  }
+  for (const value of ["//evil.com", "/login", "https://evil.com"])
+    if (sn.safeNext(value) !== "/app") fail(`safeNext(${JSON.stringify(value)}) is no longer refused`);
+
+  // F6: a validated next remembered at /forgot is used after the reset.
+  localStorage.clear();
+  if (typeof sn.rememberResetNext !== "function" || typeof sn.takeResetNext !== "function") {
+    fail(
+      "a password reset forgets where the visitor was going: lib/safeNext.ts has no " +
+        "rememberResetNext/takeResetNext, so /reset always lands on /app and the extension's " +
+        "/app?tailor_app=<id> handoff is lost.",
+    );
+  } else {
+    sn.rememberResetNext("/app?tailor_app=42");
+    const first = sn.takeResetNext();
+    if (first !== "/app?tailor_app=42")
+      fail(`takeResetNext() returned ${JSON.stringify(first)} after remembering /app?tailor_app=42`);
+    if (sn.takeResetNext() !== "/app") fail("takeResetNext() does not forget the value once it has been used");
+    // Storage is not trusted: a value planted there is validated on the way out.
+    localStorage.setItem(sn.RESET_NEXT_KEY, JSON.stringify({ next: "/.//evil.com", at: Date.now() }));
+    if (sn.takeResetNext() !== "/app") fail("takeResetNext() follows an unsafe stored value");
+    localStorage.setItem(sn.RESET_NEXT_KEY, JSON.stringify({ next: "/tracker", at: Date.now() - 2 * 3600_000 }));
+    if (sn.takeResetNext() !== "/app") fail("takeResetNext() follows a value older than the reset link's hour");
+    sn.rememberResetNext("/app");
+    if (localStorage.getItem(sn.RESET_NEXT_KEY) !== null)
+      fail("rememberResetNext stores the default destination, which is nothing to remember");
+  }
+} catch (e) {
+  fail(`safeNext probe could not run: ${e.message}`);
+}
+
+// F4: lib/draft.ts
+try {
+  localStorage.clear();
+  const dr = runProbeBundle("draft", `export * from "./lib/draft";\n`);
+  const master = (summary) => ({
+    contact: { name: "A B", email: "", phone: "", location: "", linkedin: "", website: "" },
+    headline: "",
+    summary,
+    skills: [],
+    skill_groups: [],
+    experience: [],
+    education: [],
+    projects: [],
+    certifications: [],
+    languages: [],
+    military_service: [],
+  });
+  dr.noteDraftOwner?.(7);
+  dr.writeDraft(master("Account seven's unsaved edit"));
+  dr.noteDraftOwner?.(9); // a different account signs in on this device
+  const d = dr.readDraft();
+  if (dr.offerDraft(d, master("Account nine's master")))
+    fail(
+      "a resume draft written by one account is offered to the next account that signs in on this " +
+        "device (lib/draft.ts). It must remember its owner and be discarded for anyone else.",
+    );
+  else if (localStorage._map.has("jobfinder.resumeDraft"))
+    fail("a draft that belongs to another account is refused but kept on the device; it must be discarded");
+  // The legitimate half: the same account gets its own work back.
+  localStorage.clear();
+  dr.noteDraftOwner?.(7);
+  dr.writeDraft(master("Account seven's unsaved edit"));
+  if (!dr.offerDraft(dr.readDraft(), master("Account seven's master")))
+    fail("the owner check refuses a draft to the account that wrote it");
+  // Unknown is not a match, and not a mismatch either: nothing is offered, nothing deleted.
+  dr.noteDraftOwner?.(null);
+  if (dr.offerDraft(dr.readDraft(), master("Account seven's master")))
+    fail("a draft is offered while nobody is known to be signed in");
+  if (!localStorage._map.has("jobfinder.resumeDraft"))
+    fail("a draft is deleted merely because the signed-in account is not known yet");
+} catch (e) {
+  fail(`draft owner probe could not run: ${e.message}`);
+}
+
+// F5: lib/apiError.ts
+try {
+  const ae = runProbeBundle("apierror", `export * from "./lib/apiError";\n`, {
+    // `t` at the top level too: esbuild's node-mode interop hands a default
+    // import the whole CommonJS module, whatever `__esModule` says.
+    "../i18n": { __esModule: true, t: (k) => `T:${k}`, default: { t: (k) => `T:${k}` } },
+  });
+  const err = (status, detail) => ({ response: { status, data: { detail } } });
+  const gate401 = err(401, "Access code required.");
+  const shown = ae.apiErrorMessage(gate401, "fallback");
+  if (shown === "Access code required.")
+    fail(
+      "a 401 from the access gate shows its raw English detail (\"Access code required.\") in the " +
+        "form — on /verify in Hebrew too. It must read as a translated \"your session ended\".",
+    );
+  if (typeof ae.isSessionEnded !== "function") fail("lib/apiError.ts has no isSessionEnded for the pages to branch on");
+  else {
+    if (!ae.isSessionEnded(gate401)) fail("isSessionEnded misses the gate's 401");
+    if (!ae.isSessionEnded(err(400, { code: "session_required" }))) fail("isSessionEnded misses session_required");
+    for (const [label, e] of [
+      ["a wrong code", err(400, { code: "invalid_code", attempts_left: 3 })],
+      ["an unverified account", err(403, { code: "email_unverified" })],
+      ["a rate limit", err(429, { code: "too_many_attempts", retry_after: 30 })],
+      ["a dropped connection", { message: "Network Error" }],
+    ])
+      if (ae.isSessionEnded(e)) fail(`isSessionEnded fires on ${label}, which is not a session ending`);
+  }
+  // The legitimate half: a plain-string detail that is NOT a 401 still reads as sent.
+  if (ae.apiErrorMessage(err(400, "That file is not a resume."), "fallback") !== "That file is not a resume.")
+    fail("the 401 mapping swallows ordinary string details too");
+} catch (e) {
+  fail(`session-ended probe could not run: ${e.message}`);
+}
+
+// F3 + F7: hooks/useTrackerMetrics.ts, rendered for real (a hook needs a render).
+try {
+  const tm = runProbeBundle(
+    "metrics",
+    `import { createElement } from "react";\n` +
+      `import { renderToString } from "react-dom/server";\n` +
+      `import * as m from "./hooks/useTrackerMetrics";\n` +
+      `export * from "./hooks/useTrackerMetrics";\n` +
+      `export function measure(apps) { let out; const P = () => { out = m.useTrackerMetrics(apps); return null; };` +
+      ` renderToString(createElement(P)); return out; }\n`,
+  );
+  const row = (o) => ({ status: "saved", interviewed: false, created_at: "2026-09-01T10:00:00", ...o });
+  const dragged = [row({ status: "interview" }), row({ status: "applied" })];
+  const got = tm.measure(dragged);
+  if (got.interviews !== 1)
+    fail(
+      `the Interviews tile reads ${got.interviews} for a card sitting in the Interview column with ` +
+        "interviewed=false, while the funnel counts it — one definition, interviewed || status === \"interview\".",
+    );
+  const legit = tm.measure([row({ status: "rejected", interviewed: true }), row({ status: "applied" }), row({})]);
+  if (legit.interviews !== 1) fail(`the Interviews tile reads ${legit.interviews} where exactly one row was interviewed`);
+  const none = tm.measure([row({})]);
+  if (none.interviewRate !== null || none.responseRate !== null)
+    fail("a tracker with nothing applied reports a rate instead of null — unknown is not zero");
+  const analytics = decomment(read("components/TrackerAnalytics.tsx"));
+  if (/a\.interviewed\s*\|\|\s*a\.status/.test(analytics) || !/\bisInterviewed\b/.test(analytics))
+    fail("TrackerAnalytics restates the interviews rule instead of reading isInterviewed from useTrackerMetrics");
+
+  // F7: one local day for an inbox-made card and its own email.
+  const prevTZ = process.env.TZ;
+  process.env.TZ = "Asia/Jerusalem";
+  try {
+    const email = row({ source: "email", applied_at: null, created_at: "2026-09-12T22:30:00" });
+    const receivedAt = "2026-09-12T22:30:00+00:00";
+    const cardDay = new Date(tm.dateOfRecord(email)).getDate();
+    const emailDay = new Date(receivedAt).getDate();
+    if (new Date(receivedAt).getTimezoneOffset() === 0)
+      throw new Error("process.env.TZ did not take effect, so the day comparison proves nothing");
+    if (cardDay !== emailDay)
+      fail(
+        `an inbox-made card is dated the ${cardDay}th while its own email reads the ${emailDay}th: ` +
+          "its naive created_at is UTC and was parsed as local time.",
+      );
+    // The legitimate half: rows that already state an offset, and rows no
+    // email made, keep exactly the value they had.
+    const manual = row({ source: "", created_at: "2026-09-12T22:30:00" });
+    if (tm.dateOfRecord(manual) !== "2026-09-12T22:30:00") fail("dateOfRecord rewrote a row the inbox did not make");
+    const stated = row({ source: "email", created_at: "2026-09-12T22:30:00+00:00" });
+    if (tm.dateOfRecord(stated) !== "2026-09-12T22:30:00+00:00") fail("dateOfRecord rewrote a timestamp that states its offset");
+    const sent = row({ source: "email", applied_at: "2026-09-10T08:00:00+00:00" });
+    if (tm.dateOfRecord(sent) !== "2026-09-10T08:00:00+00:00") fail("dateOfRecord no longer prefers applied_at");
+  } finally {
+    if (prevTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = prevTZ;
+  }
+} catch (e) {
+  fail(`tracker metrics probe could not run: ${e.message}`);
+}
+
+// F9: lib/authResults.ts (the response readers) and their call sites.
+try {
+  let ar = null;
+  try {
+    ar = runProbeBundle("authresults", `export * from "./lib/authResults";\n`);
+  } catch {
+    fail(
+      "the extension-key rotation and the Google revoke result are dropped: there is no " +
+        "lib/authResults.ts to read extension_key_rotated or google_revoked.",
+    );
+  }
+  if (ar) {
+    const r1 = ar.readKeyRotation({ ok: true, extension_key_rotated: true, key: "NEWKEY" });
+    if (!r1.rotated || r1.key !== "NEWKEY") fail("readKeyRotation misses a rotation that carries its key");
+    const r2 = ar.readKeyRotation({ ok: true, extension_key_rotated: true });
+    if (!r2.rotated || r2.key !== "") fail("readKeyRotation misreads a rotation without a key");
+    for (const body of [{ ok: true }, { extension_key_rotated: false, key: "X" }, null, { extension_key_rotated: "yes" }]) {
+      const r = ar.readKeyRotation(body);
+      if (r.rotated || r.key) fail(`readKeyRotation claims a rotation for ${JSON.stringify(body)}`);
+    }
+    if (ar.readGoogleRevoked({ disconnected: true, google_revoked: false }) !== false)
+      fail("readGoogleRevoked misses a failed revoke");
+    if (ar.readGoogleRevoked({ disconnected: true, google_revoked: true }) !== true)
+      fail("readGoogleRevoked misreads a successful revoke");
+    // An older response says nothing, which is unknown, never a failure to warn about.
+    if (ar.readGoogleRevoked({ disconnected: true, events_deleted: 0 }) !== null)
+      fail("readGoogleRevoked reads a response without the field as a result");
+    localStorage.clear();
+    ar.markKeyRotated();
+    if (!ar.keyRotatedNotice()) fail("markKeyRotated leaves no notice for Settings to show");
+    ar.clearKeyRotated();
+    if (ar.keyRotatedNotice()) fail("clearKeyRotated leaves the notice up");
+  }
+  const settings = decomment(read("pages/SettingsPage.tsx"));
+  for (const fn of ["function PasswordChange", "function OtherDevices"]) {
+    const body = fnSource(settings, fn);
+    if (!/readKeyRotation\(/.test(body)) fail(`SettingsPage ${fn.slice(9)} ignores extension_key_rotated`);
+    if (!/ACCESS_CODE_KEY/.test(body)) fail(`SettingsPage ${fn.slice(9)} does not store a returned key for an invite-code device`);
+  }
+  const reset = decomment(read("pages/auth/ResetPage.tsx"));
+  if (!/readKeyRotation\(/.test(reset)) fail("ResetPage ignores extension_key_rotated");
+  const card = decomment(read("components/inbox/InboxSettingsCard.tsx"));
+  if (!/readGoogleRevoked\(/.test(card) || !/href=\{GOOGLE_PERMISSIONS_URL\}/.test(card))
+    fail("InboxSettingsCard does not tell the user when Google access could not be revoked, with the permissions link");
+  if (ar && ar.GOOGLE_PERMISSIONS_URL !== "https://myaccount.google.com/permissions")
+    fail(`GOOGLE_PERMISSIONS_URL is ${JSON.stringify(ar.GOOGLE_PERMISSIONS_URL)}, not Google's permissions page`);
+} catch (e) {
+  fail(`account result probe could not run: ${e.message}`);
+}
+
+// F5, F6, F8: the page wiring no node process can render.
+try {
+  const verify = decomment(read("pages/auth/VerifyPage.tsx"));
+  for (const [what, marker] of [
+    ["the link confirm", "function ConfirmLink"],
+    ["Send a new code", "async function resend"],
+    ["Change email", "function ChangeEmail"],
+  ]) {
+    const body = fnSource(verify, marker);
+    if (!/isSessionEnded\(/.test(body))
+      fail(`/verify: ${what} does not branch on a dead session, so it prints the server's raw 401 detail`);
+  }
+  const forgot = decomment(read("pages/auth/ForgotPage.tsx"));
+  if (!/rememberResetNext\(/.test(forgot)) fail("/forgot does not remember the validated next");
+  if (!/withNext\(\s*"\/login"/.test(forgot)) fail("/forgot links back to /login without next");
+  const resetPage = decomment(read("pages/auth/ResetPage.tsx"));
+  if (!/takeResetNext\(/.test(resetPage) || /assign\(\s*"\/app"\s*\)/.test(resetPage))
+    fail("/reset lands on a hard-coded /app instead of the remembered next");
+  const login = decomment(read("pages/auth/LoginPage.tsx"));
+  if (/to="\/forgot"/.test(login) || !/withNext\(\s*"\/forgot"/.test(login))
+    fail("/login's Forgot password link drops next");
+
+  // F8: the callback toast must fire before the card's early returns.
+  const card = decomment(read("components/inbox/InboxSettingsCard.tsx"));
+  const early = card.indexOf("if (!status) return null");
+  if (early === -1) throw new Error("InboxSettingsCard no longer has its `if (!status) return null` early return");
+  const toastAt = card.search(/toast\(\s*"error"\s*,\s*callbackMessage\(/);
+  if (toastAt === -1 || toastAt > early)
+    fail(
+      "a failed Gmail connect (?inbox=<code>) is shown only inside a card that can render nothing, " +
+        "and the flag is already gone from the URL. Toast it before the early returns.",
+    );
+  // The detector itself, both directions.
+  const PROBE = /toast\(\s*"error"\s*,\s*callbackMessage\(/;
+  if (!PROBE.test('toast("error", callbackMessage(callback))') || PROBE.test('toast("error", t("inbox.saveError"))'))
+    fail("check 30's callback-toast detector cannot tell its call shape from another toast");
+} catch (e) {
+  fail(`account page wiring check could not run: ${e.message}`);
+}
+
+// F2: copy that makes a claim about what the code does.
+try {
+  const locale = (loc, ns) => JSON.parse(fs.readFileSync(path.join(SRC, "locales", loc, `${ns}.json`), "utf8"));
+  const at = (obj, key) => key.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+  // `forbid` is the false claim; `need` is the part of the true statement that
+  // makes it true. Both, because deleting the sentence would satisfy `forbid`.
+  const MAIL = {
+    en: { forbid: /all other mail|personal mail|mail that is not about/i, need: /\bAI model\b/i },
+    he: { forbid: /שאר הדואר|מיילים אישיים|מיילים שלא קשורים/, need: /מודל/ },
+  };
+  const RULES = [
+    ["auth", "privacy.gmail.skips", MAIL],
+    ["settings", "inbox.read2", MAIL],
+    ["marketing", "landing.faq.a7", MAIL],
+    [
+      "auth",
+      "privacy.store.security",
+      {
+        en: { forbid: /one-way key/i, need: /30 days after (?:that |the )?session ends/i },
+        he: { forbid: /חד-כיווני/, need: /30 (?:יום|ימים) אחרי ש/ },
+      },
+    ],
+    ["settings", "inbox.autoSyncHint", { en: { forbid: /whenever you open/i, need: /30 minutes/ }, he: { forbid: /בכל פעם/, need: /30 דקות/ } }],
+  ];
+  const claimProblem = (text, rule) =>
+    typeof text !== "string" ? "is missing" : rule.forbid.test(text) ? "makes the false claim" : !rule.need.test(text) ? "lacks the true statement" : "";
+  for (const [ns, key, byLoc] of RULES)
+    for (const loc of ["en", "he"]) {
+      const why = claimProblem(at(locale(loc, ns), key), byLoc[loc]);
+      if (why)
+        fail(
+          `locales/${loc}/${ns}.json "${key}" ${why}. Alert digests and mail clearly not about an ` +
+            "application are skipped before any AI; other possibly-job mail is read by an AI model to decide; " +
+            "the security log keeps a coarse network hint and device type for 30 days after the session ends; " +
+            "auto-sync runs on opening the tracker only when the last sync is over 30 minutes old.",
+        );
+    }
+  // Both directions on the matcher: the old sentence fails, a true one passes.
+  if (!claimProblem("Job alerts and all other mail are skipped before any AI sees them.", MAIL.en))
+    fail("check 30's copy rule passes the old false sentence");
+  if (claimProblem("Digests are skipped before any AI sees them. Other possibly-job emails are read by an AI model to decide.", MAIL.en))
+    fail("check 30's copy rule refuses a true sentence");
+} catch (e) {
+  fail(`privacy copy check could not run: ${e.message}`);
+}
+
+globalThis.window = savedGlobals.window;
+globalThis.localStorage = savedGlobals.localStorage;
 
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {

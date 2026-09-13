@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ExternalLink, Loader2, MailCheck } from "lucide-react";
 import { changeEmail, getAuthMe, resendVerification, verifyEmail } from "../../api/client";
 import { Button } from "../../components/ui";
-import { apiErrorCode, apiErrorMessage, retryAfterSeconds } from "../../lib/apiError";
+import { apiErrorCode, apiErrorMessage, isSessionEnded, retryAfterSeconds } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
 import { withNext } from "../../lib/safeNext";
 import type { AuthMe } from "../../types";
@@ -66,6 +66,10 @@ function ConfirmLink({ token }: { token: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState<{ signedIn: boolean } | null>(null);
+  // The link cannot be confirmed from a browser without the right session.
+  // That is a direction (log in, or use the code where you signed up), not an
+  // error, and the gate's own 401 detail is English whatever the page is in.
+  const [ended, setEnded] = useState(false);
 
   async function confirm() {
     if (busy) return;
@@ -75,9 +79,20 @@ function ConfirmLink({ token }: { token: string }) {
       const r = await verifyEmail({ token });
       setDone({ signedIn: r.signed_in });
     } catch (err) {
-      setError(apiErrorMessage(err, t("errors.generic")));
+      if (isSessionEnded(err)) setEnded(true);
+      else setError(apiErrorMessage(err, t("errors.generic")));
     }
     setBusy(false);
+  }
+
+  if (ended) {
+    return (
+      <AuthCard title={t("verify.endedTitle")} sub={t("verify.endedLinkBody")}>
+        <Link to={withNext("/login", next)} className={primaryLinkCls}>
+          {t("verify.endedLogIn")}
+        </Link>
+      </AuthCard>
+    );
   }
 
   if (done) {
@@ -145,6 +160,10 @@ function EnterCode() {
   const [resending, setResending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // This browser's session is gone (a reset or "sign out other devices"
+  // elsewhere, cleared cookies). Resend and Change email cannot work from
+  // here, so the page says so in the reader's language and offers log in.
+  const [ended, setEnded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   // The value last sent. `busy` is state, so two submits in the same tick (an
   // autofilled code and the Enter that follows it) would both read it as false.
@@ -294,6 +313,11 @@ function EnterCode() {
       startCooldown(r.cooldown_s > 0 ? r.cooldown_s : RESEND_COOLDOWN_S);
       setNotice(t("verify.resent"));
     } catch (err) {
+      if (isSessionEnded(err)) {
+        setEnded(true);
+        setResending(false);
+        return;
+      }
       if (redirected(err)) return;
       const wait = retryAfterSeconds(err);
       if (apiErrorCode(err) === "too_many_attempts" && wait) startCooldown(Math.ceil(wait));
@@ -327,6 +351,16 @@ function EnterCode() {
         >
           {t("verify.retry")}
         </Button>
+      </AuthCard>
+    );
+  }
+
+  if (ended) {
+    return (
+      <AuthCard title={t("verify.endedTitle")} sub={t("verify.endedBody")}>
+        <Link to={withNext("/login", next)} className={primaryLinkCls}>
+          {t("verify.endedLogIn")}
+        </Link>
       </AuthCard>
     );
   }
@@ -436,7 +470,12 @@ function EnterCode() {
       </p>
 
       <div className="mt-1">
-        <ChangeEmail current={email} onChanged={onChanged} onRefused={redirected} />
+        <ChangeEmail
+          current={email}
+          onChanged={onChanged}
+          onRefused={redirected}
+          onEnded={() => setEnded(true)}
+        />
       </div>
       <p className="text-center">
         <Link to={withNext("/login", next)} className={cn(authLinkCls, "text-sm")}>
@@ -461,10 +500,13 @@ function ChangeEmail({
   current,
   onChanged,
   onRefused,
+  onEnded,
 }: {
   current: string;
   onChanged: (me: AuthMe) => void;
   onRefused: (err: unknown) => boolean;
+  /** The session is gone: EnterCode replaces the page with "log in again". */
+  onEnded: () => void;
 }) {
   const { t } = useTranslation("auth");
   const [open, setOpen] = useState(false);
@@ -487,6 +529,10 @@ function ChangeEmail({
       setOpen(false);
       onChanged(me);
     } catch (err) {
+      if (isSessionEnded(err)) {
+        onEnded();
+        return;
+      }
       if (onRefused(err)) return;
       setError(apiErrorMessage(err, t("errors.generic")));
     }

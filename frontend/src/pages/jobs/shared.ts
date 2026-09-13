@@ -1,6 +1,7 @@
 // Shared constants + pure helpers for the Jobs surfaces (split out of
 // JobsPage.tsx — PLAN 12.5d). No JSX here.
 import type { TFunction } from "i18next";
+import { textLanguage } from "../../lib/lang";
 import type { JobMatch, KitJobIn, SearchContext } from "../../types";
 
 // House ease curve — shared by the scan ticker flips and JobsPage's tab/card motion.
@@ -98,6 +99,31 @@ export function avatarTone(name: string): string {
 
 /** A search/manual match as the kit-batch endpoint wants it (PLAN 8.1) —
  * shared by the batch card and the per-job kit button (15.9). */
+/** The posting as the tailor should read it: `Location: <location>` as the
+ * first line when the board gave a location that the ad's own text never
+ * states.
+ *
+ * The server decides "is this job in Israel?" from the posting text (it gets no
+ * separate location field from this handoff), and a lot of LinkedIn ads never
+ * name the city in the body. Without the line, the "Leave Arabic off" setting
+ * would read those jobs as "couldn't tell". The kit queue needs none of this:
+ * it sends `location` as its own field.
+ *
+ * Two cases stay untouched:
+ *   - the text already contains the location (any case): the line adds nothing.
+ *   - a Hebrew location on an English ad. The server marks a posting Hebrew
+ *     when it holds ANY Hebrew letter (`textLanguage`), so one prepended city
+ *     name would switch the whole tailored resume to Hebrew.
+ * The "Location:" label itself is Latin, so it never changes a Hebrew ad's
+ * language. */
+export function jdTextWithLocation(jdText: string, location?: string): string {
+  const loc = (location ?? "").replace(/\s+/g, " ").trim();
+  if (!jdText.trim() || !loc) return jdText;
+  if (jdText.replace(/\s+/g, " ").toLowerCase().includes(loc.toLowerCase())) return jdText;
+  if (textLanguage(loc) === "he" && textLanguage(jdText) === "en") return jdText;
+  return `Location: ${loc}\n${jdText}`;
+}
+
 export function kitJobFromMatch(m: JobMatch): KitJobIn {
   return {
     title: m.title,

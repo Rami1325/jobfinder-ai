@@ -166,7 +166,7 @@
       "q6": "Does it really work in Hebrew?",
       "a6": "Yes — the interface, the tailoring and both exported files. The PDF is laid out right to left line by line rather than being flipped, and the Word file is tagged so that Word applies Hebrew formatting properly. Resumes that mix Hebrew and English work too.",
       "q7": "Can JobFinder read my email?",
-      "a7": "Only if you connect Gmail, which is optional and is being opened to accounts gradually. The access is read-only: JobFinder looks for replies to your applications and fills in your tracker. For each job email it recognises, it keeps the sender, the date, the subject, a short preview and what it found, never the full email. Job-alert digests and personal mail are skipped before any AI sees them. You can disconnect in Settings at any time.",
+      "a7": "Only if you connect Gmail, which is optional and is being opened to accounts gradually. The access is read-only: JobFinder looks for replies to your applications and fills in your tracker. For each job email it recognises, it keeps the sender, the date, the subject, a short preview and what it found, never the full email. Job-alert digests and mail that is clearly not about an application are skipped before any AI sees them; other emails that might be about a job are read by an AI model to decide. You can disconnect in Settings at any time.",
       "privacyLink": "What we keep, in full"
     },
     "closing": {

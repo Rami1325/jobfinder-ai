@@ -107,7 +107,7 @@ export default function LoginPage() {
             id="login-password"
             label={t("fields.password")}
             trailing={
-              <Link to="/forgot" state={{ email: email.trim() }} className={cn(authLinkCls, "text-sm")}>
+              <Link to={withNext("/forgot", next)} state={{ email: email.trim() }} className={cn(authLinkCls, "text-sm")}>
                 {t("login.forgot")}
               </Link>
             }

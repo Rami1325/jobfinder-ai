@@ -909,6 +909,17 @@ export interface DeleteAccountResult {
   deactivated: boolean;
 }
 
+/** GET/PUT /profile/resume-prefs: what a TAILORED resume may leave out.
+ *
+ * Every flag is off until the user turns it on in Settings, and none of them
+ * ever touches the master resume. */
+export interface ResumePrefs {
+  /** Leave the Arabic language off a resume tailored for a job in Israel. The
+   * server keeps it when the job ad asks for Arabic, and says so in the
+   * changelog when it cannot tell whether the job is in Israel. */
+  hide_arabic_in_israel: boolean;
+}
+
 /** ATS X-ray (21.7) — what a parser actually recovers from the rendered file. */
 export interface ATSXrayFact {
   kind: string;

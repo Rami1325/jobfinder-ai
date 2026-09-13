@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -7,6 +7,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  FileLock,
   KeyRound,
   LogOut,
   MonitorSmartphone,
@@ -23,12 +24,15 @@ import {
   deleteMyData,
   getAuthMe,
   getExtensionKey,
+  getResumePrefs,
   logoutOtherDevices,
   rotateExtensionKey,
+  updateResumePrefs,
 } from "../api/client";
 import { signOut } from "../layouts/AppLayout";
 import { ACCESS_CODE_KEY } from "../lib/accessCode";
 import { apiErrorMessage } from "../lib/apiError";
+import { clearKeyRotated, keyRotatedNotice, markKeyRotated, readKeyRotation } from "../lib/authResults";
 import LanguageSwitch from "../components/LanguageSwitch";
 import ThemeToggle from "../components/ThemeToggle";
 import InboxSettingsCard from "../components/inbox/InboxSettingsCard";
@@ -168,7 +172,15 @@ function DangerAction({
  * saving the new password cannot tell which account it belongs to and files it
  * under the site with no username.
  */
-function PasswordChange({ email }: { email: string }) {
+function PasswordChange({
+  email,
+  method,
+  onKeyRotated,
+}: {
+  email: string;
+  method: AuthMe["method"];
+  onKeyRotated: () => void;
+}) {
   const { t } = useTranslation("settings");
   const { t: ta } = useTranslation("auth");
   const { t: tCommon } = useTranslation();
@@ -196,8 +208,14 @@ function PasswordChange({ email }: { email: string }) {
     setBusy(true);
     setError("");
     try {
-      await changePassword({ current_password: current, new_password: fresh });
-      toast("success", t("account.password.done"));
+      const rotation = readKeyRotation(await changePassword({ current_password: current, new_password: fresh }));
+      if (rotation.rotated) {
+        // An invite-code device signs in WITH that key: a returned key is
+        // stored at once, or its next request 401s on the key just replaced.
+        if (method === "invite_code" && rotation.key) localStorage.setItem(ACCESS_CODE_KEY, rotation.key);
+        onKeyRotated();
+      }
+      toast("success", rotation.rotated ? t("account.password.doneKey") : t("account.password.done"));
       close();
     } catch (err) {
       setError(apiErrorMessage(err, ta("errors.generic")));
@@ -274,7 +292,7 @@ function PasswordChange({ email }: { email: string }) {
 
 /** One button: every other session on this account ends, this one stays. No
  * confirm step, because nothing is lost. The other devices just sign in again. */
-function OtherDevices() {
+function OtherDevices({ method, onKeyRotated }: { method: AuthMe["method"]; onKeyRotated: () => void }) {
   const { t } = useTranslation("settings");
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -283,8 +301,13 @@ function OtherDevices() {
     if (busy) return;
     setBusy(true);
     try {
-      await logoutOtherDevices();
-      toast("success", t("account.others.done"));
+      const rotation = readKeyRotation(await logoutOtherDevices());
+      if (rotation.rotated) {
+        // PasswordChange's reason: an invite-code device stores the new key.
+        if (method === "invite_code" && rotation.key) localStorage.setItem(ACCESS_CODE_KEY, rotation.key);
+        onKeyRotated();
+      }
+      toast("success", rotation.rotated ? t("account.others.doneKey") : t("account.others.done"));
     } catch {
       toast("error", t("account.others.error"));
     }
@@ -324,7 +347,19 @@ function OtherDevices() {
  * server rewrites on every cold start, so a replace would be undone
  * unannounced. The note says where it is changed instead.
  */
-function ExtensionKeyCard({ method, isAdmin }: { method: AuthMe["method"]; isAdmin: boolean }) {
+function ExtensionKeyCard({
+  method,
+  isAdmin,
+  notice,
+  onSeen,
+}: {
+  method: AuthMe["method"];
+  isAdmin: boolean;
+  /** The key was replaced by a password change, a reset or "sign out other
+   * devices". Shown until the user reveals or copies the new key. */
+  notice: boolean;
+  onSeen: () => void;
+}) {
   const { t } = useTranslation("settings");
   const { t: tCommon } = useTranslation();
   const toast = useToast();
@@ -334,6 +369,14 @@ function ExtensionKeyCard({ method, isAdmin }: { method: AuthMe["method"]; isAdm
   const [error, setError] = useState("");
   const [arming, setArming] = useState(false);
   const [replacing, setReplacing] = useState(false);
+
+  // A key loaded before the rotation is the old one: forget it, so Show and
+  // Copy fetch the key that works now.
+  useEffect(() => {
+    if (!notice) return;
+    setKey(null);
+    setShown(false);
+  }, [notice]);
 
   async function load(): Promise<string | null> {
     if (key) return key;
@@ -356,7 +399,10 @@ function ExtensionKeyCard({ method, isAdmin }: { method: AuthMe["method"]; isAdm
       setShown(false);
       return;
     }
-    if (await load()) setShown(true);
+    if (await load()) {
+      setShown(true);
+      if (notice) onSeen();
+    }
   }
 
   async function copy() {
@@ -365,6 +411,7 @@ function ExtensionKeyCard({ method, isAdmin }: { method: AuthMe["method"]; isAdm
     try {
       await navigator.clipboard.writeText(k);
       toast("success", tCommon("actions.copied"));
+      if (notice) onSeen();
     } catch {
       toast("error", t("extension.copyError"));
     }
@@ -393,6 +440,14 @@ function ExtensionKeyCard({ method, isAdmin }: { method: AuthMe["method"]; isAdm
         <Puzzle size={16} className="text-accent-soft" /> {t("extension.title")}
       </CardTitle>
       <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t("extension.body")}</p>
+      {notice && (
+        <p
+          role="status"
+          className="mt-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm leading-relaxed text-warn"
+        >
+          {t("extension.rotatedNotice")}
+        </p>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <code
           dir="ltr"
@@ -453,6 +508,113 @@ function ExtensionKeyCard({ method, isAdmin }: { method: AuthMe["method"]; isAdm
   );
 }
 
+/**
+ * What a TAILORED resume may leave out. One switch today.
+ *
+ * The switch shows only what the server has STORED. While the read is
+ * pending it is disabled and marked busy, and a failed read replaces it with a
+ * sentence rather than a switch drawn "off", because off would be a false
+ * statement about a setting the user may have turned on.
+ *
+ * A tap is optimistic: the switch moves at once, then settles on whatever the
+ * PUT says was stored. On failure it goes back and a toast says so. A second
+ * tap while a save is in flight is ignored, so two saves can never land out of
+ * order and leave the switch showing the one the server did not keep.
+ *
+ * `role="switch"` on a real <button>: Space and Enter work with no key
+ * handler. The hit target is 44px (`min-h-11 min-w-11`) around a smaller
+ * drawn track. The knob slides with the reading direction: it starts at the
+ * inline start and moves toward the inline end in both English and Hebrew.
+ */
+function ResumePrivacyCard() {
+  const { t } = useTranslation("settings");
+  const toast = useToast();
+  const labelId = useId();
+  const hintId = useId();
+  const [hide, setHide] = useState<boolean | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    getResumePrefs()
+      .then((p) => {
+        if (live) setHide(p.hide_arabic_in_israel);
+      })
+      .catch(() => {
+        if (live) setLoadFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  async function flip() {
+    if (hide === null || saving) return;
+    const next = !hide;
+    setHide(next);
+    setSaving(true);
+    try {
+      const stored = await updateResumePrefs({ hide_arabic_in_israel: next });
+      setHide(stored.hide_arabic_in_israel);
+    } catch (err) {
+      setHide(!next);
+      toast("error", apiErrorMessage(err, t("resumePrivacy.saveError")));
+    }
+    setSaving(false);
+  }
+
+  const on = hide === true;
+
+  return (
+    <Card>
+      <CardTitle className="flex items-center gap-2">
+        <FileLock size={16} className="text-accent-soft" /> {t("resumePrivacy.title")}
+      </CardTitle>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
+        <div className="min-w-0 flex-1">
+          <p id={labelId} className="text-sm font-medium text-ink">
+            {t("resumePrivacy.arabic")}
+          </p>
+          <p id={hintId} className="mt-0.5 text-xs leading-relaxed text-ink-muted">
+            {t("resumePrivacy.arabicHint")}
+          </p>
+        </div>
+        {loadFailed ? (
+          <p role="alert" className="basis-full text-xs leading-relaxed text-danger">
+            {t("resumePrivacy.loadError")}
+          </p>
+        ) : (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            aria-labelledby={labelId}
+            aria-describedby={hintId}
+            aria-busy={hide === null || saving}
+            disabled={hide === null}
+            onClick={() => void flip()}
+            className="group inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg disabled:cursor-wait disabled:opacity-50"
+          >
+            <span
+              aria-hidden
+              className={`relative inline-block h-6 w-11 rounded-full border transition-colors group-focus-visible:ring-2 group-focus-visible:ring-accent/60 ${
+                on ? "border-accent bg-accent" : "border-line bg-bg-soft"
+              }`}
+            >
+              <span
+                className={`absolute start-0.5 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-white shadow transition-transform ${
+                  on ? "translate-x-5 rtl:-translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </span>
+          </button>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 /** The account surface: appearance, who you are, the extension key, and the
  * two ways out.
  *
@@ -476,6 +638,17 @@ export default function SettingsPage() {
   const toast = useToast();
   const [auth, setAuth] = useState<AuthMe | null>(null);
   const { hash, key } = useLocation();
+  // "Your extension key was replaced", kept on this device until the new key
+  // has been looked at: a reset sets it on a page where Settings is not shown.
+  const [keyRotated, setKeyRotated] = useState(keyRotatedNotice);
+  const onKeyRotated = () => {
+    markKeyRotated();
+    setKeyRotated(true);
+  };
+  const onKeySeen = () => {
+    clearKeyRotated();
+    setKeyRotated(false);
+  };
 
   /** Honour `#danger`, because nothing else does.
    *
@@ -630,8 +803,10 @@ export default function SettingsPage() {
         </div>
         {methodLine && <p className="mt-3 text-xs leading-relaxed text-ink-muted">{methodLine}</p>}
 
-        {hasEmailLogin && user?.has_password && <PasswordChange email={user.email} />}
-        {hasEmailLogin && <OtherDevices />}
+        {hasEmailLogin && user?.has_password && (
+          <PasswordChange email={user.email} method={method} onKeyRotated={onKeyRotated} />
+        )}
+        {hasEmailLogin && <OtherDevices method={method} onKeyRotated={onKeyRotated} />}
 
         {/* Not a <Row>: the hint IS the label here, and a Row would print
             "Sign out" twice — once as the row name, once on the button. */}
@@ -652,7 +827,16 @@ export default function SettingsPage() {
         </div>
       </Card>
 
-      {auth?.verified && user && <ExtensionKeyCard method={method} isAdmin={user.is_admin} />}
+      {auth?.verified && user && (
+        <ExtensionKeyCard
+          method={method}
+          isAdmin={user.is_admin}
+          notice={keyRotated}
+          onSeen={onKeySeen}
+        />
+      )}
+
+      <ResumePrivacyCard />
 
       {/* Gmail sync. It reads its own status and renders nothing when the
           server has no Gmail set up, so it needs no gate here. `id="inbox"` is

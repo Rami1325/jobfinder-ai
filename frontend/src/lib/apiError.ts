@@ -112,6 +112,15 @@ export function apiErrorCode(e: unknown): string | null {
   return codeOf(detailOf(e));
 }
 
+/** This browser no longer holds a session the request needed: the access
+ * gate's 401 (its detail is a plain English string), or `session_required`
+ * from the verify flow. Pages that act on it show a translated "log in again"
+ * state instead of an error. A 403 (`email_unverified`) is NOT this: that
+ * session is alive and only needs its code. */
+export function isSessionEnded(e: unknown): boolean {
+  return (e as ErrorShape)?.response?.status === 401 || apiErrorCode(e) === "session_required";
+}
+
 /** The `retry_after` seconds a 429 `too_many_attempts` carries, or null. */
 export function retryAfterSeconds(e: unknown): number | null {
   const detail = detailOf(e) as { retry_after?: unknown } | undefined;
@@ -177,6 +186,10 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     const auth = authMessage(e, code);
     if (auth) return auth;
   }
+  // The gate's 401 carries a plain English string ("Access code required.").
+  // Printed as-is it reaches a Hebrew form verbatim, so it is translated here.
+  // Only for a 401: any other string detail still reads as the server sent it.
+  if ((e as ErrorShape)?.response?.status === 401) return i18n.t("errors.sessionEnded", { ns: "auth" });
   if (typeof detail === "string" && detail.trim()) return detail;
   return fallback;
 }
