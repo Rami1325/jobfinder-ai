@@ -14561,6 +14561,21 @@ try:
         == ("applied", False, "manual") and _db29.get(_ME29, _ev29["s5"].id).action == "undone",
         f"{_undo29} {(_nim_after29.status, _nim_after29.interviewed, _nim_after29.status_source)}",
     )
+    _nim_timeline29 = _ia29.events_for_application(_db29, _u1, _nim_after29.id)
+    check(
+        "undo: the undone email STAYS on the card's timeline, marked undone, and no longer drives the card's badge — "
+        "Undo reverts the board, it does not un-receive the email",
+        any(e.id == _ev29["s5"].id and e.action == "undone" for e in _nim_timeline29)
+        and _ia29.latest_kinds(_db29, _u1).get(_nim_after29.id) != "interview",
+        str([(e.kind, e.action) for e in _nim_timeline29]),
+    )
+    check(
+        "subject_title: reply and forward prefixes come off (repeatedly, en and he) and whitespace collapses; a subject "
+        "that merely CONTAINS 're:' mid-line is kept whole",
+        _ia29.subject_title("Re: Fwd:  AI Engineer   opportunity") == "AI Engineer opportunity"
+        and _ia29.subject_title("השב: משרת מפתח") == "משרת מפתח"
+        and _ia29.subject_title("Update re: your application") == "Update re: your application",
+    )
     _zephyr29 = _cards29(_u1)["Zephyr Defense"]
     _zephyr29.status = "interview"
     _zephyr29.status_source = "manual"
@@ -15237,6 +15252,15 @@ try:
             and _web29.get("/inbox/status", headers=_DH29).json()["review_count"] == 0,
             str(_review29)[:200],
         )
+        _created_id29 = (_resolved29.json().get("application_id")
+                         if _resolved29 is not None and _resolved29.status_code == 200 else None)
+        _created29 = _web29.get(f"/applications/{_created_id29}", headers=_DH29).json() if _created_id29 else {}
+        check(
+            "review: 'Add to tracker' on an email with no detected title never makes a blank card — the subject "
+            "becomes the title",
+            bool((_created29.get("job_title") or "").strip()),
+            str({k: _created29.get(k) for k in ("job_title", "company")}),
+        )
         _recent29 = _web29.get("/inbox/events", params={"view": "recent"}, headers=_DH29).json()
         _paloma_event29 = next((e for e in _recent29 if e["kind"] == "rejection" and e["action"] == "updated"), None)
         _undone29 = _web29.post(f"/inbox/events/{_paloma_event29['id']}/undo", headers=_DH29) if _paloma_event29 else None
@@ -15244,6 +15268,12 @@ try:
             "undo over HTTP: the rejection that closed Paloma AI is undone and the card is back at applied",
             _undone29 is not None and _undone29.status_code == 200 and _undone29.json()["action"] == "undone"
             and _web29.get(f"/applications/{_paloma_event29['application_id']}", headers=_DH29).json()["status"] == "applied",
+        )
+        _recent_after29 = _web29.get("/inbox/events", params={"view": "recent"}, headers=_DH29).json()
+        check(
+            "recent updates: the undone rejection is still listed there, marked undone, never hidden",
+            _paloma_event29 is not None
+            and any(e["id"] == _paloma_event29["id"] and e["action"] == "undone" for e in _recent_after29),
         )
         check(
             "events: dismissing something that is not in review is a 409 with a code, and another user's event is a 404",

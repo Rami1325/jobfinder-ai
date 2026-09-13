@@ -690,7 +690,12 @@ export default function TrackerPage() {
         {detail && (
           <>
             <div className="mb-4 flex flex-wrap items-center gap-3">
-              <Badge tone="accent">{t("modal.match", { pct: Math.round(detail.overall_score) })}</Badge>
+              {/* Only a scored row has a match to show. The card already renders an
+                  unscored row as a dash, and every card the Gmail sync creates is
+                  unscored — unconditional, this printed a made-up "Match 0%". */}
+              {detail.overall_score ? (
+                <Badge tone="accent">{t("modal.match", { pct: Math.round(detail.overall_score) })}</Badge>
+              ) : null}
               {detail.interviewed && (
                 <Badge tone="mint">
                   <MessageSquare size={11} /> {t("interviewed")}

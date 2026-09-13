@@ -28,7 +28,8 @@ Every status string written here is one of the five tracker keys.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -434,6 +435,14 @@ def resolve(
     verdict = verdict_of(event)
     received_at = utc(event.received_at) or datetime.now(timezone.utc)
     if create:
+        # "Add to tracker" is the user's own choice, so a card with no title is the one
+        # outcome nobody asked for: the review sheet showed a subject, and the blank
+        # "—" / "—" card threw it away (Phase 29 browser pass). The subject becomes the
+        # title. The company is NOT guessed from the sender's display name — on a
+        # recruiter's mail that is a person ("Ron Shapiro"), and a card naming them as
+        # the employer is a claim the email never made. The EVENT keeps what was
+        # detected; only the card gets the fallback.
+        verdict = replace(verdict, job_title=verdict.job_title or subject_title(event.subject or ""))
         p = Plan("created", status=RESOLVE_STATUS.get(verdict.kind, "saved"), reason="resolved")
     else:
         app = db.get(Application, application_id) if application_id else None
@@ -447,6 +456,21 @@ def resolve(
         p = Plan("updated", app, status=target or "", reason="resolved") if forward else Plan("linked", app, reason="resolved")
     execute(db, user_id, event, verdict, p, received_at)
     return ""
+
+
+_REPLY_PREFIX = re.compile(r"^\s*(?:re|fwd?|aw|השב|הועבר)\s*:\s*", re.IGNORECASE)
+
+
+def subject_title(subject: str) -> str:
+    """A subject line as a card title: reply/forward prefixes off (repeatedly),
+    whitespace collapsed, capped at the column width."""
+    text = subject or ""
+    while True:
+        stripped = _REPLY_PREFIX.sub("", text, count=1)
+        if stripped == text:
+            break
+        text = stripped
+    return " ".join(text.split())[:255]
 
 
 def dismiss(user_id: int, event: MailEvent) -> str:
@@ -484,7 +508,11 @@ def events_for_application(db: Session, user_id: int, app_id: int) -> list[MailE
             .where(
                 MailEvent.user_id == user_id,
                 MailEvent.application_id == app_id,
-                MailEvent.action.in_(TRACKER_ACTIONS),
+                # "undone" too: Undo reverts the BOARD change, it does not un-receive
+                # the email. Filtered out, the interview invite that moved a card could
+                # no longer be seen anywhere in the app (Phase 29 browser pass). The UI
+                # renders it as "Undone" with no Undo button.
+                MailEvent.action.in_((*TRACKER_ACTIONS, "undone")),
             )
             .order_by(MailEvent.received_at.desc(), MailEvent.id.desc())
         ).scalars().all()

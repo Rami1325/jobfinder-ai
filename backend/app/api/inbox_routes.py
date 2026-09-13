@@ -357,7 +357,8 @@ def inbox_events(
     view: str = "recent", limit: int = 50, db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> list[InboxEventOut]:
     """`review`: emails waiting for the user. `recent`: what emails changed on
-    the board, newest first — a card created, a status moved, an interview flag set."""
+    the board, newest first — a card created, a status moved, an interview flag set,
+    and any of those the user undid (listed as undone, never hidden)."""
     query = select(MailEvent).where(MailEvent.user_id == user.id)
     if view == "review":
         query = query.where(MailEvent.action == "review").order_by(MailEvent.received_at.desc(), MailEvent.id.desc())
@@ -365,6 +366,7 @@ def inbox_events(
         query = query.where(or_(
             MailEvent.action.in_(("created", "updated")),
             (MailEvent.action == "linked") & MailEvent.set_interviewed.is_(True),
+            MailEvent.action == "undone",
         )).order_by(MailEvent.id.desc())
     rows = db.execute(query.limit(max(1, min(200, limit)))).scalars().all()
     email = _mailbox_email(db, user.id)

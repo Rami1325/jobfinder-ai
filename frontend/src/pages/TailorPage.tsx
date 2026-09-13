@@ -156,9 +156,14 @@ export default function TailorPage() {
   // loads that tracker application's JD into the target-job slot. The param is
   // stripped immediately so reloads don't re-apply it over in-progress work.
   const [searchParams, setSearchParams] = useSearchParams();
+  // StrictMode runs a mount effect twice in development, and the stripped param has
+  // not reached `searchParams` by the second run — so one handoff fetched twice and a
+  // failure toasted twice (Phase 29 browser pass). The ref survives that remount.
+  const handledHandoff = useRef<string | null>(null);
   useEffect(() => {
     const raw = searchParams.get("tailor_app");
-    if (!raw) return;
+    if (!raw || handledHandoff.current === raw) return;
+    handledHandoff.current = raw;
     const next = new URLSearchParams(searchParams);
     next.delete("tailor_app");
     setSearchParams(next, { replace: true });
