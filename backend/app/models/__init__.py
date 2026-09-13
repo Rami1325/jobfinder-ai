@@ -545,6 +545,8 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     name: Optional[str] = None
     email: Optional[str] = None
+    # Phase 29 / B2: may this account connect Gmail while INBOX_ACCESS=allowlist.
+    inbox_enabled: Optional[bool] = None
 
 
 class UserOut(BaseModel):
@@ -559,6 +561,12 @@ class UserOut(BaseModel):
     # never stamped it — and NEVER "has not visited". Any UI for this has to
     # say "unknown", or a code minted before the column reads as a no-show.
     last_seen_at: str = ""
+    # Phase 29, additive: the address this user signs in with ("" = invite code
+    # only) and whether the gate treats them as verified — which every invite
+    # code is, by construction.
+    login_email: str = ""
+    verified: bool = True
+    inbox_enabled: bool = False
 
 
 class UserList(BaseModel):
@@ -595,6 +603,11 @@ class DeleteMyDataResult(BaseModel):
     usage: int = 0
     feedback: int = 0
     kits: int = 0
+    # Phase 29 / B2: detected job emails, and the Gmail connection itself —
+    # which holds the encrypted grant, so a wipe that skipped it would leave a
+    # standing key to the user's mailbox behind.
+    inbox_events: int = 0
+    inbox_connections: int = 0
 
 
 class MeOut(BaseModel):
@@ -624,6 +637,195 @@ class DeleteAccountResult(BaseModel):
 
     data: DeleteMyDataResult
     deactivated: bool = False
+
+
+# --------------------------------------------------------------------------- #
+# Accounts (Phase 29 / B1): email sign-in beside the invite codes. Request
+# fields all default to "", so a missing field reaches the route's own
+# structured 400 (`{"code": ...}`, translated client-side) instead of FastAPI's
+# English 422.
+# --------------------------------------------------------------------------- #
+class AuthUser(BaseModel):
+    id: int
+    name: str = ""
+    email: str = ""  # the sign-in address when there is one, else users.email
+    is_admin: bool = False
+    has_password: bool = False
+    google_linked: bool = False  # Google sign-in is deferred; always False
+    signup_source: str = ""  # "" = invite code / admin, "email" = self-service
+
+
+class AuthMe(BaseModel):
+    """GET /auth/me — always 200, anonymous callers included. Deliberately not
+    `MeOut`, which is pinned byte-for-byte and stays exactly what it was."""
+
+    authenticated: bool = False
+    verified: bool = False
+    method: str = ""  # "invite_code" | "session" | "dev" (gate off) | "" (anonymous)
+    signup_open: bool = True
+    google_enabled: bool = False  # deferred (amendment S1); always False
+    user: Optional[AuthUser] = None
+
+
+class SignupIn(BaseModel):
+    name: str = ""
+    email: str = ""
+    password: str = ""
+    locale: str = ""  # "en" | "he" — the language of this account's auth mail
+
+
+class LoginIn(BaseModel):
+    email: str = ""
+    password: str = ""
+
+
+class VerifyIn(BaseModel):
+    token: str = ""  # from the emailed link; needs no session
+    code: str = ""  # the 6 digits; needs the pending session
+
+
+class VerifyOut(BaseModel):
+    verified: bool = False
+    signed_in: bool = False  # False after a link opened in a browser holding no session
+
+
+class ResendOut(BaseModel):
+    sent: bool = False
+    cooldown_s: int = 0
+
+
+class ChangeEmailIn(BaseModel):
+    email: str = ""
+
+
+class ForgotIn(BaseModel):
+    email: str = ""
+
+
+class ResetIn(BaseModel):
+    token: str = ""
+    password: str = ""
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str = ""
+    new_password: str = ""
+
+
+class OkOut(BaseModel):
+    ok: bool = True
+
+
+class LogoutOthersOut(BaseModel):
+    ok: bool = True
+    revoked: int = 0
+
+
+class ExtensionKeyOut(BaseModel):
+    key: str = ""
+
+
+# --------------------------------------------------------------------------- #
+# Gmail inbox scanner (Phase 29 / B2). Timestamps carry an explicit UTC offset,
+# and None means unknown/never — a naive ISO string is parsed as LOCAL time by
+# JavaScript, which skews every date by the reader's offset.
+# --------------------------------------------------------------------------- #
+class InboxStatus(BaseModel):
+    """GET /inbox/status. `ready` answers "may THIS account use Gmail sync":
+    false with reason "invite_only" for an account the allowlist does not name
+    (amendment O2), false with reason "" on a server with no Gmail set up."""
+
+    ready: bool = False
+    reason: str = ""
+    google_ready: bool = False  # false while ready = only the demo mailbox exists
+    connected: bool = False
+    provider: str = ""  # gmail | fake | ""
+    email: str = ""
+    status: str = ""  # active | needs_reauth | error | ""
+    last_sync_at: Optional[str] = None
+    auto_sync: bool = True
+    backfill_days: int = 60
+    review_count: int = 0
+    events_total: int = 0
+    last_error_code: str = ""
+    # connected_at + 7 days while Google keeps the app in Testing (O3); None when
+    # no weekly expiry applies.
+    reauth_due_at: Optional[str] = None
+    oauth_testing: bool = False
+    # An import of past mail is still unfinished; the cron carries it on.
+    backfilling: bool = False
+
+
+class InboxEventOut(BaseModel):
+    """One email the scanner stored: the extraction, never the body."""
+
+    id: int
+    received_at: str = ""
+    from_name: str = ""
+    from_email: str = ""
+    subject: str = ""
+    snippet: str = ""
+    kind: str = "other"
+    company: str = ""
+    job_title: str = ""
+    confidence: float = 0.0
+    method: str = ""
+    interview_at: str = ""
+    evidence: str = ""
+    application_id: Optional[int] = None
+    action: str = ""
+    prev_status: str = ""
+    new_status: str = ""
+    set_interviewed: bool = False
+    created_at: str = ""
+    gmail_url: str = ""  # "" when the message has no Message-ID or is not in Gmail
+
+
+class InboxSyncResult(BaseModel):
+    """POST /inbox/sync, and one row of the cron's results. Never an exception
+    for a mailbox problem: a refused grant or a spent cap is `error_code`.
+    `has_more` = this run stopped with mail still to read."""
+
+    user_id: int = 0
+    scanned: int = 0
+    noise: int = 0
+    rule_hits: int = 0
+    llm_calls: int = 0
+    events: int = 0
+    created: int = 0
+    updated: int = 0
+    review: int = 0
+    has_more: bool = False
+    error_code: str = ""
+
+
+class InboxCronResult(BaseModel):
+    users: int = 0
+    results: list[InboxSyncResult] = Field(default_factory=list)
+    skipped: int = 0
+
+
+class InboxStartIn(BaseModel):
+    backfill_days: Optional[int] = Field(default=None, ge=7, le=180)
+
+
+class InboxStartOut(BaseModel):
+    url: str = ""
+
+
+class InboxResolveIn(BaseModel):
+    application_id: Optional[int] = None
+    create: bool = False
+
+
+class InboxSettingsIn(BaseModel):
+    auto_sync: Optional[bool] = None
+    backfill_days: Optional[int] = Field(default=None, ge=7, le=180)
+
+
+class InboxDisconnectOut(BaseModel):
+    disconnected: bool = False
+    events_deleted: int = 0
 
 
 # --------------------------------------------------------------------------- #
@@ -667,6 +869,12 @@ class ApplicationOut(BaseModel):
     voice_score: Optional[float] = None
     fabrication_flag_count: Optional[int] = None
     created_at: str
+    # Phase 29 / B2, additive. `applied_at` is when the application was SENT
+    # (explicit offset); None is unknown, never "not sent".
+    source: str = ""  # "email" when the inbox scanner created the row
+    applied_at: Optional[str] = None
+    last_email_at: Optional[str] = None
+    last_email_kind: str = ""  # the newest linked email's kind; "" when none
 
 
 class ApplicationDetail(BaseModel):
@@ -683,6 +891,12 @@ class ApplicationDetail(BaseModel):
     interviewed: bool = False
     excitement: int = 0
     created_at: str
+    source: str = ""
+    applied_at: Optional[str] = None
+    last_email_at: Optional[str] = None
+    last_email_kind: str = ""
+    # Every email tied to this row, newest first.
+    email_events: list[InboxEventOut] = Field(default_factory=list)
 
 
 class StaleApplication(BaseModel):

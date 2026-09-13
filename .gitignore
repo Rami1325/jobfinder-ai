@@ -49,3 +49,7 @@ reference-screenshots/
 # own resume plus real job ads and every measured run. Local only, like
 # reference-screenshots/. The harness itself IS tracked; its data never is.
 backend/tests/fixtures/ab/
+
+# Inbox classifier A/B run outputs (backend/tests/inbox_eval.py --out). The
+# fixtures themselves are synthetic and tracked; the measured runs are not.
+backend/tests/fixtures/inbox_eval/results/

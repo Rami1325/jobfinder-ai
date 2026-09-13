@@ -310,6 +310,11 @@ class StubClient:
                 "salary_note": "[stub] Share a researched range for the role and location, "
                 "not a single figure — and ask what they've budgeted.",
             }
+        if "INBOX_CLASSIFY" in head:
+            # Phase 29 / B2. A keyword reading of one email, so the inbox sync,
+            # its review queue and the demo mailbox all run offline. The token
+            # shares no substring with any branch above.
+            return self._stub_inbox_classify(user)
         return {}
 
     def complete_text(self, system: str, user: str) -> str:
@@ -538,6 +543,81 @@ class StubClient:
             ],
             "covered_keywords": ["Python", "REST APIs", "SQL"],
         }
+
+    # -- INBOX_CLASSIFY (Phase 29 / B2) ------------------------------------ #
+    # First match wins, in the order a person weighs them: a rejection that
+    # thanks you for applying is a rejection, and an invite that also confirms
+    # the application is an invite. Evidence is the matched text itself, so it
+    # always passes the classifier's verbatim check.
+    _INBOX_STUB_KINDS = (
+        ("rejection", ("unfortunately", "other candidates", "other applicants", "not to proceed",
+                       "move forward with other", "not be moving forward", "position has been filled",
+                       "לצערנו", "לא להמשיך")),
+        ("offer", ("offer letter", "pleased to offer", "delighted to offer", "happy to offer",
+                   "הצעת עבודה", "שמחים להציע")),
+        ("assessment", ("home assignment", "coding test", "take-home", "assessment", "מטלת בית", "מבחן בית")),
+        ("interview", ("interview", "phone screen", "intro call", "schedule a", "ראיון")),
+        ("recruiter", ("i'm recruiting", "i am recruiting", "recruiting for", "confidential client",
+                       "מגייסת", "מגייס")),
+        ("confirmation", ("thank you for applying", "thanks for applying", "received your application",
+                          "application has been received", "we have received", "תודה על הגשת", "קיבלנו את")),
+    )
+    _INBOX_STUB_JOB_WORDS = ("application", "applying", "applied", "position", "role", "candidate",
+                             "candidacy", "hiring", "recruit", "משרה", "משרת", "תפקיד", "מועמד", "גיוס")
+    _INBOX_STUB_NOT_EMPLOYERS = ("linkedin", "indeed", "comeet", "greenhouse", "lever", "workday", "ashby",
+                                 "hackerrank", "calendly", "smartrecruiters", "teamtailor", "noreply",
+                                 "no-reply", "recruiting", "talent", "careers", "גיוס", "משאבי אנוש", "צוות")
+    _INBOX_STUB_AT = re.compile(
+        r"\b(?:at|with|to|from|join)\s+(?P<company>[A-Z][A-Za-z0-9&'-]*(?:\s+[A-Z][A-Za-z0-9&'-]*){0,3})"
+    )
+    _INBOX_STUB_TITLE = re.compile(r"\b(?:for|to) the\s+(?P<title>[A-Z][\w /&+-]{1,60}?)\s+(?:role|position)\b")
+    _INBOX_STUB_TITLE_HE = re.compile(r"(?:למשרת|לתפקיד)\s+(?P<title>[^.,\n]{2,40}?)(?=\s+ב|[.,\n]|$)")
+
+    def _stub_inbox_classify(self, user: str) -> dict[str, Any]:
+        def line(label: str) -> str:
+            found = re.search(rf"^{label}: ?(.*)$", user, re.MULTILINE)
+            return found.group(1).strip() if found else ""
+
+        sender, subject, snippet = line("From"), line("Subject"), line("Snippet")
+        start, end = user.find("BODY:\n"), user.rfind("\nEND BODY")
+        body = user[start + len("BODY:\n"):end] if start != -1 and end > start else ""
+        text = "\n".join((subject, snippet, body))
+        kind, evidence = "other", ""
+        for name, phrases in self._INBOX_STUB_KINDS:
+            for phrase in phrases:
+                hit = re.search(re.escape(phrase), text, re.IGNORECASE)
+                if hit:
+                    kind, evidence = name, hit.group(0)
+                    break
+            if evidence:
+                break
+        lowered = text.lower()
+        if kind == "other" or not any(w in lowered for w in self._INBOX_STUB_JOB_WORDS):
+            return {"is_job_related": False, "kind": "other", "company": "", "job_title": "",
+                    "confidence": 0.3, "interview_at": "", "evidence": ""}
+        # An agency's client is unnamed by construction — the prompt's rule 2.
+        company = "" if kind == "recruiter" else self._stub_inbox_company(sender, subject, text)
+        title = self._INBOX_STUB_TITLE.search(text) or self._INBOX_STUB_TITLE_HE.search(text)
+        return {
+            "is_job_related": True,
+            "kind": kind,
+            "company": company,
+            "job_title": title.group("title").strip() if title else "",
+            "confidence": 0.9 if company or kind == "recruiter" else 0.5,
+            "interview_at": "",
+            "evidence": evidence,
+        }
+
+    def _stub_inbox_company(self, sender: str, subject: str, text: str) -> str:
+        for source in (subject, text):
+            for hit in self._INBOX_STUB_AT.finditer(source):
+                company = hit.group("company").strip(" '-")
+                if company and not any(w in company.lower() for w in self._INBOX_STUB_NOT_EMPLOYERS):
+                    return company
+        name = sender.split("<", 1)[0].strip().strip('"')
+        if name and "@" not in name and not any(w in name.lower() for w in self._INBOX_STUB_NOT_EMPLOYERS):
+            return name
+        return ""
 
 
 @lru_cache

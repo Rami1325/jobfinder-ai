@@ -18,6 +18,8 @@
   ],
   "crons": [
     { "path": "/api/jobs/alerts/cron", "schedule": "0 6 * * *" },
-    { "path": "/api/jobs/nudges/cron", "schedule": "0 7 * * *" }
+    { "path": "/api/jobs/nudges/cron", "schedule": "0 7 * * *" },
+    { "path": "/api/inbox/cron", "schedule": "0 5 * * *" },
+    { "path": "/api/inbox/cron", "schedule": "0 14 * * *" }
   ]
 }

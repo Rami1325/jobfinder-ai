@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import get_settings
@@ -86,11 +87,57 @@ def _migrate_missing_columns() -> None:
         conn.commit()
 
 
+# Postgres SQLSTATEs for "that already exists": 42P07 duplicate_table (indexes
+# are relations, so a duplicate index lands here too) and 42710 duplicate_object.
+_DUPLICATE_SQLSTATES = {"42P07", "42710"}
+
+
+def _is_duplicate_ddl(exc: Exception) -> bool:
+    """True when a CREATE failed only because someone else created it first."""
+    orig = getattr(exc, "orig", None) or exc
+    sqlstate = getattr(orig, "sqlstate", None)
+    text = str(orig).lower()
+    if sqlstate in _DUPLICATE_SQLSTATES:
+        return True
+    # Two concurrent CREATE TABLEs also collide on the table's composite ROW
+    # TYPE, which Postgres reports as a unique violation on pg_type, not as a
+    # duplicate table.
+    if sqlstate == "23505" and "pg_type_typname_nsp_index" in text:
+        return True
+    return "already exists" in text  # SQLite: "table x already exists"
+
+
+def _create_all() -> None:
+    """`create_all`, surviving a concurrent cold start that creates the same tables.
+
+    `create_all` checks for each table and then creates it, with nothing in
+    between to stop a second process doing the same — and on Vercel EVERY cold
+    instance runs `init_db` at import (vercel_app.py), so a deploy that adds
+    tables starts several of them at once. The loser's CREATE fails with
+    "already exists" and, unguarded, that kills the instance's import: a 500 on
+    every request it would have served. One retry is enough, because its
+    checkfirst now sees what the winner made and creates only what is still
+    missing. A duplicate on the retry too means the winner is still mid-flight
+    creating exactly the tables we wanted, so that is success as well. Any error
+    that is not a duplicate still raises — a guard that swallowed a real DDL
+    failure would boot an instance onto a schema that isn't there.
+    """
+    for attempt in (1, 2):
+        try:
+            Base.metadata.create_all(bind=engine)
+            return
+        except DBAPIError as e:
+            if not _is_duplicate_ddl(e):
+                raise
+            if attempt == 2:
+                return
+
+
 def init_db() -> None:
     # Import models so they register on Base before create_all.
     from app.db import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    _create_all()
     _migrate_missing_columns()
 
     # Multi-user backfill (PLAN 7): make sure the admin user exists (its invite

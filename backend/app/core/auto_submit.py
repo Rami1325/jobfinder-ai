@@ -347,6 +347,10 @@ def submit_kit(
     if questionnaire_url:
         audit += f" Follow-up questionnaire: {questionnaire_url}"
     app_row.status = "applied"
+    # Phase 29 (I3): the send IS the application date. Stamped only while
+    # unknown, so a date already on the card is never overwritten.
+    if app_row.applied_at is None:
+        app_row.applied_at = now
     app_row.notes = (app_row.notes + "\n\n" if app_row.notes else "") + audit
     kit.status = "submitted"
     kit.submitted_at = now.replace(tzinfo=None)

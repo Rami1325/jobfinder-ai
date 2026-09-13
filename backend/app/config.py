@@ -163,6 +163,91 @@ class Settings(BaseSettings):
     alert_smtp_password: str = ""
     alert_email_from: str = ""  # defaults to alert_smtp_user
 
+    # Self-service accounts (Phase 29 / B1). Invite codes keep working exactly as
+    # before; everything below governs the email + password sign-in beside them.
+    #
+    # "open" lets anyone create an account; "closed" refuses POST /auth/signup
+    # with 403 signup_closed while every existing account keeps working, so the
+    # door can be shut from the Vercel env without a code deploy. Anything but
+    # "closed" counts as open, so a blank variable cannot silently lock it.
+    signup_mode: str = "open"
+    # A session slides forward on use (at most once every 12 h) by this many
+    # days, but never past `session_max_days` after the sign-in that made it: a
+    # stolen cookie that keeps being used still dies on a fixed date.
+    session_ttl_days: int = 30
+    session_max_days: int = 180
+    # scrypt work factor for password hashes (N; r=8, p=1). 2**17 measured ~0.28
+    # s and ~128 MB per hash on the owner's machine. The parameters are stored
+    # INSIDE each hash, so raising this later locks nobody out: every account is
+    # re-hashed at the new N on its next successful login. The smoke test sets
+    # 4096 so its signups cost ~0.02 s each.
+    auth_scrypt_n: int = 131072
+    # Minutes a verification code/link and a password-reset link stay valid.
+    verify_ttl_min: int = 60
+    reset_ttl_min: int = 60
+    # "smtp" sends auth mail through the ALERT_SMTP_* account above, and an
+    # unconfigured SMTP is a 503 email_unavailable — never a signup that
+    # "succeeds" and then waits for a code nobody sent. "console" prints each
+    # mail to stdout instead, for local browser testing where the code is read
+    # off the server log. Never "console" in production: it logs live codes.
+    auth_email_mode: str = "smtp"
+    # Keys the HMACs that turn an IP address or an email into a throttle key
+    # (an unsalted hash of an IPv4 address reverses in seconds). Falls back to
+    # CRON_SECRET, then APP_ACCESS_CODE, so a deployment is never keyed on a
+    # public constant; rotating whichever one is in use resets every throttle.
+    auth_secret: str = ""
+    # Google OAuth client, for the Gmail connect. Google SIGN-IN is deferred
+    # (Phase 29 amendment S1): nothing in the account routes reads these, and
+    # /auth/me reports google_enabled false regardless.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
+    # Gmail inbox scanner (Phase 29 / B2): reads employer replies and files them
+    # on the tracker. Nothing below does anything until the Google client above,
+    # APP_BASE_URL and `inbox_token_key` are all set (or the demo mailbox is
+    # switched on) — and the inbox UI renders nothing on a server with neither.
+    #
+    # Fernet key(s) encrypting stored Google refresh tokens, comma-separated and
+    # NEWEST FIRST: rotate by prepending a new key, redeploying, and dropping the
+    # old one later. Losing every key disconnects everyone — their grants can no
+    # longer be read, so each connection reads as needs_reauth.
+    inbox_token_key: str = ""
+    # The classifier's model. It gets its OWN OpenAIClient, never the tailor's:
+    # the client drops a parameter the first time a model rejects it, for the
+    # life of the process, so a cheap model that refuses `temperature` would
+    # strip it from every TAILOR call if the two shared an instance. Provisional
+    # until the real-key A/B (tests/inbox_eval.py) picks it; "" = this default.
+    inbox_model_id: str = "gpt-4.1-nano"
+    # Model classifications per user per UTC day (admins exempt, <= 0 disables).
+    # The alert-digest filter and the templates decide most mail with no model
+    # call, so this bounds the ambiguous remainder, not the mailbox.
+    daily_inbox_cap: int = 300
+    # Wall clock for one sync — the interactive button, and each user inside a
+    # cron tick — and for the whole tick, which must stop under Vercel's 300 s.
+    inbox_sync_budget_s: int = 25
+    inbox_cron_budget_s: int = 240
+    inbox_max_messages_per_run: int = 150
+    # How far back the first import reads when the user does not pick.
+    inbox_backfill_days: int = 60
+    # Below this classifier confidence an email waits in Needs review instead of
+    # touching a card.
+    inbox_review_threshold: float = 0.6
+    # A canned in-memory mailbox (app/core/inbox_fake.py), so the whole flow runs
+    # offline and in a browser without Google. Refused while the gate is ON and
+    # the real model is in use — i.e. it cannot be switched on in production.
+    inbox_fake_provider: bool = False
+    # Who may connect Gmail. "allowlist" (the default, and what anything but
+    # "all" means) = admins plus accounts the admin enabled with PATCH
+    # /admin/users/{id} {"inbox_enabled": true}; "all" = every account. While the
+    # Google app is in Testing, Google's own consent page admits only its listed
+    # test users, so a Connect button shown to everyone would send most people
+    # to an "Access blocked" page our callback never even hears about.
+    inbox_access: str = "allowlist"
+    # True while the Google app is in Testing, where Google ends every Gmail
+    # grant 7 days after consent: the connect screen says so up front, and the
+    # connection turns needs_reauth on that date instead of after a failed refresh.
+    google_oauth_testing: bool = True
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

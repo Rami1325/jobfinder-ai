@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -47,6 +47,22 @@ class User(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, default=None
     )
+    # How this account came to exist (Phase 29): "" = an invite code the admin
+    # minted, or the admin itself; "email" = self-service signup. The "" DEFAULT
+    # is load-bearing, not tidy: the ADD-COLUMN shim backfills every existing row
+    # with it, and "" is what the access gate reads as verified-by-construction —
+    # so on deploy the friends beta keeps working without anyone verifying
+    # anything. A default of "email" would lock every one of them out.
+    signup_source: Mapped[str] = mapped_column(String(16), default="")
+    # "en" | "he": the language this account's auth mail is written in. "" =
+    # unknown, which reads as English. Migrates via the shim like the above.
+    locale: Mapped[str] = mapped_column(String(8), default="")
+    # Phase 29 / B2: whether the admin let this account connect Gmail while
+    # INBOX_ACCESS=allowlist (an admin always may). The shim backfills False,
+    # and that is the point: Google's Testing mode admits only listed test
+    # users, so an account nobody added must not be offered a button Google's
+    # own consent page will refuse.
+    inbox_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -121,6 +137,24 @@ class Application(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+    # Phase 29 / B2, the inbox scanner. All four migrate via the ADD-COLUMN
+    # shim, and empty means UNKNOWN on every one of them, never a value: a row
+    # from before the scanner has no source, nobody recorded who last moved it,
+    # and it has no date it was sent on.
+    #
+    # "email" when the inbox CREATED the row; "" for every other writer.
+    source: Mapped[str] = mapped_column(String(16), default="")
+    # Who made the LAST status change: "created" (POST /applications), "manual"
+    # (a PATCH that changed it), "email" (the inbox). The inbox reads it: an
+    # email older than a row someone else owns never quietly rewrites that row
+    # (inbox_apply, rule 5).
+    status_source: Mapped[str] = mapped_column(String(16), default="")
+    # When the application was SENT. Set from a confirmation email's date, or by
+    # a writer that moves the row to applied — never from a rejection or an
+    # interview invite, neither of which proves when anything was sent.
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # The newest email the inbox tied to this row.
+    last_email_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
 
 class JobSearchHit(Base):
@@ -437,4 +471,220 @@ class SavedResume(Base):
         DateTime,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Accounts (Phase 29 / B1): email sign-in beside the invite codes. All four are
+# NEW tables, so `create_all` makes them WITH their unique constraints and
+# indexes — the ADD-COLUMN shim cannot add either to a table that already
+# exists, which is exactly why login identity is not a set of columns on `users`.
+# --------------------------------------------------------------------------- #
+class UserLogin(Base):
+    """How a user signs in with an email address. At most one per user.
+
+    Its own table because `users.email` cannot carry the constraint: it is
+    non-unique, many friend rows hold "", and a UNIQUE declared on an existing
+    column is silently ignored by the shim — Neon would get a non-unique column
+    and two accounts could share one address. A legacy invite-code user simply
+    has no row here.
+
+    `email` is normalised (NFKC, stripped, lower-cased) before it is written, so
+    the unique index is the one place "Maya@Example.com" and "maya@example.com"
+    are the same person.
+    """
+
+    __tablename__ = "user_logins"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    # `scrypt$N$r$p$salt$dk` (app/core/passwords.py); "" = no password set.
+    password_hash: Mapped[str] = mapped_column(Text, default="")
+    # NULL until the address is proven. The gate refuses every feature to an
+    # email signup while this is NULL (users.signup_source "" never needs it).
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # Reserved for Google sign-in, which is deferred (Phase 29 amendment S1).
+    google_sub: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
+class AuthSession(Base):
+    """One signed-in browser (app/core/sessions.py).
+
+    The cookie carries a random token; this row stores only its sha256, so a
+    leaked table cannot be replayed as cookies. Revoking is one column write,
+    which is what makes logout, "sign out of other devices", a password reset
+    and an account close real rather than cosmetic.
+    """
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    # Written at most every 12 h (sessions.RENEW_EVERY), not per request.
+    last_used_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    user_agent: Mapped[str] = mapped_column(String(255), default="")
+    # Deliberately coarse ("84.229.x.x"), never the address itself.
+    ip_hint: Mapped[str] = mapped_column(String(64), default="")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
+class AuthToken(Base):
+    """A single-use secret mailed to an address: a verification code + link,
+    or a password-reset link (app/core/accounts.py).
+
+    Both secrets are stored hashed. `payload` records the address the token was
+    SENT to, and consuming it requires that address to still be the account's —
+    the rule that stops "sign up as me@, switch the address to victim@, enter
+    the code I received at me@" from verifying an address nobody proved.
+    """
+
+    __tablename__ = "auth_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
+    purpose: Mapped[str] = mapped_column(String(24), default="", index=True)  # verify_email | reset_password
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # HMAC of the 6-digit code ("" for a link-only token). Keyed, because an
+    # unkeyed hash of a million possible codes is not a hash at all.
+    code_hash: Mapped[str] = mapped_column(String(64), default="")
+    payload: Mapped[str] = mapped_column(Text, default="")  # JSON: {"email": ...}
+    attempts: Mapped[int] = mapped_column(Integer, default=0)  # wrong codes against THIS token
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class AuthEvent(Base):
+    """One auth attempt or action — the throttle counter AND the sign-in
+    security log (app/core/auth_throttle.py).
+
+    `key` is an HMAC of a normalised email ("em:…"), of an IP bucket ("ip:…"),
+    or a user id ("u:…") — never a raw address. Rows outlive the account they
+    describe on purpose: closing an account NULLs `user_id` rather than deleting
+    rows keyed on an email or IP, or "close the account and sign up again"
+    would reset every brute-force limit. Pruned after 30 days.
+    """
+
+    __tablename__ = "auth_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
+    kind: Mapped[str] = mapped_column(String(32), default="", index=True)
+    key: Mapped[str] = mapped_column(String(128), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The Gmail inbox scanner (Phase 29 / B2). Both are NEW tables, so create_all
+# makes them with their unique constraints; both hold user content, so both are
+# wiped by `routes._wipe_user_rows`.
+# --------------------------------------------------------------------------- #
+class MailConnection(Base):
+    """One user's connected mailbox (at most one per user).
+
+    `refresh_token_enc` is the Google refresh token ENCRYPTED with
+    INBOX_TOKEN_KEY (app/core/token_crypto.py) and never leaves the server: no
+    response model carries it. "" for the demo mailbox, which has no grant.
+
+    The import walks the mailbox in bounded windows from the OLDEST day forward
+    (Phase 29 amendment I2), and two columns carry where it is:
+    `window_lo_ms` is the start of the next unfinished window, and `cursor_ms`
+    the internalDate below which every message has been handled. Both are epoch
+    milliseconds, Gmail's own unit.
+    """
+
+    __tablename__ = "mail_connections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(16), default="gmail")  # gmail | fake
+    email_address: Mapped[str] = mapped_column(String(320), default="")
+    refresh_token_enc: Mapped[str] = mapped_column(Text, default="")
+    scope: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active | needs_reauth | error
+    # A short CODE ("invalid_grant", "daily_limit"), translated client-side.
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    connected_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    cursor_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    window_lo_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    backfill_days: Mapped[int] = mapped_column(Integer, default=60)
+    auto_sync: Mapped[bool] = mapped_column(Boolean, default=True)
+    scanned_total: Mapped[int] = mapped_column(Integer, default=0)
+    events_total: Mapped[int] = mapped_column(Integer, default=0)
+    # A lease, not a lock: set atomically when a sync starts and cleared when it
+    # ends, so the cron and a "Sync now" tap cannot read the same messages twice
+    # at once. It expires on its own, so a killed function never wedges a user.
+    sync_lock_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
+class MailEvent(Base):
+    """One job email the scanner recognised: the EXTRACTION, never the body.
+
+    There is no body column and there must never be one — the body lives in
+    memory for one classification and is gone. What is kept is what the tracker
+    and the review sheet show: sender, date, the subject and Gmail's snippet
+    (each clipped to 300), what the email is (`kind`), who and what it is about,
+    and a verbatim quote of at most 200 characters that justified the verdict.
+    Mail the scanner decided is NOT about a job is never stored at all.
+
+    `action` is what the email did to the tracker, and every one is undoable
+    or resolvable from the app: created | updated | linked | review | dismissed
+    | undone. `prev_status` / `new_status` / `set_interviewed` are exactly what
+    an Undo needs to put a card back.
+    """
+
+    __tablename__ = "mail_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider_message_id", name="uq_mail_events_message"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    provider_message_id: Mapped[str] = mapped_column(String(64), default="")
+    thread_id: Mapped[str] = mapped_column(String(64), default="")
+    rfc822_id: Mapped[str] = mapped_column(String(255), default="")
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    from_name: Mapped[str] = mapped_column(String(255), default="")
+    from_email: Mapped[str] = mapped_column(String(320), default="")
+    subject: Mapped[str] = mapped_column(String(300), default="")
+    snippet: Mapped[str] = mapped_column(String(300), default="")
+    kind: Mapped[str] = mapped_column(String(16), default="other")
+    company: Mapped[str] = mapped_column(String(255), default="")
+    job_title: Mapped[str] = mapped_column(String(255), default="")
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    method: Mapped[str] = mapped_column(String(8), default="rule")  # rule | llm
+    interview_at: Mapped[str] = mapped_column(String(40), default="")
+    evidence: Mapped[str] = mapped_column(String(300), default="")
+    application_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
+    action: Mapped[str] = mapped_column(String(16), default="")
+    prev_status: Mapped[str] = mapped_column(String(32), default="")
+    new_status: Mapped[str] = mapped_column(String(32), default="")
+    set_interviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Whether THIS email filled the card's `applied_at`, so an Undo can take the
+    # date back out instead of leaving a "saved" card that says it was sent.
+    set_applied_at: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
     )

@@ -9,17 +9,21 @@ import threading
 from datetime import datetime, timedelta, timezone
 from functools import partial
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import admin_user, current_user, llm_user, metered_user
 from app.config import get_settings
 
+from app.core import accounts as accounts_core
 from app.core import alerts as alerts_core
 from app.core import auto_submit
+from app.core import inbox_apply
+from app.core import inbox_sync as inbox_sync_core
 from app.core import nudges as nudges_core
+from app.core.sessions import clear_session_cookie, revoke_all
 from app.core.resume_review import review_resume
 from app.core.ats_xray import xray
 from app.core.company_brief import build_company_brief
@@ -88,11 +92,14 @@ from app.db.models import (
     Feedback,
     JobAlert,
     JobSearchHit,
+    MailConnection,
+    MailEvent,
     SavedResume,
     SavedResumeVersion,
     TailorKit,
     UsageLog,
     User,
+    UserLogin,
 )
 from app.models import (
     ReviewRequest,
@@ -1546,7 +1553,14 @@ def restore_resume_version(
 # --------------------------------------------------------------------------- #
 # Application tracker
 # --------------------------------------------------------------------------- #
-def _to_out(app: Application) -> ApplicationOut:
+def _utc_iso(dt: datetime | None) -> str | None:
+    """A Phase 29 tracker timestamp with its offset stated. `created_at` above
+    keeps its historical naive form, which the card slices as a date."""
+    value = inbox_apply.utc(dt)
+    return value.isoformat() if value is not None else None
+
+
+def _to_out(app: Application, email_kind: str = "") -> ApplicationOut:
     return ApplicationOut(
         id=app.id,
         job_title=app.job_title,
@@ -1561,7 +1575,16 @@ def _to_out(app: Application) -> ApplicationOut:
         voice_score=app.voice_score,
         fabrication_flag_count=app.fabrication_flag_count,
         created_at=app.created_at.isoformat() if app.created_at else "",
+        source=app.source or "",
+        applied_at=_utc_iso(app.applied_at),
+        last_email_at=_utc_iso(app.last_email_at),
+        last_email_kind=email_kind,
     )
+
+
+def _email_kind(db: Session, user_id: int, app_id: int) -> str:
+    events = inbox_apply.events_for_application(db, user_id, app_id)
+    return events[0].kind if events else ""
 
 
 def _owned_application(db: Session, app_id: int, user: User) -> Application:
@@ -1580,7 +1603,8 @@ def list_applications(
         .where(Application.user_id == user.id)
         .order_by(Application.created_at.desc())
     ).scalars().all()
-    return [_to_out(r) for r in rows]
+    kinds = inbox_apply.latest_kinds(db, user.id)
+    return [_to_out(r, kinds.get(r.id, "")) for r in rows]
 
 
 @router.get("/applications/nudges", response_model=StaleApplicationList)
@@ -1608,6 +1632,9 @@ def get_application(
             resume = ResumeModel.model_validate_json(app.tailored_resume_json)
         except Exception:  # noqa: BLE001 - tolerate legacy/corrupt rows
             resume = None
+    events = inbox_apply.events_for_application(db, user.id, app.id)
+    conn = inbox_sync_core.connection_for(db, user.id)
+    mailbox = (conn.email_address or "") if conn is not None and conn.provider == "gmail" else ""
     return ApplicationDetail(
         id=app.id,
         job_title=app.job_title,
@@ -1622,6 +1649,11 @@ def get_application(
         interviewed=app.interviewed,
         excitement=app.excitement or 0,
         created_at=app.created_at.isoformat() if app.created_at else "",
+        source=app.source or "",
+        applied_at=_utc_iso(app.applied_at),
+        last_email_at=_utc_iso(app.last_email_at),
+        last_email_kind=events[0].kind if events else "",
+        email_events=[inbox_sync_core.event_out(e, mailbox) for e in events],
     )
 
 
@@ -1645,6 +1677,10 @@ def create_application(
         voice_score=body.voice_score,
         fabrication_flag_count=body.fabrication_flag_count,
         status_changed_at=datetime.now(timezone.utc),
+        # Phase 29: who set the status (the inbox's rule 5 reads it), and — for
+        # a row saved straight into Applied — when it was sent (I3).
+        status_source="created",
+        applied_at=datetime.now(timezone.utc) if body.status == "applied" else None,
     )
     db.add(app)
     db.commit()
@@ -1663,6 +1699,12 @@ def update_application(
     if body.status is not None:
         if body.status != app.status:
             app.status_changed_at = datetime.now(timezone.utc)
+            # Phase 29: a hand-made status change, which no older email may
+            # quietly undo (inbox_apply, rule 5) — and moving a card into Applied
+            # is the moment it was sent, when nothing recorded one earlier (I3).
+            app.status_source = "manual"
+            if body.status == "applied" and app.applied_at is None:
+                app.applied_at = datetime.now(timezone.utc)
         app.status = body.status
     if body.notes is not None:
         app.notes = body.notes
@@ -1672,7 +1714,7 @@ def update_application(
         app.excitement = body.excitement
     db.commit()
     db.refresh(app)
-    return _to_out(app)
+    return _to_out(app, _email_kind(db, user.id, app.id))
 
 
 @router.delete("/applications/{app_id}")
@@ -1680,6 +1722,15 @@ def delete_application(
     app_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> dict[str, bool]:
     app = _owned_application(db, app_id, user)
+    # Phase 29: the emails tied to this card forget it. SQLite hands a deleted
+    # max id to the next row, so a dangling link would put this card's email
+    # timeline, and its Undo, on whatever card is created next.
+    db.execute(
+        update(MailEvent)
+        .where(MailEvent.user_id == user.id, MailEvent.application_id == app.id)
+        .values(application_id=None)
+        .execution_options(synchronize_session=False)
+    )
     db.delete(app)
     db.commit()
     return {"deleted": True}
@@ -1737,6 +1788,12 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
     user.search_prefs_json = ""
     user.writing_prefs_json = ""
 
+    # Gmail (Phase 29 / B2): the stored grant goes back to Google FIRST, best
+    # effort, so a wipe ends the access rather than only forgetting it — and then
+    # the connection row (the encrypted grant) and every detected email go with
+    # the rest. `inbox_sync_core.revoke_stored_grant` never raises.
+    inbox_sync_core.revoke_stored_grant(inbox_sync_core.connection_for(db, user.id))
+
     return DeleteMyDataResult(
         resumes=_wipe(SavedResume),
         resume_versions=_wipe(SavedResumeVersion),
@@ -1746,6 +1803,8 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
         usage=_wipe(UsageLog),
         feedback=_wipe(Feedback),
         kits=_wipe(TailorKit),
+        inbox_events=_wipe(MailEvent),
+        inbox_connections=_wipe(MailConnection),
     )
 
 
@@ -1777,7 +1836,10 @@ def delete_my_data(
 
 @router.delete("/profile/account", response_model=DeleteAccountResult)
 def close_my_account(
-    db: Session = Depends(get_db), user: User = Depends(current_user)
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> DeleteAccountResult:
     """The same wipe, and then the access code stops resolving (PLAN 23.5).
 
@@ -1794,6 +1856,13 @@ def close_my_account(
     admin, so a self-close would either do nothing (the fallback re-creates it)
     or brick the dev instance. Pointing at Delete-all-my-data is the honest
     answer: it is the half of this route an admin can actually have.
+
+    Since Phase 29 the account tables go in the SAME transaction: the sign-in
+    address, its mailed tokens and every session. So the address can be
+    registered again, and every signed-in browser 401s the way the code does.
+    The auth EVENTS stay, with their user id cleared, because they are keyed on
+    an email or a network and deleting them would make closing the account a
+    way to reset its brute-force limits (`accounts.purge_on_close`).
     """
     if user.is_admin:
         raise HTTPException(
@@ -1803,11 +1872,13 @@ def close_my_account(
         )
     result = _wipe_user_rows(db, user)
     user.is_active = False
+    accounts_core.purge_on_close(db, user.id)
     db.commit()  # one transaction: never wiped-but-still-open
+    clear_session_cookie(response, request)
     return DeleteAccountResult(data=result, deactivated=True)
 
 
-def _user_out(u: User) -> UserOut:
+def _user_out(u: User, login: UserLogin | None = None) -> UserOut:
     return UserOut(
         id=u.id,
         name=u.name,
@@ -1817,6 +1888,11 @@ def _user_out(u: User) -> UserOut:
         is_active=u.is_active,
         created_at=u.created_at.isoformat() if u.created_at else "",
         last_seen_at=u.last_seen_at.isoformat() if u.last_seen_at else "",
+        login_email=login.email if login is not None else "",
+        verified=accounts_core.is_verified(
+            u.is_admin, u.signup_source, login.email_verified_at if login is not None else None
+        ),
+        inbox_enabled=bool(u.inbox_enabled),
     )
 
 
@@ -1836,7 +1912,8 @@ def admin_list_users(
     db: Session = Depends(get_db), _admin: User = Depends(admin_user)
 ) -> UserList:
     rows = db.execute(select(User).order_by(User.id)).scalars().all()
-    return UserList(users=[_user_out(u) for u in rows])
+    logins = {row.user_id: row for row in db.execute(select(UserLogin)).scalars().all()}
+    return UserList(users=[_user_out(u, logins.get(u.id)) for u in rows])
 
 
 @router.patch("/admin/users/{user_id}", response_model=UserOut)
@@ -1855,13 +1932,22 @@ def admin_update_user(
         if u.is_admin and not body.is_active:
             raise HTTPException(400, "Can't deactivate an admin account.")
         u.is_active = body.is_active
+        if not body.is_active:
+            # Revoked, not merely filtered out by `is_active`: re-enabling the
+            # account later must not bring back the cookies it had before.
+            revoke_all(db, u.id)
     if body.name is not None:
         u.name = body.name.strip()
     if body.email is not None:
         u.email = body.email.strip()
+    if body.inbox_enabled is not None:
+        # Phase 29 / B2 (O2): the Gmail allowlist. Enabling here is half of it —
+        # while the Google app is in Testing, the account must also be one of its
+        # test users, or Google's own consent page refuses it.
+        u.inbox_enabled = body.inbox_enabled
     db.commit()
     db.refresh(u)
-    return _user_out(u)
+    return _user_out(u, accounts_core.login_for(db, u.id))
 
 
 @router.get("/admin/feedback", response_model=FeedbackList)

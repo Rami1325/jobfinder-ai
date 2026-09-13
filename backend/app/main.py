@@ -2,13 +2,21 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import NamedTuple
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
+from starlette._utils import get_route_path
 
+from app.api.auth_routes import router as auth_router
+from app.api.inbox_routes import router as inbox_router
 from app.api.routes import router
 from app.config import get_settings
+from app.core.accounts import AuthError, is_verified
+from app.core.sessions import COOKIE_NAME, set_session_cookie
 from app.db.database import init_db
 from app.llm.limits import ContextWindowExceeded, InputTooLarge, OutputTruncated
 from app.llm.metering import meter
@@ -79,6 +87,15 @@ async def _output_truncated(request: Request, exc: OutputTruncated) -> JSONRespo
     )
 
 
+@app.exception_handler(AuthError)
+async def _auth_error(request: Request, exc: AuthError) -> JSONResponse:
+    # Account refusals (Phase 29): the same structured-detail shape, translated
+    # client-side, and by construction never a 401 — the frontend reads a 401
+    # anywhere as "you are signed out, go log in", which is the wrong answer to
+    # "that password was wrong".
+    return JSONResponse(status_code=exc.status, content={"detail": exc.detail})
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -97,6 +114,32 @@ _GATE_EXEMPT = {
     "/jobs/nudges/cron", "/api/jobs/nudges/cron",
     "/public/scan", "/api/public/scan",
 }
+
+# Account routes that must answer a caller holding no valid credential, since
+# signing in is how one gets it (Phase 29). The gate still RESOLVES whatever
+# credential is present — /auth/me reports who you are, and a verification code
+# needs the pending session — but a missing or bad one never 401s here.
+#
+# Compared by ROUTE path (`get_route_path`), which is bare both locally and under
+# the Vercel /api mount, so unlike _GATE_EXEMPT above there is no second
+# spelling to forget. A forgotten "/api" twin passes every smoke check, because
+# the suite drives the unmounted app, and 401s only in production.
+_AUTH_OPTIONAL = frozenset({
+    "/auth/me", "/auth/signup", "/auth/login", "/auth/logout",
+    "/auth/verify", "/auth/forgot", "/auth/reset",
+    # Phase 29 / B2. Google's redirect back carries no credential header, and the
+    # route checks its own state, binding cookie and session (amendment O1); the
+    # cron is called by Vercel's scheduler and checks its own Bearer secret.
+    "/inbox/google/callback", "/inbox/cron",
+})
+# The doors an UNVERIFIED account must still be able to open, or verifying would
+# be impossible to finish or to escape: resend the code, fix a mistyped address,
+# and read the extension key (that route refuses an unverified caller itself,
+# with the same code). Every _AUTH_OPTIONAL path is skipped too — an unverified
+# cookie must not stop someone logging in to a DIFFERENT account — and so is
+# DELETE /profile/account, the way out.
+_UNVERIFIED_OK = frozenset({"/auth/resend", "/auth/change-email", "/auth/extension-key"})
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 @app.middleware("http")
@@ -120,49 +163,165 @@ async def llm_metering(request: Request, call_next):
         return await call_next(request)
 
 
+class _Identity(NamedTuple):
+    """Everything the gate decides from — plain values, never ORM attributes."""
+
+    user_id: int
+    is_admin: bool
+    signup_source: str
+    verified: bool
+    session_id: int | None
+    auth_method: str  # "invite_code" | "session"
+    renewed_until: datetime | None
+
+
+def _resolve_identity(app_key: str, session_token: str, optional: bool) -> _Identity | None:
+    """Resolve the request's credential to a user, stamp them as seen, and hand
+    back a plain tuple.
+
+    Every value is read INSIDE the session and AFTER its last commit, and that
+    is load-bearing (Phase 29 amendment A11). `touch_last_seen` commits and so
+    does a session renewal, SQLAlchemy expires every attribute on commit, and
+    `db.close()` then detaches the instance — so a later `user.id` tries to
+    refresh itself and raises DetachedInstanceError. It bit here once already,
+    and only on the first request of each throttle window (a throttled call
+    never commits, so never expires anything), which is exactly the shape that
+    reaches production looking like a flake. With renewal added there are two
+    such windows, so nothing after `close()` may touch the ORM at all.
+    """
+    from app.core.sessions import resolve_session
+    from app.db.database import SessionLocal
+    from app.db.models import User, UserLogin
+    from app.db.users import resolve_user, touch_last_seen
+
+    db = SessionLocal()
+    try:
+        user, method, session = None, "", None
+        if app_key:
+            user = resolve_user(db, app_key)
+            method = "invite_code"
+        # X-App-Key present means the invite path ONLY: a bad key 401s even
+        # beside a valid cookie, so a leaked cookie can't quietly rescue it and
+        # the "unknown invite code 401s" checks keep meaning what they say. The
+        # one exception is an optional auth path, where a STALE stored code
+        # falls through to the cookie — otherwise a friend whose code was
+        # rotated loops for ever between a login that works and a feature call
+        # that 401s on the old header (amendment A10).
+        if user is None and session_token and (not app_key or optional):
+            session = resolve_session(db, session_token)
+            if session is not None:
+                user = db.get(User, session.user_id)
+                method = "session"
+        if user is None:
+            return None
+        # Stamped here, on the session already open for the lookup, so it costs
+        # no extra connection and covers every authenticated request —
+        # including the uncapped /tools/* routes and unknown paths, which this
+        # gate sees but no route dependency ever does.
+        touch_last_seen(db, user)
+        user_id = user.id
+        is_admin = bool(user.is_admin)
+        source = user.signup_source or ""
+        verified_at = None
+        if not is_admin and source:
+            verified_at = db.execute(
+                select(UserLogin.email_verified_at).where(UserLogin.user_id == user_id)
+            ).scalar()
+        return _Identity(
+            user_id=user_id,
+            is_admin=is_admin,
+            signup_source=source,
+            verified=is_verified(is_admin, source, verified_at),
+            session_id=session.session_id if session is not None else None,
+            auth_method=method,
+            renewed_until=session.renewed_until if session is not None else None,
+        )
+    finally:
+        db.close()
+
+
+def _sets_session_cookie(response) -> bool:  # noqa: ANN001 - a Starlette response of any kind
+    return any(v.startswith(COOKIE_NAME + "=") for v in response.headers.getlist("set-cookie"))
+
+
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
-    """When APP_ACCESS_CODE is set (the public deployment), require every API
-    call to present a valid invite code in X-App-Key (PLAN 7.1: each code maps
-    to a user; the admin's code IS the access code). Unset locally, so dev is
-    unaffected and routes fall back to the admin user."""
-    if (
-        settings.app_access_code
-        and request.method != "OPTIONS"
-        and request.url.path not in _GATE_EXEMPT
-    ):
-        from app.db.database import SessionLocal
-        from app.db.users import resolve_user, touch_last_seen
+    """Who is calling, decided once and before routing (PLAN 7.1; accounts
+    since Phase 29).
 
-        db = SessionLocal()
-        try:
-            user = resolve_user(db, request.headers.get("x-app-key", ""))
-            # Stamped here, on the session already open for the lookup, so it
-            # costs no extra connection and covers every authenticated request
-            # — including the uncapped /tools/* routes and unknown paths, which
-            # this gate sees but no route dependency ever does.
-            #
-            # The id is read INSIDE the session, and that is load-bearing:
-            # `touch_last_seen` commits, SQLAlchemy expires every attribute on
-            # commit, and `db.close()` then detaches the instance — so a later
-            # `user.id` tries to refresh itself and raises
-            # DetachedInstanceError. It bit here, and only on the first request
-            # of each throttle window (a throttled call never commits, so it
-            # never expires anything), which is exactly the shape that reaches
-            # production looking like a flake.
-            user_id = None
-            if user is not None:
-                touch_last_seen(db, user)
-                user_id = user.id
-        finally:
-            db.close()
-        if user_id is None:
-            return JSONResponse({"detail": "Access code required."}, status_code=401)
-        request.state.user_id = user_id
-    return await call_next(request)
+    Credentials, when the gate is ON (APP_ACCESS_CODE set — the public
+    deployment), in strict precedence:
+      1. `X-App-Key` present => the invite-code path only (each code maps to a
+         user; the admin's code IS the access code). See _resolve_identity for
+         the one stale-code exception.
+      2. else the `jf_session` cookie.
+      3. else 401 — unless the path is _AUTH_OPTIONAL.
+    With the gate OFF (local dev) a session cookie is still honoured, so a
+    signed-in local user is themselves; with none, every route falls back to the
+    admin exactly as before.
+
+    Then, in this order, and credentials first so a protected route with no
+    credentials still says 401:
+      - CSRF. Every POST/PUT/PATCH/DELETE that does not carry X-App-Key must
+        carry a non-empty X-Requested-With, cookie or no cookie, /auth/*
+        included. The frontend sends it on every call; a cross-site form cannot
+        add a custom header without a CORS preflight this app never grants. The
+        cookie being SameSite=Lax is not enough on its own — a top-level
+        cross-site form POST still carries a Lax cookie — and the fact that
+        FastAPI happens to refuse a form body on a JSON route is an accident,
+        not a defence.
+      - Verification. An email signup whose address is unproven reaches only
+        the _AUTH_OPTIONAL and _UNVERIFIED_OK doors (403 email_unverified
+        everywhere else). Invite codes and the admin are verified by
+        construction, so none of the pre-accounts behaviour moves.
+    """
+    if request.method == "OPTIONS" or request.url.path in _GATE_EXEMPT:
+        return await call_next(request)
+
+    gate_on = bool(settings.app_access_code)
+    route_path = get_route_path(request.scope)
+    optional = route_path in _AUTH_OPTIONAL
+    app_key = request.headers.get("x-app-key", "") if gate_on else ""
+    session_token = request.cookies.get(COOKIE_NAME, "")
+    ident = (
+        _resolve_identity(app_key, session_token, optional)
+        if app_key or session_token
+        else None
+    )
+
+    if gate_on and ident is None and not optional:
+        return JSONResponse({"detail": "Access code required."}, status_code=401)
+    if (
+        request.method in _UNSAFE_METHODS
+        and not request.headers.get("x-app-key")
+        and not request.headers.get("x-requested-with", "").strip()
+    ):
+        return JSONResponse({"detail": {"code": "csrf"}}, status_code=403)
+    if ident is not None:
+        if (
+            not ident.verified
+            and not optional
+            and route_path not in _UNVERIFIED_OK
+            and not (request.method == "DELETE" and route_path == "/profile/account")
+        ):
+            return JSONResponse({"detail": {"code": "email_unverified"}}, status_code=403)
+        request.state.user_id = ident.user_id
+        request.state.auth_method = ident.auth_method
+        request.state.session_id = ident.session_id
+
+    response = await call_next(request)
+    # A session that slid forward gets its cookie re-issued with the new
+    # lifetime; otherwise the browser drops it one TTL after sign-in and the
+    # renewal is decorative. Not when the route itself just set or cleared the
+    # cookie (a logout, a fresh sign-in) — re-issuing then would resurrect it.
+    if ident is not None and ident.renewed_until is not None and not _sets_session_cookie(response):
+        set_session_cookie(response, request, session_token, ident.renewed_until)
+    return response
 
 
 app.include_router(router)
+app.include_router(auth_router)
+app.include_router(inbox_router)
 
 
 @app.get("/")

@@ -90,12 +90,23 @@ def touch_last_seen(db: Session, user: User) -> None:
         db.rollback()
 
 
+def new_invite_code() -> str:
+    """A fresh random invite code — the one definition of what one looks like.
+
+    Used by `mint_user`, by self-service signup (Phase 29: the code doubles as
+    that account's browser-extension key, because `users.invite_code` is NOT
+    NULL + UNIQUE and the extension only ever sends X-App-Key) and by rotating
+    that key.
+    """
+    return secrets.token_urlsafe(9)
+
+
 def mint_user(db: Session, name: str, email: str = "") -> User:
     """Create a friend account with a fresh random invite code."""
     user = User(
         name=name.strip(),
         email=email.strip(),
-        invite_code=secrets.token_urlsafe(9),
+        invite_code=new_invite_code(),
     )
     db.add(user)
     db.commit()
