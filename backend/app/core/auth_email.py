@@ -14,8 +14,10 @@ is blank by design, and a seam that bypassed the resolver would leave the real
 503 path unpinned.
 
 **Nothing is sent over budget** (`auth_throttle.reserve_mail`: 200 an hour
-across everyone, 3 an hour per address). Auth mail rides the owner's own SMTP
-account, the one that also carries the job alerts.
+across everyone; per address, 3 verification mails and, separately, 3 reset
+mails an hour; a "password changed" notice is held only to the global cap, so
+nobody can silence it by spending an address's allowance first). Auth mail
+rides the owner's own SMTP account, the one that also carries the job alerts.
 
 **Never a password and never an extension key.** A mailbox is not a vault: the
 only secrets these messages carry are single-use and expire within the hour.
@@ -58,6 +60,7 @@ _COPY: dict[str, dict[str, str]] = {
         "changed_subject": "JobFinder: your password was changed",
         "changed_head": "Your password was changed",
         "changed_lead": "The password for your JobFinder account was just changed, and every other device was signed out.",
+        "changed_key": "Your browser extension key was replaced too, so the JobFinder extension needs the new key from Settings.",
         "changed_act": "If this wasn't you, reset your password now:",
         "changed_act_nolink": "If this wasn't you, reset your password from the JobFinder login page.",
         "changed_button": "Reset my password",
@@ -83,6 +86,7 @@ _COPY: dict[str, dict[str, str]] = {
         "changed_subject": "JobFinder: הסיסמה שלך שונתה",
         "changed_head": "הסיסמה שלך שונתה",
         "changed_lead": "הסיסמה של החשבון שלך ב-JobFinder שונתה עכשיו, וכל שאר המכשירים נותקו.",
+        "changed_key": "גם מפתח התוסף לדפדפן הוחלף, ולכן התוסף של JobFinder צריך את המפתח החדש מההגדרות.",
         "changed_act": "אם זה לא אתם, אפסו את הסיסמה עכשיו:",
         "changed_act_nolink": "אם זה לא אתם, אפסו את הסיסמה מעמוד הכניסה של JobFinder.",
         "changed_button": "איפוס הסיסמה",
@@ -140,10 +144,12 @@ def build_reset_email(link: str, locale: str = "", ttl_min: int = 60) -> tuple[s
     return c["reset_subject"], "\n".join(lines)
 
 
-def build_password_changed_email(link: str = "", locale: str = "") -> tuple[str, str]:
-    """(subject, plain-text body). `link` points at the forgot-password page."""
+def build_password_changed_email(link: str = "", locale: str = "", key_rotated: bool = False) -> tuple[str, str]:
+    """(subject, plain-text body). `link` points at the forgot-password page.
+    `key_rotated` adds the sentence saying the extension key was replaced — and
+    only then, so the notice never claims a replacement that did not happen."""
     c = _COPY[_lang(locale)]
-    lines = [c["changed_lead"], ""]
+    lines = [c["changed_lead"]] + ([c["changed_key"]] if key_rotated else []) + [""]
     lines += [c["changed_act"], link] if link else [c["changed_act_nolink"]]
     return c["changed_subject"], "\n".join(lines)
 
@@ -255,12 +261,19 @@ def build_reset_email_html(link: str, locale: str = "", ttl_min: int = 60) -> st
     )
 
 
-def build_password_changed_email_html(link: str = "", locale: str = "") -> str:
+def build_password_changed_email_html(link: str = "", locale: str = "", key_rotated: bool = False) -> str:
     c = _COPY[_lang(locale)]
+    key_note = (
+        f'<div style="padding-top:8px;color:{_EM["muted"]};font:15px {_EM_FONT};line-height:1.5;">'
+        f"{html_lib.escape(c['changed_key'])}</div>"
+        if key_rotated
+        else ""
+    )
     return _html(
         locale,
         c["changed_head"],
         c["changed_lead"],
+        body=key_note,
         cta_label=c["changed_button"],
         cta_href=link,
         tail=[c["changed_act"] if link else c["changed_act_nolink"]],
@@ -290,11 +303,12 @@ def _resolve_sender() -> Sender | None:
     return _smtp_sender if mailer.smtp_configured() else None
 
 
-def mail_ready(db: Session, to: str) -> bool:
-    """Could one auth mail to `to` go out right now? The preflight a signup runs
-    BEFORE it creates anything: an account whose code can never arrive is a dead
-    end that only someone who knows to sign up again can escape."""
-    return _resolve_sender() is not None and auth_throttle.mail_allowed(db, to)
+def mail_ready(db: Session, to: str, purpose: str = "verify") -> bool:
+    """Could one auth mail of this purpose to `to` go out right now? The
+    preflight a signup runs BEFORE it creates anything: an account whose code
+    can never arrive is a dead end that only someone who knows to sign up again
+    can escape."""
+    return _resolve_sender() is not None and auth_throttle.mail_allowed(db, to, purpose=purpose)
 
 
 def send_auth_email(
@@ -307,12 +321,14 @@ def send_auth_email(
     user_id: int | None = None,
     code: str = "",
     link: str = "",
+    purpose: str = "verify",
 ) -> None:
-    """Deliver one auth mail, or raise EmailUnavailable. Claims the budget first."""
+    """Deliver one auth mail, or raise EmailUnavailable. Claims the budget of
+    its purpose first (`auth_throttle.mail_allowed`)."""
     sender = _resolve_sender()
     if sender is None:
         raise EmailUnavailable("no auth-mail sender is configured")
-    if not auth_throttle.reserve_mail(db, to, user_id=user_id):
+    if not auth_throttle.reserve_mail(db, to, user_id=user_id, purpose=purpose):
         raise EmailUnavailable("the auth-mail budget is spent")
     try:
         sender(to, subject, text, html, code=code, link=link)
@@ -329,7 +345,7 @@ def send_verify(
     ttl = get_settings().verify_ttl_min
     subject, text = build_verify_email(code, link, locale, ttl)
     html = build_verify_email_html(code, link, locale, ttl)
-    send_auth_email(db, to, subject, text, html, user_id=user_id, code=code, link=link)
+    send_auth_email(db, to, subject, text, html, user_id=user_id, code=code, link=link, purpose="verify")
 
 
 def send_reset(
@@ -340,14 +356,15 @@ def send_reset(
     ttl = get_settings().reset_ttl_min
     subject, text = build_reset_email(link, locale, ttl)
     html = build_reset_email_html(link, locale, ttl)
-    send_auth_email(db, to, subject, text, html, user_id=user_id, link=link)
+    send_auth_email(db, to, subject, text, html, user_id=user_id, link=link, purpose="reset")
 
 
 def send_password_changed(
     db: Session, request: Request | None, to: str, *, locale: str = "", user_id: int | None = None,
+    key_rotated: bool = False,
 ) -> None:
     base = link_base(request)
     link = f"{base}/forgot" if base else ""
-    subject, text = build_password_changed_email(link, locale)
-    html = build_password_changed_email_html(link, locale)
-    send_auth_email(db, to, subject, text, html, user_id=user_id, link=link)
+    subject, text = build_password_changed_email(link, locale, key_rotated)
+    html = build_password_changed_email_html(link, locale, key_rotated)
+    send_auth_email(db, to, subject, text, html, user_id=user_id, link=link, purpose="notice")

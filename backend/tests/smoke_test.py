@@ -13077,22 +13077,27 @@ try:
         _ac.cookies.clear()  # the mail app's browser: it holds no session
         _via_link28 = _ac.post("/auth/verify", json={"token": _lior28_link}, headers=_XRW)
         check(
-            "verify link: works with NO session, says signed_in False and mints no cookie — a mail scanner that "
-            "pre-opens the link must not end up holding the account",
-            _via_link28.status_code == 200 and _j28(_via_link28) == {"verified": True, "signed_in": False}
+            "verify link: with NO session it is 400 session_required, mints no cookie and verifies nothing — a mail "
+            "scanner that pre-opens the link, or a squatter's victim clicking it, cannot verify the account (FIXB B1)",
+            _via_link28.status_code == 400 and _code28(_via_link28) == "session_required"
             and "jf_session" not in _via_link28.headers.get("set-cookie", "")
-            and _j28(_ac.get("/auth/me")).get("authenticated") is False,
+            and _j28(_ac.get("/auth/me")).get("authenticated") is False
+            and (_login_row28("lior@example.com") or {}).get("verified") is False,
             _via_link28.text[:120],
         )
         _ac.cookies.clear()
+        _via_tab28 = _ac.post("/auth/verify", json={"token": _lior28_link}, headers=_ck28(_lior28_tok, _XRW))
+        _ac.cookies.clear()
         check(
-            "verify link: …and the ORIGINAL tab, still holding its cookie, is verified the moment it asks",
-            _ac.get("/applications", headers=_ck28(_lior28_tok)).status_code == 200,
+            "verify link: …and the ORIGINAL tab, still holding its cookie, opens it: verified and signed in, in place",
+            _via_tab28.status_code == 200 and _j28(_via_tab28) == {"verified": True, "signed_in": True}
+            and _ac.get("/applications", headers=_ck28(_lior28_tok)).status_code == 200,
+            _via_tab28.text[:120],
         )
         _ac.cookies.clear()
         check(
-            "verify link: a link is single-use — opening it again is 'used'",
-            _code28(_ac.post("/auth/verify", json={"token": _lior28_link}, headers=_XRW)) == "used",
+            "verify link: a link is single-use — opening it again, from that same tab, is 'used'",
+            _code28(_ac.post("/auth/verify", json={"token": _lior28_link}, headers=_ck28(_lior28_tok, _XRW))) == "used",
         )
         _ac.cookies.clear()
         _sh28 = _ac.post(
@@ -13226,16 +13231,44 @@ try:
         )
         _reset_auth_throttles28()
         _ac.post("/auth/signup", json={"name": "Budget", "email": "budget@example.com", "password": "budget passphrase"}, headers=_XRW)
-        for _ in range(2):
-            _age_auth_events28("verify_mail", 2)
-            _ac.post("/auth/resend", headers=_XRW)
         _age_auth_events28("verify_mail", 2)
+        _ac.post("/auth/resend", headers=_XRW)
+        _age_auth_events28("verify_mail", 2)
+        _third28 = _ac.post("/auth/resend", headers=_XRW)
+        check(
+            "mail budget: resends of an UNVERIFIED account stop BELOW the per-address mail budget — the 3rd verification "
+            "mail inside an hour is 429 too_many_attempts and is NOT sent (FIXB B4)",
+            len(_mail_to28("budget@example.com")) == 2 and _third28.status_code == 429
+            and _code28(_third28) == "too_many_attempts"
+            and _thr28.VERIFY_MAIL_PER_EMAIL[0] < _thr28.MAIL_PER_RECIPIENT_PER_HOUR,
+            f"{len(_mail_to28('budget@example.com'))} {_third28.text[:100]}",
+        )
+        _bdb28 = SessionLocal()
+        _bdb28.add(_AEv28(kind="mail", key=_thr28.email_key("budget@example.com"), created_at=_dt28.now(_tz28.utc)))
+        _bdb28.commit()
+        _bdb28.close()
+        _age_auth_events28("verify_mail", 61)
+
+
+        def _verify_mail_events28(address):  # noqa: ANN001
+            _d = SessionLocal()
+            try:
+                return int(_d.execute(_select28(_func28.count()).select_from(_AEv28).where(
+                    _AEv28.kind == "verify_mail", _AEv28.key == _thr28.email_key(address))).scalar() or 0)
+            finally:
+                _d.close()
+
+
+        _poll28_before = _verify_mail_events28("budget@example.com")
         _over28 = _ac.post("/auth/resend", headers=_XRW)
         check(
-            "mail budget: the 4th auth mail to one address inside an hour is 503 email_unavailable and is NOT sent",
-            len(_mail_to28("budget@example.com")) == 3 and _over28.status_code == 503
-            and _code28(_over28) == "email_unavailable",
-            f"{len(_mail_to28('budget@example.com'))} {_over28.text[:100]}",
+            "mail budget: the 4th auth mail to one address inside an hour is 503 email_unavailable and is NOT sent — "
+            "and the refused attempt still spends a resend, so polling the 503 is not free (FIXB B4)",
+            len(_mail_to28("budget@example.com")) == 2 and _over28.status_code == 503
+            and _code28(_over28) == "email_unavailable"
+            and _verify_mail_events28("budget@example.com") == _poll28_before + 1,
+            f"{len(_mail_to28('budget@example.com'))} {_over28.text[:100]} "
+            f"{_poll28_before}->{_verify_mail_events28('budget@example.com')}",
         )
         _reset_auth_throttles28()
         _gdb28 = SessionLocal()
@@ -13461,6 +13494,13 @@ try:
             _wipe28.text[:120],
         )
         _ac.cookies.clear()
+        check(
+            "delete-my-data keeps the account's name and address — only CLOSING the account blanks them (the "
+            "false-positive half of FIXB B14)",
+            _j28(_ac.get("/profile/me", headers=_ck28(_m28_1))).get("email") == "maya@example.com"
+            and _j28(_ac.get("/profile/me", headers=_ck28(_m28_1))).get("name") == "Maya",
+        )
+        _ac.cookies.clear()
         _lior28_s2 = _ac.post("/auth/login", json={"email": "lior@example.com", "password": "lior's own passphrase"},
                               headers=_XRW).cookies.get("jf_session") or ""
         _ac.cookies.clear()
@@ -13525,6 +13565,19 @@ try:
             and "max-age=0" in _close28_set,
             str(_tal28_left),
         )
+        _cdb28 = SessionLocal()
+        _tal28_row = _cdb28.get(_U28, _tal28_uid)
+        _tal28_user_left = (
+            None if _tal28_row is None
+            else (_tal28_row.name, _tal28_row.email, bool(_tal28_row.is_active), bool(_tal28_row.invite_code))
+        )
+        _cdb28.close()
+        check(
+            "close account: the users row keeps only what the design needs — the name and the sign-in address are "
+            "blanked, the row itself stays, deactivated, with its dead code (FIXB B14)",
+            _tal28_user_left == ("", "", False, True),
+            str(_tal28_user_left),
+        )
         check(
             "A7: …but the auth events STAY, their user_id cleared — deleting rows keyed on an email would make closing "
             "the account a brute-force reset",
@@ -13562,7 +13615,7 @@ try:
         check(
             "A7: …while the emailed LINK still verifies — the ceiling stops guessing, never the owner",
             _ac.post("/auth/verify", json={"token": _token_of28(_last_mail28("tal@example.com", "link"))},
-                     headers=_XRW).status_code == 200,
+                     headers=_ck28(_tal28_tok2, _XRW)).status_code == 200,
         )
 
         # --- expiry, renewal (A11), a code with no session, rehash ---------------
@@ -13693,7 +13746,11 @@ try:
             _off28_me = _j28(_off28.get("/auth/me"))
             _off28_session = _j28(_off28.get("/auth/me", headers=_ck28(_noam28_tok)))
             _off28_unverified = _off28.get("/applications", headers=_ck28(_noam28_tok)).status_code
-            _off28_csrf = _off28.post("/applications", json={"job_title": "x"}).status_code
+            _off28_csrf_resp = _off28.post("/applications", json={"job_title": "x"}, headers=_ck28(_noam28_tok))
+            _off28_csrf = _off28_csrf_resp.status_code if _code28(_off28_csrf_resp) == "csrf" else -1
+            _off28.cookies.clear()
+            _off28_keyless = _off28.post("/tools/review", json={"resume": {}})
+            _off28_auth_csrf = _off28.post("/auth/login", json={"email": "maya@example.com", "password": "x"})
     finally:
         os.environ["APP_ACCESS_CODE"] = _prev28_gate_code
         get_settings.cache_clear()
@@ -13710,6 +13767,13 @@ try:
         and (_off28_session.get("user") or {}).get("email") == "noam@example.com"
         and _off28_unverified == 403 and _off28_csrf == 403,
         f"{str(_off28_session)[:120]} {_off28_unverified} {_off28_csrf}",
+    )
+    check(
+        "gate OFF: CSRF guards only what a browser session can carry — a keyless, cookieless POST (the extension or a "
+        "script against a local backend) passes the gate, while /auth/* still needs X-Requested-With (FIXB B18)",
+        _off28_keyless.status_code != 403 and _code28(_off28_keyless) != "csrf"
+        and _off28_auth_csrf.status_code == 403 and _code28(_off28_auth_csrf) == "csrf",
+        f"{_off28_keyless.status_code} {_off28_keyless.text[:80]} | {_off28_auth_csrf.status_code}",
     )
 finally:
     _ae28._resolve_sender = _real_resolve_sender28
@@ -13881,12 +13945,13 @@ check(
 )
 check(
     "matching: legal suffixes, quote marks and case never split one company; whole words never merge two, and a "
-    "name under 4 characters must match exactly",
+    "name under 4 characters matches only as a WHOLE word of the longer name (FIXB B10)",
     _ir29.normalize_company("Oren Systems Ltd.") == _ir29.normalize_company("oren systems")
     and _ir29.normalize_company('אורן מערכות בע"מ') == "אורן מערכות"
     and _ir29.company_matches(_ir29.normalize_company("Tavor"), _ir29.normalize_company("Tavor Robotics"))
     and not _ir29.company_matches(_ir29.normalize_company("Meta"), _ir29.normalize_company("Metaphor Labs"))
-    and not _ir29.company_matches("ibm", "ibm cloud"),
+    and _ir29.company_matches("ibm", "ibm cloud")
+    and not _ir29.company_matches("hp", "hapoalim"),
 )
 check(
     "matching: title similarity reads 'Senior QA Engineer' as the QA Engineer role and a product role as another",
@@ -14305,6 +14370,13 @@ def _connect29(uid, *, provider="gmail", days=60, auto_sync=False, connected_at=
                  connected_at=connected_at or _NOW29, window_lo_ms=_NOW29_MS - days * _DAY29, backfill_days=days,
                  auto_sync=auto_sync, refresh_token_enc=token_enc, last_sync_at=last_sync_at)
     _db29.add(conn)
+    if provider == "gmail":
+        # A Gmail connection only ever exists for an account the O2 allowlist lets
+        # connect (the start route refuses anyone else), and since FIXB B15 the sync
+        # re-checks it — so the fixture must describe a user who could have connected.
+        _owner29 = _db29.get(_U29, uid)
+        if _owner29 is not None:
+            _owner29.inbox_enabled = True
     _db29.commit()
     return conn.id
 
@@ -14736,6 +14808,8 @@ def _google29(method, url, headers, body, timeout):  # noqa: ANN001
     if url.startswith(_go29.REVOKE_URL):
         return 200, b""
     if path.endswith("/profile"):
+        if _google_state29.get("profile_status"):
+            return int(_google_state29["profile_status"]), b'{"error": {"code": 403, "message": "Forbidden"}}'
         return 200, _json29.dumps({"emailAddress": _google_state29["profile"]}).encode()
     if path.endswith("/messages"):
         return 200, b'{"messages": [], "resultSizeEstimate": 0}'
@@ -14906,8 +14980,10 @@ try:
     _db29.expire_all()
     _stamped29 = _db29.get(_App29, _stamp_app29.id)
     _stamp_result29 = (_stamped29.status, _stamped29.applied_at is not None)
+    _stamp_marks29 = (_stamped29.status_changed_at is not None, _stamped29.status_source)
 except Exception as _e29:  # noqa: BLE001 - asserted below
     _stamp_result29 = f"raised {type(_e29).__name__}: {_e29}"
+    _stamp_marks29 = _stamp_result29
 finally:
     _asub29._default_post = _prev29_post
     _asub29._resolve_token = _prev29_token
@@ -14915,6 +14991,12 @@ check(
     "I3: an auto-submitted application records when it was sent — applied_at stamped as the send moves it to applied",
     _stamp_result29 == ("applied", True),
     str(_stamp_result29),
+)
+check(
+    "FIXB B13: …and the send stamps status_changed_at and status_source='manual', like a PATCH — so the inbox's "
+    "rule 5 and the stale nudge read the send, not the kit's approval, as the card's last change",
+    _stamp_marks29 == (True, "manual"),
+    str(_stamp_marks29),
 )
 _db29.close()
 
@@ -15297,6 +15379,1263 @@ finally:
     _go29._transport = None
     _hdb29.close()
     _restore29(_prev29_http)
+
+# ---------------------------------------------------------------------------
+# 30. The Phase 29 adversarial review (FIXB). Each check here was written FIRST
+# and watched failing against the code the review read; the false-positive half
+# sits beside each catch. Ids (B1..B19) match the review's per-finding report.
+# ---------------------------------------------------------------------------
+from app.core import accounts as _acc30  # noqa: E402
+
+# --- 30a. Pure: redirects, addresses, company names, the session label, notice copy --
+_n30_base = "https://app.jobfinder.test"
+_n30_dot = ["/.//evil.com", "/%2e//evil.com", "/..//evil.com", "/app/..//evil.com", "/%2E%2E//evil.com",
+            "/app/%2e%2e//evil.com"]
+check(
+    "B6: safe_next refuses a dot segment that a browser normalises into '//evil.com' — it falls back to /app",
+    all(_sess28.safe_next(v, _n30_base) == "/app" for v in _n30_dot),
+    str({v: _sess28.safe_next(v, _n30_base) for v in _n30_dot}),
+)
+_n30_keep = ["/app/v1.2/notes", "/jobs?q=../x", "/tracker#../row", "/settings?next=/app"]
+check(
+    "B6: …while a dot inside a segment, a query or a fragment is an ordinary in-app destination (the false-positive half)",
+    all(_sess28.safe_next(v, _n30_base) == v for v in _n30_keep),
+    str({v: _sess28.safe_next(v, _n30_base) for v in _n30_keep}),
+)
+_e30_bad = ["x<victim@y.com>", "a,b@y.com", "name <a@y.com>", '"a"@y.com', "a b@y.com", "a@y.com;b@z.com",
+            "(c)a@y.com", "a@[1.2.3.4]", "a:b@y.com", "a\\b@y.com", "a@b@y.com", "a" * 243 + "@example.com"]
+check(
+    "B7: an address is ONE plain addr-spec — display-name, list, quoted, bracketed and over-254 forms are refused, so "
+    "one inbox cannot hide behind many spellings of a per-address budget",
+    not any(_acc30.valid_email(_acc30.normalize_email(e)) for e in _e30_bad),
+    str({e[:30]: _acc30.valid_email(_acc30.normalize_email(e)) for e in _e30_bad}),
+)
+_e30_good = ["dana.cohen+jobs@example.co.il", "o'brien@example.com", "x_y-z@sub.example.org", "a" * 242 + "@example.com"]
+check(
+    "B7: …while a plus tag, an apostrophe, a subdomain and exactly 254 characters are all real addresses (the "
+    "false-positive half)",
+    all(_acc30.valid_email(_acc30.normalize_email(e)) for e in _e30_good),
+    str({e[:30]: _acc30.valid_email(_acc30.normalize_email(e)) for e in _e30_good}),
+)
+_co30_pairs = [("SAP", "SAP Labs Israel"), ("IBM", "IBM Israel"), ("Wix", "Wix.com"), ("EY", "EY Israel")]
+check(
+    "B10: a company name under 4 characters matches a longer spelling when it is a WHOLE word of it",
+    all(_ir29.company_matches(_ir29.normalize_company(a), _ir29.normalize_company(b)) for a, b in _co30_pairs),
+    str([(a, b, _ir29.company_matches(_ir29.normalize_company(a), _ir29.normalize_company(b))) for a, b in _co30_pairs]),
+)
+_co30_apart = [("HP", "Hapoalim"), ("EY", "Keyence"), ("AI", "Aidoc"), ("NSO", "Nsoft Labs")]
+check(
+    "B10: …never as a fragment of a word — HP is not Hapoalim, EY is not Keyence (the false-positive half)",
+    not any(_ir29.company_matches(_ir29.normalize_company(a), _ir29.normalize_company(b)) for a, b in _co30_apart),
+)
+_ibm30 = _types29.SimpleNamespace(
+    id=1, company="IBM", job_title="", status="applied", status_source="created", source="",
+    status_changed_at=_NOW29 - _td29(days=20), created_at=_NOW29 - _td29(days=20))
+_plan30_ibm = _ia29.plan([_ibm30], _ir29.Verdict(kind="rejection", company="IBM Israel", confidence=0.95, method="llm"),
+                         _NOW29 - _td29(days=1), 0.6)
+check(
+    "B10: …so a rejection from 'IBM Israel' closes the tracked IBM card instead of creating a second, rejected one",
+    _plan30_ibm.action == "updated" and _plan30_ibm.app is _ibm30 and _plan30_ibm.status == "rejected",
+    str(_plan30_ibm),
+)
+check(
+    "B19: a session row's network label is coarse — an IPv4 /24 as a.b.c.x, an IPv6 /48, a mapped IPv4 as IPv4",
+    _sess28.ip_hint("84.229.17.203") == "84.229.17.x"
+    and _sess28.ip_hint("2001:db8:abcd:12:3:4:5:6") == "2001:0db8:abcd::/48"
+    and _sess28.ip_hint("::ffff:84.229.17.203") == "84.229.17.x",
+    f"{_sess28.ip_hint('84.229.17.203')} {_sess28.ip_hint('2001:db8:abcd:12:3:4:5:6')}",
+)
+check(
+    "B19: …and nothing that is not an address becomes one (the false-positive half)",
+    _sess28.ip_hint("testclient") == "" and _sess28.ip_hint("") == "",
+)
+try:
+    _chg30_en = _ae28.build_password_changed_email(f"{_n30_base}/forgot", "en", key_rotated=True)[1]
+    _chg30_he = _ae28.build_password_changed_email(f"{_n30_base}/forgot", "he", key_rotated=True)[1]
+    _chg30_html = _ae28.build_password_changed_email_html(f"{_n30_base}/forgot", "en", key_rotated=True)
+except TypeError as _e30:
+    _chg30_en = _chg30_he = _chg30_html = f"raised {_e30}"
+check(
+    "B1: when the extension key was replaced, the 'password changed' notice says so — in English, in Hebrew and in "
+    "the HTML part",
+    "extension key" in _chg30_en.lower() and "התוסף" in _chg30_he and "extension key" in _chg30_html.lower(),
+    _chg30_en[:200],
+)
+check(
+    "B1: …and a notice for a change that replaced no key never mentions one (the false-positive half)",
+    "extension" not in _ae28.build_password_changed_email(f"{_n30_base}/forgot", "en")[1].lower()
+    and "extension" not in _ae28.build_password_changed_email_html(f"{_n30_base}/forgot", "en").lower(),
+)
+
+# --- 30b. The account flows the review attacked, over HTTP --------------------------
+_prev30_auth = _env29(APP_BASE_URL=_n30_base)
+_ae28._resolve_sender = lambda: _capture_auth_mail28
+try:
+    with TestClient(_fastapi_app) as _c30:
+
+        def _key30(tok):  # noqa: ANN001
+            _c30.cookies.clear()
+            key = _j28(_c30.get("/auth/extension-key", headers=_ck28(tok))).get("key", "")
+            _c30.cookies.clear()
+            return key
+
+        def _key_status30(key):  # noqa: ANN001
+            _c30.cookies.clear()
+            return _c30.get("/applications", headers={"X-App-Key": key}).status_code
+
+        def _mail_events30(kind, address):  # noqa: ANN001
+            _d = SessionLocal()
+            try:
+                _d.add_all([_AEv28(kind="mail", key=_thr28.email_key(address), created_at=_dt28.now(_tz28.utc))
+                            for _ in range(kind)])
+                _d.commit()
+            finally:
+                _d.close()
+
+        # B1: a verify LINK belongs to the session that signed up.
+        _reset_auth_throttles28()
+        _c30.cookies.clear()
+        _r30_su = _c30.post("/auth/signup", json={"name": "Rina", "email": "rina30@example.com",
+                                                 "password": "rina first passphrase"}, headers=_XRW)
+        _rina30_tok = _r30_su.cookies.get("jf_session") or ""
+        _uid28(_r30_su)
+        _c30.cookies.clear()
+        _o30_su = _c30.post("/auth/signup", json={"name": "Omer", "email": "omer30@example.com",
+                                                 "password": "omer first passphrase"}, headers=_XRW)
+        _omer30_tok = _o30_su.cookies.get("jf_session") or ""
+        _omer30_link = _token_of28(_last_mail28("omer30@example.com", "link"))
+        _c30.cookies.clear()
+        _l30_other = _c30.post("/auth/verify", json={"token": _omer30_link}, headers=_ck28(_rina30_tok, _XRW))
+        _c30.cookies.clear()
+        _l30_none = _c30.post("/auth/verify", json={"token": _omer30_link}, headers=_XRW)
+        _c30.cookies.clear()
+        check(
+            "B1: a verify LINK opened by ANOTHER account's live session, or by none, is 400 session_required and "
+            "verifies nothing — a victim clicking 'Confirm' on a squatter's signup no longer proves the squatter's account",
+            _l30_other.status_code == 400 and _code28(_l30_other) == "session_required"
+            and _l30_none.status_code == 400 and _code28(_l30_none) == "session_required"
+            and (_login_row28("omer30@example.com") or {}).get("verified") is False,
+            f"{_l30_other.text[:80]} | {_l30_none.text[:80]}",
+        )
+        _l30_own = _c30.post("/auth/verify", json={"token": _omer30_link}, headers=_ck28(_omer30_tok, _XRW))
+        _c30.cookies.clear()
+        check(
+            "B1: …while the session that signed up opens the same link and is verified in place (the false-positive half)",
+            _l30_own.status_code == 200 and _j28(_l30_own) == {"verified": True, "signed_in": True},
+            _l30_own.text[:100],
+        )
+
+        # B1: the extension key does not outlive a password change, logout-others or a reset.
+        _r30_v = _c30.post("/auth/verify", json={"code": _last_mail28("rina30@example.com", "code")},
+                           headers=_ck28(_rina30_tok, _XRW))
+        _c30.cookies.clear()
+        _rk30_0 = _key30(_rina30_tok)
+        _pw30 = _c30.post("/auth/password", json={"current_password": "rina first passphrase",
+                                                 "new_password": "rina second passphrase"},
+                          headers=_ck28(_rina30_tok, _XRW))
+        _c30.cookies.clear()
+        _rk30_1 = _key30(_rina30_tok)
+        _rk30_0_after = _key_status30(_rk30_0)
+        check(
+            "B1: a password change replaces the extension key in the same step — the answer says so, a key read before "
+            "it is a 401, and the new one opens the gate",
+            _r30_v.status_code == 200 and _pw30.status_code == 200
+            and _j28(_pw30).get("extension_key_rotated") is True and _rk30_0 != "" and _rk30_0_after == 401
+            and _rk30_1 not in ("", _rk30_0) and _key_status30(_rk30_1) == 200,
+            f"{_pw30.text[:80]} old key -> {_rk30_0_after}",
+        )
+        _lo30 = _c30.post("/auth/logout-others", headers=_ck28(_rina30_tok, _XRW))
+        _c30.cookies.clear()
+        _rk30_2 = _key30(_rina30_tok)
+        _rk30_1_after = _key_status30(_rk30_1)
+        check(
+            "B1: 'sign out other devices' replaces the key as well — a key is a device too",
+            _lo30.status_code == 200 and _j28(_lo30).get("extension_key_rotated") is True and _rk30_1_after == 401
+            and _rk30_2 not in ("", _rk30_1) and _key_status30(_rk30_2) == 200,
+            f"{_lo30.text[:80]} old key -> {_rk30_1_after}",
+        )
+        _reset_auth_throttles28()
+        _c30.post("/auth/forgot", json={"email": "rina30@example.com"}, headers=_XRW)
+        _rr30_link = next((_token_of28(m["link"]) for m in reversed(_mail_to28("rina30@example.com"))
+                           if "/reset?token=" in m["link"]), "")
+        _rs30 = _c30.post("/auth/reset", json={"token": _rr30_link, "password": "rina third passphrase"}, headers=_XRW)
+        _rina30_tok = _rs30.cookies.get("jf_session") or ""
+        _c30.cookies.clear()
+        _rk30_2_after = _key_status30(_rk30_2)
+        _rk30_3 = _key30(_rina30_tok)
+        check(
+            "B1: a reset on an account that was ALREADY verified replaces the key too — A2 rotated it only for an "
+            "unverified one, which is exactly the account a squatter had already verified",
+            _rs30.status_code == 200 and _j28(_rs30).get("extension_key_rotated") is True and _rk30_2_after == 401
+            and _rk30_3 not in ("", _rk30_2),
+            f"{_rs30.text[:120]} old key -> {_rk30_2_after}",
+        )
+        _rn30 = [m for m in _mail_to28("rina30@example.com") if "changed" in m["subject"]]
+        check(
+            "B1: …and the 'password changed' notice for it says the extension key was replaced",
+            bool(_rn30) and "extension key" in _rn30[-1]["text"].lower(),
+            str([m["subject"] for m in _mail_to28("rina30@example.com")]),
+        )
+        _c30.cookies.clear()
+        _alo30 = _c30.post("/auth/logout-others", headers=_ADMIN_H)
+        check(
+            "B1: …while the admin's 'sign out other devices' leaves its key alone — APP_ACCESS_CODE is the only way "
+            "back in (the false-positive half)",
+            _alo30.status_code == 200 and _j28(_alo30).get("extension_key_rotated") is False
+            and _key_status30("smoke-gate-code") == 200,
+            _alo30.text[:80],
+        )
+
+        # B5: the security notice cannot be silenced through the per-address budget.
+        _reset_auth_throttles28()
+        for _ in range(3):
+            _c30.post("/auth/forgot", json={"email": "rina30@example.com"}, headers=_XRW)
+        _n30_before = len([m for m in _mail_to28("rina30@example.com") if "changed" in m["subject"]])
+        _c30.cookies.clear()
+        _pw30b = _c30.post("/auth/password", json={"current_password": "rina third passphrase",
+                                                  "new_password": "rina fourth passphrase"},
+                           headers=_ck28(_rina30_tok, _XRW))
+        _c30.cookies.clear()
+        _n30_after = len([m for m in _mail_to28("rina30@example.com") if "changed" in m["subject"]])
+        check(
+            "B5: three anonymous /auth/forgot calls for an address cannot silence its 'password changed' notice — "
+            "security notices are exempt from the per-address cap",
+            _pw30b.status_code == 200 and _n30_after == _n30_before + 1,
+            f"{_pw30b.status_code} notices {_n30_before}->{_n30_after}",
+        )
+        _reset_auth_throttles28()
+        _gdb30 = SessionLocal()
+        _gdb30.add_all([_AEv28(kind="mail", key=f"em:fixb-global{i}", created_at=_dt28.now(_tz28.utc))
+                        for i in range(_thr28.MAIL_GLOBAL_PER_HOUR)])
+        _gdb30.commit()
+        _gdb30.close()
+        _pw30c = _c30.post("/auth/password", json={"current_password": "rina fourth passphrase",
+                                                  "new_password": "rina fifth passphrase"},
+                           headers=_ck28(_rina30_tok, _XRW))
+        _c30.cookies.clear()
+        _n30_final = len([m for m in _mail_to28("rina30@example.com") if "changed" in m["subject"]])
+        _reset_auth_throttles28()
+        check(
+            "B5: …while the GLOBAL auth-mail cap still holds for a notice: the change succeeds and nothing goes out "
+            "over it (the false-positive half)",
+            _pw30c.status_code == 200 and _n30_final == _n30_after,
+            f"{_pw30c.status_code} notices {_n30_after}->{_n30_final}",
+        )
+
+        # B4: a squatter's verification mails cannot starve the owner's reset.
+        _c30.cookies.clear()
+        _sq30 = _c30.post("/auth/signup", json={"name": "Squatter", "email": "owner30@example.com",
+                                               "password": "squatter passphrase"}, headers=_XRW)
+        _sq30_tok = _sq30.cookies.get("jf_session") or ""
+        _c30.cookies.clear()
+        _mail_events30(_thr28.MAIL_PER_RECIPIENT_PER_HOUR - 1, "owner30@example.com")
+        _f30_before = len([m for m in _mail_to28("owner30@example.com") if "/reset?token=" in m["link"]])
+        _c30.post("/auth/forgot", json={"email": "owner30@example.com"}, headers=_XRW)
+        _f30_after = len([m for m in _mail_to28("owner30@example.com") if "/reset?token=" in m["link"]])
+        check(
+            "B4: a reset mail has its own per-address allowance — with the verification budget spent (a squatter's "
+            "signup and resends), the real owner's reset link still arrives",
+            _sq30.status_code == 200 and _f30_after == _f30_before + 1,
+            f"reset mails {_f30_before}->{_f30_after}",
+        )
+        _age_auth_events28("verify_mail", 2)
+        _sq30_resend = _c30.post("/auth/resend", headers=_ck28(_sq30_tok, _XRW))
+        _c30.cookies.clear()
+        check(
+            "B4: …and the reset mail hands the squatter's resends no slot: the verification budget is still spent "
+            "(the false-positive half)",
+            _sq30_resend.status_code == 503 and _code28(_sq30_resend) == "email_unavailable",
+            _sq30_resend.text[:100],
+        )
+
+        # B7: the same address rule, at the door.
+        _reset_auth_throttles28()
+        _c30.cookies.clear()
+        _dn30 = _c30.post("/auth/signup", json={"name": "Display", "email": "dana<victim30@example.com>",
+                                               "password": "display passphrase"}, headers=_XRW)
+        _c30.cookies.clear()
+        check(
+            "B7: a signup whose address carries a display name is 400 invalid_email, and no mail reaches the address "
+            "inside it",
+            _dn30.status_code == 400 and _code28(_dn30) == "invalid_email"
+            and not [m for m in _mail28 if "victim30@example.com" in m["to"]],
+            _dn30.text[:100],
+        )
+finally:
+    _ae28._resolve_sender = _real_resolve_sender28
+    _restore29(_prev30_auth)
+    _reset_auth_throttles28()
+
+# --- 30c. The sync and Undo, at function level ------------------------------------
+_ic29.get_inbox_llm_client = lambda: _active29["client"]
+_active29["client"] = _Counting29()
+
+
+class _FlakyBody30(_gm29.FakeMailbox):
+    """A mailbox whose body read fails for some ids — always, or only `fail_times`."""
+
+    def __init__(self, messages, failing, fail_times=None):  # noqa: ANN001
+        super().__init__(messages)
+        self.failing = set(failing)
+        self.fail_times = fail_times
+        self.body_failures = 0
+
+    def get_body(self, msg_id):  # noqa: ANN001
+        with self._lock:
+            fail = msg_id in self.failing and (self.fail_times is None or self.body_failures < self.fail_times)
+            if fail:
+                self.body_failures += 1
+        if fail:
+            raise RuntimeError("probe: unreadable MIME part")
+        return super().get_body(msg_id)
+
+
+def _three30(prefix, cos):  # noqa: ANN001
+    """Three model-stage emails, oldest first; the middle one is the one that breaks."""
+    return [
+        _fm29(f"{prefix}1", 10, f"{cos[0]} - next steps", f"amit@{prefix}one.example", "Amit",
+              f"Hi Dana, thanks for applying to the Robotics Engineer role at {cos[0]}. We would love to schedule an "
+              "interview."),
+        _fm29(f"{prefix}2", 9, f"Your application at {cos[1]}", f"noa@{prefix}two.example", "Noa",
+              f"Hi Dana, unfortunately we have decided not to proceed with your application for the Analyst position "
+              f"at {cos[1]}."),
+        _fm29(f"{prefix}3", 8, f"{cos[2]} - interview", f"lior@{prefix}three.example", "Lior",
+              f"Hi Dana, thanks for applying to the Lab Engineer role at {cos[2]}. We would love to schedule an "
+              "interview."),
+    ]
+
+
+def _rows30(uid):  # noqa: ANN001
+    return {e.provider_message_id: (e.action, e.subject, e.snippet, e.from_email, e.company, e.evidence)
+            for e in _events29(uid)}
+
+
+def _email30(uid, mid, days_ago, kind, company, title=""):  # noqa: ANN001
+    """One email planned and executed against the live cards, the way a sync applies it."""
+    meta = _ir29.MessageMeta(id=mid, internal_ms=_NOW29_MS - int(days_ago * _DAY29), subject=f"{kind} {company}",
+                             snippet="probe")
+    received = _ia29.received_at_of(meta)
+    verdict = _ir29.Verdict(kind=kind, company=company, job_title=title, confidence=0.95, method="llm")
+    _db29.expire_all()
+    apps = _db29.execute(_sel29(_App29).where(_App29.user_id == uid)).scalars().all()
+    event = _ia29.new_event(uid, meta, verdict, received)
+    _db29.add(event)
+    _ia29.execute(_db29, uid, event, verdict, _ia29.plan(apps, verdict, received, 0.6), received)
+    _db29.commit()
+    return event.id
+
+
+def _undo30(uid, event_id):  # noqa: ANN001
+    _db29.expire_all()
+    code = _ia29.undo(_db29, uid, _db29.get(_ME29, event_id))
+    _db29.commit()
+    return code
+
+
+try:
+    # B3: one message that keeps failing.
+    _u30f = _mint29(_db29, "FixB Flaky Body").id
+    _connect29(_u30f)
+    _box30f = _FlakyBody30(_three30("fx", ["Harbor Robotics", "Pine Metrics", "Quartz Bio"]), {"fx2"})
+    _ms30f = {m.id: m.internal_ms for m in (_box30f.get_meta("fx1"), _box30f.get_meta("fx2"), _box30f.get_meta("fx3"))}
+    _r30f1 = _is29.sync_user(_db29, _u30f, mailbox=_box30f, budget_s=0)
+    _ev30f1, _cur30f1, _used30f1 = _rows30(_u30f), int(_conn29(_u30f).cursor_ms or 0), _used_today29(_db29, _u30f, "inbox")
+    _r30f2 = _is29.sync_user(_db29, _u30f, mailbox=_box30f, budget_s=0)
+    _ev30f2, _cur30f2, _used30f2 = _rows30(_u30f), int(_conn29(_u30f).cursor_ms or 0), _used_today29(_db29, _u30f, "inbox")
+    check(
+        "B3: a message whose body read fails stops the run the FIRST time — the cursor stays before it, and all that "
+        "is stored about it is its id and an error code (no subject, snippet, sender or company)",
+        _r30f1.error_code == "classify_failed" and _cur30f1 == _ms30f["fx1"]
+        and _ev30f1.get("fx2", ("",))[0] == "failed" and _ev30f1["fx2"][1:5] == ("", "", "", ""),
+        f"{_r30f1} {_ev30f1}",
+    )
+    check(
+        "B3: …and when it fails a SECOND time it is recorded as skipped (id + error code only), the cursor moves past "
+        "it, and the import goes on to the mail after it",
+        _r30f2.error_code == "" and _ev30f2.get("fx2", ("",))[0] == "skipped"
+        and _ev30f2["fx2"][1:5] == ("", "", "", "") and _ev30f2["fx2"][5] == "body_failed"
+        and _ev30f2.get("fx3", ("",))[0] == "created" and _cur30f2 >= _ms30f["fx3"],
+        f"{_r30f2} {_ev30f2} cursor {_cur30f2}",
+    )
+    check(
+        "B3: the retried failure is not charged to the daily cap again — 3 charges for the first run, 1 (the message "
+        "after it) for the second",
+        (_used30f1, _used30f2) == (3, 4),
+        str((_used30f1, _used30f2)),
+    )
+    _u30t = _mint29(_db29, "FixB Transient Body").id
+    _connect29(_u30t)
+    _box30t = _FlakyBody30(_three30("tx", ["Cobalt Freight", "Linden Health", "Maple Signal"]), {"tx2"}, fail_times=1)
+    _r30t1 = _is29.sync_user(_db29, _u30t, mailbox=_box30t, budget_s=0)
+    _r30t2 = _is29.sync_user(_db29, _u30t, mailbox=_box30t, budget_s=0)
+    _ev30t, _used30t = _rows30(_u30t), _used_today29(_db29, _u30t, "inbox")
+    check(
+        "B3: …while a message that failed ONCE and reads fine on the next run is imported normally — its subject kept, "
+        "never marked failed or skipped (the false-positive half)",
+        _r30t1.error_code == "classify_failed" and _r30t2.error_code == ""
+        and _ev30t.get("tx2", ("",))[0] == "created" and _ev30t["tx2"][1] == "Your application at Linden Health",
+        f"{_r30t1.error_code} {_r30t2.error_code} {_ev30t}",
+    )
+    check(
+        "B3: …and that retry is not charged twice either: 3 + 1",
+        _used30t == 4,
+        str(_used30t),
+    )
+
+    # B9: the user moves the card while the sync is classifying.
+    _u30r = _mint29(_db29, "FixB Race").id
+    _db29.add(_App29(user_id=_u30r, company="Northwind Relay", job_title="Platform Engineer", status="applied",
+                     status_source="created", created_at=_NOW29 - _td29(days=20),
+                     status_changed_at=_NOW29 - _td29(days=20)))
+    _db29.commit()
+    _connect29(_u30r)
+
+    def _user_moves_card30():
+        _d = SessionLocal()
+        try:
+            _a = _d.execute(_sel29(_App29).where(_App29.user_id == _u30r)).scalars().first()
+            _a.status, _a.status_source, _a.status_changed_at = "offer", "manual", _dt29.now(_tz29.utc)
+            _d.commit()
+        finally:
+            _d.close()
+
+    def _rejection30(mid, company):  # noqa: ANN001
+        return _gm29.FakeMailbox([_fm29(
+            mid, 2, f"Your application at {company}", "noa@relay.example", "Noa",
+            f"Hi Dana, unfortunately we have decided not to proceed with your application for the Platform Engineer "
+            f"position at {company}.")])
+
+    _active29["client"] = _Counting29(on_call=_user_moves_card30)
+    _r30r = _is29.sync_user(_db29, _u30r, mailbox=_rejection30("nr1", "Northwind Relay"), budget_s=0)
+    _active29["client"] = _Counting29()
+    _card30r = _cards29(_u30r).get("Northwind Relay")
+    _act30r = [e.action for e in _events29(_u30r)]
+    check(
+        "B9: a status the user sets WHILE a sync runs is not overwritten by an email in that run — the Offer card "
+        "stays Offer (manual) and the rejection waits in review",
+        _card30r is not None and (_card30r.status, _card30r.status_source) == ("offer", "manual")
+        and _act30r == ["review"],
+        f"{_r30r} {_card30r and (_card30r.status, _card30r.status_source)} {_act30r}",
+    )
+    _u30s = _mint29(_db29, "FixB No Race").id
+    _db29.add(_App29(user_id=_u30s, company="Southwind Relay", job_title="Platform Engineer", status="applied",
+                     status_source="created", created_at=_NOW29 - _td29(days=20),
+                     status_changed_at=_NOW29 - _td29(days=20)))
+    _db29.commit()
+    _connect29(_u30s)
+    _is29.sync_user(_db29, _u30s, mailbox=_rejection30("sr1", "Southwind Relay"), budget_s=0)
+    _card30s = _cards29(_u30s).get("Southwind Relay")
+    check(
+        "B9: …while with nobody touching the card, the same rejection closes it (the false-positive half)",
+        _card30s is not None and _card30s.status == "rejected" and [e.action for e in _events29(_u30s)] == ["updated"],
+        str(_card30s and _card30s.status),
+    )
+
+    # B11: Undo and a second interview email.
+    _u30i = _mint29(_db29, "FixB Two Interviews").id
+    _db29.add_all([
+        _App29(user_id=_u30i, company="Lumen Grid", job_title="Data Engineer", status="applied",
+               status_source="created", created_at=_NOW29 - _td29(days=20), status_changed_at=_NOW29 - _td29(days=20)),
+        _App29(user_id=_u30i, company="Solace Data", job_title="Data Engineer", status="applied",
+               status_source="created", created_at=_NOW29 - _td29(days=20), status_changed_at=_NOW29 - _td29(days=20)),
+    ])
+    _db29.commit()
+    _i30_1 = _email30(_u30i, "lg1", 5, "interview", "Lumen Grid", "Data Engineer")
+    _email30(_u30i, "lg2", 3, "interview", "Lumen Grid", "Data Engineer")
+    _j30_1 = _email30(_u30i, "sd1", 5, "interview", "Solace Data", "Data Engineer")
+    _undo30_i = (_undo30(_u30i, _i30_1), _undo30(_u30i, _j30_1))
+    _c30i = _cards29(_u30i)
+    check(
+        "B11: undoing the FIRST of two interview emails keeps `interviewed` — the second invite is still on the card",
+        _undo30_i == ("", "") and _c30i["Lumen Grid"].status == "applied" and _c30i["Lumen Grid"].interviewed is True,
+        f"{_undo30_i} {_c30i['Lumen Grid'].status} {_c30i['Lumen Grid'].interviewed}",
+    )
+    check(
+        "B11: …while undoing a card's ONLY interview email clears it (the false-positive half)",
+        _c30i["Solace Data"].status == "applied" and _c30i["Solace Data"].interviewed is False,
+    )
+
+    # B12: Undo of an email-created card the user has touched.
+    _u30c = _mint29(_db29, "FixB Touched Cards").id
+    _bh30 = _email30(_u30c, "bh1", 6, "confirmation", "Bright Harbor", "QA Engineer")
+    _ch30 = _email30(_u30c, "ch1", 6, "confirmation", "Calm Harbor", "QA Engineer")
+    _tw30 = _email30(_u30c, "tw1", 6, "confirmation", "Tide Works", "QA Engineer")
+    _rl30 = _email30(_u30c, "rl1", 6, "confirmation", "Reef Labs", "QA Engineer")
+    _email30(_u30c, "rl2", 3, "confirmation", "Reef Labs", "QA Engineer")
+    _pre30 = _cards29(_u30c)
+    _pre30["Bright Harbor"].excitement = 5
+    _pre30["Tide Works"].notes = "Called the recruiter on Sunday."
+    _db29.commit()
+    _undo30_c = [_undo30(_u30c, e) for e in (_bh30, _ch30, _tw30, _rl30)]
+    _c30c = _cards29(_u30c)
+    check(
+        "B12: Undo on the email that CREATED a card keeps the card once the user has touched it — five stars are an edit",
+        _undo30_c == ["", "", "", ""] and "Bright Harbor" in _c30c and _c30c["Bright Harbor"].excitement == 5,
+        f"{_undo30_c} {sorted(_c30c)}",
+    )
+    check(
+        "B12: …while an untouched email-created card goes with its Undo (the false-positive half)",
+        "Calm Harbor" not in _c30c,
+        str(sorted(_c30c)),
+    )
+    check(
+        "B12: a kept card that still reads Applied keeps its applied date — Undo no longer blanks it when no other "
+        "confirmation remains",
+        "Tide Works" in _c30c and _c30c["Tide Works"].status == "applied" and _c30c["Tide Works"].applied_at is not None,
+        str(_c30c.get("Tide Works") and (_c30c["Tide Works"].status, _c30c["Tide Works"].applied_at)),
+    )
+    check(
+        "B12: …while with another confirmation still on the card, applied_at is re-derived from that one (the "
+        "false-positive half)",
+        "Reef Labs" in _c30c and _near29(
+            _c30c["Reef Labs"].applied_at, _dt29.fromtimestamp((_NOW29_MS - int(3 * _DAY29)) / 1000, _tz29.utc)),
+        str(_c30c.get("Reef Labs") and _c30c["Reef Labs"].applied_at),
+    )
+
+    # B15: the O2 allowlist, re-checked by the sync and the cron.
+    _u30a = _mint29(_db29, "FixB Withdrawn Beta").id
+    _connect29(_u30a, auto_sync=True)
+    _db29.get(_U29, _u30a).inbox_enabled = False  # the owner withdrew the beta after the connect
+    _db29.commit()
+    _box30a = _gm29.FakeMailbox([_fm29("wb1", 2, "Interview at Kite Labs", "yael@kite.example", "Yael",
+                                       "Hi Dana, thanks for applying. We would love to schedule an interview.")])
+    _r30a = _is29.sync_user(_db29, _u30a, mailbox=_box30a, budget_s=0)
+    _due30a = _u30a in _is29.due_user_ids(_db29)
+    check(
+        "B15: a user the O2 allowlist no longer names is not synced — invite_only, the mailbox never read — and the "
+        "cron leaves them out",
+        _r30a.error_code == "invite_only" and sum(_box30a.calls.values()) == 0 and not _due30a,
+        f"{_r30a} {_box30a.calls} due={_due30a}",
+    )
+    _db29.get(_U29, _u30a).inbox_enabled = True
+    _db29.commit()
+    _r30a2 = _is29.sync_user(_db29, _u30a, mailbox=_box30a, budget_s=0)
+    check(
+        "B15: …re-enabled, the same connection syncs and is due again (the false-positive half)",
+        _r30a2.error_code == "" and _box30a.calls["list"] > 0 and _u30a in _is29.due_user_ids(_db29),
+        f"{_r30a2} {_box30a.calls}",
+    )
+finally:
+    _ic29.get_inbox_llm_client = _real_inbox_client29
+    _active29["client"] = _Counting29()
+
+# --- 30d. The Google routes and the cron, over HTTP ----------------------------------
+_prev30_http = _env29(**_google_env29, INBOX_FAKE_PROVIDER="false", CRON_SECRET="smoke-cron-30")
+_go29._transport = _google29
+_google_saved30 = dict(_google_state29)
+_hdb30 = SessionLocal()
+try:
+    with TestClient(_fastapi_app) as _w30:
+        _fr30 = _w30.post("/admin/users", json={"name": "FixB Mailbox"}, headers=_ADMIN_H).json()
+        _FR30 = {"X-App-Key": _fr30["invite_code"]}
+        _w30.patch(f"/admin/users/{_fr30['id']}", json={"inbox_enabled": True}, headers=_ADMIN_H)
+
+        def _connect_flow30():
+            _start = _w30.post("/inbox/google/start", json={"backfill_days": 30}, headers=_FR30)
+            _w30.cookies.clear()
+            _q = {k: v[0] for k, v in _pqs29(_us29(_start.json().get("url", "")).query).items()}
+            _binding, _ = _jar29(_start, "jf_oauth")
+            _cb = _w30.get("/inbox/google/callback", params={"code": "code-30", "state": _q.get("state", "")},
+                           headers={"Cookie": f"jf_oauth={_binding}"}, follow_redirects=False)
+            _w30.cookies.clear()
+            return _loc29(_cb)
+
+        def _revoked30():
+            return [f.get("token") for _, u, f in _google_log29 if u.startswith(_go29.REVOKE_URL)]
+
+        def _mailbox30(uid):  # noqa: ANN001
+            _hdb30.expire_all()
+            return _hdb30.execute(_sel29(_MC29).where(_MC29.user_id == uid)).scalars().first()
+
+        # B16: a refused callback hands its fresh grant back.
+        _google_state29.update(scope="openid email", refresh="1//refused-scope-30", profile="fixb.mailbox@gmail.com")
+        _google_log29.clear()
+        _loc30_scope, _rev30_scope = _connect_flow30(), _revoked30()
+        _google_state29.update(scope=_google_saved30["scope"], refresh="1//profile-fail-30", profile_status=403)
+        _google_log29.clear()
+        _loc30_prof, _rev30_prof = _connect_flow30(), _revoked30()
+        _google_state29.update(profile_status=None)
+        check(
+            "B16: a refused callback hands the grant it just received back to Google — missing_scope and "
+            "profile_failed each revoke the fresh token before redirecting",
+            _loc30_scope == "/settings?inbox=missing_scope" and "1//refused-scope-30" in _rev30_scope
+            and _loc30_prof == "/settings?inbox=profile_failed" and "1//profile-fail-30" in _rev30_prof,
+            f"{_loc30_scope} {_rev30_scope} | {_loc30_prof} {_rev30_prof}",
+        )
+        _google_state29.update(refresh="1//alice-30", profile="alice30@gmail.com")
+        _google_log29.clear()
+        _loc30_alice, _rev30_alice = _connect_flow30(), _revoked30()
+        check(
+            "B16: …while a connect that succeeds revokes nothing (the false-positive half)",
+            _loc30_alice == "/tracker?inbox=connected" and _rev30_alice == [],
+            f"{_loc30_alice} {_rev30_alice}",
+        )
+
+        # B8: reconnecting as another Google address.
+        _caught30 = int(_dt29.now(_tz29.utc).timestamp() * 1000) - 3_600_000
+        _mc30 = _mailbox30(_fr30["id"])
+        _mc30.cursor_ms, _mc30.window_lo_ms = _caught30, _caught30 + 1
+        _hdb30.commit()
+        _google_state29.update(refresh="1//alice-30b")
+        _google_log29.clear()
+        _loc30_same, _rev30_same = _connect_flow30(), _revoked30()
+        _mc30 = _mailbox30(_fr30["id"])
+        check(
+            "B8: reconnecting as the SAME Google address revokes nothing and keeps the import where it was (the "
+            "false-positive half)",
+            _loc30_same == "/tracker?inbox=connected" and _rev30_same == []
+            and (int(_mc30.cursor_ms), _mc30.email_address) == (_caught30, "alice30@gmail.com"),
+            f"{_loc30_same} {_rev30_same} {_mc30.cursor_ms} {_mc30.email_address}",
+        )
+        _google_state29.update(refresh="1//bob-30", profile="bob30@gmail.com")
+        _google_log29.clear()
+        _loc30_bob, _rev30_bob = _connect_flow30(), _revoked30()
+        _mc30 = _mailbox30(_fr30["id"])
+        _now30_ms = int(_dt29.now(_tz29.utc).timestamp() * 1000)
+        check(
+            "B8: reconnecting as a DIFFERENT Google address revokes the old address's grant and starts the new "
+            "mailbox's import from its own backfill depth — cursor and window reset",
+            _loc30_bob == "/tracker?inbox=connected" and _rev30_bob == ["1//alice-30b"]
+            and _mc30.email_address == "bob30@gmail.com" and _tk29.decrypt(_mc30.refresh_token_enc) == "1//bob-30"
+            and int(_mc30.cursor_ms or 0) == 0 and int(_mc30.backfill_days) == 30
+            and abs(int(_mc30.window_lo_ms) - (_now30_ms - 30 * _DAY29)) < 120_000,
+            f"{_loc30_bob} {_rev30_bob} {_mc30.email_address} cursor={_mc30.cursor_ms} lo={_mc30.window_lo_ms}",
+        )
+
+        # B17: never claim a revoke that did not happen.
+        _google_log29.clear()
+        _d30_ok = _w30.delete("/inbox/connection", headers=_FR30)
+        check(
+            "B17: DELETE /inbox/connection says google_revoked true when the grant really went back to Google (the "
+            "false-positive half)",
+            _d30_ok.status_code == 200 and _d30_ok.json().get("google_revoked") is True and _revoked30() == ["1//bob-30"],
+            f"{_d30_ok.text[:120]} {_revoked30()}",
+        )
+
+        def _stored_conn30(name, token):  # noqa: ANN001
+            u = _w30.post("/admin/users", json={"name": name}, headers=_ADMIN_H).json()
+            _hdb30.add(_MC29(user_id=u["id"], provider="gmail", email_address=f"u{u['id']}@gmail.test",
+                             status="active", refresh_token_enc=_tk29.encrypt(token), auto_sync=False))
+            _hdb30.commit()
+            return u
+
+        _k30_1 = _stored_conn30("FixB Keyless Disconnect", "1//keyless-30")
+        _k30_2 = _stored_conn30("FixB Keyless Wipe", "1//keyless-wipe-30")
+        _prev30_key = _env29(INBOX_TOKEN_KEY="")
+        try:
+            _google_log29.clear()
+            _d30_nokey = _w30.delete("/inbox/connection", headers={"X-App-Key": _k30_1["invite_code"]})
+            _wipe30_nokey = _w30.delete("/profile/data", headers={"X-App-Key": _k30_2["invite_code"]})
+            _rev30_nokey = _revoked30()
+        finally:
+            _restore29(_prev30_key)
+        _left30 = [uid for uid in (_k30_1["id"], _k30_2["id"]) if _mailbox30(uid) is not None]
+        check(
+            "B17: with INBOX_TOKEN_KEY missing, Disconnect and the privacy wipe still delete the stored grant — and say "
+            "google_revoked false instead of claiming a revoke that never happened",
+            _d30_nokey.status_code == 200 and _d30_nokey.json().get("disconnected") is True
+            and _d30_nokey.json().get("google_revoked") is False
+            and _wipe30_nokey.status_code == 200 and _wipe30_nokey.json().get("inbox_connections") == 1
+            and _wipe30_nokey.json().get("google_revoked") is False
+            and _rev30_nokey == [] and _left30 == [],
+            f"{_d30_nokey.text[:120]} | {_wipe30_nokey.text[:200]} | {_rev30_nokey} {_left30}",
+        )
+
+        # B19: the cron prunes the security log even when nobody signs in.
+        _now30 = _dt29.now(_tz29.utc)
+
+        def _session30(tag, *, expires_in_days, revoked_days_ago=None):  # noqa: ANN001
+            return _ASess28(
+                user_id=_fr30["id"], token_hash=f"fixb30-{tag}", created_at=_now30 - _td29(days=60),
+                last_used_at=_now30 - _td29(days=40), expires_at=_now30 + _td29(days=expires_in_days),
+                revoked_at=None if revoked_days_ago is None else _now30 - _td29(days=revoked_days_ago),
+                user_agent="probe", ip_hint="")
+
+        _hdb30.add_all([
+            _session30("revoked-31", expires_in_days=100, revoked_days_ago=31),
+            _session30("revoked-29", expires_in_days=100, revoked_days_ago=29),
+            _session30("expired-31", expires_in_days=-31),
+            _session30("live", expires_in_days=10),
+            _AEv28(kind="login", key="ip:fixb30-old", created_at=_now30 - _td29(days=31)),
+            _AEv28(kind="login", key="ip:fixb30-recent", created_at=_now30 - _td29(days=29)),
+        ])
+        _hdb30.commit()
+        _cron30 = _w30.get("/inbox/cron", headers={"Authorization": "Bearer smoke-cron-30"})
+        _hdb30.expire_all()
+        _sess30_left = sorted(_hdb30.execute(
+            _sel29(_ASess28.token_hash).where(_ASess28.token_hash.like("fixb30-%"))).scalars().all())
+        _ev30_left = sorted(_hdb30.execute(
+            _sel29(_AEv28.key).where(_AEv28.key.like("ip:fixb30-%"))).scalars().all())
+        check(
+            "B19: the inbox cron prunes the security log — sessions revoked or expired more than 30 days ago and auth "
+            "events older than 30 days go, with nobody signing in to trigger it",
+            _cron30.status_code == 200 and _sess30_left == ["fixb30-live", "fixb30-revoked-29"]
+            and _ev30_left == ["ip:fixb30-recent"],
+            f"{_cron30.status_code} {_sess30_left} {_ev30_left}",
+        )
+        check(
+            "B19: …while a live session and anything under 30 days old stays (the false-positive half)",
+            "fixb30-live" in _sess30_left and "fixb30-revoked-29" in _sess30_left and "ip:fixb30-recent" in _ev30_left,
+        )
+finally:
+    _go29._transport = None
+    _google_state29.clear()
+    _google_state29.update(_google_saved30)
+    _hdb30.close()
+    _restore29(_prev30_http)
+
+# --- 30e. Sentry: no secret and no mail content, ever (B2) -------------------------
+import sentry_sdk as _sentry30  # noqa: E402
+from sentry_sdk.transport import Transport as _SentryTransport30  # noqa: E402
+
+_sentry_events30: list[dict] = []
+
+
+class _CaptureTransport30(_SentryTransport30):
+    def capture_envelope(self, envelope):  # noqa: ANN001
+        for _item in envelope.items:
+            _event = _item.get_event()
+            if _event is not None:
+                _sentry_events30.append(_event)
+
+
+_secret30 = "sk-FIXB-PROBE-SECRET-123"
+_prev30_sentry = _env29(OPENAI_API_KEY=_secret30, CRON_SECRET="cron-FIXB-probe-secret")
+try:
+    from app.core import sentry_scrub as _scrub30  # noqa: E402
+
+    _scrub_opts30 = _scrub30.sentry_init_options(get_settings())
+except ImportError:
+    _scrub30 = None
+    _scrub_opts30 = {"send_default_pii": False, "max_request_body_size": "never", "traces_sample_rate": 0.0}
+_real_plan30 = _ia29.plan
+_r30_sentry = None
+_sentry30.init(**{**_scrub_opts30, "dsn": "https://public@o0.ingest.sentry.io/0", "environment": "smoke",
+                  "transport": _CaptureTransport30})
+_ic29.get_inbox_llm_client = lambda: _Counting29()
+try:
+    _u30e = _mint29(_db29, "FixB Sentry").id
+    _connect29(_u30e)
+    _box30e = _gm29.FakeMailbox([_fm29(
+        "se1", 2, "SECRET-SUBJECT-FIXB interview", "yael@kite.example", "Yael",
+        "SNIPPET-PRIVATE-FIXB Hi Dana, thanks for applying at Kite Labs. We would love to schedule an interview.")])
+
+    def _boom30(apps, verdict, received_at, threshold):  # noqa: ANN001
+        settings_in_frame = get_settings()  # every secret, in a frame variable
+        raise RuntimeError(f"probe failure beside SNIPPET-PRIVATE-FIXB ({len(str(settings_in_frame))})")
+
+    _ia29.plan = _boom30
+    _r30_sentry = _is29.sync_user(_db29, _u30e, mailbox=_box30e, budget_s=0)
+    _ia29.plan = _real_plan30
+    _sentry30.capture_message(f"probe message carrying {_secret30} beside ordinary words")
+    _sentry30.flush()
+finally:
+    _ia29.plan = _real_plan30
+    _ic29.get_inbox_llm_client = _real_inbox_client29
+    try:
+        _sentry30.get_client().close()
+    except Exception:  # noqa: BLE001 - teardown only
+        pass
+    _sentry30.init(dsn=None)
+    _restore29(_prev30_sentry)
+_dump30 = _json29.dumps(_sentry_events30, default=str)
+check(
+    "B2: a failed inbox sync reaches Sentry as an event that NAMES the failure — and carries no frame variables, no "
+    "email subject or snippet, and no configured secret",
+    _r30_sentry is not None and _r30_sentry.error_code == "internal"
+    and "inbox sync failed" in _dump30 and '"vars"' not in _dump30
+    and "SECRET-SUBJECT-FIXB" not in _dump30 and "SNIPPET-PRIVATE-FIXB" not in _dump30
+    and _secret30 not in _dump30 and "cron-FIXB-probe-secret" not in _dump30,
+    f"{_r30_sentry} events={len(_sentry_events30)} vars={'\"vars\"' in _dump30} "
+    f"subject={'SECRET-SUBJECT-FIXB' in _dump30} key={_secret30 in _dump30}",
+)
+check(
+    "B2: …before_send redacts a secret wherever it appears while the words around it survive (the false-positive half)",
+    any("ordinary words" in _json29.dumps(e, default=str) and "[redacted]" in _json29.dumps(e, default=str)
+        and _secret30 not in _json29.dumps(e, default=str) for e in _sentry_events30),
+    str([str(e.get("message") or e.get("logentry"))[:120] for e in _sentry_events30]),
+)
+_main30_tree = _ast29.parse(_Path29(_main28.__file__).read_text(encoding="utf-8"))
+_init30_calls = [
+    n for n in _ast29.walk(_main30_tree)
+    if isinstance(n, _ast29.Call) and isinstance(n.func, _ast29.Attribute) and n.func.attr == "init"
+    and isinstance(n.func.value, _ast29.Name) and n.func.value.id == "sentry_sdk"
+]
+_sync30_tree = _ast29.parse(_Path29(_is29.__file__).read_text(encoding="utf-8"))
+_sync30_exc = [
+    n for n in _ast29.walk(_sync30_tree)
+    if isinstance(n, _ast29.Call) and isinstance(n.func, _ast29.Attribute) and n.func.attr == "exception"
+] + [k for n in _ast29.walk(_sync30_tree) if isinstance(n, _ast29.Call) for k in n.keywords if k.arg == "exc_info"]
+check(
+    "B2: main.py initialises Sentry only through those options — include_local_variables=False and the redacting "
+    "before_send — and the inbox sync never logs a traceback (source-pinned through the AST)",
+    _scrub30 is not None and bool(_init30_calls)
+    and all(any(k.arg is None and isinstance(k.value, _ast29.Call)
+                and getattr(k.value.func, "id", "") == "sentry_init_options" for k in c.keywords)
+            for c in _init30_calls)
+    and _scrub_opts30.get("include_local_variables") is False
+    and _scrub_opts30.get("before_send") is getattr(_scrub30, "scrub_event", object())
+    and not _sync30_exc,
+    f"init calls {len(_init30_calls)} exception/exc_info in sync {len(_sync30_exc)}",
+)
+
+
+# ---------------------------------------------------------------------------
+# 31. Spec 07 — two owner requests. R1: an OPT-IN preference that leaves Arabic
+# off TAILORED resumes for jobs in Israel (removal only; the master is never
+# touched; a job that asks for Arabic keeps it; the changelog says why when it
+# stays). R2: numbers as digits in tailored prose, with the fabrication guard
+# re-run so a number the model invented IN WORDS is no longer invisible to it.
+# Every rule sits beside the false positive it must not fire on, and each key
+# defect was planted at runtime and watched turning these red.
+# ---------------------------------------------------------------------------
+import app.core.arabic_omit as _ao31  # noqa: E402
+import app.core.jd_analyzer as _jda31  # noqa: E402
+import app.core.job_market as _jm31  # noqa: E402
+import app.core.numerals as _num31  # noqa: E402
+import app.core.tailor as _t31  # noqa: E402
+import app.llm.prompts as _pr31  # noqa: E402
+from sqlalchemy import select as _sel31  # noqa: E402
+
+from app.core.kits import process_next_kit as _pnk31  # noqa: E402
+from app.db.models import TailorKit as _TK31, User as _U31  # noqa: E402
+from app.models import JDModel as _JD31, TailorResult as _TR31  # noqa: E402
+
+# --- 31a. Is this job in Israel? (pure) -------------------------------------------
+_im31 = _jm31.israel_market
+check(
+    "R1 market: an Israeli city names Israel, while 'lodging', 'exploded' and 'melody' (Lod's letters) do not — "
+    "Latin tokens are bounded",
+    _im31("Senior engineer, offices in Lod") is True
+    and _im31("Lodging allowance, exploded-view drawings, melody-driven UX") is None,
+)
+check(
+    "R1 market: a Hebrew token matches BEHIND a prefix (בתל אביב) and a Hebrew posting is Israel — while a Latin "
+    "posting that names no place is UNKNOWN, never 'not Israel'",
+    _im31("", "בתל אביב") is True and _im31("anything", "", "he") is True
+    and _im31("Remote-friendly Python role") is None,
+)
+check(
+    "R1 market: the location hint alone places a job, another country is False, and an Israel token beside another "
+    "country wins (curly apostrophe spelling included)",
+    _im31("Backend engineer", "Herzliya") is True and _im31("Backend engineer", "Berlin, Germany") is False
+    and _im31("Offices in London and Tel Aviv") is True and _im31("Backend role, Ra’anana") is True,
+)
+check(
+    "R1 market: 'us' the pronoun is not the United States; 'US' the country code is",
+    _im31("Join us and help us grow") is None and _im31("Remote, US only") is False,
+)
+
+
+class _MarketLiar31:
+    """ANALYZE_JD answers claiming market IL — the stamp must overwrite it."""
+
+    def complete_json(self, system: str, user: str):
+        return {"job_title": "Backend Engineer", "market": "IL", "hard_skills": ["Python"]}
+
+    def complete_text(self, system: str, user: str):
+        return ""
+
+
+_jda31_real = _jda31.get_llm_client
+_jda31.get_llm_client = lambda: _MarketLiar31()
+try:
+    _m31_silent = _jda31.analyze_jd("Backend engineer. Python and SQL.").market
+    _m31_he = _jda31.analyze_jd("מפתח/ת Python לצוות backend").market
+    _m31_loc = _jda31.analyze_jd("Backend engineer. Python and SQL.", location="Tel Aviv").market
+    _m31_abroad = _jda31.analyze_jd("Backend engineer in Berlin, Germany.").market
+finally:
+    _jda31.get_llm_client = _jda31_real
+check(
+    "R1 market: analyze_jd stamps it AUTHORITATIVELY — a silent JD is '' even when the model said IL; Hebrew -> IL; "
+    "the location hint -> IL; abroad -> 'other'",
+    (_m31_silent, _m31_he, _m31_loc, _m31_abroad) == ("", "IL", "IL", "other"),
+    str((_m31_silent, _m31_he, _m31_loc, _m31_abroad)),
+)
+_st31 = [_JD31(market=m) for m in ("IL", "other", "", "other")]
+_jm31.stamp_market(_st31[0], "Berlin, Germany", "")
+_jm31.stamp_market(_st31[1], "Backend engineer", "Tel Aviv")
+_jm31.stamp_market(_st31[2], "Backend engineer", "Berlin")
+_jm31.stamp_market(_st31[3], "Backend engineer", "")
+check(
+    "R1 market: stamp_market only UPGRADES — IL is never overwritten, a location naming Israel beats 'other', an "
+    "unknown takes what the location says, and a known 'other' is not downgraded by a silent location",
+    [j.market for j in _st31] == ["IL", "IL", "other", "other"],
+    str([j.market for j in _st31]),
+)
+
+# --- 31b. Numbers as digits (pure) --------------------------------------------------
+_d31 = _num31.digits_in_text
+_num31_pos = {
+    "five years of Python": "5 years of Python",
+    "Led a team of fifteen engineers": "Led a team of 15 engineers",
+    "One year at Acme": "1 year at Acme",
+    "twenty-five developers": "25 developers",
+    "five+ years": "5+ years",
+    "a two-week sprint": "a 2-week sprint",
+    "cut costs by twenty percent": "cut costs by 20%",
+    "Five APIs shipped": "5 APIs shipped",
+}
+_num31_neg = [
+    "one of the first hires", "no one else", "one-on-one mentoring", "two of the teams",
+    "one or two engineers", "between two and five years", "more than five", "two-thirds of revenue",
+    "five hundred customers", "twenty five years", "nine-to-five", "the Seven Bridges project",
+    "Three Pillars framework", "we were five.",
+]
+_num31_bad_pos = {k: _d31(k, "en") for k, v in _num31_pos.items() if _d31(k, "en") != (v, 1)}
+_num31_bad_neg = {k: _d31(k, "en") for k in _num31_neg if _d31(k, "en") != (k, 0)}
+check(
+    "R2 numerals (en): cardinals and hyphenated compounds convert before a noun, keeping + / -week / percent",
+    not _num31_bad_pos, str(_num31_bad_pos),
+)
+check(
+    "R2 numerals (en): the false positives stay words — 'one of the', a proper noun, a compound it cannot read whole "
+    "('one or two', 'twenty five'), a fraction and 'hundred'",
+    not _num31_bad_neg, str(_num31_bad_neg),
+)
+_num31_he_pos = {"חמש שנות ניסיון": "5 שנות ניסיון", "ניהול שלושה צוותים": "ניהול 3 צוותים"}
+_num31_he_neg = ["שבע רצון מהלקוחות", "שש לעזור", "חמש עשרה שנים", "בשלוש שנים", "שנתיים ניסיון"]
+check(
+    "R2 numerals (he): 2-10 convert only as a standalone word before an allowlisted noun — שבע/שש as ordinary words, "
+    "'חמש עשרה' (fifteen), a prefixed form and שנתיים are untouched",
+    all(_d31(k, "he") == (v, 1) for k, v in _num31_he_pos.items())
+    and all(_d31(k, "he") == (k, 0) for k in _num31_he_neg),
+    str({k: _d31(k, "he") for k in [*_num31_he_pos, *_num31_he_neg]}),
+)
+_num31_all = [*_num31_pos, *_num31_neg, *_num31_he_pos, *_num31_he_neg]
+check(
+    "R2 numerals: idempotent — a second pass over every converted string changes nothing",
+    all(_d31(_d31(s, "")[0], "") == (_d31(s, "")[0], 0) for s in _num31_all),
+)
+
+# --- 31c. Arabic: which entries, which sentences (pure) -----------------------------
+check(
+    "R1 omit: an entry that IS the language is recognised with a level or dialect word beside it, in three scripts — "
+    "while 'Arabic translation', 'Judeo-Arabic' and a two-language entry are not whole entries to delete",
+    all(_ao31.is_arabic_name(s) for s in ("Arabic", "arabic (native)", "Arab", "ערבית – שפת אם", "العربية", "Spoken Arabic"))
+    and not any(_ao31.is_arabic_name(s) for s in ("Arabic translation", "Judeo-Arabic", "Hebrew, Arabic", "Hebrew")),
+)
+check(
+    "R1 omit: a list of languages loses Arabic cleanly (en and he); a sentence that is not a list ('between Arabic "
+    "and Hebrew') is left exactly as written; 'United Arab Emirates' is a place, not a mention",
+    _ao31.strip_list_forms("Fluent in Hebrew, English and Arabic.") == "Fluent in Hebrew, English."
+    and _ao31.strip_list_forms("Arabic, Hebrew and English") == "Hebrew and English"
+    and _ao31.strip_list_forms("דובר עברית, אנגלית וערבית") == "דובר עברית, אנגלית"
+    and _ao31.strip_list_forms("Translated contracts between Arabic and Hebrew")
+    == "Translated contracts between Arabic and Hebrew"
+    and not _ao31.mentions_arabic("Shipped to the United Arab Emirates and Saudi Arabia"),
+)
+check(
+    "R1 omit: a job asks for Arabic when any requirement, preference, keyword, qualification or responsibility names "
+    "it — and a job selling into Saudi Arabia does not",
+    _ao31.jd_asks_for_arabic(_JD31(hard_skills=["Arabic"]))
+    and _ao31.jd_asks_for_arabic(_JD31(qualifications=["ערבית ברמה גבוהה"]))
+    and not _ao31.jd_asks_for_arabic(_JD31(responsibilities=["Grow our Saudi Arabia market"])),
+)
+_ao31_in = ResumeModel(
+    skills=["Python", "Arabic"],
+    skill_groups=[{"label": "Backend", "items": ["Python"]}, {"label": "Languages", "items": ["Arabic"]}],
+    languages=[{"language": "Hebrew", "level": "native"}, {"language": "Arabic", "level": "fluent"}],
+)
+_ao31_before = _ao31_in.model_dump()
+_ao31_out, _ao31_removed, _ao31_left = _ao31.omit_arabic(_ao31_in)
+_ao31_round = ResumeModel.model_validate(_ao31_out.model_dump())
+check(
+    "R1 omit: removal is a TWO-FIELD write — Arabic leaves skills AND skill_groups, so a round trip through "
+    "ResumeModel's union validator does not resurrect it; the input is not mutated",
+    _ao31_removed and not _ao31_left
+    and "Arabic" not in _ao31_round.skills
+    and all("Arabic" not in g.items for g in _ao31_round.skill_groups)
+    and [lang.language for lang in _ao31_round.languages] == ["Hebrew"]
+    and _ao31_in.model_dump() == _ao31_before,
+    f"skills={_ao31_round.skills} groups={[g.items for g in _ao31_round.skill_groups]}",
+)
+_ao31_clean = ResumeModel(skills=["Python"], languages=[{"language": "Hebrew"}])
+check(
+    "R1 omit: a resume that never mentions Arabic comes back as the SAME object",
+    _ao31.omit_arabic(_ao31_clean)[0] is _ao31_clean,
+)
+
+# --- 31d. The prompt ----------------------------------------------------------------
+_pr31_kw = dict(plan_json='{"p":1}', avoid_phrases=["synergy"], max_pages=2, source_pages=3, source_projects=4)
+_pr31_default = _pr31.tailor_user("{}", "{}", **_pr31_kw)
+_pr31_off = _pr31.tailor_user("{}", "{}", **_pr31_kw, omit_arabic=False)
+_pr31_on = _pr31.tailor_user("{}", "{}", **_pr31_kw, omit_arabic=True)
+check(
+    "R1 prompt: omit_arabic=False builds the BYTE-IDENTICAL TAILOR message; True adds the instruction and nothing else",
+    _pr31_off == _pr31_default and "Arabic" not in _pr31_default
+    and "do not mention the Arabic language" in _pr31_on
+    and _pr31_on.startswith(_pr31_default[: _pr31_default.index("Produce the tailored resume")])
+    and _pr31_on.endswith("Produce the tailored resume per the rules."),
+)
+
+# --- 31e. Inside tailor_resume ------------------------------------------------------
+_M31 = ResumeModel.model_validate({
+    "contact": {"name": "Samar Haddad", "email": "samar@example.com", "location": "Haifa"},
+    "headline": "Backend Engineer",
+    "summary": "Backend engineer fluent in Hebrew, English and Arabic.",
+    "skills": ["Python", "SQL", "two-factor authentication", "Arabic"],
+    "skill_groups": [
+        {"label": "Backend", "items": ["Python", "SQL", "two-factor authentication"]},
+        {"label": "Languages", "items": ["Arabic"]},
+    ],
+    "experience": [{
+        "company": "Acme Corp", "title": "Engineer, two squads", "start_date": "2019", "end_date": "Present",
+        "bullets": [
+            "Built Python services used by five teams.",
+            "Translated API contracts between Arabic and Hebrew for partners.",
+        ],
+    }],
+    "languages": [
+        {"language": "Hebrew", "level": "native"},
+        {"language": "English", "level": "fluent"},
+        {"language": "Arabic", "level": "native"},
+    ],
+})
+_M31_DUMP = _M31.model_dump()
+_JD31_BASE = dict(job_title="Backend Engineer", hard_skills=["Python", "SQL"], keywords=["Python", "SQL"])
+_jd31_il = _JD31(**_JD31_BASE, market="IL")
+_jd31_other = _JD31(**_JD31_BASE, market="other")
+_jd31_unknown = _JD31(**_JD31_BASE, market="")
+_jd31_asks = _JD31(**{**_JD31_BASE, "preferred_skills": ["Arabic"]}, market="IL")
+_seen31: list[str] = []
+
+
+class _Echo31:
+    """TAILOR echoes the master (plus `extra` bullets); every other task is the stub."""
+
+    def __init__(self, inner, extra=()):  # noqa: ANN001
+        self._inner, self._extra = inner, list(extra)
+
+    def complete_json(self, system: str, user: str):
+        if not system.startswith("Task: TAILOR."):
+            return self._inner.complete_json(system, user)
+        _seen31.append(user)
+        body = _M31.model_dump()
+        body["experience"][0]["bullets"] += self._extra
+        return {"tailored_resume": body, "changelog": [], "covered_keywords": []}
+
+    def complete_text(self, system: str, user: str):
+        return self._inner.complete_text(system, user)
+
+
+def _tailor31(jd, extra=(), **kw):  # noqa: ANN001
+    real = _t31.get_llm_client
+    _t31.get_llm_client = lambda: _Echo31(real(), extra)
+    try:
+        return _t31.tailor_resume(_M31, jd, **kw)
+    finally:
+        _t31.get_llm_client = real
+
+
+def _langs31(res):  # noqa: ANN001
+    return [lang.language for lang in res.tailored_resume.languages]
+
+
+def _arabic_notes31(res):  # noqa: ANN001
+    return [c for c in res.changelog if "Arabic" in c.change]
+
+
+_r31_default = _tailor31(_jd31_il)
+_r31_off = _tailor31(_jd31_il, hide_arabic_in_israel=False)
+_r31_on = _tailor31(_jd31_il, hide_arabic_in_israel=True)
+_r31_asks = _tailor31(_jd31_asks, hide_arabic_in_israel=True)
+_r31_other_plain = _tailor31(_jd31_other)
+_r31_other = _tailor31(_jd31_other, hide_arabic_in_israel=True)
+_r31_unknown = _tailor31(_jd31_unknown, hide_arabic_in_israel=True)
+_p31_default, _p31_off, _p31_on, _p31_asks, _p31_other_plain, _p31_other, _p31_unknown = _seen31[-7:]
+
+check(
+    "R1 prompt, driven: with the preference off — or on, for a job abroad — the TAILOR message is byte-identical to "
+    "the call that never passed it; on + Israel carries the instruction",
+    len(_seen31) >= 7 and _p31_off == _p31_default and _p31_other == _p31_other_plain
+    and "Arabic language" not in _p31_default and "do not mention the Arabic language" in _p31_on,
+)
+check(
+    "R1 default OFF: an Israeli job with the preference untouched ships Arabic, with no Arabic note in the changelog",
+    "Arabic" in _langs31(_r31_default) and "Arabic" in _r31_default.tailored_resume.skills
+    and not _arabic_notes31(_r31_default) and not _arabic_notes31(_r31_off),
+    str(_langs31(_r31_default)),
+)
+_on31 = _r31_on.tailored_resume
+_on31_notes = _arabic_notes31(_r31_on)
+check(
+    "R1 on + Israel + a silent job: Arabic leaves languages, skills AND skill_groups; 'Left Arabic off' names the "
+    "Settings choice and the master; the master resume is byte-for-byte unchanged",
+    "Arabic" not in _langs31(_r31_on) and "Hebrew" in _langs31(_r31_on)
+    and "Arabic" not in _on31.skills and all("Arabic" not in g.items for g in _on31.skill_groups)
+    and any(c.change == "Left Arabic off" and c.section == "languages" and "(Settings)" in c.reason
+            and "master resume still lists it" in c.reason for c in _on31_notes)
+    and _M31.model_dump() == _M31_DUMP,
+    f"langs={_langs31(_r31_on)} skills={_on31.skills} groups={[g.items for g in _on31.skill_groups]}",
+)
+check(
+    "R1 on + Israel: the prose LIST form is removed cleanly, while the non-list mention is REPORTED by section and "
+    "left word-for-word as the model wrote it",
+    _on31.summary == "Backend engineer fluent in Hebrew, English."
+    and "Translated API contracts between Arabic and Hebrew for partners." in _on31.experience[0].bullets
+    and any(c.change.startswith("Arabic is still mentioned in your experience") and "edit it before sending" in c.change
+            for c in _on31_notes),
+    f"summary={_on31.summary!r} notes={[c.change for c in _on31_notes]}",
+)
+check(
+    "R1 on + a job that ASKS for Arabic: it stays, and the changelog says 'this job asks for it'",
+    "Arabic" in _langs31(_r31_asks)
+    and [c.change for c in _arabic_notes31(_r31_asks)] == ["Arabic kept: this job asks for it"],
+    str([c.change for c in _arabic_notes31(_r31_asks)]),
+)
+check(
+    "R1 on + a job known to be ABROAD: Arabic stays and nothing is said — there was nothing to decide",
+    "Arabic" in _langs31(_r31_other) and not _arabic_notes31(_r31_other),
+    str([c.change for c in _arabic_notes31(_r31_other)]),
+)
+check(
+    "R1 on + an UNKNOWN market: Arabic stays, and the changelog says we couldn't tell — so the owner can remove it by hand",
+    "Arabic" in _langs31(_r31_unknown)
+    and [c.change for c in _arabic_notes31(_r31_unknown)] == ["Arabic kept: we couldn't tell this job is in Israel"],
+    str([c.change for c in _arabic_notes31(_r31_unknown)]),
+)
+check(
+    "R1 on + Israel for a resume with NO Arabic: no note at all (a 'Left Arabic off' there would describe nothing)",
+    not _arabic_notes31(_t31.tailor_resume(resume, _JD31(**_JD31_BASE, market="IL"), hide_arabic_in_israel=True)),
+)
+
+# R2, driven. The master says "five teams"; the model also invents "fifteen engineers" in words.
+_l31 = build_facts_ledger(_M31)
+_l31_before = _l31.model_dump()
+_r31_num = _tailor31(_jd31_other, extra=["Led fifteen engineers across the platform."], ledger=_l31)
+_num31_doc = _r31_num.tailored_resume
+_num31_flags = [f.value for f in _r31_num.fabrication_flags if f.category == "number"]
+check(
+    "R2 in tailor_resume: tailored prose is written in digits, and the changelog counts them under the first section touched",
+    "Built Python services used by 5 teams." in _num31_doc.experience[0].bullets
+    and "Led 15 engineers across the platform." in _num31_doc.experience[0].bullets
+    and any(c.change == "Wrote 2 numbers as digits" and c.section == "experience"
+            and "'5 years' reads faster than 'five years'" in c.reason for c in _r31_num.changelog),
+    str([c.change for c in _r31_num.changelog if "digit" in c.change]),
+)
+check(
+    "R2 guard: a number the model invented IN WORDS is flagged once it is a digit ('15')",
+    any("15" in v for v in _num31_flags), str(_num31_flags),
+)
+check(
+    "R2 guard, the false-positive half: the candidate's own 'five teams' shipped as '5 teams' raises NO flag — "
+    "while the unextended ledger WOULD flag it, so the extension is what clears it",
+    not any(v.strip() == "5" or "5 teams" in v for v in _num31_flags)
+    and any(f.category == "number" and f.value.strip() == "5" for f in check_fabrication(_num31_doc, _l31)),
+    str(_num31_flags),
+)
+check(
+    "R2 scope: titles, skills and the master are untouched, and the ledger passed in is never mutated",
+    _num31_doc.experience[0].title == "Engineer, two squads"
+    and "two-factor authentication" in _num31_doc.skills
+    and _l31.model_dump() == _l31_before and _M31.model_dump() == _M31_DUMP,
+)
+
+# --- 31f. Over HTTP: the preference, /tailor, /jd/analyze, kits, the wipe ----------------
+with TestClient(_fastapi_app) as _tc31:
+    _u31 = _tc31.post("/admin/users", json={"name": "Samar31"}, headers=_ADMIN_H).json()
+    _H31 = {"X-App-Key": _u31["invite_code"]}
+    _g31_0 = _tc31.get("/profile/resume-prefs", headers=_H31)
+    _p31 = _tc31.put("/profile/resume-prefs", json={"hide_arabic_in_israel": True}, headers=_H31)
+    _g31_1 = _tc31.get("/profile/resume-prefs", headers=_H31)
+    check(
+        "R1 prefs route: OFF by default for a new user, PUT turns it on, GET reads it back",
+        _g31_0.status_code == 200 and _g31_0.json() == {"hide_arabic_in_israel": False}
+        and _p31.status_code == 200 and _g31_1.json() == {"hide_arabic_in_israel": True},
+        f"{_g31_0.text} {_p31.text} {_g31_1.text}",
+    )
+
+    _real31 = _t31.get_llm_client
+    _t31.get_llm_client = lambda: _Echo31(_real31())
+    try:
+        _tr31 = _tc31.post("/tailor", json={"resume": _M31.model_dump(), "jd": _jd31_il.model_dump()}, headers=_H31)
+    finally:
+        _t31.get_llm_client = _real31
+    check(
+        "R1 /tailor reads the STORED preference: an Israeli job's tailored resume comes back without Arabic",
+        _tr31.status_code == 200
+        and "Arabic" not in [lang["language"] for lang in _tr31.json()["tailored_resume"]["languages"]]
+        and any(c["change"] == "Left Arabic off" for c in _tr31.json()["changelog"]),
+        _tr31.text[:200],
+    )
+    _an31_loc = _tc31.post("/jd/analyze", json={"jd_text": "Python backend engineer.", "location": "Tel Aviv"},
+                           headers=_H31)
+    _an31_none = _tc31.post("/jd/analyze", json={"jd_text": "Python backend engineer."}, headers=_H31)
+    check(
+        "R1 POST /jd/analyze takes an optional location: with 'Tel Aviv' the stamp is IL, without it unknown",
+        _an31_loc.status_code == 200 and _an31_loc.json().get("market") == "IL"
+        and _an31_none.status_code == 200 and _an31_none.json().get("market") == "",
+        f"{_an31_loc.text[:80]} | {_an31_none.text[:80]}",
+    )
+
+    # Kits: the stored location stamps the market AFTER the one-argument analyze
+    # call, and the user's preference reaches tailor_fn as a keyword.
+    _tc31.put("/profile/resume", json={"resume": _M31.model_dump(), "label": "Samar CV"}, headers=_H31)
+    _db31 = SessionLocal()
+    try:
+        _urow31 = _db31.execute(_sel31(_U31).where(_U31.invite_code == _u31["invite_code"])).scalars().first()
+        _db31.add_all([
+            _TK31(user_id=_urow31.id, status="queued", job_title="IL", url="https://kit31.test/il",
+                  location="Tel Aviv", jd_text="Python developer."),
+            _TK31(user_id=_urow31.id, status="queued", job_title="DE", url="https://kit31.test/de",
+                  location="Berlin, Germany", jd_text="Python developer."),
+        ])
+        _db31.commit()
+        _kit31_seen: list[tuple[str, object]] = []
+
+        def _kit31_tailor(resume, jd, ledger=None, **kw):  # noqa: ANN001 - tailor_resume's shape
+            _kit31_seen.append((jd.market, kw.get("hide_arabic_in_israel")))
+            return _TR31(tailored_resume=resume)
+
+        _pnk31(_db31, _urow31, analyze_fn=lambda t: _JD31(job_title="x"), tailor_fn=_kit31_tailor)
+        _pnk31(_db31, _urow31, analyze_fn=lambda t: _JD31(job_title="x"), tailor_fn=_kit31_tailor)
+    finally:
+        _db31.close()
+    check(
+        "R1 kits: a one-argument AnalyzeFn fake still works, the kit's stored location stamps IL / 'other', and the "
+        "stored preference reaches tailor_fn as hide_arabic_in_israel",
+        _kit31_seen == [("IL", True), ("other", True)],
+        str(_kit31_seen),
+    )
+
+    _tc31.request("DELETE", "/profile/data", headers=_H31)
+    _db31 = SessionLocal()
+    try:
+        _col31 = _db31.execute(_sel31(_U31.resume_prefs_json).where(_U31.invite_code == _u31["invite_code"])).scalar()
+    finally:
+        _db31.close()
+    check(
+        "R1 the privacy wipe clears the preference (it implies ethnicity) — armed first, then read back OFF, column empty",
+        _g31_1.json() == {"hide_arabic_in_israel": True}
+        and _tc31.get("/profile/resume-prefs", headers=_H31).json() == {"hide_arabic_in_israel": False}
+        and _col31 == "",
+        repr(_col31),
+    )
+
+# Source pins: both modules are deterministic — parsed, not grepped, because each
+# docstring NAMES what it refuses.
+import ast as _ast31  # noqa: E402
+import inspect as _insp31  # noqa: E402
+
+
+def _imports31(mod):  # noqa: ANN001
+    tree = _ast31.parse(_insp31.getsource(mod))
+    names = set()
+    for n in _ast31.walk(tree):
+        if isinstance(n, _ast31.Import):
+            names |= {p for a in n.names for p in a.name.split(".")}
+        elif isinstance(n, _ast31.ImportFrom):
+            names |= set((n.module or "").split(".")) | {a.name for a in n.names}
+    return names
+
+
+_forbid31 = {"llm", "client", "get_llm_client", "urllib", "requests", "httpx", "socket", "openai", "datetime", "time"}
+check(
+    "R1/R2 source pins: job_market, arabic_omit and numerals import no model, no network and no clock (AST)",
+    all(not (_imports31(m) & _forbid31) for m in (_jm31, _ao31, _num31)),
+    str({m.__name__: sorted(_imports31(m) & _forbid31) for m in (_jm31, _ao31, _num31)}),
+)
 
 _reached_end = True
 print(f"\n{_ran} checks ran.")

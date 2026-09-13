@@ -56,6 +56,7 @@ from app.core.interview import (
     session_scorecard,
 )
 from app.core.jd_analyzer import analyze_jd
+from app.core.job_market import stamp_market
 from app.core.scorer import analyze_and_score, keyword_analysis
 from app.core.job_match import fetch_job_text, match_jobs
 from app.core.outreach import generate_outreach
@@ -71,6 +72,7 @@ from app.core.tailor import tailor_resume
 from app.core.usage import check_and_count, record_tokens
 from app.llm.metering import TokenTally, bind
 from app.core import writing_prefs as writing_prefs_core
+from app.core import resume_prefs as resume_prefs_core
 from app.db.comeet import list_companies as list_comeet_companies
 from app.db.database import SessionLocal, get_db
 from app.db.greenhouse import list_companies as list_greenhouse_companies
@@ -193,6 +195,7 @@ from app.models import (
     StaleApplicationList,
     TailorRequest,
     TailorResult,
+    ResumePrefs,
     WritingPrefsIn,
     WritingPrefsOut,
     UserCreate,
@@ -261,7 +264,9 @@ def jd_analyze(body: JDAnalyzeRequest, _u: User = Depends(llm_user)) -> JDModel:
     if not body.jd_text.strip():
         raise HTTPException(400, "Job description text is empty.")
     try:
-        return analyze_jd(body.jd_text)
+        # One argument, then the location re-stamp: `analyze_jd` is injected
+        # with that one-argument shape by the smoke suite's metering fake.
+        return stamp_market(analyze_jd(body.jd_text), body.jd_text, body.location)
     except _SIZE_ERRORS:
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
@@ -279,11 +284,32 @@ def tailor(
         return tailor_resume(
             body.resume, body.jd,
             avoid_phrases=writing_prefs_core.avoid_phrases(user),
+            hide_arabic_in_israel=resume_prefs_core.hide_arabic_in_israel(user),
         )
     except _SIZE_ERRORS:
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM error while tailoring resume: {e}")
+
+
+@router.get("/profile/resume-prefs", response_model=ResumePrefs)
+def get_resume_prefs(user: User = Depends(current_user)) -> ResumePrefs:
+    """The user's resume preferences (spec 07 / R1). Every switch OFF by default.
+    Plain `current_user`: nothing here reaches a model."""
+    return resume_prefs_core.load(user)
+
+
+@router.put("/profile/resume-prefs", response_model=ResumePrefs)
+def update_resume_prefs(
+    body: ResumePrefs,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ResumePrefs:
+    """Full replace. Applies to the NEXT tailor; never rewrites a stored kit,
+    tracker row or the master resume."""
+    user.resume_prefs_json = resume_prefs_core.dump(body)
+    db.commit()
+    return resume_prefs_core.load(user)
 
 
 @router.get("/profile/writing-prefs", response_model=WritingPrefsOut)
@@ -1787,12 +1813,17 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
     # `DeleteMyDataResult` is unchanged and both doors get this for free.
     user.search_prefs_json = ""
     user.writing_prefs_json = ""
+    # Spec 07 / R1: "leave Arabic off for jobs in Israel" implies the user's
+    # ethnicity. Same column-not-row rule as the two above.
+    user.resume_prefs_json = ""
 
     # Gmail (Phase 29 / B2): the stored grant goes back to Google FIRST, best
     # effort, so a wipe ends the access rather than only forgetting it — and then
     # the connection row (the encrypted grant) and every detected email go with
     # the rest. `inbox_sync_core.revoke_stored_grant` never raises.
-    inbox_sync_core.revoke_stored_grant(inbox_sync_core.connection_for(db, user.id))
+    # FIXB B17: the result REPORTS whether that revoke happened, so a wipe with
+    # an unreadable token never reads as a grant handed back.
+    google_revoked = inbox_sync_core.revoke_stored_grant(inbox_sync_core.connection_for(db, user.id))
 
     return DeleteMyDataResult(
         resumes=_wipe(SavedResume),
@@ -1805,6 +1836,7 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
         kits=_wipe(TailorKit),
         inbox_events=_wipe(MailEvent),
         inbox_connections=_wipe(MailConnection),
+        google_revoked=google_revoked,
     )
 
 
@@ -1872,6 +1904,12 @@ def close_my_account(
         )
     result = _wipe_user_rows(db, user)
     user.is_active = False
+    # FIXB B14: the row stays (a deactivated id and its dead code are what the
+    # design needs), but the name and the sign-in address go with the account —
+    # the privacy page says closing deletes the sign-in details, and the auth
+    # events are HMAC-keyed precisely so a closed account leaves no plain email.
+    user.name = ""
+    user.email = ""
     accounts_core.purge_on_close(db, user.id)
     db.commit()  # one transaction: never wiped-but-still-open
     clear_session_cookie(response, request)

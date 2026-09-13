@@ -21,7 +21,13 @@ critique found in the first draft:
 - **A reset on an UNVERIFIED account is a safe takeover** (A2), because such an
   account can only be an email signup holding no other credential. The reset
   revokes every session AND rotates the extension key, so whoever registered the
-  address before its owner keeps nothing.
+  address before its owner keeps nothing. Since the Phase 29 review (FIXB B1)
+  the key is rotated on EVERY reset, password change and "sign out other
+  devices" of a self-registered account, verified or not: the key is a full
+  credential with no expiry, so a squatter who got an account verified, or
+  anyone who held a session once, otherwise kept it through all three. And a
+  verify LINK only verifies from a live session of the SAME account, so a
+  victim clicking "Confirm" on a squatter's signup proves nothing.
 - **Signup never merges** (A3). An unverified login with the same password is a
   sign-in; any other password is `email_taken`.
 - **Brute-force limits survive closing the account** (A7) — see auth_throttle.
@@ -39,6 +45,7 @@ import re
 import secrets
 import unicodedata
 from datetime import datetime, timedelta
+from email.utils import parseaddr
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
@@ -76,6 +83,13 @@ _TOKEN_MAX_LEN = 128
 # A plausible address, not RFC 5322: one @, no whitespace, a dotted domain with
 # a tail of 2+ characters. Whether it is DELIVERABLE is what the code proves.
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s.]{2,}$")
+# FIXB B7: any of these makes the string something other than ONE plain
+# addr-spec — a display name (`x<victim@y.com>`), a list (`a,b@y.com`), a quoted
+# local part, a comment or a domain literal. Each is a different string to the
+# unique index and the per-address budgets while SMTP delivers it to the same
+# inbox, so none of them may be an account's address.
+_EMAIL_FORBIDDEN = frozenset('<>()[],;:"\\')
+_EMAIL_MAX = 254
 
 
 class AuthError(Exception):
@@ -100,11 +114,13 @@ def normalize_email(email: str | None) -> str:
 
 
 def valid_email(email: str) -> bool:
-    return (
-        len(email) <= 320
-        and bool(_EMAIL_RE.match(email))
-        and not any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in email)
-    )
+    """Exactly one plain addr-spec: at most 254 characters, one @, no whitespace
+    or structural punctuation, and `parseaddr` reading back the same string."""
+    if not email or len(email) > _EMAIL_MAX or email.count("@") != 1:
+        return False
+    if any(ch.isspace() or ch in _EMAIL_FORBIDDEN or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in email):
+        return False
+    return parseaddr(email)[1] == email and bool(_EMAIL_RE.match(email))
 
 
 def signup_open() -> bool:
@@ -318,11 +334,29 @@ def _verify_mail_slot(
     return False
 
 
-def _notify_password_changed(db: Session, request: Request, email: str, locale: str, user_id: int) -> None:
+def _notify_password_changed(
+    db: Session, request: Request, email: str, locale: str, user_id: int, *, key_rotated: bool = False
+) -> None:
     try:
-        auth_email.send_password_changed(db, request, email, locale=locale, user_id=user_id)
+        auth_email.send_password_changed(db, request, email, locale=locale, user_id=user_id,
+                                         key_rotated=key_rotated)
     except auth_email.EmailUnavailable:
         pass  # a notice is best-effort: the change it describes has already happened
+
+
+def _rotate_extension_key(user: User | None) -> bool:
+    """Replace a self-registered account's extension key (no commit). True when
+    it was replaced.
+
+    FIXB B1: the key IS `users.invite_code`, a full X-App-Key credential with no
+    expiry, so ending sessions alone leaves anyone who once read it holding the
+    account. An invite-code account (signup_source "") is exempt — that code was
+    handed over by the admin and is the user's only way in — and so is the admin,
+    whose code `ensure_admin` rewrites from APP_ACCESS_CODE on every cold start."""
+    if user is None or user.is_admin or not (user.signup_source or ""):
+        return False
+    user.invite_code = new_invite_code()
+    return True
 
 
 # --- flows -------------------------------------------------------------------------
@@ -462,10 +496,14 @@ def logout(db: Session, request: Request) -> None:
 def verify(db: Session, request: Request, *, token: str = "", code: str = "") -> tuple[bool, bool]:
     """(verified, signed_in).
 
-    A LINK needs no session and never mints one: mail security scanners open
-    links before the owner does, so a link that signed its opener in would hand
-    the account to the scanner. The tab that signed up polls /auth/me and
-    continues on its own. A CODE needs that pending session.
+    A LINK never mints a session: mail security scanners open links before the
+    owner does, so a link that signed its opener in would hand the account to
+    the scanner. And since FIXB B1 a link verifies ONLY from a live session of
+    the same account: otherwise a squatter who signs up with someone else's
+    address has that person's click on "Confirm my email" verify the squatter's
+    account. Opened anywhere else it is 400 session_required, and the page tells
+    the reader to enter the 6-digit code on the device where they signed up. A
+    CODE needs that pending session too.
     """
     now = utc_now()
     if token:
@@ -478,15 +516,17 @@ def verify(db: Session, request: Request, *, token: str = "", code: str = "") ->
 def _verify_link(db: Session, request: Request, raw: str, now: datetime) -> tuple[bool, bool]:
     row = _token_by_raw(db, raw, VERIFY)
     login, user = _account_for(db, row)
+    user_id = user.id
+    if getattr(request.state, "user_id", None) != user_id:
+        raise AuthError(400, "session_required")
     state = _token_state(row, login, now)
     if state:
         raise AuthError(400, state)
-    user_id = user.id
     if not _claim(db, row.id, now):
         raise AuthError(400, "used")
     _mark_verified(db, user_id, now)
     db.commit()
-    return True, getattr(request.state, "user_id", None) == user_id
+    return True, True
 
 
 def _verify_code(db: Session, request: Request, code: str, now: datetime) -> tuple[bool, bool]:
@@ -580,9 +620,12 @@ def resend(db: Session, request: Request, user: User) -> int:
     s = get_settings()
     now = utc_now()
     email, user_id, locale = login.email, user.id, user.locale
+    # The resend slot is spent BEFORE the mail budget is asked (FIXB B4): a 503
+    # that cost nothing let a squatter poll every second and take each freed
+    # slot the instant it appeared. Now a refused attempt still counts.
+    _verify_mail_slot(db, email, user_id, now)
     if not auth_email.mail_ready(db, email):
         raise AuthError(503, "email_unavailable")
-    _verify_mail_slot(db, email, user_id, now)
     token, code = _issue(db, user_id, VERIFY, email, s.verify_ttl_min, with_code=True, now=now)
     db.commit()
     try:
@@ -660,7 +703,7 @@ def forgot(db: Session, request: Request, email: str) -> None:
         return
     # A reset mail with no link has nothing in it to act on; don't consume the
     # previous link for one, or for a mail the budget would refuse.
-    if not auth_email.link_base(request) or not auth_email.mail_ready(db, email):
+    if not auth_email.link_base(request) or not auth_email.mail_ready(db, email, purpose="reset"):
         return
     user_id, locale = user.id, user.locale
     token, _ = _issue(db, user_id, RESET, email, s.reset_ttl_min, with_code=False, now=now)
@@ -671,12 +714,14 @@ def forgot(db: Session, request: Request, email: str) -> None:
         pass  # silent by contract
 
 
-def reset(db: Session, request: Request, *, token: str, password: str) -> tuple[User, str]:
-    """Set a new password from a reset link, then sign this browser in.
+def reset(db: Session, request: Request, *, token: str, password: str) -> tuple[User, str, bool]:
+    """Set a new password from a reset link, then sign this browser in. Returns
+    (user, raw session token, whether the extension key was replaced).
 
     EVERY session is revoked first — including any the account's owner never
     made — and one fresh session is minted. The link proves the address, so an
-    unverified account becomes verified, and (A2) has its extension key rotated.
+    unverified account becomes verified. The extension key is rotated on every
+    reset (A2, widened by FIXB B1 to verified accounts too).
     """
     s = get_settings()
     now = utc_now()
@@ -696,24 +741,25 @@ def reset(db: Session, request: Request, *, token: str, password: str) -> tuple[
     login.password_hash = password_hash
     login.password_changed_at = now
     if was_unverified:
-        # An unverified account can only be an email signup, so whoever
-        # registered this address before its owner may hold a session and the
-        # extension key. The session dies below; the key dies here.
         login.email_verified_at = now
-        user.invite_code = new_invite_code()
+    # Whoever registered this address before its owner, or held a session on it
+    # at any point, may hold a session and the extension key. The sessions die
+    # below; the key dies here — verified or not (FIXB B1).
+    rotated = _rotate_extension_key(user)
     consume_tokens(db, user_id, (VERIFY, RESET), now)
     revoke_all(db, user_id, now=now)
     raw_session = create_session(db, user_id, request, now)
     db.commit()
     throttle.record(db, "password_reset", throttle.email_key(email), user_id, now)
-    _notify_password_changed(db, request, email, locale, user_id)
-    return db.get(User, user_id), raw_session
+    _notify_password_changed(db, request, email, locale, user_id, key_rotated=rotated)
+    return db.get(User, user_id), raw_session, rotated
 
 
-def change_password(db: Session, request: Request, user: User, *, current: str, new: str) -> None:
+def change_password(db: Session, request: Request, user: User, *, current: str, new: str) -> bool:
     """Change the password from Settings. The current one is required whenever
     one is set (and throttled like a login, or a stolen session could grind it);
-    every OTHER session is signed out."""
+    every OTHER session is signed out and the extension key is replaced (FIXB
+    B1). Returns whether the key was replaced."""
     s = get_settings()
     now = utc_now()
     login = login_for(db, user.id)
@@ -733,18 +779,24 @@ def change_password(db: Session, request: Request, user: User, *, current: str, 
     row = login_for(db, user_id)
     row.password_hash = password_hash
     row.password_changed_at = now
+    rotated = _rotate_extension_key(db.get(User, user_id))
     consume_tokens(db, user_id, (VERIFY, RESET), now)
     revoke_all(db, user_id, except_id=getattr(request.state, "session_id", None), now=now)
     db.commit()
     throttle.record(db, "password_changed", throttle.email_key(email), user_id, now)
-    _notify_password_changed(db, request, email, locale, user_id)
+    _notify_password_changed(db, request, email, locale, user_id, key_rotated=rotated)
+    return rotated
 
 
-def logout_others(db: Session, request: Request, user: User) -> int:
-    """Sign out every session but this one. Returns how many were ended."""
-    revoked = revoke_all(db, user.id, except_id=getattr(request.state, "session_id", None))
+def logout_others(db: Session, request: Request, user: User) -> tuple[int, bool]:
+    """Sign out every session but this one, and replace the extension key — a
+    key someone read earlier is a device too (FIXB B1). Returns (sessions
+    ended, whether the key was replaced)."""
+    user_id = user.id
+    revoked = revoke_all(db, user_id, except_id=getattr(request.state, "session_id", None))
+    rotated = _rotate_extension_key(db.get(User, user_id))
     db.commit()
-    return revoked
+    return revoked, rotated
 
 
 def extension_key(db: Session, user: User) -> str:

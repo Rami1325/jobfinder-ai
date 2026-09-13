@@ -33,6 +33,11 @@ class User(Base):
     # prompt as an avoid-list. Learned only from explicit user decisions.
     # "" = none. Migrates via the ADD-COLUMN shim.
     writing_prefs_json: Mapped[str] = mapped_column(Text, default="")
+    # Resume preferences (spec 07 / R1): `ResumePrefs` JSON, "" = defaults (every
+    # switch OFF). SENSITIVE — "leave Arabic off for jobs in Israel" implies the
+    # user's ethnicity — so `_wipe_user_rows` clears it with the two above.
+    # Migrates via the ADD-COLUMN shim.
+    resume_prefs_json: Mapped[str] = mapped_column(Text, default="")
     # When this user last made an authenticated API request. Stamped by the
     # access-gate middleware, so it covers EVERY request — including the
     # deliberately uncapped deterministic routes (/tools/*, /render), which

@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
 from app.config import Settings, get_settings
-from app.core import accounts, google_oauth, inbox_apply, inbox_sync, token_crypto
+from app.core import accounts, auth_throttle, google_oauth, inbox_apply, inbox_sync, token_crypto
 from app.core.gmail_api import GmailMailbox, MessageGone
 from app.core.inbox_fake import DEMO_EMAIL
 from app.core.sessions import cookie_path, hkey, is_https, token_hash
@@ -62,8 +62,9 @@ def _private(response: Response) -> None:
 
 
 def _allowed(s: Settings, user: User) -> bool:
-    """O2: who may connect Gmail. Anything but INBOX_ACCESS=all is the allowlist."""
-    return (s.inbox_access or "").strip().lower() == "all" or bool(user.is_admin) or bool(user.inbox_enabled)
+    """O2: who may connect Gmail — `inbox_sync.inbox_allowed`, the one rule the
+    sync and the cron re-check too (FIXB B15)."""
+    return inbox_sync.inbox_allowed(s, user)
 
 
 def _days(value: int | None, s: Settings) -> int:
@@ -253,17 +254,38 @@ def inbox_google_callback(
         tokens = google_oauth.exchange_code(code, str(payload.get("verifier") or ""))
     except google_oauth.GoogleAuthError:
         return fail("exchange_failed")
+
+    def refuse(reason: str) -> RedirectResponse:
+        # FIXB B16: past a successful exchange Google has ALREADY granted
+        # something, and a refusal that simply dropped the tokens left that grant
+        # live in the user's Google account with no connection row for Disconnect
+        # to act on. Hand it back first (best effort; revoke never raises).
+        google_oauth.revoke(str(tokens.get("refresh_token") or tokens.get("access_token") or ""))
+        return fail(reason)
+
     if not google_oauth.grants_gmail(tokens):
-        return fail("missing_scope")
+        return refuse("missing_scope")
     try:
         address = GmailMailbox(str(tokens.get("access_token") or "")).profile_email()
     except (google_oauth.GoogleAuthError, MessageGone):
-        return fail("profile_failed")
+        return refuse("profile_failed")
     refresh_token = str(tokens.get("refresh_token") or "")
+    address = address[:320]
     conn = inbox_sync.connection_for(db, user.id)
-    fresh = conn is None or conn.provider != "gmail"
+    # FIXB B8: a reconnect that picked a DIFFERENT Google account on the chooser
+    # is a new mailbox. Its import starts from its own backfill depth (the old
+    # cursor would skip everything older than the previous mailbox's last
+    # message), and the old address's grant goes back to Google before our only
+    # copy of it is overwritten — otherwise no in-app action could ever revoke it.
+    switched = (
+        conn is not None and conn.provider == "gmail" and bool(conn.email_address)
+        and conn.email_address != address
+    )
+    fresh = conn is None or conn.provider != "gmail" or switched
     if fresh and not refresh_token:
         return fail("no_refresh_token")
+    if switched:
+        inbox_sync.revoke_stored_grant(conn)
     if conn is None:
         conn = MailConnection(user_id=user.id)
         db.add(conn)
@@ -277,7 +299,7 @@ def inbox_google_callback(
         # as first returns no refresh token, and the stored one still works.
         conn.refresh_token_enc = token_crypto.encrypt(refresh_token)
     conn.provider = "gmail"
-    conn.email_address = address[:320]
+    conn.email_address = address
     conn.scope = str(tokens.get("scope") or "")
     conn.status = "active"
     conn.last_error = ""
@@ -414,17 +436,23 @@ def inbox_disconnect(
     purge: bool = False, db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> InboxDisconnectOut:
     """Give the grant back to Google (best effort) and delete our copy of it.
-    `purge` also deletes the detected emails; tracker cards stay either way."""
+    `purge` also deletes the detected emails; tracker cards stay either way.
+
+    `google_revoked` reports whether Google really took the grant back (FIXB
+    B17). With INBOX_TOKEN_KEY missing or wrong the token cannot be read, so
+    nothing was revoked — the row is still deleted, and the answer says so
+    instead of implying the access ended."""
     conn = inbox_sync.connection_for(db, user.id)
+    revoked = False
     if conn is not None:
-        inbox_sync.revoke_stored_grant(conn)
+        revoked = inbox_sync.revoke_stored_grant(conn)
         db.delete(conn)
     accounts.consume_tokens(db, user.id, (INBOX_CONNECT,), inbox_sync.utc_now())
     deleted = 0
     if purge:
         deleted = db.execute(delete(MailEvent).where(MailEvent.user_id == user.id)).rowcount or 0
     db.commit()
-    return InboxDisconnectOut(disconnected=conn is not None, events_deleted=deleted)
+    return InboxDisconnectOut(disconnected=conn is not None, events_deleted=deleted, google_revoked=revoked)
 
 
 @router.get("/inbox/cron", response_model=InboxCronResult)
@@ -443,5 +471,12 @@ def inbox_cron(request: Request, db: Session = Depends(get_db)) -> InboxCronResu
         auth = request.headers.get("authorization", "")
         if not hmac.compare_digest(auth.encode("utf-8"), f"Bearer {secret}".encode("utf-8")):
             raise HTTPException(401, "Bad cron secret.")
+    # FIXB B19: the security log is pruned here too, not only when someone signs
+    # in — on a quiet instance "deleted after 30 days" would otherwise never
+    # happen. Housekeeping: it may never cost the sync.
+    try:
+        auth_throttle.prune_security_log(db)
+    except Exception:  # noqa: BLE001 - best effort
+        db.rollback()
     results, skipped = inbox_sync.run_all_inbox(db)
     return InboxCronResult(users=len(results) + skipped, results=results, skipped=skipped)

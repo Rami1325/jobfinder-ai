@@ -141,6 +141,12 @@ class JDModel(BaseModel):
     # "he" | "en" — set deterministically by jd_analyzer (regex on the Hebrew
     # Unicode block, never the LLM). Defaults "en" for back-compat.
     language: str = "en"
+    # "IL" | "other" | "" — whether the job is in Israel, set deterministically
+    # by jd_analyzer (`job_market.israel_market`, never the LLM) and by the kit
+    # path from the stored location. "" is UNKNOWN: every JD stored before this
+    # field existed reads as unknown, never as "not Israel". Read by the opt-in
+    # "leave Arabic off tailored resumes for jobs in Israel" preference.
+    market: str = ""
     hard_skills: list[str] = Field(default_factory=list)  # mandatory/required skills
     # Humanization spec stage 2: nice-to-have skills and the business outcomes
     # the role exists to drive — parsed separately from hard requirements so
@@ -292,8 +298,21 @@ class WritingPrefsOut(BaseModel):
     avoid: list[str] = Field(default_factory=list)
 
 
+class ResumePrefs(BaseModel):
+    """GET/PUT /profile/resume-prefs. OFF by default for every user.
+
+    `hide_arabic_in_israel`: leave Arabic off TAILORED resumes for jobs in
+    Israel, unless the job asks for it. The master resume is never touched.
+    Sensitive (it implies ethnicity), so the privacy wipe clears it."""
+
+    hide_arabic_in_israel: bool = False
+
+
 class JDAnalyzeRequest(BaseModel):
     jd_text: str
+    # Optional hint for the market stamp (a job board's location field), used
+    # only by `job_market.israel_market` — never sent to the model.
+    location: str = ""
 
 
 class TailorRequest(BaseModel):
@@ -608,6 +627,10 @@ class DeleteMyDataResult(BaseModel):
     # standing key to the user's mailbox behind.
     inbox_events: int = 0
     inbox_connections: int = 0
+    # FIXB B17: whether a stored Gmail grant was really handed back to Google.
+    # False with no connection, and False when the token could not be read —
+    # never a claimed revoke that did not happen.
+    google_revoked: bool = False
 
 
 class MeOut(BaseModel):
@@ -716,9 +739,25 @@ class OkOut(BaseModel):
     ok: bool = True
 
 
+# FIXB B1: a password change, a reset and "sign out other devices" each replace
+# a self-registered account's extension key; the answer says whether it did, so
+# the page can tell the reader the extension needs the new key. False for an
+# invite-code account and the admin, whose codes are never rotated here.
+class PasswordChangeOut(BaseModel):
+    ok: bool = True
+    extension_key_rotated: bool = False
+
+
+class ResetOut(AuthMe):
+    """POST /auth/reset: /auth/me's answer for the fresh session, plus the rotation flag."""
+
+    extension_key_rotated: bool = False
+
+
 class LogoutOthersOut(BaseModel):
     ok: bool = True
     revoked: int = 0
+    extension_key_rotated: bool = False
 
 
 class ExtensionKeyOut(BaseModel):
@@ -826,6 +865,11 @@ class InboxSettingsIn(BaseModel):
 class InboxDisconnectOut(BaseModel):
     disconnected: bool = False
     events_deleted: int = 0
+    # FIXB B17: whether Google actually accepted the revoke. False when the token
+    # could not be read (INBOX_TOKEN_KEY missing or wrong) or Google did not
+    # answer — our copy is deleted either way, and the page must then tell the
+    # reader to remove the access at myaccount.google.com.
+    google_revoked: bool = False
 
 
 # --------------------------------------------------------------------------- #

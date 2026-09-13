@@ -6,7 +6,10 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 
 from app.config import get_settings
+from app.core.arabic_omit import jd_asks_for_arabic, omit_arabic, resume_mentions_arabic
 from app.core.cv_planner import plan_cv
+from app.core.job_market import MARKET_IL, MARKET_OTHER
+from app.core.numerals import digits_in_resume, quantity_phrases
 from app.core.fabrication_guard import check_fabrication, drop_invented_roles
 from app.core.humanizer import humanize_resume
 from app.core.keyword_guard import (
@@ -42,12 +45,22 @@ def tailor_resume(
     ledger: FactsLedger | None = None,
     avoid_phrases: list[str] | None = None,
     template: str = DEFAULT_TEMPLATE,
+    hide_arabic_in_israel: bool = False,
 ) -> TailorResult:
     """`avoid_phrases`: wording this user rejected in past reviews (§26
     feedback loop) — injected into the tailor prompt as a hard avoid-list.
-    `template`: which resume template the page budget measures against."""
+    `template`: which resume template the page budget measures against.
+    `hide_arabic_in_israel`: the user's opt-in preference (spec 07 / R1) —
+    see the omission stage near the end."""
     if ledger is None:
         ledger = build_facts_ledger(resume)
+
+    # SPEC 07 / R1 — DECIDED ONCE, UP FRONT, because the prompt carries it. The
+    # user chose it (OFF by default); the job must be KNOWN to be in Israel (an
+    # unknown market is not Israel); and a job that asks for Arabic keeps it.
+    omit_arabic_here = (
+        hide_arabic_in_israel and jd.market == MARKET_IL and not jd_asks_for_arabic(jd)
+    )
 
     settings = get_settings()
     max_pages = settings.resume_max_pages
@@ -90,6 +103,9 @@ def tailor_resume(
             max_pages=max_pages,
             source_pages=page_count(resume, template),
             source_projects=len(resume.projects),
+            # Passed only when it applies, so an off preference cannot even
+            # reach the builder's branch: the message stays byte-identical.
+            **({"omit_arabic": True} if omit_arabic_here else {}),
         ),
     )
 
@@ -575,6 +591,97 @@ def tailor_resume(
     # deferred: a deferral needs a tri-state ("not yet reviewed" is a real third
     # state), and a deletion has none.
     #
+    # THE LAST TWO TEXT STAGES (spec 07), after every stage that can change the
+    # set and after the restore report, before `score_after` — so the score, the
+    # guard and the changelog all describe the document that ships. Both are
+    # deterministic and both return `tailored` ITSELF when they did nothing.
+    _pre_text = tailored
+
+    # R1 — leave Arabic off, when the user chose it and the job qualifies. It
+    # only ever REMOVES, so it cannot create a fabrication flag or grow a page.
+    if hide_arabic_in_israel:
+        if omit_arabic_here:
+            tailored, _arabic_removed, _arabic_left = omit_arabic(tailored)
+            if _arabic_removed:
+                changelog.append(
+                    ChangeLogEntry(
+                        section="languages",
+                        change="Left Arabic off",
+                        reason="You chose to leave Arabic off resumes for jobs in Israel "
+                        "(Settings). Your master resume still lists it.",
+                    )
+                )
+            if _arabic_left:
+                # REPORTED, NEVER REWRITTEN: a sentence this pipeline would have
+                # to rephrase to remove the word is a sentence the user owns.
+                changelog.append(
+                    ChangeLogEntry(
+                        section="languages",
+                        change="Arabic is still mentioned in your "
+                        + " and ".join(_arabic_left)
+                        + "; edit it before sending",
+                        reason="It is part of a sentence, not a list, and we do not rewrite "
+                        "your sentences. Everything else was left off as you chose.",
+                    )
+                )
+        elif resume_mentions_arabic(tailored):
+            # THE HONEST HALF: the preference is on and Arabic is on the page, so
+            # say why — the owner can still remove it by hand. Silent on a job
+            # KNOWN to be abroad: there is nothing to decide there.
+            if jd.market == MARKET_IL:
+                changelog.append(
+                    ChangeLogEntry(
+                        section="languages",
+                        change="Arabic kept: this job asks for it",
+                        reason="You chose to leave Arabic off resumes for jobs in Israel, "
+                        "but this posting names Arabic, so leaving it off would hide a "
+                        "skill the job wants.",
+                    )
+                )
+            elif jd.market != MARKET_OTHER:
+                changelog.append(
+                    ChangeLogEntry(
+                        section="languages",
+                        change="Arabic kept: we couldn't tell this job is in Israel",
+                        reason="You chose to leave Arabic off resumes for jobs in Israel. "
+                        "This posting does not say where the job is — if it is in Israel, "
+                        "remove Arabic before sending.",
+                    )
+                )
+
+    # R2 — numbers as digits in the tailored PROSE, the last text stage.
+    tailored, _digits, _digits_section = digits_in_resume(tailored)
+    if _digits:
+        # THE GUARD READS DIGITS ONLY (`structurer._NUMBER_RE`), so a number the
+        # model invented IN WORDS was invisible to it — and is visible now that it
+        # is a digit. Re-run it against a COPY of the ledger that also knows the
+        # ORIGINAL resume's own quantity words, converted by the same function:
+        # "five years" shipped as "5 years" is the candidate's fact, while an
+        # invented "fifteen engineers" is not. Built from the original resume at
+        # runtime, never from how the ledger was made — the kit path passes a
+        # STORED ledger. The ledger itself is never mutated.
+        _ledger_words = ledger.model_copy(
+            update={"numbers": [*ledger.numbers, *quantity_phrases(resume)]}
+        )
+        flags = check_fabrication(tailored, _ledger_words)
+        changelog.append(
+            ChangeLogEntry(
+                section=_digits_section or "summary",
+                change=f"Wrote {_digits} number{'s' if _digits != 1 else ''} as digits",
+                reason="Recruiters skim for numbers; '5 years' reads faster than 'five years'.",
+            )
+        )
+
+    if tailored is not _pre_text:
+        # What shipped changed, so the two reports that describe it are
+        # re-measured rather than carried: the page count (both stages only ever
+        # shorten text, so this can only fall) and the voice audit, whose
+        # humanizer bookkeeping is carried across by hand as above.
+        length_report.pages_after = page_count(tailored, template)
+        was_revised, was_fixed = report.revised, report.fixed
+        report = audit_voice(tailored, jd)
+        report.revised, report.fixed = was_revised, was_fixed
+
     # Inline, not a one-member pool: that would be a thread spawn and a context
     # copy for zero concurrency. It is also the SAFER spelling — `copy_context()
     # .run` exists only because a pool worker starts from an EMPTY context, and a

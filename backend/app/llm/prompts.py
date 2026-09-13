@@ -976,8 +976,15 @@ def tailor_user(
     max_pages: int = 2,
     source_pages: int = 0,
     source_projects: int = 0,
+    omit_arabic: bool = False,
 ) -> str:
-    """The optional positioning plan (stage 4), the user's rejected-phrase
+    """`omit_arabic` (spec 07 / R1): the user chose to leave Arabic off resumes
+    for jobs in Israel and this job qualifies. With it False the message is
+    BYTE-IDENTICAL to the one built before the parameter existed (smoke-pinned);
+    `arabic_omit.omit_arabic` still runs after the model either way, because an
+    instruction is not a guarantee.
+
+    The optional positioning plan (stage 4), the user's rejected-phrase
     avoid-list (§26 feedback loop) and the page budget ride in the user message
     so the system prompt — and its stub-routing Task tag — stays static.
 
@@ -1012,6 +1019,13 @@ def tailor_user(
         parts.append(
             "PHRASES THIS CANDIDATE HAS REJECTED BEFORE (do not use them or close "
             f"variants — restate the facts differently): {quoted}\n\n"
+        )
+    if omit_arabic:
+        parts.append(
+            "LANGUAGE THE CANDIDATE CHOSE TO LEAVE OFF: do not mention the Arabic language "
+            "anywhere in the tailored resume — not in languages, skills, the summary, the "
+            "headline or any bullet. Remove it; do not replace it with anything, and change "
+            "nothing else because of this.\n\n"
         )
     parts.append("Produce the tailored resume per the rules.")
     return "".join(parts)

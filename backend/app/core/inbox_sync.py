@@ -38,7 +38,9 @@ counted before each batch of model calls. Never the `llm` cap.
 from __future__ import annotations
 
 import logging
+import os
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
@@ -48,7 +50,7 @@ from typing import Callable
 from urllib.parse import quote
 
 from fastapi import HTTPException
-from sqlalchemy import case, or_, select, update
+from sqlalchemy import case, delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -81,6 +83,13 @@ REAUTH_AFTER = timedelta(days=7)
 CRON_MESSAGE_FACTOR = 3
 # Google errors that mean the grant is gone for good: only a reconnect helps.
 _REAUTH_CODES = frozenset({"invalid_grant", "admin_policy_enforced"})
+# FIXB B3: the two MailEvent actions a message that cannot be read or classified
+# gets. `failed` marks the first failure (the next run retries it, uncharged);
+# `skipped` is the second, and the import moves past it. Either row holds the
+# provider id and an error code in `evidence` — never a subject, a snippet, a
+# sender or a body.
+FAILED = "failed"
+SKIPPED = "skipped"
 
 
 def utc_now() -> datetime:
@@ -101,6 +110,17 @@ def fake_enabled(settings: Settings | None = None) -> bool:
 
 def google_ready(settings: Settings | None = None) -> bool:
     return google_oauth.configured() and token_crypto.key_configured()
+
+
+def inbox_allowed(settings: Settings, user: User) -> bool:
+    """O2: who may use Gmail sync. Anything but INBOX_ACCESS=all is the allowlist.
+
+    Checked at connect time AND by every sync and the cron (FIXB B15): an owner
+    who clears `inbox_enabled` — to free one of Google's Testing-mode test-user
+    slots, or to end the beta for someone — must stop the mailbox being read,
+    not only stop a new connect."""
+    s = settings
+    return (s.inbox_access or "").strip().lower() == "all" or bool(user.is_admin) or bool(user.inbox_enabled)
 
 
 def connection_for(db: Session, user_id: int) -> MailConnection | None:
@@ -129,7 +149,11 @@ def revoke_stored_grant(conn: MailConnection | None) -> bool:
         return False
     try:
         token = token_crypto.decrypt(conn.refresh_token_enc)
-    except Exception:  # noqa: BLE001 - best effort by contract
+    except Exception as exc:  # noqa: BLE001 - best effort by contract
+        # FIXB B17: say so, and return False — every caller now REPORTS this
+        # value, so a disconnect with an unreadable token never claims a revoke.
+        # The type only: the exception text is not ours to send to Sentry.
+        log.warning("inbox: a stored Gmail grant could not be read (%s) and was not revoked", type(exc).__name__)
         return False
     return google_oauth.revoke(token)
 
@@ -206,7 +230,9 @@ class _Staged:
     meta: MessageMeta
     stage: str  # noise | rule | model | skip
     verdict: Verdict | None = None
-    outcome: str = ""  # model only: ok | gone | unclassifiable | failed | uncharged
+    outcome: str = ""  # model only: ok | gone | unclassifiable | failed | uncharged | skipped
+    retried: bool = False  # model only: an earlier run failed on this message (FIXB B3)
+    error: str = ""  # model only, on failure: body_failed | model_failed
 
 
 @dataclass
@@ -262,6 +288,12 @@ def sync_user(
         if user is None or not user.is_active:
             result.error_code = "inactive"
             return result
+        if conn.provider != "fake" and not inbox_allowed(s, user):
+            # FIXB B15: no longer on the O2 allowlist — the mailbox is not read,
+            # the grant is not refreshed and no model call is spent. The demo
+            # mailbox reads nobody's mail, so it is exempt, as at connect time.
+            result.error_code = "invite_only"
+            return result
         due = reauth_due_at(conn, s)
         if conn.status == "active" and due is not None and now >= due:
             # O3: Google ends a Testing-mode grant at 7 days whether or not we
@@ -281,12 +313,25 @@ def sync_user(
                   max_messages or s.inbox_max_messages_per_run, result)
         finally:
             _release_lease(db, conn_id)
-    except Exception:  # noqa: BLE001 - never raises by contract; logged for Sentry
-        log.exception("inbox sync failed for user %s", user_id)
+    except Exception as exc:  # noqa: BLE001 - never raises by contract; logged for Sentry
+        # FIXB B2: the exception TYPE and where it happened, nothing more. A
+        # traceback carries every frame's locals to Sentry (the settings and the
+        # message metadata being handled), and an exception's own text can quote
+        # a subject — neither is ours to send.
+        log.error("inbox sync failed for user %s: %s", user_id, _failure_site(exc))
         db.rollback()
         result.error_code = result.error_code or "internal"
         _note_error(db, user_id, result.error_code)
     return result
+
+
+def _failure_site(exc: BaseException) -> str:
+    """`TypeName at file.py:123 in function` — the innermost frame's location only."""
+    frames = traceback.extract_tb(exc.__traceback__)
+    if not frames:
+        return type(exc).__name__
+    last = frames[-1]
+    return f"{type(exc).__name__} at {os.path.basename(last.filename)}:{last.lineno} in {last.name}"
 
 
 def _take_lease(db: Session, conn_id: int, now: datetime, budget_s: float) -> bool:
@@ -455,12 +500,16 @@ def _list_window(run: _Run, lo_ms: int, hi_ms: int) -> tuple[list[str], int]:
 
 
 def _unstored(run: _Run, ids: list[str]) -> list[str]:
+    """Ids with no stored row — a `failed` marker does not count as stored, so a
+    message that failed once is listed again for its one retry (FIXB B3)."""
     known: set[str] = set()
     for i in range(0, len(ids), 500):
         known.update(
             run.db.execute(
                 select(MailEvent.provider_message_id).where(
-                    MailEvent.user_id == run.user_id, MailEvent.provider_message_id.in_(ids[i:i + 500])
+                    MailEvent.user_id == run.user_id,
+                    MailEvent.provider_message_id.in_(ids[i:i + 500]),
+                    MailEvent.action != FAILED,
                 )
             ).scalars().all()
         )
@@ -570,48 +619,101 @@ def _charge(run: _Run, wanted: int) -> int:
     return allowed
 
 
-def _classify_one(box: Mailbox, meta: MessageMeta, client: LLMClient) -> tuple[str, Verdict | None]:
+def _classify_one(box: Mailbox, meta: MessageMeta, client: LLMClient) -> tuple[str, Verdict | None, str]:
+    """(outcome, verdict, error code on failure)."""
     try:
         body = box.get_body(meta.id)
     except MessageGone:
-        return "gone", None
-    except Exception:  # noqa: BLE001 - a mailbox failure stops the run
-        return "failed", None
+        return "gone", None, ""
+    except Exception:  # noqa: BLE001 - a mailbox failure stops the run (once; see _process_chunk)
+        return "failed", None, "body_failed"
     try:
-        return "ok", inbox_classifier.classify(meta, body, client=client)
+        return "ok", inbox_classifier.classify(meta, body, client=client), ""
     except (OutputTruncated, ContextWindowExceeded, JSONDecodeError, ValueError, TypeError, KeyError):
         # Deterministic for this message: retrying it forever would block every
         # message after it. Skipped, unstored.
-        return "unclassifiable", None
-    except Exception:  # noqa: BLE001 - a network or provider error stops the run
-        return "failed", None
+        return "unclassifiable", None, ""
+    except Exception:  # noqa: BLE001 - a network or provider error stops the run (once)
+        return "failed", None, "model_failed"
 
 
 def _classify(run: _Run, items: list[_Staged]) -> None:
+    if not items:
+        return
     with metering.meter() as tally:
         with ThreadPoolExecutor(max_workers=POOL) as pool:
             futures = [pool.submit(copy_context().run, _classify_one, run.box, st.meta, run.client) for st in items]
             outcomes = [future.result() for future in futures]
-    for staged, (outcome, verdict) in zip(items, outcomes):
-        staged.outcome, staged.verdict = outcome, verdict
+    for staged, (outcome, verdict, error) in zip(items, outcomes):
+        staged.outcome, staged.verdict, staged.error = outcome, verdict, error
         if outcome in ("ok", "unclassifiable"):
             run.result.llm_calls += 1
     record_tokens(run.db, run.user_id, tally.prompt, tally.completion, action=INBOX_TOKENS_ACTION)
 
 
+def _failed_before(run: _Run, ids: list[str]) -> set[str]:
+    """The ids an earlier run already failed on (and already charged)."""
+    if not ids:
+        return set()
+    return set(run.db.execute(
+        select(MailEvent.provider_message_id).where(
+            MailEvent.user_id == run.user_id,
+            MailEvent.action == FAILED,
+            MailEvent.provider_message_id.in_(ids),
+        )
+    ).scalars().all())
+
+
+def _remember_failures(run: _Run, items: list[_Staged]) -> None:
+    """A `failed` marker per message that failed for the first time: the id and
+    an error code, nothing about the mail itself. Best effort — a concurrent run
+    that stored the id first changes nothing, since the next run retries anyway."""
+    if not items:
+        return
+    try:
+        for staged in items:
+            run.db.add(MailEvent(
+                user_id=run.user_id, provider_message_id=(staged.meta.id or "")[:64],
+                action=FAILED, evidence=staged.error or "failed",
+            ))
+        run.db.commit()
+    except Exception:  # noqa: BLE001 - bookkeeping on the failure path
+        run.db.rollback()
+
+
 def _process_chunk(run: _Run, conn_id: int, chunk: list[list[_Staged]]) -> bool:
+    """Classify one chunk and apply it group by group, the cursor moving with each.
+
+    Failure isolation (FIXB B3). A message whose body read or model call fails
+    stops the run at that message the FIRST time — a network blip must not skip
+    real mail — and leaves a `failed` marker. The next run retries it WITHOUT
+    charging the daily cap again; if it fails a second time it is recorded as
+    `skipped` and the import moves past it. Before this, one unreadable message
+    re-charged the whole chunk on every run and nothing after it was ever
+    imported."""
     wanted = [st for group in chunk for st in group if st.stage == "model"]
     if wanted:
-        allowed = _charge(run, len(wanted))
-        if allowed:
-            _classify(run, wanted[:allowed])
-        for staged in wanted[allowed:]:
+        retried = _failed_before(run, [st.meta.id for st in wanted])
+        for staged in wanted:
+            staged.retried = staged.meta.id in retried
+        fresh = [st for st in wanted if not st.retried]
+        allowed = _charge(run, len(fresh)) if fresh else 0
+        _classify(run, [st for st in wanted if st.retried] + fresh[:allowed])
+        for staged in fresh[allowed:]:
             staged.outcome = "uncharged"
-    for group in chunk:
+        for staged in wanted:
+            if staged.retried and staged.outcome == "failed":
+                staged.outcome = SKIPPED  # the second failure of the same message
+    for index, group in enumerate(chunk):
         stuck = [st for st in group if st.stage == "model" and st.outcome in ("failed", "uncharged")]
         if stuck:
             run.db.rollback()
             run.result.error_code = "daily_limit" if any(st.outcome == "uncharged" for st in stuck) else "classify_failed"
+            # Every first failure from here on was charged; mark each so its
+            # retry is free.
+            _remember_failures(run, [
+                st for later in chunk[index:] for st in later if st.stage == "model" and st.outcome == "failed"
+            ])
             return False
         for staged in group:
             _apply(run, staged)
@@ -623,6 +725,26 @@ def _process_chunk(run: _Run, conn_id: int, chunk: list[list[_Staged]]) -> bool:
 def _apply(run: _Run, staged: _Staged) -> None:
     run.handled += 1
     run.result.scanned += 1
+    if staged.retried:
+        marker = run.db.execute(
+            select(MailEvent).where(
+                MailEvent.user_id == run.user_id,
+                MailEvent.provider_message_id == (staged.meta.id or "")[:64],
+                MailEvent.action == FAILED,
+            )
+        ).scalars().first()
+        if staged.outcome == SKIPPED:
+            if marker is None:
+                marker = MailEvent(user_id=run.user_id, provider_message_id=(staged.meta.id or "")[:64])
+                run.db.add(marker)
+            marker.action = SKIPPED
+            marker.evidence = staged.error or "failed"
+            return
+        if marker is not None:
+            # Read fine this time: the marker gives way to whatever the email is.
+            run.db.execute(delete(MailEvent).where(MailEvent.id == marker.id).execution_options(
+                synchronize_session=False))
+            run.db.expunge(marker)
     if staged.stage == "noise":
         run.result.noise += 1
         return
@@ -637,7 +759,9 @@ def _apply(run: _Run, staged: _Staged) -> None:
         return
     event = inbox_apply.new_event(run.user_id, staged.meta, verdict, received)
     run.db.add(event)
-    app = inbox_apply.execute(run.db, run.user_id, event, verdict, plan, received)
+    # recheck: the plan came from the run-start snapshot; the card may have moved
+    # since (FIXB B9).
+    app = inbox_apply.execute(run.db, run.user_id, event, verdict, plan, received, recheck=True)
     run.result.events += 1
     if event.action == "created" and app is not None:
         run.result.created += 1
@@ -656,11 +780,21 @@ def _apply(run: _Run, staged: _Staged) -> None:
 def due_user_ids(db: Session) -> list[int]:
     """Active auto-sync connections of active users, NEVER-SYNCED FIRST, then the
     longest-unsynced. An explicit CASE, not NULLS FIRST: SQLite and Postgres put
-    NULLs at opposite ends, the precedent `alerts.due_user_ids` records."""
-    rows = db.execute(
+    NULLs at opposite ends, the precedent `alerts.due_user_ids` records.
+
+    Gmail connections of users the O2 allowlist no longer names are left out
+    (FIXB B15, the same rule as `inbox_allowed`); the demo mailbox is exempt."""
+    query = (
         select(MailConnection.user_id)
         .join(User, User.id == MailConnection.user_id)
         .where(MailConnection.status == "active", MailConnection.auto_sync.is_(True), User.is_active.is_(True))
+    )
+    if (get_settings().inbox_access or "").strip().lower() != "all":
+        query = query.where(or_(
+            MailConnection.provider == "fake", User.is_admin.is_(True), User.inbox_enabled.is_(True)
+        ))
+    rows = db.execute(
+        query
         .order_by(
             case((MailConnection.last_sync_at.is_(None), 0), else_=1),
             MailConnection.last_sync_at.asc(),

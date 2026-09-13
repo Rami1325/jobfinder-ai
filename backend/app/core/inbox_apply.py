@@ -48,6 +48,8 @@ from app.db.models import Application, MailEvent
 
 RANK = {"saved": 0, "applied": 1, "interview": 2, "offer": 3}
 TERMINAL = frozenset({"offer", "rejected"})
+# Statuses that say an application was sent, so a card in one keeps its applied_at.
+SENT_STATUSES = frozenset({"applied", "interview", "offer", "rejected"})
 # The status each kind asks for. viewed / recruiter / other / assessment ask for
 # none (I5: an assessment is a task, not an interview).
 TARGET = {"confirmation": "applied", "interview": "interview", "offer": "offer", "rejection": "rejected"}
@@ -99,8 +101,9 @@ def _company_key(app: Any) -> str:
 def match(apps: list[Any], company: str, title: str) -> Match:
     """Which of the user's cards an email is about (I6).
 
-    Company first: normalised-equal, or whole-word containment once the shorter
-    name has 4+ characters. Then the title, whenever BOTH sides have one — for a
+    Company first: normalised-equal, or whole-word containment (a name under 4
+    characters must be one whole word of the longer name). Then the title,
+    whenever BOTH sides have one — for a
     single company match too, because someone who applied to two roles at one
     company and tracked only one must not have role B's rejection close role A.
     Several cards and no way to choose is `ambiguous`, never a guess.
@@ -240,9 +243,18 @@ def _touch(app: Application, kind: str, received_at: datetime, event: MailEvent)
 
 
 def execute(
-    db: Session, user_id: int, event: MailEvent, verdict: Verdict, p: Plan, received_at: datetime
+    db: Session, user_id: int, event: MailEvent, verdict: Verdict, p: Plan, received_at: datetime,
+    *, recheck: bool = False,
 ) -> Application | None:
-    """Carry out a plan on the tracker and record it on the event. No commit."""
+    """Carry out a plan on the tracker and record it on the event. No commit.
+
+    `recheck` (the sync passes it) re-plans an update or link against the card
+    AS IT IS NOW, never the snapshot the plan was made from (FIXB B9). A sync
+    runs for up to 25 s in the foreground and 240 s in the cron, and a user who
+    drags the card to Offer in that window has made the newer, terminal change —
+    rules 4 and 5 then send the email to review instead of overwriting it. A
+    Needs-review resolution does not pass it: there the user's own choice
+    replaces the checks."""
     event.action = p.action
     if p.action == "created":
         status = p.status if p.status in STATUSES else "saved"
@@ -272,6 +284,14 @@ def execute(
     if app is None or app.user_id != user_id:
         event.action = "review"
         return None
+    if recheck:
+        kind = verdict.kind if verdict.kind in KINDS else "other"
+        target = TARGET.get(kind)
+        if target is not None:
+            p = _plan_matched(app, kind, target, received_at)
+            event.action = p.action
+            if p.action not in ("updated", "linked"):
+                return None
     if p.action == "updated" and p.status in STATUSES:
         event.prev_status = app.status if app.status in STATUSES else "saved"
         event.new_status = p.status
@@ -310,9 +330,45 @@ def _refresh_email_dates(db: Session, user_id: int, app: Application, undone: Ma
     app.last_email_at = max(dates) if dates else None
     if undone.set_applied_at:
         confirmations = [utc(r[0]) for r in rows if r[1] == "confirmation" and r[0] is not None]
-        app.applied_at = min(confirmations) if confirmations else None
+        if confirmations:
+            app.applied_at = min(confirmations)
+        elif (app.status or "") not in SENT_STATUSES:
+            app.applied_at = None
+        # else (FIXB B12): the card still reads as sent, so it keeps the date it
+        # has. Blanking it dropped a kept card out of every applied_at bucket, and
+        # no later write would restore it — a PATCH to the status it already has
+        # changes nothing, so it stamps nothing.
     if (app.source or "") == "email" and dates:
         app.created_at = min(dates)
+
+
+def _touched(app: Application, event: MailEvent) -> bool:
+    """Has anyone but the inbox changed this card since `event` created it? Then
+    an Undo of that email may not delete it (FIXB B12). A rating, a hand-toggled
+    interview flag, a link, a job ad, a cover letter, notes, a tailored resume
+    or a status someone else set each count; the scanner writes none of them."""
+    return (
+        (app.status_source or "") != "email"
+        or bool((app.notes or "").strip())
+        or bool(app.tailored_resume_json or "")
+        or bool((app.cover_letter or "").strip())
+        or bool((app.jd_text or "").strip())
+        or bool((app.job_url or "").strip())
+        or int(app.excitement or 0) != 0
+        or bool(app.interviewed) != bool(event.set_interviewed)
+    )
+
+
+def _interview_remains(db: Session, user_id: int, app_id: int) -> bool:
+    """Does an interview email still stand on this card (FIXB B11)?"""
+    return bool(db.execute(
+        select(func.count()).select_from(MailEvent).where(
+            MailEvent.user_id == user_id,
+            MailEvent.application_id == app_id,
+            MailEvent.action.in_(TRACKER_ACTIONS),
+            MailEvent.kind == "interview",
+        )
+    ).scalar())
 
 
 def undo(db: Session, user_id: int, event: MailEvent, now: datetime | None = None) -> str:
@@ -321,9 +377,10 @@ def undo(db: Session, user_id: int, event: MailEvent, now: datetime | None = Non
     `updated`: only while the card still shows the status this email wrote —
     after the user moved it again, an Undo would overwrite THEM (`changed_since`).
     The card is then the user's (status_source manual). `created`: the card is
-    deleted only while nobody has touched it (still email-owned, no notes, no
-    tailored resume, no other email tied to it); otherwise it stays and only the
-    event is undone. No commit.
+    deleted only while nobody has touched it (`_touched`, and no other email
+    tied to it); otherwise it stays and only the event is undone. `interviewed`
+    is cleared only when no other interview email still stands on the card
+    (FIXB B11 — I5 says nothing clears it while an email proves it). No commit.
     """
     now = now or datetime.now(timezone.utc)
     if event.user_id != user_id:
@@ -350,21 +407,16 @@ def undo(db: Session, user_id: int, event: MailEvent, now: datetime | None = Non
                 MailEvent.action.in_(TRACKER_ACTIONS),
             )
         ).scalar() or 0
-        remove = (
-            (app.status_source or "") == "email"
-            and not (app.notes or "").strip()
-            and not (app.tailored_resume_json or "")
-            and not others
-        )
+        remove = not others and not _touched(app, event)
     event.action = "undone"
     if remove:
         db.delete(app)
         event.application_id = None
         return ""
     if app is not None:
-        if was in ("updated", "linked") and event.set_interviewed:
-            app.interviewed = False
         db.flush()
+        if was in ("updated", "linked") and event.set_interviewed:
+            app.interviewed = _interview_remains(db, user_id, app.id)
         _refresh_email_dates(db, user_id, app, event)
     return ""
 

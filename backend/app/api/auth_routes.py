@@ -33,8 +33,10 @@ from app.models import (
     LogoutOthersOut,
     OkOut,
     PasswordChangeIn,
+    PasswordChangeOut,
     ResendOut,
     ResetIn,
+    ResetOut,
     SignupIn,
     VerifyIn,
     VerifyOut,
@@ -126,34 +128,37 @@ def auth_forgot(body: ForgotIn, request: Request, db: Session = Depends(get_db))
     return OkOut()
 
 
-@router.post("/auth/reset", response_model=AuthMe)
+@router.post("/auth/reset", response_model=ResetOut)
 def auth_reset(
     body: ResetIn, request: Request, response: Response, db: Session = Depends(get_db)
-) -> AuthMe:
+) -> ResetOut:
+    """The /auth/me answer for the fresh session, plus `extension_key_rotated`
+    so the page can tell the reader the extension needs its new key (FIXB B1)."""
     _private(response)
-    user, raw = accounts.reset(db, request, token=body.token, password=body.password)
+    user, raw, rotated = accounts.reset(db, request, token=body.token, password=body.password)
     set_session_cookie(response, request, raw)
-    return accounts.me(db, user, "session")
+    return ResetOut(**accounts.me(db, user, "session").model_dump(), extension_key_rotated=rotated)
 
 
-@router.post("/auth/password", response_model=OkOut)
+@router.post("/auth/password", response_model=PasswordChangeOut)
 def auth_password(
     body: PasswordChangeIn,
     request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
-) -> OkOut:
-    accounts.change_password(
+) -> PasswordChangeOut:
+    rotated = accounts.change_password(
         db, request, user, current=body.current_password, new=body.new_password
     )
-    return OkOut()
+    return PasswordChangeOut(extension_key_rotated=rotated)
 
 
 @router.post("/auth/logout-others", response_model=LogoutOthersOut)
 def auth_logout_others(
     request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> LogoutOthersOut:
-    return LogoutOthersOut(revoked=accounts.logout_others(db, request, user))
+    revoked, rotated = accounts.logout_others(db, request, user)
+    return LogoutOthersOut(revoked=revoked, extension_key_rotated=rotated)
 
 
 @router.get("/auth/extension-key", response_model=ExtensionKeyOut)

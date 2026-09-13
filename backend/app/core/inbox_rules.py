@@ -376,14 +376,23 @@ def normalize_company(value: str) -> str:
 
 
 def company_matches(a: str, b: str) -> bool:
-    """Two NORMALISED names: equal, or one contains the other as whole words once
-    the shorter is 4+ characters ("tavor" never matches inside "tavorit")."""
+    """Two NORMALISED names: equal, or one contains the other as whole words
+    ("tavor" never matches inside "tavorit").
+
+    A name under 4 characters matches only when it is one WHOLE word of the
+    longer name (FIXB B10): "sap" ~ "sap labs israel", "ibm" ~ "ibm israel",
+    "wix" ~ "wix com" — while "hp" never matches inside "hapoalim". It used to
+    need an exact match, so a rejection from "IBM Israel" created a second,
+    rejected card beside the tracked IBM one; short names are common in the
+    primary market (IBM, SAP, EY, HP, NSO, Wix)."""
     if not a or not b:
         return False
     if a == b:
         return True
     short, long_ = sorted((a, b), key=len)
-    return len(short) >= 4 and f" {short} " in f" {long_} "
+    if len(short) >= 4:
+        return f" {short} " in f" {long_} "
+    return short in long_.split()
 
 
 _TITLE_FILLER = frozenset({"the", "a", "an", "of", "for", "and", "role", "position", "job"})

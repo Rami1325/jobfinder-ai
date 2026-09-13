@@ -33,7 +33,7 @@ from typing import NamedTuple
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.core.sessions import as_utc, hkey, ip_bucket, naive_utc, utc_now
+from app.core.sessions import as_utc, hkey, ip_bucket, naive_utc, prune_sessions, utc_now
 from app.db.models import AuthEvent
 
 # (limit, window in seconds). Each is the number of attempts ALLOWED in the
@@ -44,7 +44,6 @@ LOGIN_FAIL_PER_IP = (30, 900)
 # After this many wrong codes in a day only the emailed LINK verifies: the code
 # space is a million, so the ceiling is what makes guessing it hopeless.
 VERIFY_FAIL_PER_EMAIL = (30, 86400)
-VERIFY_MAIL_PER_EMAIL = (6, 3600)
 VERIFY_MAIL_COOLDOWN_S = 60
 FORGOT_PER_EMAIL = (3, 3600)
 FORGOT_PER_IP = (20, 3600)
@@ -58,7 +57,16 @@ TOKEN_ATTEMPTS = 5
 # otherwise a free way to make that account mail strangers until the provider
 # suspends it. Over budget, nothing is sent.
 MAIL_GLOBAL_PER_HOUR = 200
+# Per ADDRESS, and per PURPOSE (FIXB B4/B5). Verification mail and reset mail
+# each have their own hourly allowance, so an unverified squatter's signup and
+# resends can never spend the real owner's reset link; a "password changed"
+# notice has no per-address allowance at all — only the global cap — so
+# anonymous /auth/forgot calls cannot silence it.
 MAIL_PER_RECIPIENT_PER_HOUR = 3
+MAIL_RESET_PER_RECIPIENT_PER_HOUR = 3
+# Resends of an unverified account stop BELOW the verification allowance, so a
+# squatter meets a 429 with a countdown, not a free-to-poll 503.
+VERIFY_MAIL_PER_EMAIL = (MAIL_PER_RECIPIENT_PER_HOUR - 1, 3600)
 
 RETENTION = timedelta(days=30)
 
@@ -88,6 +96,19 @@ def prune(db: Session, now: datetime | None = None) -> None:
         .where(AuthEvent.created_at < cutoff)
         .execution_options(synchronize_session=False)
     )
+
+
+def prune_security_log(db: Session, now: datetime | None = None) -> None:
+    """Delete auth events and ended sessions older than RETENTION, and commit.
+
+    Called by the inbox cron (FIXB B19) as well as on every write, because
+    "pruned on write" alone means an instance nobody signs in to keeps its
+    security log for ever — the privacy page's 30 days would then only be true
+    on a busy day."""
+    now = now or utc_now()
+    prune(db, now)
+    prune_sessions(db, now)
+    db.commit()
 
 
 def record(
@@ -174,19 +195,35 @@ def cooldown_left(
     return max(0, math.ceil(left))
 
 
-def mail_allowed(db: Session, to: str, now: datetime | None = None) -> bool:
-    """Would one more auth mail to `to` stay inside both budgets? Read-only."""
+def mail_key(to: str, purpose: str = "verify") -> str:
+    """The per-address key a mail of this purpose counts under. Every purpose
+    records kind "mail", so the GLOBAL budget still counts all of them."""
+    if purpose == "reset":
+        return "rs:" + hkey("rs", to)
+    if purpose == "notice":
+        return "nt:" + hkey("nt", to)
+    return email_key(to)
+
+
+def mail_allowed(db: Session, to: str, now: datetime | None = None, purpose: str = "verify") -> bool:
+    """Would one more auth mail of this purpose to `to` stay inside its budgets? Read-only.
+
+    `verify` (codes and links) and `reset` each have their own per-address
+    allowance; `notice` (a security notice) has none, only the global cap."""
     if count(db, "mail", None, 3600, now) >= MAIL_GLOBAL_PER_HOUR:
         return False
-    return count(db, "mail", email_key(to), 3600, now) < MAIL_PER_RECIPIENT_PER_HOUR
+    if purpose == "notice":
+        return True
+    cap = MAIL_RESET_PER_RECIPIENT_PER_HOUR if purpose == "reset" else MAIL_PER_RECIPIENT_PER_HOUR
+    return count(db, "mail", mail_key(to, purpose), 3600, now) < cap
 
 
 def reserve_mail(
-    db: Session, to: str, user_id: int | None = None, now: datetime | None = None
+    db: Session, to: str, user_id: int | None = None, now: datetime | None = None, purpose: str = "verify"
 ) -> bool:
     """Claim one mail from the budget, or say no. A claimed mail counts even if
     the send then fails: a broken SMTP account must not be retried at speed."""
-    if not mail_allowed(db, to, now):
+    if not mail_allowed(db, to, now, purpose):
         return False
-    record(db, "mail", email_key(to), user_id, now)
+    record(db, "mail", mail_key(to, purpose), user_id, now)
     return True

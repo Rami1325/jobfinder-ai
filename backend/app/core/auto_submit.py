@@ -347,6 +347,12 @@ def submit_kit(
     if questionnaire_url:
         audit += f" Follow-up questionnaire: {questionnaire_url}"
     app_row.status = "applied"
+    # FIXB B13: stamped like a PATCH that changes the status. Without it the
+    # inbox's rule 5 and the stale-application nudge read the kit's APPROVAL
+    # (created_at) as the card's last change, so an older rejection received
+    # between approval and send could close the card the user just sent.
+    app_row.status_changed_at = now
+    app_row.status_source = "manual"
     # Phase 29 (I3): the send IS the application date. Stamped only while
     # unknown, so a date already on the card is never overwritten.
     if app_row.applied_at is None:

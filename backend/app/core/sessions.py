@@ -124,8 +124,11 @@ def ip_bucket(ip: str) -> str:
 
 
 def ip_hint(ip: str) -> str:
-    """A deliberately coarse label for a session row: the /16 of an IPv4
-    address, the /32 of an IPv6 one, "" for anything that is not an address."""
+    """A deliberately coarse label for a session row (FIXB B19): the /24 of an
+    IPv4 address as "a.b.c.x", the /48 of an IPv6 one, "" for anything that is
+    not an address. Never the full address, and the row itself is deleted 30
+    days after the session ends (`prune_sessions`, run on sign-in AND by the
+    inbox cron)."""
     try:
         addr = ipaddress.ip_address((ip or "").strip().split("%")[0])
     except ValueError:
@@ -133,10 +136,10 @@ def ip_hint(ip: str) -> str:
     if addr.version == 6 and addr.ipv4_mapped is not None:
         addr = addr.ipv4_mapped
     if addr.version == 4:
-        a, b = str(addr).split(".")[:2]
-        return f"{a}.{b}.x.x"
+        a, b, c = str(addr).split(".")[:3]
+        return f"{a}.{b}.{c}.x"
     groups = addr.exploded.split(":")
-    return f"{groups[0]}:{groups[1]}::/32"
+    return f"{groups[0]}:{groups[1]}:{groups[2]}::/48"
 
 
 def is_https(request: Request) -> bool:
@@ -205,6 +208,14 @@ def safe_next(value: str | None, base: str | None = None) -> str:
     decodes it. So the rules run over the value AND each decoding of it, and the
     survivor must still resolve to the app's own origin. The frontend runs the
     same rules against `location.origin`.
+
+    A "." or ".." PATH SEGMENT is refused too (FIXB B6): a browser removes dot
+    segments before it reads the path, so `/.//evil.com` and `/app/..//evil.com`
+    both become `//evil.com`, a protocol-relative URL, the moment anything
+    normalises them. Python's urljoin does not agree with browsers on every
+    such case (`/..//evil.com`), so the test is the segment itself, not a
+    resolution. No real in-app destination contains one; a dot inside a
+    segment, a query or a fragment is untouched.
     """
     fallback = "/app"
     candidate = value or ""
@@ -222,6 +233,9 @@ def safe_next(value: str | None, base: str | None = None) -> str:
         if "\\" in form or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in form):
             return fallback
         if not form.startswith("/") or form.startswith("//"):
+            return fallback
+        path = form.split("?", 1)[0].split("#", 1)[0]
+        if any(segment in (".", "..") for segment in path.split("/")):
             return fallback
     origin = (base if base is not None else get_settings().app_base_url) or "http://x"
     expected = urlsplit(origin)
@@ -243,7 +257,9 @@ class ResolvedSession(NamedTuple):
 
 def prune_sessions(db: Session, now: datetime | None = None) -> None:
     """Delete session rows revoked or expired more than RETENTION ago. Run on
-    the write path (sign-in), so the table never needs a cron."""
+    the write path (sign-in) AND by the inbox cron (FIXB B19,
+    `auth_throttle.prune_security_log`): on an instance nobody signs in to, the
+    write path alone would keep a device string and a network prefix for ever."""
     cutoff = naive_utc((now or utc_now()) - RETENTION)
     db.execute(
         delete(AuthSession)

@@ -25,9 +25,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.jd_analyzer import analyze_jd
+from app.core.job_market import stamp_market
 from app.core.lang import detect_language
 from app.core.tailor import tailor_resume
-from app.core import writing_prefs
+from app.core import resume_prefs, writing_prefs
 from app.db.models import Application, SavedResume, TailorKit, User
 from app.models import (
     FactsLedger,
@@ -272,9 +273,16 @@ def process_next_kit(
             except Exception:  # noqa: BLE001 - tailor rebuilds it from the resume
                 ledger = None
         jd = analyze_fn(row.jd_text)
+        # The market stamp, with the location the search stored beside the job.
+        # AFTER the call, so the injectable `AnalyzeFn` keeps its one-argument
+        # shape (the smoke fakes call it that way). Only ever UPGRADES: a stored
+        # location naming Israel beats a text that named nowhere or elsewhere,
+        # and an unknown stamp takes whatever the location can say.
+        stamp_market(jd, row.jd_text, row.location or "")
         result = tailor_fn(
             resume, jd, ledger=ledger,
             avoid_phrases=writing_prefs.avoid_phrases(user),
+            hide_arabic_in_israel=resume_prefs.hide_arabic_in_israel(user),
         )
         row.base_resume_json = master.resume_json
         row.base_language = master.language or "en"

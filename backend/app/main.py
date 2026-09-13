@@ -33,17 +33,16 @@ app = FastAPI(title="JobFinder API", version="0.1.0", lifespan=lifespan)
 settings = get_settings()
 
 # Error tracking (PLAN 7.0): opt-in via SENTRY_DSN. Resume/JD text travels in
-# request bodies, so bodies are never captured and PII stays off.
+# request bodies, so bodies are never captured and PII stays off. The options
+# live in app/core/sentry_scrub.py (FIXB B2): no frame variables, and a
+# before_send that redacts every configured secret — the SDK's defaults sent the
+# Settings object and inbox mail metadata to Sentry on one failed sync.
 if settings.sentry_dsn:
     import sentry_sdk
 
-    sentry_sdk.init(
-        dsn=settings.sentry_dsn,
-        environment=settings.sentry_environment,
-        send_default_pii=False,
-        max_request_body_size="never",
-        traces_sample_rate=0.0,
-    )
+    from app.core.sentry_scrub import sentry_init_options
+
+    sentry_sdk.init(**sentry_init_options(settings))
 
 # Size limits, mapped once for the whole app rather than in each of the ~26
 # route bodies that wrap their model call in a bare `except Exception -> 502`.
@@ -262,14 +261,20 @@ async def access_gate(request: Request, call_next):
 
     Then, in this order, and credentials first so a protected route with no
     credentials still says 401:
-      - CSRF. Every POST/PUT/PATCH/DELETE that does not carry X-App-Key must
-        carry a non-empty X-Requested-With, cookie or no cookie, /auth/*
-        included. The frontend sends it on every call; a cross-site form cannot
-        add a custom header without a CORS preflight this app never grants. The
-        cookie being SameSite=Lax is not enough on its own — a top-level
-        cross-site form POST still carries a Lax cookie — and the fact that
-        FastAPI happens to refuse a form body on a JSON route is an accident,
-        not a defence.
+      - CSRF. With the gate ON, every POST/PUT/PATCH/DELETE that does not carry
+        X-App-Key must carry a non-empty X-Requested-With, cookie or no cookie,
+        /auth/* included. The frontend sends it on every call; a cross-site form
+        cannot add a custom header without a CORS preflight this app never
+        grants. The cookie being SameSite=Lax is not enough on its own — a
+        top-level cross-site form POST still carries a Lax cookie — and the fact
+        that FastAPI happens to refuse a form body on a JSON route is an
+        accident, not a defence.
+        With the gate OFF (local dev) it applies only to a request carrying a
+        session cookie, and to /auth/* (FIXB B18). There X-App-Key is ignored
+        and a keyless request is the dev admin, so the rule used to 403 the
+        installed Chrome extension and every local script — a regression a
+        deploy cannot fix. The session and the cookie-issuing /auth/* doors,
+        which are what login CSRF aims at, stay covered.
       - Verification. An email signup whose address is unproven reaches only
         the _AUTH_OPTIONAL and _UNVERIFIED_OK doors (403 email_unverified
         everywhere else). Invite codes and the admin are verified by
@@ -291,8 +296,10 @@ async def access_gate(request: Request, call_next):
 
     if gate_on and ident is None and not optional:
         return JSONResponse({"detail": "Access code required."}, status_code=401)
+    csrf_applies = gate_on or bool(session_token) or route_path.startswith("/auth/")
     if (
-        request.method in _UNSAFE_METHODS
+        csrf_applies
+        and request.method in _UNSAFE_METHODS
         and not request.headers.get("x-app-key")
         and not request.headers.get("x-requested-with", "").strip()
     ):
