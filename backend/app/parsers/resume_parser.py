@@ -64,8 +64,10 @@ def _assert_docx_expansion(data: bytes) -> None:
     """Refuse a .docx that expands past `max_docx_uncompressed_mb`.
 
     The DOCX twin of `_assert_page_count`, and it exists for the same reason:
-    /public/scan takes no access code, so an unbounded expansion is a free way
-    to exhaust a serverless instance. `max_upload_mb` does not cover it — that
+    /resume/upload and /tools/scan feed a user's file straight into this parser,
+    and a free account costs nothing to make, so an unbounded expansion is a
+    cheap way to exhaust a serverless instance. `max_upload_mb` does not cover
+    it — that
     caps COMPRESSED bytes, and a .docx is a zip whose parts `python-docx`
     expands into an lxml tree in full before a single line of text exists.
     Measured: 0.298 MB of zip is 102.0 MB of `document.xml` (343:1), so the
@@ -154,7 +156,8 @@ def _assert_page_count(pdf) -> None:  # noqa: ANN001 - pdfplumber.PDF
 
     `pdf.pages` is lazy, so counting is cheap while extraction is not — this is
     the cheapest place to stop a crafted PDF from burning an instance's CPU on
-    the no-access-code /public/scan route. The ceiling is deliberately far above
+    either upload route (/resume/upload, /tools/scan). The ceiling is
+    deliberately far above
     any real resume (a master CV runs ~30 rendered pages at the extreme).
     """
     limit = get_settings().max_pdf_pages

@@ -4,6 +4,11 @@ Friends testing = the owner's OpenAI key burning, so the expensive actions
 (job search, tailor) are capped per user per UTC day. Admins are exempt and
 a cap <= 0 disables it. The 429 carries a structured detail the UI translates
 (en+he): {"code": "daily_limit", "action": ..., "cap": ...}.
+
+Since Phase 30 the monthly uses (app/core/quota.py) sit on top of these. A
+route checks its daily cap FIRST, so a daily 429 never spends a monthly use; a
+daily count is never refunded; and "Delete my data" keeps today's rows, or the
+wipe would reset every daily cap (only closing the account removes them).
 """
 from __future__ import annotations
 
@@ -26,7 +31,9 @@ TOKENS_ACTION = "tokens"
 INBOX_TOKENS_ACTION = "inbox_tokens"
 
 
-def _today() -> str:
+def utc_day() -> str:
+    """The UTC day a daily count is filed under, "YYYY-MM-DD". Public because the
+    privacy wipe reads it too: it deletes only rows from earlier days."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
@@ -56,7 +63,7 @@ def record_tokens(
     if prompt <= 0 and completion <= 0:
         return
     try:
-        day = _today()
+        day = utc_day()
         row = _row_for(db, user_id, action, day)
         if row is None:
             row = UsageLog(user_id=user_id, action=action, day=day, count=0)
@@ -73,7 +80,7 @@ def used_today(db: Session, user_id: int, action: str) -> int:
     """How many uses of `action` this user has been charged today. For a batch
     that would rather charge what is LEFT under a cap than lose the whole batch
     to one 429 (the inbox sync)."""
-    row = _row_for(db, user_id, action, _today())
+    row = _row_for(db, user_id, action, utc_day())
     return int(row.count or 0) if row is not None else 0
 
 
@@ -86,7 +93,7 @@ def check_and_count(db: Session, user: User, action: str, cap: int, count: int =
     still consumed an LLM call or scrape budget)."""
     if user.is_admin or cap <= 0 or count <= 0:
         return
-    day = _today()
+    day = utc_day()
     row = _row_for(db, user.id, action, day)
     if (row.count if row else 0) + count > cap:
         raise HTTPException(

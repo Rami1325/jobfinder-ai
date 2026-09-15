@@ -4,6 +4,7 @@ from __future__ import annotations
 import hmac
 import io
 import json
+import logging
 import queue
 import threading
 from datetime import datetime, timedelta, timezone
@@ -47,7 +48,7 @@ from app.llm.limits import (
 _SIZE_ERRORS = (InputTooLarge, ContextWindowExceeded, OutputTruncated)
 from app.core.mailer import smtp_configured
 from app.core.follow_up import write_follow_up
-from app.core.free_scan import free_scan, free_scan_limiter
+from app.core.free_scan import free_scan
 from app.core.interview import (
     answer_feedback,
     chat_turn,
@@ -59,7 +60,7 @@ from app.core.interview import (
 from app.core.jd_analyzer import analyze_jd
 from app.core.job_market import stamp_market
 from app.core.scorer import analyze_and_score, keyword_analysis
-from app.core.job_match import fetch_job_text, match_jobs
+from app.core.job_match import MAX_MATCH_LISTINGS, fetch_job_text, match_jobs
 from app.core.outreach import generate_outreach
 from app.core.screening import answer_screening_question
 from app.core.job_search import derive_search_context, resume_hash, search_jobs
@@ -70,7 +71,7 @@ from app.core.providers.comeet import register_company as register_comeet_compan
 from app.core.providers.greenhouse import register_company as register_greenhouse_company
 from app.core.providers.greenhouse_seed import board_url as greenhouse_board_url
 from app.core.tailor import tailor_resume
-from app.core.usage import check_and_count, record_tokens
+from app.core.usage import check_and_count, record_tokens, utc_day
 from app.llm.metering import TokenTally, bind
 from app.core import writing_prefs as writing_prefs_core
 from app.core import resume_prefs as resume_prefs_core
@@ -211,6 +212,7 @@ from app.render.pdf_renderer import page_count, render_pdf
 from app.render.templates import get_template
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health")
@@ -222,9 +224,10 @@ async def _read_capped(file: UploadFile) -> bytes:
     """Read an upload, refusing anything over MAX_UPLOAD_MB.
 
     Chunked on purpose: `await file.read()` with no argument pulls the WHOLE
-    upload into memory before anything can object to its size, which on the
-    no-access-code /public/scan route is a free way to exhaust an instance.
-    This stops at the first chunk that crosses the line.
+    upload into memory before anything can object to its size, and a free
+    account costs nothing to make, so an unbounded read on /resume/upload or
+    /tools/scan would be a cheap way to exhaust an instance. This stops at the
+    first chunk that crosses the line.
     """
     limit = get_settings().max_upload_mb * 1024 * 1024
     chunks: list[bytes] = []
@@ -240,7 +243,20 @@ async def _read_capped(file: UploadFile) -> bytes:
 
 
 @router.post("/resume/upload", response_model=ResumeUploadResponse)
-async def upload_resume(file: UploadFile = File(...), _u: User = Depends(llm_user)) -> ResumeUploadResponse:
+async def upload_resume(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(metered_user),
+) -> ResumeUploadResponse:
+    """Parse an uploaded resume into the structured model.
+
+    Uploading never costs a monthly use (Phase 30): it is a step of the counted
+    flows, and counting it would make one tailor cost two. Its model call is
+    bounded by its OWN daily cap instead (`upload`, B4.6), counted right before
+    that call, so a file refused as empty, unreadable or textless costs nothing.
+    `metered_user`, not `llm_user`: it no longer takes the shared llm unit, and
+    its tokens are still recorded.
+    """
     data = await _read_capped(file)
     if not data:
         raise HTTPException(400, "Empty file.")
@@ -250,6 +266,7 @@ async def upload_resume(file: UploadFile = File(...), _u: User = Depends(llm_use
         raise HTTPException(400, str(e))
     if not raw.strip():
         raise HTTPException(422, "Could not extract any text from the file.")
+    check_and_count(db, user, "upload", get_settings().daily_upload_cap)
     try:
         resume = structure_resume(raw)
     except _SIZE_ERRORS:
@@ -261,9 +278,17 @@ async def upload_resume(file: UploadFile = File(...), _u: User = Depends(llm_use
 
 
 @router.post("/jd/analyze", response_model=JDModel)
-def jd_analyze(body: JDAnalyzeRequest, _u: User = Depends(llm_user)) -> JDModel:
+def jd_analyze(
+    body: JDAnalyzeRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(metered_user),
+) -> JDModel:
+    """Read a pasted job ad into the analysed JD. It costs no monthly use (it is
+    the first step of a tailor) and is bounded by its own daily `jd_analyze` cap
+    (Phase 30 / B4.6) instead of the shared llm unit; its tokens are recorded."""
     if not body.jd_text.strip():
         raise HTTPException(400, "Job description text is empty.")
+    check_and_count(db, user, "jd_analyze", get_settings().daily_jd_analyze_cap)
     try:
         # One argument, then the location re-stamp: `analyze_jd` is injected
         # with that one-argument shape by the smoke suite's metering fake.
@@ -280,17 +305,26 @@ def tailor(
     db: Session = Depends(get_db),
     user: User = Depends(metered_user),  # keeps its own tailor cap; meters tokens
 ) -> TailorResult:
+    """Tailor the resume to one analysed job: one monthly use (Phase 30 / B4).
+
+    The daily tailor cap first, then the use, both in the handler: a charge in a
+    dependency would bill a malformed body, because FastAPI resolves the
+    dependencies before it validates the body. The `charged` block sits OUTSIDE
+    the try/except -> 502, or its 429 would be re-wrapped as a 502, and any
+    failure inside it (400, 413, 502, 503) gives the use back.
+    """
     check_and_count(db, user, "tailor", get_settings().daily_tailor_cap)
-    try:
-        return tailor_resume(
-            body.resume, body.jd,
-            avoid_phrases=writing_prefs_core.avoid_phrases(user),
-            hide_arabic_in_israel=resume_prefs_core.hide_arabic_in_israel(user),
-        )
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while tailoring resume: {e}")
+    with quota.charged(db, user, "tailor"):
+        try:
+            return tailor_resume(
+                body.resume, body.jd,
+                avoid_phrases=writing_prefs_core.avoid_phrases(user),
+                hide_arabic_in_israel=resume_prefs_core.hide_arabic_in_israel(user),
+            )
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while tailoring resume: {e}")
 
 
 @router.get("/profile/resume-prefs", response_model=ResumePrefs)
@@ -438,15 +472,36 @@ def interview_scorecard(body: InterviewChatRequest, _u: User = Depends(llm_user)
 # Job discovery / matching
 # --------------------------------------------------------------------------- #
 @router.post("/jobs/match", response_model=JobMatchResult)
-def jobs_match(body: JobMatchRequest, _u: User = Depends(llm_user)) -> JobMatchResult:
-    if not body.listings:
+def jobs_match(
+    body: JobMatchRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(llm_user),
+) -> JobMatchResult:
+    """Rank pasted listings by fit: ONE use for up to MAX_MATCH_LISTINGS (Phase 30 / B4.3).
+
+    Every listing that is read costs two model calls in a serial loop, so the
+    count, the readable listings and every size are checked BEFORE the use is
+    taken and before the first call: a refusal here costs nothing. Too many
+    listings is a handler 400 with a sentence, never a Pydantic 422, whose list
+    detail the client cannot show. A failure after the model ran gives the use
+    back (OD-3).
+    """
+    if len(body.listings) > MAX_MATCH_LISTINGS:
+        raise HTTPException(400, f"At most {MAX_MATCH_LISTINGS} listings per ranking.")
+    usable = [text.strip() for text in body.listings if len(text.strip()) >= 20]
+    if not usable:
         raise HTTPException(400, "Provide at least one job listing.")
-    try:
-        return match_jobs(body.resume, body.listings)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while matching jobs: {e}")
+    settings = get_settings()
+    for text in usable:
+        require_within(text, settings.max_jd_kb, "jd")
+    require_within(body.resume.model_dump_json(), settings.max_resume_kb, "resume")
+    with quota.charged(db, user, "search"):
+        try:
+            return match_jobs(body.resume, usable)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while matching jobs: {e}")
 
 
 @router.post("/jobs/fit", response_model=FitCheckResult)
@@ -493,9 +548,16 @@ def jobs_fetch(body: JobFetchRequest) -> JobFetchResponse:
 
 
 @router.post("/jobs/search-context", response_model=SearchContext)
-def jobs_search_context(body: SearchContextRequest, _u: User = Depends(llm_user)) -> SearchContext:
+def jobs_search_context(
+    body: SearchContextRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(metered_user),
+) -> SearchContext:
     """Derive what/where to search from the resume, so the UI can prefill the
-    'Customize search' fields before any scrape runs."""
+    'Customize search' fields before any scrape runs. It costs no monthly use
+    (it feeds a counted search) and is bounded by its own daily
+    `search_context` cap (Phase 30 / B4.6) instead of the shared llm unit."""
+    check_and_count(db, user, "search_context", get_settings().daily_search_context_cap)
     try:
         return derive_search_context(body.resume)
     except _SIZE_ERRORS:
@@ -535,40 +597,48 @@ def jobs_search(
     db: Session = Depends(get_db),
     user: User = Depends(metered_user),  # keeps its own search cap; meters tokens
 ) -> JobSearchResult:
+    """Search the boards and rank what they return: one monthly use (Phase 30 / B4).
+
+    The daily search cap first, then the use around the search itself. A search
+    that completes keeps its use, zero matches included (a 200 whose postings
+    were all filtered is a completed search); a failure gives it back. History
+    and the rest of the bookkeeping below are best-effort and outside the charge.
+    """
     check_and_count(db, user, "search", get_settings().daily_search_cap)
     rhash = resume_hash(body.resume)
     try:  # the cache is an optimization (PLAN 12.4) — never fail the search over it
         cache = load_score_cache(db, user.id, rhash)
     except Exception:  # noqa: BLE001
         cache = {}
-    try:
-        result = search_jobs(
-            body.resume,
-            body.customize,
-            cache=cache,
-            # READ BEFORE WRITE, and the order is the whole trap (PLAN 28.3).
-            # `search_jobs` calls this once on THIS thread, after select_hits
-            # and before the scoring pool — so the request's own session is
-            # safe to close over — and `record_sightings` below runs only once
-            # the search has returned. Recording first would stamp every
-            # posting's `first_seen_at` with NOW and then read it straight
-            # back, so `long_open` would measure each posting's age against the
-            # moment we noticed it: zero days, for every posting, for ever.
-            # The signal would pass by never firing.
-            #
-            # Passed BARE, not wrapped: `search_jobs` already catches whatever
-            # this raises and falls back to no sightings, on the rule that
-            # bookkeeping may never turn a served request into an error. A
-            # second try/except here would be a second owner of one policy, and
-            # the two would drift.
-            sightings_fn=partial(load_sightings, db),
-        )
-    except ValueError as e:  # user-facing scrape/search problems
-        raise HTTPException(400, str(e))
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"Error while searching jobs: {e}")
+    with quota.charged(db, user, "search"):
+        try:
+            result = search_jobs(
+                body.resume,
+                body.customize,
+                cache=cache,
+                # READ BEFORE WRITE, and the order is the whole trap (PLAN 28.3).
+                # `search_jobs` calls this once on THIS thread, after select_hits
+                # and before the scoring pool — so the request's own session is
+                # safe to close over — and `record_sightings` below runs only once
+                # the search has returned. Recording first would stamp every
+                # posting's `first_seen_at` with NOW and then read it straight
+                # back, so `long_open` would measure each posting's age against the
+                # moment we noticed it: zero days, for every posting, for ever.
+                # The signal would pass by never firing.
+                #
+                # Passed BARE, not wrapped: `search_jobs` already catches whatever
+                # this raises and falls back to no sightings, on the rule that
+                # bookkeeping may never turn a served request into an error. A
+                # second try/except here would be a second owner of one policy, and
+                # the two would drift.
+                sightings_fn=partial(load_sightings, db),
+            )
+        except ValueError as e:  # user-facing scrape/search problems
+            raise HTTPException(400, str(e))
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"Error while searching jobs: {e}")
     try:  # history persistence is best-effort — never fail the search because of it
         record_search_hits(db, result.matches, user.id, resume_hash=rhash)
     except Exception:  # noqa: BLE001
@@ -607,12 +677,23 @@ def jobs_search_stream(
     then exactly one terminal `result` (a JobSearchResult) or `error`
     ({detail, status}). Errors after the 200 header ride the stream — the cap
     check raises a plain 429 before streaming starts, so old error handling
-    still applies there."""
+    still applies there.
+
+    Monthly uses (Phase 30 / B4.2). One use is reserved on this request's session
+    before the stream starts, so a monthly 429 is a plain HTTP 429 like the daily
+    cap, and the response carries the post-reserve X-Uses-Remaining. A search
+    that completes keeps its use, zero matches included; one that fails gives it
+    back BEFORE its error frame is queued, so no client can read the frame while
+    the use is still spent. That refund runs on the worker's thread, outside the
+    request, where it cannot change a header already sent: the client re-reads
+    /auth/me after an error frame. There is no Idempotency-Key (a reused key
+    would re-run the model for free), so a retry after a dropped connection pays
+    again — and History already holds the search that finished."""
     check_and_count(db, user, "search", get_settings().daily_search_cap)
     # The stream can run for minutes; don't pin the request's pooled (Neon)
     # connection to it. Read what we still need off the session — including the
     # score cache (PLAN 12.4), which must be built BEFORE the close — then
-    # release it; history is persisted at the end on a fresh, short-lived
+    # release it; history is persisted by the worker on a fresh, short-lived
     # session. (check_and_count committed already; get_db's close() is a no-op.)
     user_id = user.id
     rhash = resume_hash(body.resume)
@@ -624,6 +705,9 @@ def jobs_search_stream(
         applied_map = applied_status_map(db, user_id)
     except Exception:  # noqa: BLE001
         applied_map = {}
+    # The use, reserved LAST on this session and right before it closes: nothing
+    # between here and the worker's start can fail and strand it.
+    charge = quota.reserve(db, user, "search")
     db.close()
 
     events: queue.Queue = queue.Queue()  # thread-safe: search workers notify from threads
@@ -640,7 +724,7 @@ def jobs_search_stream(
         above deliberately released the pooled (Neon) connection before this
         endpoint returned, and `search_jobs` calls this minutes later on the
         worker thread. So it opens the same kind of short-lived session the
-        terminal `result` frame already opens for `record_search_hits`
+        worker opens for `record_search_hits` once the search completes
         (`hist_db`) rather than inventing a second pattern, and closes it
         immediately — the read is one query and happens once per search.
 
@@ -656,6 +740,19 @@ def jobs_search_stream(
         finally:
             sdb.close()
 
+    def _refund_search() -> None:
+        """Give the search's use back, on a short-lived session of the worker's
+        own. Wrapped whole: a refund that fails must never stop the error frame
+        that follows it, or the stream would spin keep-alives for ever."""
+        try:
+            refund_db = SessionLocal()
+            try:
+                charge.refund(refund_db)
+            finally:
+                refund_db.close()
+        except Exception:  # noqa: BLE001 - the frame still has to go out
+            logger.warning("search stream: giving back a failed search's use did not complete", exc_info=True)
+
     def _worker() -> None:
         with bind(tally):
             try:
@@ -665,16 +762,45 @@ def jobs_search_stream(
                     progress=lambda e: events.put(("progress", e)),
                     cache=cache,
                     # Read before write: this runs before the scoring pool, and
-                    # the sightings are recorded only in the `result` branch
-                    # below. See the non-stream route for what reversing it
+                    # the sightings are recorded only once the search below has
+                    # returned. See the non-stream route for what reversing it
                     # would cost.
                     sightings_fn=_sightings_fn,
                 )
-                events.put(("result", result))
             except ValueError as e:  # user-facing scrape/search problems
-                events.put(("error", {"detail": str(e), "status": 400}))
+                # The refund lands BEFORE the frame is queued, so no client can
+                # read "error" while the use is still spent.
+                try:
+                    _refund_search()
+                finally:
+                    events.put(("error", {"detail": str(e), "status": 400}))
+                return
             except Exception as e:  # noqa: BLE001
-                events.put(("error", {"detail": f"Error while searching jobs: {e}", "status": 502}))
+                try:
+                    _refund_search()
+                finally:
+                    events.put(("error", {"detail": f"Error while searching jobs: {e}", "status": 502}))
+                return
+            # A completed search is in History BEFORE its result frame, written
+            # here on the worker's own session rather than by the stream below:
+            # the stream's generator only runs while a client is reading, so a
+            # client that dropped would otherwise lose a search it already paid for.
+            try:  # best-effort, same as the non-stream route
+                hist_db = SessionLocal()
+                try:
+                    record_search_hits(hist_db, result.matches, user_id, resume_hash=rhash)
+                    # The market memory rides the SAME short-lived session as the
+                    # history write — one session, one close. A failure here is
+                    # bookkeeping for TOMORROW's ghost signals and must not cost
+                    # the user this search, so it lands in the best-effort
+                    # `except` below; `hist_db` is closed and discarded either
+                    # way, so there is no dirty session left to poison anything.
+                    record_sightings(hist_db, result.matches, datetime.now(timezone.utc))
+                finally:
+                    hist_db.close()
+            except Exception:  # noqa: BLE001
+                pass
+            events.put(("result", result))
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -712,27 +838,8 @@ def jobs_search_stream(
                     else:
                         yield _sse_frame("progress", payload)
                 elif kind == "result":
-                    try:  # best-effort history persistence, same as the non-stream route
-                        hist_db = SessionLocal()
-                        try:
-                            record_search_hits(hist_db, payload.matches, user_id, resume_hash=rhash)
-                            # The market memory rides the SAME short-lived
-                            # session as the history write — one session, one
-                            # close, rather than a third connection opened for
-                            # a single upsert on a stream that has already run
-                            # for minutes. A failure here is bookkeeping for
-                            # TOMORROW's ghost signals and must not cost the
-                            # user this search, so it lands in the existing
-                            # best-effort `except` below; `hist_db` is closed
-                            # and discarded either way, so there is no dirty
-                            # session left to poison anything.
-                            record_sightings(
-                                hist_db, payload.matches, datetime.now(timezone.utc)
-                            )
-                        finally:
-                            hist_db.close()
-                    except Exception:  # noqa: BLE001
-                        pass
+                    # History was written by the worker before this frame was
+                    # queued (see _worker); here the matches are only marked.
                     stamp_applied(payload.matches, applied_map)
                     yield _sse_frame("result", payload.model_dump())
                     return
@@ -914,17 +1021,19 @@ def kits_batch(
     user: User = Depends(current_user),
 ) -> KitBatchResult:
     """Queue tailor kits for the given jobs (deduped by URL; failed kits are
-    requeued). What will actually run is charged against the daily tailor cap
-    upfront, before any kit is written — fail-fast beats dying mid-batch."""
+    requeued). What will actually run is charged upfront, before any kit is
+    written — fail-fast beats dying mid-batch: the daily tailor cap first, then
+    one monthly use per NEW kit in a single reserve (Phase 30 / B4.1). A batch
+    bigger than what is left is a 429 whose detail says what is left, and
+    nothing is queued. Every queued kit carries the reserve's event, which is
+    what a failed, deleted or wiped kit gives back."""
+
+    def _charge(n: int) -> int | None:
+        check_and_count(db, user, "tailor", get_settings().daily_tailor_cap, count=n)
+        return quota.reserve(db, user, "tailor", n).event_id
+
     try:
-        queued_rows, skipped = kits_core.enqueue_kits(
-            db,
-            user,
-            body.jobs,
-            charge=lambda n: check_and_count(
-                db, user, "tailor", get_settings().daily_tailor_cap, count=n
-            ),
-        )
+        queued_rows, skipped = kits_core.enqueue_kits(db, user, body.jobs, charge=_charge)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return KitBatchResult(
@@ -936,8 +1045,9 @@ def kits_batch(
 def kits_process_next(
     db: Session = Depends(get_db), user: User = Depends(metered_user)
 ) -> KitProcessResult:
-    """Run the tailor pipeline on the oldest queued kit (already charged to the
-    cap at batch time). Pipeline failures land on the kit as status=failed —
+    """Run the tailor pipeline on the oldest queued kit (already paid for at
+    batch time: the daily cap and the kit's monthly use). Pipeline failures land
+    on the kit as status=failed and give that kit's use back (Phase 30 / B4.1) —
     the response is always 200 so the client's loop keeps draining the queue."""
     row, remaining = kits_core.process_next_kit(db, user)
     return KitProcessResult(kit=kits_core.kit_out(row) if row else None, remaining=remaining)
@@ -1024,9 +1134,12 @@ def kits_submit(
 def kits_delete(
     kit_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> dict[str, bool]:
+    """Delete one kit. A kit still waiting in the queue gives its use back in the
+    same transaction as the delete (Phase 30 / B4.1); a kit that ran keeps it."""
     row = db.get(TailorKit, kit_id)
     if not row or row.user_id != user.id:
         raise HTTPException(404, "Kit not found.")
+    kits_core.refund_kit(db, kit_id, queued_only=True)
     db.delete(row)
     db.commit()
     return {"deleted": True}
@@ -1045,10 +1158,14 @@ def comeet_companies(db: Session = Depends(get_db)) -> ComeetCompanyList:
 
 @router.post("/jobs/comeet/companies", response_model=ComeetCompanyOut)
 def comeet_add_company(
-    body: AddComeetCompanyRequest, db: Session = Depends(get_db)
+    body: AddComeetCompanyRequest,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(admin_user),
 ) -> ComeetCompanyOut:
     """Grow the registry: paste any public Comeet careers-page URL and its jobs
-    join every future search."""
+    join EVERY user's future searches. Admin-only (Phase 30 / B4.8): the
+    registry is shared by all accounts and each add fetches a third-party page,
+    so an ordinary account adding companies would be changing everyone's search."""
     try:
         c = register_comeet_company(db, body.url)
     except ValueError as e:  # bad URL / not a Comeet page — user-facing
@@ -1073,10 +1190,13 @@ def greenhouse_companies(db: Session = Depends(get_db)) -> GreenhouseCompanyList
 
 @router.post("/jobs/greenhouse/companies", response_model=GreenhouseCompanyOut)
 def greenhouse_add_company(
-    body: AddGreenhouseCompanyRequest, db: Session = Depends(get_db)
+    body: AddGreenhouseCompanyRequest,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(admin_user),
 ) -> GreenhouseCompanyOut:
     """Grow the registry: paste a Greenhouse board slug or careers URL and its
-    jobs join every future search."""
+    jobs join EVERY user's future searches. Admin-only (Phase 30 / B4.8), for the
+    same reason as the Comeet registry: it is shared by all accounts."""
     try:
         c = register_greenhouse_company(db, body.board)
     except ValueError as e:  # bad slug / no such board — user-facing
@@ -1089,32 +1209,42 @@ def greenhouse_add_company(
 
 
 # --------------------------------------------------------------------------- #
-# Free public CV-vs-JD scan (PLAN 6): the landing-page wedge. Exempt from the
-# X-App-Key gate (see main.py), deterministic only — never the LLM — and
-# nothing is persisted. Rate-limited per client because it is public.
+# The CV scan (PLAN 6): a resume file against a pasted job description,
+# deterministic only — never the LLM — and nothing is persisted. An app feature
+# since Phase 30 / A2: it sits behind the gate like every other feature (it has
+# no `_GATE_EXEMPT` entry, so credentials, CSRF and verification all apply), and
+# a scan that returns a result costs one monthly use. The anonymous /public/scan
+# and its per-instance, per-IP limiter are gone; the per-user pool, the daily
+# scan cap and the signup throttles replace them.
 # --------------------------------------------------------------------------- #
-@router.post("/public/scan", response_model=FreeScanResult)
-async def public_scan(
-    request: Request,
+@router.post("/tools/scan", response_model=FreeScanResult)
+async def tools_scan(
     file: UploadFile = File(...),
     jd_text: str = Form(""),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> FreeScanResult:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    client_ip = forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
-    if not free_scan_limiter.allow(client_ip):
-        raise HTTPException(429, "Too many scans from this address — try again in a bit.")
+    """Score a resume file against a job description.
+
+    In order: an empty JD is a 400 that costs nothing; the daily scan cap counts
+    the attempt and is never refunded; then one monthly use wraps the read, the
+    parse and the scan, so a refused upload (413), an unreadable file (400) or a
+    file with no text (422) gives the use back.
+    """
     if not jd_text.strip():
         raise HTTPException(400, "Paste the job description text.")
-    data = await _read_capped(file)
-    if not data:
-        raise HTTPException(400, "Empty file.")
-    try:
-        raw = extract_text(file.filename or "", data)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    if not raw.strip():
-        raise HTTPException(422, "Could not extract any text from the file.")
-    return free_scan(raw, jd_text)
+    check_and_count(db, user, "scan", get_settings().daily_scan_cap)
+    with quota.charged(db, user, "scan"):
+        data = await _read_capped(file)
+        if not data:
+            raise HTTPException(400, "Empty file.")
+        try:
+            raw = extract_text(file.filename or "", data)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if not raw.strip():
+            raise HTTPException(422, "Could not extract any text from the file.")
+        return free_scan(raw, jd_text)
 
 
 # --------------------------------------------------------------------------- #
@@ -1244,43 +1374,55 @@ def tools_page_count(body: PageCountRequest) -> PageCountResult:
 
 
 @router.post("/tools/linkedin", response_model=LinkedInResult)
-def tools_linkedin(body: LinkedInRequest, _u: User = Depends(llm_user)) -> LinkedInResult:
-    try:
-        return optimize_linkedin(body.resume)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while optimizing LinkedIn profile: {e}")
+def tools_linkedin(
+    body: LinkedInRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> LinkedInResult:
+    """One monthly use (Phase 30 / B4), given back if the rewrite fails."""
+    with quota.charged(db, user, "linkedin"):
+        try:
+            return optimize_linkedin(body.resume)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while optimizing LinkedIn profile: {e}")
 
 
 @router.post("/tools/follow-up", response_model=FollowUpResult)
-def tools_follow_up(body: FollowUpRequest, _u: User = Depends(llm_user)) -> FollowUpResult:
-    try:
-        return write_follow_up(body.company, body.role, body.stage, body.context)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while writing the follow-up email: {e}")
+def tools_follow_up(
+    body: FollowUpRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> FollowUpResult:
+    """One monthly use (Phase 30 / B4), given back if the email cannot be written."""
+    with quota.charged(db, user, "follow_up"):
+        try:
+            return write_follow_up(body.company, body.role, body.stage, body.context)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while writing the follow-up email: {e}")
 
 
 @router.post("/outreach", response_model=OutreachResult)
-def outreach(body: OutreachRequest, _u: User = Depends(llm_user)) -> OutreachResult:
+def outreach(
+    body: OutreachRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> OutreachResult:
     """Outreach Studio: a LinkedIn connection note, an InMail/cold email, and a
     referral request for one job — the direct-to-a-human path to an interview,
-    grounded only in real resume facts."""
-    try:
-        return generate_outreach(
-            body.resume,
-            body.jd_text,
-            body.company,
-            body.job_title,
-            body.contact_name,
-            body.contact_role,
-        )
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while writing outreach messages: {e}")
+    grounded only in real resume facts. One monthly use (Phase 30 / B4), given
+    back if the messages cannot be written."""
+    with quota.charged(db, user, "outreach"):
+        try:
+            return generate_outreach(
+                body.resume,
+                body.jd_text,
+                body.company,
+                body.job_title,
+                body.contact_name,
+                body.contact_role,
+            )
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while writing outreach messages: {e}")
 
 
 @router.post("/tools/screening-answer", response_model=ScreeningAnswerResult)
@@ -1298,21 +1440,26 @@ def tools_screening_answer(body: ScreeningRequest, _u: User = Depends(llm_user))
 
 
 @router.post("/tools/company-brief", response_model=CompanyBriefResult)
-def tools_company_brief(body: CompanyBriefRequest, _u: User = Depends(llm_user)) -> CompanyBriefResult:
+def tools_company_brief(
+    body: CompanyBriefRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> CompanyBriefResult:
     """Grounded pre-apply/pre-interview company brief: fetches the company's
     about/careers page (or takes pasted text) and summarizes it — plus key
     hiring-relevant people from the page and a short resume-grounded reach-out.
-    Never model memory alone; emails only when they appear on the page."""
-    try:
-        return build_company_brief(
-            body.resume, body.company, body.url, body.page_text, body.jd_text, body.job_title
-        )
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while building the company brief: {e}")
+    Never model memory alone; emails only when they appear on the page. One
+    monthly use (Phase 30 / B4): a page that cannot be fetched (400), or any
+    other failure, gives it back."""
+    with quota.charged(db, user, "company_brief"):
+        try:
+            return build_company_brief(
+                body.resume, body.company, body.url, body.page_text, body.jd_text, body.job_title
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while building the company brief: {e}")
 
 
 # --------------------------------------------------------------------------- #
@@ -1796,6 +1943,11 @@ def send_feedback(
 def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
     """Delete every row this user owns, and say how many per table.
 
+    Two deliberate carve-outs (Phase 30 / B2): TODAY's usage_log rows stay (they
+    are the daily caps, and `close_my_account` removes them), and the monthly-uses
+    tables are never touched (the pool belongs to the person). Both exist so that
+    neither privacy door is a way to reset a limit.
+
     Shared by BOTH destructive routes so the two can never drift: the day a
     table is added, one edit here covers "Delete all my data" and "Close my
     account" alike. This is the function CLAUDE.md's "anything holding user
@@ -1834,13 +1986,25 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
     # an unreadable token never reads as a grant handed back.
     google_revoked = inbox_sync_core.revoke_stored_grant(inbox_sync_core.connection_for(db, user.id))
 
+    # Phase 30 / B4.1: a kit still waiting in the queue was paid for when it was
+    # batched and will never run now, so its use comes back BEFORE the kit rows
+    # go, in this same transaction.
+    kits_core.refund_queued_kits(db, user.id)
+
+    # Phase 30 / B2: only usage_log rows from EARLIER UTC days. Today's rows are
+    # the daily caps' counters, and a wipe that took them would make "Delete my
+    # data" a free reset of every daily cap.
+    earlier_usage = db.execute(
+        delete(UsageLog).where(UsageLog.user_id == user.id, UsageLog.day < utc_day())
+    ).rowcount or 0
+
     return DeleteMyDataResult(
         resumes=_wipe(SavedResume),
         resume_versions=_wipe(SavedResumeVersion),
         applications=_wipe(Application),
         history=_wipe(JobSearchHit),
         alerts=_wipe(JobAlert),
-        usage=_wipe(UsageLog),
+        usage=earlier_usage,
         feedback=_wipe(Feedback),
         kits=_wipe(TailorKit),
         inbox_events=_wipe(MailEvent),
@@ -1912,6 +2076,11 @@ def close_my_account(
             "this instance. Use Delete all my data instead.",
         )
     result = _wipe_user_rows(db, user)
+    # Phase 30 / B2: the usage_log rows the wipe kept for TODAY go too, in this
+    # transaction. A deactivated user can never spend them and a new signup gets
+    # a new user id, so keeping them would hold usage data with no purpose and no
+    # expiry. The monthly pool is keyed by the address, not the id, and stays.
+    result.usage += db.execute(delete(UsageLog).where(UsageLog.user_id == user.id)).rowcount or 0
     user.is_active = False
     # FIXB B14: the row stays (a deactivated id and its dead code are what the
     # design needs), but the name and the sign-in address go with the account —

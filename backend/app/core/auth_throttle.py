@@ -1,9 +1,10 @@
 """Auth throttles, the auth-mail budget and the sign-in security log (Phase 29 / B1).
 
-Counted in the `auth_events` TABLE, never in process memory. The /public/scan
-`RateLimiter` says it in its own docstring: on Vercel every instance has its own
-memory, so an in-process window is a separate budget per cold start — a login
-limit built that way is a limit per instance, i.e. no limit.
+Counted in the `auth_events` TABLE, never in process memory: on Vercel every
+instance has its own memory, so an in-process window is a separate budget per
+cold start — a login limit built that way is a limit per instance, i.e. no
+limit. (The CV scan's in-process `RateLimiter` was exactly that; Phase 30
+deleted it for a per-user daily cap, which is counted in a table too.)
 
 **Write first, then count.** An attempt inserts and commits its event BEFORE it
 counts, so parallel requests see each other: a burst of fifty cannot slip fifty

@@ -46,9 +46,10 @@ class Settings(BaseSettings):
     daily_search_context_cap: int = 10
     # The CV scan's own daily cap, beside its monthly charge (Phase 30 / A2).
     daily_scan_cap: int = 20
-    # Upload limits. Both upload routes read the file into memory to parse it,
-    # and /public/scan takes NO access code, so an unbounded read is a free way
-    # to exhaust a serverless instance. A resume is a couple of hundred kB; 10 MB
+    # Upload limits. Both upload routes (/resume/upload and /tools/scan) read the
+    # file into memory to parse it, and a free account costs nothing to make, so
+    # an unbounded read is a cheap way to exhaust a serverless instance. A resume
+    # is a couple of hundred kB; 10 MB
     # is generous for a scan-heavy PDF and still nowhere near dangerous. The page
     # ceiling bounds pdfplumber, which is the expensive half — a master CV can
     # legitimately be ~30 rendered pages (PLAN 18.4), so 50 leaves real headroom
@@ -81,9 +82,11 @@ class Settings(BaseSettings):
     # build. So a bomb sized just under this cap still buys ~38 s of one
     # instance against Vercel's 300 s kill; unguarded, the same upload buys
     # ~3.4 GB and OOMs long before it finishes. 64 MB was the first choice and
-    # was halved on exactly that number: /public/scan takes no access code, so
-    # the CPU an anonymous request can buy is the quantity being bounded, and
-    # 3x headroom over a measured worst case is enough. Below ~12 MB the guard
+    # was halved on exactly that number: the scan took no access code then, and
+    # while every upload route is signed in since Phase 30, a free account is
+    # still cheap to make, so the CPU one request can buy is the quantity being
+    # bounded, and 3x headroom over a measured worst case is enough. Below ~12 MB
+    # the guard
     # starts firing on legitimate input, which is the other wall.
     #
     # <= 0 disables the check.

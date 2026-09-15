@@ -106,13 +106,14 @@ app.add_middleware(
 
 # Paths as seen locally and under the Vercel /api mount. The alerts cron is
 # called by Vercel's scheduler (no X-App-Key); it enforces its own Bearer
-# CRON_SECRET check in the handler. /public/scan is the free no-signup
-# CV-vs-JD scan (deterministic only, rate-limited in its handler).
+# CRON_SECRET check in the handler. Every FEATURE is behind the gate: the CV
+# scan left this set in Phase 30 (A2), when it became /tools/scan, so no
+# anonymous route feeds a file to the parser any more. A feature added here would
+# skip credentials, CSRF and verification all at once.
 _GATE_EXEMPT = {
     "/", "/health", "/api", "/api/health",
     "/jobs/alerts/cron", "/api/jobs/alerts/cron",
     "/jobs/nudges/cron", "/api/jobs/nudges/cron",
-    "/public/scan", "/api/public/scan",
 }
 
 # Account routes that must answer a caller holding no valid credential, since

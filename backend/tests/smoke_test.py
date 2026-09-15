@@ -5062,11 +5062,11 @@ check(
 )
 _db.close()
 
-# 17. Free public CV-vs-JD scan (PLAN 6): deterministic keyword extraction,
-# coverage via the scorer, Hebrew prefix rescue, rate limiter, and the
-# HTTP-level gate exemption. Zero LLM calls on this path by construction.
+# 17. The CV scan (PLAN 6; an app feature since Phase 30 / A2): deterministic
+# keyword extraction, coverage via the scorer, Hebrew prefix rescue, and the
+# HTTP route behind the gate with its daily cap and its monthly use. Zero LLM
+# calls on this path by construction.
 from app.core.free_scan import (  # noqa: E402
-    RateLimiter,
     extract_jd_keywords,
     free_scan,
 )
@@ -5146,8 +5146,9 @@ check(
 # .docx is a zip that python-docx expands into an lxml tree in full before a
 # word of text exists. Measured: 0.298 MB of zip is 102.0 MB of `document.xml`
 # (343:1), so the 10 MB upload cap admitted ~3.4 GB of XML from unremarkable
-# content. That matters because `POST /public/scan` takes NO access code — it
-# is the one door a stranger who has never seen an invite code can reach.
+# content. It still matters with every upload route behind the gate (Phase 30 /
+# A2): a free account costs nothing to make, and `/resume/upload` and
+# `/tools/scan` both feed a user's FILE straight into the parser.
 #
 # Driven through `extract_text`, never by calling the guard directly: a direct
 # call still passes with the `_assert_docx_expansion(data)` line deleted from
@@ -5546,61 +5547,99 @@ check(
     str([(k, _cov_kp(k, _cov_dot, _cov_dot_t)) for k in ("SQL", "Python", "node.js", "node")]),
 )
 
-_rl = RateLimiter(max_requests=3, window_seconds=60)
-check(
-    "rate limiter allows up to the cap then blocks",
-    all(_rl.allow("1.2.3.4", now=t) for t in (0.0, 1.0, 2.0))
-    and not _rl.allow("1.2.3.4", now=3.0)
-    and _rl.allow("5.6.7.8", now=3.0),  # other keys unaffected
-)
-check("rate limiter window slides", _rl.allow("1.2.3.4", now=61.0))
-
-# HTTP: with APP_ACCESS_CODE set (top of file), /public/scan must work with
-# no X-App-Key while a gated route 401s.
+# HTTP. The scan is an app feature (Phase 30 / A2): with APP_ACCESS_CODE set
+# (top of file) it 401s without a credential like every other feature, and a
+# signed-in user pays one monthly use for a scan that returns a result. The old
+# anonymous `/public/scan` door and its per-IP `RateLimiter` are gone; the
+# per-user pool, the daily scan cap and the verification gate replace them.
+#
+# `_ADMIN_H` is defined some 2,200 lines further down, so this block keeps its
+# own copy of the admin header: using that name here would be a NameError that
+# aborts the straight-line suite.
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import select as _scan_sel  # noqa: E402
 
+from app.db.models import UsageEvent as _ScanEvent  # noqa: E402
 from app.main import app as _fastapi_app  # noqa: E402
 
+_SCAN_ADMIN_H = {"X-App-Key": "smoke-gate-code"}
+
+
+def _scan_events(uid):  # noqa: ANN001
+    """(id, feature, delta, refunded, ref) for every ledger event of one user, oldest first."""
+    _d = SessionLocal()
+    try:
+        return [
+            (e.id, e.feature, e.delta, e.refunded, e.ref)
+            for e in _d.execute(
+                _scan_sel(_ScanEvent).where(_ScanEvent.user_id == uid).order_by(_ScanEvent.id)
+            ).scalars()
+        ]
+    finally:
+        _d.close()
+
+
 with TestClient(_fastapi_app) as _tc:
-    _scan_resp = _tc.post(
-        "/public/scan",
-        files={"file": ("resume.txt", "Dana Levi\ndana@example.com\nPython, SQL".encode("utf-8"), "text/plain")},
-        data={"jd_text": "Python developer. Python and SQL required. Docker an advantage."},
+    _scan_user = _tc.post("/admin/users", json={"name": "Scan Friend"}, headers=_SCAN_ADMIN_H).json()
+    _scan_uid = _scan_user.get("id")
+    _SCAN_H = {"X-App-Key": _scan_user.get("invite_code", "")}
+    _scan_file = ("resume.txt", "Dana Levi\ndana@example.com\nPython, SQL".encode("utf-8"), "text/plain")
+    _scan_jd = {"jd_text": "Python developer. Python and SQL required. Docker an advantage."}
+    _scan_anon = _tc.post("/tools/scan", files={"file": _scan_file}, data=_scan_jd)
+    _scan_old = _tc.post("/public/scan", files={"file": _scan_file}, data=_scan_jd, headers=_SCAN_ADMIN_H)
+    check(
+        "the CV scan needs an account: /tools/scan with no credential is a 401 like every other feature, and the "
+        "anonymous /public/scan route is gone (404 even for the admin)",
+        _scan_anon.status_code == 401 and _scan_old.status_code == 404,
+        f"{_scan_anon.status_code} {_scan_old.status_code}",
+    )
+    _scan_resp = _tc.post("/tools/scan", files={"file": _scan_file}, data=_scan_jd, headers=_SCAN_H)
+    _scan_ev1 = _scan_events(_scan_uid)
+    check(
+        "a signed-in user's scan scores, and a scan that returns a result keeps its one use (+1 scan)",
+        _scan_resp.status_code == 200
+        and 0 < ((_scan_resp.json() or {}).get("coverage") or 0) <= 100
+        and [e[1:] for e in _scan_ev1] == [("scan", 1, 0, "")],
+        f"{_scan_resp.status_code} {_scan_resp.text[:120]} {_scan_ev1}",
     )
     check(
-        "public scan endpoint bypasses the access gate and scores",
-        _scan_resp.status_code == 200 and 0 < _scan_resp.json()["coverage"] <= 100,
-        f"{_scan_resp.status_code} {_scan_resp.text[:120]}",
-    )
-    check(
-        "public scan rejects an empty JD",
+        "the scan rejects an empty JD with a 400, before any use is taken",
         _tc.post(
-            "/public/scan",
+            "/tools/scan",
             files={"file": ("resume.txt", b"text", "text/plain")},
             data={"jd_text": " "},
-        ).status_code == 400,
+            headers=_SCAN_H,
+        ).status_code == 400
+        and _scan_events(_scan_uid) == _scan_ev1,
     )
     _gated = _tc.post("/jd/analyze", json={"jd_text": "Python developer"})
     check("gated routes still 401 without the access code", _gated.status_code == 401, str(_gated.status_code))
 
-    # THE ZIP BOMB, OVER HTTP, ON THE ONE ROUTE THAT TAKES NO ACCESS CODE. The
-    # unit check above proves the guard raises; this proves the raise is WIRED —
-    # gate exemption, the `InputTooLarge` exception handler and the structured
-    # 413 body all in one request. Without it the guard could regress to a 500
-    # (a limit the user can act on turning into a Sentry issue) with the unit
-    # check still green.
+    # THE ZIP BOMB, OVER HTTP. The unit check above proves the guard raises; this
+    # proves the raise is WIRED — the `InputTooLarge` exception handler and the
+    # structured 413 body in one request. Without it the guard could regress to a
+    # 500 (a limit the user can act on turning into a Sentry issue) with the unit
+    # check still green. It is also the proof that `quota.charged` refunds an
+    # exception that is NOT an HTTPException: the bomb is refused inside the
+    # charged block, so the +1 must come back as a -1 `refund:<id>` event.
     _bomb_resp = _tc.post(
-        "/public/scan",
+        "/tools/scan",
         files={"file": ("bomb.docx", _docx_bomb,
                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
         data={"jd_text": "Python developer."},
+        headers=_SCAN_H,
     )
+    _scan_ev2 = _scan_events(_scan_uid)[len(_scan_ev1):]
+    _bomb_detail = (_bomb_resp.json() or {}).get("detail")
     check(
-        "the unauthenticated /public/scan refuses a decompression bomb with a 413, "
-        "not a 500 — the door a stranger with no invite code can reach",
+        "the scan refuses a decompression bomb with a 413, not a 500 — and gives the use back: the bomb's +1 scan "
+        "charge is marked refunded and answered by a -1 refund:<id> event",
         _bomb_resp.status_code == 413
-        and _bomb_resp.json().get("detail", {}).get("code") == "input_too_large",
-        f"{_bomb_resp.status_code} {_bomb_resp.text[:160]}",
+        and isinstance(_bomb_detail, dict) and _bomb_detail.get("code") == "input_too_large"
+        and len(_scan_ev2) == 2
+        and _scan_ev2[0][1:] == ("scan", 1, 1, "")
+        and _scan_ev2[1][1:] == ("scan", -1, 0, f"refund:{_scan_ev2[0][0]}"),
+        f"{_bomb_resp.status_code} {_bomb_resp.text[:160]} {_scan_ev2}",
     )
     # The false-positive half over HTTP too: an ordinary .docx still scores.
     # A SMALL one — this suite sets MAX_UPLOAD_MB=1 (top of file), so the 6 MB
@@ -5609,15 +5648,16 @@ with TestClient(_fastapi_app) as _tc:
     # check, which does not cross an HTTP boundary; what this one has to prove
     # is that a normal CV still gets a 200 through the same route.
     _ok_resp = _tc.post(
-        "/public/scan",
+        "/tools/scan",
         files={"file": ("small.docx", _make_docx(
             _DOCX_HEAD + b"<w:p><w:r><w:t>Dana Levi builds Kubernetes tooling</w:t></w:r></w:p>" + _DOCX_TAIL),
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
         data={"jd_text": "Kubernetes engineer. Kubernetes required."},
+        headers=_SCAN_H,
     )
     check(
         "…while a real .docx upload still scans normally through the same route",
-        _ok_resp.status_code == 200 and 0 < _ok_resp.json()["coverage"] <= 100,
+        _ok_resp.status_code == 200 and 0 < ((_ok_resp.json() or {}).get("coverage") or 0) <= 100,
         f"{_ok_resp.status_code} {_ok_resp.text[:160]}",
     )
 
@@ -8064,15 +8104,59 @@ with TestClient(_fastapi_app) as _tc:
     check("feedback list is admin-only", _tc.get("/admin/feedback", headers=_FRIEND_H).status_code == 403)
 
     # Delete-my-data (PLAN 7.5): friend leaves cleanly, admin data untouched.
+    # Phase 30 / B2: the wipe deletes only usage_log rows from EARLIER UTC days.
+    # Today's rows are the daily caps' counters, so a wipe that took them would
+    # make "Delete my data" a free reset of every daily cap. The friend's tailor
+    # count from the checks above is asserted PRESENT before the wipe, so the
+    # pin cannot pass on a user who simply never had a row.
+    from datetime import datetime as _WipeDT, timedelta as _WipeTD, timezone as _WipeTZ  # noqa: E402
+
+    from app.db.models import UsageLog as _WipeUL  # noqa: E402
+
+    def _usage_rows(uid):  # noqa: ANN001
+        """(action, day) for every usage_log row of one user, sorted."""
+        _d = SessionLocal()
+        try:
+            return sorted(
+                tuple(r) for r in _d.execute(
+                    _scan_sel(_WipeUL.action, _WipeUL.day).where(_WipeUL.user_id == uid)
+                ).all()
+            )
+        finally:
+            _d.close()
+
+    _wipe_today = _WipeDT.now(_WipeTZ.utc).strftime("%Y-%m-%d")
+    _friend_rows_before = _usage_rows(_friend_id)
     _del = _tc.request("DELETE", "/profile/data", headers=_FRIEND_H)
     check(
-        "delete-my-data wipes the friend's rows (resume, app, usage, feedback)",
+        "delete-my-data wipes the friend's rows (resume, app, feedback) and KEEPS today's usage_log row — the "
+        "tailor count from this morning is there before and after, and the wipe reports usage 0",
         _del.status_code == 200
         and _del.json()["resumes"] == 1
         and _del.json()["applications"] == 1
-        and _del.json()["usage"] == 1
-        and _del.json()["feedback"] == 1,
-        _del.text[:200],
+        and _del.json()["usage"] == 0
+        and _del.json()["feedback"] == 1
+        and ("tailor", _wipe_today) in _friend_rows_before
+        and _usage_rows(_friend_id) == _friend_rows_before,
+        f"{_del.text[:200]} before={_friend_rows_before} after={_usage_rows(_friend_id)}",
+    )
+    # The catch beside it: a row from an EARLIER day does go, and today's stays.
+    _wipe_yesterday = (_WipeDT.now(_WipeTZ.utc) - _WipeTD(days=1)).strftime("%Y-%m-%d")
+    _wd = SessionLocal()
+    try:
+        _wd.add(_WipeUL(user_id=_friend_id, action="llm", day=_wipe_yesterday, count=4))
+        _wd.commit()
+    finally:
+        _wd.close()
+    _old_rows = _usage_rows(_friend_id)
+    _del_old = _tc.request("DELETE", "/profile/data", headers=_FRIEND_H)
+    check(
+        "…while a back-dated usage_log row IS deleted: the next wipe reports usage 1, yesterday's row is gone and "
+        "today's tailor row is still there",
+        ("llm", _wipe_yesterday) in _old_rows
+        and _del_old.status_code == 200 and _del_old.json()["usage"] == 1
+        and _usage_rows(_friend_id) == _friend_rows_before,
+        f"{_del_old.text[:160]} {_usage_rows(_friend_id)}",
     )
     check(
         "after wipe: friend empty, admin intact",
@@ -8115,6 +8199,14 @@ with TestClient(_fastapi_app) as _tc:
     )
     _tc.put("/profile/resume", json={"resume": _resume_json, "label": "Yael CV"}, headers=_QUIT_H)
     _tc.post("/applications", json={"job_title": "SRE", "company": "QuitCo"}, headers=_QUIT_H)
+    # Phase 30 / B2: a same-day usage_log row, asserted present before the close.
+    _qd = SessionLocal()
+    try:
+        _qd.add(_WipeUL(user_id=_quit["id"], action="llm", day=_wipe_today, count=1))
+        _qd.commit()
+    finally:
+        _qd.close()
+    _quit_rows_before = _usage_rows(_quit["id"])
     _close = _tc.request("DELETE", "/profile/account", headers=_QUIT_H)
     check(
         "closing an account wipes the same rows AND reports the deactivation",
@@ -8123,6 +8215,15 @@ with TestClient(_fastapi_app) as _tc:
         and _close.json()["data"]["resumes"] == 1
         and _close.json()["data"]["applications"] == 1,
         _close.text[:250],
+    )
+    check(
+        "closing an account deletes the closed user's usage_log rows, TODAY's included — present before, none after, "
+        "counted in data.usage — the twin of Delete my data keeping today's row above (a deactivated user can never "
+        "spend them, and a new signup gets a new id)",
+        _quit_rows_before == [("llm", _wipe_today)]
+        and _usage_rows(_quit["id"]) == []
+        and _close.status_code == 200 and _close.json()["data"]["usage"] == 1,
+        f"before={_quit_rows_before} after={_usage_rows(_quit['id'])} {_close.text[:160]}",
     )
     check(
         "a closed account's code stops opening the gate",
@@ -12667,11 +12768,12 @@ check("guarded redirect handler re-checks each hop", _redir_blocked)
 with TestClient(_fastapi_app) as _tc:
     _too_big = b"x" * (1024 * 1024 + 1024)
     check(
-        "public scan refuses an over-cap upload with 413",
+        "the scan refuses an over-cap upload with 413",
         _tc.post(
-            "/public/scan",
+            "/tools/scan",
             files={"file": ("big.txt", _too_big, "text/plain")},
             data={"jd_text": "Python developer"},
+            headers=_ADMIN_H,
         ).status_code == 413,
     )
     # A prompt-size limit must reach the user as a 413 carrying a STRUCTURED
@@ -12707,9 +12809,10 @@ with TestClient(_fastapi_app) as _tc:
     check(
         "an under-cap upload still goes through",
         _tc.post(
-            "/public/scan",
+            "/tools/scan",
             files={"file": ("resume.txt", b"Dana Levi\nPython, SQL\n" + b"filler " * 1000, "text/plain")},
             data={"jd_text": "Python and SQL required."},
+            headers=_ADMIN_H,
         ).status_code == 200,
     )
 
@@ -12798,27 +12901,51 @@ check("record() outside a meter is a harmless no-op", _record(999, 999) is None)
 with TestClient(_fastapi_app) as _tc:
     _cap_user = _tc.post("/admin/users", json={"name": "Cap Tester"}, headers=_ADMIN_H).json()
     _CAP_H = {"X-App-Key": _cap_user["invite_code"]}
+    # Not a check about the monthly pool (Phase 30 / B8.0 rule 6), so the cap user
+    # gets the plan that lifts the MONTHLY limit. Every DAILY cap this section pins
+    # still applies to plan "unlimited".
+    _cap_plan = _tc.patch(f"/admin/users/{_cap_user['id']}", json={"plan": "unlimited"}, headers=_ADMIN_H)
 
-    # --- S2: a previously-free route now charges the llm cap (3 for this suite).
-    _jd_body = {"jd_text": "Python developer. Python and SQL required."}
-    _codes = [_tc.post("/jd/analyze", json=_jd_body, headers=_CAP_H).status_code for _ in range(4)]
+    def _cap_count(action):  # noqa: ANN001
+        """The cap user's usage_log count for one action today (0 when there is no row)."""
+        _d = _Session()
+        try:
+            _row = _d.execute(
+                _select(_UsageLog).where(_UsageLog.user_id == _cap_user["id"], _UsageLog.action == action)
+            ).scalars().first()
+            return int(_row.count) if _row is not None else 0
+        finally:
+            _d.close()
+
+    # --- S2: a previously-free route charges the llm cap (3 for this suite).
+    _fu_body = {"company": "Acme", "role": "Engineer", "stage": "after_apply", "context": ""}
+    _fu = [_tc.post("/tools/follow-up", json=_fu_body, headers=_CAP_H) for _ in range(4)]
     check(
-        "previously-uncapped LLM routes now charge the daily llm cap",
-        _codes[:3] == [200, 200, 200] and _codes[3] == 429,
-        str(_codes),
+        "previously-uncapped LLM routes charge the daily llm cap: three follow-ups land and the fourth is a 429 "
+        "with the structured detail",
+        _cap_plan.status_code == 200
+        and [r.status_code for r in _fu] == [200, 200, 200, 429]
+        and _fu[3].json().get("detail") == {"code": "daily_limit", "action": "llm", "cap": 3},
+        f"{[r.status_code for r in _fu]} {_fu[3].text[:120]}",
     )
-    _over = _tc.post("/tools/follow-up",
-                     json={"company": "Acme", "role": "Engineer", "stage": "after_apply", "context": ""},
-                     headers=_CAP_H)
+    _li_over = _tc.post("/tools/linkedin", json={"resume": _resume_json}, headers=_CAP_H)
     check(
-        "the cap is shared across all of them, with the structured detail",
-        _over.status_code == 429
-        and _over.json()["detail"] == {"code": "daily_limit", "action": "llm", "cap": 3},
-        _over.text[:120],
+        "the cap is shared across all of them: LinkedIn meets the same exhausted llm unit, with the structured detail",
+        _li_over.status_code == 429
+        and _li_over.json().get("detail") == {"code": "daily_limit", "action": "llm", "cap": 3},
+        _li_over.text[:120],
+    )
+    _jd_body = {"jd_text": "Python developer. Python and SQL required."}
+    _jd_free = _tc.post("/jd/analyze", json=_jd_body, headers=_CAP_H)
+    check(
+        "/jd/analyze no longer takes the shared llm unit (Phase 30 / B4.6): on the exhausted cap it still answers "
+        "200, its own jd_analyze counter takes the call, and the llm counter stays at 3",
+        _jd_free.status_code == 200 and _cap_count("llm") == 3 and _cap_count("jd_analyze") == 1,
+        f"{_jd_free.status_code} llm={_cap_count('llm')} jd_analyze={_cap_count('jd_analyze')}",
     )
     check(
         "admin stays exempt from the llm cap",
-        all(_tc.post("/jd/analyze", json=_jd_body, headers=_ADMIN_H).status_code == 200 for _ in range(4)),
+        all(_tc.post("/tools/follow-up", json=_fu_body, headers=_ADMIN_H).status_code == 200 for _ in range(4)),
     )
     # This pin used to send `jd_text: ""` — the ONE value that never enters the
     # coverage branch — under a label asserting the route calls no model, while
@@ -18356,6 +18483,1010 @@ check(
     and _calls32(_iroutes32.inbox_cron, "auth_throttle", "prune_security_log")
     and not _calls32(_routes32.cron_nudges, "quota", "prune"),
 )
+
+# ---------------------------------------------------------------------------
+# 32 (continued). Where the monthly uses are spent (Phase 30 / B4 and A2): the
+# plainly charged routes, the kits, the search stream, the job-match ranking, the
+# CV scan, the daily caps on the free model routes, and the registry writes.
+# The B8.0 rules above still hold: every quota assertion runs as a user minted
+# HERE, a charge is proven by its +n event before a refund or a skip is asserted,
+# and each catch sits beside its twin. The HTTP checks run with the three older
+# daily caps OFF, so a minted friend meets the monthly pool and never
+# DAILY_LLM_CAP=3; a check that is ABOUT a daily cap turns its own cap back on.
+# ---------------------------------------------------------------------------
+from app.core import company_brief as _cb32, job_match as _jm32, kits as _kits32  # noqa: E402
+from app.core.providers import comeet as _comeet32, greenhouse as _gh32  # noqa: E402
+from app.db.history import list_search_hits as _hits32  # noqa: E402
+from app.db.models import TailorKit as _TK32, UsageLog as _ULog32  # noqa: E402
+from app.llm.client import StubClient as _Stub32, get_llm_client as _get_llm32  # noqa: E402
+from app.models import JDModel as _JD32, JobMatch as _JM32, JobSearchRequest as _JSReq32  # noqa: E402
+from app.models import JobSearchResult as _JSRes32, TailorResult as _TRes32  # noqa: E402
+
+_R32 = resume.model_dump(mode="json")
+_JDJ32 = jd.model_dump(mode="json")
+
+
+def _events32(uid):  # noqa: ANN001
+    """(id, feature, delta, refunded, ref) for every ledger event of one user, oldest first. A refund event carries
+    its charge's user id, so a user's refunds are listed with their charges."""
+    d = SessionLocal()
+    try:
+        return [tuple(r) for r in d.execute(
+            _sel32(_UE32.id, _UE32.feature, _UE32.delta, _UE32.refunded, _UE32.ref)
+            .where(_UE32.user_id == uid).order_by(_UE32.id)
+        ).all()]
+    finally:
+        d.close()
+
+
+def _shape32(events):  # noqa: ANN001
+    """The events without their ids: (feature, delta, refunded, ref)."""
+    return [tuple(e[1:]) for e in events]
+
+
+def _refunded32(events, feature):  # noqa: ANN001
+    """True when `events` hold exactly one +1 `feature` charge, marked refunded once, answered by its -1 refund:<id>."""
+    charges = [e for e in events if e[1] == feature and e[2] > 0]
+    refunds = [e for e in events if e[1] == feature and e[2] < 0]
+    return (
+        len(charges) == 1 and len(refunds) == 1
+        and charges[0][2] == 1 and charges[0][3] == 1
+        and refunds[0][2] == -1 and refunds[0][3] == 0 and refunds[0][4] == f"refund:{charges[0][0]}"
+    )
+
+
+def _event_period32(event_id):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return d.execute(_sel32(_UE32.period).where(_UE32.id == event_id)).scalar()
+    finally:
+        d.close()
+
+
+def _ul32(uid):  # noqa: ANN001
+    """{action: count} of one user's usage_log rows for today (UTC)."""
+    d = SessionLocal()
+    try:
+        today = _dt32.now(_UTC32).strftime("%Y-%m-%d")
+        return {str(a): int(c or 0) for a, c in d.execute(
+            _sel32(_ULog32.action, _ULog32.count).where(_ULog32.user_id == uid, _ULog32.day == today)
+        ).all()}
+    finally:
+        d.close()
+
+
+def _hdr32(resp):  # noqa: ANN001
+    """The response's X-Uses-Remaining, or None."""
+    return resp.headers.get("x-uses-remaining")
+
+
+def _kits_of32(uid):  # noqa: ANN001
+    """(id, url, status, quota_event_id, quota_refunded) for one user's kits, oldest first."""
+    d = SessionLocal()
+    try:
+        return [tuple(r) for r in d.execute(
+            _sel32(_TK32.id, _TK32.url, _TK32.status, _TK32.quota_event_id, _TK32.quota_refunded)
+            .where(_TK32.user_id == uid).order_by(_TK32.id)
+        ).all()]
+    finally:
+        d.close()
+
+
+class _Calls32:
+    """Counts model calls by wrapping complete_json and complete_text on the StubClient CLASS. Earlier sections
+    restore a patched method by assigning a bound method onto the cached client INSTANCE, which would shadow a
+    class-level wrapper and read 0 calls for ever; so any such instance override is set aside while counting."""
+
+    def __init__(self):
+        self.n = 0
+
+    def __enter__(self):
+        self._cls = (_Stub32.complete_json, _Stub32.complete_text)
+        self._inst = _get_llm32()
+        self._shadow = {k: vars(self._inst).pop(k) for k in ("complete_json", "complete_text") if k in vars(self._inst)}
+        counter, real_json, real_text = self, self._cls[0], self._cls[1]
+
+        def _json(inner, system, user):  # noqa: ANN001
+            counter.n += 1
+            return real_json(inner, system, user)
+
+        def _text(inner, system, user):  # noqa: ANN001
+            counter.n += 1
+            return real_text(inner, system, user)
+
+        _Stub32.complete_json, _Stub32.complete_text = _json, _text
+        return self
+
+    def __exit__(self, *exc):  # noqa: ANN002
+        _Stub32.complete_json, _Stub32.complete_text = self._cls
+        vars(self._inst).update(self._shadow)
+        return False
+
+
+def _kit_job32(tag, i, jd_text=None):  # noqa: ANN001
+    return {
+        "title": f"Kit32 {tag} {i}", "company": "KitCo32", "location": "Tel Aviv",
+        "url": f"https://kit32.test/{tag}/{i}", "source": "linkedin",
+        "jd_text": _KIT_JD if jd_text is None else jd_text, "overall": 88.0,
+    }
+
+
+_real_search32b = _routes32.search_jobs
+_real_tailor32b = _routes32.tailor_resume
+_real_rsh32b = _routes32.record_search_hits
+_real_fetch32b = _cb32.fetch_job_text
+_real_kits_tailor32b = _kits32.tailor_resume
+_real_kits_analyze32b = _kits32.analyze_jd
+_real_kits_now32b = _kits32._now
+_real_jm_analyze32b = _jm32.analyze_jd
+_real_comeet_get32b = _comeet32._http_get
+_real_gh_get32b = _gh32._http_get
+
+
+def _kit_fakes32(tailor=None):  # noqa: ANN001
+    """Fast stand-ins for the kit pipeline, patched on the CONSUMER (app.core.kits) — the seam B8.0 names."""
+    _kits32.analyze_jd = lambda text, location="": _JD32(job_title="Kit32")
+    _kits32.tailor_resume = tailor or (lambda resume, jd, ledger=None, **kw: _TRes32(tailored_resume=resume))
+
+
+def _kit_reals32():
+    _kits32.analyze_jd = _real_kits_analyze32b
+    _kits32.tailor_resume = _real_kits_tailor32b
+
+
+def _interleave_kits32(uid):  # noqa: ANN001
+    """process_next_kit for `uid`, with a SECOND call forced in at the first call's claim.
+
+    kits._now is read once for the stuck-kit cutoff and then once per claim attempt, between choosing a candidate
+    and the conditional write that claims it; the second read is where another request lands. Returns (what the
+    inner call processed, what the outer call processed, the outer call's remaining). The assertions that the INNER
+    call took a kit are what keep a mistimed hook from passing."""
+    state = {"calls": 0, "inside": False, "nested": None}
+
+    def _now():
+        if not state["inside"] and state["nested"] is None:
+            state["calls"] += 1
+            if state["calls"] == 2:
+                state["inside"] = True
+                try:
+                    nd = SessionLocal()
+                    try:
+                        kit, _left = _kits32.process_next_kit(nd, nd.get(_U32, uid))
+                        state["nested"] = (kit.id, kit.status) if kit is not None else ("none", "")
+                    finally:
+                        nd.close()
+                finally:
+                    state["inside"] = False
+        return _real_kits_now32b()
+
+    _kits32._now = _now
+    od = SessionLocal()
+    try:
+        kit, left = _kits32.process_next_kit(od, od.get(_U32, uid))
+        outer = (kit.id, kit.status) if kit is not None else None
+    finally:
+        _kits32._now = _real_kits_now32b
+        od.close()
+    return state["nested"], outer, left
+
+
+_prev32b_env = _env29(DAILY_LLM_CAP="0", DAILY_TAILOR_CAP="0", DAILY_SEARCH_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _c32b:
+        # --- 32.3 / 32.12 The plainly charged routes: one use each, and the header says what is left --------------
+        def _zero_search32(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+            return _JSRes32(matches=[])
+
+        _routes32.search_jobs = _zero_search32
+        try:
+            _PLAIN32 = (
+                ("linkedin", "/tools/linkedin", {"resume": _R32}),
+                ("follow_up", "/tools/follow-up",
+                 {"company": "Acme", "role": "Engineer", "stage": "after applying", "context": ""}),
+                ("outreach", "/outreach",
+                 {"resume": _R32, "jd_text": "Python engineer at Acme.", "company": "Acme", "job_title": "Engineer"}),
+                ("company_brief", "/tools/company-brief",
+                 {"resume": _R32, "company": "Acme",
+                  "page_text": "Acme builds payment rails in Tel Aviv and hires backend engineers who like Python."}),
+                ("search", "/jobs/search", {"resume": _R32, "customize": None}),
+            )
+            _pl_uid32, _PL32_H = _mint32(_c32b, "Plain Charges")
+            _pl_limit32 = _snap32(_pl_uid32).limit
+            _pl_resps32 = [_c32b.post(path, json=body, headers=_PL32_H) for _f, path, body in _PLAIN32]
+            _pl_events32 = _events32(_pl_uid32)
+            _pl_unl32, _PL_UNL32_H = _mint32(_c32b, "Plain Unlimited")
+            _pl_unl_patch32 = _c32b.patch(f"/admin/users/{_pl_unl32}", json={"plan": "unlimited"}, headers=_ADMIN_H)
+            _pl_admin_before32 = _rows32(_admin_row_id, _key32(_admin_row_id))
+            _tw_admin32 = [_c32b.post(path, json=body, headers=_ADMIN_H) for _f, path, body in _PLAIN32]
+            _tw_unl32 = [_c32b.post(path, json=body, headers=_PL_UNL32_H) for _f, path, body in _PLAIN32]
+        finally:
+            _routes32.search_jobs = _real_search32b
+        check(
+            "32.3 charged: LinkedIn, follow-up, outreach, company brief and a job search each take ONE use as they run "
+            "— five +1 events named for their feature, used 5 == SUM(delta) — and each response's X-Uses-Remaining is "
+            "limit - used after its own write (9, 8, 7, 6, 5); the search found nothing and still keeps its use",
+            _pl_limit32 == 10
+            and all(r.status_code == 200 for r in _pl_resps32)
+            and [_hdr32(r) for r in _pl_resps32] == ["9", "8", "7", "6", "5"]
+            and _shape32(_pl_events32) == [(f, 1, 0, "") for f, _p, _b in _PLAIN32]
+            and _pool32(f"u:{_pl_uid32}", _P_THIS32) == (5, 5),
+            f"{[(r.status_code, _hdr32(r)) for r in _pl_resps32]} {_shape32(_pl_events32)}",
+        )
+        check(
+            "32.12 twins: the SAME five calls by the admin and by plan 'unlimited' answer 200 with NO uses header and "
+            "write no quota rows — beside the free user above, whose identical calls wrote +1 each",
+            _pl_unl_patch32.status_code == 200
+            and all(r.status_code == 200 and _hdr32(r) is None for r in _tw_admin32 + _tw_unl32)
+            and _rows32(_admin_row_id, _key32(_admin_row_id)) == _pl_admin_before32
+            and _rows32(_pl_unl32, f"u:{_pl_unl32}") == (0, 0, 0),
+            f"{[(r.status_code, _hdr32(r)) for r in _tw_admin32 + _tw_unl32]}",
+        )
+        _free32 = [
+            _c32b.post("/tools/coverage", json={"resume": _R32, "jd": _JDJ32}, headers=_PL32_H),
+            _c32b.post("/jd/analyze", json={"jd_text": "Python developer. Python and SQL required."}, headers=_PL32_H),
+            _c32b.post("/jobs/search-context", json={"resume": _R32}, headers=_PL32_H),
+            _c32b.post("/resume/upload", headers=_PL32_H, files={"file": (
+                "cv.txt", b"Dana Levi\nPython engineer at Acme 2020-Present\n- Built APIs", "text/plain")}),
+        ]
+        check(
+            "32.12 free routes carry no uses header and write no ledger event — coverage, and the three model routes "
+            "that stay off the pool (JD analysis, search context, resume upload) — on the user whose charged calls "
+            "just wrote five",
+            all(r.status_code == 200 and _hdr32(r) is None for r in _free32)
+            and len(_events32(_pl_uid32)) == 5,
+            f"{[(r.status_code, _hdr32(r)) for r in _free32]}",
+        )
+
+        # --- 32.3 Refunds: a failure gives the use back, in the charge's month, once --------------------------------
+        _tr_uid32, _TR32_H = _mint32(_c32b, "Tailor Refund")
+        _tailor_body32 = {"resume": _R32, "jd": _JDJ32}
+        _tr_ok32 = _c32b.post("/tailor", json=_tailor_body32, headers=_TR32_H)
+
+        def _tailor_down32(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("model unavailable")
+
+        _routes32.tailor_resume = _tailor_down32
+        try:
+            _tr_bad32 = _c32b.post("/tailor", json=_tailor_body32, headers=_TR32_H)
+        finally:
+            _routes32.tailor_resume = _real_tailor32b
+        _tr_ev32 = _events32(_tr_uid32)
+        check(
+            "32.3 tailor: a tailor that returns keeps its use (+1, header 9); one that fails (502) is charged and then "
+            "refunded — its +1 marked refunded, a -1 refund:<id> event, used back to 1 == SUM(delta) — and the 502 "
+            "already says 9",
+            _tr_ok32.status_code == 200 and _hdr32(_tr_ok32) == "9"
+            and _tr_bad32.status_code == 502 and _hdr32(_tr_bad32) == "9"
+            and len(_tr_ev32) == 3 and _tr_ev32[0][1:] == ("tailor", 1, 0, "")
+            and _refunded32(_tr_ev32[1:], "tailor")
+            and _pool32(f"u:{_tr_uid32}", _P_THIS32) == (1, 1),
+            f"{_tr_ok32.status_code}/{_hdr32(_tr_ok32)} {_tr_bad32.status_code}/{_hdr32(_tr_bad32)} {_shape32(_tr_ev32)}",
+        )
+        _cb_uid32, _CB32_H = _mint32(_c32b, "Brief Refund")
+
+        def _blocked_fetch32(url):  # noqa: ANN001
+            raise ValueError("That page needs a login or blocked the fetch.")
+
+        _cb32.fetch_job_text = _blocked_fetch32
+        try:
+            _cb_bad32 = _c32b.post(
+                "/tools/company-brief",
+                json={"resume": _R32, "company": "Acme", "url": "https://acme.example/about"},
+                headers=_CB32_H,
+            )
+        finally:
+            _cb32.fetch_job_text = _real_fetch32b
+        _cb_ev32 = _events32(_cb_uid32)
+        check(
+            "32.3 company brief: a page that cannot be fetched is a 400 that gives the use back — +1 marked refunded, "
+            "-1 refund:<id>, used 0 == SUM(delta), header 10 — where the grounded brief above kept its use",
+            _cb_bad32.status_code == 400 and _hdr32(_cb_bad32) == "10"
+            and len(_cb_ev32) == 2 and _refunded32(_cb_ev32, "company_brief")
+            and _pool32(f"u:{_cb_uid32}", _P_THIS32) == (0, 0),
+            f"{_cb_bad32.status_code} {_cb_bad32.text[:120]} {_shape32(_cb_ev32)}",
+        )
+        _sc_uid32, _SC32_H = _mint32(_c32b, "Scan Refund")
+        _sc_jd32 = {"jd_text": "Python developer. Python and SQL required."}
+        _sc_ok32 = _c32b.post("/tools/scan", files={"file": ("cv.txt", b"Dana Levi\nPython, SQL", "text/plain")},
+                              data=_sc_jd32, headers=_SC32_H)
+        _sc_blank32 = _c32b.post("/tools/scan", files={"file": ("blank.txt", b"   \n  ", "text/plain")},
+                                 data=_sc_jd32, headers=_SC32_H)
+        _sc_ev32 = _events32(_sc_uid32)
+        check(
+            "32.3 scan: a scan that scores keeps its use (header 9); a file with no text is a 422 that gives its use "
+            "back — +1 marked refunded, -1 refund:<id>, used 1 == SUM(delta), header 9",
+            _sc_ok32.status_code == 200 and _hdr32(_sc_ok32) == "9"
+            and _sc_blank32.status_code == 422 and _hdr32(_sc_blank32) == "9"
+            and len(_sc_ev32) == 3 and _sc_ev32[0][1:] == ("scan", 1, 0, "")
+            and _refunded32(_sc_ev32[1:], "scan")
+            and _pool32(f"u:{_sc_uid32}", _P_THIS32) == (1, 1),
+            f"{_sc_ok32.status_code}/{_hdr32(_sc_ok32)} {_sc_blank32.status_code}/{_hdr32(_sc_blank32)} "
+            f"{_shape32(_sc_ev32)}",
+        )
+        _mo_uid32, _ = _mint32(_c32b, "Boundary Refund")
+        _mo_key32 = f"u:{_mo_uid32}"
+        _mo_this32 = _reserve32(_mo_uid32, "tailor", now=_THIS32)[0]
+        _mo_next32 = _reserve32(_mo_uid32, "tailor", now=_NEXT32)[0]
+        _mo_d32 = SessionLocal()
+        try:
+            _mo_refund32 = _q32.refund_units(
+                _mo_d32, _mo_this32.event_id if _mo_this32 is not None else None, 1,
+                ref=f"refund:{_mo_this32.event_id if _mo_this32 is not None else ''}", now=_NEXT32,
+            )
+        finally:
+            _mo_d32.close()
+        _mo_back32 = [e for e in _events32(_mo_uid32) if e[2] < 0]
+        check(
+            "32.3 boundary: a charge from THIS month refunded on the 1st of NEXT month lowers this month only — the -1 "
+            "lands in the charge's own period, next month's use is untouched, and SUM(delta) == used in both months",
+            _mo_this32 is not None and _mo_next32 is not None and _mo_refund32 is True
+            and _pool32(_mo_key32, _P_THIS32) == (0, 0) and _pool32(_mo_key32, _P_NEXT32) == (1, 1)
+            and len(_mo_back32) == 1 and _event_period32(_mo_back32[0][0]) == _P_THIS32,
+            f"{_pool32(_mo_key32, _P_THIS32)} {_pool32(_mo_key32, _P_NEXT32)} {_mo_back32}",
+        )
+        _tw_uid32, _ = _mint32(_c32b, "Refund Twice")
+        _tw_charge32 = _reserve32(_tw_uid32, "search", now=_THIS32)[0]
+        _tw_d32 = SessionLocal()
+        try:
+            _tw_id32 = _tw_charge32.event_id if _tw_charge32 is not None else None
+            _tw_first32 = _q32.refund_units(_tw_d32, _tw_id32, 1, ref=f"refund:{_tw_id32}", now=_THIS32)
+            _tw_second32 = _q32.refund_units(_tw_d32, _tw_id32, 1, ref=f"refund:{_tw_id32}", now=_THIS32)
+            _tw_third32 = _tw_charge32.refund(_tw_d32) if _tw_charge32 is not None else None
+        finally:
+            _tw_d32.close()
+        check(
+            "32.3 once: refund_units called twice on one charge refunds ONCE — True, then False, and Charge.refund "
+            "after it is False too — one -1 event, refunded 1, used 0 == SUM(delta)",
+            (_tw_first32, _tw_second32, _tw_third32) == (True, False, False)
+            and _refunded32(_events32(_tw_uid32), "search")
+            and _pool32(f"u:{_tw_uid32}", _P_THIS32) == (0, 0),
+            f"{(_tw_first32, _tw_second32, _tw_third32)} {_shape32(_events32(_tw_uid32))}",
+        )
+
+        # --- 32.3 The search stream (B4.2) ------------------------------------------------------------------------
+        def _search_400_32(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+            raise ValueError("boards are down")
+
+        def _search_502_32(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+            raise RuntimeError("the scoring pool crashed")
+
+        _st_body32 = {"resume": _R32, "customize": None}
+        _st_uid32, _ST32_H = _mint32(_c32b, "Stream Friend")
+        try:
+            _routes32.search_jobs = _search_400_32
+            _st_400_32 = _c32b.post("/jobs/search/stream", json=_st_body32, headers=_ST32_H)
+            _st_400_ev32 = _events32(_st_uid32)  # read the moment .post returned the frame
+            _routes32.search_jobs = _search_502_32
+            _st_502_32 = _c32b.post("/jobs/search/stream", json=_st_body32, headers=_ST32_H)
+            _st_502_ev32 = _events32(_st_uid32)
+            _st_502_pool32 = _pool32(f"u:{_st_uid32}", _P_THIS32)  # before the zero-match search adds its +1
+            _routes32.search_jobs = _zero_search32
+            _st_zero32 = _c32b.post("/jobs/search/stream", json=_st_body32, headers=_ST32_H)
+            _st_zero_ev32 = _events32(_st_uid32)
+            _st_full_uid32, _ST_FULL32_H = _mint32(_c32b, "Stream Full")
+            for _ in range(10):
+                _reserve32(_st_full_uid32, "tailor")
+            _st_full32 = _c32b.post("/jobs/search/stream", json=_st_body32, headers=_ST_FULL32_H)
+        finally:
+            _routes32.search_jobs = _real_search32b
+        _st_502_new32 = _st_502_ev32[len(_st_400_ev32):]
+        _st_zero_new32 = _st_zero_ev32[len(_st_502_ev32):]
+        _st_502_frames32 = _sse_events(_st_502_32.text)
+        check(
+            "32.3 stream: a search that fails with a user-facing 400 is charged before the stream starts (header 9 on "
+            "the 200 that carries it) and refunded BEFORE its error frame can be read — the ledger read the moment "
+            ".post returned already holds the -1 refund:<id>",
+            _st_400_32.status_code == 200 and _hdr32(_st_400_32) == "9"
+            and _sse_events(_st_400_32.text) == [("error", {"detail": "boards are down", "status": 400})]
+            and len(_st_400_ev32) == 2 and _refunded32(_st_400_ev32, "search"),
+            f"{_st_400_32.status_code}/{_hdr32(_st_400_32)} {_st_400_32.text[:120]} {_shape32(_st_400_ev32)}",
+        )
+        check(
+            "32.3 stream: …and the same for the 502 branch — that search's +1 and its -1 refund:<id> are both in the "
+            "ledger the moment the error frame arrived, used back to 0 == SUM(delta)",
+            _st_502_32.status_code == 200
+            and [n for n, _d in _st_502_frames32] == ["error"] and _st_502_frames32[0][1].get("status") == 502
+            and len(_st_502_new32) == 2 and _refunded32(_st_502_new32, "search")
+            and _st_502_pool32 == (0, 0),
+            f"{_st_502_32.text[:120]} {_shape32(_st_502_new32)} pool={_st_502_pool32}",
+        )
+        check(
+            "32.3 stream: a search that completes with ZERO matches is a success and keeps its use — one +1, no "
+            "refund, a result frame, header 9",
+            _st_zero32.status_code == 200 and _hdr32(_st_zero32) == "9"
+            and [n for n, _d in _sse_events(_st_zero32.text)] == ["result"]
+            and _shape32(_st_zero_new32) == [("search", 1, 0, "")]
+            and _pool32(f"u:{_st_uid32}", _P_THIS32) == (1, 1),
+            f"{_st_zero32.text[:120]} {_shape32(_st_zero_new32)}",
+        )
+        check(
+            "32.3 stream: at the limit the stream never starts — a plain HTTP 429 monthly_limit with remaining 0, "
+            "never an error frame inside a 200",
+            _st_full32.status_code == 429 and _detail28(_st_full32).get("code") == "monthly_limit"
+            and _detail28(_st_full32).get("remaining") == 0 and _hdr32(_st_full32) is None,
+            f"{_st_full32.status_code} {_st_full32.text[:160]}",
+        )
+        _nr_uid32, _ = _mint32(_c32b, "Never Reads")
+        _NR_MATCH32 = _JM32(title="Never Read Engineer", company="QuietCo32", overall=77.0, jd_text="JD",
+                            url="https://stream32.test/never-read", source="linkedin")
+        _nr_written32 = _thr32.Event()
+
+        def _nr_search32(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+            return _JSRes32(matches=[_NR_MATCH32])
+
+        def _nr_record32(*args, **kwargs):  # noqa: ANN002, ANN003
+            try:
+                return _real_rsh32b(*args, **kwargs)
+            finally:
+                _nr_written32.set()
+
+        _routes32.search_jobs = _nr_search32
+        _routes32.record_search_hits = _nr_record32
+        _nr_db32 = SessionLocal()
+        try:
+            # Called directly, and its body is never iterated: the client that asked went away before a byte.
+            _nr_resp32 = _routes32.jobs_search_stream(
+                _JSReq32(resume=resume, customize=None), db=_nr_db32, user=_nr_db32.get(_U32, _nr_uid32)
+            )
+            _nr_fired32 = _nr_written32.wait(20)
+        finally:
+            _routes32.search_jobs = _real_search32b
+            _routes32.record_search_hits = _real_rsh32b
+            _nr_db32.close()
+        _nr_hist_db32 = SessionLocal()
+        try:
+            _nr_urls32 = [h.url for h in _hits32(_nr_hist_db32, _nr_uid32)]
+        finally:
+            _nr_hist_db32.close()
+        check(
+            "32.3 stream: a search whose client never reads a byte of the body still lands in History — the worker "
+            "writes it before the result frame, so a dropped connection loses the frame, never the search — and it "
+            "keeps its use",
+            _nr_fired32 and _NR_MATCH32.url in _nr_urls32
+            and _shape32(_events32(_nr_uid32)) == [("search", 1, 0, "")],
+            f"fired={_nr_fired32} urls={_nr_urls32} {_shape32(_events32(_nr_uid32))}",
+        )
+
+        # --- 32.4 A body that fails validation (422) never charges --------------------------------------------------
+        _v_uid32, _V32_H = _mint32(_c32b, "Validation Friend")
+        _v_limit32 = _snap32(_v_uid32).limit
+        _v_bad32 = (
+            _c32b.post("/tailor", json={"resume": _R32, "jd": "not a job"}, headers=_V32_H),
+            _c32b.post("/cover-letter", json={"resume": _R32}, headers=_V32_H),
+            _c32b.post("/tools/scan", data={"jd_text": "Python developer."}, headers=_V32_H),
+        )
+        _v_after32 = _events32(_v_uid32)
+        _v_ok_tailor32 = _c32b.post("/tailor", json={"resume": _R32, "jd": _JDJ32}, headers=_V32_H)
+        _v_ok_scan32 = _c32b.post("/tools/scan", files={"file": ("cv.txt", b"Dana Levi\nPython, SQL", "text/plain")},
+                                  data={"jd_text": "Python developer."}, headers=_V32_H)
+        check(
+            "32.4 a 422 never charges: a malformed /tailor, a /cover-letter with no job and a /tools/scan with no file "
+            "are refused before the handler with no event and no header — on a user whose limit reads 10 and whose "
+            "valid tailor and scan right after DO write +1 each",
+            _v_limit32 == 10
+            and [r.status_code for r in _v_bad32] == [422, 422, 422]
+            and all(_hdr32(r) is None for r in _v_bad32)
+            and _v_after32 == []
+            and _v_ok_tailor32.status_code == 200 and _v_ok_scan32.status_code == 200
+            and _shape32(_events32(_v_uid32)) == [("tailor", 1, 0, ""), ("scan", 1, 0, "")],
+            f"{[r.status_code for r in _v_bad32]} {_v_ok_tailor32.status_code} {_v_ok_scan32.status_code} "
+            f"{_shape32(_events32(_v_uid32))}",
+        )
+
+        # --- 32.5 Kits (B4.1): paid at batch, one use per kit, given back per kit ----------------------------------
+        _kb_uid32, _KB32_H = _mint32(_c32b, "Kit Batch")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KB32_H)
+        _kb32 = _c32b.post("/kits/batch", json={"jobs": [_kit_job32("batch", i) for i in range(3)]}, headers=_KB32_H)
+        _kb_ev32 = _events32(_kb_uid32)
+        _kb_kits32 = _kits_of32(_kb_uid32)
+        check(
+            "32.5 kits: a batch of 3 new kits reserves 3 in ONE +3 tailor event (header 7), and every queued kit "
+            "carries that event's id, not yet refunded",
+            _kb32.status_code == 200 and len(_j28(_kb32).get("queued") or []) == 3 and _hdr32(_kb32) == "7"
+            and _shape32(_kb_ev32) == [("tailor", 3, 0, "")]
+            and len(_kb_kits32) == 3
+            and all(k[2] == "queued" and k[3] == _kb_ev32[0][0] and not k[4] for k in _kb_kits32),
+            f"{_kb32.status_code} {_hdr32(_kb32)} {_shape32(_kb_ev32)} {_kb_kits32}",
+        )
+        _kf_calls32 = {"n": 0}
+
+        def _kit_tailor32(resume, jd, ledger=None, **kw):  # noqa: ANN001
+            _kf_calls32["n"] += 1
+            if _kf_calls32["n"] in (1, 3):
+                raise RuntimeError("model unavailable")
+            return _TRes32(tailored_resume=resume)
+
+        _kit_fakes32(_kit_tailor32)
+        try:
+            _kp32 = [_c32b.post("/kits/process-next", headers=_KB32_H) for _ in range(3)]
+        finally:
+            _kit_reals32()
+        _kp_kits32 = _kits_of32(_kb_uid32)
+        _kp_ev32 = _events32(_kb_uid32)
+        _kp_refunds32 = [e for e in _kp_ev32 if e[2] < 0]
+        _kp_charge32 = [e for e in _kp_ev32 if e[2] > 0]
+        check(
+            "32.5 kits: two of the three kits fail and each gives back ITS use — two -1 events with distinct refs "
+            "refund:<event>:kit:<kit>, the +3 marked refunded 2, used 1 == SUM(delta); a failed kit's response carries "
+            "the header (8, then 9) and the done kit's carries none",
+            len(_kp_kits32) == 3 and len(_kp_charge32) == 1
+            and [k[2] for k in _kp_kits32] == ["failed", "done", "failed"]
+            and [k[4] for k in _kp_kits32] == [True, False, True]
+            and [e[4] for e in _kp_refunds32] == [
+                f"refund:{_kp_charge32[0][0]}:kit:{_kp_kits32[0][0]}",
+                f"refund:{_kp_charge32[0][0]}:kit:{_kp_kits32[2][0]}",
+            ]
+            and all(e[1:4] == ("tailor", -1, 0) for e in _kp_refunds32)
+            and _kp_charge32[0][3] == 2
+            and [_hdr32(r) for r in _kp32] == ["8", None, "9"]
+            and _pool32(f"u:{_kb_uid32}", _P_THIS32) == (1, 1),
+            f"{[k[2] for k in _kp_kits32]} {[_hdr32(r) for r in _kp32]} {_shape32(_kp_ev32)}",
+        )
+        _kr_uid32, _KR32_H = _mint32(_c32b, "Kit Rebatch")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KR32_H)
+
+        def _always_fail32(resume, jd, ledger=None, **kw):  # noqa: ANN001
+            raise RuntimeError("model unavailable")
+
+        _kit_fakes32(_always_fail32)
+        try:
+            _kr_steps32 = [
+                _c32b.post("/kits/batch", json={"jobs": [_kit_job32("rebatch", 1)]}, headers=_KR32_H),
+                _c32b.post("/kits/process-next", headers=_KR32_H),
+                _c32b.post("/kits/batch", json={"jobs": [_kit_job32("rebatch", 1)]}, headers=_KR32_H),
+                _c32b.post("/kits/process-next", headers=_KR32_H),
+            ]
+        finally:
+            _kit_reals32()
+        _kr_ev32 = _events32(_kr_uid32)
+        check(
+            "32.5 kits: fail, re-batch the same job, fail again nets 0 — the requeue is charged afresh (+1) and "
+            "refunded afresh (-1): four events on one kit, used 0 == SUM(delta)",
+            [r.status_code for r in _kr_steps32] == [200, 200, 200, 200]
+            and [k[2] for k in _kits_of32(_kr_uid32)] == ["failed"]
+            and [e[2] for e in _kr_ev32] == [1, -1, 1, -1]
+            and _pool32(f"u:{_kr_uid32}", _P_THIS32) == (0, 0),
+            f"{[r.status_code for r in _kr_steps32]} {_shape32(_kr_ev32)}",
+        )
+        _ki_uid32, _KI32_H = _mint32(_c32b, "Kit Interleave")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KI32_H)
+        _c32b.post("/kits/batch", headers=_KI32_H,
+                   json={"jobs": [_kit_job32("interleave", 1, jd_text="Python engineer. " * 2400)]})
+        _ki_analyses32 = {"n": 0}
+
+        def _ki_analyze32(text, location=""):  # noqa: ANN001
+            _ki_analyses32["n"] += 1
+            return _real_kits_analyze32b(text)  # 40 KB of JD: refused by the prompt's size guard
+
+        _kits32.analyze_jd = _ki_analyze32
+        try:
+            _ki_nested32, _ki_outer32, _ki_left32 = _interleave_kits32(_ki_uid32)
+        finally:
+            _kit_reals32()
+        _ki_ev32 = _events32(_ki_uid32)
+        check(
+            "32.5 kits: two process-next calls forced to interleave over ONE oversized-JD kit (kits._now patched so "
+            "the second claims it between the first's pick and its write) run the pipeline ONCE and refund ONCE — the "
+            "inner call processed and failed the kit, the outer claimed nothing, one analysis, one -1, used 0",
+            _ki_nested32 is not None and _ki_nested32[1] == "failed"
+            and _ki_outer32 is None and _ki_left32 == 0
+            and _ki_analyses32["n"] == 1
+            and [e[2] for e in _ki_ev32] == [1, -1]
+            and _pool32(f"u:{_ki_uid32}", _P_THIS32) == (0, 0),
+            f"nested={_ki_nested32} outer={_ki_outer32} analyses={_ki_analyses32['n']} {_shape32(_ki_ev32)}",
+        )
+        _kt_uid32, _KT32_H = _mint32(_c32b, "Kit Interleave Twin")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KT32_H)
+        _c32b.post("/kits/batch", json={"jobs": [_kit_job32("twin", 1), _kit_job32("twin", 2)]}, headers=_KT32_H)
+        _kt_tailors32 = {"n": 0}
+
+        def _kt_tailor32(resume, jd, ledger=None, **kw):  # noqa: ANN001
+            _kt_tailors32["n"] += 1
+            return _TRes32(tailored_resume=resume)
+
+        _kit_fakes32(_kt_tailor32)
+        try:
+            _kt_nested32, _kt_outer32, _kt_left32 = _interleave_kits32(_kt_uid32)
+        finally:
+            _kit_reals32()
+        check(
+            "32.5 kits twin: the same forced interleave over TWO kits runs both — the inner call takes the older kit, "
+            "the outer's claim of it fails and it claims the next one instead; two tailors, both done, no refund",
+            _kt_nested32 is not None and _kt_nested32[1] == "done"
+            and _kt_outer32 is not None and _kt_outer32[1] == "done" and _kt_outer32[0] != _kt_nested32[0]
+            and _kt_tailors32["n"] == 2
+            and sorted(k[2] for k in _kits_of32(_kt_uid32)) == ["done", "done"]
+            and [e[2] for e in _events32(_kt_uid32)] == [2],
+            f"nested={_kt_nested32} outer={_kt_outer32} tailors={_kt_tailors32['n']}",
+        )
+        _kd_uid32, _KD32_H = _mint32(_c32b, "Kit Delete")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KD32_H)
+        _c32b.post("/kits/batch", json={"jobs": [_kit_job32("delete", 1), _kit_job32("delete", 2)]}, headers=_KD32_H)
+        _kit_fakes32()
+        try:
+            _c32b.post("/kits/process-next", headers=_KD32_H)
+        finally:
+            _kit_reals32()
+        _kd_kits32 = _kits_of32(_kd_uid32)
+        _kd_done_id32 = _kd_kits32[0][0] if len(_kd_kits32) == 2 else 0
+        _kd_queued_id32 = _kd_kits32[1][0] if len(_kd_kits32) == 2 else 0
+        _kd_del_done32 = _c32b.delete(f"/kits/{_kd_done_id32}", headers=_KD32_H)
+        _kd_ev_done32 = _events32(_kd_uid32)
+        _kd_del_queued32 = _c32b.delete(f"/kits/{_kd_queued_id32}", headers=_KD32_H)
+        _kd_ev32 = _events32(_kd_uid32)
+        check(
+            "32.5 kits: deleting a DONE kit gives nothing back (no event, no header: the pipeline ran), while deleting "
+            "a still-QUEUED kit returns its one use — exactly one -1 refund:<event>:kit:<kit>, header 9, used 1",
+            [k[2] for k in _kd_kits32] == ["done", "queued"]
+            and _kd_del_done32.status_code == 200 and _hdr32(_kd_del_done32) is None
+            and _shape32(_kd_ev_done32) == [("tailor", 2, 0, "")]
+            and _kd_del_queued32.status_code == 200 and _hdr32(_kd_del_queued32) == "9"
+            and len(_kd_ev32) == 2
+            and _kd_ev32[1][1:] == ("tailor", -1, 0, f"refund:{_kd_ev32[0][0]}:kit:{_kd_queued_id32}")
+            and _pool32(f"u:{_kd_uid32}", _P_THIS32) == (1, 1),
+            f"{_kd_kits32} {_hdr32(_kd_del_done32)} {_hdr32(_kd_del_queued32)} {_shape32(_kd_ev32)}",
+        )
+        _kw_uid32, _KW32_H = _mint32(_c32b, "Kit Wipe")
+        _c32b.post("/kits/batch", json={"jobs": [_kit_job32("wipe", 1), _kit_job32("wipe", 2)]}, headers=_KW32_H)
+        _kw_before32 = _events32(_kw_uid32)
+        _kw_wipe32 = _c32b.request("DELETE", "/profile/data", headers=_KW32_H)
+        _kw_ev32 = _events32(_kw_uid32)
+        _kw_refunds32 = [e for e in _kw_ev32 if e[2] < 0]
+        check(
+            "32.5 kits: 'Delete my data' gives back every still-queued kit's use before the kits go — +2 present "
+            "first, then two -1 events with distinct kit refs, used 0, the wipe reports kits 2, and its header says 10",
+            _shape32(_kw_before32) == [("tailor", 2, 0, "")]
+            and _kw_wipe32.status_code == 200 and _j28(_kw_wipe32).get("kits") == 2 and _hdr32(_kw_wipe32) == "10"
+            and len(_kw_refunds32) == 2 and len({e[4] for e in _kw_refunds32}) == 2
+            and all(e[4].startswith(f"refund:{_kw_before32[0][0]}:kit:") for e in _kw_refunds32)
+            and _pool32(f"u:{_kw_uid32}", _P_THIS32) == (0, 0),
+            f"{_kw_wipe32.text[:160]} {_hdr32(_kw_wipe32)} {_shape32(_kw_ev32)}",
+        )
+        _kc_uid32, _KC32_H = _mint32(_c32b, "Kit Close")
+        _c32b.post("/kits/batch", json={"jobs": [_kit_job32("close", 1)]}, headers=_KC32_H)
+        _kc_before32 = _events32(_kc_uid32)
+        _kc_close32 = _c32b.request("DELETE", "/profile/account", headers=_KC32_H)
+        _kc_ev32 = _events32(_kc_uid32)
+        check(
+            "32.5 kits: closing the account refunds a still-queued kit the same way — the +1 present first, then one "
+            "-1 refund:<event>:kit:<kit> — and the close's response carries the header",
+            _shape32(_kc_before32) == [("tailor", 1, 0, "")]
+            and _kc_close32.status_code == 200 and _hdr32(_kc_close32) == "10"
+            and len(_kc_ev32) == 2 and _kc_ev32[1][2] == -1
+            and _kc_ev32[1][4].startswith(f"refund:{_kc_before32[0][0]}:kit:"),
+            f"{_kc_close32.status_code} {_hdr32(_kc_close32)} {_shape32(_kc_ev32)}",
+        )
+        _kdc_uid32, _KDC32_H = _mint32(_c32b, "Kit Daily Cap")
+        _kdc_env32 = _env29(DAILY_TAILOR_CAP="2")
+        try:
+            _kdc_over32 = _c32b.post("/kits/batch", headers=_KDC32_H,
+                                     json={"jobs": [_kit_job32("daily", i) for i in range(3)]})
+            _kdc_mid32 = (_events32(_kdc_uid32), _kits_of32(_kdc_uid32), _snap32(_kdc_uid32).used)
+            _kdc_ok32 = _c32b.post("/kits/batch", headers=_KDC32_H,
+                                   json={"jobs": [_kit_job32("daily", i) for i in range(2)]})
+        finally:
+            _restore29(_kdc_env32)
+        check(
+            "32.5 kits: a batch refused by the DAILY tailor cap (3 over a cap of 2) is a 429 daily_limit that leaves "
+            "the monthly count and the ledger untouched and queues nothing — while 2 under the same cap land +2",
+            _kdc_over32.status_code == 429 and _detail28(_kdc_over32).get("code") == "daily_limit"
+            and _kdc_mid32 == ([], [], 0)
+            and _kdc_ok32.status_code == 200 and _shape32(_events32(_kdc_uid32)) == [("tailor", 2, 0, "")],
+            f"{_kdc_over32.text[:120]} {_kdc_mid32} {_shape32(_events32(_kdc_uid32))}",
+        )
+        _ka_before32 = len(_events32(_admin_row_id))
+        _ka32 = _c32b.post("/kits/batch", json={"jobs": [_kit_job32("admin", 1)]}, headers=_ADMIN_H)
+        _ka_kits32 = [k for k in _kits_of32(_admin_row_id) if k[1] == "https://kit32.test/admin/1"]
+        _ka_del32 = _c32b.delete(f"/kits/{_ka_kits32[0][0] if _ka_kits32 else 0}", headers=_ADMIN_H)
+        check(
+            "32.5 kits: an ADMIN batch is exempt — its kit is queued with quota_event_id NULL, no event and no header "
+            "— and deleting that queued kit refunds nothing (a kit that never paid never refunds), beside the free "
+            "batches above whose kits carry their charge's id",
+            _ka32.status_code == 200 and _hdr32(_ka32) is None
+            and len(_ka_kits32) == 1 and _ka_kits32[0][2] == "queued" and _ka_kits32[0][3] is None
+            and _ka_del32.status_code == 200 and _hdr32(_ka_del32) is None
+            and len(_events32(_admin_row_id)) == _ka_before32 == 0,
+            f"{_ka32.status_code} {_ka_kits32} {_ka_del32.status_code}",
+        )
+        _kl_uid32, _KL32_H = _mint32(_c32b, "Kit Over Remaining")
+        _kl_first32 = _c32b.post("/kits/batch", headers=_KL32_H,
+                                 json={"jobs": [_kit_job32("left", 1), _kit_job32("left", 2)]})
+        for _ in range(6):
+            _reserve32(_kl_uid32, "search")
+        _kl_over32 = _c32b.post("/kits/batch", headers=_KL32_H,
+                                json={"jobs": [_kit_job32("left", i) for i in (3, 4, 5)]})
+        _kl_mid32 = (len(_kits_of32(_kl_uid32)), _snap32(_kl_uid32).used)
+        _kl_fit32 = _c32b.post("/kits/batch", headers=_KL32_H,
+                               json={"jobs": [_kit_job32("left", i) for i in (1, 2, 3, 4)]})
+        check(
+            "32.5 kits: a batch of 3 NEW kits at 2 remaining is a 429 monthly_limit whose detail carries the true "
+            "remaining (2) and the tailor feature, and nothing is queued",
+            _kl_first32.status_code == 200
+            and _kl_over32.status_code == 429 and _detail28(_kl_over32).get("code") == "monthly_limit"
+            and _detail28(_kl_over32).get("remaining") == 2 and _detail28(_kl_over32).get("feature") == "tailor"
+            and _kl_mid32 == (2, 8),
+            f"{_kl_over32.status_code} {_kl_over32.text[:160]} {_kl_mid32}",
+        )
+        check(
+            "32.5 kits twin: 2 new plus 2 already-kitted URLs at 2 remaining is a 200 — only NEW kits are charged — "
+            "queued 2, skipped 2, used 10",
+            _kl_fit32.status_code == 200 and len(_j28(_kl_fit32).get("queued") or []) == 2
+            and _j28(_kl_fit32).get("skipped_existing") == 2
+            and _snap32(_kl_uid32).used == 10,
+            f"{_kl_fit32.status_code} {_kl_fit32.text[:160]}",
+        )
+        _ke_uid32, _ = _mint32(_c32b, "Kit Commit Failure")
+        _ke_db32 = SessionLocal()
+        _ke_armed32 = {"on": False}
+        _ke_real_commit32 = _ke_db32.commit
+
+        def _ke_commit32():
+            if _ke_armed32["on"]:
+                _ke_armed32["on"] = False
+                raise RuntimeError("the database went away")
+            return _ke_real_commit32()
+
+        def _ke_charge32(n):  # noqa: ANN001
+            event_id = _q32.reserve(_ke_db32, _ke_db32.get(_U32, _ke_uid32), "tailor", n).event_id
+            _ke_armed32["on"] = True
+            return event_id
+
+        _ke_db32.commit = _ke_commit32
+        _ke_err32 = None
+        try:
+            _kits32.enqueue_kits(
+                _ke_db32, _ke_db32.get(_U32, _ke_uid32),
+                [_KitJob(**_kit_job32("commit", i)) for i in (1, 2)], charge=_ke_charge32,
+            )
+        except RuntimeError as _exc32:
+            _ke_err32 = _exc32
+        finally:
+            _ke_db32.rollback()
+            _ke_db32.close()
+        _ke_ev32 = _events32(_ke_uid32)
+        check(
+            "32.5 kits: when the commit that writes the queued kits fails AFTER the batch was reserved, the whole "
+            "charge comes back — the +2 marked refunded 2 and answered by a -2 refund:<id>, nothing queued, used 0 — "
+            "and the error still reaches the caller",
+            _ke_err32 is not None
+            and len(_ke_ev32) == 2 and _ke_ev32[0][1:4] == ("tailor", 2, 2)
+            and _ke_ev32[1][1:] == ("tailor", -2, 0, f"refund:{_ke_ev32[0][0]}")
+            and _kits_of32(_ke_uid32) == [] and _pool32(f"u:{_ke_uid32}", _P_THIS32) == (0, 0),
+            f"err={_ke_err32!r} {_shape32(_ke_ev32)}",
+        )
+
+        # --- 32.17 /jobs/match (B4.3): one use ranks up to ten listings --------------------------------------------
+        _LISTING32 = "Senior Python engineer at Acme in Tel Aviv. Python, SQL and REST APIs required."
+        _mt_uid32, _MT32_H = _mint32(_c32b, "Match Friend")
+        _mt_limit32 = _snap32(_mt_uid32).limit
+        with _Calls32() as _mt_c11_32:
+            _mt_11_32 = _c32b.post("/jobs/match", json={"resume": _R32, "listings": [_LISTING32] * 11},
+                                   headers=_MT32_H)
+        with _Calls32() as _mt_cbig32:
+            _mt_big32 = _c32b.post("/jobs/match", headers=_MT32_H,
+                                   json={"resume": _R32, "listings": [_LISTING32, _LISTING32, "x" * (33 * 1024)]})
+        with _Calls32() as _mt_cres32:
+            _mt_res32 = _c32b.post("/jobs/match", headers=_MT32_H,
+                                   json={"resume": dict(_R32, summary="Built services. " * 18000),
+                                         "listings": [_LISTING32]})
+        with _Calls32() as _mt_cshort32:
+            _mt_short32 = _c32b.post("/jobs/match", json={"resume": _R32, "listings": ["short"]}, headers=_MT32_H)
+        _mt_refused_ev32 = _events32(_mt_uid32)
+        with _Calls32() as _mt_c10_32:
+            _mt_10_32 = _c32b.post("/jobs/match", json={"resume": _R32, "listings": [_LISTING32] * 10},
+                                   headers=_MT32_H)
+        check(
+            "32.17 match: 11 listings is a 400 sentence naming the limit, with no model call",
+            _mt_limit32 == 10 and _mt_11_32.status_code == 400 and "10" in str(_j28(_mt_11_32).get("detail"))
+            and _mt_c11_32.n == 0,
+            f"{_mt_11_32.status_code} {_mt_11_32.text[:120]} calls={_mt_c11_32.n}",
+        )
+        check(
+            "32.17 match: [ok, ok, 33 KB] is a 413 naming the JD, and an oversized resume a 413 naming the resume — "
+            "both refused BEFORE any model call (0 calls each), where the serial loop would already have paid for "
+            "the first listings",
+            _mt_big32.status_code == 413 and _detail28(_mt_big32).get("kind") == "jd" and _mt_cbig32.n == 0
+            and _mt_res32.status_code == 413 and _detail28(_mt_res32).get("kind") == "resume" and _mt_cres32.n == 0,
+            f"{_mt_big32.status_code}/{_mt_cbig32.n} {_mt_res32.status_code}/{_mt_cres32.n}",
+        )
+        check(
+            "32.17 match: a lone listing too short to read ('short') is a 400 with no call — and none of these four "
+            "refusals wrote a ledger event",
+            _mt_short32.status_code == 400 and _mt_cshort32.n == 0 and _mt_refused_ev32 == [],
+            f"{_mt_short32.status_code}/{_mt_cshort32.n} {_mt_refused_ev32}",
+        )
+        check(
+            "32.17 match: 10 ordinary listings rank for ONE use — 200, ten matches, 20 model calls (an analysis and a "
+            "fit per listing), one +1 search event, header 9",
+            _mt_10_32.status_code == 200 and len(_j28(_mt_10_32).get("matches") or []) == 10
+            and _mt_c10_32.n == 20
+            and _shape32(_events32(_mt_uid32)) == [("search", 1, 0, "")] and _hdr32(_mt_10_32) == "9",
+            f"{_mt_10_32.status_code} calls={_mt_c10_32.n} {_shape32(_events32(_mt_uid32))} {_hdr32(_mt_10_32)}",
+        )
+        _mf_uid32, _MF32_H = _mint32(_c32b, "Match Failure")
+        _mf_seen32 = {"n": 0}
+
+        def _mf_analyze32(text, location=""):  # noqa: ANN001
+            _mf_seen32["n"] += 1
+            if _mf_seen32["n"] == 2:
+                raise RuntimeError("model unavailable")
+            return _real_jm_analyze32b(text)
+
+        _jm32.analyze_jd = _mf_analyze32
+        try:
+            with _Calls32() as _mf_c32:
+                _mf32 = _c32b.post("/jobs/match", json={"resume": _R32, "listings": [_LISTING32] * 3},
+                                   headers=_MF32_H)
+        finally:
+            _jm32.analyze_jd = _real_jm_analyze32b
+        _mf_ev32 = _events32(_mf_uid32)
+        check(
+            "32.17 match: a model failure AFTER the first listing's calls is a 502 that still gives the use back "
+            "(OD-3) — the first listing spent its 2 calls, +1 marked refunded, -1 refund:<id>, used 0",
+            _mf32.status_code == 502 and _mf_c32.n == 2
+            and len(_mf_ev32) == 2 and _refunded32(_mf_ev32, "search")
+            and _pool32(f"u:{_mf_uid32}", _P_THIS32) == (0, 0),
+            f"{_mf32.status_code} calls={_mf_c32.n} {_shape32(_mf_ev32)}",
+        )
+
+        # --- 32.18 Daily caps on the free model routes and the scan (B4.6) ------------------------------------------
+        _CV_FILE32 = ("cv.txt", b"Dana Levi\nPython engineer at Acme 2020-Present\n- Built APIs", "text/plain")
+        _JD_TEXT32 = {"jd_text": "Python developer. Python and SQL required."}
+
+        def _capped_pairs32(headers):  # noqa: ANN001
+            """Two calls on each capped route, in a fixed order."""
+            return {
+                "upload": [_c32b.post("/resume/upload", files={"file": _CV_FILE32}, headers=headers) for _ in range(2)],
+                "jd_analyze": [_c32b.post("/jd/analyze", json=_JD_TEXT32, headers=headers) for _ in range(2)],
+                "search_context": [_c32b.post("/jobs/search-context", json={"resume": _R32}, headers=headers)
+                                   for _ in range(2)],
+                "scan": [_c32b.post("/tools/scan", files={"file": _CV_FILE32}, data=_JD_TEXT32, headers=headers)
+                         for _ in range(2)],
+            }
+
+        _dc_env32 = _env29(DAILY_UPLOAD_CAP="1", DAILY_JD_ANALYZE_CAP="1", DAILY_SEARCH_CONTEXT_CAP="1",
+                           DAILY_SCAN_CAP="1", DAILY_LLM_CAP="50")
+        try:
+            _dc_uid32, _DC32_H = _mint32(_c32b, "Daily Caps")
+            _dc_seed32 = _c32b.post("/tools/follow-up", headers=_DC32_H,
+                                    json={"company": "Acme", "role": "Engineer", "stage": "after applying", "context": ""})
+            _dc_llm_before32 = _ul32(_dc_uid32).get("llm")
+            _dc32 = _capped_pairs32(_DC32_H)
+            _dc_ul32 = _ul32(_dc_uid32)
+            _dc_admin32 = _capped_pairs32(_ADMIN_H)
+            _dcu_uid32, _DCU32_H = _mint32(_c32b, "Daily Caps Unlimited")
+            _dcu_patch32 = _c32b.patch(f"/admin/users/{_dcu_uid32}", json={"plan": "unlimited"}, headers=_ADMIN_H)
+            _dcu32 = _capped_pairs32(_DCU32_H)
+            _dw_uid32, _DW32_H = _mint32(_c32b, "Daily Caps Wipe")
+            _dw_first32 = _c32b.post("/jd/analyze", json=_JD_TEXT32, headers=_DW32_H)
+            _dw_wipe32 = _c32b.request("DELETE", "/profile/data", headers=_DW32_H)
+            _dw_second32 = _c32b.post("/jd/analyze", json=_JD_TEXT32, headers=_DW32_H)
+        finally:
+            _restore29(_dc_env32)
+        check(
+            "32.18 daily caps: the call one past each cap is a 429 naming ITS OWN action — upload, jd_analyze, "
+            "search_context and scan, each after one 200 at a cap of 1 — and the shared llm counter the follow-up "
+            "just moved to 1 is still 1",
+            _dc_seed32.status_code == 200 and _dc_llm_before32 == 1
+            and all(pair[0].status_code == 200 and pair[1].status_code == 429 for pair in _dc32.values())
+            and all(_detail28(pair[1]) == {"code": "daily_limit", "action": name, "cap": 1}
+                    for name, pair in _dc32.items())
+            and _dc_ul32.get("llm") == 1 and all(_dc_ul32.get(name) == 1 for name in _dc32),
+            str({name: [r.status_code for r in pair] for name, pair in _dc32.items()}) + f" {_dc_ul32}",
+        )
+        check(
+            "32.18 daily caps: the admin is exempt (two 200s on every route), and plan 'unlimited' is NOT — it lifts "
+            "the monthly limit only, so its second call on each route is the same 429 naming that route's action",
+            all(r.status_code == 200 for pair in _dc_admin32.values() for r in pair)
+            and _dcu_patch32.status_code == 200
+            and all(pair[0].status_code == 200 and pair[1].status_code == 429 for pair in _dcu32.values())
+            and all(_detail28(pair[1]).get("action") == name for name, pair in _dcu32.items()),
+            str({name: [r.status_code for r in pair] for name, pair in _dcu32.items()}),
+        )
+        check(
+            "32.18 daily caps: 'Delete my data' between two calls resets nothing — the JD analysis after the wipe is "
+            "still a 429",
+            _dw_first32.status_code == 200 and _dw_wipe32.status_code == 200
+            and _dw_second32.status_code == 429 and _detail28(_dw_second32).get("action") == "jd_analyze",
+            f"{_dw_first32.status_code} {_dw_wipe32.status_code} {_dw_second32.status_code}",
+        )
+        _s21_uid32, _S21_32_H = _mint32(_c32b, "Twenty Refunded Scans")
+        _s21_blank32 = [
+            _c32b.post("/tools/scan", files={"file": ("blank.txt", b"   ", "text/plain")}, data=_JD_TEXT32,
+                       headers=_S21_32_H)
+            for _ in range(20)
+        ]
+        _s21_used32 = _snap32(_s21_uid32).used
+        _s21_last32 = _c32b.post("/tools/scan", files={"file": _CV_FILE32}, data=_JD_TEXT32, headers=_S21_32_H)
+        _s21_ev32 = _events32(_s21_uid32)
+        check(
+            "32.18 daily caps: the daily scan cap counts ATTEMPTS and is never refunded — after 20 scans that each "
+            "422'd and got their use back (20 charges, 20 refunds, used 0) the 21st is a 429 daily_limit scan, and "
+            "used is still 0",
+            all(r.status_code == 422 for r in _s21_blank32)
+            and len([e for e in _s21_ev32 if e[2] > 0]) == 20 and len([e for e in _s21_ev32 if e[2] < 0]) == 20
+            and _s21_used32 == 0
+            and _s21_last32.status_code == 429
+            and _detail28(_s21_last32) == {"code": "daily_limit", "action": "scan", "cap": 20}
+            and _snap32(_s21_uid32).used == 0,
+            f"{[r.status_code for r in _s21_blank32][:3]} {_s21_last32.status_code} {_s21_last32.text[:120]}",
+        )
+        _vz_env32 = _env29(DAILY_SCAN_CAP="5", DAILY_JD_ANALYZE_CAP="5")
+        try:
+            _vz_uid32, _VZ32_H = _mint32(_c32b, "Validation Counters")
+            _vz_scan32 = _c32b.post("/tools/scan", data=_JD_TEXT32, headers=_VZ32_H)
+            _vz_jd32 = _c32b.post("/jd/analyze", json={}, headers=_VZ32_H)
+            _vz_mid32 = (_ul32(_vz_uid32), _events32(_vz_uid32))
+            _vz_ok_scan32 = _c32b.post("/tools/scan", files={"file": _CV_FILE32}, data=_JD_TEXT32, headers=_VZ32_H)
+            _vz_ok_jd32 = _c32b.post("/jd/analyze", json=_JD_TEXT32, headers=_VZ32_H)
+        finally:
+            _restore29(_vz_env32)
+        check(
+            "32.18 a body-validation 422 increments neither counter: a scan with no file and a JD analysis with no "
+            "text leave no daily row and no ledger event — while the same user's valid calls move both (scan 1 with "
+            "a +1 scan event, jd_analyze 1)",
+            _vz_scan32.status_code == 422 and _vz_jd32.status_code == 422
+            and _vz_mid32 == ({}, [])
+            and _vz_ok_scan32.status_code == 200 and _vz_ok_jd32.status_code == 200
+            and _ul32(_vz_uid32) == {"scan": 1, "jd_analyze": 1}
+            and _shape32(_events32(_vz_uid32)) == [("scan", 1, 0, "")],
+            f"{_vz_scan32.status_code} {_vz_jd32.status_code} {_vz_mid32} {_ul32(_vz_uid32)}",
+        )
+
+        # --- 32.19 Registry writes are admin-only (B4.8) ----------------------------------------------------------
+        _rg_uid32, _RG32_H = _mint32(_c32b, "Registry Friend")
+        _rg_fetches32: list[str] = []
+
+        def _rg_get32(url, timeout=15):  # noqa: ANN001
+            _rg_fetches32.append(url)
+            raise OSError("no network in the smoke test")
+
+        _comeet32._http_get = _rg_get32
+        _gh32._http_get = _rg_get32
+        _RG_COMEET32 = {"url": "https://www.comeet.com/jobs/acme32/A1.00B"}
+        _RG_GH32 = {"board": "acme32"}
+        try:
+            _rg_friend32 = [
+                _c32b.post("/jobs/comeet/companies", json=_RG_COMEET32, headers=_RG32_H),
+                _c32b.post("/jobs/greenhouse/companies", json=_RG_GH32, headers=_RG32_H),
+            ]
+            _rg_friend_fetches32 = list(_rg_fetches32)
+            _rg_bad32 = [
+                _c32b.post("/jobs/comeet/companies", json={"url": "not a comeet careers page"}, headers=_ADMIN_H),
+                _c32b.post("/jobs/greenhouse/companies", json={"board": "not a slug!"}, headers=_ADMIN_H),
+            ]
+            _rg_bad_fetches32 = list(_rg_fetches32)
+            _rg_good32 = [
+                _c32b.post("/jobs/comeet/companies", json=_RG_COMEET32, headers=_ADMIN_H),
+                _c32b.post("/jobs/greenhouse/companies", json=_RG_GH32, headers=_ADMIN_H),
+            ]
+        finally:
+            _comeet32._http_get = _real_comeet_get32b
+            _gh32._http_get = _real_gh_get32b
+        check(
+            "32.19 registry: adding a Comeet or Greenhouse company is admin-only — a free user's POST is a 403 that "
+            "never reaches the handler (no fetch attempted), even with a valid URL and slug",
+            [r.status_code for r in _rg_friend32] == [403, 403] and _rg_friend_fetches32 == [],
+            f"{[r.status_code for r in _rg_friend32]} {_rg_friend_fetches32}",
+        )
+        check(
+            "32.19 registry: the admin with a malformed URL or slug gets the parser's 400 before any network — and "
+            "the detector is live: the admin's VALID URL and slug do reach the fetch (2 attempts, refused here: 400)",
+            [r.status_code for r in _rg_bad32] == [400, 400] and _rg_bad_fetches32 == []
+            and [r.status_code for r in _rg_good32] == [400, 400] and len(_rg_fetches32) == 2,
+            f"{[r.status_code for r in _rg_bad32]} {[r.status_code for r in _rg_good32]} {_rg_fetches32}",
+        )
+finally:
+    _routes32.search_jobs = _real_search32b
+    _routes32.tailor_resume = _real_tailor32b
+    _routes32.record_search_hits = _real_rsh32b
+    _cb32.fetch_job_text = _real_fetch32b
+    _kit_reals32()
+    _kits32._now = _real_kits_now32b
+    _jm32.analyze_jd = _real_jm_analyze32b
+    _comeet32._http_get = _real_comeet_get32b
+    _gh32._http_get = _real_gh_get32b
+    _restore29(_prev32b_env)
 
 _reached_end = True
 print(f"\n{_ran} checks ran.")

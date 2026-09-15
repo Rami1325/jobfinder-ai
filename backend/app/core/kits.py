@@ -11,19 +11,32 @@ and the full TailorResult. The fabrication guard runs inside `tailor_resume`
 as always; a kit with flags is marked (`flag_count > 0`) and must never be
 auto-approvable.
 
+**Monthly uses (Phase 30 / B4.1).** A batch is PAID when it is queued: one use
+per new kit, in one reserve, and every kit queued by it carries that event's id.
+A kit that fails, or is deleted or wiped while still queued, gives its one use
+back through `refund_kit`, at most once (`quota_refunded`). A kit with no event
+(queued before Phase 30, or by an exempt caller) never refunds: it never paid.
+A kit is CLAIMED with one conditional UPDATE, and the write that ends its run is
+conditional on that claim, so two process-next calls can never run one kit
+twice or refund it twice.
+
 `process_next_kit` takes injectable `analyze_fn`/`tailor_fn` (same pattern as
 alerts.run_alert's `search_fn`) so the smoke test drives the whole loop
-offline, including a forced-flags path.
+offline, including a forced-flags path. Left unset they resolve to this
+module's `analyze_jd` / `tailor_resume` at CALL time, so patching those two
+names here is a real seam, not one a default argument bound at import time.
 """
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
+from app.core import quota
 from app.core.jd_analyzer import analyze_jd
 from app.core.job_market import stamp_market
 from app.core.lang import detect_language
@@ -40,10 +53,17 @@ from app.models import (
     TailorResult,
 )
 
+logger = logging.getLogger(__name__)
+
 MAX_BATCH = 10  # kits enqueued per call; also the ceiling the UI offers
 # A "running" kit older than this is a crashed/killed invocation (serverless
 # timeouts leave no chance to mark it failed) — requeue it on the next call.
 STUCK_RUNNING = timedelta(minutes=10)
+
+# The claim, the requeue and the terminal write are Core statements on the table:
+# their rowcount is the decision, and none of them should wait on the ORM
+# reconciling objects in memory with a row another request just changed.
+_KITS = TailorKit.__table__
 
 
 def _now() -> datetime:
@@ -118,16 +138,22 @@ def enqueue_kits(
     db: Session,
     user: User,
     jobs: list[KitJobIn],
-    charge: Callable[[int], None] | None = None,
+    charge: Callable[[int], int | None] | None = None,
 ) -> tuple[list[TailorKit], int]:
     """Queue tailor kits for `jobs`, deduped by URL against the user's existing
     kits: queued/running/done kits are skipped, failed ones are requeued with
     the fresh JD. Returns (queued rows, skipped count). Raises ValueError on
     unusable input — the route maps it to a 400.
 
-    `charge` is called with the number of kits about to be queued BEFORE any
-    row is written (the route passes the daily-cap check there): if it raises,
-    nothing was queued, and its own commit can't flush half-built kit rows."""
+    `charge` is called with the number of NEW kits (after the dedupe) BEFORE any
+    row is written: the route passes the daily tailor cap and then the monthly
+    reserve, and returns the reserve's event id (None for an exempt caller, and
+    from a fake that returns nothing). If it raises, nothing was queued, and its
+    own commit can't flush half-built kit rows. Every kit queued here, fresh or a
+    requeued failure, carries that event id with `quota_refunded` False, which
+    is what `refund_kit` gives back. If the commit that writes the kits fails
+    after the charge, the whole charge is refunded before the error propagates:
+    nothing was queued, so nothing was bought."""
     # NO geo backstop here, deliberately — one was written and removed. It ran
     # `detect_geo_restriction` on every job with no gate, while `search_jobs`
     # gates on `JobHit.origin_market`. The two therefore disagreed about the
@@ -161,13 +187,12 @@ def enqueue_kits(
         seen_batch.add(key)
         row = existing.get(key)
         if row is not None and row.status != "failed":
-            skipped += 1
+            skipped += 1  # opening a kit that already exists is free
             continue
         to_queue.append((row, job))
     if not to_queue:
         return [], skipped
-    if charge is not None:
-        charge(len(to_queue))
+    event_id = charge(len(to_queue)) if charge is not None else None
 
     queued: list[TailorKit] = []
     for row, job in to_queue:
@@ -196,9 +221,59 @@ def enqueue_kits(
         row.application_id = None
         row.started_at = None
         row.processed_at = None
+        # Phase 30 / B4.1: the charge that paid for THIS run of the kit. A
+        # requeued failure was refunded under its old event, so it starts over.
+        row.quota_event_id = event_id
+        row.quota_refunded = False
         queued.append(row)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        if event_id is not None:
+            try:
+                quota.refund_units(db, event_id, len(to_queue), ref=f"refund:{event_id}")
+            except Exception:  # noqa: BLE001 - never mask the error that failed the batch
+                logger.warning("refunding a batch whose kits were never written did not complete", exc_info=True)
+        raise
     return queued, skipped
+
+
+def refund_kit(db: Session, kit_id: int, *, queued_only: bool = False) -> bool:
+    """The per-kit refund (Phase 30 / B4.1): give back the one use a kit paid for
+    at batch time, at most once. True when a use came back.
+
+    Runs in the CALLER's transaction and never commits: the caller writes the
+    kit's status (a failed run) or deletes it (a queued kit deleted or wiped) and
+    commits ONCE, so the flag, the refund and that write land together. A kit
+    with no charge event never refunds. `queued_only` is the delete-and-wipe
+    form: a kit that is already running belongs to the call running it.
+    """
+    stmt = (
+        update(_KITS)
+        .where(
+            _KITS.c.id == kit_id,
+            _KITS.c.quota_event_id.is_not(None),
+            _KITS.c.quota_refunded.is_(False),
+        )
+        .values(quota_refunded=True)
+    )
+    if queued_only:
+        stmt = stmt.where(_KITS.c.status == "queued")
+    if db.execute(stmt).rowcount != 1:
+        return False
+    event_id = db.execute(select(_KITS.c.quota_event_id).where(_KITS.c.id == kit_id)).scalar()
+    return quota.refund_units(db, event_id, 1, ref=f"refund:{event_id}:kit:{kit_id}", commit=False)
+
+
+def refund_queued_kits(db: Session, user_id: int) -> int:
+    """`refund_kit` for every still-queued kit of one user: the privacy wipe and
+    the account close, BEFORE the kit rows are deleted. Never commits; returns
+    how many uses came back."""
+    kit_ids = db.execute(
+        select(_KITS.c.id).where(_KITS.c.user_id == user_id, _KITS.c.status == "queued")
+    ).scalars().all()
+    return sum(1 for kit_id in kit_ids if refund_kit(db, kit_id, queued_only=True))
 
 
 def _pick_master(db: Session, user_id: int, jd_language: str) -> SavedResume | None:
@@ -217,20 +292,54 @@ def _pick_master(db: Session, user_id: int, jd_language: str) -> SavedResume | N
 
 
 def _requeue_stuck(db: Session, user_id: int) -> None:
-    rows = db.execute(
-        select(TailorKit).where(
-            TailorKit.user_id == user_id, TailorKit.status == "running"
-        )
-    ).scalars().all()
+    """Put this user's kits left "running" past STUCK_RUNNING back in the queue.
+
+    One conditional UPDATE in the claim's own form, so a kit is only taken back
+    while it is still the stuck run it looked like. A requeued kit keeps its
+    charge: running it again never charges again. It always commits, even when
+    nothing matched, because an open write transaction here would hold SQLite's
+    write lock for the rest of the call.
+    """
     cutoff = _now().replace(tzinfo=None) - STUCK_RUNNING
-    changed = False
-    for row in rows:
-        if row.started_at is None or row.started_at < cutoff:
-            row.status = "queued"
-            row.started_at = None
-            changed = True
-    if changed:
-        db.commit()
+    db.execute(
+        update(_KITS)
+        .where(
+            _KITS.c.user_id == user_id,
+            _KITS.c.status == "running",
+            or_(_KITS.c.started_at.is_(None), _KITS.c.started_at < cutoff),
+        )
+        .values(status="queued", started_at=None)
+    )
+    db.commit()
+
+
+def _claim_next(db: Session, user_id: int) -> tuple[int, datetime] | None:
+    """Claim the oldest queued kit this call can win: (kit id, claimed_at), or None.
+
+    The claim is ONE conditional UPDATE (`… AND status = 'queued'`) and its rowcount
+    is the decision, so two calls that picked the same kit cannot both run it (the
+    old select-then-write let both in, and both refunded). The loser moves on to
+    the next queued kit, up to MAX_BATCH of them, and returns None only when
+    nothing could be claimed: the client's drain loop stops on a null kit.
+    """
+    candidates = db.execute(
+        select(_KITS.c.id)
+        .where(_KITS.c.user_id == user_id, _KITS.c.status == "queued")
+        .order_by(_KITS.c.id)
+        .limit(MAX_BATCH)
+    ).scalars().all()
+    for kit_id in candidates:
+        claimed_at = _now().replace(tzinfo=None)
+        won = db.execute(
+            update(_KITS)
+            .where(_KITS.c.id == kit_id, _KITS.c.status == "queued")
+            .values(status="running", started_at=claimed_at)
+        ).rowcount
+        if won == 1:
+            db.commit()
+            return int(kit_id), claimed_at
+        db.rollback()
+    return None
 
 
 AnalyzeFn = Callable[[str], JDModel]
@@ -240,29 +349,37 @@ TailorFn = Callable[..., TailorResult]  # (resume, jd, ledger=...) -> TailorResu
 def process_next_kit(
     db: Session,
     user: User,
-    analyze_fn: AnalyzeFn = analyze_jd,
-    tailor_fn: TailorFn = tailor_resume,
+    analyze_fn: AnalyzeFn | None = None,
+    tailor_fn: TailorFn | None = None,
 ) -> tuple[TailorKit | None, int]:
     """Run the full tailor pipeline on the user's oldest queued kit.
 
-    Returns (processed row or None when the queue is empty, kits still queued).
-    Failures mark the kit "failed" with a user-facing error instead of raising —
-    the client's loop keeps going and the queue can't jam on one bad job.
-    """
-    _requeue_stuck(db, user.id)
-    row = db.execute(
-        select(TailorKit)
-        .where(TailorKit.user_id == user.id, TailorKit.status == "queued")
-        .order_by(TailorKit.id)
-    ).scalars().first()
-    if row is None:
-        return None, 0
-    row.status = "running"
-    row.started_at = _now().replace(tzinfo=None)
-    db.commit()
+    Returns (processed row, or None when no kit could be claimed; kits still
+    queued). Failures mark the kit "failed" with a user-facing error instead of
+    raising — the client's loop keeps going and the queue can't jam on one bad
+    job — and give that kit's use back (Phase 30 / B4.1).
 
+    The write that ends a run is conditional on THIS call's claim (`status =
+    'running' AND started_at = claimed_at`). If the kit was requeued as stuck and
+    claimed again, or deleted, while this call ran, that write matches nothing,
+    and this call writes nothing and refunds nothing: the kit belongs to whoever
+    holds it now.
+    """
+    analyze = analyze_fn or analyze_jd
+    tailor = tailor_fn or tailor_resume
+    user_id = user.id
+    _requeue_stuck(db, user_id)
+    claim = _claim_next(db, user_id)
+    if claim is None:
+        return None, queued_count(db, user_id)
+    kit_id, claimed_at = claim
+    row = db.get(TailorKit, kit_id)
+    if row is None:  # deleted between the claim and this read
+        return None, queued_count(db, user_id)
+
+    values: dict[str, object]
     try:
-        master = _pick_master(db, user.id, detect_language(row.jd_text))
+        master = _pick_master(db, user_id, detect_language(row.jd_text))
         if master is None:
             raise ValueError("No master resume saved — upload your resume first.")
         resume = ResumeModel.model_validate_json(master.resume_json)
@@ -272,37 +389,51 @@ def process_next_kit(
                 ledger = FactsLedger.model_validate_json(master.ledger_json)
             except Exception:  # noqa: BLE001 - tailor rebuilds it from the resume
                 ledger = None
-        jd = analyze_fn(row.jd_text)
+        jd = analyze(row.jd_text)
         # The market stamp, with the location the search stored beside the job.
         # AFTER the call, so the injectable `AnalyzeFn` keeps its one-argument
         # shape (the smoke fakes call it that way). Only ever UPGRADES: a stored
         # location naming Israel beats a text that named nowhere or elsewhere,
         # and an unknown stamp takes whatever the location can say.
         stamp_market(jd, row.jd_text, row.location or "")
-        result = tailor_fn(
+        result = tailor(
             resume, jd, ledger=ledger,
             avoid_phrases=writing_prefs.avoid_phrases(user),
             hide_arabic_in_israel=resume_prefs.hide_arabic_in_israel(user),
         )
-        row.base_resume_json = master.resume_json
-        row.base_language = master.language or "en"
-        row.jd_json = jd.model_dump_json()
-        row.result_json = result.model_dump_json()
-        row.score_before = result.score_before.overall
-        row.score_after = result.score_after.overall
-        row.flag_count = len(result.fabrication_flags)
-        row.error = ""
-        row.status = "done"
+        values = {
+            "status": "done",
+            "base_resume_json": master.resume_json,
+            "base_language": master.language or "en",
+            "jd_json": jd.model_dump_json(),
+            "result_json": result.model_dump_json(),
+            "score_before": result.score_before.overall,
+            "score_after": result.score_after.overall,
+            "flag_count": len(result.fabrication_flags),
+            "error": "",
+        }
     except ValueError as e:  # user-facing (no master, bad JD)
-        row.status = "failed"
-        row.error = str(e)
+        values = {"status": "failed", "error": str(e)}
     except Exception as e:  # noqa: BLE001 - LLM/network; keep the queue moving
-        row.status = "failed"
-        row.error = f"Tailoring failed: {e}"
-    row.processed_at = _now().replace(tzinfo=None)
+        values = {"status": "failed", "error": f"Tailoring failed: {e}"}
+    values["processed_at"] = _now().replace(tzinfo=None)
+    db.rollback()  # the pipeline only read; start the terminal write clean
+
+    ended = db.execute(
+        update(_KITS)
+        .where(_KITS.c.id == kit_id, _KITS.c.status == "running", _KITS.c.started_at == claimed_at)
+        .values(**values)
+    ).rowcount
+    if ended != 1:
+        db.rollback()
+        return db.get(TailorKit, kit_id), queued_count(db, user_id)
+    if values["status"] == "failed":
+        refund_kit(db, kit_id)  # joins this transaction: the status and the refund land together
     db.commit()
-    db.refresh(row)
-    return row, queued_count(db, user.id)
+    row = db.get(TailorKit, kit_id)
+    if row is not None:
+        db.refresh(row)
+    return row, queued_count(db, user_id)
 
 
 def _sent_signals(result_json: str) -> tuple[float | None, int | None]:

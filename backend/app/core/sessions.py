@@ -96,8 +96,7 @@ def client_ip(request: Request) -> str:
     truth. Anywhere else — uvicorn directly, the Vite proxy, any other host —
     that header is whatever the client chose to send, and trusting it would hand
     every per-IP throttle to anyone who sends a fresh value per request. There
-    it is ignored. (The older /public/scan limiter still reads it
-    unconditionally; that route is deliberately not changed here.)
+    it is ignored.
     """
     if os.environ.get("VERCEL"):
         first = request.headers.get("x-forwarded-for", "").split(",")[0].strip()

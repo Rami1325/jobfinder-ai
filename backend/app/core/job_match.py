@@ -19,6 +19,13 @@ from app.core.salary import extract_salary
 from app.core.scorer import score_resume, top_matched_and_gaps
 from app.models import JobMatch, JobMatchResult, ResumeModel
 
+# The most listings one ranking reads (Phase 30 / B4.3). Each listing costs two
+# model calls in the serial loop below while the whole ranking costs ONE monthly
+# use, so without a ceiling one use bought any number of fit readings.
+# `/jobs/match` refuses more with a 400 before any call; `kits.MAX_BATCH` is the
+# precedent.
+MAX_MATCH_LISTINGS = 10
+
 
 def match_jobs(resume: ResumeModel, listings: list[str]) -> JobMatchResult:
     matches: list[JobMatch] = []
