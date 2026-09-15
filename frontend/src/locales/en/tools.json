@@ -52,7 +52,8 @@
     "referral": "Referral request",
     "subject": "Subject: {{subject}}",
     "chars": "{{count}} / 300 characters",
-    "copied": "Copied to clipboard"
+    "copied": "Copied to clipboard",
+    "error": "Couldn't write the messages."
   },
   "screening": {
     "gateFeature": "the screening-answer helper",
@@ -72,7 +73,8 @@
     "jdPlaceholder": "Paste the JD for a more tailored answer (optional)…",
     "draft": "Draft answer",
     "answer": "Answer",
-    "copied": "Answer copied"
+    "copied": "Answer copied",
+    "error": "Couldn't draft an answer."
   },
   "xray": {
     "gateFeature": "the ATS X-ray",
@@ -144,7 +146,8 @@
     "about": "About",
     "bullets": "Experience bullets",
     "copyAll": "Copy all",
-    "skills": "Skills"
+    "skills": "Skills",
+    "error": "Couldn't optimize your profile."
   },
   "brief": {
     "gateFeature": "the company brief",
@@ -203,6 +206,7 @@
     "write": "Write email",
     "draft": "Draft",
     "copied": "Copied email",
-    "subject": "Subject: {{subject}}"
+    "subject": "Subject: {{subject}}",
+    "error": "Couldn't write the email."
   }
 }

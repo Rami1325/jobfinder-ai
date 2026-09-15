@@ -6,7 +6,10 @@ import { outreach } from "../../api/client";
 import JDPaste from "../../components/JDPaste";
 import ResumeGate from "../../components/ResumeGate";
 import ToolShell from "../../components/ToolShell";
+import UsesNote from "../../components/UsesNote";
 import { useMasterResume } from "../../hooks/useMasterResume";
+import { apiErrorMessage } from "../../lib/apiError";
+import { useUses } from "../../lib/usesStore";
 import { Button, Card, CardTitle, Skeleton, useToast } from "../../components/ui";
 import type { OutreachResult } from "../../types";
 
@@ -29,12 +32,15 @@ export default function OutreachToolPage() {
   const [role, setRole] = useState<string>(ROLES[0]);
   const [result, setResult] = useState<OutreachResult | null>(null);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
   const toast = useToast();
+  const uses = useUses("outreach");
 
   async function run() {
     if (!master?.resume) return;
     setRunning(true);
     setResult(null);
+    setError("");
     try {
       setResult(
         await outreach({
@@ -46,6 +52,10 @@ export default function OutreachToolPage() {
           contact_role: role,
         }),
       );
+    } catch (e) {
+      // Said under the button (Phase 30 / C4). With no catch at all a refusal,
+      // the monthly limit included, cleared the page and said nothing.
+      setError(apiErrorMessage(e, t("outreach.error")));
     } finally {
       setRunning(false);
     }
@@ -97,9 +107,11 @@ export default function OutreachToolPage() {
             </select>
           </div>
         </div>
-        <Button className="mt-4" loading={running} icon={<Sparkles size={16} />} onClick={run}>
+        <Button className="mt-4" loading={running} disabled={uses.out} icon={<Sparkles size={16} />} onClick={run}>
           {t("outreach.generate")}
         </Button>
+        <UsesNote feature="outreach" className="mt-2" />
+        {error && <p className="mt-2 text-sm text-danger">{error}</p>}
         <p className="mt-3 text-xs text-ink-faint">{t("outreach.honesty")}</p>
       </Card>
 

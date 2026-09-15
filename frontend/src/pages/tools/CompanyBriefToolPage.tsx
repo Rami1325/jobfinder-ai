@@ -15,8 +15,10 @@ import { companyBrief } from "../../api/client";
 import JDPaste from "../../components/JDPaste";
 import ResumeGate from "../../components/ResumeGate";
 import ToolShell from "../../components/ToolShell";
+import UsesNote from "../../components/UsesNote";
 import { useMasterResume } from "../../hooks/useMasterResume";
 import { apiErrorMessage } from "../../lib/apiError";
+import { useUses } from "../../lib/usesStore";
 import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../../components/ui";
 import type { CompanyBriefResult } from "../../types";
 
@@ -43,7 +45,9 @@ export default function CompanyBriefToolPage() {
   const [jobTitle, setJobTitle] = useState(prefill?.jobTitle ?? "");
   const [result, setResult] = useState<CompanyBriefResult | null>(null);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
   const toast = useToast();
+  const uses = useUses("company_brief");
 
   const canRun = Boolean(url.trim() || pageText.trim() || jdText.trim());
 
@@ -51,6 +55,7 @@ export default function CompanyBriefToolPage() {
     if (!master?.resume || !canRun) return;
     setRunning(true);
     setResult(null);
+    setError("");
     try {
       setResult(
         await companyBrief({
@@ -63,7 +68,9 @@ export default function CompanyBriefToolPage() {
         }),
       );
     } catch (e) {
-      toast("error", apiErrorMessage(e, t("brief.error")));
+      // Under the button rather than in a toast (Phase 30 / C4): a refusal, the
+      // monthly limit included, stays beside the note that priced the tap.
+      setError(apiErrorMessage(e, t("brief.error")));
     } finally {
       setRunning(false);
     }
@@ -138,12 +145,14 @@ export default function CompanyBriefToolPage() {
         <Button
           className="mt-4"
           loading={running}
-          disabled={!canRun}
+          disabled={!canRun || uses.out}
           icon={<Sparkles size={16} />}
           onClick={run}
         >
           {t("brief.build")}
         </Button>
+        <UsesNote feature="company_brief" className="mt-2" />
+        {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       </Card>
 
       {running && <Skeleton className="h-64 w-full" />}

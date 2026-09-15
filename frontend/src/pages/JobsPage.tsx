@@ -48,8 +48,10 @@ import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { resumeLanguage } from "../lib/lang";
 import { onboardingRole } from "../lib/onboarding";
+import { useUses } from "../lib/usesStore";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { Button, Card, CardTitle, Modal, Skeleton, useToast } from "../components/ui";
+import UsesNote from "../components/UsesNote";
 import type {
   ApplicationOut,
   FactsLedger,
@@ -81,6 +83,8 @@ export default function JobsPage() {
     loc.state?.tab === "kits" ? "kits" : "search",
   );
   const toast = useToast();
+  // A search and a ranking each use 1 (Phase 30 / B4); none left disables both.
+  const searchUses = useUses("search");
 
   // -- Batch auto-tailor kits (PLAN 8.1) --
   const {
@@ -584,7 +588,7 @@ export default function JobsPage() {
                 size="lg"
                 loading={searching}
                 icon={<Search size={18} />}
-                disabled={prefilling || limitInvalid}
+                disabled={prefilling || limitInvalid || searchUses.out}
                 onClick={runSearch}
               >
                 {t("search.cta")}
@@ -599,6 +603,7 @@ export default function JobsPage() {
                   its jobs are in History and its use is kept (Phase 30 / C3). */}
               {dropped && <span className="text-sm text-warn">{t("search.connectionDropped")}</span>}
             </div>
+            <UsesNote feature="search" className="mt-2" />
           </Card>
 
           <SearchScanPanel
@@ -888,7 +893,13 @@ export default function JobsPage() {
           </div>
 
           <Card className="flex flex-wrap items-center gap-3">
-            <Button size="lg" loading={running} icon={<Trophy size={18} />} disabled={listings.length === 0} onClick={rank}>
+            <Button
+              size="lg"
+              loading={running}
+              icon={<Trophy size={18} />}
+              disabled={listings.length === 0 || searchUses.out}
+              onClick={rank}
+            >
               {t("manual.rank", { count: listings.length })}
             </Button>
             {/* Said where the limit bites, once the queue is full; both add
@@ -897,6 +908,7 @@ export default function JobsPage() {
               <span className="text-xs text-ink-muted">{t("manual.maxListings", { max: MAX_MATCH_LISTINGS })}</span>
             )}
             {error && <span className="text-sm text-danger">{error}</span>}
+            <UsesNote feature="search" className="w-full" />
           </Card>
 
           {running && (

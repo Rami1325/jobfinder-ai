@@ -5,8 +5,10 @@ import { useTranslation } from "react-i18next";
 import { Bell, X } from "lucide-react";
 import { getJobAlert, runJobAlert, searchContext, updateJobAlert } from "../../api/client";
 import { Button, Card, CardTitle, useToast } from "../../components/ui";
+import UsesNote from "../../components/UsesNote";
 import { apiErrorMessage } from "../../lib/apiError";
 import { onboardingRole } from "../../lib/onboarding";
+import { formatUsesDate, useUses } from "../../lib/usesStore";
 import type { AlertSettings, ResumeModel, SearchContext } from "../../types";
 import {
   contextKey,
@@ -275,6 +277,13 @@ export function AlertsCard({
   const [customOpen, setCustomOpen] = useState(false);
   const [ctx, setCtx] = useState<SearchContext | null>(null);
   const [prefilling, setPrefilling] = useState(false);
+  const { t: tCommon } = useTranslation();
+  const { i18n } = useTranslation();
+  // Run now is a search the user pressed (Phase 30 / B6.4) and uses 1. A
+  // scheduled morning uses 1 only when it emails jobs, and with none left the
+  // mornings wait for the 1st.
+  const searchUses = useUses("search");
+  const alertUses = useUses("job_alert");
 
   useEffect(() => {
     getJobAlert()
@@ -303,6 +312,13 @@ export function AlertsCard({
     nudges !== !!settings.nudge_emails ||
     (minScore !== null && minScore !== settings.min_score) ||
     contextKey(customOpen ? ctx : null) !== contextKey(settings.context);
+  // Paused for want of a use (Phase 30 / B6.5): the server says so when the card
+  // is read, and the store says so the moment another feature spends the last
+  // use. Never while the count is unknown, which also keeps it off for an
+  // account with no monthly limit.
+  const paused =
+    alertUses.limited && (settings.paused_reason === "monthly_limit" || (enabled && alertUses.out));
+  const pausedDate = paused ? formatUsesDate(settings.resumes_on || alertUses.resetsOn, i18n.language) : "";
 
   function toggleCustomize(checked: boolean) {
     setCustomOpen(checked);
@@ -391,6 +407,7 @@ export function AlertsCard({
         </span>
       </CardTitle>
       <p className="mt-1 text-sm text-ink-muted">{t("alerts.body")}</p>
+      {alertUses.limited && <p className="mt-1 text-xs text-ink-faint">{tCommon("uses.alertMornings")}</p>}
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
@@ -425,7 +442,7 @@ export function AlertsCard({
           size="sm"
           variant="secondary"
           loading={running}
-          disabled={saving || limitInvalid}
+          disabled={saving || limitInvalid || searchUses.out}
           onClick={runNow}
         >
           {t("alerts.runNow")}
@@ -436,6 +453,9 @@ export function AlertsCard({
           </Button>
         )}
       </div>
+      <UsesNote feature="search" className="mt-2">
+        {tCommon("uses.runNow")}
+      </UsesNote>
 
       {/* The fit bar. Its own row rather than a sixth control in the row above:
           at 390px that row already wraps to three lines, and this is a sentence
@@ -480,6 +500,11 @@ export function AlertsCard({
 
       <div className="mt-3 space-y-1 text-xs text-ink-muted">
         {unsaved && <p className="text-warn">{t("alerts.unsaved")}</p>}
+        {paused && (
+          <p className="text-warn">
+            {pausedDate ? tCommon("uses.alertPaused", { date: pausedDate }) : tCommon("uses.alertPausedBare")}
+          </p>
+        )}
         {settings.last_run_at && (
           <p>
             {/* The bar line only for a run that actually measured against one.

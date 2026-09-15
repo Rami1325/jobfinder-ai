@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Crosshair, Info, Sparkles } from "lucide-react";
 import { inlineField, readBlock } from "../lib/resumeBlocks";
 import { Button } from "./ui";
+import UsesNote from "./UsesNote";
+import { useUses } from "../lib/usesStore";
 import { cn } from "../lib/cn";
 import type { ResumeModel, ReviewFinding, ReviewResult, ReviewRewrite } from "../types";
 
@@ -311,7 +313,10 @@ interface Props {
   rewrites?: ReviewRewrite[];
   rewritesDropped?: number;
   rewritesBusy?: boolean;
-  rewritesFailed?: boolean;
+  /** Why the last rewrites request failed, already a sentence ("" when it did
+   * not): a monthly-limit refusal says when uses come back, where a fixed
+   * "we couldn't check your resume" said nothing true about it. */
+  rewritesError?: string;
   onSuggestRewrites?: () => void;
 }
 
@@ -326,10 +331,12 @@ export default function ReviewPanel({
   rewrites,
   rewritesDropped = 0,
   rewritesBusy,
-  rewritesFailed,
+  rewritesError = "",
   onSuggestRewrites,
 }: Props) {
   const { t } = useTranslation("tailor");
+  // Before the early returns below, where every hook has to be.
+  const rewriteUses = useUses("rewrites");
 
   if (failed && !data) return <p className="text-sm text-danger">{t("doc.review.failed")}</p>;
   if (!data) return null;
@@ -429,8 +436,8 @@ export default function ReviewPanel({
 
       {/* THE ONE PART OF THIS PANEL THAT SPENDS. Everything above is
           deterministic Python on an uncapped route and re-runs on every
-          keystroke; this is `Depends(llm_user)` and is therefore a button with
-          its cost stated before it is pressed. */}
+          keystroke; this uses 1 of the month's uses (Phase 30 / B4.5) and is
+          therefore a button with its cost stated before it is pressed. */}
       {rewritable && (
         <div className="space-y-2 rounded-lg border border-line p-2.5">
           <Button
@@ -438,16 +445,14 @@ export default function ReviewPanel({
             variant="secondary"
             icon={<Sparkles size={14} />}
             loading={rewritesBusy}
-            disabled={rewritesBusy}
+            disabled={rewritesBusy || rewriteUses.out}
             onClick={onSuggestRewrites}
           >
             {t("doc.review.rewrites")}
           </Button>
-          <p className="text-[11px] leading-relaxed text-ink-faint">
-            {t("doc.review.rewritesCost")}
-          </p>
+          <UsesNote feature="rewrites" />
 
-          {rewritesFailed && <p className="text-sm text-danger">{t("doc.review.failed")}</p>}
+          {rewritesError && <p className="text-sm text-danger">{rewritesError}</p>}
 
           {/* REPORTED, never swallowed. A guard that fires silently is the 21.7
               failure mode. */}

@@ -47,6 +47,7 @@ import { clearDraft } from "../lib/draft";
 import { clearInboxHints } from "../lib/inboxHint";
 import { clearOnboarding, isOnboarded } from "../lib/onboarding";
 import { authRedirectUrl } from "../lib/safeNext";
+import { usesFor, useUsesState } from "../lib/usesStore";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 import { getKitsState, loadKits, subscribeKits } from "../state/kitsStore";
 import type { Me } from "../types";
@@ -433,6 +434,9 @@ function AccountMenu({
   // read as an account button with no name at all — hence the User glyph rather
   // than a placeholder letter, which would be a fabricated initial.
   const initial = me?.name?.trim()?.[0]?.toUpperCase();
+  // This month's uses, for the line under "Signed in as" (Phase 30 / C5).
+  const usesState = useUsesState();
+  const uses = usesFor("", undefined, usesState);
 
   const item =
     "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-start text-sm font-medium transition-colors";
@@ -480,6 +484,14 @@ function AccountMenu({
             {me?.name && (
               <p className="truncate px-3 pb-2 pt-1.5 text-xs text-ink-muted">
                 {t("nav.signedInAs", { name: me.name })}
+              </p>
+            )}
+            {/* Only a count this page knows: nothing for the admin, a plan with
+                no monthly limit, or an /auth/me that could not be read. It stays
+                in AppLayout.tsx, for check 9's reason. */}
+            {uses.limited && (
+              <p className={cn("truncate px-3 pb-2 text-xs text-ink-muted", !me?.name && "pt-1.5")}>
+                {t("uses.account", { count: uses.limit ?? 0, remaining: uses.remaining ?? 0 })}
               </p>
             )}
             <Link

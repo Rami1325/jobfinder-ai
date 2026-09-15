@@ -86,7 +86,7 @@ export type TailorState = {
   // master in the JD's language was swapped in ("he" | "en"); null otherwise.
   langSwitched: "he" | "en" | null;
   // "Check fit" before any tailoring: the reading, and the exact posting text it
-  // was taken for. Re-checking the same text would spend a credit to learn
+  // was taken for. Re-checking the same text would spend a use to learn
   // nothing, so the overlay compares against `checkedFor` rather than assuming.
   fit: FitCheckResult | null;
   checkedFor: string | null;
@@ -232,12 +232,16 @@ export function startTailor(): void {
   if (!resume || state.loading) return;
   const id = ++seq;
   // ONE comparison, captured BEFORE the reset writes over `state`, and used for
-  // two things that must never disagree: whether the analysed JD can be reused
-  // (no second credit), and whether the fit reading still describes the posting
-  // we are about to tailor for. The `prior` lookup used to live inside the async
-  // IIFE, i.e. AFTER this reset — leaving it there while clearing `checkedFor`
-  // would make it read the value this very call had just nulled, and the app
-  // would re-spend the credit the overlay's cost line promises it will not.
+  // two things that must never disagree: whether the analysed JD can be reused,
+  // and whether the fit reading still describes the posting we are about to
+  // tailor for. Reusing it is what keeps "check fit, then tailor" at 1 use: the
+  // server keys the tailor a fit check includes by the analysed JD that check
+  // returned (Phase 30 / B4.4), and a second analysis of the same text is a
+  // different JD, so that tailor would use a second one. The `prior` lookup used
+  // to live inside the async IIFE, i.e. AFTER this reset — leaving it there while
+  // clearing `checkedFor` would make it read the value this very call had just
+  // nulled, and the overlay's "tailoring this job afterwards is included" would
+  // be false.
   const sameJd = state.checkedFor !== null && state.checkedFor === jdText.trim();
   const prior = sameJd ? state.jd : null;
   setTailorState({
@@ -288,8 +292,9 @@ export function startTailor(): void {
   });
   (async () => {
     // Reuse the posting we already read. `/jobs/fit` hands its analysed JD back
-    // for exactly this reason, so "check fit, then tailor" costs the same one
-    // credit as tailoring straight away — which is what the overlay promises.
+    // for exactly this reason: the tailor it includes is keyed by that JD, so
+    // "check fit, then tailor" is 1 use, the same as tailoring straight away,
+    // which is what the overlay's note promises.
     const analyzed = prior ?? (await analyzeJD(jdText));
     if (id !== seq) return;
     setTailorState({ jd: analyzed });
@@ -316,7 +321,18 @@ export function startTailor(): void {
       }
     }
     const r = await tailor(useResume, analyzed);
-    if (id === seq) setTailorState({ loading: false, result: r, scoredAt: Date.now() });
+    if (id === seq)
+      setTailorState({
+        loading: false,
+        result: r,
+        scoredAt: Date.now(),
+        // The fit check's included tailor is spent: this tailor sent the JD that
+        // reading analysed, and one fit check includes one tailor. Kept, the
+        // stamp would have the overlay call a second tailor of the same job
+        // "included" once this review is discarded. A failed tailor never gets
+        // here, and the server gives its ride back.
+        ...(prior && state.fit ? { fit: { ...state.fit, tailor_included_until: "" } } : {}),
+      });
   })().catch((e: unknown) => {
     if (id === seq)
       setTailorState({

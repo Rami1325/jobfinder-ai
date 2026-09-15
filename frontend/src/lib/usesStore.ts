@@ -315,6 +315,17 @@ export function formatUsesDate(resetsOn: string, lang?: string): string {
     : "";
 }
 
+/** "2:30 PM" / "14:30": when a pass or a per-posting inclusion ends, in the
+ * reader's language and on the device's own clock, or "" for a time this cannot
+ * read. Takes the store's `deadline` (milliseconds, already local to this
+ * device) or the server's ISO instant (read as UTC when it carries no offset). */
+export function formatUsesTime(at: number | string | undefined, lang?: string): string {
+  const ms = typeof at === "number" ? at : instant(at);
+  return ms !== null && Number.isFinite(ms)
+    ? new Intl.DateTimeFormat(localeOf(lang), { hour: "numeric", minute: "2-digit" }).format(new Date(ms))
+    : "";
+}
+
 /** "September" / "ספטמבר": the month whose uses ran out, the one before `resetsOn`. */
 export function usedUpMonth(resetsOn: string, lang?: string): string {
   const date = utcDay(resetsOn, -1);

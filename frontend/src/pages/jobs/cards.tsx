@@ -20,6 +20,7 @@ import {
 import { listKits, saveApplication } from "../../api/client";
 import { Badge, BorderGlow, Button, CountUp, ProgressRing, useToast } from "../../components/ui";
 import { fitReason } from "../../lib/fitReason";
+import { useUses } from "../../lib/usesStore";
 import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
 import type {
   FilteredJob,
@@ -36,6 +37,7 @@ import {
   isNewPosting,
   jdTextWithLocation,
   kitJobFromMatch,
+  normalizeJobUrl,
   postedAgo,
   sourceLabel,
 } from "./shared";
@@ -468,7 +470,15 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
   const toast = useToast();
-  const { batching } = useSyncExternalStore(subscribeKits, getKitsState);
+  const { batching, kits } = useSyncExternalStore(subscribeKits, getKitsState);
+  // Opening a job's existing kit is free and a new one uses 1 (Phase 30 / C4), so
+  // at none left the button is disabled only when the loaded kits hold no live
+  // kit for this posting. With the list not loaded, the server decides.
+  const tailorOut = useUses("tailor").out;
+  const hasKit =
+    !!m.url && !!kits?.some((k) => k.status !== "failed" && normalizeJobUrl(k.url) === normalizeJobUrl(m.url));
+  const kitOut = tailorOut && kits !== null && !hasKit;
+  const [kitError, setKitError] = useState("");
   // The page's status map is rebuilt per SEARCH, not per click, so a freshly
   // saved job would keep showing "Save" until the next search without a local
   // override. `justSaved` wins over `appStatus` for exactly that window.
@@ -504,10 +514,12 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
   // specific posting never found it. Creates + processes a single kit, then
   // lands on its review page (approve → send).
   async function makeKit() {
+    setKitError("");
     const summary = await startKitBatch([kitJobFromMatch(m)]);
     if (!summary) {
-      const err = getKitsState().error;
-      if (err) toast("error", err);
+      // A refusal, the monthly limit included, is said under this button rather
+      // than in a toast that is gone before anyone reads why.
+      setKitError(getKitsState().error);
       return;
     }
     try {
@@ -632,15 +644,23 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
           {t("card.tailorToThis")}
         </Button>
         {m.url && m.jd_text && (
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={batching}
-            icon={<Wand2 size={14} />}
-            onClick={makeKit}
-          >
-            {t("card.kit")}
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={batching}
+              disabled={kitOut}
+              icon={<Wand2 size={14} />}
+              onClick={makeKit}
+            >
+              {t("card.kit")}
+            </Button>
+            {kitError && (
+              <p role="alert" className="max-w-[16rem] text-sm text-danger">
+                {kitError}
+              </p>
+            )}
+          </>
         )}
         {status ? (
           // NOT disabled: it is the only route to the tracker the toast just

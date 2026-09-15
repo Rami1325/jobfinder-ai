@@ -8,6 +8,7 @@ import {
   Eye,
   EyeOff,
   FileLock,
+  Gauge,
   KeyRound,
   LogOut,
   MonitorSmartphone,
@@ -33,12 +34,13 @@ import { signOut } from "../layouts/AppLayout";
 import { ACCESS_CODE_KEY } from "../lib/accessCode";
 import { apiErrorMessage } from "../lib/apiError";
 import { clearKeyRotated, keyRotatedNotice, markKeyRotated, readKeyRotation } from "../lib/authResults";
+import { formatUsesDate } from "../lib/usesStore";
 import LanguageSwitch from "../components/LanguageSwitch";
 import ThemeToggle from "../components/ThemeToggle";
 import InboxSettingsCard from "../components/inbox/InboxSettingsCard";
 import { Badge, Button, Card, CardTitle, useToast } from "../components/ui";
 import { FormError, PasswordInput, charCount } from "./auth/shared";
-import type { AuthMe } from "../types";
+import type { AuthMe, UsageOut } from "../types";
 
 /** The hint beside an account action (Sign out, Change password, Sign out
  * other devices). `min-w-[12rem]`, not `min-w-0`. With `min-w-0` the hint could
@@ -629,6 +631,40 @@ function ResumePrivacyCard() {
  * also switches it off everywhere. Both ship, clearly separated, because a
  * tester wanting a clean slate and someone leaving for good are not the same
  * person. */
+/** This month's uses on the free plan (Phase 30 / C6): the allowance, what was
+ * used on what, when it resets, and what never counts.
+ *
+ * Only for a plan with a monthly limit. The admin and plan "unlimited" have no
+ * limit to show, and a card calling them "Free plan" would be false. It reads the
+ * /auth/me answer this page already fetched, because the per-feature breakdown
+ * lives only there. Its `uses.*` keys are literal calls through `tCommon`, the
+ * name this file already binds to common.json, for check-mirrors 32(d). */
+function PlanCard({ usage }: { usage: UsageOut }) {
+  const { t: tCommon } = useTranslation();
+  const { i18n } = useTranslation();
+  const used = Object.entries(usage.by_feature ?? {})
+    .filter(([, n]) => typeof n === "number" && n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(
+      ([feature, n]) =>
+        `${tCommon(`uses.features.${feature}`, { defaultValue: tCommon("uses.plan.other") })} ${n}`,
+    );
+  const resets = formatUsesDate(usage.resets_on, i18n.language);
+  return (
+    <Card>
+      <CardTitle className="flex items-center gap-2">
+        <Gauge size={16} className="text-accent-soft" /> {tCommon("uses.plan.title")}
+      </CardTitle>
+      <div className="mt-3 space-y-1 text-sm">
+        <p className="text-ink">{tCommon("uses.plan.free", { count: usage.limit ?? 0 })}</p>
+        <p className="text-ink-muted">{used.length ? used.join(" · ") : tCommon("uses.plan.none")}</p>
+        {resets && <p className="text-ink-muted">{tCommon("uses.plan.resets", { date: resets })}</p>}
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-ink-muted">{tCommon("uses.plan.alwaysFree")}</p>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation("settings");
   // The wipe copy is reused VERBATIM from common.json rather than restated
@@ -826,6 +862,10 @@ export default function SettingsPage() {
           </Button>
         </div>
       </Card>
+
+      {/* Hidden for the admin and plan "unlimited" (their limit is null), and
+          while /auth/me is unread. */}
+      {auth?.usage && auth.usage.limit !== null && <PlanCard usage={auth.usage} />}
 
       {auth?.verified && user && (
         <ExtensionKeyCard

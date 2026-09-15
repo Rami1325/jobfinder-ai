@@ -15,6 +15,8 @@ import {
   subscribeMockInterview,
 } from "../../state/mockInterviewStore";
 import { Button, Card, CardTitle, ProgressRing } from "../../components/ui";
+import UsesNote from "../../components/UsesNote";
+import { useUses } from "../../lib/usesStore";
 import type { ResumeModel } from "../../types";
 
 export default function MockInterview({
@@ -31,6 +33,10 @@ export default function MockInterview({
   );
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
+  // A whole practice session is 1 use (Phase 30 / B5). Only Start can be out of
+  // uses: Send and End ride the session it opened and are never disabled, and a
+  // refusal on either lands in `error` below.
+  const uses = useUses("interview");
 
   // Keep the newest message in view as the conversation grows.
   useEffect(() => {
@@ -55,10 +61,12 @@ export default function MockInterview({
         <Button
           className="mt-4"
           icon={<Mic size={16} />}
+          disabled={uses.out}
           onClick={() => startMockInterview(resume, jdText)}
         >
           {t("mock.start")}
         </Button>
+        <UsesNote feature="interview" className="mt-2" />
       </Card>
     );
   }
@@ -143,6 +151,7 @@ export default function MockInterview({
               </button>
               {error && <span className="text-sm text-danger">{error}</span>}
             </div>
+            <UsesNote feature="interview" inSession className="mt-2" />
           </>
         )}
       </Card>

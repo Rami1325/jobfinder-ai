@@ -4,7 +4,10 @@ import { Contact, Copy, Sparkles } from "lucide-react";
 import { linkedinOptimize } from "../../api/client";
 import ResumeGate from "../../components/ResumeGate";
 import ToolShell from "../../components/ToolShell";
+import UsesNote from "../../components/UsesNote";
 import { useMasterResume } from "../../hooks/useMasterResume";
+import { apiErrorMessage } from "../../lib/apiError";
+import { useUses } from "../../lib/usesStore";
 import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../../components/ui";
 import type { LinkedInResult } from "../../types";
 
@@ -13,14 +16,21 @@ export default function LinkedInToolPage() {
   const { master, loading } = useMasterResume();
   const [result, setResult] = useState<LinkedInResult | null>(null);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
   const toast = useToast();
+  const uses = useUses("linkedin");
 
   async function run() {
     if (!master?.resume) return;
     setRunning(true);
     setResult(null);
+    setError("");
     try {
       setResult(await linkedinOptimize(master.resume));
+    } catch (e) {
+      // Said under the button (Phase 30 / C4). With no catch at all a refusal,
+      // the monthly limit included, cleared the page and said nothing.
+      setError(apiErrorMessage(e, t("linkedin.error")));
     } finally {
       setRunning(false);
     }
@@ -41,9 +51,11 @@ export default function LinkedInToolPage() {
       icon={<Contact className="text-accent-soft" />}
     >
       <Card>
-        <Button loading={running} icon={<Sparkles size={16} />} onClick={run}>
+        <Button loading={running} disabled={uses.out} icon={<Sparkles size={16} />} onClick={run}>
           {result ? t("linkedin.regenerate") : t("linkedin.optimize")}
         </Button>
+        <UsesNote feature="linkedin" className="mt-2" />
+        {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       </Card>
 
       {running && <Skeleton className="h-64 w-full" />}

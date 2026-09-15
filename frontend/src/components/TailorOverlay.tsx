@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Sparkles, Wand2 } from "lucide-react";
 import JDPaste from "./JDPaste";
+import UsesNote from "./UsesNote";
 import { checkFit } from "../api/client";
 import { apiErrorMessage } from "../lib/apiError";
+import { useUses } from "../lib/usesStore";
 import { Badge, Button, Modal, ProgressRing } from "./ui";
 import type { FitCheckResult, ResumeModel } from "../types";
 
@@ -13,7 +15,8 @@ interface Props {
   resume: ResumeModel;
   /** The JD text already in the store, so re-opening shows what was checked. */
   jdText: string;
-  /** The posting this fit reading belongs to — re-checking it costs nothing. */
+  /** The posting this fit reading belongs to. With it on screen the dialog
+   * offers no second check, which would spend a use to learn nothing. */
   checkedFor: string | null;
   fit: FitCheckResult | null;
   onChecked: (jdText: string, fit: FitCheckResult) => void;
@@ -48,14 +51,16 @@ const TOP_MISSING = 8;
  * Tailor for a job, in one place: paste the posting or drop its link, see how
  * you match it, then tailor.
  *
- * CHECK FIT IS NOT FREE, and the copy says so rather than hiding it. Coverage
- * needs the posting's keywords, and the only thing that produces those is a
- * model call — so there is no version of this that costs nothing. Since it costs
- * a credit either way, it spends that credit on the JD_FIT task, which returns
- * the analysed posting AND the fit reading together; `analyze_jd` alone would
- * cost the same and return half as much. The analysed JD then rides into the
- * tailor, so checking first adds no calls at all — which is the honest headline
- * and is exactly what the cost line says.
+ * CHECK FIT IS NOT FREE, and the note under the buttons says so rather than
+ * hiding it. Coverage needs the posting's keywords, and the only thing that
+ * produces those is a model call, so there is no version of this that costs
+ * nothing: it uses 1 of the month's uses, on the JD_FIT task, which returns the
+ * analysed posting AND the fit reading together. That use also covers tailoring
+ * the same job within 24 hours (Phase 30 / B4.4): the server keys that tailor by
+ * the analysed JD the fit check returned, and `startTailor` sends exactly that
+ * JD. So "check fit, then tailor" is 1 use in all, the same as tailoring
+ * straight away, and the Tailor note says so for as long as
+ * `tailor_included_until` holds.
  *
  * The draft is local. The page writes `jdText` into a module-level store on
  * every keystroke, and inside a modal that would make Cancel do nothing.
@@ -98,7 +103,7 @@ export default function TailorOverlay({
 
   const ready = draft.trim().length > 30;
   // Already read this exact posting: the result on screen is about this text,
-  // so re-checking would spend a credit to learn nothing.
+  // so re-checking would spend a use to learn nothing.
   //
   // `!hasResult` is belt as well as braces. `checkedFor` is never "" (a check
   // only fires when `ready`, i.e. over 30 characters), so the empty draft above
@@ -107,6 +112,15 @@ export default function TailorOverlay({
   // document's, and that contradiction is worth being able to SEE in one
   // expression rather than deducing from two files. check-mirrors 15 reads it.
   const cached = !hasResult && !!fit && checkedFor !== null && checkedFor === draft.trim();
+
+  // What each button spends (Phase 30 / C3, C4). The fit check's included tailor
+  // counts only while this dialog shows that reading (`cached`): another draft is
+  // another posting, and with a result up the dialog aims elsewhere. `out` is
+  // the one thing that disables a counted button, and it is false for a covered
+  // call, so at 0 uses left an included Tailor stays enabled.
+  const fitUses = useUses("fit_check");
+  const includedUntil = cached ? fit?.tailor_included_until : undefined;
+  const tailorUses = useUses("tailor", includedUntil);
 
   async function run() {
     if (!ready || busy) return;
@@ -124,9 +138,9 @@ export default function TailorOverlay({
   const missing = (fit?.gaps ?? []).filter((g) => g.status === "missing").slice(0, TOP_MISSING);
   // Partials were hidden here, which is backwards: a partial is the cheapest
   // thing on the list to fix. The posting wants its own wording and the
-  // candidate already has the experience, so it costs one edit and no tailor
-  // credit -- and it is half a point of coverage each, which is exactly why
-  // the ring disagreed with the "N of M" line beneath it.
+  // candidate already has the experience, so it costs one edit and no use --
+  // and it is half a point of coverage each, which is exactly why the ring
+  // disagreed with the "N of M" line beneath it.
   const partial = (fit?.gaps ?? []).filter((g) => g.status === "partial").slice(0, TOP_MISSING);
 
   return (
@@ -189,12 +203,6 @@ export default function TailorOverlay({
 
         {err && <p className="text-sm text-danger">{err}</p>}
 
-        {/* The cost, stated. Checking spends one credit; tailoring afterwards
-            reuses the posting it already read, so it does not spend again. */}
-        <p className="text-xs leading-relaxed text-ink-faint">
-          {cached ? t("overlay.cached") : t("overlay.cost")}
-        </p>
-
         {/* The thing the app never said out loud: a second tailor starts again
             from the MASTER, and what it replaces is the review on screen — not
             the saved resume. Plain static markup, no reveal and no `animate`
@@ -221,7 +229,7 @@ export default function TailorOverlay({
             {t("overlay.close")}
           </Button>
           {!cached && (
-            <Button loading={busy} disabled={!ready} icon={<Sparkles size={16} />} onClick={run}>
+            <Button loading={busy} disabled={!ready || fitUses.out} icon={<Sparkles size={16} />} onClick={run}>
               {busy ? t("overlay.checking") : t("overlay.checkFit")}
             </Button>
           )}
@@ -231,7 +239,11 @@ export default function TailorOverlay({
               whether or not anything is armed), so arming reveals no new fact;
               it only separates the intent from the act. */}
           {guarded && !armed ? (
-            <Button disabled={!ready || busy} icon={<Wand2 size={16} />} onClick={() => setArmed(true)}>
+            <Button
+              disabled={!ready || busy || tailorUses.out}
+              icon={<Wand2 size={16} />}
+              onClick={() => setArmed(true)}
+            >
               {t("overlay.retailor")}
             </Button>
           ) : (
@@ -244,7 +256,7 @@ export default function TailorOverlay({
               <Button
                 variant={guarded ? "danger" : "primary"}
                 loading={tailoring}
-                disabled={!ready || busy}
+                disabled={!ready || busy || tailorUses.out}
                 icon={<Wand2 size={16} />}
                 onClick={() => onTailor(draft.trim())}
               >
@@ -257,6 +269,16 @@ export default function TailorOverlay({
             </>
           )}
         </div>
+        {/* The cost, stated under the buttons that spend it. Before a fit
+            reading it describes Check fit, whose use also covers tailoring the
+            same job; with this posting's reading on screen it describes Tailor,
+            which that reading includes while it lasts. Nothing at all for an
+            account with no monthly limit or an unknown count. */}
+        {cached ? (
+          <UsesNote feature="tailor" includedUntil={includedUntil} className="text-end" />
+        ) : (
+          <UsesNote feature="fit_check" className="text-end" />
+        )}
         {!ready && <p className="text-end text-xs text-ink-muted">{t("overlay.needsJd")}</p>}
       </div>
     </Modal>

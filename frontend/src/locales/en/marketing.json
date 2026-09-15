@@ -96,7 +96,7 @@
       "ctaPrimary": "Tailor my resume",
       "ctaSecondary": "Scan my CV",
       "langs": "English & Hebrew",
-      "access": "Free account: confirm your email and you're in.",
+      "access": "Free account: confirm your email and you're in. 10 free uses a month.",
       "pauseBg": "Pause background",
       "resumeBg": "Resume background"
     },
@@ -158,7 +158,7 @@
       "q2": "Will the file pass an ATS?",
       "a2": "The exports are built to be read by a machine: plain text in a single column, standard section names, and no tables, text boxes, images or Word headers and footers. You can also run the ATS X-ray, which reads your finished file back with our own parser and shows you what it found. No tool can promise that a particular employer's screener will pass you — what we can say is that nothing in the file is there to trip one.",
       "q3": "Do I need an account?",
-      "a3": "Yes, a free one. Sign up with your name and email, then confirm the address with the code we send you; the app opens once it's verified. Invite codes from the private beta keep working.",
+      "a3": "Yes, a free one. Sign up with your email, then confirm the address from the email we send you. A free account includes 10 uses a month. Invite codes from the private beta keep working, with the same monthly limit.",
       "q4": "Is this an auto-apply tool?",
       "a4": "No. You decide what gets sent, and tailoring happens one role at a time so you can read it first. There is one narrow exception: for a single job board, and only for an application you have already approved, JobFinder can submit it for you. LinkedIn is never submitted automatically.",
       "q5": "Can I choose how it looks?",

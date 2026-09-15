@@ -4,6 +4,9 @@ import { useTranslation } from "react-i18next";
 import { Mail, Copy, Sparkles } from "lucide-react";
 import { followUp } from "../../api/client";
 import ToolShell from "../../components/ToolShell";
+import UsesNote from "../../components/UsesNote";
+import { apiErrorMessage } from "../../lib/apiError";
+import { useUses } from "../../lib/usesStore";
 import { Button, Card, CardTitle, Skeleton, useToast } from "../../components/ui";
 import type { FollowUpResult } from "../../types";
 
@@ -24,14 +27,21 @@ export default function FollowUpToolPage() {
   const [context, setContext] = useState("");
   const [result, setResult] = useState<FollowUpResult | null>(null);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
   const toast = useToast();
+  const uses = useUses("follow_up");
 
   async function run() {
     if (!company.trim() || !role.trim()) return;
     setRunning(true);
     setResult(null);
+    setError("");
     try {
       setResult(await followUp({ company, role, stage, context }));
+    } catch (e) {
+      // Said under the button (Phase 30 / C4). With no catch at all a refusal,
+      // the monthly limit included, cleared the page and said nothing.
+      setError(apiErrorMessage(e, t("followup.error")));
     } finally {
       setRunning(false);
     }
@@ -71,9 +81,17 @@ export default function FollowUpToolPage() {
             <input className={input} value={context} onChange={(e) => setContext(e.target.value)} placeholder={t("followup.fitPlaceholder")} />
           </div>
         </div>
-        <Button className="mt-4" loading={running} icon={<Sparkles size={16} />} disabled={!company.trim() || !role.trim()} onClick={run}>
+        <Button
+          className="mt-4"
+          loading={running}
+          icon={<Sparkles size={16} />}
+          disabled={!company.trim() || !role.trim() || uses.out}
+          onClick={run}
+        >
           {t("followup.write")}
         </Button>
+        <UsesNote feature="follow_up" className="mt-2" />
+        {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       </Card>
 
       {running && <Skeleton className="h-48 w-full" />}

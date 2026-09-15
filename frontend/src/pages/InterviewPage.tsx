@@ -12,10 +12,12 @@ import {
 } from "../api/client";
 import JDPaste from "../components/JDPaste";
 import ResumeGate from "../components/ResumeGate";
+import UsesNote from "../components/UsesNote";
 import MockInterview from "./interview/MockInterview";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
+import { useUses } from "../lib/usesStore";
 import { Badge, Button, Card, CardTitle, CountUp, Skeleton } from "../components/ui";
 import TypeText from "../components/ui/TypeText";
 import type {
@@ -51,16 +53,24 @@ function QuestionCard({
   const [answer, setAnswer] = useState("");
   const [tips, setTips] = useState<string[]>([]);
   const [loadingA, setLoadingA] = useState(false);
+  const [errorA, setErrorA] = useState("");
   const [practice, setPractice] = useState("");
   const [feedback, setFeedback] = useState<InterviewFeedbackResult | null>(null);
   const [loadingF, setLoadingF] = useState(false);
+  const [errorF, setErrorF] = useState("");
 
+  // Both ride the practice session the questions opened (Phase 30 / B5): never
+  // disabled mid-session, and a refusal, the monthly limit included, is said
+  // under the button that got it. With no catch at all it said nothing.
   async function getAnswer() {
     setLoadingA(true);
+    setErrorA("");
     try {
       const r = await interviewAnswer(resume, jd, q.question);
       setAnswer(r.answer);
       setTips(r.tips);
+    } catch (e) {
+      setErrorA(apiErrorMessage(e, t("genericError")));
     } finally {
       setLoadingA(false);
     }
@@ -69,8 +79,11 @@ function QuestionCard({
   async function getFeedback() {
     if (practice.trim().length < 10) return;
     setLoadingF(true);
+    setErrorF("");
     try {
       setFeedback(await interviewFeedback(resume, q.question, practice));
+    } catch (e) {
+      setErrorF(apiErrorMessage(e, t("genericError")));
     } finally {
       setLoadingF(false);
     }
@@ -95,6 +108,8 @@ function QuestionCard({
           {answer ? t("regenerateAnswer") : t("modelAnswer")}
         </Button>
       </div>
+      <UsesNote feature="interview" inSession className="mt-1.5" />
+      {errorA && <p className="mt-2 text-sm text-danger">{errorA}</p>}
 
       {answer && (
         <div className="mt-3 rounded-lg border border-line bg-bg-soft p-3 text-sm leading-relaxed text-ink">
@@ -129,6 +144,8 @@ function QuestionCard({
         >
           {t("practice.cta")}
         </Button>
+        <UsesNote feature="interview" inSession className="mt-1.5" />
+        {errorF && <p className="mt-2 text-sm text-danger">{errorF}</p>}
       </div>
 
       {feedback && (
@@ -184,6 +201,9 @@ export default function InterviewPage() {
   const [recruiter, setRecruiter] = useState<RecruiterScreenResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
+  // Questions and the recruiter screen each open a practice session, 1 use for
+  // up to 3 hours (Phase 30 / B5); while one is open this button stays enabled.
+  const uses = useUses("interview");
 
   async function generate() {
     if (!master?.resume || jdText.trim().length < 30) return;
@@ -263,17 +283,20 @@ export default function InterviewPage() {
         {mode === "mock" ? (
           <p className="mt-3 text-xs text-ink-faint">{t("mock.jdOptional")}</p>
         ) : (
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <Button
-              loading={running}
-              icon={<Sparkles size={16} />}
-              disabled={jdText.trim().length < 30}
-              onClick={mode === "questions" ? generate : buildRecruiter}
-            >
-              {mode === "questions" ? t("generate") : t("recruiter.build")}
-            </Button>
-            {error && <span className="text-sm text-danger">{error}</span>}
-          </div>
+          <>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Button
+                loading={running}
+                icon={<Sparkles size={16} />}
+                disabled={jdText.trim().length < 30 || uses.out}
+                onClick={mode === "questions" ? generate : buildRecruiter}
+              >
+                {mode === "questions" ? t("generate") : t("recruiter.build")}
+              </Button>
+              {error && <span className="text-sm text-danger">{error}</span>}
+            </div>
+            <UsesNote feature="interview" className="mt-2" />
+          </>
         )}
       </Card>
 

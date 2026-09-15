@@ -4,7 +4,10 @@ import { MessageSquareText, Copy, Sparkles, Lightbulb } from "lucide-react";
 import { screeningAnswer } from "../../api/client";
 import ResumeGate from "../../components/ResumeGate";
 import ToolShell from "../../components/ToolShell";
+import UsesNote from "../../components/UsesNote";
 import { useMasterResume } from "../../hooks/useMasterResume";
+import { apiErrorMessage } from "../../lib/apiError";
+import { useUses } from "../../lib/usesStore";
 import { Button, Card, CardTitle, Skeleton, useToast } from "../../components/ui";
 import type { ScreeningAnswerResult } from "../../types";
 
@@ -21,14 +24,23 @@ export default function ScreeningToolPage() {
   const [question, setQuestion] = useState("");
   const [result, setResult] = useState<ScreeningAnswerResult | null>(null);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
   const toast = useToast();
+  // 1 use covers up to 6 answers within 3 hours (Phase 30 / B5), so `out` stays
+  // false while that pass has answers left, whatever the month's count.
+  const uses = useUses("screening");
 
   async function run() {
     if (!master?.resume || !question.trim()) return;
     setRunning(true);
     setResult(null);
+    setError("");
     try {
       setResult(await screeningAnswer({ resume: master.resume, jd_text: jdText, question }));
+    } catch (e) {
+      // Said under the button (Phase 30 / C4). With no catch at all a refusal,
+      // the monthly limit included, cleared the page and said nothing.
+      setError(apiErrorMessage(e, t("screening.error")));
     } finally {
       setRunning(false);
     }
@@ -81,12 +93,14 @@ export default function ScreeningToolPage() {
         <Button
           className="mt-4"
           loading={running}
-          disabled={!question.trim()}
+          disabled={!question.trim() || uses.out}
           icon={<Sparkles size={16} />}
           onClick={run}
         >
           {t("screening.draft")}
         </Button>
+        <UsesNote feature="screening" className="mt-2" />
+        {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       </Card>
 
       {running && <Skeleton className="h-48 w-full" />}

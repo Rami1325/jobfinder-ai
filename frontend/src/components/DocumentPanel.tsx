@@ -23,6 +23,7 @@ import { usePdfPreview, useXray } from "../hooks/useFilePreview";
 import { downloadResume, resumeFilename, reviewRewrites, type ResumeTemplate } from "../api/client";
 import { PDF_ONLY, TEMPLATE_SPECS } from "../lib/templateSpecs";
 import { Button, Card, CardTitle, Skeleton } from "./ui";
+import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
 import type { FactsLedger, ResumeModel, ReviewResult, ReviewRewrite } from "../types";
 
@@ -267,8 +268,8 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
      That panel is rendered conditionally — an inline Card, never a height tween
      (check 11) — so it unmounts the moment the review is closed. With the
      rewrites in its own state, closing the panel silently discarded a result
-     the user had just spent an AI credit on, and reopening it offered to spend
-     a second one for the same three sentences. `tplOpen` / `replaceOpen` are up
+     the user had just spent a use on, and reopening it offered to spend a
+     second one for the same three sentences. `tplOpen` / `replaceOpen` are up
      here for the same structural reason; this one just also has a price.
 
      The call is made here rather than passed in because it is the panel's own
@@ -279,11 +280,13 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   const [rewrites, setRewrites] = useState<ReviewRewrite[] | null>(null);
   const [rewritesDropped, setRewritesDropped] = useState(0);
   const [rewritesBusy, setRewritesBusy] = useState(false);
-  const [rewritesFailed, setRewritesFailed] = useState(false);
+  // The refusal's own sentence (Phase 30 / C4), shown under the button: at the
+  // monthly limit it says when uses come back.
+  const [rewritesError, setRewritesError] = useState("");
 
   async function suggestRewrites() {
     setRewritesBusy(true);
-    setRewritesFailed(false);
+    setRewritesError("");
     try {
       // `paths: []` = "pick the rewritable findings server-side". The panel's
       // own REWRITABLE list only decides whether the BUTTON is on screen, so
@@ -291,8 +294,8 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
       const res = await reviewRewrites(resume, []);
       setRewrites(res.rewrites);
       setRewritesDropped(res.dropped);
-    } catch {
-      setRewritesFailed(true);
+    } catch (e) {
+      setRewritesError(apiErrorMessage(e, t("doc.review.failed")));
     } finally {
       setRewritesBusy(false);
     }
@@ -526,7 +529,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
                   rewrites={rewrites ?? undefined}
                   rewritesDropped={rewritesDropped}
                   rewritesBusy={rewritesBusy}
-                  rewritesFailed={rewritesFailed}
+                  rewritesError={rewritesError}
                   onSuggestRewrites={suggestRewrites}
                 />
               </div>

@@ -12,10 +12,12 @@ import {
   Wand2,
 } from "lucide-react";
 import { Badge, Button, Card, CardTitle, ProgressRing, useToast } from "../../components/ui";
+import UsesNote from "../../components/UsesNote";
+import { useUses } from "../../lib/usesStore";
 import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
 import type { JobMatch, KitOut } from "../../types";
 import { CompanyAvatar, JobResultCard } from "./cards";
-import { inputCls, kitJobFromMatch, sourceLabel } from "./shared";
+import { inputCls, kitJobFromMatch, normalizeJobUrl, sourceLabel } from "./shared";
 
 // Batch auto-tailor (PLAN 8.1): jobs at/above the fit threshold become queued
 // "application kits" — the backend tailors them one process-next call at a
@@ -36,11 +38,13 @@ export function BatchTailorCard({
   attractKey?: number | null;
 }) {
   const { t } = useTranslation("jobs");
+  const { t: tCommon } = useTranslation();
   const toast = useToast();
-  const { batching, total, done, lastKit, lastBatch, error } = useSyncExternalStore(
+  const { batching, total, done, lastKit, lastBatch, error, kits } = useSyncExternalStore(
     subscribeKits,
     getKitsState,
   );
+  const uses = useUses("tailor");
   const [threshold, setThreshold] = useState<number>(KIT_DEFAULT_THRESHOLD);
   // Threshold the DISPLAYED integer, not the raw float. The card, the fit ring
   // and the alert email all show `Math.round(overall)`, so a job at 74.6 reads
@@ -48,10 +52,30 @@ export function BatchTailorCard({
   // `alerts.displayed_score` rounds the same way for the 75% mail. Comparing
   // the float here made this queue the one surface that disagreed, which is
   // exactly what sharing the number 75 with KIT_DEFAULT_THRESHOLD was for.
-  const eligible = matches
+  const qualifying = matches
     .filter((m) => m.url && m.jd_text && Math.round(m.overall) >= threshold)
-    .sort((a, b) => b.overall - a.overall)
-    .slice(0, KIT_MAX_BATCH);
+    .sort((a, b) => b.overall - a.overall);
+  // A job that already holds a kit (anything but a failed one) is skipped by the
+  // server and costs nothing, so here it takes no place in the batch and no use
+  // (Phase 30 / C4). A kits list never loaded subtracts nothing: the server decides.
+  const kitted = new Set(
+    (kits ?? []).filter((k) => k.status !== "failed" && k.url).map((k) => normalizeJobUrl(k.url)),
+  );
+  const fresh = qualifying.filter((m) => !kitted.has(normalizeJobUrl(m.url)));
+  // Every new kit uses 1, paid when the batch is queued, and the server refuses
+  // a whole batch bigger than what is left. So the batch stops at what is left.
+  const room = uses.remaining === null ? KIT_MAX_BATCH : Math.min(KIT_MAX_BATCH, uses.remaining);
+  const eligible = fresh.slice(0, room);
+  const usesCapped =
+    uses.remaining !== null && uses.remaining > 0 && uses.remaining < Math.min(KIT_MAX_BATCH, fresh.length);
+  // The line under the button: the cap when uses cut the batch short, else how
+  // many this batch uses. One kit reads UsesNote's own sentence, and none left
+  // reads its zero line.
+  const batchLine = usesCapped
+    ? tCommon("uses.batchCap", { count: eligible.length, total: fresh.length })
+    : eligible.length > 1
+      ? tCommon("uses.batchNote", { count: eligible.length, remaining: uses.remaining ?? 0 })
+      : undefined;
 
   async function run() {
     const summary = await startKitBatch(eligible.map(kitJobFromMatch));
@@ -112,10 +136,19 @@ export function BatchTailorCard({
           </Button>
         </div>
       </div>
-      {!batching && eligible.length === 0 && (
+      {!batching && qualifying.length === 0 && (
         <p className="mt-2 text-xs text-ink-muted">{t("batch.none", { threshold })}</p>
       )}
-      {!batching && eligible.length >= KIT_MAX_BATCH && (
+      {!batching && qualifying.length > 0 && fresh.length === 0 && (
+        <p className="mt-2 text-xs text-ink-muted">{t("batch.allSkipped")}</p>
+      )}
+      {!batching && (eligible.length > 0 || (uses.out && fresh.length > 0)) && (
+        <UsesNote feature="tailor" className="mt-2">
+          {batchLine}
+        </UsesNote>
+      )}
+      {/* The per-run cap, unless uses cut the batch shorter and said so above. */}
+      {!batching && !usesCapped && eligible.length >= KIT_MAX_BATCH && (
         <p className="mt-2 text-xs text-ink-faint">{t("batch.capNote", { max: KIT_MAX_BATCH })}</p>
       )}
       {batching && (

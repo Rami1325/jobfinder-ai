@@ -17,9 +17,11 @@ import { useTranslation } from "react-i18next";
 import { scanResume } from "../api/client";
 import type { FreeScanResult } from "../types";
 import ToolShell from "../components/ToolShell";
+import UsesNote from "../components/UsesNote";
 import { Button, Card, CardTitle, ProgressRing, SectionLabel } from "../components/ui";
 import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
+import { useUses } from "../lib/usesStore";
 
 const chipTone: Record<string, string> = {
   covered: "border-mint/50 bg-mint/15 text-mint",
@@ -51,7 +53,10 @@ export default function ScanPage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<FreeScanResult | null>(null);
 
-  const canScan = !!file && jd.trim().length > 0 && !loading;
+  // With no uses left the scan is disabled (Phase 30 / C4). A file the server
+  // refuses or cannot read gives its use back there, so the note stays true.
+  const uses = useUses("scan");
+  const canScan = !!file && jd.trim().length > 0 && !loading && !uses.out;
 
   async function scan() {
     if (!file || !canScan) return;
@@ -145,6 +150,7 @@ export default function ScanPage() {
             <ShieldCheck size={14} className="text-mint" /> {t("privacy")}
           </p>
         </div>
+        <UsesNote feature="scan" className="mt-2" />
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}
       </div>
 

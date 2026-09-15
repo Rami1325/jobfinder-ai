@@ -700,8 +700,10 @@ try {
 // already paid to read this exact posting?" — used to live inside the async
 // IIFE, i.e. AFTER the reset, reading `state.checkedFor` from the module
 // binding. Leave it there and it reads the value this very call just nulled,
-// always misses, and re-spends a credit on `analyzeJD` — while the overlay's
-// own cost line promises "tailoring afterwards doesn't charge again".
+// always misses, and re-reads the posting with `analyzeJD`. That second reading
+// is a different JD, and the server keys the tailor a fit check includes by the
+// JD that check returned (Phase 30 / B4.4), so the tailor uses a second use while
+// the overlay's note says "tailoring this job afterwards is included".
 //
 // Nothing else can see this. Both orderings compile, both type-check, and the
 // symptom is a silent extra model call, not an error.
@@ -727,8 +729,9 @@ try {
     fail(
       "state/tailorStore.ts: startTailor reads the analysed-JD reuse AFTER its own " +
         "reset. The reset nulls `checkedFor`, so the lookup reads the value this call " +
-        "just cleared, never reuses the posting it already paid to read, and spends a " +
-        "second credit on analyzeJD — contradicting the overlay's cost line.",
+        "just cleared and analyses the posting the fit check already read a second " +
+        "time. The tailor then sends a different JD from the one that check's included " +
+        "tailor is keyed by, and uses a second use while the overlay says it is included.",
     );
   }
   if (order("setTailorState({ checkedFor: null });\nconst sameJd = state.checkedFor === x;").ok) {
@@ -2762,9 +2765,19 @@ const CALL = /\b(\w+)\(\s*"([A-Za-z][\w.]*)"\s*[,)]/g;
  * declares no binding, binds one identifier to two namespaces, or yields fewer
  * calls than its `floor`. A per-file floor, for check 22's reason: a floor on
  * the sum is not fail-loud, because the other files carry the total past it
- * while one file's call shape has gone dark. */
-function boundCalls(f, floor) {
-  const src = decomment(read(f));
+ * while one file's call shape has gone dark.
+ *
+ * `source`, when given, is read instead of the file, so a check can probe this
+ * reader on a fixture and still report it under a file name. */
+function boundCalls(f, floor, source) {
+  const src = decomment(source ?? read(f));
+  // Both regexes are shared and global, and `matchAll` COPIES `lastIndex`, so a
+  // `.test` or `.exec` anywhere else (check 28's binding probe leaves BIND at 47)
+  // would start this read part-way into the file. No real file has a binding in
+  // its first 47 characters, which is how that survived; 32(d)'s short fixture
+  // does, and read no binding at all. Reset here, where the reads happen.
+  BIND.lastIndex = 0;
+  CALL.lastIndex = 0;
   const binders = new Map();
   for (const m of src.matchAll(BIND)) {
     const name = m[1] || "t";
@@ -2790,6 +2803,63 @@ function boundCalls(f, floor) {
         `(expected at least ${floor}) — the call shape changed`,
     );
   return here.map((m) => [f, binders.get(m[1]), m[2]]);
+}
+
+// ---- a counted key is only as good as its plural set ---------------------- //
+// ONE definition, shared by checks 31 and 32(d), for `resolvesIn`'s reason: two
+// checks asking "can this bundle render this key for every count?" must not be
+// free to answer it differently. Check 31 wrote it for the Jobs page's counted
+// sentences, and the monthly-uses notes are counted the same way.
+//
+// The plural forms i18next asks for in each UI locale. A FIXED table, never
+// `Intl.PluralRules` read at build time: the build machine's ICU is not the
+// user's browser, and older CLDR gave Hebrew a `many` form that CLDR 48 (Node
+// 24, ICU 78: one, two, other) no longer has, so reading the runtime would make
+// a verdict depend on which Node ran the build. `_zero` is optional.
+const PLURAL_FORMS = { en: ["one", "other"], he: ["one", "two", "other"] };
+const PLURAL_FORM = /^(?:zero|one|two|few|many|other)$/;
+
+/** What a page needs of one key in one locale's bundle: [] when it can render
+ * the key for every count, otherwise each reason it cannot. `resolvesIn`
+ * accepts a key when ANY suffixed form exists, while i18next 26 has no
+ * fallback to `_other`: it tries the form the count selects, then the bare key,
+ * then the fallback language. So a missing `_other` renders the raw key, and a
+ * missing Hebrew `_two` renders the ENGLISH sentence on the Hebrew page, and
+ * check 8 stays green on both because it compares stems. */
+function keyProblems(b, key, loc, surface = "the Jobs page") {
+  if (!resolvesIn(b, key))
+    return [
+      `is missing "${key}" — ${surface} would render the raw key. Check 8 stays green while both ` +
+        "locales are equally wrong.",
+    ];
+  const parts = key.split(".");
+  const leaf = parts.pop();
+  const parent = parts.reduce((o, k) => o[k], b);
+  // A plain key: i18next reads it whatever the count.
+  if (parent[leaf] !== undefined) return [];
+  const forms = new Set(
+    Object.keys(parent)
+      .filter((k) => k.startsWith(`${leaf}_`))
+      .map((k) => k.slice(leaf.length + 1))
+      .filter((form) => PLURAL_FORM.test(form)),
+  );
+  const gaps = PLURAL_FORMS[loc].filter((form) => !forms.has(form));
+  return gaps.length
+    ? [
+        `has "${key}" without its ${gaps.map((g) => `_${g}`).join(" / ")} form — i18next has no fallback to ` +
+          "_other, so that count renders in English or as the raw key. Check 8 compares stems and stays green.",
+      ]
+    : [];
+}
+
+/** A deep copy of bundle `b` with `key`'s `_<form>` deleted: the probe fixture
+ * for a plural set that lost one form. */
+function withoutForm(b, key, form) {
+  const copy = JSON.parse(JSON.stringify(b));
+  const parts = key.split(".");
+  const leaf = parts.pop();
+  delete parts.reduce((o, k) => o[k], copy)[`${leaf}_${form}`];
+  return copy;
 }
 
 // ---- 28. the landing's own copy resolves in both locales ----------------- //
@@ -3486,41 +3556,8 @@ try {
     ["pages/jobs/cards.tsx", 34, 33],
   ];
   const IN_SCOPE = /^(?:search|card)\./;
-
-  // The plural forms i18next asks for in each UI locale. A FIXED table, never
-  // `Intl.PluralRules` read at build time: the build machine's ICU is not the
-  // user's browser, and older CLDR gave Hebrew a `many` form that CLDR 48 (Node
-  // 24, ICU 78: one, two, other) no longer has, so reading the runtime would make
-  // this check's verdict depend on which Node ran the build. `_zero` is optional.
-  const PLURAL_FORMS = { en: ["one", "other"], he: ["one", "two", "other"] };
-  const FORM = /^(?:zero|one|two|few|many|other)$/;
-  // What the Jobs page needs of one key in one locale's bundle: [] when it can
-  // render the key for every count, otherwise each reason it cannot.
-  const keyProblems = (b, key, loc) => {
-    if (!resolvesIn(b, key))
-      return [
-        `is missing "${key}" — the Jobs page would render the raw key. Check 8 stays green while both ` +
-          "locales are equally wrong.",
-      ];
-    const parts = key.split(".");
-    const leaf = parts.pop();
-    const parent = parts.reduce((o, k) => o[k], b);
-    // A plain key: i18next reads it whatever the count.
-    if (parent[leaf] !== undefined) return [];
-    const forms = new Set(
-      Object.keys(parent)
-        .filter((k) => k.startsWith(`${leaf}_`))
-        .map((k) => k.slice(leaf.length + 1))
-        .filter((form) => FORM.test(form)),
-    );
-    const gaps = PLURAL_FORMS[loc].filter((form) => !forms.has(form));
-    return gaps.length
-      ? [
-          `has "${key}" without its ${gaps.map((g) => `_${g}`).join(" / ")} form — i18next has no fallback to ` +
-            "_other, so that count renders in English or as the raw key. Check 8 compares stems and stays green.",
-        ]
-      : [];
-  };
+  // What the Jobs page needs of one key in one locale's bundle is the shared
+  // `keyProblems` above, which 32(d) asks of the monthly-uses notes as well.
 
   const bundles = new Map();
   const bundle = (loc, ns) => {
@@ -3586,13 +3623,6 @@ try {
   // `_two` gone a count of 2 renders the ENGLISH sentence on the Hebrew page.
   // Check 8 stays green on both, because it compares stems.
   const jobsHe = bundle("he", "jobs");
-  const withoutForm = (b, key, form) => {
-    const copy = JSON.parse(JSON.stringify(b));
-    const parts = key.split(".");
-    const leaf = parts.pop();
-    delete parts.reduce((o, k) => o[k], copy)[`${leaf}_${form}`];
-    return copy;
-  };
   const COUNTED = "search.filteredMarket";
   if (!jobsEn || !jobsHe || keyProblems(jobsEn, COUNTED, "en").length || keyProblems(jobsHe, COUNTED, "he").length)
     fail(`check 31 refuses the real ${COUNTED} plural sets, which are complete in both locales`);
@@ -3612,9 +3642,10 @@ try {
 
   // A passing `test` on a /g regex leaves `lastIndex` past the match, and
   // `matchAll` COPIES it, so the next `boundCalls` would start scraping at
-  // that offset instead of at the top of its file. Check 28 happens to end on
-  // a failing test, which resets it; the reader probes above end on a passing
-  // one, so this check hands the shared reader back at zero for check 32 onward.
+  // that offset instead of at the top of its file. `boundCalls` now resets both
+  // of its regexes itself (32(d) found BIND left at 47 by check 28's binding
+  // probe), so this reset is a belt: it hands CALL back at zero to anything that
+  // reads it directly after this check.
   CALL.lastIndex = 0;
 } catch (e) {
   fail(`jobs copy check could not run: ${e.message}`);
@@ -4110,6 +4141,182 @@ try {
   }
 } catch (e) {
   fail(`monthly-limit message probe could not run: ${e.message}`);
+}
+
+// ---- 32(d). every monthly-uses sentence resolves in both locales ----------- //
+// Phase 30 prices each counted control where it sits: a line under the button
+// ("This uses 1 of the 3 you have left this month"), one in the account menu,
+// the alerts card's paused line, the kit batch's cap, the cover letter's
+// changes and the Settings plan card. Every one is a `uses.*` key in
+// common.json, and NOTHING resolved them against the code that reads them:
+// check 8 is parity-only, so a key missing from en AND he is green; 16 and 22
+// read tailor.json, 28 the landing, 29 the account pages, 31 the Jobs page's
+// search.* / card.*; and 32(c) executes lib/apiError.ts but sees only the keys
+// its own probe reaches. A missing key renders raw at 12px under the very
+// button it prices, in Hebrew.
+//
+// The same reader as 28, 29 and 31 (`boundCalls`), so each call is looked up in
+// the namespace its own binding names, and a `uses.*` key read through a binding
+// to any OTHER namespace fails: C8 puts every one in common.json, so a
+// component bound to `jobs` reads them through a separately named
+// `useTranslation()` binding. lib/apiError.ts has no binding (it calls
+// `i18n.t("uses.…", { ns: "common" })`) and has its own matcher.
+//
+// Counted keys are held to their whole plural set by the shared `keyProblems`:
+// the batch cap is `_one` / `_other` in English and `_one` / `_two` / `_other`
+// in Hebrew, and a missing Hebrew `_two` puts the English sentence on the
+// Hebrew page for a batch of two.
+//
+// PER-FILE FLOORS, for check 22's reason. And EVERY file that reads a `uses.*`
+// key must be registered: the source tree is walked, check 29's way, so a new
+// surface reading one fails until it is in the table instead of shipping
+// guarded by nothing. `t("common:uses.…")`, the key-prefixed spelling, is
+// refused outright, because no scrape here can see it.
+try {
+  // [file, floor on its literal uses.* calls, keys it must keep reading].
+  // Floors sit just under what each file carries, check 29's convention.
+  const FILES = [
+    ["components/UsesNote.tsx", 8, []],
+    ["layouts/AppLayout.tsx", 1, []],
+    ["pages/jobs/AlertsCard.tsx", 3, []],
+    ["components/OnboardingModal.tsx", 1, []],
+    // The Settings plan card (C6).
+    ["pages/SettingsPage.tsx", 5, []],
+    // `uses.batchCap` by name: the cap is what keeps a batch from asking for
+    // more uses than are left, and its sentence is the one place that says so.
+    ["pages/jobs/kits.tsx", 1, ["uses.batchCap"]],
+    ["components/CoverLetter.tsx", 1, []],
+  ];
+  const API_ERROR = "lib/apiError.ts";
+  const API_FLOOR = 2;
+  // The fewest source files src/ can hold before the walk is reading the wrong
+  // place: a tree that moved would otherwise walk nothing and pass for ever.
+  const WALK_FLOOR = 120;
+  const IS_USES = /^uses\./;
+  const SURFACE = "the note beside a counted control";
+  const common = {
+    en: JSON.parse(read("locales/en/common.json")),
+    he: JSON.parse(read("locales/he/common.json")),
+  };
+
+  /** Every reason the `uses.*` calls among `calls` ([file, ns, key]) cannot render. */
+  const usesProblems = (calls) => {
+    const out = [];
+    const seen = new Set();
+    for (const [f, ns, key] of calls) {
+      if (!IS_USES.test(key)) continue;
+      if (ns !== "common") {
+        out.push(
+          `${f} reads "${key}" through a binding to "${ns}", but every uses.* key lives in common.json — ` +
+            "read it through a separately named useTranslation() binding, or it renders the raw key.",
+        );
+        continue;
+      }
+      if (seen.has(key)) continue;
+      seen.add(key);
+      for (const loc of ["en", "he"])
+        for (const p of keyProblems(common[loc], key, loc, SURFACE))
+          out.push(`locales/${loc}/common.json ${p} (used by ${f})`);
+    }
+    return out;
+  };
+
+  for (const [f, floor, required] of FILES) {
+    let uses;
+    try {
+      uses = boundCalls(f, 0).filter(([, , key]) => IS_USES.test(key));
+    } catch (e) {
+      fail(`check 32(d) cannot read ${f}: ${e.message}`);
+      continue;
+    }
+    if (uses.length < floor)
+      fail(
+        `scraped only ${uses.length} literal uses.* calls from ${f} (expected at least ${floor}) — its notes ` +
+          "went dark, or the call shape changed and this check would pass by never firing.",
+      );
+    for (const key of required)
+      if (!uses.some(([, , k]) => k === key))
+        fail(`${f} no longer reads "${key}" through a common binding, so its sentence is guarded by nothing here.`);
+    for (const p of usesProblems(uses)) fail(p);
+  }
+
+  // lib/apiError.ts: no binding, a namespace option instead.
+  const API_CALL = /\bi18n\.t\(\s*"(uses\.[A-Za-z][\w.]*)"\s*,\s*\{\s*ns:\s*"(\w+)"/g;
+  const ANY_USES = /"uses\.[A-Za-z][\w.]*"/g;
+  const apiSrc = decomment(read(API_ERROR));
+  const apiCalls = [...apiSrc.matchAll(API_CALL)].map((m) => [API_ERROR, m[2], m[1]]);
+  const spelled = (apiSrc.match(ANY_USES) || []).length;
+  if (apiCalls.length < API_FLOOR)
+    fail(
+      `scraped only ${apiCalls.length} i18n.t("uses.…", { ns }) calls from ${API_ERROR} ` +
+        `(expected at least ${API_FLOOR}) — the call shape changed.`,
+    );
+  if (spelled > apiCalls.length)
+    fail(
+      `${API_ERROR} spells ${spelled - apiCalls.length} uses.* key(s) in a shape check 32(d) cannot read — it ` +
+        'reads i18n.t("uses.…", { ns: "…", … }) with the namespace first.',
+    );
+  for (const p of usesProblems(apiCalls)) fail(p);
+
+  // Every file that reads a uses.* key is registered above.
+  const PREFIXED = /["'`]common:uses\./;
+  const USES_CALL = /\b\w+\(\s*"uses\.[A-Za-z]/;
+  const registered = new Set([...FILES.map(([f]) => f), API_ERROR]);
+  const walk = (dir) =>
+    fs.readdirSync(dir ? path.join(SRC, ...dir.split("/")) : SRC, { withFileTypes: true }).flatMap((d) => {
+      const rel = dir ? `${dir}/${d.name}` : d.name;
+      if (d.isDirectory()) return d.name === "locales" ? [] : walk(rel);
+      return /\.tsx?$/.test(d.name) ? [rel] : [];
+    });
+  const sources = walk("");
+  if (sources.length < WALK_FLOOR)
+    throw new Error(`walked only ${sources.length} source files under src/ (expected at least ${WALK_FLOOR}) — the tree moved`);
+  for (const f of sources) {
+    const src = decomment(read(f));
+    if (PREFIXED.test(src))
+      fail(
+        `${f} spells a uses.* key as "common:uses.…", which no check can resolve — read it through a ` +
+          "useTranslation() binding instead.",
+      );
+    else if (USES_CALL.test(src) && !registered.has(f))
+      fail(
+        `${f} reads a uses.* key but is not registered in check 32(d), so its copy is resolved against ` +
+          "nothing — add it to the table with a floor.",
+      );
+  }
+
+  // Both directions, for every matcher this check adds. Keys that existed before
+  // this check did, so the probes judge the matchers and not the copy.
+  const probeProblems = usesProblems(
+    boundCalls(
+      "check-32d-probe.tsx",
+      0,
+      'const { t } = useTranslation("jobs");\nconst { t: tCommon } = useTranslation();\n' +
+        't("uses.limitReached");\ntCommon("uses.limitReached");\ntCommon("uses.onboarding", { count: 3 });\n',
+    ),
+  );
+  if (probeProblems.length !== 1 || !probeProblems[0].includes('binding to "jobs"'))
+    fail(
+      "check 32(d) misjudges a fixture with one uses.* key behind a jobs binding and two behind a common " +
+        `one: ${JSON.stringify(probeProblems)}`,
+    );
+  for (const [loc, form] of [["en", "other"], ["he", "two"], ["he", "other"]])
+    if (!keyProblems(withoutForm(common[loc], "uses.onboarding", form), "uses.onboarding", loc, SURFACE).length)
+      fail(`check 32(d) passes a ${loc} uses.onboarding with no _${form} form`);
+  if (keyProblems(common.en, "uses.onboarding", "en").length || keyProblems(common.he, "uses.onboarding", "he").length)
+    fail("check 32(d) refuses the real uses.onboarding plural sets, which are complete in both locales");
+  const apiProbe = new RegExp(API_CALL.source);
+  const okProbe = apiProbe.exec('i18n.t("uses.limitReached", { ns: "common", month, date })');
+  if (!okProbe || okProbe[1] !== "uses.limitReached" || okProbe[2] !== "common")
+    fail("check 32(d)'s apiError matcher cannot read its own call shape");
+  if (apiProbe.test('i18n.t("dailyLimit.search", { ns: "common", cap })'))
+    fail("check 32(d)'s apiError matcher reads a key outside uses.*");
+  if (!PREFIXED.test('t("common:uses.runNow")') || PREFIXED.test('t("common:actions.save")'))
+    fail("check 32(d)'s prefixed-spelling detector cannot tell common:uses.* from another common key");
+  if (!USES_CALL.test('tCommon("uses.plan.title")') || USES_CALL.test("tCommon(`uses.features.${id}`)"))
+    fail("check 32(d)'s walk would miss a literal uses.* call, or fire on a template literal it cannot resolve");
+} catch (e) {
+  fail(`monthly-uses copy check could not run: ${e.message}`);
 }
 
 // ---- 32(e). the uses store: when a counted control is out (EXECUTED) ------- //
