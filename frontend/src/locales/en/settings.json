@@ -16,6 +16,7 @@
     "methodSession": "You sign in with your email address and password.",
     "methodCode": "You're signed in with an invite code, remembered on this device.",
     "methodDev": "Local mode: the app is running without sign-in.",
+    "methodGoogle": "Signed in with Google.",
     "signOut": "Sign out",
     "signOutHint": "Signs you out on this device only. Your account, your data and your other devices are not affected.",
     "password": {
@@ -24,6 +25,10 @@
       "save": "Save new password",
       "done": "Password changed. Your other devices were signed out.",
       "doneKey": "Password changed. Your other devices were signed out, and your extension key was replaced."
+    },
+    "addPassword": {
+      "cta": "Add a password",
+      "hint": "Saving it signs you out on other devices and replaces the extension key."
     },
     "others": {
       "cta": "Sign out other devices",

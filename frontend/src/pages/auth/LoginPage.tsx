@@ -4,10 +4,12 @@ import { useTranslation } from "react-i18next";
 import { KeyRound } from "lucide-react";
 import { getAuthMe, login } from "../../api/client";
 import { Button } from "../../components/ui";
+import { useTakeParam } from "../../hooks/useTakeParam";
 import { ACCESS_CODE_KEY } from "../../lib/accessCode";
-import { apiErrorMessage } from "../../lib/apiError";
+import { apiErrorMessage, googleErrorMessage, loginErrorMessage } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
 import { withNext } from "../../lib/safeNext";
+import GoogleButton from "./GoogleButton";
 import {
   AuthCard,
   EmailInput,
@@ -36,32 +38,51 @@ import {
  * Every success ends in a DOCUMENT LOAD (`location.assign`), for AccessGate's
  * reason: the stores that outlive the router must not survive a change of who
  * is signed in.
+ *
+ * Continue with Google (Phase 30 F) sits under the form once /auth/me says this
+ * server offers it. That answer is stored BEFORE the signed-in branches return,
+ * because a signed-out visitor is exactly who the button is for. A sign-in
+ * Google refused comes back here as `?google=<code>`: read once, taken out of
+ * the address with `next` kept, and shown in the form's error slot. A cancel
+ * shows nothing, since the person chose it.
  */
 export default function LoginPage() {
   const { t } = useTranslation("auth");
   const next = useNext();
   const { state } = useLocation();
+  const google = useTakeParam("google");
   const [email, setEmail] = useState<string>(() => (state as { email?: string } | null)?.email ?? "");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
 
   useEffect(() => {
     let live = true;
     getAuthMe()
       .then((me) => {
-        if (!live || !me.authenticated) return;
+        if (!live) return;
+        // Before the early return below: the button is for signed-out visitors.
+        setGoogleEnabled(me.google_enabled === true);
+        if (!me.authenticated) return;
         if (me.verified) window.location.assign(next);
         else setPending(true);
       })
       .catch(() => {
-        /* the form still works; the server answers the submit */
+        /* the form still works; the server answers the submit, and Google stays hidden */
       });
     return () => {
       live = false;
     };
   }, [next]);
+
+  // Set after mount, not as the first state: FormError's live region announces
+  // a CHANGE, and a message already there when the region mounts is often not
+  // read out at all.
+  useEffect(() => {
+    if (google && google !== "cancelled") setError(googleErrorMessage(google));
+  }, [google]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -82,7 +103,7 @@ export default function LoginPage() {
       // second login into a page that is already unloading.
       window.location.assign(me.verified ? next : withNext("/verify", next));
     } catch (err) {
-      setError(apiErrorMessage(err, t("errors.generic")));
+      setError(loginErrorMessage(err, googleEnabled, t("errors.generic")));
       setBusy(false);
     }
   }
@@ -127,6 +148,8 @@ export default function LoginPage() {
         </Button>
       </form>
 
+      {googleEnabled && <GoogleButton next={next} page="login" />}
+
       <p className="mt-3 flex flex-wrap items-center justify-center gap-x-1.5 text-sm text-ink-muted">
         {t("login.noAccount")}
         <Link to={withNext("/signup", next)} className={authLinkCls}>
@@ -134,6 +157,11 @@ export default function LoginPage() {
         </Link>
       </p>
 
+      {/* An invite code and a Google account are two different accounts, even on
+          the same address, so a friend from the beta is told before tapping. */}
+      {googleEnabled && (
+        <p className="mb-1 text-center text-xs leading-relaxed text-ink-muted">{t("login.inviteGoogle")}</p>
+      )}
       <InviteCode next={next} />
     </AuthCard>
   );

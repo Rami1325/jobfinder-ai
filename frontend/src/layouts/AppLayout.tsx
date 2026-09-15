@@ -36,6 +36,7 @@ import { cn } from "../lib/cn";
 import { SectionLabel } from "../components/ui";
 import Logo from "../components/Logo";
 import FeedbackButton from "../components/FeedbackButton";
+import GoogleNotice from "../components/GoogleNotice";
 import LanguageSwitch from "../components/LanguageSwitch";
 import OnboardingModal from "../components/OnboardingModal";
 import ThemeToggle from "../components/ThemeToggle";
@@ -842,6 +843,10 @@ export default function AppLayout() {
           DocumentToolbar bleeds itself out with `-mx-4 lg:-mx-8` to reach the
           column's own padding, and a different number leaves it peeking. */}
       <main className="mx-auto max-w-6xl px-4 pb-24 pt-8 lg:px-8 lg:pb-10">
+        {/* After the guard, never in the spinner branch above: it takes
+            `google=superseded` out of the address as it mounts, and there it
+            would be unmounted before anyone read it (check-mirrors 32(l)). */}
+        <GoogleNotice email={me?.email ?? ""} />
         <motion.div
           key={pathname}
           initial={{ opacity: 0, y: 6 }}

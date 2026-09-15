@@ -33,6 +33,10 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
  *
  * The Limited Use sentence is the disclosure Google requires from apps that
  * read Gmail, with the policy linked where its name falls in the sentence.
+ *
+ * The Continue with Google sentence (Phase 30 F5) is conditional on purpose: it
+ * says what a Google sign-in sends us, and never that the button is there. A
+ * static page cannot know whether this server has sign-in configured.
  */
 export default function PrivacyPage() {
   const { t } = useTranslation("auth");
@@ -48,6 +52,7 @@ export default function PrivacyPage() {
         <Block title={t("privacy.store.title")}>
           <ul className="list-disc space-y-2 ps-5">
             <li>{t("privacy.store.account")}</li>
+            <li>{t("privacy.store.google")}</li>
             <li>{t("privacy.store.content")}</li>
             <li>{t("privacy.store.usage")}</li>
             <li>{t("privacy.store.security")}</li>

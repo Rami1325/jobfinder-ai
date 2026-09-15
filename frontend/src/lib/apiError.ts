@@ -107,6 +107,41 @@ const AUTH_ERROR_KEYS: Record<string, string> = {
   no_login: "errors.noLogin",
   session_required: "errors.sessionRequired",
   already_verified: "errors.alreadyVerified",
+  // Phase 30: a Google-only account asked to change a password it does not have
+  // (it adds one through Forgot password, E4), and the Google start route while
+  // sign-in is not configured.
+  password_not_set: "errors.passwordNotSet",
+  google_disabled: "errors.google.disabled",
+};
+
+// Continue with Google's refusals (Phase 30 F3). The callback redirects, so a
+// refusal reaches /login or /signup as `?google=<code>` with no JSON detail, and
+// is read through `googleErrorMessage`, never `apiErrorMessage`. Its OWN table:
+// two of these codes (`expired`, `signup_closed`) already name other sentences
+// in AUTH_ERROR_KEYS, and one object literal cannot hold a key twice.
+//
+// One row per code the callback can send, each named `errors.google.<code>`.
+// check-mirrors 32(g) reads the codes out of the backend (the callback's own and
+// accounts.google_sign_in's) and fails a code with no row here.
+const GOOGLE_ERROR_KEYS: Record<string, string> = {
+  disabled: "errors.google.disabled",
+  state_invalid: "errors.google.state_invalid",
+  expired: "errors.google.expired",
+  state_mismatch: "errors.google.state_mismatch",
+  cancelled: "errors.google.cancelled",
+  google_error: "errors.google.google_error",
+  exchange_failed: "errors.google.exchange_failed",
+  token_invalid: "errors.google.token_invalid",
+  account_inactive: "errors.google.account_inactive",
+  not_authoritative: "errors.google.not_authoritative",
+  signup_closed: "errors.google.signup_closed",
+  linked_elsewhere: "errors.google.linked_elsewhere",
+  try_again: "errors.google.try_again",
+  // E3's account-creation throttle. The redirect carries no `retry_after`, so
+  // there is no countdown to give, and the sentence does not say "sign up with
+  // your email" either: email signup counts on the same per-network counter, so
+  // a new email account is refused on that network for the same hour.
+  too_many_attempts: "errors.google.too_many_attempts",
 };
 
 // The server's password rules (validate_password's reasons). An unknown reason
@@ -231,4 +266,30 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
   if ((e as ErrorShape)?.response?.status === 401) return i18n.t("errors.sessionEnded", { ns: "auth" });
   if (typeof detail === "string" && detail.trim()) return detail;
   return fallback;
+}
+
+/** The sentence for a Google sign-in that came back refused, read from its
+ * `?google=<code>` (Phase 30 F3).
+ *
+ * The lookup is by the table's OWN keys. The code arrives in an address anyone
+ * can type, and a plain `GOOGLE_ERROR_KEYS[code]` answers `?google=constructor`
+ * with a function every object inherits. Anything unknown gets the generic
+ * sentence, which still says a Google sign-in is what failed. */
+export function googleErrorMessage(code: string): string {
+  const key = Object.prototype.hasOwnProperty.call(GOOGLE_ERROR_KEYS, code)
+    ? GOOGLE_ERROR_KEYS[code]
+    : "errors.google.generic";
+  return i18n.t(key, { ns: "auth" });
+}
+
+/** A failed password login's sentence. On a server that offers Continue with
+ * Google, `invalid_credentials` also says that an account made with Google has
+ * no password to type — the one reason a correct address fails that the
+ * ordinary sentence cannot suggest. It reads the same for every failed login, so
+ * it says nothing about whether an address has an account. Every other refusal
+ * reads exactly as `apiErrorMessage` reads it. */
+export function loginErrorMessage(e: unknown, googleEnabled: boolean, fallback: string): string {
+  if (googleEnabled && apiErrorCode(e) === "invalid_credentials")
+    return i18n.t("errors.invalidCredentialsGoogle", { ns: "auth" });
+  return apiErrorMessage(e, fallback);
 }

@@ -921,10 +921,13 @@ export interface AuthUser {
   name: string;
   email: string;
   is_admin: boolean;
-  /** An email sign-in exists (which means a current password to confirm before changing it). */
+  /** This login has a password, so there is a current one to confirm before
+   * changing it. False for an invite-code account, which has no login, and for a
+   * Google-only account, which adds one through Forgot password (Phase 30 E4). */
   has_password: boolean;
+  /** A Google sign-in is linked to this login (Phase 30 E4). */
   google_linked: boolean;
-  /** "" = invite code / admin (grandfathered as verified), "email" = self-signup. */
+  /** "" = invite code / admin (grandfathered as verified); "email" or "google" = self-service. */
   signup_source: string;
 }
 
@@ -943,6 +946,9 @@ export interface AuthMe {
    * the admin. Empty when nobody was recognised. */
   method: "session" | "invite_code" | "dev" | "" | null;
   signup_open: boolean;
+  /** Continue with Google is configured on this server (Phase 30 E4). On the
+   * signed-out answer too: /login and /signup read it to decide whether to show
+   * the button, and they are read by visitors who are signed in to nothing. */
   google_enabled: boolean;
   user: AuthUser | null;
   /** This month's uses for a signed-in caller (Phase 30 / B7); null for a

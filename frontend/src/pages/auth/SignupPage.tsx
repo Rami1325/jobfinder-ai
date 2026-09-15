@@ -3,10 +3,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { getAuthMe, signup } from "../../api/client";
 import { Button } from "../../components/ui";
+import { useTakeParam } from "../../hooks/useTakeParam";
 import i18n from "../../i18n";
-import { apiErrorCode, apiErrorMessage } from "../../lib/apiError";
+import { apiErrorCode, apiErrorMessage, googleErrorMessage } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
 import { withNext } from "../../lib/safeNext";
+import GoogleButton from "./GoogleButton";
 import {
   AuthCard,
   EmailInput,
@@ -32,11 +34,17 @@ import {
  * The client pre-checks (name, address shape, 8 characters) only save a round
  * trip for the obvious cases, in the user's language. The server's answer
  * decides, and its codes arrive through the same translation table.
+ *
+ * Continue with Google (Phase 30 F) sits under the form, as on /login, and is
+ * stored before the forwarding branch. A refusal comes back as `?google=<code>`,
+ * read once with `next` kept: "sign-ups are paused" opens this page's own closed
+ * card, a cancel shows nothing, and anything else goes in the error slot.
  */
 export default function SignupPage() {
   const { t } = useTranslation("auth");
   const next = useNext();
   const navigate = useNavigate();
+  const google = useTakeParam("google");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -44,22 +52,30 @@ export default function SignupPage() {
   const [error, setError] = useState("");
   const [taken, setTaken] = useState(false);
   const [closed, setClosed] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
 
   useEffect(() => {
     let live = true;
     getAuthMe()
       .then((me) => {
         if (!live) return;
+        setGoogleEnabled(me.google_enabled === true);
         if (me.authenticated && me.verified) window.location.assign(next);
         else if (me.signup_open === false) setClosed(true);
       })
       .catch(() => {
-        /* the form still works; the server answers the submit */
+        /* the form still works; the server answers the submit, and Google stays hidden */
       });
     return () => {
       live = false;
     };
   }, [next]);
+
+  // After mount, for /login's reason: the error slot announces a change.
+  useEffect(() => {
+    if (google === "signup_closed") setClosed(true);
+    else if (google && google !== "cancelled") setError(googleErrorMessage(google));
+  }, [google]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -161,6 +177,8 @@ export default function SignupPage() {
           {t("signup.submit")}
         </Button>
       </form>
+
+      {googleEnabled && <GoogleButton next={next} page="signup" />}
 
       <p className="mt-3 flex flex-wrap items-center justify-center gap-x-1.5 text-sm text-ink-muted">
         {t("signup.haveAccount")}

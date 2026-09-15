@@ -33,6 +33,7 @@ import {
 import { ACCESS_CODE_KEY } from "../lib/accessCode";
 import { apiErrorMessage } from "../lib/apiError";
 import { clearKeyRotated, keyRotatedNotice, markKeyRotated, readKeyRotation } from "../lib/authResults";
+import { withNext } from "../lib/safeNext";
 import { signOut } from "../lib/session";
 import { formatUsesDate } from "../lib/usesStore";
 import LanguageSwitch from "../components/LanguageSwitch";
@@ -328,6 +329,35 @@ function OtherDevices({ method, onKeyRotated }: { method: AuthMe["method"]; onKe
       >
         {t("account.others.cta")}
       </Button>
+    </div>
+  );
+}
+
+/**
+ * "Add a password", for an account that signs in with Google only (Phase 30 F4).
+ *
+ * Not PasswordChange: there is no current password to confirm, and the server
+ * refuses a change on such an account (`password_not_set`). A password is added
+ * through Forgot password instead, which proves the mailbox — that is what keeps
+ * a stolen Google session from becoming a lasting password. The address is
+ * filled in, and the reset lands back on this page.
+ *
+ * What saving it does is stated BEFORE the tap, the danger zone's rule: a reset
+ * signs out every other device and replaces the extension key.
+ */
+function AddPassword({ email }: { email: string }) {
+  const { t } = useTranslation("settings");
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-line pt-4">
+      <p className={ACTION_HINT}>{t("account.addPassword.hint")}</p>
+      <Link
+        to={withNext("/forgot", "/settings")}
+        state={{ email }}
+        className="inline-flex min-h-[32px] items-center justify-center gap-1.5 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-[13px] font-semibold text-ink transition-colors hover:border-accent/60 hover:bg-panel-2/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      >
+        <KeyRound size={14} aria-hidden />
+        {t("account.addPassword.cta")}
+      </Link>
     </div>
   );
 }
@@ -735,9 +765,15 @@ export default function SettingsPage() {
   // An email sign-in is exactly a session-authenticated request: invite-code
   // accounts have no login, and "dev" is the gate being off locally.
   const hasEmailLogin = method === "session";
+  // A Google-only account (Phase 30 F4) has a login row, so it is a session like
+  // any email account, and no password: it says so on its own line, and gets
+  // "Add a password" where an email account gets "Change password".
+  const googleOnly = hasEmailLogin && !!user?.google_linked && !user.has_password;
   const methodLine =
     method === "session"
-      ? t("account.methodSession")
+      ? googleOnly
+        ? t("account.methodGoogle")
+        : t("account.methodSession")
       : method === "invite_code"
         ? t("account.methodCode")
         : method === "dev"
@@ -842,6 +878,7 @@ export default function SettingsPage() {
         {hasEmailLogin && user?.has_password && (
           <PasswordChange email={user.email} method={method} onKeyRotated={onKeyRotated} />
         )}
+        {googleOnly && user && <AddPassword email={user.email} />}
         {hasEmailLogin && <OtherDevices method={method} onKeyRotated={onKeyRotated} />}
 
         {/* Not a <Row>: the hint IS the label here, and a Row would print

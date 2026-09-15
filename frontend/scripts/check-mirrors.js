@@ -2970,25 +2970,35 @@ try {
 //
 // A floor is never registered ahead of its file: `read` throws on a missing
 // file, and this check would go red on a tree with nothing wrong in it.
+//
+// CONTINUE WITH GOOGLE (Phase 30 F) adds two files. pages/auth/GoogleButton.tsx
+// is inside a walked directory, so leaving it out is a failure by itself.
+// components/GoogleNotice.tsx is NOT, so this table is the only thing that
+// resolves its copy, and 32(k) holds both to the table.
+//
+// Floors sit just under what each file carries today, so adding or removing a
+// string does not trip them but a call shape going dark does. Module-level so
+// 32(k) can read the same table this check resolves against.
+const ACCOUNT_COPY_FILES = [
+  ["pages/auth/shared.tsx", 2],
+  ["pages/auth/LoginPage.tsx", 15],
+  ["pages/auth/SignupPage.tsx", 16],
+  ["pages/auth/VerifyPage.tsx", 28],
+  ["pages/auth/ForgotPage.tsx", 8],
+  ["pages/auth/ResetPage.tsx", 10],
+  ["pages/auth/GoogleButton.tsx", 6],
+  ["layouts/AuthLayout.tsx", 2],
+  ["pages/PrivacyPage.tsx", 20],
+  ["pages/SettingsPage.tsx", 60],
+  ["components/GoogleNotice.tsx", 2],
+  ["components/inbox/shared.tsx", 30],
+  ["components/inbox/InboxBar.tsx", 22],
+  ["components/inbox/InboxReviewSheet.tsx", 20],
+  ["components/inbox/InboxSettingsCard.tsx", 38],
+  ["components/inbox/EmailTimeline.tsx", 3],
+];
 try {
-  // Floors sit just under what each file carries today, so adding or removing
-  // a string does not trip them but a call shape going dark does.
-  const files = [
-    ["pages/auth/shared.tsx", 2],
-    ["pages/auth/LoginPage.tsx", 15],
-    ["pages/auth/SignupPage.tsx", 16],
-    ["pages/auth/VerifyPage.tsx", 28],
-    ["pages/auth/ForgotPage.tsx", 8],
-    ["pages/auth/ResetPage.tsx", 10],
-    ["layouts/AuthLayout.tsx", 2],
-    ["pages/PrivacyPage.tsx", 20],
-    ["pages/SettingsPage.tsx", 60],
-    ["components/inbox/shared.tsx", 30],
-    ["components/inbox/InboxBar.tsx", 22],
-    ["components/inbox/InboxReviewSheet.tsx", 20],
-    ["components/inbox/InboxSettingsCard.tsx", 38],
-    ["components/inbox/EmailTimeline.tsx", 3],
-  ];
+  const files = ACCOUNT_COPY_FILES;
 
   // Every source file under these directories must be in the table above.
   // Each carries the fewest files it can hold before the walk is reading the
@@ -4448,6 +4458,158 @@ try {
   fail(`monthly-limit message probe could not run: ${e.message}`);
 }
 
+// ---- 32(c), continued: a Google refusal says what happened (EXECUTED) ------ //
+// Continue with Google comes back to /login or /signup as `?google=<code>`
+// (Phase 30 E2). That is a redirect, so the code arrives with no JSON detail and
+// never passes through `apiErrorMessage`: `googleErrorMessage` reads its own
+// table, GOOGLE_ERROR_KEYS. Its own and not AUTH_ERROR_KEYS, because two of the
+// callback's codes (`expired`, `signup_closed`) already name other sentences
+// there, and one object literal cannot hold both.
+//
+// The code is read from an address anyone can type, so an unknown one, and one
+// named after something every object inherits, must land on the generic
+// sentence. A plain `TABLE[code]` hands i18next Object's own `constructor` for
+// `?google=constructor`.
+//
+// Beside it, the three account sentences Phase 30 adds to the ordinary path:
+// `password_not_set` (a Google-only account has no password to change, E4),
+// `google_disabled` (the start route before sign-in is configured), and a failed
+// password login, which names Continue with Google only on a server offering it.
+
+/** `[code, key]` for every entry of lib/apiError.ts's GOOGLE_ERROR_KEYS, read as
+ * a literal. ONE reader, shared by 32(c) and 32(g), for `resolvesIn`'s reason.
+ * Throws on a line inside the table it cannot read, so a changed shape is a
+ * loud failure rather than a shorter list. */
+function googleErrorTable(source) {
+  const body = blockAfter(decomment(source ?? read("lib/apiError.ts")), "const GOOGLE_ERROR_KEYS", "GOOGLE_ERROR_KEYS");
+  const entries = [];
+  for (const raw of body.split("\n")) {
+    const line = raw.replace(/\s\/\/.*$/, "").trim();
+    if (!line) continue;
+    const m = /^"?([a-z][a-z_]*)"?\s*:\s*"([^"]+)"\s*,?$/.exec(line);
+    if (!m) throw new Error(`GOOGLE_ERROR_KEYS has a line check 32 cannot read: ${line}`);
+    entries.push([m[1], m[2]]);
+  }
+  return entries;
+}
+
+try {
+  const TABLE_PROBE =
+    "const GOOGLE_ERROR_KEYS: Record<string, string> = {\n  // a note, not a row\n" +
+    '  expired: "errors.google.expired",\n  too_many_attempts: "errors.google.too_many_attempts", // E3\n};\n';
+  if (googleErrorTable(TABLE_PROBE).map(([c]) => c).join() !== "expired,too_many_attempts")
+    fail("check 32(c)'s GOOGLE_ERROR_KEYS reader misreads a table with a comment line and a trailing comment");
+  let refused = false;
+  try {
+    googleErrorTable('const GOOGLE_ERROR_KEYS = {\n  ...OTHER_KEYS,\n  expired: "errors.google.expired",\n};\n');
+  } catch {
+    refused = true;
+  }
+  if (!refused) fail("check 32(c)'s GOOGLE_ERROR_KEYS reader skips a row it cannot read instead of refusing it");
+
+  const asked = [];
+  const i18nStub = {
+    __esModule: true,
+    language: "en",
+    t: (key, opts) => {
+      asked.push([key, opts || {}]);
+      return `T:${key}`;
+    },
+  };
+  i18nStub.default = i18nStub;
+  const ae = runProbeBundle("apierror-google", `export * from "./lib/apiError";\n`, { "../i18n": i18nStub });
+  const authKeys = new Set();
+  /** What `fn` rendered, and the namespace of the last key it asked for. */
+  const say = (fn) => {
+    asked.length = 0;
+    const text = fn();
+    // Strings only: a table read as `TABLE[code]` hands i18next a FUNCTION for
+    // `?google=constructor`, and collecting that would make the resolve loop
+    // below throw, reporting "could not run" in place of the real defect.
+    for (const [key, opts] of asked) if (opts.ns === "auth" && typeof key === "string") authKeys.add(key);
+    return { text, ns: (asked[asked.length - 1] || [undefined, {}])[1].ns };
+  };
+  const err = (status, detail) => ({ response: { status, data: { detail } } });
+
+  const table = googleErrorTable();
+  if (table.length < 14)
+    throw new Error(`read only ${table.length} rows out of GOOGLE_ERROR_KEYS; the Google callback sends 14 codes (spec F3)`);
+  if (typeof ae.googleErrorMessage !== "function") {
+    fail("lib/apiError.ts exports no googleErrorMessage, so /login?google=<code> has nothing to say what happened with");
+  } else {
+    const generic = say(() => ae.googleErrorMessage("a_code_this_build_has_never_heard_of"));
+    if (!/^T:errors\.google\./.test(generic.text) || generic.ns !== "auth")
+      fail(
+        `googleErrorMessage falls back to ${JSON.stringify(generic.text)}; an unknown code must get a generic ` +
+          "errors.google.* sentence from auth.json, never the raw code.",
+      );
+    for (const [code, key] of table) {
+      const got = say(() => ae.googleErrorMessage(code));
+      if (got.text !== `T:${key}` || got.ns !== "auth")
+        fail(`googleErrorMessage("${code}") renders ${JSON.stringify(got.text)}, not auth's "${key}" from its own table.`);
+      if (got.text === generic.text)
+        fail(`googleErrorMessage("${code}") renders the generic fallback, so the table row for it does nothing.`);
+    }
+    // The false-positive half of "falls back": hostile codes from a hand-typed URL.
+    for (const hostile of ["", "constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      let got;
+      try {
+        got = say(() => ae.googleErrorMessage(hostile));
+      } catch (e) {
+        fail(`googleErrorMessage(${JSON.stringify(hostile)}) throws (${e.message}); /login?google=${hostile} would break the page.`);
+        continue;
+      }
+      if (got.text !== generic.text)
+        fail(
+          `googleErrorMessage(${JSON.stringify(hostile)}) renders ${JSON.stringify(got.text)} instead of the generic ` +
+            "sentence: a ?google= value anyone can type reaches a property every object inherits.",
+        );
+    }
+  }
+
+  for (const [label, e, want] of [
+    ["a Google-only account asked to change its password", err(400, { code: "password_not_set" }), "T:errors.passwordNotSet"],
+    ["the start route before sign-in is configured", err(404, { code: "google_disabled" }), "T:errors.google.disabled"],
+  ]) {
+    const got = say(() => ae.apiErrorMessage(e, "FALLBACK"));
+    if (got.text !== want)
+      fail(`${label} renders ${JSON.stringify(got.text)}, not ${want}: AUTH_ERROR_KEYS must map it (spec F3).`);
+  }
+
+  if (typeof ae.loginErrorMessage !== "function") {
+    fail("lib/apiError.ts exports no loginErrorMessage, so a failed password login cannot mention Continue with Google");
+  } else {
+    const wrong = err(400, { code: "invalid_credentials" });
+    const offered = say(() => ae.loginErrorMessage(wrong, true, "FALLBACK")).text;
+    if (offered !== "T:errors.invalidCredentialsGoogle")
+      fail(
+        `a failed password login on a server offering Google renders ${JSON.stringify(offered)}, not ` +
+          "errors.invalidCredentialsGoogle: someone who signed up with Google is told only that the password is wrong.",
+      );
+    // The twin: no Google on this server, no Google in the sentence.
+    const plain = say(() => ae.loginErrorMessage(wrong, false, "FALLBACK")).text;
+    if (plain !== "T:errors.invalidCredentials")
+      fail(`a failed password login with Google off renders ${JSON.stringify(plain)}, not errors.invalidCredentials`);
+    // Every other refusal reads exactly as apiErrorMessage reads it.
+    for (const e of [err(429, { code: "too_many_attempts", retry_after: 120 }), err(403, { code: "email_unverified" }), { message: "Network Error" }]) {
+      const viaLogin = say(() => ae.loginErrorMessage(e, true, "FALLBACK")).text;
+      const viaApi = say(() => ae.apiErrorMessage(e, "FALLBACK")).text;
+      if (viaLogin !== viaApi)
+        fail(`loginErrorMessage renders ${JSON.stringify(viaLogin)} where apiErrorMessage renders ${JSON.stringify(viaApi)}`);
+    }
+  }
+
+  // Every auth key the probe was handed resolves in both locales.
+  for (const loc of ["en", "he"]) {
+    const auth = JSON.parse(read(`locales/${loc}/auth.json`));
+    for (const key of authKeys)
+      if (!resolvesIn(auth, key))
+        fail(`locales/${loc}/auth.json is missing "${key}" (rendered by lib/apiError.ts); the page would show the raw key.`);
+  }
+} catch (e) {
+  fail(`Google refusal message probe could not run: ${e.message}`);
+}
+
 // ---- 32(d). every monthly-uses sentence resolves in both locales ----------- //
 // Phase 30 prices each counted control where it sits: a line under the button
 // ("This uses 1 of the 3 you have left this month"), one in the account menu,
@@ -4857,6 +5019,194 @@ try {
   fail(`tools label check could not run: ${e.message}`);
 }
 
+// ---- 32(g). every refusal the Google callback sends has a sentence --------- //
+// The callback in auth_routes.py ALWAYS redirects, and every refusal travels as
+// `?google=<code>`: the callback's own `fail("…")` codes, plus whatever
+// `accounts.google_sign_in` raises as `AuthError(…, "…")`, which the callback
+// passes on as `fail(exc.code)`. A code with no row in GOOGLE_ERROR_KEYS shows
+// the generic sentence, which hides the one thing the person could act on
+// (`not_authoritative`: use your email and password instead). tsc sees none of
+// it, because the code is a string in a URL. So the codes are READ from the
+// backend, never restated here, and each must map to `errors.google.<code>`,
+// which must resolve in both auth.json files.
+//
+// `google_sign_in` hands its new-account, link and supersede branches to
+// `_google_*` helpers, and two codes are raised only there (`signup_closed`,
+// `too_many_attempts`). The helpers are found by the calls in its body, one
+// level down, so a fourth helper is read without editing this check.
+//
+// Degrades only when backend/ is absent; the table's own half still runs.
+
+/** Python source with docstrings blanked and `#` comments cut, so a sentence in
+ * a docstring or a commented-out call cannot read as code. A `#` inside a
+ * string is kept. */
+function pyCode(src) {
+  return src
+    .replace(/\r\n/g, "\n")
+    .replace(/"""[\s\S]*?"""|'''[\s\S]*?'''/g, '""')
+    .split("\n")
+    .map((line) => {
+      let quote = null;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (quote) {
+          if (c === "\\") i++;
+          else if (c === quote) quote = null;
+        } else if (c === '"' || c === "'") quote = c;
+        else if (c === "#") return line.slice(0, i);
+      }
+      return line;
+    })
+    .join("\n");
+}
+
+/** A top-level `def name(`, from its line to the next statement at column 0.
+ * A multi-line signature closes with `) -> T:` at column 0, and that line is
+ * still the def's own. */
+function pyDef(src, name, file) {
+  const m = new RegExp(`^def ${name}\\(`, "m").exec(src);
+  if (!m) throw new Error(`backend/${file} has no top-level \`def ${name}(\` (the function moved or was renamed)`);
+  const lines = src.slice(m.index).split("\n");
+  let end = lines.length;
+  for (let i = 1; i < lines.length; i++)
+    if (/^[^\s)]/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  return lines.slice(0, end).join("\n");
+}
+
+/** The quoted codes a function passes to `fail(…)`: a literal argument, or
+ * either literal branch of `"a" if cond else "b"`. The condition is not a code
+ * (`error == "access_denied"` is Google's word, not ours), and a non-literal
+ * argument (`fail(exc.code)`) is another function's list, read separately. */
+function failCodes(body) {
+  const codes = new Set();
+  for (const m of body.matchAll(/\bfail\(([^()\n]*)\)/g)) {
+    const arg = m[1].trim();
+    const ternary = /^(.*?)\s+if\s+.*\s+else\s+(.*)$/.exec(arg);
+    for (const part of ternary ? [ternary[1], ternary[2]] : [arg]) {
+      const lit = /^(["'])([a-z][a-z_]*)\1$/.exec(part.trim());
+      if (lit) codes.add(lit[2]);
+    }
+  }
+  return codes;
+}
+
+/** The codes a function raises as `AuthError(<status>, "<code>"…)`. */
+const authErrorCodes = (body) =>
+  new Set([...body.matchAll(/\bAuthError\(\s*\d+\s*,\s*(["'])([a-z][a-z_]*)\1/g)].map((m) => m[2]));
+
+try {
+  const table = new Map(googleErrorTable());
+  const misnamed = (tbl) => [...tbl].filter(([code, key]) => key !== `errors.google.${code}`);
+  for (const [code, key] of misnamed(table))
+    fail(
+      `lib/apiError.ts maps the Google code "${code}" to "${key}", not "errors.google.${code}". One sentence per ` +
+        "code, named after it, is what lets this check pair the backend's codes with the copy.",
+    );
+  for (const loc of ["en", "he"]) {
+    const auth = JSON.parse(read(`locales/${loc}/auth.json`));
+    for (const [code, key] of table)
+      if (!resolvesIn(auth, key))
+        fail(`locales/${loc}/auth.json is missing "${key}", so /login?google=${code} would show the raw key.`);
+  }
+
+  const unmapped = (codes, tbl) => [...codes].filter((code) => !tbl.has(code));
+  const routes = pySource("app/api/auth_routes.py", "check 32(g)");
+  const accounts = pySource("app/core/accounts.py", "check 32(g)");
+  if (routes !== null && accounts !== null) {
+    const fromCallback = failCodes(pyDef(pyCode(routes), "auth_google_callback", "app/api/auth_routes.py"));
+    if (fromCallback.size < 8)
+      throw new Error(
+        `read only ${fromCallback.size} fail("…") codes out of auth_google_callback (expected at least 8) — its call shape changed`,
+      );
+    const accountsCode = pyCode(accounts);
+    const signIn = pyDef(accountsCode, "google_sign_in", "app/core/accounts.py");
+    const helpers = [...new Set([...signIn.matchAll(/\b(_google_\w+)\(/g)].map((m) => m[1]))];
+    if (helpers.length < 3)
+      throw new Error(
+        `google_sign_in calls only ${helpers.length} _google_* helpers (expected the signup, link and supersede branches)`,
+      );
+    const fromAccounts = authErrorCodes(signIn);
+    for (const helper of helpers)
+      for (const code of authErrorCodes(pyDef(accountsCode, helper, "app/core/accounts.py"))) fromAccounts.add(code);
+    if (fromAccounts.size < 6)
+      throw new Error(
+        `read only ${fromAccounts.size} AuthError codes out of google_sign_in and its helpers (expected at least 6)`,
+      );
+    for (const code of unmapped(new Set([...fromCallback, ...fromAccounts]), table))
+      fail(
+        `the Google callback can send ?google=${code}, and lib/apiError.ts's GOOGLE_ERROR_KEYS has no row for it: ` +
+          "the page would show the generic sentence instead of saying what happened.",
+      );
+  }
+
+  // Both directions on every reader, on fixtures shaped like the real files.
+  const ROUTE_PROBE = [
+    '@router.get("/auth/google/callback")',
+    "def auth_google_callback(",
+    "    request: Request,",
+    '    code: str = "",',
+    ") -> RedirectResponse:",
+    '    """Every refusal is fail("from_a_docstring")."""',
+    "    def fail(reason: str) -> RedirectResponse:",
+    '        auth_throttle.record(db, "google_fail", key)  # fail("from_a_comment")',
+    '        return leave("/login?google=" + quote(reason, safe=""))',
+    "    if error:",
+    '        return fail("cancelled" if error == "access_denied" else "google_error")',
+    "    except accounts.AuthError as exc:",
+    "        return fail(exc.code)",
+    '    return fail("try_again")',
+    "",
+    "",
+    '@router.get("/next")',
+    "def next_route():",
+    '    return fail("not_this_function")',
+  ].join("\n");
+  const routeRead = [...failCodes(pyDef(pyCode(ROUTE_PROBE), "auth_google_callback", "probe"))].sort().join();
+  if (routeRead !== "cancelled,google_error,try_again")
+    fail(
+      `check 32(g)'s callback reader reads [${routeRead}] from its probe, not [cancelled,google_error,try_again]: ` +
+        "it misses a ternary branch, or reads a condition, a docstring, a comment or the next function.",
+    );
+  const ACCOUNTS_PROBE = [
+    'def google_sign_in(db, request, claims, locale=""):',
+    '    """Refusals: AuthError(400, "from_a_docstring")."""',
+    "    if bad:",
+    '        raise AuthError(400, "token_invalid")',
+    '    # raise AuthError(403, "from_a_comment")',
+    "    return _google_signup(db, request)",
+    "",
+    "",
+    "def _google_signup(",
+    "    db: Session, request: Request",
+    ") -> tuple[int, str, str]:",
+    '    raise AuthError(429, "too_many_attempts", retry_after=attempt.retry_after)',
+    "",
+    "",
+    "def unrelated():",
+    '    raise AuthError(400, "not_reached")',
+  ].join("\n");
+  const probeCode = pyCode(ACCOUNTS_PROBE);
+  const probeSignIn = pyDef(probeCode, "google_sign_in", "probe");
+  const probeCodes = authErrorCodes(probeSignIn);
+  for (const h of new Set([...probeSignIn.matchAll(/\b(_google_\w+)\(/g)].map((m) => m[1])))
+    for (const c of authErrorCodes(pyDef(probeCode, h, "probe"))) probeCodes.add(c);
+  if ([...probeCodes].sort().join() !== "token_invalid,too_many_attempts")
+    fail(
+      `check 32(g)'s account reader reads [${[...probeCodes].sort().join()}] from its probe, not ` +
+        "[token_invalid,too_many_attempts]: it misses a helper's code, or reads a docstring, a comment or an unrelated function.",
+    );
+  const TBL = new Map([["state_invalid", "errors.google.state_invalid"]]);
+  if (unmapped(new Set(["state_invalid", "not_authoritative"]), TBL).join() !== "not_authoritative")
+    fail("check 32(g) cannot tell a code with a row from a code without one");
+  if (misnamed(TBL).length || misnamed(new Map([["state_invalid", "errors.google.try_again"]])).length !== 1)
+    fail("check 32(g)'s naming rule cannot tell a row named after its code from one borrowing another code's sentence");
+} catch (e) {
+  fail(`Google refusal code check could not run: ${e.message}`);
+}
+
 // ---- 32(h). uploading a resume on /jobs starts no search ------------------- //
 // Before Phase 30 the first upload on the Jobs page auto-ran a job search. A
 // search now uses 1 of the month's uses, and that screen sits under copy saying
@@ -5053,6 +5403,221 @@ try {
     fail("check 32(j)'s TypeScript reader reads a comment or a nested key as a field, or misses an optional one");
 } catch (e) {
   fail(`monthly-uses contract check could not run: ${e.message}`);
+}
+
+// ---- 32(k). the Google copy is registered where check 29 resolves it ------- //
+// Check 29 resolves the account pages' copy against the files in its table, and
+// fails an UNREGISTERED file only under the two directories it walks.
+// components/GoogleNotice.tsx is outside both: if it left the table its
+// sentences would be resolved against nothing, and the build would stay green
+// while a raw `google.superseded` rendered at the top of the app. So both Google
+// files are held to that table here, each with a floor that guards something.
+//
+// It also resolves the three Phase 30 keys that sit outside every other scrape:
+// /verify's other-account card (`verify.otherAccount*`, D), onboarding's
+// `onboarding.continue` (C7), and the failed-login sentence
+// `errors.invalidCredentialsGoogle` (F3).
+try {
+  const MUST = [
+    ["pages/auth/GoogleButton.tsx", 2],
+    ["components/GoogleNotice.tsx", 2],
+  ];
+  const unregistered = (tbl) => MUST.filter(([f, least]) => !((tbl.get(f) ?? 0) >= least)).map(([f]) => f);
+  for (const f of unregistered(new Map(ACCOUNT_COPY_FILES)))
+    fail(
+      `${f} is not in check 29's table (ACCOUNT_COPY_FILES) with a floor, so its copy is resolved against ` +
+        "nothing and a missing key would render raw on a green build.",
+    );
+  // Both directions on the detector.
+  if (unregistered(new Map([["pages/auth/GoogleButton.tsx", 6]])).join() !== "components/GoogleNotice.tsx")
+    fail("check 32(k) cannot see a Google file missing from check 29's table");
+  if (unregistered(new Map([["pages/auth/GoogleButton.tsx", 6], ["components/GoogleNotice.tsx", 0]])).length !== 1)
+    fail("check 32(k) accepts a registration whose floor of 0 guards nothing");
+  if (unregistered(new Map([["pages/auth/GoogleButton.tsx", 6], ["components/GoogleNotice.tsx", 2]])).length)
+    fail("check 32(k) refuses a real registration");
+
+  const needs = [];
+  const other = boundCalls("pages/auth/VerifyPage.tsx", 1).filter(([, , key]) => /^verify\.otherAccount/.test(key));
+  if (new Set(other.map(([, , key]) => key)).size < 6)
+    fail(
+      `pages/auth/VerifyPage.tsx reads only ${new Set(other.map(([, , key]) => key)).size} verify.otherAccount* keys ` +
+        "literally (expected at least 6): the other-account card's copy moved into a shape nothing resolves.",
+    );
+  needs.push(...other);
+  const cont = boundCalls("components/OnboardingModal.tsx", 1).filter(([, , key]) => key === "onboarding.continue");
+  if (!cont.length)
+    fail("components/OnboardingModal.tsx no longer reads onboarding.continue literally, so nothing resolves its button label.");
+  needs.push(...cont);
+  if (!/"errors\.invalidCredentialsGoogle"/.test(decomment(read("lib/apiError.ts"))))
+    fail("lib/apiError.ts does not carry the literal \"errors.invalidCredentialsGoogle\", so check 29's error scrape cannot see it.");
+  needs.push(["lib/apiError.ts", "auth", "errors.invalidCredentialsGoogle"]);
+  for (const [f, ns, key] of needs)
+    for (const loc of ["en", "he"])
+      if (!resolvesIn(JSON.parse(read(`locales/${loc}/${ns}.json`)), key))
+        fail(`locales/${loc}/${ns}.json is missing "${key}" (read by ${f}); the page would render the raw key.`);
+} catch (e) {
+  fail(`Google copy registration check could not run: ${e.message}`);
+}
+
+// ---- 32(l). Continue with Google: below the form, its result read once ------ //
+// Wiring no node process can render, each a defect that compiles green:
+//   - Both pages read `?google=<code>` through ONE taker, `useTakeParam`, which
+//     removes that key and nothing else. A strip that rebuilt the query from
+//     scratch drops `next`, and the person lands on /app instead of where they
+//     were going (the extension's /app?tailor_app=<id>). Its pure half is
+//     EXECUTED.
+//   - LoginPage stores `google_enabled` BEFORE its `!me.authenticated` early
+//     return. After it, the button would exist only for visitors who are
+//     already signed in, i.e. for nobody /login shows a form to.
+//   - The button renders AFTER the form's submit button. /auth/me can answer
+//     seconds into a cold start, and a button arriving above the form would move
+//     the email field out from under a tap already on its way.
+//   - GoogleNotice mounts after AppLayout's guard. In the spinner branch it would
+//     take `google=superseded` out of the address and then be unmounted, and the
+//     notice would never be seen.
+// And the in-app browser test (lib/inAppBrowser.ts), EXECUTED with its
+// false-positive half: Google refuses sign-in inside an embedded browser, and a
+// marker that also matched real Chrome or Safari would take the button away
+// from exactly the people it works for.
+try {
+  const TAKES_GOOGLE = /\buseTakeParam\(\s*"google"\s*\)/;
+  /** Is `<GoogleButton` after the first submit button? null when either is missing. */
+  const belowSubmit = (body) => {
+    const submit = body.indexOf('type="submit"');
+    const button = body.indexOf("<GoogleButton");
+    return submit === -1 || button === -1 ? null : button > submit;
+  };
+  for (const [f, marker] of [
+    ["pages/auth/LoginPage.tsx", "export default function LoginPage"],
+    ["pages/auth/SignupPage.tsx", "export default function SignupPage"],
+  ]) {
+    const body = fnSource(decomment(read(f)), marker);
+    if (!TAKES_GOOGLE.test(body))
+      fail(
+        `${f} does not read ?google= through useTakeParam("google"): a refused Google sign-in says nothing, ` +
+          "or its flag is stripped by hand, where next is the thing that gets lost.",
+      );
+    const below = belowSubmit(body);
+    if (below === null)
+      fail(`${f} renders no <GoogleButton, or has no submit button to put it under: Continue with Google is not on the page.`);
+    else if (!below)
+      fail(`${f} renders Continue with Google ABOVE its form's submit button; a late /auth/me would move the form under a tap.`);
+  }
+
+  /** Is `google_enabled` read before `!me.authenticated` in the /auth/me answer? */
+  const enabledFirst = (body) => {
+    const at = body.indexOf("getAuthMe()");
+    if (at === -1) return null;
+    const enabled = body.indexOf("google_enabled", at);
+    const early = body.indexOf("!me.authenticated", at);
+    return enabled === -1 || early === -1 ? null : enabled < early;
+  };
+  const order = enabledFirst(fnSource(decomment(read("pages/auth/LoginPage.tsx")), "export default function LoginPage"));
+  if (order === null)
+    fail(
+      "pages/auth/LoginPage.tsx's /auth/me answer does not read google_enabled before an !me.authenticated check " +
+        "(one of them is gone), so this check cannot tell whether a signed-out visitor sees Continue with Google.",
+    );
+  else if (!order)
+    fail(
+      "pages/auth/LoginPage.tsx reads google_enabled AFTER its !me.authenticated early return, so a signed-out " +
+        "visitor, the only one /login shows a form to, never sees Continue with Google.",
+    );
+
+  // The taker: its pure half EXECUTED, and the hook wired to it.
+  const tp = runProbeBundle("take-param", `export { withoutParam } from "./hooks/useTakeParam";\n`);
+  if (typeof tp.withoutParam !== "function") {
+    fail("hooks/useTakeParam.ts exports no withoutParam, so nothing says which parameters survive the strip");
+  } else {
+    for (const [search, want] of [
+      ["?google=cancelled&next=%2Ftracker%3Fx%3D1", "?next=%2Ftracker%3Fx%3D1"],
+      ["?next=%2Fapp%3Ftailor_app%3D42&google=not_authoritative", "?next=%2Fapp%3Ftailor_app%3D42"],
+      ["?google=superseded", ""],
+      ["?googled=1&google=x&my_google=2", "?googled=1&my_google=2"],
+    ]) {
+      const got = tp.withoutParam(search, "google");
+      if (got !== want)
+        fail(`withoutParam(${JSON.stringify(search)}, "google") is ${JSON.stringify(got)}, not ${JSON.stringify(want)}: next must survive, and only "google" may go.`);
+    }
+    // The twin: nothing to take, so nothing changes, byte for byte.
+    for (const search of ["?next=%2Ftracker%3Fx%3D1", "", "?tailor_app=42"])
+      if (tp.withoutParam(search, "google") !== search)
+        fail(`withoutParam(${JSON.stringify(search)}, "google") rewrites an address that has no google flag in it`);
+  }
+  const hook = fnSource(decomment(read("hooks/useTakeParam.ts")), "export function useTakeParam");
+  if (!/\bwithoutParam\(/.test(hook) || !/replace:\s*true/.test(hook))
+    fail(
+      "hooks/useTakeParam.ts's useTakeParam does not strip through withoutParam( with replace: true, so the flag " +
+        "stays in the address (a reload repeats an old refusal) or Back returns to it.",
+    );
+
+  // GoogleNotice takes its flag the same way, and mounts after the guard.
+  if (!TAKES_GOOGLE.test(decomment(read("components/GoogleNotice.tsx"))))
+    fail('components/GoogleNotice.tsx does not read ?google= through useTakeParam("google")');
+  const afterGuard = (body) => {
+    const guard = body.indexOf("if (!authed)");
+    const at = body.indexOf("<GoogleNotice");
+    return guard === -1 || at === -1 ? null : at > guard;
+  };
+  const mounted = afterGuard(fnSource(decomment(read("layouts/AppLayout.tsx")), "export default function AppLayout"));
+  if (mounted === null)
+    fail("layouts/AppLayout.tsx renders no <GoogleNotice (or its `if (!authed)` guard moved): a superseded sign-up is never told its password was removed.");
+  else if (!mounted)
+    fail("layouts/AppLayout.tsx renders <GoogleNotice before its auth guard passes, where it strips the flag and is then unmounted.");
+
+  // The in-app browser test, EXECUTED, with its false-positive half.
+  const iab = runProbeBundle("in-app-browser", `export * from "./lib/inAppBrowser";\n`);
+  for (const name of ["isInAppBrowser", "isAndroid", "chromeIntentUrl"])
+    if (typeof iab[name] !== "function") throw new Error(`lib/inAppBrowser.ts exports no ${name}`);
+  const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+  const WEBVIEW =
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/AP2A.240805.005; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/127.0.6533.103 Mobile Safari/537.36";
+  for (const [label, ua] of [
+    ["Instagram on an iPhone", `${IPHONE} Mobile/15E148 Instagram 334.0.0.42.95 (iPhone15,2; iOS 17_5; en_US; en; scale=3.00; 1179x2556; 606302839)`],
+    ["Facebook on an iPhone", `${IPHONE} Mobile/15E148 [FBAN/FBIOS;FBAV/470.0.0.42.109;FBBV/626293066;FBDV/iPhone15,2;FBSN/iOS;FBSV/17.5]`],
+    ["an Android WebView", WEBVIEW],
+    ["LinkedIn on Android", `${WEBVIEW} LinkedInApp/4.1.975`],
+    ["TikTok on an iPhone", `${IPHONE} Mobile/15E148 musical_ly_35.1.0 JsSdk/2.0 NetType/WIFI Channel/App Store`],
+    ["LINE on an iPhone", `${IPHONE} Mobile/15E148 Safari Line/14.10.0`],
+  ])
+    if (!iab.isInAppBrowser(ua)) fail(`isInAppBrowser misses ${label}, where Google refuses to sign in`);
+  for (const [label, ua] of [
+    ["Chrome on Android", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"],
+    ["Safari on an iPhone", `${IPHONE} Version/17.5 Mobile/15E148 Safari/604.1`],
+    ["Chrome on an iPhone", `${IPHONE} CriOS/127.0.6533.107 Mobile/15E148 Safari/604.1`],
+    ["Samsung Internet", "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/25.0 Chrome/121.0.0.0 Mobile Safari/537.36"],
+    ["Firefox on Android", "Mozilla/5.0 (Android 14; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0"],
+    ["Edge on Windows", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.2651.74"],
+  ])
+    if (iab.isInAppBrowser(ua)) fail(`isInAppBrowser fires on ${label}, a real browser, and would hide Continue with Google there`);
+  if (!iab.isAndroid(WEBVIEW) || iab.isAndroid(`${IPHONE} Version/17.5 Mobile/15E148 Safari/604.1`))
+    fail("isAndroid cannot tell an Android phone from an iPhone, so the Open in Chrome link goes to the wrong one");
+  const intent = iab.chromeIntentUrl({
+    protocol: "https:",
+    host: "jobfinder.example",
+    pathname: "/login",
+    search: "?next=%2Ftracker%3Fx%3D1",
+  });
+  if (intent !== "intent://jobfinder.example/login?next=%2Ftracker%3Fx%3D1#Intent;scheme=https;package=com.android.chrome;end")
+    fail(`chromeIntentUrl builds ${JSON.stringify(intent)}; it must open this page, its query included, in Chrome (spec F2)`);
+
+  // Both directions on the three source detectors.
+  const FORM = '<form><Button type="submit">Log in</Button></form>';
+  const BUTTON = '{googleEnabled && <GoogleButton next={next} page="login" />}';
+  if (belowSubmit(FORM + BUTTON) !== true || belowSubmit(BUTTON + FORM) !== false)
+    fail("check 32(l)'s placement detector cannot tell a button below the form from one above it");
+  const ANSWER_OK = "getAuthMe().then((me) => {\n  if (!live) return;\n  setGoogleEnabled(me.google_enabled === true);\n  if (!me.authenticated) return;\n});";
+  const ANSWER_BAD = "getAuthMe().then((me) => {\n  if (!live || !me.authenticated) return;\n  setGoogleEnabled(me.google_enabled === true);\n});";
+  if (enabledFirst(ANSWER_OK) !== true || enabledFirst(ANSWER_BAD) !== false)
+    fail("check 32(l)'s order detector cannot tell google_enabled read before the early return from after it");
+  const GUARD = "if (!authed) {\n  return <Spinner />;\n}\n";
+  const NOTICE = "<GoogleNotice email={me?.email ?? \"\"} />";
+  if (afterGuard(GUARD + NOTICE) !== true || afterGuard(NOTICE + GUARD) !== false)
+    fail("check 32(l)'s mount detector cannot tell a notice after the guard from one before it");
+  if (!TAKES_GOOGLE.test('const google = useTakeParam("google");') || TAKES_GOOGLE.test('params.get("google")') || TAKES_GOOGLE.test('useTakeParam("inbox")'))
+    fail("check 32(l)'s taker detector cannot tell useTakeParam(\"google\") from a hand read or another flag");
+} catch (e) {
+  fail(`Google page wiring check could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

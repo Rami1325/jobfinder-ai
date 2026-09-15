@@ -844,6 +844,24 @@ export async function login(payload: { email: string; password: string }): Promi
   return data;
 }
 
+/** Continue with Google (Phase 30 F1): the URL of Google's account chooser. The
+ * caller sends the whole document there. Google comes back through the server's
+ * callback, which signs this browser in and goes to `next`, or goes to
+ * `/<page>?google=<code>` when it refused.
+ *
+ * What a sign-in must forget is forgotten HERE, before the document leaves: the
+ * way back is a redirect, so no code of ours runs then to do it. */
+export async function startGoogleSignIn(payload: {
+  next: string;
+  locale: string;
+  page: "login" | "signup";
+}): Promise<string> {
+  const { data } = await api.post<{ url?: string }>("/auth/google/start", payload);
+  if (!data?.url) throw new Error("the Google sign-in start returned no URL");
+  adoptSession();
+  return data.url;
+}
+
 /** Ends this browser's session on the server. Callers ignore a failure,
  * because forgetting this device still has to happen (see `signOut`). */
 export async function logout(): Promise<void> {
