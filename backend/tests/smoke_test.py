@@ -7832,13 +7832,35 @@ with TestClient(_fastapi_app) as _tc:
         _tc.get("/applications", headers={"X-App-Key": "not-a-code"}).status_code == 401,
     )
 
-    # Cron endpoint with nothing enabled: 0 users, no network touched.
-    _cron = _tc.get("/jobs/alerts/cron")
+    # Cron endpoint with nothing enabled: 0 users, no network touched. Since Phase 30 /
+    # B6.1 it FAILS CLOSED like the inbox cron: with the gate on it answers only the
+    # Bearer secret, and with no secret configured it refuses outright, because every
+    # morning it runs can spend a free user's monthly use. `_env29` is defined 7,000
+    # lines further down, so the variable is set and restored inline here.
+    os.environ["CRON_SECRET"] = ""
+    get_settings.cache_clear()
+    _cron_closed = _tc.get("/jobs/alerts/cron")
+    os.environ["CRON_SECRET"] = "smoke-cron-19"
+    get_settings.cache_clear()
+    try:
+        _cron = _tc.get("/jobs/alerts/cron", headers={"Authorization": "Bearer smoke-cron-19"})
+        _cron_wrong = _tc.get("/jobs/alerts/cron", headers={"Authorization": "Bearer not-the-secret"})
+    finally:
+        os.environ["CRON_SECRET"] = ""
+        get_settings.cache_clear()
     check(
-        "cron endpoint iterates enabled alerts (none yet)",
+        "cron endpoint iterates enabled alerts (none yet), with the Bearer secret",
         _cron.status_code == 200
         and _cron.json() == {"users": 0, "results": [], "skipped": 0},
         _cron.text[:100],
+    )
+    check(
+        "B6.1: with the gate on and CRON_SECRET empty the alerts cron refuses with 503 cron_unconfigured (it used to "
+        "run for anyone who found the URL), and a wrong Bearer is a 401 — beside the right one above, which runs",
+        _cron_closed.status_code == 503
+        and _cron_closed.json() == {"detail": {"code": "cron_unconfigured"}}
+        and _cron_wrong.status_code == 401,
+        f"{_cron_closed.status_code} {_cron_closed.text[:100]} | {_cron_wrong.status_code}",
     )
 
     # Mint a friend
@@ -20415,6 +20437,1590 @@ finally:
     _q32._open_pass = _real_open_pass32c
     _q32.utc_now = _real_utc_now32c
     _restore29(_prev32c_env)
+
+# ---------------------------------------------------------------------------
+# 32 (continued). Job alerts (Phase 30 / B6), then route coverage (32.13). A
+# scheduled morning costs a free user one use and keeps it only when it emails
+# jobs; at zero the morning is skipped and the alerts card reads paused until the
+# 1st; "Run now" is a search the user pressed and costs one like any search. The
+# coverage pin is last because it needs every route final: every mounted route is
+# classed by what it costs, its source is checked for the shape of that class,
+# and every route is driven as a minted plan-free friend. The B8.0 rules hold: a
+# charge is proven by its +1 before a refund is asserted, and each catch sits
+# beside its twin. Nothing here may reach the network: the alert routes are
+# driven through `routes.search_jobs`, and the REAL search is replaced by a
+# tripwire on run_alert's and run_all_alerts' default arguments, so a route that
+# stopped passing its search explicitly fails a check instead of scraping boards.
+# ---------------------------------------------------------------------------
+import textwrap as _tw32  # noqa: E402
+
+from fastapi.routing import APIRoute as _APIRoute32  # noqa: E402
+
+from app.core import alerts as _al32, mailer as _mailer32  # noqa: E402
+from app.db.history import record_search_hits as _record_hits32  # noqa: E402
+from app.db.models import JobAlert as _JA32, SavedResume as _SR32  # noqa: E402
+from app.models import FilteredJob as _FJ32, SearchContext as _SC32  # noqa: E402
+
+_real_search32d = _routes32.search_jobs
+_real_above_min32 = _al32.above_min
+_real_smtp32, _real_send32 = _mailer32.smtp_configured, _mailer32.send_email
+_real_transport32 = _go29._transport
+_real_kits_tailor32d = _kits32.tailor_resume
+_real_run_alert_kw32 = dict(_al32.run_alert.__kwdefaults__ or {})
+_real_run_all_kw32 = dict(_al32.run_all_alerts.__kwdefaults__ or {})
+_tripped32: list[str] = []
+_google_calls32: list[str] = []
+
+
+def _search_tripwire32(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+    """The real job search's stand-in as a DEFAULT argument while this part runs: only a caller that did not pass its
+    search reaches it, and it records that and fails instead of scraping the boards."""
+    _tripped32.append("search_jobs")
+    raise RuntimeError("the real job search was reached through a default argument")
+
+
+def _arm_tripwire32():
+    _al32.run_alert.__kwdefaults__ = {**_real_run_alert_kw32, "search_fn": _search_tripwire32}
+    _al32.run_all_alerts.__kwdefaults__ = {**_real_run_all_kw32, "search_fn": _search_tripwire32}
+
+
+def _disarm_tripwire32():
+    _al32.run_alert.__kwdefaults__ = dict(_real_run_alert_kw32)
+    _al32.run_all_alerts.__kwdefaults__ = dict(_real_run_all_kw32)
+
+
+def _unpatch32():
+    """Put back the seams one check patches: the search the routes read, the fit bar, the mailer, the kit tailor."""
+    _routes32.search_jobs = _real_search32d
+    _al32.above_min = _real_above_min32
+    _mailer32.smtp_configured, _mailer32.send_email = _real_smtp32, _real_send32
+    _kits32.tailor_resume = _real_kits_tailor32d
+
+
+def _mail_through32(outbox):  # noqa: ANN001
+    """Patch the mailer MODULE the way Part J does: configured, and sending into `outbox`."""
+    _mailer32.smtp_configured = lambda: True
+    _mailer32.send_email = outbox
+
+
+def _dep_names32(route):  # noqa: ANN001
+    """The name of every dependency a route resolves, sub-dependencies included."""
+    names, stack = set(), ([route.dependant] if route is not None else [])
+    while stack:
+        dependant = stack.pop()
+        for sub in dependant.dependencies:
+            if sub.call is not None:
+                names.add(getattr(sub.call, "__name__", ""))
+            stack.append(sub)
+    return names
+
+
+def _alert_user32(client, name, *, email="", enabled=False, min_score=75, master=True):  # noqa: ANN001
+    """A minted plan-free friend with a saved master resume and an alert row: (user id, headers). Disabled unless a
+    check needs a cron to find it, so no later cron picks the row up by accident (Part J's precedent); the direct
+    morning checks run it with force=True, which still takes the morning's job_alert reserve."""
+    uid, headers = _mint32(client, name)
+    if uid is None:
+        return None, headers
+    d = SessionLocal()
+    try:
+        if master:
+            d.add(_SR32(user_id=uid, label="Alerts32 CV", language="en", resume_json=resume.model_dump_json()))
+            d.commit()
+        _al32.update_alert(d, uid, enabled=enabled, email=email, context=_SC32(job_title="Backend Engineer"),
+                           min_score=min_score)
+    finally:
+        d.close()
+    return uid, headers
+
+
+def _alert_matches32(tag, *scores):  # noqa: ANN001, ANN002
+    return [
+        _JM32(title=f"Alert32 {tag} {i}", company="AlertCo32", overall=float(score), jd_text="Python engineer.",
+              url=f"https://alert32.test/{tag}/{i}", source="linkedin")
+        for i, score in enumerate(scores)
+    ]
+
+
+class _AlertSearch32:
+    """A canned search fitting every caller's call shape (run_alert's, the search routes', the stream's), counting its
+    calls. `raises` makes it fail the way a board outage does."""
+
+    def __init__(self, matches=(), raises=None, filtered=()):  # noqa: ANN001
+        self.calls = 0
+        self.matches, self.raises, self.filtered = list(matches), raises, list(filtered)
+
+    def __call__(self, resume, ctx=None, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+        self.calls += 1
+        if self.raises is not None:
+            raise self.raises
+        return _JSRes32(context=_SC32(job_title="Backend Engineer"), matches=list(self.matches),
+                        filtered=list(self.filtered))
+
+
+class _Outbox32:
+    """run_alert's send seam: records each mail, or refuses it the way an SMTP server that is down does."""
+
+    def __init__(self, fail=False):  # noqa: ANN001
+        self.sent, self.fail = [], fail
+
+    def __call__(self, to, subject, text, html=""):  # noqa: ANN001
+        if self.fail:
+            raise OSError("the SMTP server refused the message")
+        self.sent.append((to, subject))
+
+
+def _run_alert32(uid, **kwargs):  # noqa: ANN001, ANN003
+    """run_alert on its own session: (the result, None), or (None, what it raised) — it must never raise."""
+    d = SessionLocal()
+    try:
+        return _al32.run_alert(d, uid, **kwargs), None
+    except Exception as exc:  # noqa: BLE001 - a raise is the failure the checks report
+        return None, exc
+    finally:
+        d.close()
+
+
+def _run_all32(**kwargs):  # noqa: ANN003
+    """run_all_alerts on its own session: (results, the order it runs users in, None), or (…, what it raised)."""
+    d = SessionLocal()
+    order = []
+    try:
+        order = list(_al32.due_user_ids(d))
+        results, _skipped = _al32.run_all_alerts(d, **kwargs)
+        return list(results), order, None
+    except Exception as exc:  # noqa: BLE001 - a raise out of the cron is the failure the checks report
+        return [], order, exc
+    finally:
+        d.close()
+
+
+def _alert_row32(uid):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        row = d.execute(_sel32(_JA32).where(_JA32.user_id == uid).order_by(_JA32.id)).scalars().first()
+        if row is None:
+            return {}
+        return {"enabled": row.enabled, "last_skip": row.last_skip, "last_run_at": row.last_run_at,
+                "last_error": row.last_error or ""}
+    finally:
+        d.close()
+
+
+def _set_alert32(uid, **values):  # noqa: ANN001, ANN003
+    d = SessionLocal()
+    try:
+        d.execute(_upd32(_JA32).where(_JA32.user_id == uid).values(**values))
+        d.commit()
+    finally:
+        d.close()
+
+
+def _pause32(uid, now, row=None):  # noqa: ANN001
+    """alerts.pause_state for one user: the pair it returns, or ('raised', why)."""
+    d = SessionLocal()
+    try:
+        return _al32.pause_state(d, d.get(_U32, uid), row if row is not None else _al32.get_alert(d, uid), now=now)
+    except Exception as exc:  # noqa: BLE001 - before B6 there is no pause_state, and that is the failure
+        return ("raised", f"{type(exc).__name__}: {exc}")
+    finally:
+        d.close()
+
+
+def _hits_of32(uid):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return [h.url for h in _hits32(d, uid)]
+    finally:
+        d.close()
+
+
+_prev32d_env = _env29(DAILY_LLM_CAP="0", DAILY_TAILOR_CAP="0", DAILY_SEARCH_CAP="0")
+_arm_tripwire32()
+try:
+    with TestClient(_fastapi_app) as _c32d:
+        # --- 32.9 The scheduled morning (B6.2, B6.3): a use, kept only when the morning emails jobs -----------------
+        _am_uid32, _ = _alert_user32(_c32d, "Morning Emails", email="morning.emails32@example.com")
+        _am_box32 = _Outbox32()
+        _am32, _am_err32 = _run_alert32(_am_uid32, force=True, send_fn=_am_box32,
+                                        search_fn=_AlertSearch32(_alert_matches32("emails", 91)))
+        _am_ev32 = _events32(_am_uid32)
+        check(
+            "32.9 cron: a morning that EMAILS jobs keeps its use — one +1 job_alert event, never refunded, used 1 == "
+            "SUM(delta) — and the mail went out through run_alert's send seam",
+            _am_err32 is None and _am32 is not None and _am32.ran is True and _am32.emailed is True
+            and _am32.above_min == 1 and len(_am_box32.sent) == 1
+            and _shape32(_am_ev32) == [("job_alert", 1, 0, "")]
+            and _pool32(f"u:{_am_uid32}", _P_THIS32) == (1, 1),
+            f"err={_am_err32!r} run={_am32} {_shape32(_am_ev32)} sent={len(_am_box32.sent)}",
+        )
+        _ab_uid32, _ = _alert_user32(_c32d, "Morning Below The Bar", email="below.bar32@example.com")
+        _ab_box32 = _Outbox32()
+        _ab32, _ab_err32 = _run_alert32(_ab_uid32, force=True, send_fn=_ab_box32,
+                                        search_fn=_AlertSearch32(_alert_matches32("below", 41)))
+        _ab_ev32 = _events32(_ab_uid32)
+        check(
+            "32.9 cron: a morning with nothing above the bar sends nothing and gives its use back — its +1 job_alert "
+            "marked refunded and answered by -1 refund:<id>, used 0 — while the posting still counts as new",
+            _ab_err32 is None and _ab32 is not None and _ab32.ran is True and _ab32.emailed is False
+            and _ab32.new_count == 1 and _ab32.above_min == 0 and _ab_box32.sent == []
+            and len(_ab_ev32) == 2 and _refunded32(_ab_ev32, "job_alert")
+            and _pool32(f"u:{_ab_uid32}", _P_THIS32) == (0, 0),
+            f"err={_ab_err32!r} run={_ab32} {_shape32(_ab_ev32)}",
+        )
+        _ar_uid32, _ = _alert_user32(_c32d, "Morning Search Fails", email="search.fails32@example.com")
+        _ar32, _ar_err32 = _run_alert32(_ar_uid32, force=True, send_fn=_Outbox32(),
+                                        search_fn=_AlertSearch32(raises=ValueError("boards are down")))
+        _ar_ev32 = _events32(_ar_uid32)
+        check(
+            "32.9 cron: a morning whose search raises returns an error result instead of raising and gives its use "
+            "back — +1/-1 job_alert, used 0 — and last_error says why",
+            _ar_err32 is None and _ar32 is not None and "boards are down" in _ar32.error
+            and len(_ar_ev32) == 2 and _refunded32(_ar_ev32, "job_alert")
+            and _pool32(f"u:{_ar_uid32}", _P_THIS32) == (0, 0)
+            and "boards are down" in _alert_row32(_ar_uid32).get("last_error", ""),
+            f"err={_ar_err32!r} run={_ar32} {_shape32(_ar_ev32)}",
+        )
+        _an_uid32, _ = _alert_user32(_c32d, "Morning No SMTP", email="no.smtp32@example.com")
+        _an32, _an_err32 = _run_alert32(_an_uid32, force=True,
+                                        search_fn=_AlertSearch32(_alert_matches32("nosmtp", 91)))
+        _an_ev32 = _events32(_an_uid32)
+        _ap_uid32, _ = _alert_user32(_c32d, "Morning Patched Mailer", email="patched.mailer32@example.com")
+        _ap_box32 = _Outbox32()
+        _mail_through32(_ap_box32)
+        try:
+            _ap32, _ap_err32 = _run_alert32(_ap_uid32, force=True,
+                                            search_fn=_AlertSearch32(_alert_matches32("patched", 91)))
+        finally:
+            _unpatch32()
+        check(
+            "32.9 cron: with no SMTP (the suite's own configuration) the default send seam emails nothing and the "
+            "morning gives its use back (+1/-1 job_alert) — while the same morning with mailer.smtp_configured and "
+            "mailer.send_email patched on the MODULE, after import, sends through them and keeps its use: the default "
+            "seam reads the mailer at call time",
+            _an_err32 is None and _an32 is not None and _an32.emailed is False and _an32.above_min == 1
+            and len(_an_ev32) == 2 and _refunded32(_an_ev32, "job_alert")
+            and _ap_err32 is None and _ap32 is not None and _ap32.emailed is True and len(_ap_box32.sent) == 1
+            and _shape32(_events32(_ap_uid32)) == [("job_alert", 1, 0, "")],
+            f"no smtp: err={_an_err32!r} {_an32} {_shape32(_an_ev32)} | patched: err={_ap_err32!r} {_ap32} "
+            f"sent={len(_ap_box32.sent)}",
+        )
+        _ax32 = {}
+        for _ax_tag32, _ax_email32, _ax_search32, _ax_box32 in (
+            ("blank address", "", _AlertSearch32(_alert_matches32("blank", 91)), _Outbox32()),
+            ("failed send", "failed.send32@example.com", _AlertSearch32(_alert_matches32("failsend", 91)),
+             _Outbox32(fail=True)),
+            ("all filtered", "all.filtered32@example.com",
+             _AlertSearch32([], filtered=[_FJ32(title="Sofia role", url="https://alert32.test/hidden/0",
+                                               reason="market")]),
+             _Outbox32()),
+        ):
+            _ax_uid32, _ = _alert_user32(_c32d, f"Morning {_ax_tag32}", email=_ax_email32)
+            _ax_run32, _ax_err32 = _run_alert32(_ax_uid32, force=True, search_fn=_ax_search32, send_fn=_ax_box32)
+            _ax32[_ax_tag32] = (_ax_err32, _ax_run32, _events32(_ax_uid32), list(_ax_box32.sent))
+        check(
+            "32.9 cron: a blank alert address, a send that fails, and Part J's all-filtered morning (a 200 with no "
+            "matches, only a market row) each email nothing and each give the use back — +1/-1 job_alert every time",
+            all(err is None and run is not None and run.emailed is False and len(ev) == 2
+                and _refunded32(ev, "job_alert") and sent == []
+                for err, run, ev, sent in _ax32.values())
+            and "Email failed" in getattr(_ax32["failed send"][1], "error", ""),
+            str({tag: (repr(v[0]), v[1], _shape32(v[2])) for tag, v in _ax32.items()})[:600],
+        )
+
+        # --- 32.9 Skip at zero, and the twin that runs once a use is back ----------------------------------------------
+        _sz_uid32, _ = _alert_user32(_c32d, "Morning At Zero", email="at.zero32@example.com")
+        _fill32(_sz_uid32, 10)
+        _sz_stamp32 = (_q32.utc_now() - _td32(days=3)).replace(tzinfo=None, microsecond=0)
+        _set_alert32(_sz_uid32, last_run_at=_sz_stamp32)
+        _sz_before32 = _events32(_sz_uid32)
+        _sz_search32 = _AlertSearch32(_alert_matches32("zero", 91))
+        _sz_box32 = _Outbox32()
+        _sz32, _sz_err32 = _run_alert32(_sz_uid32, force=True, search_fn=_sz_search32, send_fn=_sz_box32)
+        _sz_row32 = _alert_row32(_sz_uid32)
+        check(
+            "32.9 skip at zero: with no uses left the morning does not run — ran False, skipped_reason monthly_limit "
+            "and no error, last_skip monthly_limit, last_run_at left exactly as it was, ZERO search calls, no mail and "
+            "no new ledger event",
+            _sz_err32 is None and _sz32 is not None and _sz32.ran is False
+            and getattr(_sz32, "skipped_reason", None) == "monthly_limit" and _sz32.error == ""
+            and _sz_row32.get("last_skip") == "monthly_limit" and _sz_row32.get("last_run_at") == _sz_stamp32
+            and _sz_search32.calls == 0 and _sz_box32.sent == []
+            and len(_sz_before32) == 10 and _events32(_sz_uid32) == _sz_before32,
+            f"err={_sz_err32!r} run={_sz32} row={_sz_row32} calls={_sz_search32.calls}",
+        )
+        _szd32 = SessionLocal()
+        try:
+            _sz_back32 = bool(_sz_before32) and _q32.refund_units(
+                _szd32, _sz_before32[-1][0], 1, ref=f"refund:{_sz_before32[-1][0]}")
+        finally:
+            _szd32.close()
+        _sz_again32, _sz_again_err32 = _run_alert32(_sz_uid32, force=True, search_fn=_sz_search32, send_fn=_sz_box32)
+        check(
+            "32.9 skip twin: with one use given back the same user's next morning RUNS — one search call, the mail goes "
+            "out, the use is kept (used 10 again) and the successful reserve clears last_skip to ''",
+            _sz_back32 is True and _sz_again_err32 is None and _sz_again32 is not None and _sz_again32.ran is True
+            and _sz_again32.emailed is True and _sz_search32.calls == 1 and len(_sz_box32.sent) == 1
+            and _alert_row32(_sz_uid32).get("last_skip") == "" and _snap32(_sz_uid32).used == 10,
+            f"back={_sz_back32} err={_sz_again_err32!r} run={_sz_again32} calls={_sz_search32.calls} "
+            f"row={_alert_row32(_sz_uid32)}",
+        )
+
+        # --- 32.9 pause_state (B6.5): read off the pool, never off last_skip ---------------------------------------
+        _ps_uid32, _ = _alert_user32(_c32d, "Paused This Month", email="paused32@example.com", enabled=True)
+        for _ in range(10):
+            _reserve32(_ps_uid32, "search", now=_THIS32)
+        _ps_this32 = _pause32(_ps_uid32, _THIS32)
+        _ps_first32 = _pause32(_ps_uid32, _NEXT32)
+        _prf_uid32, _ = _alert_user32(_c32d, "Skipped Then Refilled", email="refilled32@example.com", enabled=True)
+        for _ in range(3):
+            _reserve32(_prf_uid32, "search", now=_THIS32)
+        _set_alert32(_prf_uid32, last_skip="monthly_limit")
+        _ps_left32 = _pause32(_prf_uid32, _THIS32)
+        _pd_uid32, _ = _alert_user32(_c32d, "Spent But Disabled", email="disabled32@example.com")
+        for _ in range(10):
+            _reserve32(_pd_uid32, "search", now=_THIS32)
+        _ps_off32 = _pause32(_pd_uid32, _THIS32)
+        _ps_admin32 = _pause32(_admin_row_id, _THIS32, row=_JA32(user_id=_admin_row_id, enabled=True))
+        _set_alert32(_ps_uid32, enabled=False)
+        _set_alert32(_prf_uid32, enabled=False)
+        check(
+            "32.9 pause_state: an enabled alert on a spent pool is paused this month — ('monthly_limit', the 1st of "
+            "next month) — and clear on that 1st with nothing written; twins: last_skip still 'monthly_limit' with "
+            "uses left is clear (the pause is read off the pool, never off last_skip), a disabled alert on a spent "
+            "pool is clear, and so is the admin's enabled alert (no monthly limit)",
+            _ps_this32 == ("monthly_limit", _q32.resets_on(_THIS32).isoformat())
+            and _ps_first32 == ("", "") and _ps_left32 == ("", "")
+            and _ps_off32 == ("", "") and _ps_admin32 == ("", ""),
+            f"this={_ps_this32} first={_ps_first32} left={_ps_left32} off={_ps_off32} admin={_ps_admin32}",
+        )
+        _phl_uid32, _PH_32_H = _alert_user32(_c32d, "Paused By Another Feature", email="paused.http32@example.com",
+                                            enabled=True)
+        _fill32(_phl_uid32, 9)
+        _ph_before32 = _c32d.get("/jobs/alerts", headers=_PH_32_H)
+        _ph_spend32 = _c32d.post("/tools/linkedin", json={"resume": _R32}, headers=_PH_32_H)
+        _ph_after32 = _c32d.get("/jobs/alerts", headers=_PH_32_H)
+        _ph_put32 = _c32d.put("/jobs/alerts", headers=_PH_32_H, json={
+            "enabled": True, "email": "paused.http32@example.com", "context": None, "min_score": 75})
+        _ph_resets32 = _q32.resets_on(_q32.utc_now()).isoformat()
+        _set_alert32(_phl_uid32, enabled=False)
+        check(
+            "32.9 pause over HTTP: with one use left the alerts card is not paused (paused_reason '', resumes_on ''); "
+            "the moment ANOTHER feature — a LinkedIn rewrite — spends the last use, GET /jobs/alerts says paused_reason "
+            "monthly_limit with resumes_on the 1st of next month, and PUT answers the same — read off the pool, with "
+            "no morning run in between",
+            _ph_before32.status_code == 200
+            and _j28(_ph_before32).get("paused_reason") == "" and _j28(_ph_before32).get("resumes_on") == ""
+            and _ph_spend32.status_code == 200 and _hdr32(_ph_spend32) == "0"
+            and _ph_after32.status_code == 200
+            and _j28(_ph_after32).get("paused_reason") == "monthly_limit"
+            and _j28(_ph_after32).get("resumes_on") == _ph_resets32
+            and _ph_put32.status_code == 200 and _j28(_ph_put32).get("paused_reason") == "monthly_limit"
+            and _j28(_ph_put32).get("resumes_on") == _ph_resets32,
+            f"{_ph_before32.text[:160]} | {_ph_spend32.status_code}/{_hdr32(_ph_spend32)} | {_ph_after32.text[:200]} | "
+            f"{_ph_put32.text[:200]}",
+        )
+
+        # --- 32.9 The cron carries on past a skipped user and past a raise --------------------------------------------
+        _cz0_uid32, _ = _alert_user32(_c32d, "Cron Zero Pool", email="cron.zero32@example.com", enabled=True)
+        _cz1_uid32, _ = _alert_user32(_c32d, "Cron After Zero", email="cron.after32@example.com", enabled=True)
+        _fill32(_cz0_uid32, 10)
+        _set_alert32(_cz1_uid32, last_run_at=(_q32.utc_now() - _td32(days=1)).replace(tzinfo=None))
+        _cz_results32, _cz_order32, _cz_err32 = _run_all32(search_fn=_AlertSearch32(_alert_matches32("carries", 41)),
+                                                           budget_s=0)
+        _cz_by32 = {r.user_id: r for r in _cz_results32}
+        _cz_mine32 = {uid: _cz_by32.get(uid) for uid in (_cz0_uid32, _cz1_uid32)}
+        _set_alert32(_cz0_uid32, enabled=False)
+        _set_alert32(_cz1_uid32, enabled=False)
+        check(
+            "32.9 the cron carries on: the zero-pool user (never run) is ordered AHEAD of the user who ran yesterday, is "
+            "skipped with skipped_reason monthly_limit and nothing charged, and the user after it still runs in the "
+            "same tick — results read by user_id, budget_s=0",
+            _cz_err32 is None
+            and _cz0_uid32 in _cz_order32 and _cz1_uid32 in _cz_order32
+            and _cz_order32.index(_cz0_uid32) < _cz_order32.index(_cz1_uid32)
+            and _cz_mine32[_cz0_uid32] is not None and _cz_mine32[_cz0_uid32].ran is False
+            and getattr(_cz_mine32[_cz0_uid32], "skipped_reason", "") == "monthly_limit"
+            and len(_events32(_cz0_uid32)) == 10
+            and _cz_mine32[_cz1_uid32] is not None and _cz_mine32[_cz1_uid32].ran is True
+            and _refunded32(_events32(_cz1_uid32), "job_alert"),
+            f"err={_cz_err32!r} order={_cz_order32} mine={_cz_mine32}",
+        )
+        _rx1_uid32, _ = _alert_user32(_c32d, "Cron Raise After Search", email="raise.after32@example.com",
+                                      enabled=True, min_score=77)
+        _rx2_uid32, _ = _alert_user32(_c32d, "Cron Next User", email="next.user32@example.com", enabled=True)
+        _set_alert32(_rx2_uid32, last_run_at=(_q32.utc_now() - _td32(hours=1)).replace(tzinfo=None))
+
+        def _above_min_crashes32(matches, min_score):  # noqa: ANN001
+            if min_score == 77:  # only the alert that asked for a 77% bar
+                raise RuntimeError("the fit bar crashed")
+            return _real_above_min32(matches, min_score)
+
+        _rx_box32 = _Outbox32()
+        _al32.above_min = _above_min_crashes32
+        _mail_through32(_rx_box32)
+        try:
+            _rx_results32, _rx_order32, _rx_err32 = _run_all32(
+                search_fn=_AlertSearch32(_alert_matches32("raise", 91)), budget_s=0)
+        finally:
+            _unpatch32()
+        _rx_by32 = {r.user_id: r for r in _rx_results32}
+        _set_alert32(_rx1_uid32, enabled=False)
+        _set_alert32(_rx2_uid32, enabled=False)
+        check(
+            "32.9 a raise injected AFTER the search (alerts.above_min patched to crash for one alert) never escapes the "
+            "cron: that user gets an error result, its use given back (+1/-1 job_alert) and last_error set, and the "
+            "user after it in the same tick still runs, emails and keeps its use",
+            _rx_err32 is None
+            and _rx1_uid32 in _rx_order32 and _rx2_uid32 in _rx_order32
+            and _rx_order32.index(_rx1_uid32) < _rx_order32.index(_rx2_uid32)
+            and _rx1_uid32 in _rx_by32 and "the fit bar crashed" in _rx_by32[_rx1_uid32].error
+            and _refunded32(_events32(_rx1_uid32), "job_alert")
+            and "the fit bar crashed" in _alert_row32(_rx1_uid32).get("last_error", "")
+            and _rx2_uid32 in _rx_by32 and _rx_by32[_rx2_uid32].emailed is True
+            and _shape32(_events32(_rx2_uid32)) == [("job_alert", 1, 0, "")],
+            f"err={_rx_err32!r} order={_rx_order32} one={_rx_by32.get(_rx1_uid32)} two={_rx_by32.get(_rx2_uid32)} "
+            f"{_shape32(_events32(_rx1_uid32))} {_shape32(_events32(_rx2_uid32))}",
+        )
+
+        # --- 32.9 Run now (B6.4): a search the user pressed ----------------------------------------------------------
+        def _run_now32(headers, search):  # noqa: ANN001
+            _routes32.search_jobs = search
+            try:
+                return _c32d.post("/jobs/alerts/run", headers=headers)
+            finally:
+                _routes32.search_jobs = _real_search32d
+
+        _rnb_uid32, _RNB32_H = _alert_user32(_c32d, "Run Now Blank Address")
+        _rnb_search32 = _AlertSearch32(_alert_matches32("runnow-blank", 91))
+        _rnb32 = _run_now32(_RNB32_H, _rnb_search32)
+        check(
+            "32.9 Run now: a run whose alert has no address keeps ONE search use — +1 search, no job_alert event, no "
+            "refund, X-Uses-Remaining 9 — and the job it found is in History",
+            _rnb32.status_code == 200 and _j28(_rnb32).get("ran") is True and _j28(_rnb32).get("emailed") is False
+            and _rnb_search32.calls == 1
+            and _shape32(_events32(_rnb_uid32)) == [("search", 1, 0, "")] and _hdr32(_rnb32) == "9"
+            and "https://alert32.test/runnow-blank/0" in _hits_of32(_rnb_uid32),
+            f"{_rnb32.status_code} {_rnb32.text[:160]} calls={_rnb_search32.calls} "
+            f"{_shape32(_events32(_rnb_uid32))} {_hdr32(_rnb32)}",
+        )
+        _rnr_uid32, _RNR32_H = _alert_user32(_c32d, "Run Now Search Fails", email="rn.raise32@example.com")
+        _rnr32 = _run_now32(_RNR32_H, _AlertSearch32(raises=ValueError("boards are down")))
+        _rnm_uid32, _RNM32_H = _alert_user32(_c32d, "Run Now No Master", email="rn.nomaster32@example.com",
+                                             master=False)
+        _rnm_search32 = _AlertSearch32(_alert_matches32("runnow-nomaster", 91))
+        _rnm32 = _run_now32(_RNM32_H, _rnm_search32)
+        check(
+            "32.9 Run now: a search that raises, and a user with no master resume, each give the search use back — a "
+            "+1/-1 search pair, X-Uses-Remaining 10, the reason in the result — and with no master the search is "
+            "never called",
+            _rnr32.status_code == 200 and "boards are down" in (_j28(_rnr32).get("error") or "")
+            and len(_events32(_rnr_uid32)) == 2 and _refunded32(_events32(_rnr_uid32), "search")
+            and _hdr32(_rnr32) == "10"
+            and _rnm32.status_code == 200 and _j28(_rnm32).get("ran") is False
+            and "master resume" in (_j28(_rnm32).get("error") or "")
+            and len(_events32(_rnm_uid32)) == 2 and _refunded32(_events32(_rnm_uid32), "search")
+            and _hdr32(_rnm32) == "10" and _rnm_search32.calls == 0,
+            f"raise: {_rnr32.status_code} {_rnr32.text[:120]} {_shape32(_events32(_rnr_uid32))} {_hdr32(_rnr32)} | "
+            f"no master: {_rnm32.status_code} {_rnm32.text[:120]} {_shape32(_events32(_rnm_uid32))} {_hdr32(_rnm32)}",
+        )
+        _rnz_uid32, _RNZ32_H = _alert_user32(_c32d, "Run Now At Zero", email="rn.zero32@example.com")
+        _fill32(_rnz_uid32, 10)
+        _rnz_search32 = _AlertSearch32(_alert_matches32("runnow-zero", 91))
+        _rnz32 = _run_now32(_RNZ32_H, _rnz_search32)
+        check(
+            "32.9 Run now at zero uses left is a plain HTTP 429 monthly_limit naming search — the search is never "
+            "called, no event is written, and last_skip is NOT written (a skipped morning is the cron's line, not this "
+            "one)",
+            _rnz32.status_code == 429 and _detail28(_rnz32).get("code") == "monthly_limit"
+            and _detail28(_rnz32).get("feature") == "search" and _rnz_search32.calls == 0
+            and len(_events32(_rnz_uid32)) == 10 and _alert_row32(_rnz_uid32).get("last_skip") == ""
+            and _hdr32(_rnz32) is None,
+            f"{_rnz32.status_code} {_rnz32.text[:160]} calls={_rnz_search32.calls} row={_alert_row32(_rnz_uid32)}",
+        )
+        _rnc_env32 = _env29(DAILY_SEARCH_CAP="1")
+        try:
+            _rnc_uid32, _RNC32_H = _alert_user32(_c32d, "Run Now Daily Cap")
+            _rnc_search32 = _AlertSearch32(_alert_matches32("runnow-cap", 41))
+            _rnc32 = [_run_now32(_RNC32_H, _rnc_search32) for _ in range(2)]
+        finally:
+            _restore29(_rnc_env32)
+        check(
+            "32.9 Run now past the DAILY search cap is a 429 daily_limit naming search: at a cap of 1 the first run is "
+            "a 200 that keeps +1, and the second searches nothing and writes no event",
+            [r.status_code for r in _rnc32] == [200, 429]
+            and _detail28(_rnc32[1]) == {"code": "daily_limit", "action": "search", "cap": 1}
+            and _rnc_search32.calls == 1 and _shape32(_events32(_rnc_uid32)) == [("search", 1, 0, "")],
+            f"{[(r.status_code, r.text[:80]) for r in _rnc32]} calls={_rnc_search32.calls} "
+            f"{_shape32(_events32(_rnc_uid32))}",
+        )
+        _rnk_uid32, _RNK32_H = _alert_user32(_c32d, "Run Now Keeps Its Use", email="rn.keeps32@example.com")
+        _rnk32 = {}
+        for _rnk_tag32, _rnk_search32, _rnk_box32 in (
+            ("below the bar", _AlertSearch32(_alert_matches32("rnk-below", 41)), None),
+            ("no smtp", _AlertSearch32(_alert_matches32("rnk-nosmtp", 91)), None),
+            ("send fails", _AlertSearch32(_alert_matches32("rnk-fails", 91)), _Outbox32(fail=True)),
+            ("zero matches", _AlertSearch32([]), None),
+        ):
+            if _rnk_box32 is not None:
+                _mail_through32(_rnk_box32)
+            try:
+                _rnk32[_rnk_tag32] = _run_now32(_RNK32_H, _rnk_search32)
+            finally:
+                _unpatch32()
+        _rnk_cron_uid32, _ = _alert_user32(_c32d, "Morning Below The Bar Twin", email="rnk.cron32@example.com")
+        _rnk_cron32, _rnk_cron_err32 = _run_alert32(_rnk_cron_uid32, force=True, send_fn=_Outbox32(),
+                                                    search_fn=_AlertSearch32(_alert_matches32("rnk-cron", 41)))
+        check(
+            "32.9 Run now keeps its use whenever its search completed — nothing above the bar, no SMTP, a send that "
+            "fails, zero matches: four 200s, four +1 search events and no refund, X-Uses-Remaining 9, 8, 7, 6 — while "
+            "beside it a cron morning with nothing above the bar is still refunded (+1/-1 job_alert)",
+            [r.status_code for r in _rnk32.values()] == [200, 200, 200, 200]
+            and [_hdr32(r) for r in _rnk32.values()] == ["9", "8", "7", "6"]
+            and _shape32(_events32(_rnk_uid32)) == [("search", 1, 0, "")] * 4
+            and "Email failed" in (_j28(_rnk32["send fails"]).get("error") or "")
+            and _rnk_cron_err32 is None and _rnk_cron32 is not None
+            and _refunded32(_events32(_rnk_cron_uid32), "job_alert"),
+            f"{[(tag, r.status_code, _hdr32(r)) for tag, r in _rnk32.items()]} {_shape32(_events32(_rnk_uid32))} "
+            f"cron={_rnk_cron32} {_shape32(_events32(_rnk_cron_uid32))}",
+        )
+        _rn_route32 = next((r for r in _fastapi_app.routes
+                            if isinstance(r, _APIRoute32) and r.path == "/jobs/alerts/run"), None)
+        check(
+            "32.9 Run now meters its tokens (metered_user) and takes no shared llm unit (never llm_user), beside the "
+            "daily search cap and the use its handler charges",
+            _rn_route32 is not None and "metered_user" in _dep_names32(_rn_route32)
+            and "llm_user" not in _dep_names32(_rn_route32),
+            str(sorted(_dep_names32(_rn_route32))),
+        )
+finally:
+    _unpatch32()
+    _disarm_tripwire32()
+    _restore29(_prev32d_env)
+
+# --- 32.13 Route coverage (a, b): every mounted route, classed by what it costs ---------------------------------------
+# (METHOD, route path) -> cost class (spec B8.2 item 13):
+#   charged:<feature>     the handler itself calls quota.charged or quota.reserve for that feature
+#   pass:<feature>        the handler calls quota.pass_charged for that feature
+#   core_charged:<fn>     a core function the route reaches takes the use (the alerts cron's mornings)
+#   batch_paid            the kit was paid for at batch time; the route only gives a failed kit's use back
+#   own_cap:<action>      the inbox routes that spend model calls, bounded by their own daily cap
+#   free_capped:<action>  a model route kept off the pool, bounded by its own daily cap
+#   refund_only           charges nothing, but gives a still-queued kit's use back
+#   free                  no charge, no refund, no model dependency; reading the pool is allowed
+# A route added without a class fails 32.13(a); a route whose source stops matching its class fails 32.13(b).
+_ROUTE_COST = {
+    ("POST", "/tailor"): "charged:tailor",
+    ("POST", "/jobs/fit"): "charged:fit_check",
+    ("POST", "/kits/batch"): "charged:tailor",
+    ("POST", "/jobs/search"): "charged:search",
+    ("POST", "/jobs/search/stream"): "charged:search",
+    ("POST", "/jobs/match"): "charged:search",
+    ("POST", "/jobs/alerts/run"): "charged:search",
+    ("POST", "/tools/company-brief"): "charged:company_brief",
+    ("POST", "/tools/scan"): "charged:scan",
+    ("POST", "/tools/linkedin"): "charged:linkedin",
+    ("POST", "/tools/follow-up"): "charged:follow_up",
+    ("POST", "/outreach"): "charged:outreach",
+    ("POST", "/tools/review/rewrites"): "charged:rewrites",
+    ("POST", "/interview/questions"): "pass:interview",
+    ("POST", "/interview/answer"): "pass:interview",
+    ("POST", "/interview/feedback"): "pass:interview",
+    ("POST", "/interview/recruiter-screen"): "pass:interview",
+    ("POST", "/interview/chat"): "pass:interview",
+    ("POST", "/interview/scorecard"): "pass:interview",
+    ("POST", "/tools/screening-answer"): "pass:screening",
+    ("POST", "/cover-letter"): "pass:cover_letter",
+    ("GET", "/jobs/alerts/cron"): "core_charged:alerts.run_alert",
+    ("POST", "/kits/process-next"): "batch_paid",
+    ("POST", "/inbox/sync"): "own_cap:inbox",
+    ("GET", "/inbox/cron"): "own_cap:inbox",
+    ("POST", "/resume/upload"): "free_capped:upload",
+    ("POST", "/jd/analyze"): "free_capped:jd_analyze",
+    ("POST", "/jobs/search-context"): "free_capped:search_context",
+    ("DELETE", "/kits/{kit_id}"): "refund_only",
+    ("DELETE", "/profile/data"): "refund_only",
+    ("DELETE", "/profile/account"): "refund_only",
+    # free: the deterministic tools and the fetch
+    ("POST", "/render"): "free",
+    ("POST", "/tools/review"): "free",
+    ("POST", "/tools/coverage"): "free",
+    ("POST", "/tools/ats-xray"): "free",
+    ("POST", "/tools/page-count"): "free",
+    ("POST", "/jobs/fetch"): "free",
+    # free: kit actions
+    ("GET", "/kits"): "free",
+    ("GET", "/kits/{kit_id}"): "free",
+    ("POST", "/kits/{kit_id}/approve"): "free",
+    ("POST", "/kits/{kit_id}/reject"): "free",
+    ("POST", "/kits/{kit_id}/submit"): "free",
+    # free: accounts
+    ("GET", "/auth/me"): "free",
+    ("POST", "/auth/signup"): "free",
+    ("POST", "/auth/login"): "free",
+    ("POST", "/auth/logout"): "free",
+    ("POST", "/auth/verify"): "free",
+    ("POST", "/auth/resend"): "free",
+    ("POST", "/auth/change-email"): "free",
+    ("POST", "/auth/forgot"): "free",
+    ("POST", "/auth/reset"): "free",
+    ("POST", "/auth/password"): "free",
+    ("POST", "/auth/logout-others"): "free",
+    ("GET", "/auth/extension-key"): "free",
+    ("POST", "/auth/extension-key/rotate"): "free",
+    # free: the profile, the tracker, search settings and history, the alerts card, the registries
+    ("GET", "/profile/me"): "free",
+    ("GET", "/profile/resume"): "free",
+    ("PUT", "/profile/resume"): "free",
+    ("GET", "/profile/resumes"): "free",
+    ("GET", "/profile/resume/versions"): "free",
+    ("GET", "/profile/resume/versions/{version_id}"): "free",
+    ("POST", "/profile/resume/versions/{version_id}/restore"): "free",
+    ("GET", "/profile/resume-prefs"): "free",
+    ("PUT", "/profile/resume-prefs"): "free",
+    ("GET", "/profile/writing-prefs"): "free",
+    ("POST", "/profile/writing-prefs"): "free",
+    ("GET", "/applications"): "free",
+    ("POST", "/applications"): "free",
+    ("GET", "/applications/nudges"): "free",
+    ("GET", "/applications/{app_id}"): "free",
+    ("PATCH", "/applications/{app_id}"): "free",
+    ("DELETE", "/applications/{app_id}"): "free",
+    ("POST", "/feedback"): "free",
+    ("GET", "/jobs/search-prefs"): "free",
+    ("PUT", "/jobs/search-prefs"): "free",
+    ("GET", "/jobs/history"): "free",
+    ("DELETE", "/jobs/history"): "free",
+    ("DELETE", "/jobs/history/{hit_id}"): "free",
+    ("GET", "/jobs/alerts"): "free",
+    ("PUT", "/jobs/alerts"): "free",
+    ("GET", "/jobs/nudges/cron"): "free",
+    ("GET", "/jobs/comeet/companies"): "free",
+    ("POST", "/jobs/comeet/companies"): "free",
+    ("GET", "/jobs/greenhouse/companies"): "free",
+    ("POST", "/jobs/greenhouse/companies"): "free",
+    # free: the inbox routes that spend no model call
+    ("GET", "/inbox/status"): "free",
+    ("POST", "/inbox/google/start"): "free",
+    ("GET", "/inbox/google/callback"): "free",
+    ("POST", "/inbox/fake/connect"): "free",
+    ("GET", "/inbox/events"): "free",
+    ("POST", "/inbox/events/{event_id}/undo"): "free",
+    ("POST", "/inbox/events/{event_id}/dismiss"): "free",
+    ("POST", "/inbox/events/{event_id}/resolve"): "free",
+    ("PATCH", "/inbox/settings"): "free",
+    ("DELETE", "/inbox/connection"): "free",
+    # free: admin, and the app itself
+    ("GET", "/admin/users"): "free",
+    ("POST", "/admin/users"): "free",
+    ("PATCH", "/admin/users/{user_id}"): "free",
+    ("GET", "/admin/feedback"): "free",
+    ("GET", "/health"): "free",
+    ("GET", "/"): "free",
+}
+_CHARGING32 = frozenset({"charged", "reserve", "pass_charged", "open_fit_ride", "claim_fit_ride", "release_fit_ride",
+                         "settle_fit_ride"})
+_RIDE_FNS32 = frozenset({"open_fit_ride", "claim_fit_ride", "release_fit_ride", "settle_fit_ride"})
+_REFUNDS32 = frozenset({(_q32.__name__, "refund_units"), (_kits32.__name__, "refund_kit"),
+                        (_kits32.__name__, "refund_queued_kits")})
+_calls_memo32: dict = {}
+_reach_memo32: dict = {}
+
+
+def _mounted32():  # noqa: ANN202
+    """{(METHOD, path): route} for every APIRoute on the app: the three routers and the app's own root."""
+    return {(method, r.path): r for r in _fastapi_app.routes if isinstance(r, _APIRoute32) for method in r.methods}
+
+
+def _calls_in32(fn):  # noqa: ANN001
+    """Every call in fn's own source (nested defs included), resolved against fn's globals: (module, name, node,
+    target). A Name bound to a function or class, or an attribute of a Name bound to a module, which is how the name
+    routes.py binds to app.core.quota is followed whatever that name is. Parsed, never grepped."""
+    fn = _insp32.unwrap(fn)
+    if fn in _calls_memo32:
+        return _calls_memo32[fn]
+    try:
+        tree = _ast32.parse(_tw32.dedent(_insp32.getsource(fn)))
+    except (OSError, TypeError, SyntaxError):
+        _calls_memo32[fn] = []
+        return []
+    scope = getattr(fn, "__globals__", {})
+    found = []
+    for node in _ast32.walk(tree):
+        if not isinstance(node, _ast32.Call):
+            continue
+        func = node.func
+        if isinstance(func, _ast32.Name):
+            target = scope.get(func.id)
+            if callable(target) and isinstance(getattr(target, "__module__", None), str):
+                found.append((target.__module__, getattr(target, "__name__", func.id), node, target))
+        elif isinstance(func, _ast32.Attribute) and isinstance(func.value, _ast32.Name):
+            owner = scope.get(func.value.id)
+            if _insp32.ismodule(owner):
+                found.append((owner.__name__, func.attr, node, getattr(owner, func.attr, None)))
+    _calls_memo32[fn] = found
+    return found
+
+
+def _reach32(fn, depth=8):  # noqa: ANN001
+    """{(module, name)} of every call fn makes, followed breadth-first into the functions it reaches in app.* and in
+    fn's own module — never into app.core.quota, whose entry points are what is being looked for. A charge hidden in
+    a helper is therefore still a charge."""
+    root = _insp32.unwrap(fn)
+    if root in _reach_memo32:
+        return _reach_memo32[root]
+    root_module = str(getattr(root, "__module__", "") or "")
+    found, seen, queue, at = set(), {root}, [(root, depth)], 0
+    while at < len(queue):
+        current, left = queue[at]
+        at += 1
+        for module, name, _node, target in _calls_in32(current):
+            found.add((module, name))
+            if left <= 0 or module == _q32.__name__ or target is None:
+                continue
+            inner = _insp32.unwrap(target)
+            inner_module = str(getattr(inner, "__module__", "") or "")
+            if (_insp32.isfunction(inner) and inner not in seen
+                    and (inner_module.startswith("app.") or inner_module == root_module)):
+                seen.add(inner)
+                queue.append((inner, left - 1))
+    _reach_memo32[root] = found
+    return found
+
+
+def _direct_quota32(fn):  # noqa: ANN001
+    """(entry point, feature literal or None) for every app.core.quota call in fn's OWN source."""
+    out = []
+    for module, name, node, _target in _calls_in32(fn):
+        if module == _q32.__name__:
+            arg = node.args[2] if len(node.args) >= 3 else None
+            out.append((name, arg.value if isinstance(arg, _ast32.Constant) and isinstance(arg.value, str) else None))
+    return out
+
+
+def _cap_actions32(fn):  # noqa: ANN001
+    """The literal actions fn's own source hands to usage.check_and_count."""
+    actions = set()
+    for module, name, node, _target in _calls_in32(fn):
+        if (module, name) == ("app.core.usage", "check_and_count") and len(node.args) >= 3:
+            arg = node.args[2]
+            if isinstance(arg, _ast32.Constant) and isinstance(arg.value, str):
+                actions.add(arg.value)
+    return actions
+
+
+def _shape_problem32(cls, fn, deps):  # noqa: ANN001
+    """'' when fn has the source shape its cost class requires, else what is wrong."""
+    kind, _, arg = cls.partition(":")
+    reach = _reach32(fn)
+    direct = _direct_quota32(fn)
+    charging = sorted(name for module, name in reach if module == _q32.__name__ and name in _CHARGING32)
+    if kind == "charged":
+        features = {feature for name, feature in direct if name in ("charged", "reserve")}
+        if features != {arg}:
+            return f"the handler charges {sorted(map(str, features))}, not {arg}"
+        return "the handler also opens a pass" if any(name == "pass_charged" for name, _f in direct) else ""
+    if kind == "pass":
+        features = {feature for name, feature in direct if name == "pass_charged"}
+        if features != {arg}:
+            return f"the handler opens passes for {sorted(map(str, features))}, not {arg}"
+        return "the handler also charges" if any(name in ("charged", "reserve") for name, _f in direct) else ""
+    if kind == "core_charged":
+        if any(name in _CHARGING32 for name, _f in direct):
+            return "the handler charges by itself"
+        if arg != "alerts.run_alert":
+            return f"no core charge is known as {arg}"
+        needed = {(_al32.__name__, "run_all_alerts"), (_al32.__name__, "run_alert")}
+        if not needed <= reach:
+            return f"does not reach {sorted(needed - reach)}"
+        return "" if ("reserve", "job_alert") in _direct_quota32(_al32.run_alert) else "run_alert reserves no job_alert"
+    if charging:
+        return f"a {kind} route reaches the charging entry points {charging}"
+    if kind == "batch_paid":
+        needed = {(_kits32.__name__, "process_next_kit"), (_kits32.__name__, "refund_kit"),
+                  (_q32.__name__, "refund_units")}
+        return "" if needed <= reach else f"does not reach {sorted(needed - reach)}"
+    if kind == "own_cap":
+        needed = {(_is29.__name__, "_charge"), ("app.core.usage", "check_and_count")}
+        if getattr(_is29, "INBOX_ACTION", None) != arg:
+            return f"the inbox cap is not called {arg}"
+        return "" if needed <= reach else f"does not reach {sorted(needed - reach)}"
+    if kind == "free_capped":
+        actions = _cap_actions32(fn)
+        return "" if actions == {arg} else f"its own daily caps are {sorted(actions)}, not {arg}"
+    if kind == "refund_only":
+        return "" if (_kits32.__name__, "refund_kit") in reach else "reaches no per-kit refund"
+    if kind == "free":
+        metered = sorted(deps & {"llm_user", "metered_user"})
+        if metered:
+            return f"depends on {metered}"
+        refunds = sorted(reach & _REFUNDS32)
+        return f"gives uses back through {refunds}" if refunds else ""
+    return f"unknown class {cls}"
+
+
+_mounted_routes32 = _mounted32()
+_PROBE_UNCLASSED32 = "/__smoke32/unclassed"
+_routes_count32 = len(_fastapi_app.router.routes)
+_fastapi_app.add_api_route(_PROBE_UNCLASSED32, lambda: {"ok": True}, methods=["GET"])
+try:
+    _probe_unclassed32 = set(_mounted32()) - set(_ROUTE_COST)
+finally:
+    _fastapi_app.router.routes[:] = [
+        r for r in _fastapi_app.router.routes if getattr(r, "path", "") != _PROBE_UNCLASSED32
+    ]
+check(
+    "32.13(a) completeness: _ROUTE_COST classes every (METHOD, path) mounted on app.main.app — the three routers and "
+    "the app's own root — and names nothing that is not mounted; the detector is live: a route added at runtime shows "
+    "up as unclassed, and is removed again",
+    set(_ROUTE_COST) == set(_mounted_routes32)
+    and _probe_unclassed32 == {("GET", _PROBE_UNCLASSED32)}
+    and len(_fastapi_app.router.routes) == _routes_count32,
+    f"unclassed={sorted(set(_mounted_routes32) - set(_ROUTE_COST))} "
+    f"not mounted={sorted(set(_ROUTE_COST) - set(_mounted_routes32))} probe={_probe_unclassed32}",
+)
+
+
+def _probe_free_reserves32(db, user):  # noqa: ANN001
+    return _q32.reserve(db, user, "linkedin")
+
+
+def _probe_hides_its_charge32(db, user):  # noqa: ANN001
+    return _probe_free_reserves32(db, user)
+
+
+_probe_reserve_alias32 = _q32.reserve
+
+
+def _probe_charges_by_alias32(db, user):  # noqa: ANN001
+    return _probe_reserve_alias32(db, user, "tailor")
+
+
+def _probe_reads_pool32(db, user):  # noqa: ANN001
+    return _q32.snapshot(db, user)
+
+
+_probe_verdicts32 = [
+    _shape_problem32("free", _probe_free_reserves32, set()),
+    _shape_problem32("free", _probe_hides_its_charge32, set()),
+    _shape_problem32("free", _probe_charges_by_alias32, set()),
+    _shape_problem32("charged:tailor", _routes32.tools_linkedin, set()),
+    _shape_problem32("charged:linkedin", _routes32.tools_linkedin, set()),
+    _shape_problem32("free", _probe_reads_pool32, set()),
+    _shape_problem32("free", _routes32.tools_review, {"llm_user"}),
+]
+check(
+    "32.13(b) the shape test is live: a function classed free that reserves, one that reserves through a helper of its "
+    "own module, and one that calls quota.reserve under another name are each refused; charged:tailor is refused for "
+    "the LinkedIn route while charged:linkedin fits it; reading the pool (snapshot) is still free, and a free route "
+    "given an llm_user dependency is refused",
+    all(_probe_verdicts32[:4]) and _probe_verdicts32[4] == "" and _probe_verdicts32[5] == ""
+    and _probe_verdicts32[6] != "",
+    str(_probe_verdicts32),
+)
+_shape_bad32 = {}
+for _route_key32, _route_cls32 in sorted(_ROUTE_COST.items()):
+    _route_obj32 = _mounted_routes32.get(_route_key32)
+    if _route_obj32 is None:
+        continue  # 32.13(a) names it
+    _route_why32 = _shape_problem32(_route_cls32, _route_obj32.endpoint, _dep_names32(_route_obj32))
+    if _route_why32:
+        _shape_bad32[_route_key32] = _route_why32
+check(
+    "32.13(b) every route has the source shape of its cost class: the charged and pass handlers call quota.charged, "
+    "quota.reserve or quota.pass_charged for exactly their feature, the alerts cron reaches run_alert's job_alert "
+    "reserve, the kit drain reaches only the per-kit refund, the capped routes call check_and_count with their own "
+    "action, and no route outside the charging classes reaches a charging entry point",
+    _shape_bad32 == {},
+    str(_shape_bad32)[:900],
+)
+_ride_routes32 = sorted(
+    key for key, route in _mounted_routes32.items()
+    if {name for module, name in _reach32(route.endpoint) if module == _q32.__name__} & _RIDE_FNS32
+)
+check(
+    "32.13(b) only /jobs/fit and /tailor reach the fit-ride functions (open, claim, release, settle)",
+    _ride_routes32 == [("POST", "/jobs/fit"), ("POST", "/tailor")],
+    str(_ride_routes32),
+)
+
+# --- 32.13 (c) and 32.12: the driven sweep ------------------------------------------------------------------------------
+_sweep32: dict = {}
+_FREE_STATUS32: dict = {}
+_SW32: dict = {}
+_AUTH32: dict = {}
+_E1_32, _E2_32 = "sweep.signup32@example.com", "sweep.moved32@example.com"
+_PW1_32, _PW2_32 = "sweep account passphrase one", "sweep account passphrase two"
+_PW3_32 = "sweep account passphrase three"
+_CRON_H32 = {"Authorization": "Bearer smoke-cron-32"}
+_FIT_TEXT32 = "Python developer at Acme. Python, SQL and REST APIs required."
+
+
+def _offline_google32(method, url, headers, body, timeout):  # noqa: ANN001
+    """google_oauth's transport for the sweep: nothing driven here may reach Google, so a call is recorded and
+    answered as an outage."""
+    _google_calls32.append(url)
+    return 503, b'{"error": "offline in the smoke test"}'
+
+
+def _quota_counts32():  # noqa: ANN202
+    d = SessionLocal()
+    try:
+        return tuple(int(d.execute(_sel32(_func32.count()).select_from(model)).scalar() or 0)
+                     for model in (_UM32, _UE32, _UP32))
+    finally:
+        d.close()
+
+
+def _last_event32():  # noqa: ANN202
+    d = SessionLocal()
+    try:
+        return int(d.execute(_sel32(_func32.max(_UE32.id))).scalar() or 0)
+    finally:
+        d.close()
+
+
+def _events_since32(last_id):  # noqa: ANN001
+    """(id, user_id, feature, delta, refunded, ref) for every ledger event written after `last_id`."""
+    d = SessionLocal()
+    try:
+        return [tuple(r) for r in d.execute(
+            _sel32(_UE32.id, _UE32.user_id, _UE32.feature, _UE32.delta, _UE32.refunded, _UE32.ref)
+            .where(_UE32.id > last_id).order_by(_UE32.id)
+        ).all()]
+    finally:
+        d.close()
+
+
+def _as32(method, path, headers=None, **kwargs):  # noqa: ANN001, ANN003
+    """One request on the sweep's client with an empty cookie jar either side, so a cookie set by one row never rides
+    into the next (an account row's session would otherwise travel beside a friend's invite code)."""
+    _c32e.cookies.clear()
+    try:
+        return _c32e.request(method, path, headers=headers, **kwargs)
+    finally:
+        _c32e.cookies.clear()
+
+
+def _sweep_row32(key, drive, setup=None):  # noqa: ANN001
+    """Drive one route and record what it did. `setup` runs first and is NOT measured; then the quota tables are
+    counted, the stub's model calls are counted on the class, and the ledger events the drive wrote are collected.
+    `drive(state)` returns a dict holding the response under 'resp'."""
+    record = {"state": {}, "out": {}, "error": None, "calls": 0, "events": []}
+    _sweep32[key] = record
+    try:
+        record["state"] = setup() if setup is not None else {}
+    except Exception as exc:  # noqa: BLE001 - a broken setup is one red row, never an aborted suite
+        record["error"] = f"setup: {type(exc).__name__}: {exc}"
+        return record
+    record["before"], last = _quota_counts32(), _last_event32()
+    with _Calls32() as counter:
+        try:
+            record["out"] = drive(record["state"]) or {}
+        except Exception as exc:  # noqa: BLE001
+            record["error"] = f"drive: {type(exc).__name__}: {exc}"
+    record.update(calls=counter.n, after=_quota_counts32(), events=_events_since32(last))
+    return record
+
+
+def _plain32(key, drive, setup=None, statuses=None):  # noqa: ANN001
+    """A row whose drive only returns the response; `statuses` records what a free row may answer."""
+    if statuses is not None:
+        _FREE_STATUS32[key] = set(statuses)
+    _sweep_row32(key, lambda state: {"resp": drive(state)}, setup=setup)
+
+
+def _fresh32(name, master=False):  # noqa: ANN001
+    """A new minted plan-free friend for one row: {'uid', 'h'}; with `master`, a saved master resume."""
+    uid, headers = _mint32(_c32e, name)
+    if master:
+        _as32("PUT", "/profile/resume", headers, json={"resume": _R32, "label": "Sweep32 CV"})
+    return {"uid": uid, "h": headers}
+
+
+def _call32(method, path, **kwargs):  # noqa: ANN001, ANN003
+    """A drive: the request, as the row's own user."""
+    def drive(state):  # noqa: ANN001
+        return {"resp": _as32(method, path, state["h"], **kwargs), "uid": state["uid"]}
+    return drive
+
+
+def _searching32(drive, search):  # noqa: ANN001
+    """A drive run with `routes.search_jobs` replaced by `search`: the seam every search-running route reads."""
+    def wrapped(state):  # noqa: ANN001
+        _routes32.search_jobs = search
+        try:
+            return drive(state)
+        finally:
+            _routes32.search_jobs = _real_search32d
+    return wrapped
+
+
+def _kit_owner32(name, *, done=False):  # noqa: ANN001
+    """A fresh friend with a master resume and ONE batched kit (+1 at batch time): still queued, or already run to
+    done with the fast kit fakes. The state carries the kit's id, its status and its charge event."""
+    state = _fresh32(name, master=True)
+    batch = _as32("POST", "/kits/batch", state["h"], json={"jobs": [_kit_job32(f"sweep-{state['uid']}", 1)]})
+    if done:
+        _kit_fakes32()
+        try:
+            _as32("POST", "/kits/process-next", state["h"])
+        finally:
+            _kit_reals32()
+    kits = _kits_of32(state["uid"])
+    state.update(batch=batch.status_code, kit=kits[0][0] if kits else 0, event=kits[0][3] if kits else None,
+                 kit_status=kits[0][2] if kits else "")
+    return state
+
+
+_CHARGED_DRIVES32 = [
+    (("POST", "/tailor"), False, _call32("POST", "/tailor", json={"resume": _R32, "jd": _JDJ32})),
+    (("POST", "/jobs/fit"), False, _call32("POST", "/jobs/fit", json={"resume": _R32, "jd_text": _FIT_TEXT32})),
+    (("POST", "/kits/batch"), False, _call32("POST", "/kits/batch", json={"jobs": [_kit_job32("sweep-batch", 1)]})),
+    (("POST", "/jobs/search"), False,
+     _searching32(_call32("POST", "/jobs/search", json={"resume": _R32, "customize": None}), _AlertSearch32())),
+    (("POST", "/jobs/search/stream"), False,
+     _searching32(_call32("POST", "/jobs/search/stream", json={"resume": _R32, "customize": None}), _AlertSearch32())),
+    (("POST", "/jobs/match"), False, _call32("POST", "/jobs/match", json={"resume": _R32, "listings": [_LISTING32]})),
+    (("POST", "/jobs/alerts/run"), True,
+     _searching32(_call32("POST", "/jobs/alerts/run"), _AlertSearch32(_alert_matches32("sweep-run", 41)))),
+    (("POST", "/tools/company-brief"), False, _call32("POST", "/tools/company-brief", json={
+        "resume": _R32, "company": "Acme",
+        "page_text": "Acme builds payment rails in Tel Aviv and hires backend engineers who like Python."})),
+    (("POST", "/tools/scan"), False, _call32(
+        "POST", "/tools/scan", files={"file": ("cv.txt", b"Dana Levi\nPython, SQL", "text/plain")},
+        data={"jd_text": "Python developer. Python and SQL required."})),
+    (("POST", "/tools/linkedin"), False, _call32("POST", "/tools/linkedin", json={"resume": _R32})),
+    (("POST", "/tools/follow-up"), False, _call32("POST", "/tools/follow-up", json={
+        "company": "Acme", "role": "Engineer", "stage": "after applying", "context": ""})),
+    (("POST", "/outreach"), False, _call32("POST", "/outreach", json={
+        "resume": _R32, "jd_text": "Python engineer at Acme.", "company": "Acme", "job_title": "Engineer"})),
+    (("POST", "/tools/review/rewrites"), False,
+     _call32("POST", "/tools/review/rewrites", json={"resume": _RW_CV32, "paths": []})),
+    (("POST", "/interview/questions"), False,
+     _call32("POST", "/interview/questions", json={"resume": _R32, "jd": _JDJ32})),
+    (("POST", "/interview/answer"), False, _call32("POST", "/interview/answer", json={
+        "resume": _R32, "jd": _JDJ32, "question": "Why this team?"})),
+    (("POST", "/interview/feedback"), False, _call32("POST", "/interview/feedback", json={
+        "resume": _R32, "question": "Why this team?", "answer": "I build payment systems in Python."})),
+    (("POST", "/interview/recruiter-screen"), False, _call32("POST", "/interview/recruiter-screen", json={
+        "resume": _R32, "jd_text": "Python role at Acme."})),
+    (("POST", "/interview/chat"), False, _call32("POST", "/interview/chat", json={
+        "resume": _R32, "jd_text": "", "transcript": []})),
+    (("POST", "/interview/scorecard"), False, _call32("POST", "/interview/scorecard", json={
+        "resume": _R32, "jd_text": "", "transcript": [
+            {"role": "interviewer", "text": "Tell me about a system you built."},
+            {"role": "candidate", "text": "I built a payment service in Python."}]})),
+    (("POST", "/tools/screening-answer"), False, _call32("POST", "/tools/screening-answer", json={
+        "resume": _R32, "jd_text": "Python role at Acme.", "question": "Why Acme?"})),
+    (("POST", "/cover-letter"), False, _call32("POST", "/cover-letter", json={"resume": _R32, "jd": _JDJ32})),
+]
+
+_prev32e_env = _env29(FREE_MONTHLY_USES="10", DAILY_LLM_CAP="0", DAILY_TAILOR_CAP="0", DAILY_SEARCH_CAP="0",
+                      CRON_SECRET="smoke-cron-32", INBOX_FAKE_PROVIDER="true", APP_BASE_URL="https://app.jobfinder.test")
+_ae28._resolve_sender = lambda: _capture_auth_mail28
+_go29._transport = _offline_google32
+_arm_tripwire32()
+try:
+    with TestClient(_fastapi_app) as _c32e:
+        # The charged and pass rows: each on a fresh friend, so each row's +1 is its own.
+        for _cd_key32, _cd_master32, _cd_drive32 in _CHARGED_DRIVES32:
+            _sweep_row32(_cd_key32, _cd_drive32,
+                         setup=lambda key=_cd_key32, master=_cd_master32: _fresh32(f"Sweep {key[1]}", master=master))
+
+        # The core-charged row, which is also 32.12's cron over two free users.
+        def _cron_owners32():
+            return {"uids": [
+                _alert_user32(_c32e, f"Sweep Cron Morning {i}", email=f"sweep.cron{i}.32@example.com", enabled=True)[0]
+                for i in (1, 2)
+            ]}
+
+        def _cron_drive32(state):  # noqa: ANN001
+            outbox = _Outbox32()
+            _routes32.search_jobs = _AlertSearch32(_alert_matches32("sweep-cron", 91))
+            _mail_through32(outbox)
+            try:
+                return {"resp": _as32("GET", "/jobs/alerts/cron", _CRON_H32), "uids": state["uids"],
+                        "sent": list(outbox.sent)}
+            finally:
+                _unpatch32()
+
+        _sweep_row32(("GET", "/jobs/alerts/cron"), _cron_drive32, setup=_cron_owners32)
+        for _cron_uid32 in (_sweep32[("GET", "/jobs/alerts/cron")].get("state") or {}).get("uids") or []:
+            if _cron_uid32 is not None:
+                _set_alert32(_cron_uid32, enabled=False)
+
+        # batch_paid: a kit run to done, and beside it a kit that fails.
+        _sweep_row32(("POST", "/kits/process-next"),
+                     lambda state: {"resp": _as32("POST", "/kits/process-next", state["h"]), **state},
+                     setup=lambda: _kit_owner32("Sweep Kit Runs"))
+
+        def _kit_fails_drive32(state):  # noqa: ANN001
+            def _tailor_down32(*args, **kwargs):  # noqa: ANN002, ANN003
+                raise RuntimeError("model unavailable")
+
+            _kits32.tailor_resume = _tailor_down32
+            try:
+                return {"resp": _as32("POST", "/kits/process-next", state["h"]), **state}
+            finally:
+                _kits32.tailor_resume = _real_kits_tailor32d
+
+        _sweep_row32(("POST", "/kits/process-next", "failed"), _kit_fails_drive32,
+                     setup=lambda: _kit_owner32("Sweep Kit Fails"))
+
+        # refund_only: each door over ONE still-queued kit, and its twin over a done kit, on users minted for it.
+        for _ro_key32, _ro_path32, _ro_name32 in (
+            (("DELETE", "/kits/{kit_id}"), "", "Sweep Kit Delete"),
+            (("DELETE", "/profile/data"), "/profile/data", "Sweep Delete My Data"),
+            (("DELETE", "/profile/account"), "/profile/account", "Sweep Close Account"),
+        ):
+            for _ro_done32 in (False, True):
+                _sweep_row32(
+                    _ro_key32 + (("done",) if _ro_done32 else ()),
+                    lambda state, path=_ro_path32: {
+                        "resp": _as32("DELETE", path or f"/kits/{state['kit']}", state["h"]), **state},
+                    setup=lambda name=_ro_name32, done=_ro_done32: _kit_owner32(
+                        f"{name} {'Done' if done else 'Queued'}", done=done),
+                )
+
+        # The free rows, and the capped ones, as one minted friend with a master resume.
+        _SW32.update(_fresh32("Sweep Free Routes", master=True))
+        _plain32(("GET", "/"), lambda s: _as32("GET", "/"), statuses=(200,))
+        _plain32(("GET", "/health"), lambda s: _as32("GET", "/health"), statuses=(200,))
+        _plain32(("POST", "/admin/users"),
+                 lambda s: _as32("POST", "/admin/users", _ADMIN_H, json={"name": "Sweep Minted By Admin"}),
+                 statuses=(200,))
+        _plain32(("GET", "/admin/users"), lambda s: _as32("GET", "/admin/users", _ADMIN_H), statuses=(200,))
+        _plain32(("PATCH", "/admin/users/{user_id}"),
+                 lambda s: _as32("PATCH", f"/admin/users/{_SW32['uid']}", _ADMIN_H, json={"name": "Sweep Free Routes"}),
+                 statuses=(200,))
+        _plain32(("GET", "/admin/feedback"), lambda s: _as32("GET", "/admin/feedback", _ADMIN_H), statuses=(200,))
+        _plain32(("POST", "/feedback"),
+                 lambda s: _as32("POST", "/feedback", _SW32["h"], json={"page": "/app", "text": "sweep"}),
+                 statuses=(200,))
+        _plain32(("GET", "/profile/me"), lambda s: _as32("GET", "/profile/me", _SW32["h"]), statuses=(200,))
+        _plain32(("PUT", "/profile/resume"),
+                 lambda s: _as32("PUT", "/profile/resume", _SW32["h"], json={"resume": _R32, "label": "Sweep32 CV"}),
+                 statuses=(200,))
+        _plain32(("GET", "/profile/resume"), lambda s: _as32("GET", "/profile/resume", _SW32["h"]), statuses=(200,))
+        _plain32(("GET", "/profile/resumes"), lambda s: _as32("GET", "/profile/resumes", _SW32["h"]), statuses=(200,))
+
+        def _edited_master32():
+            _as32("PUT", "/profile/resume", _SW32["h"], json={
+                "resume": dict(_R32, summary=f"{_R32.get('summary') or ''} Sweep edit."), "label": "Sweep32 CV"})
+            return {}
+
+        def _version32():
+            versions = _j28(_as32("GET", "/profile/resume/versions", _SW32["h"])).get("versions") or []
+            return {"version": versions[0]["id"] if versions else 0}
+
+        _plain32(("GET", "/profile/resume/versions"),
+                 lambda s: _as32("GET", "/profile/resume/versions", _SW32["h"]), setup=_edited_master32,
+                 statuses=(200,))
+        _plain32(("GET", "/profile/resume/versions/{version_id}"),
+                 lambda s: _as32("GET", f"/profile/resume/versions/{s['version']}", _SW32["h"]), setup=_version32,
+                 statuses=(200,))
+        _plain32(("POST", "/profile/resume/versions/{version_id}/restore"),
+                 lambda s: _as32("POST", f"/profile/resume/versions/{s['version']}/restore", _SW32["h"]),
+                 setup=_version32, statuses=(200,))
+        _plain32(("GET", "/profile/resume-prefs"), lambda s: _as32("GET", "/profile/resume-prefs", _SW32["h"]),
+                 statuses=(200,))
+        _plain32(("PUT", "/profile/resume-prefs"),
+                 lambda s: _as32("PUT", "/profile/resume-prefs", _SW32["h"], json={"hide_arabic_in_israel": False}),
+                 statuses=(200,))
+        _plain32(("GET", "/profile/writing-prefs"), lambda s: _as32("GET", "/profile/writing-prefs", _SW32["h"]),
+                 statuses=(200,))
+        _plain32(("POST", "/profile/writing-prefs"),
+                 lambda s: _as32("POST", "/profile/writing-prefs", _SW32["h"],
+                                 json={"rejected": ["leveraged cross-functional synergies"]}),
+                 statuses=(200,))
+        _plain32(("GET", "/applications"), lambda s: _as32("GET", "/applications", _SW32["h"]), statuses=(200,))
+
+        def _create_application32(state):  # noqa: ANN001
+            resp = _as32("POST", "/applications", _SW32["h"], json={"job_title": "Sweep Role", "company": "SweepCo32"})
+            _SW32["app"] = _j28(resp).get("id", 0)
+            return resp
+
+        _plain32(("POST", "/applications"), _create_application32, statuses=(200,))
+        _plain32(("GET", "/applications/nudges"), lambda s: _as32("GET", "/applications/nudges", _SW32["h"]),
+                 statuses=(200,))
+        _plain32(("GET", "/applications/{app_id}"),
+                 lambda s: _as32("GET", f"/applications/{_SW32.get('app', 0)}", _SW32["h"]), statuses=(200,))
+        _plain32(("PATCH", "/applications/{app_id}"),
+                 lambda s: _as32("PATCH", f"/applications/{_SW32.get('app', 0)}", _SW32["h"], json={"notes": "sweep"}),
+                 statuses=(200,))
+        _plain32(("DELETE", "/applications/{app_id}"),
+                 lambda s: _as32("DELETE", f"/applications/{_SW32.get('app', 0)}", _SW32["h"]), statuses=(200,))
+        _plain32(("GET", "/jobs/search-prefs"), lambda s: _as32("GET", "/jobs/search-prefs", _SW32["h"]),
+                 statuses=(200,))
+        _plain32(("PUT", "/jobs/search-prefs"),
+                 lambda s: _as32("PUT", "/jobs/search-prefs", _SW32["h"], json={"context": None}), statuses=(200,))
+        _plain32(("GET", "/jobs/history"), lambda s: _as32("GET", "/jobs/history", _SW32["h"]), statuses=(200,))
+
+        def _history_hit32():
+            d = SessionLocal()
+            try:
+                _record_hits32(d, [_JM32(title="Sweep Hit", company="SweepCo32", overall=50.0, jd_text="JD",
+                                         url="https://sweep32.test/hit/1")], _SW32["uid"])
+                return {"hit": next((h.id for h in _hits32(d, _SW32["uid"]) if h.url == "https://sweep32.test/hit/1"),
+                                    0)}
+            finally:
+                d.close()
+
+        _plain32(("DELETE", "/jobs/history/{hit_id}"),
+                 lambda s: _as32("DELETE", f"/jobs/history/{s['hit']}", _SW32["h"]), setup=_history_hit32,
+                 statuses=(200,))
+        _plain32(("DELETE", "/jobs/history"), lambda s: _as32("DELETE", "/jobs/history", _SW32["h"]), statuses=(200,))
+        _plain32(("GET", "/jobs/alerts"), lambda s: _as32("GET", "/jobs/alerts", _SW32["h"]), statuses=(200,))
+        _plain32(("PUT", "/jobs/alerts"), lambda s: _as32("PUT", "/jobs/alerts", _SW32["h"], json={
+            "enabled": False, "email": "", "context": None, "min_score": 75}), statuses=(200,))
+        _plain32(("GET", "/jobs/nudges/cron"), lambda s: _as32("GET", "/jobs/nudges/cron", _CRON_H32),
+                 statuses=(200,))
+        _plain32(("GET", "/jobs/comeet/companies"), lambda s: _as32("GET", "/jobs/comeet/companies", _SW32["h"]),
+                 statuses=(200,))
+        _plain32(("POST", "/jobs/comeet/companies"),
+                 lambda s: _as32("POST", "/jobs/comeet/companies", _ADMIN_H, json={"url": "not a comeet careers page"}),
+                 statuses=(400,))
+        _plain32(("GET", "/jobs/greenhouse/companies"),
+                 lambda s: _as32("GET", "/jobs/greenhouse/companies", _SW32["h"]), statuses=(200,))
+        _plain32(("POST", "/jobs/greenhouse/companies"),
+                 lambda s: _as32("POST", "/jobs/greenhouse/companies", _ADMIN_H, json={"board": "not a slug!"}),
+                 statuses=(400,))
+        _plain32(("POST", "/jobs/fetch"),
+                 lambda s: _as32("POST", "/jobs/fetch", _SW32["h"], json={"url": "http://127.0.0.1:9/sweep"}),
+                 statuses=(400,))
+        _plain32(("GET", "/kits"), lambda s: _as32("GET", "/kits", _SW32["h"]), statuses=(200,))
+
+        def _review_kits32():
+            d = SessionLocal()
+            try:
+                result_json = _TRes32(tailored_resume=resume).model_dump_json()
+                rows = [
+                    _TK32(user_id=_SW32["uid"], url=f"https://sweep32.test/kit/{tag}", status=status,
+                          source="linkedin", job_title=f"Sweep Kit {tag}", company="SweepCo32", jd_text=_KIT_JD,
+                          result_json=result_json)
+                    for tag, status in (("review-a", "done"), ("review-b", "done"), ("approved-c", "approved"))
+                ]
+                d.add_all(rows)
+                d.commit()
+                _SW32.update(kit_a=rows[0].id, kit_b=rows[1].id, kit_c=rows[2].id)
+                return {}
+            finally:
+                d.close()
+
+        _plain32(("GET", "/kits/{kit_id}"), lambda s: _as32("GET", f"/kits/{_SW32.get('kit_a', 0)}", _SW32["h"]),
+                 setup=_review_kits32, statuses=(200,))
+        _plain32(("POST", "/kits/{kit_id}/approve"),
+                 lambda s: _as32("POST", f"/kits/{_SW32.get('kit_a', 0)}/approve", _SW32["h"], json={}),
+                 statuses=(200,))
+        _plain32(("POST", "/kits/{kit_id}/reject"),
+                 lambda s: _as32("POST", f"/kits/{_SW32.get('kit_b', 0)}/reject", _SW32["h"], json={"reason": "sweep"}),
+                 statuses=(200,))
+        _plain32(("POST", "/kits/{kit_id}/submit"),
+                 lambda s: _as32("POST", f"/kits/{_SW32.get('kit_c', 0)}/submit", _SW32["h"]), statuses=(400,))
+        _plain32(("POST", "/render"),
+                 lambda s: _as32("POST", "/render", _SW32["h"], json={"resume": _R32, "fmt": "pdf"}), statuses=(200,))
+        _plain32(("POST", "/tools/review"),
+                 lambda s: _as32("POST", "/tools/review", _SW32["h"], json={"resume": _R32, "jd": None}),
+                 statuses=(200,))
+        _plain32(("POST", "/tools/coverage"),
+                 lambda s: _as32("POST", "/tools/coverage", _SW32["h"], json={"resume": _R32, "jd": _JDJ32}),
+                 statuses=(200,))
+        _plain32(("POST", "/tools/ats-xray"),
+                 lambda s: _as32("POST", "/tools/ats-xray", _SW32["h"], json={"resume": _R32}), statuses=(200,))
+        _plain32(("POST", "/tools/page-count"),
+                 lambda s: _as32("POST", "/tools/page-count", _SW32["h"], json={"resume": _R32}), statuses=(200,))
+        _plain32(("POST", "/resume/upload"), lambda s: _as32("POST", "/resume/upload", _SW32["h"], files={"file": (
+            "cv.txt", b"Dana Levi\nPython engineer at Acme 2020-Present\n- Built APIs", "text/plain")}))
+        _plain32(("POST", "/jd/analyze"), lambda s: _as32(
+            "POST", "/jd/analyze", _SW32["h"], json={"jd_text": "Python developer. Python and SQL required."}))
+        _plain32(("POST", "/jobs/search-context"),
+                 lambda s: _as32("POST", "/jobs/search-context", _SW32["h"], json={"resume": _R32}))
+
+        # The inbox: the demo mailbox, then everything that reads or changes what it found.
+        _plain32(("GET", "/inbox/status"), lambda s: _as32("GET", "/inbox/status", _SW32["h"]), statuses=(200,))
+        _plain32(("POST", "/inbox/google/start"),
+                 lambda s: _as32("POST", "/inbox/google/start", _SW32["h"], json={}), statuses=(404,))
+        _plain32(("GET", "/inbox/google/callback"),
+                 lambda s: _as32("GET", "/inbox/google/callback", params={"code": "sweep", "state": "sweep"},
+                                 follow_redirects=False),
+                 statuses=(302,))
+        _plain32(("POST", "/inbox/fake/connect"), lambda s: _as32("POST", "/inbox/fake/connect", _SW32["h"]),
+                 statuses=(200,))
+        _plain32(("POST", "/inbox/sync"), lambda s: _as32("POST", "/inbox/sync", _SW32["h"]))
+        _plain32(("GET", "/inbox/events"),
+                 lambda s: _as32("GET", "/inbox/events", _SW32["h"], params={"view": "recent"}), statuses=(200,))
+
+        def _inbox_event32(view, actions):  # noqa: ANN001
+            def setup():
+                events = _as32("GET", "/inbox/events", _SW32["h"], params={"view": view}).json()
+                found = next((e["id"] for e in events if e.get("action") in actions), 0) if isinstance(events, list) \
+                    else 0
+                return {"event": found}
+            return setup
+
+        def _review_event32():
+            state = _inbox_event32("review", ("review",))()
+            _SW32["resolved_event"] = state["event"]
+            return state
+
+        _plain32(("POST", "/inbox/events/{event_id}/resolve"),
+                 lambda s: _as32("POST", f"/inbox/events/{s['event']}/resolve", _SW32["h"], json={"create": True}),
+                 setup=_review_event32, statuses=(200,))
+        _plain32(("POST", "/inbox/events/{event_id}/dismiss"),
+                 lambda s: _as32("POST", f"/inbox/events/{_SW32.get('resolved_event', 0)}/dismiss", _SW32["h"]),
+                 statuses=(409,))
+        _plain32(("POST", "/inbox/events/{event_id}/undo"),
+                 lambda s: _as32("POST", f"/inbox/events/{s['event']}/undo", _SW32["h"]),
+                 setup=_inbox_event32("recent", ("created", "updated")), statuses=(200,))
+        _plain32(("GET", "/inbox/cron"), lambda s: _as32("GET", "/inbox/cron", _CRON_H32))
+        _plain32(("PATCH", "/inbox/settings"),
+                 lambda s: _as32("PATCH", "/inbox/settings", _SW32["h"], json={"auto_sync": False}), statuses=(200,))
+        _plain32(("DELETE", "/inbox/connection"),
+                 lambda s: _as32("DELETE", "/inbox/connection", _SW32["h"], params={"purge": "true"}), statuses=(200,))
+
+        # The account doors, anonymously and then on the session they hand out.
+        def _throttles_cleared32():
+            _reset_auth_throttles28()
+            return {}
+
+        def _auth_cookie32():
+            return _ck28(_AUTH32.get("token", ""), _XRW)
+
+        def _signup_drive32(state):  # noqa: ANN001
+            resp = _as32("POST", "/auth/signup", _XRW,
+                         json={"name": "Sweep Account", "email": _E1_32, "password": _PW1_32})
+            _AUTH32["token"] = resp.cookies.get("jf_session") or ""
+            return resp
+
+        _plain32(("POST", "/auth/signup"), _signup_drive32, setup=_throttles_cleared32, statuses=(200,))
+        _plain32(("POST", "/auth/resend"), lambda s: _as32("POST", "/auth/resend", _auth_cookie32()),
+                 statuses=(200, 429))
+        _plain32(("POST", "/auth/change-email"),
+                 lambda s: _as32("POST", "/auth/change-email", _auth_cookie32(), json={"email": _E2_32}),
+                 setup=_throttles_cleared32, statuses=(200,))
+        _plain32(("POST", "/auth/verify"),
+                 lambda s: _as32("POST", "/auth/verify", _auth_cookie32(), json={"code": _last_mail28(_E2_32, "code")}),
+                 statuses=(200,))
+        _plain32(("GET", "/auth/me"), lambda s: _as32("GET", "/auth/me", _auth_cookie32()), statuses=(200,))
+        _plain32(("GET", "/auth/extension-key"), lambda s: _as32("GET", "/auth/extension-key", _auth_cookie32()),
+                 statuses=(200,))
+        _plain32(("POST", "/auth/password"),
+                 lambda s: _as32("POST", "/auth/password", _auth_cookie32(),
+                                 json={"current_password": _PW1_32, "new_password": _PW2_32}),
+                 setup=_throttles_cleared32, statuses=(200,))
+        _plain32(("POST", "/auth/logout-others"), lambda s: _as32("POST", "/auth/logout-others", _auth_cookie32()),
+                 statuses=(200,))
+        _plain32(("POST", "/auth/extension-key/rotate"),
+                 lambda s: _as32("POST", "/auth/extension-key/rotate", _auth_cookie32()), statuses=(200,))
+        _plain32(("POST", "/auth/logout"), lambda s: _as32("POST", "/auth/logout", _auth_cookie32()), statuses=(200,))
+        _plain32(("POST", "/auth/login"),
+                 lambda s: _as32("POST", "/auth/login", _XRW, json={"email": _E2_32, "password": _PW2_32}),
+                 setup=_throttles_cleared32, statuses=(200,))
+        _plain32(("POST", "/auth/forgot"), lambda s: _as32("POST", "/auth/forgot", _XRW, json={"email": _E2_32}),
+                 setup=_throttles_cleared32, statuses=(200,))
+        _plain32(("POST", "/auth/reset"),
+                 lambda s: _as32("POST", "/auth/reset", _XRW, json={
+                     "token": _token_of28(_last_mail28(_E2_32, "link")), "password": _PW3_32}),
+                 statuses=(200,))
+finally:
+    _ae28._resolve_sender = _real_resolve_sender28
+    _go29._transport = _real_transport32
+    _unpatch32()
+    _disarm_tripwire32()
+    _restore29(_prev32e_env)
+
+
+def _row_out32(key):  # noqa: ANN001
+    record = _sweep32.get(key) or {}
+    return record, (record.get("out") or {})
+
+
+def _ledger_of32(record, uid):  # noqa: ANN001
+    """(feature, delta, refunded, ref) of the events a row wrote for one user."""
+    return [(e[2], e[3], e[4], e[5]) for e in record.get("events", []) if e[1] == uid]
+
+
+def _left_after32(uid):  # noqa: ANN001
+    """limit - used, read by SQL now, as the header must carry it; None with no limit."""
+    if uid is None:
+        return None
+    usage = _snap32(uid)
+    return None if usage.limit is None else str(usage.limit - usage.used)
+
+
+_cp_bad32 = {}
+for _cp_key32, _cp_cls32 in _ROUTE_COST.items():
+    _cp_kind32, _, _cp_feature32 = _cp_cls32.partition(":")
+    if _cp_kind32 not in ("charged", "pass"):
+        continue
+    _cp_rec32, _cp_out32 = _row_out32(_cp_key32)
+    _cp_resp32, _cp_uid32 = _cp_out32.get("resp"), _cp_out32.get("uid")
+    _cp_left32 = _left_after32(_cp_uid32)
+    # A cover-letter pass belongs to one posting, so its opening event carries that posting's jd_ref (B5).
+    _cp_ref32 = _ref_of32(_JDJ32) if _cp_feature32 == "cover_letter" else ""
+    if not (
+        _cp_rec32.get("error") is None and _cp_resp32 is not None and _cp_resp32.status_code == 200
+        and _ledger_of32(_cp_rec32, _cp_uid32) == [(_cp_feature32, 1, 0, _cp_ref32)]
+        and all(e[1] == _cp_uid32 for e in _cp_rec32.get("events", []))
+        and _cp_left32 == "9" and _hdr32(_cp_resp32) == _cp_left32
+    ):
+        _cp_bad32[_cp_key32] = (
+            _cp_rec32.get("error"), getattr(_cp_resp32, "status_code", None),
+            _ledger_of32(_cp_rec32, _cp_uid32), _hdr32(_cp_resp32) if _cp_resp32 is not None else None, _cp_left32,
+        )
+check(
+    "32.13(c) + 32.12 sweep, charged and pass rows: each one, driven once as a fresh plan-free friend, answers 200, "
+    "writes exactly ONE +1 event named for its class's feature and nothing for anyone else, and carries "
+    "X-Uses-Remaining == limit - used read by SQL after the write (10 - 1 = 9)",
+    len([c for c in _ROUTE_COST.values() if c.partition(":")[0] in ("charged", "pass")]) >= 21 and _cp_bad32 == {},
+    str(_cp_bad32)[:900],
+)
+_cr_rec32, _cr_out32 = _row_out32(("GET", "/jobs/alerts/cron"))
+_cr_resp32, _cr_uids32 = _cr_out32.get("resp"), _cr_out32.get("uids") or []
+_cr_results32 = (
+    {r.get("user_id"): r for r in (_j28(_cr_resp32).get("results") or [])} if _cr_resp32 is not None else {}
+)
+check(
+    "32.12 cron twin + 32.13(c) core_charged: ONE cron request that charges two free users — each morning emailed and "
+    "kept exactly its +1 job_alert — carries NO X-Uses-Remaining and no X-Uses-Pass (a write reaches the header only "
+    "for the user a request is bound to, and the cron is bound to nobody); nothing in this part reached the real "
+    "search through a default argument",
+    _cr_rec32.get("error") is None and _cr_resp32 is not None and _cr_resp32.status_code == 200
+    and len(_cr_uids32) == 2 and None not in _cr_uids32
+    and all((_cr_results32.get(uid) or {}).get("emailed") is True for uid in _cr_uids32)
+    and all(_ledger_of32(_cr_rec32, uid) == [("job_alert", 1, 0, "")] for uid in _cr_uids32)
+    and _hdr32(_cr_resp32) is None and "x-uses-pass" not in _cr_resp32.headers
+    and _tripped32 == [],
+    f"err={_cr_rec32.get('error')} {getattr(_cr_resp32, 'status_code', None)} "
+    f"{[(uid, _cr_results32.get(uid), _ledger_of32(_cr_rec32, uid)) for uid in _cr_uids32]} "
+    f"hdr={_hdr32(_cr_resp32) if _cr_resp32 is not None else None} tripped={_tripped32}",
+)
+_bp_rec32, _bp_out32 = _row_out32(("POST", "/kits/process-next"))
+_bf_rec32, _bf_out32 = _row_out32(("POST", "/kits/process-next", "failed"))
+_bp_resp32, _bf_resp32 = _bp_out32.get("resp"), _bf_out32.get("resp")
+check(
+    "32.13(c) batch_paid: /kits/process-next was paid at batch time — a kit it runs to done writes NO ledger event and "
+    "carries no header although the pipeline made model calls, while a kit that fails gives back exactly its one use "
+    "(-1 refund:<event>:kit:<kit>) with X-Uses-Remaining == limit - used (10)",
+    _bp_rec32.get("error") is None and _bp_resp32 is not None and _bp_resp32.status_code == 200
+    and _bp_out32.get("batch") == 200 and (_j28(_bp_resp32).get("kit") or {}).get("status") == "done"
+    and _bp_rec32.get("events") == [] and _bp_rec32.get("before") == _bp_rec32.get("after")
+    and _hdr32(_bp_resp32) is None and _bp_rec32.get("calls", 0) > 0
+    and _bf_rec32.get("error") is None and _bf_resp32 is not None and _bf_resp32.status_code == 200
+    and (_j28(_bf_resp32).get("kit") or {}).get("status") == "failed"
+    and [(e[1], e[2], e[3], e[5]) for e in _bf_rec32.get("events", [])]
+    == [(_bf_out32.get("uid"), "tailor", -1, f"refund:{_bf_out32.get('event')}:kit:{_bf_out32.get('kit')}")]
+    and _hdr32(_bf_resp32) == _left_after32(_bf_out32.get("uid")) == "10",
+    f"done: err={_bp_rec32.get('error')} {getattr(_bp_resp32, 'status_code', None)} "
+    f"{_bp_resp32.text[:120] if _bp_resp32 is not None else ''} events={_bp_rec32.get('events')} "
+    f"calls={_bp_rec32.get('calls')} | failed: err={_bf_rec32.get('error')} events={_bf_rec32.get('events')} "
+    f"hdr={_hdr32(_bf_resp32) if _bf_resp32 is not None else None}",
+)
+_ro_bad32 = {}
+for _ro_check_key32 in (("DELETE", "/kits/{kit_id}"), ("DELETE", "/profile/data"), ("DELETE", "/profile/account")):
+    _rq_rec32, _rq_out32 = _row_out32(_ro_check_key32)
+    _rd_rec32, _rd_out32 = _row_out32(_ro_check_key32 + ("done",))
+    _rq_resp32, _rd_resp32 = _rq_out32.get("resp"), _rd_out32.get("resp")
+    _rq_ok32 = (
+        _rq_rec32.get("error") is None and _rq_resp32 is not None and _rq_resp32.status_code == 200
+        and _rq_out32.get("batch") == 200 and _rq_out32.get("kit_status") == "queued"
+        and [(e[1], e[2], e[3], e[5]) for e in _rq_rec32.get("events", [])]
+        == [(_rq_out32.get("uid"), "tailor", -1, f"refund:{_rq_out32.get('event')}:kit:{_rq_out32.get('kit')}")]
+        and _hdr32(_rq_resp32) == _left_after32(_rq_out32.get("uid")) == "10"
+    )
+    _rd_ok32 = (
+        _rd_rec32.get("error") is None and _rd_resp32 is not None and _rd_resp32.status_code == 200
+        and _rd_out32.get("kit_status") == "done"
+        and _rd_rec32.get("events") == [] and _rd_rec32.get("before") == _rd_rec32.get("after")
+        and _hdr32(_rd_resp32) is None
+    )
+    if not (_rq_ok32 and _rd_ok32):
+        _ro_bad32[_ro_check_key32] = (
+            _rq_rec32.get("error"), getattr(_rq_resp32, "status_code", None), _rq_out32.get("kit_status"),
+            _rq_rec32.get("events"), _hdr32(_rq_resp32) if _rq_resp32 is not None else None,
+            "| done:", _rd_rec32.get("error"), getattr(_rd_resp32, "status_code", None), _rd_out32.get("kit_status"),
+            _rd_rec32.get("events"), _hdr32(_rd_resp32) if _rd_resp32 is not None else None,
+        )
+check(
+    "32.13(c) refund_only: deleting a kit, 'Delete my data' and 'Close my account' — each driven on a user minted for "
+    "it holding ONE still-queued kit — write exactly one -1 refund:<event>:kit:<kit> and carry X-Uses-Remaining == "
+    "limit - used (10); beside each, the same door over a DONE kit writes zero rows and carries no header",
+    _ro_bad32 == {},
+    str(_ro_bad32)[:900],
+)
+_cap_bad32 = {}
+for _cap_key32, _cap_cls32 in _ROUTE_COST.items():
+    _cap_kind32 = _cap_cls32.partition(":")[0]
+    if _cap_kind32 not in ("free_capped", "own_cap"):
+        continue
+    _cap_rec32, _cap_out32 = _row_out32(_cap_key32)
+    _cap_resp32 = _cap_out32.get("resp")
+    _cap_ok32 = (
+        _cap_rec32.get("error") is None and _cap_resp32 is not None and _cap_resp32.status_code == 200
+        and _cap_rec32.get("events") == [] and _cap_rec32.get("before") == _cap_rec32.get("after")
+        and _hdr32(_cap_resp32) is None
+    )
+    if _cap_kind32 == "free_capped":
+        _cap_ok32 = _cap_ok32 and _cap_rec32.get("calls", 0) > 0
+    if not _cap_ok32:
+        _cap_bad32[_cap_key32] = (
+            _cap_rec32.get("error"), getattr(_cap_resp32, "status_code", None),
+            _cap_resp32.text[:100] if _cap_resp32 is not None else "", _cap_rec32.get("events"), _cap_rec32.get("calls"),
+        )
+_sync_resp32 = _row_out32(("POST", "/inbox/sync"))[1].get("resp")
+_sync_body32 = _j28(_sync_resp32) if _sync_resp32 is not None else {}
+check(
+    "32.13(c) the capped rows stay off the pool: a resume upload, a JD analysis and a search context each reach the "
+    "model (calls > 0), an inbox sync reads the demo mailbox with the model (llm_calls > 0), and the inbox cron runs "
+    "— every one a 200 that writes zero quota rows and carries no uses header",
+    _cap_bad32 == {} and (_sync_body32.get("llm_calls") or 0) > 0,
+    f"{str(_cap_bad32)[:700]} sync={str(_sync_body32)[:160]}",
+)
+_free_bad32 = {}
+for _free_key32, _free_cls32 in _ROUTE_COST.items():
+    if _free_cls32 != "free":
+        continue
+    _free_rec32, _free_out32 = _row_out32(_free_key32)
+    _free_resp32 = _free_out32.get("resp")
+    if not (
+        _free_rec32.get("error") is None and _free_resp32 is not None
+        and _free_resp32.status_code in _FREE_STATUS32.get(_free_key32, {200})
+        and _free_rec32.get("events") == [] and _free_rec32.get("before") == _free_rec32.get("after")
+        and _hdr32(_free_resp32) is None and "x-uses-pass" not in _free_resp32.headers
+    ):
+        _free_bad32[_free_key32] = (
+            _free_rec32.get("error"), getattr(_free_resp32, "status_code", None),
+            _free_resp32.text[:100] if _free_resp32 is not None else "", _free_rec32.get("events"),
+        )
+check(
+    "32.13(c) free rows: every one — driven as the minted friend, as the admin for the admin-only routes, or "
+    "anonymously and then on its own session for the account doors — answers its expected status and writes ZERO "
+    "rows in the three quota tables, with no uses header",
+    _free_bad32 == {},
+    str(_free_bad32)[:900],
+)
+_free_calls32 = {key: (_sweep32.get(key) or {}).get("calls", 0) for key, cls in _ROUTE_COST.items() if cls == "free"}
+_DETERMINISTIC32 = (("POST", "/render"), ("POST", "/tools/review"), ("POST", "/tools/coverage"),
+                    ("POST", "/tools/ats-xray"), ("POST", "/tools/page-count"), ("POST", "/jobs/fetch"))
+check(
+    "32.13(c) the /tools/ats-scan catch: no driven row that made a stub model call is classed free — every free row "
+    "made ZERO calls on the StubClient class — and the counter is live: the tailor, the fit check, a resume upload and "
+    "the kit pipeline each made calls, while the six deterministic routes (render, review, coverage, x-ray, page "
+    "count, fetch) were driven and made none",
+    [key for key, n in _free_calls32.items() if n > 0] == []
+    and all((_sweep32.get(key) or {}).get("calls", 0) > 0
+            for key in (("POST", "/tailor"), ("POST", "/jobs/fit"), ("POST", "/resume/upload"),
+                        ("POST", "/kits/process-next")))
+    and all(key in _sweep32 and _free_calls32.get(key) == 0 for key in _DETERMINISTIC32),
+    f"free with calls={ {key: n for key, n in _free_calls32.items() if n > 0} } "
+    f"live={[(key, (_sweep32.get(key) or {}).get('calls')) for key in (('POST', '/tailor'), ('POST', '/resume/upload'))]}",
+)
+check(
+    "32.13(c) the sweep drove every row of _ROUTE_COST — no mounted route was left undriven",
+    {key for key in _sweep32 if len(key) == 2} == set(_ROUTE_COST),
+    f"undriven={sorted(set(_ROUTE_COST) - set(_sweep32))}",
+)
 
 _reached_end = True
 print(f"\n{_ran} checks ran.")

@@ -165,7 +165,11 @@ class Settings(BaseSettings):
 
     # Job alerts (PLAN 6): SMTP for the alert emails + the Vercel cron secret.
     # Vercel sends "Authorization: Bearer <CRON_SECRET>" on cron invocations
-    # when the CRON_SECRET env var exists; unset = the cron endpoint is open.
+    # when the CRON_SECRET env var exists. With the access gate on
+    # (APP_ACCESS_CODE set) and no secret, the alerts cron and the inbox cron
+    # refuse with 503 cron_unconfigured (Phase 30 / B6.1: a morning can spend a
+    # free user's monthly use); the nudges cron reaches no model and stays open.
+    # With the gate off (local dev) an unset secret leaves the crons open.
     cron_secret: str = ""
     # Wall-clock budget for one alerts-cron tick (PLAN 20.5/C2). One alert is a
     # full multi-board fan-out plus up to 25 LLM scoring calls, and Vercel kills

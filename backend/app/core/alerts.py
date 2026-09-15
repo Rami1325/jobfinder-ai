@@ -26,21 +26,32 @@ shows and what `load_score_cache` reads, so skipping the below-bar rows would
 make every daily cron re-score them from scratch — the cache exists precisely to
 stop that. And a posting hidden from the inbox is still one the user can find in
 the app; a posting missing from history is one we deliberately lost.
+
+MONTHLY USES (Phase 30 / B6). A scheduled morning costs a free user one use,
+reserved before its search, and keeps it only when the morning emails jobs:
+nothing above the bar, zero matches, a blank address, no SMTP, a failed send
+or a raise all give it back. With no use left the morning is skipped
+(`last_skip`), and the alerts card reads paused until the 1st (`pause_state`,
+worked out from the pool when the card is read). "Run now" is a search the
+user pressed: its route charges one `search` use and passes it in, and the run
+keeps it whenever its search completed, because the results are in History.
 """
 from __future__ import annotations
 
 import html as html_lib
+import logging
 import math
 import time
 from datetime import datetime, timezone
 from functools import partial
 from typing import Callable
 
+from fastapi import HTTPException
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.core import mailer
+from app.core import mailer, quota
 from app.core.job_search import resume_hash, search_jobs
 from app.db.history import load_score_cache, record_search_hits
 from app.db.models import JobAlert, JobSearchHit, SavedResume, User
@@ -53,6 +64,8 @@ from app.models import (
     ResumeModel,
     SearchContext,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Default fit bar for a new (or never-configured) alert. 75 is not a new opinion:
@@ -542,112 +555,252 @@ def _master_resume(db: Session, user_id: int) -> ResumeModel | None:
     return None
 
 
+# The default for `run_alert(send_fn=...)`, resolved when the run sends (see `_resolve_send`).
+_DEFAULT_SEND = object()
+
+
+def _resolve_send(send_fn: object) -> Callable[..., None] | None:
+    """What a run sends its mail with, or None when it cannot send.
+
+    The default reads `mailer.send_email` and `mailer.smtp_configured` through the
+    MODULE at call time. A binding taken at import would bypass anything that
+    patches those two attributes later, which is exactly how the offline suite
+    captures an alert email (Part J's checks do it)."""
+    if send_fn is _DEFAULT_SEND:
+        return mailer.send_email if mailer.smtp_configured() else None
+    return send_fn  # type: ignore[return-value]
+
+
+def _is_monthly_limit(exc: HTTPException) -> bool:
+    detail = exc.detail
+    return exc.status_code == 429 and isinstance(detail, dict) and detail.get("code") == "monthly_limit"
+
+
+def _give_back(db: Session, charge: quota.Charge | None) -> None:
+    """Refund a run's use; a second call gives nothing (`refund_units` refunds a
+    charge at most once). Best effort: bookkeeping may never turn a run into a raise."""
+    if charge is None:
+        return
+    try:
+        charge.refund(db)
+    except Exception:  # noqa: BLE001 - the run's own outcome is what gets reported
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning("alert run: giving back use %s did not complete", charge.event_id, exc_info=True)
+
+
+def _record_error(db: Session, row: JobAlert, message: str, *, stamp_run: bool, clear_skip: bool) -> None:
+    """Write a run's error onto its settings row, best effort: a failing commit
+    here must not become the raise `run_alert` promises never to make."""
+    try:
+        if stamp_run:
+            row.last_run_at = datetime.now(timezone.utc)
+        if clear_skip:
+            row.last_skip = ""
+        row.last_error = message[:500]
+        db.commit()
+    except Exception:  # noqa: BLE001
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def pause_state(db: Session, user: User, row: JobAlert, *, now: datetime) -> tuple[str, str]:
+    """Why the alert is paused right now and when it resumes: ("monthly_limit",
+    the 1st of next month as YYYY-MM-DD) for an enabled alert whose owner has a
+    monthly limit and no use left this month; otherwise ("", "").
+
+    Worked out from the POOL when the card is read, never from `last_skip`, which
+    only records that a morning was skipped. So the card reads paused the moment
+    any feature spends the last use, and a new month clears it with no write."""
+    if not row.enabled or quota.limit_for(user) is None:
+        return "", ""
+    usage = quota.snapshot(db, user, now)
+    if usage.remaining == 0:
+        return "monthly_limit", usage.resets_on
+    return "", ""
+
+
 def run_alert(
     db: Session,
     user_id: int,
     *,
     force: bool = False,
     search_fn: Callable[..., JobSearchResult] = search_jobs,
+    charge: quota.Charge | None = None,
+    send_fn: object = _DEFAULT_SEND,
+    now: datetime | None = None,
 ) -> AlertRunResult:
     """Execute one alert run for one user. `force=True` runs even when the
     toggle is off (the UI's "Run now"). Never raises: failures land in
-    `last_error` and the returned result so the cron caller always gets a 200
-    with the outcome. `search_fn` is called as
-    `search_fn(resume, context, cache=..., sightings_fn=...)` — fakes must accept
-    BOTH kwargs."""
+    `last_error` and the returned result, so the cron caller always gets a 200
+    with the outcome and one user's failure never stops the next. `search_fn` is
+    called as `search_fn(resume, context, cache=..., sightings_fn=...)` — fakes
+    must accept BOTH kwargs.
+
+    Monthly uses (Phase 30 / B6):
+
+    - With `charge=None` (the cron, and every direct call) the run reserves one
+      `job_alert` use once it knows it will search, after the enabled and
+      master-resume checks, and KEEPS it only if the morning emailed jobs.
+      Nothing above the bar, zero matches, a blank address, no SMTP, a failed
+      send or a raise all give it back. With no use left the morning does not
+      run: `last_skip` is set, `last_run_at` is left alone and the result says
+      `skipped_reason="monthly_limit"`. A reserve that succeeds clears
+      `last_skip`. An owner with no monthly limit writes nothing.
+    - With a `charge` ("Run now", which its route already charged one `search`
+      use) nothing is reserved here, and the use is given back only when there
+      was no master resume or the search itself failed. A search that completed
+      keeps it whatever the email did, because its results are in History.
+
+    `send_fn` defaults to the mailer, read at call time (`_resolve_send`); `now`
+    is the aware clock the reserve reads (default: the real time).
+    """
     row = get_alert(db, user_id)
     if not row.enabled and not force:
         return AlertRunResult(user_id=user_id, ran=False, error="Alerts are disabled.")
     resume = _master_resume(db, user_id)
     if resume is None:
+        _give_back(db, charge)
         row.last_error = "No master resume saved yet."
         db.commit()
         return AlertRunResult(user_id=user_id, ran=False, error=row.last_error)
 
-    # PLAN 12.4: the daily cron re-surfaces mostly the SAME postings every
-    # morning — the score cache turns those into zero-LLM, zero-fetch reuse
-    # when the master resume hasn't changed since they were last scored.
-    master_hash = resume_hash(resume)
-    try:  # the cache is an optimization — an unreadable history must not kill the run
-        cache = load_score_cache(db, user_id, master_hash)
-    except Exception:  # noqa: BLE001
-        cache = {}
-
-    # The ghost detector's market memory (PLAN 28.3). `search_fn` calls it ONCE
-    # on this thread before its scoring pool, so it can share the run's session.
-    # Bare, not wrapped like `cache` above: `search_jobs` already catches what
-    # this raises and falls back to no sightings, and a second try/except here
-    # would be a second owner of one policy.
-    #
-    # THE CRON IS WHAT MAKES `long_open` HONEST, so this call site is not one of
-    # three equivalent ones. A daily alert run is a daily sample of the market,
-    # which is what turns `first_seen_at` from "the day someone happened to
-    # search" into a real lower bound on a posting's age, within weeks of deploy.
-    try:
-        result = search_fn(
-            resume, alert_context(row), cache=cache, sightings_fn=partial(load_sightings, db)
-        )
-        new = split_new_matches(db, result.matches, user_id)
-        record_search_hits(db, result.matches, user_id, resume_hash=master_hash)
-    except Exception as e:  # noqa: BLE001 - report, don't crash the cron
-        row.last_run_at = datetime.now(timezone.utc)
-        row.last_error = str(e)[:500]
-        db.commit()
-        return AlertRunResult(user_id=user_id, ran=True, error=row.last_error)
-
-    # READ BEFORE WRITE (PLAN 28.3): the reader above ran INSIDE the search;
-    # this records what that search found. Reversed, every posting would be
-    # stamped `first_seen_at = now` and then read back in the same run, so
-    # `long_open` would measure each posting's age against the moment we noticed
-    # it — zero days, always, for ever. The signal would pass by never firing.
-    #
-    # In its OWN best-effort block rather than the try above, because the two
-    # have different consequences: a failure inside that try abandons the run and
-    # the user loses this morning's email, while this is bookkeeping for
-    # TOMORROW's ghost signals. `usage.record_tokens` keeps the same rule and the
-    # same shape — rollback rather than `pass`, so a half-written upsert cannot
-    # leave the session dirty for the settings commit further down.
-    try:
-        record_sightings(db, result.matches, datetime.now(timezone.utc))
-    except Exception:  # noqa: BLE001 - never lose a served run over bookkeeping
-        db.rollback()
-
-    # The bar, applied AFTER record_search_hits above: below-bar postings are
-    # kept out of the inbox and kept in the history the app reads and the score
-    # cache reuses. `new` stays the diff's answer ("never seen before") and
-    # `worth` is the email's ("...and worth your morning") — two questions, two
-    # numbers, because a run that finds 12 and emails 3 must not look like a run
-    # that found 3.
-    min_score = alert_min_score(row)
-    worth = above_min(new, min_score)
+    # The morning's own use, taken before anything that costs money and outside
+    # the try below: a refusal at the limit is a skip, not a failure. Any other
+    # refusal is reported rather than raised, or it would stop the cron.
+    own_use = charge is None
+    if own_use:
+        try:
+            charge = quota.reserve(db, db.get(User, user_id), "job_alert", now=now)
+        except HTTPException as exc:
+            if _is_monthly_limit(exc):
+                row.last_skip = "monthly_limit"
+                db.commit()
+                return AlertRunResult(user_id=user_id, ran=False, skipped_reason="monthly_limit")
+            db.rollback()
+            _record_error(db, row, f"Could not start the run: {exc.detail}", stamp_run=False, clear_skip=False)
+            return AlertRunResult(user_id=user_id, ran=False, error=f"Could not start the run: {exc.detail}"[:500])
+        except Exception as exc:  # noqa: BLE001 - never raise: the next user must still run
+            db.rollback()
+            _record_error(db, row, f"Could not start the run: {exc}", stamp_run=False, clear_skip=False)
+            return AlertRunResult(user_id=user_id, ran=False, error=f"Could not start the run: {exc}"[:500])
 
     emailed = False
-    email_error = ""
-    if worth and row.email and mailer.smtp_configured():
-        subject, body = build_alert_email(worth, result.context, min_score)
-        html = build_alert_email_html(
-            worth, result.context, app_url=get_settings().app_base_url, min_score=min_score
-        )
+    try:
         try:
-            mailer.send_email(row.email, subject, body, html=html)
-            emailed = True
-        except Exception as e:  # noqa: BLE001
-            email_error = f"Email failed: {e}"
+            # PLAN 12.4: the daily cron re-surfaces mostly the SAME postings every
+            # morning — the score cache turns those into zero-LLM, zero-fetch reuse
+            # when the master resume hasn't changed since they were last scored.
+            master_hash = resume_hash(resume)
+            try:  # the cache is an optimization — an unreadable history must not kill the run
+                cache = load_score_cache(db, user_id, master_hash)
+            except Exception:  # noqa: BLE001
+                cache = {}
 
-    row.last_run_at = datetime.now(timezone.utc)
-    row.last_new_count = len(new)
-    row.last_above_min = len(worth)
-    row.last_error = email_error
-    db.commit()
-    return AlertRunResult(
-        user_id=user_id,
-        ran=True,
-        total=len(result.matches),
-        new_count=len(new),
-        above_min=len(worth),
-        emailed=emailed,
-        error=email_error,
-    )
+            # The ghost detector's market memory (PLAN 28.3). `search_fn` calls it ONCE
+            # on this thread before its scoring pool, so it can share the run's session.
+            # Bare, not wrapped like `cache` above: `search_jobs` already catches what
+            # this raises and falls back to no sightings, and a second try/except here
+            # would be a second owner of one policy.
+            #
+            # THE CRON IS WHAT MAKES `long_open` HONEST, so this call site is not one of
+            # three equivalent ones. A daily alert run is a daily sample of the market,
+            # which is what turns `first_seen_at` from "the day someone happened to
+            # search" into a real lower bound on a posting's age, within weeks of deploy.
+            result = search_fn(
+                resume, alert_context(row), cache=cache, sightings_fn=partial(load_sightings, db)
+            )
+            new = split_new_matches(db, result.matches, user_id)
+            record_search_hits(db, result.matches, user_id, resume_hash=master_hash)
+        except Exception as e:  # noqa: BLE001 - report, don't crash the cron
+            # Rolled back BEFORE the refund, so nothing the failed search left
+            # pending can ride the refund's commit. The search did not complete,
+            # so the use comes back, the morning's or Run now's alike.
+            db.rollback()
+            _give_back(db, charge)
+            row.last_run_at = datetime.now(timezone.utc)
+            row.last_error = str(e)[:500]
+            if own_use:
+                row.last_skip = ""
+            db.commit()
+            return AlertRunResult(user_id=user_id, ran=True, error=row.last_error)
+
+        # READ BEFORE WRITE (PLAN 28.3): the reader above ran INSIDE the search;
+        # this records what that search found. Reversed, every posting would be
+        # stamped `first_seen_at = now` and then read back in the same run, so
+        # `long_open` would measure each posting's age against the moment we noticed
+        # it — zero days, always, for ever. The signal would pass by never firing.
+        #
+        # In its OWN best-effort block rather than the try above, because the two
+        # have different consequences: a failure inside that try abandons the run and
+        # the user loses this morning's email, while this is bookkeeping for
+        # TOMORROW's ghost signals. `usage.record_tokens` keeps the same rule and the
+        # same shape — rollback rather than `pass`, so a half-written upsert cannot
+        # leave the session dirty for the settings commit further down.
+        try:
+            record_sightings(db, result.matches, datetime.now(timezone.utc))
+        except Exception:  # noqa: BLE001 - never lose a served run over bookkeeping
+            db.rollback()
+
+        # The bar, applied AFTER record_search_hits above: below-bar postings are
+        # kept out of the inbox and kept in the history the app reads and the score
+        # cache reuses. `new` stays the diff's answer ("never seen before") and
+        # `worth` is the email's ("...and worth your morning") — two questions, two
+        # numbers, because a run that finds 12 and emails 3 must not look like a run
+        # that found 3.
+        min_score = alert_min_score(row)
+        worth = above_min(new, min_score)
+
+        send = _resolve_send(send_fn)
+        email_error = ""
+        if worth and row.email and send is not None:
+            subject, body = build_alert_email(worth, result.context, min_score)
+            html = build_alert_email_html(
+                worth, result.context, app_url=get_settings().app_base_url, min_score=min_score
+            )
+            try:
+                send(row.email, subject, body, html=html)
+                emailed = True
+            except Exception as e:  # noqa: BLE001
+                email_error = f"Email failed: {e}"
+
+        # A morning keeps its use only if it emailed jobs. Run now keeps its use
+        # here whatever the email did: its search completed and History holds it.
+        if own_use and not (emailed and worth):
+            _give_back(db, charge)
+        row.last_run_at = datetime.now(timezone.utc)
+        row.last_new_count = len(new)
+        row.last_above_min = len(worth)
+        row.last_error = email_error
+        if own_use:
+            row.last_skip = ""
+        db.commit()
+        return AlertRunResult(
+            user_id=user_id,
+            ran=True,
+            total=len(result.matches),
+            new_count=len(new),
+            above_min=len(worth),
+            emailed=emailed,
+            error=email_error,
+        )
+    except Exception as e:  # noqa: BLE001 - never raise: one user's failure must not stop the cron
+        # Anything after the reserve: roll back, give the morning's use back unless
+        # it already emailed jobs, and report. Run now's use stays spent here,
+        # because its search had completed before anything could raise.
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        if own_use and not emailed:
+            _give_back(db, charge)
+        message = (str(e) or type(e).__name__)[:500]
+        _record_error(db, row, message, stamp_run=True, clear_skip=own_use)
+        return AlertRunResult(user_id=user_id, ran=True, error=message)
 
 
 def due_user_ids(db: Session) -> list[int]:

@@ -460,10 +460,11 @@ def inbox_disconnect(
 @router.get("/inbox/cron", response_model=InboxCronResult)
 def inbox_cron(request: Request, db: Session = Depends(get_db)) -> InboxCronResult:
     """Vercel cron entrypoint, twice a day (vercel.json). `_AUTH_OPTIONAL` in
-    main.py; authenticates with the Bearer CRON_SECRET like the alert crons —
-    except that it FAILS CLOSED (amendment A12): with the gate on and no secret it
-    refuses, because an open copy of this route would refresh every user's Gmail
-    grant and spend model calls for anyone who found the URL."""
+    main.py; authenticates with the Bearer CRON_SECRET, and like the alerts cron
+    (Phase 30 / B6.1) it FAILS CLOSED (amendment A12): with the gate on and no
+    secret it refuses, because an open copy of this route would refresh every
+    user's Gmail grant and spend model calls for anyone who found the URL. Only
+    the nudges cron, which reaches no model, still runs without a secret."""
     s = get_settings()
     secret = s.cron_secret
     if not secret:

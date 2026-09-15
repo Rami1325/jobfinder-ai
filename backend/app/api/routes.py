@@ -997,7 +997,10 @@ def clear_jobs_history(
 # --------------------------------------------------------------------------- #
 # Job alerts (PLAN 6): saved-search re-runs on a schedule, email new hits
 # --------------------------------------------------------------------------- #
-def _alert_out(row) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert ORM row
+def _alert_out(row, db: Session, user: User) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert ORM row
+    # Phase 30 / B6.5: paused or not is read off the pool NOW, in both GET and
+    # PUT, so the card says paused the moment any feature spends the last use.
+    paused_reason, resumes_on = alerts_core.pause_state(db, user, row, now=quota.utc_now())
     return AlertSettingsOut(
         enabled=row.enabled,
         email=row.email,
@@ -1009,6 +1012,8 @@ def _alert_out(row) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert ORM row
         nudge_emails=bool(row.nudge_emails),
         min_score=alerts_core.alert_min_score(row),
         last_above_min=row.last_above_min,  # `or 0` would erase the unknown/zero split
+        paused_reason=paused_reason,
+        resumes_on=resumes_on,
     )
 
 
@@ -1016,7 +1021,7 @@ def _alert_out(row) -> AlertSettingsOut:  # noqa: ANN001 - JobAlert ORM row
 def get_job_alert(
     db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> AlertSettingsOut:
-    return _alert_out(alerts_core.get_alert(db, user.id))
+    return _alert_out(alerts_core.get_alert(db, user.id), db, user)
 
 
 @router.put("/jobs/alerts", response_model=AlertSettingsOut)
@@ -1036,26 +1041,55 @@ def update_job_alert(
         nudge_emails=body.nudge_emails,
         min_score=body.min_score,
     )
-    return _alert_out(row)
+    return _alert_out(row, db, user)
 
 
 @router.post("/jobs/alerts/run", response_model=AlertRunResult)
 def run_job_alert(
-    db: Session = Depends(get_db), user: User = Depends(current_user)
+    db: Session = Depends(get_db), user: User = Depends(metered_user)
 ) -> AlertRunResult:
-    """Manual 'Run now' from the UI — runs even when the toggle is off."""
-    return alerts_core.run_alert(db, user.id, force=True)
+    """Manual 'Run now' from the UI — runs even when the toggle is off.
+
+    A search the user pressed, charged like one (Phase 30 / B6.4). It used to be
+    an unlimited free ranked search: no daily cap, every scored match recorded to
+    History, and History hands back the fit, the gaps and the posting text. Now
+    the daily search cap comes first, then one `search` use, both before anything
+    runs; at the limit that is a plain 429, and the alert's `last_skip` is left
+    alone (that line is about the scheduled mornings). The run keeps the use
+    whenever its search completed (zero matches, nothing above the bar, no
+    address, no SMTP and a failed send included) and gives it back only when
+    there was no master resume or the search itself failed. Never wrapped in
+    `quota.charged`: `run_alert` never raises, so that wrapper would never refund.
+    The search is passed explicitly so a test can patch `routes.search_jobs`, and
+    `metered_user` records the scoring tokens.
+    """
+    user_id = user.id
+    check_and_count(db, user, "search", get_settings().daily_search_cap)
+    charge = quota.reserve(db, user, "search", now=quota.utc_now())
+    return alerts_core.run_alert(db, user_id, force=True, search_fn=search_jobs, charge=charge)
 
 
 @router.get("/jobs/alerts/cron", response_model=AlertCronResult)
 def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertCronResult:
-    """Vercel cron entrypoint (exempt from the X-App-Key gate — see main.py).
-    When CRON_SECRET is set, Vercel sends it as a Bearer token; require it.
-    Runs every active user's enabled alert (PLAN 7.3)."""
-    secret = get_settings().cron_secret
-    if secret:
+    """Vercel cron entrypoint (exempt from the X-App-Key gate — see main.py),
+    authenticated by the Bearer CRON_SECRET Vercel sends. Runs every active
+    user's enabled alert (PLAN 7.3).
+
+    It FAILS CLOSED like the inbox cron (Phase 30 / B6.1): with the gate on and no
+    secret configured it refuses with 503 cron_unconfigured. Each morning it runs
+    can spend a free user's monthly use, and a refunded morning stays bounded to
+    once a day only while this Bearer check runs. The search is passed
+    explicitly, as Run now does, so a test can patch `routes.search_jobs`; one
+    user's failure cannot stop the next, because `run_alert` never raises.
+    """
+    s = get_settings()
+    secret = s.cron_secret
+    if not secret:
+        if s.app_access_code:
+            raise HTTPException(503, detail={"code": "cron_unconfigured"})
+    else:
         auth = request.headers.get("authorization", "")
-        if not hmac.compare_digest(auth, f"Bearer {secret}"):
+        if not hmac.compare_digest(auth.encode("utf-8"), f"Bearer {secret}".encode("utf-8")):
             raise HTTPException(401, "Bad cron secret.")
     # Phase 30 / B2: quota rows older than the previous month are pruned here and
     # by the inbox cron, not only on a day's first reserve, or a quiet instance
@@ -1065,16 +1099,17 @@ def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertCron
         quota.prune(db, quota.utc_now())
     except Exception:  # noqa: BLE001 - best effort
         db.rollback()
-    results, skipped = alerts_core.run_all_alerts(db)
+    results, skipped = alerts_core.run_all_alerts(db, search_fn=search_jobs)
     return AlertCronResult(users=len(results) + skipped, results=results, skipped=skipped)
 
 
 @router.get("/jobs/nudges/cron", response_model=NudgeCronResult)
 def cron_nudges(request: Request, db: Session = Depends(get_db)) -> NudgeCronResult:
     """Vercel cron entrypoint for stale-application nudges (PLAN 11.4) —
-    exempt from the X-App-Key gate (see main.py), guarded by the same Bearer
-    CRON_SECRET as the alerts cron. Emails every opted-in user whose 'applied'
-    applications newly went stale."""
+    exempt from the X-App-Key gate (see main.py) and guarded by the same Bearer
+    CRON_SECRET. Unlike the alerts cron it stays open when no secret is set: it
+    reaches no model and spends no use, and Phase 30 leaves it as it was. Emails
+    every opted-in user whose 'applied' applications newly went stale."""
     secret = get_settings().cron_secret
     if secret:
         auth = request.headers.get("authorization", "")

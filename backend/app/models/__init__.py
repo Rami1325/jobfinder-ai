@@ -439,13 +439,18 @@ class AlertSettingsOut(BaseModel):
     # the bar and never measured it — which is NOT the same as 0 ("it measured,
     # and none cleared"). The card renders its pre-bar line for None.
     last_above_min: Optional[int] = None
+    # Phase 30 / B6.5: "monthly_limit" while the owner's monthly uses are spent,
+    # so the morning emails stop until the 1st; "" otherwise. Worked out from the
+    # pool when the card is read, never from the last morning's skip.
+    paused_reason: str = ""
+    # "YYYY-MM-DD", the 1st of next month, while paused; "" otherwise.
+    resumes_on: str = ""
 
 
 class AlertRunResult(BaseModel):
     # Whose run this was. The cron returns a list of these and, since PLAN
     # 20.5/C2, runs users longest-unrun-first — so position no longer implies
-    # identity and an anonymous outcome is undebuggable. 0 for a manual
-    # "Run now", where the caller already knows.
+    # identity and an anonymous outcome is undebuggable.
     user_id: int = 0
     ran: bool = False
     total: int = 0  # jobs the search returned
@@ -457,6 +462,10 @@ class AlertRunResult(BaseModel):
     above_min: int = 0
     emailed: bool = False
     error: str = ""
+    # Phase 30 / B6.2: "monthly_limit" when a scheduled morning did not run
+    # because its owner had no use left (ran is False, error is empty); "" when
+    # the run was not skipped.
+    skipped_reason: str = ""
 
 
 class AlertCronResult(BaseModel):
