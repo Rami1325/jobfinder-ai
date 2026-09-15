@@ -19488,6 +19488,934 @@ finally:
     _gh32._http_get = _real_gh_get32b
     _restore29(_prev32b_env)
 
+# ---------------------------------------------------------------------------
+# 32 (continued). Check fit then Tailor for one use, the review's rewrites, and
+# the session passes (Phase 30 / B4.4, B4.5, B5, B7). A pass is one use for a
+# whole interview practice session, up to six screening answers, or a cover
+# letter and its changes for one posting. Counts, windows, failures and the
+# forced interleaves are driven at function level on an injected clock (B8.0
+# rule 3); each route family then gets HTTP wiring checks as a minted plan-free
+# friend, with the three older daily caps OFF as above. A user driven on the
+# injected clock is never also driven over HTTP on the real one: a pass opened
+# at _THIS32 is still open "now" on the 15th, and a check that rides it by
+# accident would pass for the wrong reason.
+# ---------------------------------------------------------------------------
+from sqlalchemy import update as _upd32  # noqa: E402
+
+from app.core import interview as _iv32, screening as _scr32  # noqa: E402
+
+_real_fit32c = _routes32.analyze_and_score
+_real_cover32c = _routes32.generate_cover_letter
+_real_tailor32c = _routes32.tailor_resume
+_real_iv_client32c = _iv32.get_llm_client
+_real_scr_client32c = _scr32.get_llm_client
+_real_rr_client32c = _rr32.get_llm_client
+_real_open_pass32c = _q32._open_pass
+_real_utc_now32c = _q32.utc_now
+_H3_32 = _td32(hours=3)
+_H24_32 = _td32(hours=24)
+_SEC32 = _td32(seconds=1)
+
+
+class _Boom32(Exception):
+    """The model failure the pass checks inject."""
+
+
+def _pass_call32(uid, feature, now, *, ref="", fail=False, during=None):  # noqa: ANN001
+    """One call inside a session pass on its own session, shaped like a handler: `during` runs while the call is in
+    flight (a rider forced in), and `fail` makes the call raise after it. (the PassUse, None) when it was served,
+    (the PassUse, the failure) when it failed, (None, the 429) when it was refused."""
+    d = SessionLocal()
+    seen = {}
+    try:
+        with _q32.pass_charged(d, d.get(_U32, uid), feature, now=now, ref=ref) as use:
+            seen["use"] = use
+            if during is not None:
+                during()
+            if fail:
+                raise _Boom32("model unavailable")
+        return use, None
+    except (_HTTPExc32, _Boom32) as exc:
+        return seen.get("use"), exc
+    finally:
+        d.close()
+
+
+def _hold32(uid, feature, now, ref=""):  # noqa: ANN001
+    """A pass call held IN FLIGHT, entered with its call taken and not yet finished: (session, manager, PassUse)."""
+    d = SessionLocal()
+    cm = _q32.pass_charged(d, d.get(_U32, uid), feature, now=now, ref=ref)
+    return d, cm, cm.__enter__()
+
+
+def _finish32(held, fail):  # noqa: ANN001
+    """Finish a held call the way its with-block would: the failure thrown into it, or served."""
+    d, cm, _use = held
+    try:
+        if fail:
+            cm.__exit__(_Boom32, _Boom32("model unavailable"), None)
+        else:
+            cm.__exit__(None, None, None)
+    finally:
+        d.close()
+
+
+def _concurrent_first32(uid, feature, n, now, ref=""):  # noqa: ANN001
+    """`n` first calls forced to interleave: each misses the free ride, and before it can open a pass the next call
+    arrives and misses too, so all `n` reach the open together, which is the race the serialized open exists for.
+    Hooked on quota._open_pass (pass_charged looks it up at call time), the one point where the waiting call holds
+    no transaction. Returns (each call's outcome, innermost first; how many calls reached the open)."""
+    state = {"entered": 0}
+    out = []
+
+    def _one():
+        use, err = _pass_call32(uid, feature, now, ref=ref)
+        out.append(("ok", use.opened) if err is None else ("refused", getattr(err, "status_code", repr(err))))
+
+    def _open(db, **kwargs):  # noqa: ANN001, ANN003
+        state["entered"] += 1
+        if state["entered"] < n:
+            _one()
+        return _real_open_pass32c(db, **kwargs)
+
+    _q32._open_pass = _open
+    try:
+        _one()
+    finally:
+        _q32._open_pass = _real_open_pass32c
+    return out, state["entered"]
+
+
+def _passes32(uid):  # noqa: ANN001
+    """One user's pass rows, oldest first, as plain rows."""
+    d = SessionLocal()
+    try:
+        return d.execute(
+            _sel32(_UP32.id, _UP32.feature, _UP32.ref, _UP32.calls, _UP32.max_calls, _UP32.succeeded, _UP32.failed,
+                   _UP32.opener_failed, _UP32.event_id, _UP32.opened_at, _UP32.expires_at)
+            .where(_UP32.user_id == uid).order_by(_UP32.id)
+        ).all()
+    finally:
+        d.close()
+
+
+def _set_pass32(pass_id, **values):  # noqa: ANN001, ANN003
+    d = SessionLocal()
+    try:
+        d.execute(_upd32(_UP32).where(_UP32.id == pass_id).values(**values))
+        d.commit()
+    finally:
+        d.close()
+
+
+def _phdr32(resp):  # noqa: ANN001
+    """The response's X-Uses-Pass, or None."""
+    return resp.headers.get("x-uses-pass")
+
+
+def _pass_secs32(resp):  # noqa: ANN001
+    """The expires_in_s part of X-Uses-Pass, or -1."""
+    parts = (_phdr32(resp) or "").split(";")
+    return int(parts[2]) if len(parts) == 3 and parts[2].isdigit() else -1
+
+
+def _iso32(value):  # noqa: ANN001
+    """An ISO timestamp off a response as an aware datetime; None when it is missing, unreadable or naive."""
+    try:
+        moment = _dt32.fromisoformat(value) if isinstance(value, str) and value else None
+    except ValueError:
+        return None
+    return moment if moment is not None and moment.tzinfo is not None else None
+
+
+def _stamp32(value):  # noqa: ANN001
+    """A stored naive-UTC column as an aware datetime."""
+    return value.replace(tzinfo=_UTC32) if value is not None else None
+
+
+def _fill32(uid, n, feature="search"):  # noqa: ANN001
+    """Spend `n` uses on the real clock."""
+    for _ in range(n):
+        _reserve32(uid, feature)
+
+
+def _listed_passes32(client, headers):  # noqa: ANN001
+    return (_j28(client.get("/auth/me", headers=headers)).get("usage") or {}).get("passes")
+
+
+def _ref_of32(jd_json):  # noqa: ANN001
+    """jd_ref of an analysed JD given as JSON, or None when it does not validate."""
+    try:
+        return _q32.jd_ref(_JD32.model_validate(jd_json))
+    except Exception:  # noqa: BLE001 - an unreadable JD fails its check, never the suite
+        return None
+
+
+_prev32c_env = _env29(DAILY_LLM_CAP="0", DAILY_TAILOR_CAP="0", DAILY_SEARCH_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _c32c:
+        # --- 32.6 The interview pass (B5): one use for a whole practice session --------------------------------------
+        _ivp_uid32, _ = _mint32(_c32c, "Interview Session")
+        _ivp_key32 = f"u:{_ivp_uid32}"
+        _ivp_limit32 = _snap32(_ivp_uid32, _THIS32).limit
+        _ivp32 = [_pass_call32(_ivp_uid32, "interview", _THIS32) for _ in range(61)]
+        _ivp_rows32 = _passes32(_ivp_uid32)
+        check(
+            "32.6 interview pass: the first call opens a pass and uses 1, the next 59 ride it free (60 of 60 calls, 59 "
+            "served rides), and the 61st opens a SECOND pass for 1 more — two +1 interview events, used 2 == SUM(delta)",
+            _ivp_limit32 == 10
+            and all(u is not None and e is None for u, e in _ivp32)
+            and [u.opened for u, _e in _ivp32] == [True] + [False] * 59 + [True]
+            and [u.calls_left for u, _e in _ivp32[:2]] == [59, 58]
+            and _ivp32[59][0].calls_left == 0 and _ivp32[60][0].calls_left == 59
+            and _ivp32[0][0].expires_at == _THIS32 + _H3_32
+            and [(r.feature, r.ref, r.calls, r.max_calls, r.succeeded, r.failed) for r in _ivp_rows32]
+            == [("interview", "", 60, 60, 59, 0), ("interview", "", 1, 60, 0, 0)]
+            and _ledger32(_ivp_key32, _P_THIS32) == [("interview", 1, 0, "")] * 2
+            and _pool32(_ivp_key32, _P_THIS32) == (2, 2),
+            f"{[tuple(r)[:7] for r in _ivp_rows32]} {_ledger32(_ivp_key32, _P_THIS32)}",
+        )
+        _exp_uid32, _ = _mint32(_c32c, "Interview Window")
+        _exp32 = [
+            _pass_call32(_exp_uid32, "interview", _THIS32),
+            _pass_call32(_exp_uid32, "interview", _THIS32 + _H3_32 - _SEC32),
+            _pass_call32(_exp_uid32, "interview", _THIS32 + _H3_32),
+        ]
+        check(
+            "32.6 interview pass: the window is 3 hours — one second before it ends a call still rides free, and at 3 "
+            "hours the next call opens a new pass for 1 more although 58 calls were left on the old one",
+            all(u is not None and e is None for u, e in _exp32)
+            and [u.opened for u, _e in _exp32] == [True, False, True]
+            and [(r.calls, r.max_calls) for r in _passes32(_exp_uid32)] == [(2, 60), (1, 60)]
+            and _ledger32(f"u:{_exp_uid32}", _P_THIS32) == [("interview", 1, 0, "")] * 2,
+            str([tuple(r)[:5] for r in _passes32(_exp_uid32)]),
+        )
+        _nor_uid32, _ = _mint32(_c32c, "Opener Fails Alone")
+        _nor32 = _pass_call32(_nor_uid32, "interview", _THIS32, fail=True)
+        _nor_ev32 = _events32(_nor_uid32)
+        check(
+            "32.6 opener failure: a first call that fails with nobody riding its pass gives the use back and DELETES the "
+            "pass — its +1 marked refunded, a -1 refund:<id>, used 0, no pass row left",
+            _nor32[0] is not None and _nor32[0].opened and isinstance(_nor32[1], _Boom32)
+            and len(_nor_ev32) == 2 and _refunded32(_nor_ev32, "interview")
+            and _passes32(_nor_uid32) == []
+            and _pool32(f"u:{_nor_uid32}", _P_THIS32) == (0, 0),
+            f"{_shape32(_nor_ev32)} {[tuple(r) for r in _passes32(_nor_uid32)]}",
+        )
+        _cl1_uid32, _ = _mint32(_c32c, "Nothing Served")
+        _cl1_rider32 = {}
+        _cl1_32 = _pass_call32(
+            _cl1_uid32, "interview", _THIS32, fail=True,
+            during=lambda: _cl1_rider32.update(out=_pass_call32(_cl1_uid32, "interview", _THIS32, fail=True)),
+        )
+        _cl1_rows32 = _passes32(_cl1_uid32)
+        _cl1_ev32 = _events32(_cl1_uid32)
+        _cl1_next32 = _pass_call32(_cl1_uid32, "interview", _THIS32)
+        check(
+            "32.6 opener failure after a rider that ALSO failed: nothing on the pass was served, so the use comes back "
+            "ONCE and the pass is CLOSED, not deleted — calls 2, max_calls = calls, expired at that moment, "
+            "opener_failed, 1 failed ride, 0 served — and the next call opens a fresh pass for +1",
+            (_cl1_rider32.get("out") or (None, None))[0] is not None and not _cl1_rider32["out"][0].opened
+            and isinstance(_cl1_rider32["out"][1], _Boom32)
+            and _cl1_32[0] is not None and _cl1_32[0].opened and isinstance(_cl1_32[1], _Boom32)
+            and [(r.calls, r.max_calls, r.succeeded, r.failed, bool(r.opener_failed), r.expires_at) for r in _cl1_rows32]
+            == [(2, 2, 0, 1, True, _THIS32.replace(tzinfo=None))]
+            and len(_cl1_ev32) == 2 and _refunded32(_cl1_ev32, "interview")
+            and _cl1_next32[0] is not None and _cl1_next32[1] is None and _cl1_next32[0].opened
+            and _pool32(f"u:{_cl1_uid32}", _P_THIS32) == (1, 1),
+            f"{[tuple(r)[:8] for r in _cl1_rows32]} {_shape32(_cl1_ev32)}",
+        )
+        _kp1_uid32, _ = _mint32(_c32c, "Rider Served")
+        _kp1_rider32 = {}
+        _kp1_32 = _pass_call32(
+            _kp1_uid32, "interview", _THIS32, fail=True,
+            during=lambda: _kp1_rider32.update(out=_pass_call32(_kp1_uid32, "interview", _THIS32)),
+        )
+        check(
+            "32.6 twin: the SAME opener failure after a rider that was SERVED keeps the use and the pass — a call on it "
+            "succeeded, so a refund would re-open the free late-failure ride: one +1 not refunded, calls == 2, still "
+            "open under its 60-call ceiling",
+            (_kp1_rider32.get("out") or (None, "missing"))[1] is None
+            and _kp1_32[0] is not None and _kp1_32[0].opened and isinstance(_kp1_32[1], _Boom32)
+            and [(r.calls, r.max_calls, r.succeeded, r.failed, bool(r.opener_failed)) for r in _passes32(_kp1_uid32)]
+            == [(2, 60, 1, 0, True)]
+            and _shape32(_events32(_kp1_uid32)) == [("interview", 1, 0, "")]
+            and _pool32(f"u:{_kp1_uid32}", _P_THIS32) == (1, 1),
+            f"{[tuple(r)[:8] for r in _passes32(_kp1_uid32)]} {_shape32(_events32(_kp1_uid32))}",
+        )
+        _fl_uid32, _ = _mint32(_c32c, "Rider Still In Flight")
+        _fl_open32 = _hold32(_fl_uid32, "interview", _THIS32)
+        _fl_ride32 = _hold32(_fl_uid32, "interview", _THIS32)
+        _finish32(_fl_open32, fail=True)
+        _fl_mid32 = (
+            [(r.calls, r.max_calls, r.failed, bool(r.opener_failed)) for r in _passes32(_fl_uid32)],
+            _pool32(f"u:{_fl_uid32}", _P_THIS32),
+        )
+        _finish32(_fl_ride32, fail=True)
+        _fl_ev32 = _events32(_fl_uid32)
+        check(
+            "32.6 order: an opener that fails while its rider is STILL IN FLIGHT refunds nothing yet — that rider may yet "
+            "be served (used 1, the pass open, opener_failed) — and the rider's own failure then closes the pass "
+            "(max_calls = calls = 2) and gives the use back once",
+            _fl_open32[2].opened and not _fl_ride32[2].opened
+            and _fl_mid32 == ([(2, 60, 0, True)], (1, 1))
+            and [(r.calls, r.max_calls, r.succeeded, r.failed) for r in _passes32(_fl_uid32)] == [(2, 2, 0, 1)]
+            and len(_fl_ev32) == 2 and _refunded32(_fl_ev32, "interview")
+            and _pool32(f"u:{_fl_uid32}", _P_THIS32) == (0, 0),
+            f"{_fl_mid32} {[tuple(r)[:8] for r in _passes32(_fl_uid32)]} {_shape32(_fl_ev32)}",
+        )
+        _fs_uid32, _ = _mint32(_c32c, "Rider Served After Opener Failed")
+        _fs_open32 = _hold32(_fs_uid32, "interview", _THIS32)
+        _fs_ride32 = _hold32(_fs_uid32, "interview", _THIS32)
+        _finish32(_fs_open32, fail=True)
+        _finish32(_fs_ride32, fail=False)
+        check(
+            "32.6 order twin: the same in-flight rider SERVED after its opener failed keeps the use and the pass — one "
+            "+1 not refunded, calls 2 of 60, 1 served",
+            [(r.calls, r.max_calls, r.succeeded, r.failed, bool(r.opener_failed)) for r in _passes32(_fs_uid32)]
+            == [(2, 60, 1, 0, True)]
+            and _shape32(_events32(_fs_uid32)) == [("interview", 1, 0, "")]
+            and _pool32(f"u:{_fs_uid32}", _P_THIS32) == (1, 1),
+            f"{[tuple(r)[:8] for r in _passes32(_fs_uid32)]} {_shape32(_events32(_fs_uid32))}",
+        )
+        _cc_uid32, _ = _mint32(_c32c, "Five First Calls")
+        _cc_out32, _cc_entered32 = _concurrent_first32(_cc_uid32, "interview", 5, _THIS32)
+        check(
+            "32.6 concurrency: five first calls forced to interleave — every one misses the free ride before ANY of them "
+            "opens — spend exactly ONE use and open ONE pass: the open is serialized per pool and re-runs the ride "
+            "under the lock, so one call opens and four ride it (calls 5)",
+            _cc_entered32 == 5 and _cc_out32 == [("ok", True)] + [("ok", False)] * 4
+            and [(r.calls, r.max_calls) for r in _passes32(_cc_uid32)] == [(5, 60)]
+            and _shape32(_events32(_cc_uid32)) == [("interview", 1, 0, "")]
+            and _pool32(f"u:{_cc_uid32}", _P_THIS32) == (1, 1),
+            f"entered={_cc_entered32} {_cc_out32} {[tuple(r)[:5] for r in _passes32(_cc_uid32)]}",
+        )
+        _c9_uid32, _ = _mint32(_c32c, "Five First Calls At Nine")
+        _c10_uid32, _ = _mint32(_c32c, "Five First Calls At Ten")
+        for _ in range(9):
+            _reserve32(_c9_uid32, "tailor", now=_THIS32)
+            _reserve32(_c10_uid32, "tailor", now=_THIS32)
+        _reserve32(_c10_uid32, "tailor", now=_THIS32)
+        _c9_out32, _c9_entered32 = _concurrent_first32(_c9_uid32, "interview", 5, _THIS32)
+        _c10_out32, _c10_entered32 = _concurrent_first32(_c10_uid32, "interview", 5, _THIS32)
+        check(
+            "32.6 concurrency at 9 of 10 used: the same five interleaved first calls spend the LAST use once and NONE is "
+            "refused — the ride re-check comes before the 429 decision — while at 10 of 10 all five are refused (the "
+            "detector can say no)",
+            _c9_entered32 == 5 and _c9_out32 == [("ok", True)] + [("ok", False)] * 4
+            and [r.calls for r in _passes32(_c9_uid32)] == [5]
+            and _pool32(f"u:{_c9_uid32}", _P_THIS32) == (10, 10)
+            and _c10_entered32 == 5 and _c10_out32 == [("refused", 429)] * 5
+            and _passes32(_c10_uid32) == [] and _pool32(f"u:{_c10_uid32}", _P_THIS32) == (10, 10),
+            f"{_c9_out32} {_c10_out32}",
+        )
+        _sl_uid32, _ = _mint32(_c32c, "Failed Ride Keeps Its Slot")
+        _sl32 = [
+            _pass_call32(_sl_uid32, "interview", _THIS32),
+            _pass_call32(_sl_uid32, "interview", _THIS32, fail=True),
+        ]
+        _sl_mid32 = [(r.calls, r.succeeded, r.failed, bool(r.opener_failed)) for r in _passes32(_sl_uid32)]
+        _sl_next32 = _pass_call32(_sl_uid32, "interview", _THIS32)
+        check(
+            "32.6 a failed ride keeps its slot and charges nothing: after a served opener, a ride that fails still counts "
+            "against the pass (calls 2, 1 failed) with no ledger event and the use kept — so the next ride has 57 "
+            "left, not 58",
+            _sl32[0][1] is None and _sl32[1][0] is not None and not _sl32[1][0].opened
+            and isinstance(_sl32[1][1], _Boom32)
+            and _sl_mid32 == [(2, 0, 1, False)]
+            and _sl_next32[0] is not None and _sl_next32[1] is None and _sl_next32[0].calls_left == 57
+            and _shape32(_events32(_sl_uid32)) == [("interview", 1, 0, "")]
+            and _pool32(f"u:{_sl_uid32}", _P_THIS32) == (1, 1),
+            f"{_sl_mid32} {_shape32(_events32(_sl_uid32))}",
+        )
+        _ph_uid32, _PH32_H = _mint32(_c32c, "Pass Refusals Over HTTP")
+        _ph_limit32 = _snap32(_ph_uid32).limit
+        _ph_empty32 = _c32c.post("/tools/screening-answer", headers=_PH32_H,
+                                 json={"resume": _R32, "jd_text": "Python role at Acme.", "question": "   "})
+        _ph_after_empty32 = (_events32(_ph_uid32), _passes32(_ph_uid32))
+        _ph_big32 = _c32c.post("/interview/questions", headers=_PH32_H,
+                               json={"resume": dict(_R32, summary="Built services. " * 18000), "jd": _JDJ32})
+        _ph_big_ev32 = _events32(_ph_uid32)
+        _ph_big_rows32 = _passes32(_ph_uid32)
+        _ph_ok32 = _c32c.post("/tools/screening-answer", headers=_PH32_H,
+                              json={"resume": _R32, "jd_text": "Python role at Acme.", "question": "Why Acme?"})
+        check(
+            "32.6 HTTP: an empty screening question is the handler's own 400, refused BEFORE the pass — no pass, no "
+            "event, no header — on a user whose limit reads 10",
+            _ph_limit32 == 10 and _ph_empty32.status_code == 400
+            and _ph_after_empty32 == ([], []) and _hdr32(_ph_empty32) is None and _phdr32(_ph_empty32) is None,
+            f"{_ph_empty32.status_code} {_ph_after_empty32}",
+        )
+        check(
+            "32.6 HTTP: an interview opener whose resume is over the size cap is a 413 input_too_large that DID open the "
+            "pass and gave the use straight back — a +1/-1 interview pair, no pass row, X-Uses-Remaining 10 with "
+            "X-Uses-Pass interview;0;0 — and the same user's valid screening answer after it takes +1 (header 9)",
+            _ph_big32.status_code == 413 and _detail28(_ph_big32).get("code") == "input_too_large"
+            and len(_ph_big_ev32) == 2 and _refunded32(_ph_big_ev32, "interview") and _ph_big_rows32 == []
+            and _hdr32(_ph_big32) == "10" and _phdr32(_ph_big32) == "interview;0;0"
+            and _ph_ok32.status_code == 200 and _hdr32(_ph_ok32) == "9"
+            and [r.feature for r in _passes32(_ph_uid32)] == ["screening"],
+            f"{_ph_big32.status_code} {_hdr32(_ph_big32)} {_phdr32(_ph_big32)} {_shape32(_ph_big_ev32)} "
+            f"{_ph_ok32.status_code}/{_hdr32(_ph_ok32)}",
+        )
+
+        # --- 32.7 The screening pass (B5): up to six answers for one use ---------------------------------------------
+        _scp_uid32, _ = _mint32(_c32c, "Six Screening Answers")
+        _scp32 = [_pass_call32(_scp_uid32, "screening", _THIS32 + _td32(minutes=25 * i)) for i in range(7)]
+        check(
+            "32.7 screening pass: six answers inside 3 hours (the sixth at 2 h 5 min, far past a 15-minute window) are "
+            "ONE use — the first opens a pass of 6 and five ride it — and the 7th, still inside the window, opens a new "
+            "pass for 1 more because the first is used up",
+            all(u is not None and e is None for u, e in _scp32)
+            and [u.opened for u, _e in _scp32] == [True, False, False, False, False, False, True]
+            and [u.calls_left for u, _e in _scp32] == [5, 4, 3, 2, 1, 0, 5]
+            and [(r.feature, r.ref, r.calls, r.max_calls) for r in _passes32(_scp_uid32)]
+            == [("screening", "", 6, 6), ("screening", "", 1, 6)]
+            and _ledger32(f"u:{_scp_uid32}", _P_THIS32) == [("screening", 1, 0, "")] * 2,
+            str([tuple(r)[:5] for r in _passes32(_scp_uid32)]),
+        )
+        _scw_uid32, _ = _mint32(_c32c, "Screening Window")
+        _scw32 = [
+            _pass_call32(_scw_uid32, "screening", _THIS32),
+            _pass_call32(_scw_uid32, "screening", _THIS32 + _H3_32 - _SEC32),
+            _pass_call32(_scw_uid32, "screening", _THIS32 + _H3_32),
+        ]
+        check(
+            "32.7 screening window: an answer one second before 3 hours rides the pass, and one AT 3 hours opens a new "
+            "pass for 1 more though 4 answers were left",
+            all(u is not None and e is None for u, e in _scw32)
+            and [u.opened for u, _e in _scw32] == [True, False, True]
+            and [(r.calls, r.max_calls) for r in _passes32(_scw_uid32)] == [(2, 6), (1, 6)]
+            and _ledger32(f"u:{_scw_uid32}", _P_THIS32) == [("screening", 1, 0, "")] * 2,
+            str([tuple(r)[:5] for r in _passes32(_scw_uid32)]),
+        )
+        _sch_uid32, _SCH32_H = _mint32(_c32c, "Screening Over HTTP")
+        _sch32 = [
+            _c32c.post("/tools/screening-answer", headers=_SCH32_H,
+                       json={"resume": _R32, "jd_text": "Python role at Acme.", "question": "Why Acme?"}),
+            _c32c.post("/tools/screening-answer", headers=_SCH32_H,
+                       json={"resume": _R32, "jd_text": "Data role at Beta Labs.",
+                             "question": "Describe a hard problem you solved."}),
+        ]
+        check(
+            "32.7 HTTP: the web tool's first answer opens the pass (+1 screening, X-Uses-Remaining 9, X-Uses-Pass "
+            "screening;5;<about 3 hours>) and an answer for a DIFFERENT job and question rides it (screening;4;, no new "
+            "event) — a screening pass is keyed by feature alone, never by posting",
+            [r.status_code for r in _sch32] == [200, 200]
+            and [_hdr32(r) for r in _sch32] == ["9", "9"]
+            and (_phdr32(_sch32[0]) or "").startswith("screening;5;")
+            and 3 * 3600 - 120 <= _pass_secs32(_sch32[0]) <= 3 * 3600
+            and (_phdr32(_sch32[1]) or "").startswith("screening;4;")
+            and _shape32(_events32(_sch_uid32)) == [("screening", 1, 0, "")]
+            and [(r.ref, r.calls) for r in _passes32(_sch_uid32)] == [("", 2)],
+            f"{[(r.status_code, _hdr32(r), _phdr32(r)) for r in _sch32]}",
+        )
+
+        # --- 32.8 Rewrites (B4.5): a use only when the model would be asked -------------------------------------------
+        _RW_CV32 = _RV_RW_CV.model_dump(mode="json")
+        _TIDY32 = _tidy.model_dump(mode="json")
+        _RW_EMPTY32 = {"rewrites": [], "dropped": 0, "dropped_reasons": []}
+        _rw_uid32, _RW32_H = _mint32(_c32c, "Rewrites Friend")
+        _rw_limit32 = _snap32(_rw_uid32).limit
+        _rw_ok32 = _c32c.post("/tools/review/rewrites", json={"resume": _RW_CV32, "paths": []}, headers=_RW32_H)
+        _rw_ok_ev32 = _events32(_rw_uid32)
+
+        def _rw_unreachable32():
+            raise RuntimeError("the model must not be reached")
+
+        _rr32.get_llm_client = _rw_unreachable32
+        try:
+            _rw_tidy32 = _c32c.post("/tools/review/rewrites", json={"resume": _TIDY32, "paths": []}, headers=_RW32_H)
+            _rw_nomatch32 = _c32c.post("/tools/review/rewrites", headers=_RW32_H,
+                                       json={"resume": _RW_CV32, "paths": ["@exp.7.b.3", "@summary"]})
+            _rw_free_ev32 = _events32(_rw_uid32)
+            _rw_err32 = _c32c.post("/tools/review/rewrites", json={"resume": _RW_CV32, "paths": []}, headers=_RW32_H)
+        finally:
+            _rr32.get_llm_client = _real_rr_client32c
+        _rw_err_ev32 = _events32(_rw_uid32)
+        check(
+            "32.8 rewrites: paths [] on a CV with rewritable findings asks the model and takes ONE use — a 200 with its "
+            "two rewrites, one +1 rewrites event, header 9",
+            _rw_limit32 == 10 and _rw_ok32.status_code == 200 and len(_j28(_rw_ok32).get("rewrites") or []) == 2
+            and _shape32(_rw_ok_ev32) == [("rewrites", 1, 0, "")] and _hdr32(_rw_ok32) == "9",
+            f"{_rw_ok32.status_code} {_rw_ok32.text[:120]} {_shape32(_rw_ok_ev32)} {_hdr32(_rw_ok32)}",
+        )
+        check(
+            "32.8 no target, no use: paths [] on a tidy CV (the server picks, and finds nothing) and explicit paths that "
+            "match no bullet each answer 200 with the empty result while the model client is patched to RAISE — no "
+            "call made, no event, no header — on the user whose first call above did write +1",
+            hasattr(_rr32, "rewrite_targets") and _rr32.rewrite_targets(_tidy, []) == []
+            and _rw_tidy32.status_code == 200 and _j28(_rw_tidy32) == _RW_EMPTY32
+            and _rw_nomatch32.status_code == 200 and _j28(_rw_nomatch32) == _RW_EMPTY32
+            and _hdr32(_rw_tidy32) is None and _hdr32(_rw_nomatch32) is None
+            and _rw_free_ev32 == _rw_ok_ev32,
+            f"{_rw_tidy32.status_code} {_rw_tidy32.text[:80]} {_rw_nomatch32.status_code} {_rw_nomatch32.text[:80]}",
+        )
+        check(
+            "32.8 a model failure after the charge is a 502 that gives the use back — its +1 marked refunded, a -1 "
+            "refund:<id>, header 9",
+            _rw_err32.status_code == 502 and len(_rw_err_ev32) == 3 and _refunded32(_rw_err_ev32[1:], "rewrites")
+            and _hdr32(_rw_err32) == "9" and _pool32(f"u:{_rw_uid32}", _P_THIS32) == (1, 1),
+            f"{_rw_err32.status_code} {_shape32(_rw_err_ev32)} {_hdr32(_rw_err32)}",
+        )
+        _fill32(_rw_uid32, 9)
+        _rw_zero32 = _c32c.post("/tools/review/rewrites", json={"resume": _RW_CV32, "paths": []}, headers=_RW32_H)
+        _rw_zero_free32 = _c32c.post("/tools/review/rewrites", json={"resume": _TIDY32, "paths": []}, headers=_RW32_H)
+        check(
+            "32.8 at 0 uses left a call that would ask the model is a 429 monthly_limit naming rewrites — not a 502, so "
+            "the charge sits outside the route's error wrapper — while the no-target call on the same user is a 200",
+            _snap32(_rw_uid32).remaining == 0
+            and _rw_zero32.status_code == 429 and _detail28(_rw_zero32).get("code") == "monthly_limit"
+            and _detail28(_rw_zero32).get("feature") == "rewrites"
+            and _rw_zero_free32.status_code == 200 and _j28(_rw_zero_free32) == _RW_EMPTY32,
+            f"{_rw_zero32.status_code} {_rw_zero32.text[:120]} {_rw_zero_free32.status_code}",
+        )
+
+        # --- 32.16 Check fit, then Tailor the same job: one use (B4.4) ----------------------------------------------
+        _FIT_BODY32 = {"resume": _R32, "jd_text": "Python developer at Acme. Python, SQL and REST APIs required."}
+
+        def _fit_call32(headers):  # noqa: ANN001
+            return _c32c.post("/jobs/fit", json=_FIT_BODY32, headers=headers)
+
+        def _tailor_call32(headers, jd_json):  # noqa: ANN001
+            return _c32c.post("/tailor", json={"resume": _R32, "jd": jd_json}, headers=headers)
+
+        def _fit_jd32(resp):  # noqa: ANN001
+            return _j28(resp).get("jd") or {}
+
+        def _another_jd32(jd_json):  # noqa: ANN001
+            """The same analysed JD with another title: a different posting, as far as the ride's key is concerned."""
+            return dict(jd_json, job_title=f"{jd_json.get('job_title', '')} (Platform)")
+
+        _ft_uid32, _FT32_H = _mint32(_c32c, "Fit Then Tailor")
+        _ft_limit32 = _snap32(_ft_uid32).limit
+        _ft_fit32 = _fit_call32(_FT32_H)
+        _ft_at32 = _q32.utc_now()
+        _ft_jd32 = _fit_jd32(_ft_fit32)
+        _ft_fit_ev32 = _events32(_ft_uid32)
+        _ft_fit_rows32 = _passes32(_ft_uid32)
+        _ft_until32 = _iso32(_j28(_ft_fit32).get("tailor_included_until"))
+        check(
+            "32.16 fit: a fit check takes ONE fit_check use (header 9) and opens a tailor ride for THAT analysed JD — one "
+            "pass row: tailor_after_fit, ref jd_ref(the JD it returned), 0 of 1 calls, the fit event's id, open for "
+            "exactly 24 hours — and tailor_included_until names that end, about 24 hours from now",
+            _ft_limit32 == 10 and _ft_fit32.status_code == 200 and _hdr32(_ft_fit32) == "9"
+            and _shape32(_ft_fit_ev32) == [("fit_check", 1, 0, "")]
+            and [(r.feature, r.ref, r.calls, r.max_calls, r.event_id) for r in _ft_fit_rows32]
+            == [(_q32.FIT_RIDE, _ref_of32(_ft_jd32), 0, 1, _ft_fit_ev32[0][0] if _ft_fit_ev32 else None)]
+            and _ft_fit_rows32[0].expires_at - _ft_fit_rows32[0].opened_at == _H24_32
+            and _ft_until32 is not None and _ft_until32 == _stamp32(_ft_fit_rows32[0].expires_at)
+            and abs((_ft_until32 - _ft_at32) - _H24_32) < _td32(minutes=2),
+            f"{_ft_fit32.status_code}/{_hdr32(_ft_fit32)} {_shape32(_ft_fit_ev32)} "
+            f"{[tuple(r)[:9] for r in _ft_fit_rows32]} until={_j28(_ft_fit32).get('tailor_included_until')!r}",
+        )
+        _ft_tailor32 = _tailor_call32(_FT32_H, _ft_jd32)
+        _ft_ev32 = _events32(_ft_uid32)
+        _ft_rows32 = _passes32(_ft_uid32)
+        _ft_snap32 = _snap32(_ft_uid32)
+        _ft_ride32 = f"ride:{_ft_rows32[0].id}" if _ft_rows32 else "ride:none"
+        check(
+            "32.16 then Tailor the same JD: covered — a 200 that still carries the header (9) with used unchanged at 1; "
+            "the ledger reclassifies the fit as the tailored job (fit_check -1 and tailor +1, both ref ride:<pass id>), "
+            "so the breakdown reads tailor 1 / fit_check 0 and the ride is spent (1 of 1)",
+            _ft_tailor32.status_code == 200 and _hdr32(_ft_tailor32) == "9"
+            and _shape32(_ft_ev32)
+            == [("fit_check", 1, 0, ""), ("fit_check", -1, 0, _ft_ride32), ("tailor", 1, 0, _ft_ride32)]
+            and _ft_snap32.used == 1 and _ft_snap32.by_feature == {"fit_check": 0, "tailor": 1}
+            and _pool32(f"u:{_ft_uid32}", _P_THIS32) == (1, 1)
+            and [(r.calls, r.max_calls) for r in _ft_rows32] == [(1, 1)],
+            f"{_ft_tailor32.status_code}/{_hdr32(_ft_tailor32)} {_shape32(_ft_ev32)} {_ft_snap32.by_feature}",
+        )
+        _ft_again32 = _tailor_call32(_FT32_H, _ft_jd32)
+        check(
+            "32.16 a second tailor of that JD is +1 more — one fit check's ride covers ONE tailor — header 8, the "
+            "breakdown at tailor 2 / fit_check 0",
+            _ft_again32.status_code == 200 and _hdr32(_ft_again32) == "8"
+            and _shape32(_events32(_ft_uid32))[3:] == [("tailor", 1, 0, "")]
+            and _snap32(_ft_uid32).by_feature == {"fit_check": 0, "tailor": 2},
+            f"{_ft_again32.status_code}/{_hdr32(_ft_again32)} {_shape32(_events32(_ft_uid32))}",
+        )
+        _fd_uid32, _FD32_H = _mint32(_c32c, "Fit Another Job")
+        _fd_fit32 = _fit_call32(_FD32_H)
+        _fd_jd32 = _fit_jd32(_fd_fit32)
+        _fd_other32 = _tailor_call32(_FD32_H, _another_jd32(_fd_jd32))
+        _fd_mid32 = (_shape32(_events32(_fd_uid32)), [(r.calls, r.max_calls) for r in _passes32(_fd_uid32)])
+        _fd_same32 = _tailor_call32(_FD32_H, _fd_jd32)
+        check(
+            "32.16 a different JD is not covered: a fit on one analysed JD, then a tailor of another (its title differs), "
+            "is +2 — fit_check +1, tailor +1 (header 8), the ride untouched at 0 of 1 — and the ride still covers the "
+            "posting it was bought for: tailoring THAT JD next is a 200 with used still 2",
+            _fd_fit32.status_code == 200 and _ref_of32(_another_jd32(_fd_jd32)) != _ref_of32(_fd_jd32)
+            and _fd_other32.status_code == 200 and _hdr32(_fd_other32) == "8"
+            and _fd_mid32 == ([("fit_check", 1, 0, ""), ("tailor", 1, 0, "")], [(0, 1)])
+            and _fd_same32.status_code == 200 and _hdr32(_fd_same32) == "8"
+            and _pool32(f"u:{_fd_uid32}", _P_THIS32) == (2, 2)
+            and _snap32(_fd_uid32).by_feature == {"fit_check": 0, "tailor": 2},
+            f"{_fd_mid32} {_fd_same32.status_code}/{_hdr32(_fd_same32)} {_snap32(_fd_uid32).by_feature}",
+        )
+        _fr_uid32, _FR32_H = _mint32(_c32c, "Covered Tailor Fails")
+        _fr_fit32 = _fit_call32(_FR32_H)
+        _fr_jd32 = _fit_jd32(_fr_fit32)
+
+        def _tailor_fails32(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("model unavailable")
+
+        _routes32.tailor_resume = _tailor_fails32
+        try:
+            _fr_bad32 = _tailor_call32(_FR32_H, _fr_jd32)
+        finally:
+            _routes32.tailor_resume = _real_tailor32c
+        _fr_mid32 = (_shape32(_events32(_fr_uid32)), [(r.calls, r.max_calls) for r in _passes32(_fr_uid32)])
+        _fr_retry32 = _tailor_call32(_FR32_H, _fr_jd32)
+        check(
+            "32.16 a covered tailor that FAILS gives the ride back with no ledger change — the 502 leaves only the fit's "
+            "+1 and the ride at 0 of 1 — so the retry is still covered: a 200 reclassified as the tailored job, used 1",
+            _fr_fit32.status_code == 200 and _fr_bad32.status_code == 502
+            and _fr_mid32 == ([("fit_check", 1, 0, "")], [(0, 1)])
+            and _fr_retry32.status_code == 200
+            and [e[1:3] for e in _events32(_fr_uid32)] == [("fit_check", 1), ("fit_check", -1), ("tailor", 1)]
+            and [(r.calls, r.max_calls) for r in _passes32(_fr_uid32)] == [(1, 1)]
+            and _pool32(f"u:{_fr_uid32}", _P_THIS32) == (1, 1),
+            f"{_fr_bad32.status_code} {_fr_mid32} {_fr_retry32.status_code} {_shape32(_events32(_fr_uid32))}",
+        )
+        _ff_uid32, _FF32_H = _mint32(_c32c, "Fit Check Fails")
+
+        def _fit_fails32(resume, jd_text):  # noqa: ANN001
+            raise RuntimeError("model unavailable")
+
+        _routes32.analyze_and_score = _fit_fails32
+        try:
+            _ff32 = _fit_call32(_FF32_H)
+        finally:
+            _routes32.analyze_and_score = _real_fit32c
+        _ff_ev32 = _events32(_ff_uid32)
+        check(
+            "32.16 a fit check that fails is charged, refunded and opens NO ride — a 502 with a +1/-1 fit_check pair, no "
+            "pass row and the header back at 10 — beside the successful fit above, which opened one",
+            _ff32.status_code == 502 and len(_ff_ev32) == 2 and _refunded32(_ff_ev32, "fit_check")
+            and _passes32(_ff_uid32) == [] and _hdr32(_ff32) == "10" and len(_ft_fit_rows32) == 1,
+            f"{_ff32.status_code} {_shape32(_ff_ev32)} {_hdr32(_ff32)}",
+        )
+        _fx_uid32, _FX32_H = _mint32(_c32c, "Fit Ride Expires")
+        _fy_uid32, _FY32_H = _mint32(_c32c, "Fit Ride Last Second")
+        try:
+            _q32.utc_now = lambda: _THIS32
+            _fx_fit32 = _fit_call32(_FX32_H)
+            _fy_fit32 = _fit_call32(_FY32_H)
+            _q32.utc_now = lambda: _THIS32 + _H24_32
+            _fx_tailor32 = _tailor_call32(_FX32_H, _fit_jd32(_fx_fit32))
+            _q32.utc_now = lambda: _THIS32 + _H24_32 - _SEC32
+            _fy_tailor32 = _tailor_call32(_FY32_H, _fit_jd32(_fy_fit32))
+        finally:
+            _q32.utc_now = _real_utc_now32c
+        check(
+            "32.16 the ride lasts 24 hours, on an injected clock: the fit's tailor_included_until is exactly 24 hours "
+            "after it; a tailor AT that instant is charged (+1 tailor, the ride left at 0 of 1), while the twin tailor "
+            "one second earlier is covered (fit_check -1, tailor +1)",
+            _iso32(_j28(_fx_fit32).get("tailor_included_until")) == _THIS32 + _H24_32
+            and _fx_tailor32.status_code == 200
+            and _shape32(_events32(_fx_uid32)) == [("fit_check", 1, 0, ""), ("tailor", 1, 0, "")]
+            and [(r.calls, r.max_calls) for r in _passes32(_fx_uid32)] == [(0, 1)]
+            and _fy_tailor32.status_code == 200
+            and [e[1:3] for e in _events32(_fy_uid32)] == [("fit_check", 1), ("fit_check", -1), ("tailor", 1)]
+            and [r.calls for r in _passes32(_fy_uid32)] == [1],
+            f"{_j28(_fx_fit32).get('tailor_included_until')!r} {_shape32(_events32(_fx_uid32))} "
+            f"{_shape32(_events32(_fy_uid32))}",
+        )
+        _fl9_uid32, _FL9_32_H = _mint32(_c32c, "Fit Spends The Last Use")
+        _fill32(_fl9_uid32, 9)
+        _fl9_fit32 = _fit_call32(_FL9_32_H)
+        _fl9_jd32 = _fit_jd32(_fl9_fit32)
+        _fl9_other32 = _tailor_call32(_FL9_32_H, _another_jd32(_fl9_jd32))
+        _fl9_tailor32 = _tailor_call32(_FL9_32_H, _fl9_jd32)
+        check(
+            "32.16 a fit check that spends the LAST use still buys its tailor: the fit leaves 0 (header 0), a tailor of "
+            "another JD is a 429 monthly_limit, and the tailor of the checked JD is a 200 covered by the ride (header "
+            "0, used 10 == SUM(delta), the breakdown search 9 / fit_check 0 / tailor 1)",
+            _fl9_fit32.status_code == 200 and _hdr32(_fl9_fit32) == "0"
+            and _fl9_other32.status_code == 429 and _detail28(_fl9_other32).get("code") == "monthly_limit"
+            and _fl9_tailor32.status_code == 200 and _hdr32(_fl9_tailor32) == "0"
+            and _pool32(f"u:{_fl9_uid32}", _P_THIS32) == (10, 10)
+            and _snap32(_fl9_uid32).by_feature == {"search": 9, "fit_check": 0, "tailor": 1},
+            f"{_fl9_fit32.status_code}/{_hdr32(_fl9_fit32)} {_fl9_other32.status_code} "
+            f"{_fl9_tailor32.status_code}/{_hdr32(_fl9_tailor32)} {_snap32(_fl9_uid32).by_feature}",
+        )
+        _f2_uid32, _F2_32_H = _mint32(_c32c, "Two Fits Of One Posting")
+        _f2_fits32 = [_fit_call32(_F2_32_H) for _ in range(2)]
+        _f2_jd32 = _fit_jd32(_f2_fits32[0])
+        _f2_tailors32 = [_tailor_call32(_F2_32_H, _f2_jd32) for _ in range(2)]
+        _f2_rows32 = _passes32(_f2_uid32)
+        _f2_refs32 = [e[4] for e in _events32(_f2_uid32)]
+        _f2_snap32 = _snap32(_f2_uid32)
+        _f2_third32 = _tailor_call32(_F2_32_H, _f2_jd32)
+        _f2_newest_first32 = (
+            [f"ride:{_f2_rows32[1].id}"] * 2 + [f"ride:{_f2_rows32[0].id}"] * 2 if len(_f2_rows32) == 2 else None
+        )
+        check(
+            "32.16 two fit checks of one posting (+2), then two tailors: BOTH are covered and each ride is claimed exactly "
+            "once, the newest first — used stays 2 with the breakdown at fit_check 0 / tailor 2 — and a third tailor, "
+            "with no ride left, takes +1 (header 7)",
+            all(r.status_code == 200 for r in _f2_fits32 + _f2_tailors32)
+            and _fit_jd32(_f2_fits32[1]) == _f2_jd32
+            and [(r.calls, r.max_calls) for r in _f2_rows32] == [(1, 1), (1, 1)]
+            and _f2_refs32[:2] == ["", ""] and _f2_refs32[2:] == _f2_newest_first32
+            and _f2_snap32.used == 2 and _f2_snap32.by_feature == {"fit_check": 0, "tailor": 2}
+            and _f2_third32.status_code == 200 and _hdr32(_f2_third32) == "7"
+            and _snap32(_f2_uid32).by_feature == {"fit_check": 0, "tailor": 3},
+            f"{[tuple(r)[:5] for r in _f2_rows32]} {_f2_refs32} {_f2_snap32.by_feature} {_hdr32(_f2_third32)}",
+        )
+        _fa_key32 = _key32(_admin_row_id)
+        _fa_before32 = _rows32(_admin_row_id, _fa_key32)
+        _fa_fit32 = _fit_call32(_ADMIN_H)
+        _fa_tailor32 = _tailor_call32(_ADMIN_H, _fit_jd32(_fa_fit32))
+        check(
+            "32.16 the admin is exempt: a fit check is a 200 with tailor_included_until '' and no header, the tailor after "
+            "it a 200 with no header, and neither writes a month row, an event or a pass — beside the friends above, "
+            "whose identical fit checks each opened a ride",
+            _fa_fit32.status_code == 200 and _j28(_fa_fit32).get("tailor_included_until") == ""
+            and _hdr32(_fa_fit32) is None
+            and _fa_tailor32.status_code == 200 and _hdr32(_fa_tailor32) is None
+            and _rows32(_admin_row_id, _fa_key32) == _fa_before32 and _fa_before32[2] == 0,
+            f"{_fa_fit32.status_code} {_j28(_fa_fit32).get('tailor_included_until')!r} "
+            f"{_rows32(_admin_row_id, _fa_key32)}",
+        )
+
+        # --- 32.20 The cover-letter pass (OD-2 b): a posting's first letter, and its changes -------------------------
+        _CL_BODY32 = {"resume": _R32, "jd": _JDJ32}
+        _CL_OTHER32 = {"resume": _R32, "jd": dict(_JDJ32, company="Beta Labs")}
+        _cl_ref32 = _ref_of32(_JDJ32)
+        _cl_uid32, _CL32_H = _mint32(_c32c, "Cover Letters")
+        _cl_limit32 = _snap32(_cl_uid32).limit
+        _cl_first32 = _c32c.post("/cover-letter", json=dict(_CL_BODY32, tone="professional"), headers=_CL32_H)
+        _cl_first_at32 = _q32.utc_now()
+        _cl_first_ev32 = _events32(_cl_uid32)
+        _cl_changes32 = [
+            _c32c.post("/cover-letter", json=dict(_CL_BODY32, tone=("warm", "concise", "professional")[i % 3]),
+                       headers=_CL32_H)
+            for i in range(9)
+        ]
+        _cl_changes_ev32 = _events32(_cl_uid32)
+        _cl_eleventh32 = _c32c.post("/cover-letter", json=_CL_BODY32, headers=_CL32_H)
+        _cl_other32 = _c32c.post("/cover-letter", json=_CL_OTHER32, headers=_CL32_H)
+        _cl_rows32 = _passes32(_cl_uid32)
+        _cl_first_body32 = _j28(_cl_first32)
+        _cl_until32 = _iso32(_cl_first_body32.get("included_until"))
+        check(
+            "32.20 cover letter: the first letter for a posting opens its pass for ONE use — +1 cover_letter, "
+            "changes_left 9, included_until about 24 hours ahead, X-Uses-Remaining 9 and NO X-Uses-Pass (a per-posting "
+            "pass rides its own response)",
+            _cl_limit32 == 10 and _cl_first32.status_code == 200 and bool(_cl_first_body32.get("cover_letter"))
+            and _cl_first_body32.get("changes_left") == 9
+            and _cl_until32 is not None and abs((_cl_until32 - _cl_first_at32) - _H24_32) < _td32(minutes=2)
+            and _hdr32(_cl_first32) == "9" and _phdr32(_cl_first32) is None
+            and [e[1:4] for e in _cl_first_ev32] == [("cover_letter", 1, 0)],
+            f"{_cl_first32.status_code} {({k: v for k, v in _cl_first_body32.items() if k != 'cover_letter'})} "
+            f"{_hdr32(_cl_first32)} {_shape32(_cl_first_ev32)}",
+        )
+        check(
+            "32.20 the next 9 calls on the same posting, in any tone, are free changes: all 200, changes_left counting "
+            "down 8 to 0 on the same included_until, with no new event and header 9 throughout",
+            all(r.status_code == 200 for r in _cl_changes32)
+            and [_j28(r).get("changes_left") for r in _cl_changes32] == list(range(8, -1, -1))
+            and all(_j28(r).get("included_until") == _cl_first_body32.get("included_until") for r in _cl_changes32)
+            and all(_hdr32(r) == "9" and _phdr32(r) is None for r in _cl_changes32)
+            and len(_cl_changes_ev32) == 1,
+            f"{[(r.status_code, _j28(r).get('changes_left')) for r in _cl_changes32]} {len(_cl_changes_ev32)}",
+        )
+        check(
+            "32.20 the 11th call on that posting opens a NEW pass (+1, changes_left 9, header 8), and a letter for a "
+            "DIFFERENT posting opens its own (+1, changes_left 9, header 7) — three passes: 10 of 10 and 1 of 10 under "
+            "the first posting's ref, 1 of 10 under the other's",
+            _cl_eleventh32.status_code == 200 and _j28(_cl_eleventh32).get("changes_left") == 9
+            and _hdr32(_cl_eleventh32) == "8"
+            and _cl_other32.status_code == 200 and _j28(_cl_other32).get("changes_left") == 9
+            and _hdr32(_cl_other32) == "7"
+            and _ref_of32(_CL_OTHER32["jd"]) != _cl_ref32
+            and [(r.feature, r.ref, r.calls, r.max_calls) for r in _cl_rows32]
+            == [("cover_letter", _cl_ref32, 10, 10), ("cover_letter", _cl_ref32, 1, 10),
+                ("cover_letter", _ref_of32(_CL_OTHER32["jd"]), 1, 10)]
+            and [e[1:4] for e in _events32(_cl_uid32)] == [("cover_letter", 1, 0)] * 3,
+            f"{[tuple(r)[:5] for r in _cl_rows32]} {_shape32(_events32(_cl_uid32))}",
+        )
+        _cw_uid32, _ = _mint32(_c32c, "Cover Letter Window")
+        _cw32 = [
+            _pass_call32(_cw_uid32, "cover_letter", _THIS32, ref=_cl_ref32),
+            _pass_call32(_cw_uid32, "cover_letter", _THIS32 + _H24_32 - _SEC32, ref=_cl_ref32),
+            _pass_call32(_cw_uid32, "cover_letter", _THIS32 + _H24_32, ref=_cl_ref32),
+        ]
+        check(
+            "32.20 the cover-letter window is 24 hours: a change one second before it ends rides free, and a call AT 24 "
+            "hours opens a new pass for 1 more though 8 changes were left",
+            all(u is not None and e is None for u, e in _cw32)
+            and [u.opened for u, _e in _cw32] == [True, False, True]
+            and [u.included_until for u, _e in _cw32[:2]] == [(_THIS32 + _H24_32).isoformat()] * 2
+            and [(r.ref, r.calls, r.max_calls) for r in _passes32(_cw_uid32)]
+            == [(_cl_ref32, 2, 10), (_cl_ref32, 1, 10)]
+            and [e[1:3] for e in _events32(_cw_uid32)] == [("cover_letter", 1)] * 2,
+            str([tuple(r)[:5] for r in _passes32(_cw_uid32)]),
+        )
+        _cf_uid32, _CF32_H = _mint32(_c32c, "Cover Letter Fails")
+
+        def _cover_fails32(resume, jd, tone="professional"):  # noqa: ANN001
+            raise RuntimeError("model unavailable")
+
+        _routes32.generate_cover_letter = _cover_fails32
+        try:
+            _cf32 = _c32c.post("/cover-letter", json=_CL_BODY32, headers=_CF32_H)
+        finally:
+            _routes32.generate_cover_letter = _real_cover32c
+        _cf_ev32 = _events32(_cf_uid32)
+        check(
+            "32.20 a first letter that fails with nobody riding its pass is a 502 that gives the use back and leaves no "
+            "pass — a +1/-1 cover_letter pair, header 10, and still no X-Uses-Pass",
+            _cf32.status_code == 502 and len(_cf_ev32) == 2 and _refunded32(_cf_ev32, "cover_letter")
+            and _passes32(_cf_uid32) == [] and _hdr32(_cf32) == "10" and _phdr32(_cf32) is None,
+            f"{_cf32.status_code} {_shape32(_cf_ev32)} {_hdr32(_cf32)} {_phdr32(_cf32)}",
+        )
+        _ca_before32 = _rows32(_admin_row_id, _fa_key32)
+        _ca32 = _c32c.post("/cover-letter", json=_CL_BODY32, headers=_ADMIN_H)
+        check(
+            "32.20 the admin writes no pass row and gets included_until '' (changes_left 0) with no uses header — beside "
+            "the friends above, whose identical letters opened passes",
+            _ca32.status_code == 200 and _j28(_ca32).get("included_until") == ""
+            and _j28(_ca32).get("changes_left") == 0
+            and _hdr32(_ca32) is None and _phdr32(_ca32) is None
+            and _rows32(_admin_row_id, _fa_key32) == _ca_before32 and _ca_before32[2] == 0,
+            f"{_ca32.status_code} {({k: v for k, v in _j28(_ca32).items() if k != 'cover_letter'})}",
+        )
+        _rf_uid32, _RF32_H = _mint32(_c32c, "Passes Without A Posting")
+        _rf32 = [
+            _c32c.post("/interview/questions", json={"resume": _R32, "jd": _JDJ32}, headers=_RF32_H),
+            _c32c.post("/interview/answer", headers=_RF32_H,
+                       json={"resume": _R32, "jd": _CL_OTHER32["jd"], "question": "Why this team?"}),
+            _c32c.post("/interview/chat", json={"resume": _R32, "jd_text": "A third posting.", "transcript": []},
+                       headers=_RF32_H),
+            _c32c.post("/tools/screening-answer", headers=_RF32_H,
+                       json={"resume": _R32, "jd_text": "Python role at Acme.", "question": "Why Acme?"}),
+            _c32c.post("/tools/screening-answer", headers=_RF32_H,
+                       json={"resume": _R32, "jd_text": "Data role at Beta Labs.", "question": "Why Beta Labs?"}),
+            _c32c.post("/cover-letter", json=_CL_BODY32, headers=_RF32_H),
+        ]
+        _rf_rows32 = _passes32(_rf_uid32)
+        check(
+            "32.20 twin: interview practice and screening answers still match ref '' ONLY — questions for one posting, an "
+            "answer for another and a chat about a third ride ONE interview pass (calls 3), and two answers for two "
+            "jobs ride ONE screening pass (calls 2) — while the cover letter beside them opened its own pass under its "
+            "posting's ref: three uses in all",
+            all(r.status_code == 200 for r in _rf32)
+            and [(r.feature, r.ref, r.calls) for r in _rf_rows32]
+            == [("interview", "", 3), ("screening", "", 2), ("cover_letter", _cl_ref32, 1)]
+            and [e[1:3] for e in _events32(_rf_uid32)] == [("interview", 1), ("screening", 1), ("cover_letter", 1)]
+            and [_hdr32(r) for r in _rf32] == ["9", "9", "9", "8", "8", "7"],
+            f"{[r.status_code for r in _rf32]} {[tuple(r)[:4] for r in _rf_rows32]} {[_hdr32(r) for r in _rf32]}",
+        )
+
+        # --- 32.12 (pass bullets) What a pass says, on the header and on /auth/me ------------------------------------
+        _CHAT32 = {"resume": _R32, "jd_text": "", "transcript": []}
+        _lu_uid32, _LU32_H = _mint32(_c32c, "Last Use Opens A Pass")
+        _fill32(_lu_uid32, 9)
+        _lu_open32 = _c32c.post("/interview/chat", json=_CHAT32, headers=_LU32_H)
+        _lu_listed32 = _listed_passes32(_c32c, _LU32_H) or {}
+        _lu_ride32 = _c32c.post("/interview/chat", json=_CHAT32, headers=_LU32_H)
+        _lu_charged32 = _c32c.post("/tools/linkedin", json={"resume": _R32}, headers=_LU32_H)
+        check(
+            "32.12 passes: the call that opens a pass with the LAST use carries BOTH headers — X-Uses-Remaining 0 and "
+            "X-Uses-Pass interview;59;<about 3 hours> — and /auth/me lists that pass with 59 calls left",
+            _lu_open32.status_code == 200 and _hdr32(_lu_open32) == "0"
+            and (_phdr32(_lu_open32) or "").startswith("interview;59;")
+            and 3 * 3600 - 120 <= _pass_secs32(_lu_open32) <= 3 * 3600
+            and set(_lu_listed32) == {"interview"} and (_lu_listed32.get("interview") or {}).get("calls_left") == 59
+            and 0 < (_lu_listed32.get("interview") or {}).get("expires_in_s", 0) <= 3 * 3600,
+            f"{_lu_open32.status_code} {_hdr32(_lu_open32)} {_phdr32(_lu_open32)} {_lu_listed32}",
+        )
+        check(
+            "32.12 passes: at 0 uses left a riding call is still a 200, one call lower (interview;58;) with "
+            "X-Uses-Remaining 0 — where a charged route for the same user is a 429 monthly_limit",
+            _lu_ride32.status_code == 200 and _hdr32(_lu_ride32) == "0"
+            and (_phdr32(_lu_ride32) or "").startswith("interview;58;")
+            and _lu_charged32.status_code == 429 and _detail28(_lu_charged32).get("code") == "monthly_limit"
+            and _pool32(f"u:{_lu_uid32}", _P_THIS32) == (10, 10),
+            f"{_lu_ride32.status_code} {_hdr32(_lu_ride32)} {_phdr32(_lu_ride32)} {_lu_charged32.status_code}",
+        )
+        _fo_uid32, _FO32_H = _mint32(_c32c, "Screening Opener Fails")
+
+        def _scr_client_fails32():
+            raise RuntimeError("model unavailable")
+
+        _scr32.get_llm_client = _scr_client_fails32
+        try:
+            _fo32 = _c32c.post("/tools/screening-answer", headers=_FO32_H,
+                               json={"resume": _R32, "jd_text": "Python role at Acme.", "question": "Why Acme?"})
+        finally:
+            _scr32.get_llm_client = _real_scr_client32c
+        _fo_ev32 = _events32(_fo_uid32)
+        check(
+            "32.12 passes: an opener that fails with no rider answers X-Uses-Pass screening;0;0 with the use back "
+            "(X-Uses-Remaining 10), and /auth/me lists no pass — its +1/-1 screening pair proves the pass was opened",
+            _fo32.status_code == 502 and _phdr32(_fo32) == "screening;0;0" and _hdr32(_fo32) == "10"
+            and len(_fo_ev32) == 2 and _refunded32(_fo_ev32, "screening")
+            and _passes32(_fo_uid32) == [] and _listed_passes32(_c32c, _FO32_H) == {},
+            f"{_fo32.status_code} {_phdr32(_fo32)} {_hdr32(_fo32)} {_shape32(_fo_ev32)}",
+        )
+        _cz_uid32, _CZ32_H = _mint32(_c32c, "Interview Pass Closed")
+        _cz_rider32 = {}
+
+        def _iv_rider_then_fails32():
+            _cz_rider32["out"] = _pass_call32(_cz_uid32, "interview", _real_utc_now32c(), fail=True)
+            raise RuntimeError("model unavailable")
+
+        _iv32.get_llm_client = _iv_rider_then_fails32
+        try:
+            _cz32 = _c32c.post("/interview/questions", json={"resume": _R32, "jd": _JDJ32}, headers=_CZ32_H)
+        finally:
+            _iv32.get_llm_client = _real_iv_client32c
+        _cz_rows32 = _passes32(_cz_uid32)
+        _cz_ev32 = _events32(_cz_uid32)
+        check(
+            "32.12 passes: a pass CLOSED by the settlement rule — its opener failed after a rider that failed too — "
+            "answers X-Uses-Pass interview;0;0 with the use back (header 10), and /auth/me lists no pass though the "
+            "closed row remains (calls 2 = max_calls, 1 failed ride)",
+            (_cz_rider32.get("out") or (None, None))[0] is not None and not _cz_rider32["out"][0].opened
+            and _cz32.status_code == 502 and _phdr32(_cz32) == "interview;0;0" and _hdr32(_cz32) == "10"
+            and [(r.calls, r.max_calls, r.failed, bool(r.opener_failed)) for r in _cz_rows32] == [(2, 2, 1, True)]
+            and len(_cz_ev32) == 2 and _refunded32(_cz_ev32, "interview")
+            and _listed_passes32(_c32c, _CZ32_H) == {},
+            f"{_cz32.status_code} {_phdr32(_cz32)} {_hdr32(_cz32)} {[tuple(r)[:8] for r in _cz_rows32]}",
+        )
+        _nl_uid32, _NL32_H = _mint32(_c32c, "Passes Not Listed")
+        _nl32 = [
+            _c32c.post("/interview/chat", json=_CHAT32, headers=_NL32_H),
+            _c32c.post("/tools/screening-answer", headers=_NL32_H,
+                       json={"resume": _R32, "jd_text": "Python role at Acme.", "question": "Why Acme?"}),
+            _c32c.post("/cover-letter", json=_CL_BODY32, headers=_NL32_H),
+        ]
+        _nl_open32 = _listed_passes32(_c32c, _NL32_H) or {}
+        _nl_rows32 = {r.feature: r for r in _passes32(_nl_uid32)}
+        if {"interview", "screening"} <= set(_nl_rows32):
+            _set_pass32(_nl_rows32["interview"].id, expires_at=_real_utc_now32c().replace(tzinfo=None) - _SEC32)
+            _set_pass32(_nl_rows32["screening"].id, calls=_nl_rows32["screening"].max_calls)
+        _nl_after32 = _listed_passes32(_c32c, _NL32_H)
+        check(
+            "32.12 twins: /auth/me lists the open interview and screening passes and NEVER the open cover-letter pass "
+            "beside them (it belongs to one posting and rides its own response, which carries no X-Uses-Pass); once the "
+            "interview pass has expired and the screening pass is used up, neither is listed",
+            all(r.status_code == 200 for r in _nl32) and _phdr32(_nl32[2]) is None
+            and set(_nl_open32) == {"interview", "screening"}
+            and set(_nl_rows32) == {"interview", "screening", "cover_letter"}
+            and _nl_after32 == {},
+            f"{[r.status_code for r in _nl32]} {_nl_open32} {sorted(_nl_rows32)} {_nl_after32}",
+        )
+finally:
+    _routes32.analyze_and_score = _real_fit32c
+    _routes32.generate_cover_letter = _real_cover32c
+    _routes32.tailor_resume = _real_tailor32c
+    _iv32.get_llm_client = _real_iv_client32c
+    _scr32.get_llm_client = _real_scr_client32c
+    _rr32.get_llm_client = _real_rr_client32c
+    _q32._open_pass = _real_open_pass32c
+    _q32.utc_now = _real_utc_now32c
+    _restore29(_prev32c_env)
+
 _reached_end = True
 print(f"\n{_ran} checks ran.")
 print("ALL PASSED" if not failures else f"FAILURES: {failures}")

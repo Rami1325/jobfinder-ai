@@ -3,8 +3,10 @@
 This is the ONE part of the resume review that spends. Everything in
 `resume_review.py` is deterministic, free and uncapped, and runs on every
 keystroke; this runs behind a button, takes `Depends(llm_user)` and costs one
-AI credit. The split is deliberate and it is the shape the rest of this repo
-already uses: a review that quietly billed per keystroke would be the
+monthly use, but only when there is a bullet to ask about: the route chooses the
+targets first with `rewrite_targets`, and none means no model call and no charge
+(Phase 30 / B4.5). The split is deliberate and it is the shape the rest of this
+repo already uses: a review that quietly billed per keystroke would be the
 `/tools/ats-scan` defect wearing the other hat.
 
 The model is not trusted with the result. Every rewrite it returns is checked
@@ -38,9 +40,9 @@ from app.llm.client import get_llm_client
 from app.models import ResumeModel, ReviewRewrite, ReviewRewriteResult
 from app.parsers.structurer import _extract_numbers
 
-# One AI credit buys a bounded prompt. The review routinely finds twenty weak
-# bullets on a first-draft CV and sending all of them would turn one credit into
-# an arbitrarily long call.
+# One use buys a bounded prompt. The review routinely finds twenty weak bullets
+# on a first-draft CV and sending all of them would turn one use into an
+# arbitrarily long call.
 MAX_BULLETS = 5
 
 
@@ -56,12 +58,14 @@ def _bullets(resume: ResumeModel) -> dict[str, str]:
     return {path: text for path, text in _bullet_blocks(resume) if (text or "").strip()}
 
 
-def _targets(resume: ResumeModel, paths: list[str] | None) -> list[tuple[str, str]]:
-    """The bullets to ask about.
+def rewrite_targets(resume: ResumeModel, paths: list[str] | None) -> list[tuple[str, str]]:
+    """The bullets to ask about, as (path, text).
 
     An explicit `paths` list is honoured as given (still capped); an empty one
     means "choose the rewritable findings server-side", which is what the panel
     sends and what keeps the client from having to re-implement `REWRITABLE`.
+    Public because the route decides with it whether there is anything to pay
+    for: no targets means no model call, so no use is charged (Phase 30 / B4.5).
     """
     have = _bullets(resume)
     if paths:
@@ -73,14 +77,22 @@ def _targets(resume: ResumeModel, paths: list[str] | None) -> list[tuple[str, st
     return seen[:MAX_BULLETS]
 
 
-def write_rewrites(resume: ResumeModel, paths: list[str] | None = None) -> ReviewRewriteResult:
+def write_rewrites(
+    resume: ResumeModel,
+    paths: list[str] | None = None,
+    *,
+    targets: list[tuple[str, str]] | None = None,
+) -> ReviewRewriteResult:
     """Ask the model to reword the weak bullets, then refuse what it got wrong.
 
     Returns an empty result rather than raising when there is nothing to ask
     about: "no rewritable findings" is a clean document, not an error, and the
-    route should not spend a call to discover it.
+    route should not spend a call to discover it. `targets` are the bullets the
+    route already chose (and charged for), so the call asks about exactly those;
+    when None they are chosen here from `paths`, as before.
     """
-    targets = _targets(resume, paths)
+    if targets is None:
+        targets = rewrite_targets(resume, paths)
     if not targets:
         return ReviewRewriteResult()
 

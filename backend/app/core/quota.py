@@ -803,36 +803,77 @@ def claim_fit_ride(db: Session, user: User, *, ref: str, now: datetime) -> int |
 
 
 def release_fit_ride(db: Session, pass_id: int | None) -> None:
-    """A covered tailor failed: give the ride back, with no ledger change, so the retry is still covered."""
+    """A covered tailor failed: give the ride back, with no ledger change, so the retry is still covered.
+
+    Whatever the failed call left pending is rolled back first. Best effort, like
+    the refund in `charged`: it may never mask the error that failed the tailor,
+    and a ride it cannot give back only means the retry is charged as usual.
+    """
     if pass_id is None:
         return
-    db.execute(
-        update(_PASSES)
-        .where(_PASSES.c.id == pass_id, _PASSES.c.feature == FIT_RIDE, _PASSES.c.calls > 0)
-        .values(calls=_PASSES.c.calls - 1)
-    )
-    db.commit()
+    try:
+        db.rollback()
+        db.execute(
+            update(_PASSES)
+            .where(_PASSES.c.id == pass_id, _PASSES.c.feature == FIT_RIDE, _PASSES.c.calls > 0)
+            .values(calls=_PASSES.c.calls - 1)
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001 - never mask the error that failed the tailor
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning("giving back fit ride %s did not complete; the retry will be charged", pass_id, exc_info=True)
 
 
-def settle_fit_ride(db: Session, user: User, pass_id: int, *, fit_event_id: int, now: datetime) -> None:
+def settle_fit_ride(
+    db: Session, user: User, pass_id: int, *, fit_event_id: int | None = None, now: datetime | None = None
+) -> None:
     """A covered tailor succeeded: reclassify the fit check's use as a tailored job
     (fit_check -1, tailor +1, both in the fit event's month, ref `ride:<pass id>`).
-    `used` is unchanged, so the breakdown counts a tailored job for the one use."""
+    `used` is unchanged, so the breakdown counts a tailored job for the one use.
+
+    `fit_event_id` defaults to the ride's own `event_id`, the fit charge that
+    opened it, which is all a caller holding only the claimed pass id can name.
+    Written at most once per ride. Best effort: the tailor was already served, so
+    a reclassification that cannot land leaves `used` right and only the
+    breakdown still saying fit_check, where raising would lose the user a
+    tailored resume the ride had already paid for.
+    """
     moment = _clock(now)
     user_id, _plan, limit = _who(user)
-    fit = db.execute(select(_EVENTS.c.quota_key, _EVENTS.c.period).where(_EVENTS.c.id == fit_event_id)).first()
-    if fit is None:
-        return
-    key, period = fit
-    ride = f"ride:{pass_id}"
-    settled = db.execute(
-        select(_EVENTS.c.id).where(_EVENTS.c.quota_key == key, _EVENTS.c.ref == ride).limit(1)
-    ).first()
-    if settled is None:
-        _insert_event(db, user_id=user_id, key=key, period=period, feature="fit_check", delta=-1, ref=ride, now=moment)
-        _insert_event(db, user_id=user_id, key=key, period=period, feature="tailor", delta=1, ref=ride, now=moment)
-        db.commit()
-    _note_remaining(db, user_id, key, period, limit)
+    try:
+        if fit_event_id is None:
+            fit_event_id = db.execute(
+                select(_PASSES.c.event_id).where(_PASSES.c.id == pass_id, _PASSES.c.feature == FIT_RIDE)
+            ).scalar()
+        fit = (
+            db.execute(select(_EVENTS.c.quota_key, _EVENTS.c.period).where(_EVENTS.c.id == fit_event_id)).first()
+            if fit_event_id is not None
+            else None
+        )
+        if fit is None:
+            return
+        key, period = fit
+        ride = f"ride:{pass_id}"
+        settled = db.execute(
+            select(_EVENTS.c.id).where(_EVENTS.c.quota_key == key, _EVENTS.c.ref == ride).limit(1)
+        ).first()
+        if settled is None:
+            _insert_event(
+                db, user_id=user_id, key=key, period=period, feature="fit_check", delta=-1, ref=ride, now=moment
+            )
+            _insert_event(db, user_id=user_id, key=key, period=period, feature="tailor", delta=1, ref=ride, now=moment)
+            db.commit()
+        _note_remaining(db, user_id, key, period, limit)
+    except Exception:  # noqa: BLE001 - the tailor was served; never turn it into an error
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning("settling fit ride %s did not complete; its use still counts as a fit check", pass_id,
+                       exc_info=True)
 
 
 # --- what /auth/me says (B7) ----------------------------------------------------------------------

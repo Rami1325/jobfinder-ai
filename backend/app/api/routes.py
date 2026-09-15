@@ -30,7 +30,7 @@ from app.core.resume_review import review_resume
 from app.core.ats_xray import xray
 from app.core.company_brief import build_company_brief
 from app.core.cover_letter import generate_cover_letter
-from app.core.review_rewrites import write_rewrites
+from app.core.review_rewrites import rewrite_targets, write_rewrites
 from app.core.salary import extract_salary
 from app.llm.limits import (
     ContextWindowExceeded,
@@ -299,32 +299,56 @@ def jd_analyze(
         raise HTTPException(502, f"LLM error while analyzing job description: {e}")
 
 
+def _tailor_or_502(body: TailorRequest, user: User) -> TailorResult:
+    """The tailor itself, with the model's errors mapped once for both of /tailor's
+    paths (a use charged, or a fit check's ride): a size limit stays the app-level
+    413/503, and anything else is a 502."""
+    try:
+        return tailor_resume(
+            body.resume, body.jd,
+            avoid_phrases=writing_prefs_core.avoid_phrases(user),
+            hide_arabic_in_israel=resume_prefs_core.hide_arabic_in_israel(user),
+        )
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never an 'LLM error' 502
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM error while tailoring resume: {e}")
+
+
 @router.post("/tailor", response_model=TailorResult)
 def tailor(
     body: TailorRequest,
     db: Session = Depends(get_db),
     user: User = Depends(metered_user),  # keeps its own tailor cap; meters tokens
 ) -> TailorResult:
-    """Tailor the resume to one analysed job: one monthly use (Phase 30 / B4).
+    """Tailor the resume to one analysed job: one monthly use (Phase 30 / B4), or
+    none when a fit check of the same analysed JD already paid for it (B4.4).
 
-    The daily tailor cap first, then the use, both in the handler: a charge in a
-    dependency would bill a malformed body, because FastAPI resolves the
-    dependencies before it validates the body. The `charged` block sits OUTSIDE
-    the try/except -> 502, or its 429 would be re-wrapped as a 502, and any
-    failure inside it (400, 413, 502, 503) gives the use back.
+    The daily tailor cap first, then the ride or the use, all in the handler: a
+    charge in a dependency would bill a malformed body, because FastAPI resolves
+    the dependencies before it validates the body.
+
+    A fit check opens a 24-hour ride for ONE tailor of the JD it returned, keyed
+    by that analysed JD (`TailorRequest` carries no posting text). A covered
+    tailor that returns reclassifies the fit's use as this tailor, so `used` is
+    unchanged and the header still says what is left; one that fails gives the
+    ride back, so the retry is still covered. With no ride the `charged` block
+    sits OUTSIDE the try/except -> 502, or its 429 would be re-wrapped as a 502,
+    and any failure inside it (400, 413, 502, 503) gives the use back.
     """
     check_and_count(db, user, "tailor", get_settings().daily_tailor_cap)
-    with quota.charged(db, user, "tailor"):
-        try:
-            return tailor_resume(
-                body.resume, body.jd,
-                avoid_phrases=writing_prefs_core.avoid_phrases(user),
-                hide_arabic_in_israel=resume_prefs_core.hide_arabic_in_israel(user),
-            )
-        except _SIZE_ERRORS:
-            raise  # app-level 413/503, never an 'LLM error' 502
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"LLM error while tailoring resume: {e}")
+    now = quota.utc_now()
+    ride = quota.claim_fit_ride(db, user, ref=quota.jd_ref(body.jd), now=now)
+    if ride is None:
+        with quota.charged(db, user, "tailor", now=now):
+            return _tailor_or_502(body, user)
+    try:
+        result = _tailor_or_502(body, user)
+    except BaseException:
+        quota.release_fit_ride(db, ride)
+        raise
+    quota.settle_fit_ride(db, user, ride, now=now)
+    return result
 
 
 @router.get("/profile/resume-prefs", response_model=ResumePrefs)
@@ -364,14 +388,26 @@ def add_writing_prefs(
 
 
 @router.post("/cover-letter", response_model=CoverLetterResponse)
-def cover_letter(body: CoverLetterRequest, _u: User = Depends(llm_user)) -> CoverLetterResponse:
-    try:
-        text = generate_cover_letter(body.resume, body.jd, body.tone)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while writing cover letter: {e}")
-    return CoverLetterResponse(cover_letter=text)
+def cover_letter(
+    body: CoverLetterRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> CoverLetterResponse:
+    """Write a cover letter for one analysed job (Phase 30 / B5, OD-2 b).
+
+    The first letter for a posting uses 1 and opens a 24-hour pass keyed by that
+    analysed JD (`quota.jd_ref`); changes to it, in any tone, ride the pass up to
+    10 calls in all, and a letter for another posting opens its own. The pass is
+    reported on this response (`included_until`, `changes_left`), never on the
+    uses header, because it belongs to one posting. The pass sits OUTSIDE the
+    try/except -> 502, so a 429 stays a 429.
+    """
+    with quota.pass_charged(db, user, "cover_letter", ref=quota.jd_ref(body.jd)) as use:
+        try:
+            text = generate_cover_letter(body.resume, body.jd, body.tone)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while writing cover letter: {e}")
+    return CoverLetterResponse(cover_letter=text, included_until=use.included_until, changes_left=use.calls_left)
 
 
 @router.post("/render")
@@ -395,77 +431,101 @@ def render(body: RenderRequest):
 
 
 # --------------------------------------------------------------------------- #
-# Interview prep
+# Interview prep. A whole practice session is ONE monthly use (Phase 30 / B5):
+# the first call opens a 3-hour pass of 60 calls and every call on these six
+# routes rides it, whichever posting it is about, because the pass is keyed by
+# the feature alone. Each route takes the pass after its own 400 checks and
+# OUTSIDE its try/except -> 502, so a 429 stays a 429, and a pass on which no
+# call was served gives its use back (quota.pass_charged, B5.3).
 # --------------------------------------------------------------------------- #
 @router.post("/interview/questions", response_model=InterviewQuestionsResult)
-def interview_questions(body: InterviewQuestionsRequest, _u: User = Depends(llm_user)) -> InterviewQuestionsResult:
-    try:
-        return generate_questions(body.resume, body.jd)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while generating interview questions: {e}")
+def interview_questions(
+    body: InterviewQuestionsRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> InterviewQuestionsResult:
+    with quota.pass_charged(db, user, "interview"):
+        try:
+            return generate_questions(body.resume, body.jd)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while generating interview questions: {e}")
 
 
 @router.post("/interview/answer", response_model=InterviewAnswerResult)
-def interview_answer(body: InterviewAnswerRequest, _u: User = Depends(llm_user)) -> InterviewAnswerResult:
+def interview_answer(
+    body: InterviewAnswerRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> InterviewAnswerResult:
     if not body.question.strip():
         raise HTTPException(400, "Question is empty.")
-    try:
-        return model_answer(body.resume, body.jd, body.question)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while writing the model answer: {e}")
+    with quota.pass_charged(db, user, "interview"):
+        try:
+            return model_answer(body.resume, body.jd, body.question)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while writing the model answer: {e}")
 
 
 @router.post("/interview/feedback", response_model=InterviewFeedbackResult)
-def interview_feedback(body: InterviewFeedbackRequest, _u: User = Depends(llm_user)) -> InterviewFeedbackResult:
+def interview_feedback(
+    body: InterviewFeedbackRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> InterviewFeedbackResult:
     if not body.answer.strip():
         raise HTTPException(400, "Answer is empty.")
-    try:
-        return answer_feedback(body.resume, body.question, body.answer)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while evaluating the answer: {e}")
+    with quota.pass_charged(db, user, "interview"):
+        try:
+            return answer_feedback(body.resume, body.question, body.answer)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while evaluating the answer: {e}")
 
 
 @router.post("/interview/recruiter-screen", response_model=RecruiterScreenResult)
-def interview_recruiter_screen(body: RecruiterScreenRequest, _u: User = Depends(llm_user)) -> RecruiterScreenResult:
+def interview_recruiter_screen(
+    body: RecruiterScreenRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> RecruiterScreenResult:
     """Prep sheet for the ~15-min recruiter phone screen: pitch, predictable
     questions with grounded talking points, and honest salary-range framing."""
-    try:
-        return recruiter_screen(body.resume, body.jd_text)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while building the recruiter-screen prep: {e}")
+    with quota.pass_charged(db, user, "interview"):
+        try:
+            return recruiter_screen(body.resume, body.jd_text)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while building the recruiter-screen prep: {e}")
 
 
 @router.post("/interview/chat", response_model=InterviewChatResult)
-def interview_chat(body: InterviewChatRequest, _u: User = Depends(llm_user)) -> InterviewChatResult:
+def interview_chat(
+    body: InterviewChatRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> InterviewChatResult:
     """One mock-interview turn (PLAN 11.3). Stateless: the client sends the
-    whole transcript; the model returns the interviewer's next message."""
-    try:
-        return chat_turn(body.resume, body.jd_text, body.transcript)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error during the mock interview: {e}")
+    whole transcript; the model returns the interviewer's next message. Every
+    turn rides the session's pass, so the session is one use, not one per message."""
+    with quota.pass_charged(db, user, "interview"):
+        try:
+            return chat_turn(body.resume, body.jd_text, body.transcript)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error during the mock interview: {e}")
 
 
 @router.post("/interview/scorecard", response_model=InterviewScorecardResult)
-def interview_scorecard(body: InterviewChatRequest, _u: User = Depends(llm_user)) -> InterviewScorecardResult:
+def interview_scorecard(
+    body: InterviewChatRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> InterviewScorecardResult:
     """End-of-session scorecard for a mock-interview transcript (PLAN 11.3)."""
     if not any(t.role == "candidate" and t.text.strip() for t in body.transcript):
         raise HTTPException(400, "Answer at least one question before ending the session.")
-    try:
-        return session_scorecard(body.resume, body.jd_text, body.transcript)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while writing the scorecard: {e}")
+    with quota.pass_charged(db, user, "interview"):
+        try:
+            return session_scorecard(body.resume, body.jd_text, body.transcript)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while writing the scorecard: {e}")
 
 
 # --------------------------------------------------------------------------- #
@@ -505,36 +565,51 @@ def jobs_match(
 
 
 @router.post("/jobs/fit", response_model=FitCheckResult)
-def jobs_fit(body: FitCheckRequest, _u: User = Depends(llm_user)) -> FitCheckResult:
+def jobs_fit(
+    body: FitCheckRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> FitCheckResult:
     """Read a posting and score the resume against it, before any tailoring.
 
     ONE round-trip, on the existing JD_FIT task — no new prompt, no new stub
-    branch. `analyze_jd` alone would cost the same unit and return half of this,
-    so the merged task is strictly the better spend.
+    branch. `analyze_jd` alone would spend the same model call and return half of
+    this, so the merged task is strictly the better spend.
+
+    One monthly use, `fit_check`, and it buys the tailor too (Phase 30 / B4.4,
+    OD-1): a fit check that returns opens a 24-hour ride for ONE tailor of the
+    analysed JD it hands back, and `tailor_included_until` says when that cover
+    ends ("" for a caller with no monthly limit). A fit check that fails gives
+    its use back and opens no ride; one with no tailor after it still costs 1.
 
     The analysed JD rides back in the response on purpose: the caller tailors
-    with it instead of paying to read the same posting a second time, and
-    re-scores coverage against it for free on `/tools/coverage`.
+    with it, which is the key the ride is held under, instead of paying to read
+    the same posting a second time, and re-scores coverage against it for free
+    on `/tools/coverage`.
     """
     if not body.jd_text.strip():
         raise HTTPException(400, "Job description text is empty.")
-    try:
-        jd, score = analyze_and_score(body.resume, body.jd_text)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while reading the job description: {e}")
-    return FitCheckResult(
-        jd=jd,
-        keyword_coverage=score.keyword_coverage,
-        fit_score=score.fit_score,
-        rationale=score.rationale,
-        gaps=score.gaps,
-        covered=sum(1 for g in score.gaps if g.status == "covered"),
-        partial=sum(1 for g in score.gaps if g.status == "partial"),
-        missing=sum(1 for g in score.gaps if g.status == "missing"),
-        total=len(score.gaps),
-    )
+    now = quota.utc_now()
+    with quota.charged(db, user, "fit_check", now=now) as charge:
+        try:
+            jd, score = analyze_and_score(body.resume, body.jd_text)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while reading the job description: {e}")
+        result = FitCheckResult(
+            jd=jd,
+            keyword_coverage=score.keyword_coverage,
+            fit_score=score.fit_score,
+            rationale=score.rationale,
+            gaps=score.gaps,
+            covered=sum(1 for g in score.gaps if g.status == "covered"),
+            partial=sum(1 for g in score.gaps if g.status == "partial"),
+            missing=sum(1 for g in score.gaps if g.status == "missing"),
+            total=len(score.gaps),
+        )
+        # Last inside the block: a ride that cannot be opened gives the fit's use back.
+        included_until = quota.open_fit_ride(db, user, ref=quota.jd_ref(jd), event_id=charge.event_id, now=now)
+    result.tailor_included_until = included_until.isoformat() if included_until is not None else ""
+    return result
 
 
 @router.post("/jobs/fetch", response_model=JobFetchResponse)
@@ -1287,21 +1362,35 @@ def tools_review(body: ReviewRequest) -> ReviewResult:
 
 @router.post("/tools/review/rewrites", response_model=ReviewRewriteResult)
 def tools_review_rewrites(
-    body: ReviewRewriteRequest, _u: User = Depends(llm_user)
+    body: ReviewRewriteRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
 ) -> ReviewRewriteResult:
     """Model rewordings for the rewritable findings — the one part of the
     review that spends, and therefore the one part that is capped.
 
-    Its sibling above is free and runs on every keystroke; this one costs an AI
-    credit and sits behind a button. Every rewrite is guard-checked after the
-    call and the response says how many were refused.
+    Its sibling above is free and runs on every keystroke; this one sits behind
+    a button and costs one monthly use (Phase 30 / B4.5), but only when there is
+    something to ask the model about. The targets are chosen ONCE, here: none (a
+    tidy CV, or paths that match no bullet) is the empty result with no model
+    call and no charge. `paths: []` means "the server picks", not "no targets".
+    The charge sits OUTSIDE the try/except -> 502, so a 429 stays a 429. Every
+    rewrite is guard-checked after the call and the response says how many were
+    refused.
     """
     try:
-        return write_rewrites(body.resume, body.paths)
+        targets = rewrite_targets(body.resume, body.paths)
     except _SIZE_ERRORS:
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while rewriting bullets: {e}")
+        raise HTTPException(502, f"Error while choosing bullets to rewrite: {e}")
+    if not targets:
+        return ReviewRewriteResult()
+    with quota.charged(db, user, "rewrites"):
+        try:
+            return write_rewrites(body.resume, body.paths, targets=targets)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while rewriting bullets: {e}")
 
 
 # Deterministic like /tools/ats-scan — it renders and re-parses, never calls the
@@ -1426,17 +1515,26 @@ def outreach(
 
 
 @router.post("/tools/screening-answer", response_model=ScreeningAnswerResult)
-def tools_screening_answer(body: ScreeningRequest, _u: User = Depends(llm_user)) -> ScreeningAnswerResult:
+def tools_screening_answer(
+    body: ScreeningRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> ScreeningAnswerResult:
     """Draft an honest, resume-grounded answer to an application/screening
-    free-text question (e.g. "Why do you want to work here?")."""
+    free-text question (e.g. "Why do you want to work here?").
+
+    Up to 6 answers in 3 hours are one monthly use (Phase 30 / B5): the Chrome
+    extension's autofill fires up to four answers per click, one request each,
+    with no grouping id, so the pass is keyed by the feature alone. Taken after
+    the empty-question 400 and OUTSIDE the try/except -> 502.
+    """
     if not body.question.strip():
         raise HTTPException(400, "Question is empty.")
-    try:
-        return answer_screening_question(body.resume, body.jd_text, body.question)
-    except _SIZE_ERRORS:
-        raise  # app-level 413/503, never an 'LLM error' 502
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"LLM error while drafting the answer: {e}")
+    with quota.pass_charged(db, user, "screening"):
+        try:
+            return answer_screening_question(body.resume, body.jd_text, body.question)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while drafting the answer: {e}")
 
 
 @router.post("/tools/company-brief", response_model=CompanyBriefResult)

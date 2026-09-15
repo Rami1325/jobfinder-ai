@@ -327,7 +327,18 @@ class CoverLetterRequest(BaseModel):
 
 
 class CoverLetterResponse(BaseModel):
+    """A cover letter, and the session pass it rode (Phase 30 / B5, OD-2 b).
+
+    The first letter for a posting uses 1 and opens a 24-hour pass keyed by that
+    analysed JD; changes to it (any tone) ride the pass, up to 10 calls in all.
+    The pass belongs to ONE posting, so it travels on this response and never on
+    /auth/me or the X-Uses-Pass header, which list the feature-keyed passes."""
+
     cover_letter: str
+    # ISO UTC end of this posting's pass; "" for a caller with no monthly limit
+    included_until: str = ""
+    # calls left on the pass after this one (max_calls - calls); 0 when exempt
+    changes_left: int = 0
 
 
 class RenderRequest(BaseModel):
@@ -1466,13 +1477,20 @@ class FitCheckResult(BaseModel):
     "Check fit" cannot be free, and pretending otherwise would be the exact
     dishonesty this surface exists to remove: coverage needs `jd.keywords`, and
     the only thing that produces those is `analyze_jd` — a model call. So it
-    costs one unit either way, and this spends it on the better call: the JD_FIT
-    task returns the analysed JD *and* the fit reading together, where
+    costs a model call either way, and this spends it on the better call: the
+    JD_FIT task returns the analysed JD *and* the fit reading together, where
     `analyze_jd` alone would return half as much for the same price.
 
-    The analysed `jd` comes back so the caller can tailor without paying to read
-    the posting twice, and can re-score coverage against it for free on
-    `/tools/coverage` as often as it likes.
+    It is one monthly use, and that use buys the tailor too (Phase 30 / B4.4,
+    OD-1): a fit check opens a 24-hour ride for ONE tailor of the `jd` it
+    returns, so checking fit and then tailoring that job costs 1, not 2. A fit
+    check with no tailor still costs 1. `tailor_included_until` is when the cover
+    ends (ISO UTC), "" for a caller with no monthly limit.
+
+    The analysed `jd` comes back so the caller can tailor with it, which is also
+    the key the ride is held under (`TailorRequest` carries no posting text), and
+    can re-score coverage against it for free on `/tools/coverage` as often as it
+    likes.
 
     No `overall`: it blends a live deterministic half with a frozen LLM sample.
     And no `fit_before`/`fit_after` — two samples at temperature 0.3 are not a
@@ -1488,6 +1506,8 @@ class FitCheckResult(BaseModel):
     partial: int = 0
     missing: int = 0
     total: int = 0
+    # ISO UTC end of the tailor ride this fit check opened; "" when exempt (B4.4)
+    tailor_included_until: str = ""
 
 
 class PageCountRequest(BaseModel):
@@ -1797,7 +1817,8 @@ class ReviewRewriteRequest(BaseModel):
 
     `paths` picks which bullets to ask about; `[]` means "choose the rewritable
     findings server-side", which is what the panel sends. Capped server-side so
-    a caller cannot turn one AI credit into an arbitrarily long prompt.
+    a caller cannot turn one monthly use into an arbitrarily long prompt. A
+    request with nothing to ask about costs no use at all (Phase 30 / B4.5).
     """
 
     model_config = {"extra": "forbid"}
