@@ -212,6 +212,10 @@ export interface FitCheckResult {
   partial: number;
   missing: number;
   total: number;
+  /** When the tailor this fit check paid for stops being included (ISO UTC); ""
+   * for an account with no monthly limit. Check fit, then Tailor the same
+   * analysed job, is 1 use (Phase 30 / B4.4). Absent on older backends. */
+  tailor_included_until?: string;
 }
 
 /** A live page measurement for the document the user is about to download. */
@@ -232,6 +236,19 @@ export interface TailorResult {
   voice_report?: VoiceReport; // absent on results saved by older backends
   plan?: CVPlan | null;
   length_report?: LengthReport; // absent on results saved by older backends
+}
+
+/** POST /cover-letter: the letter, and the pass it rode (Phase 30 / B5). The
+ * first letter for a posting uses 1 and opens a 24-hour pass for that analysed
+ * job; changes to it ride the pass, up to 10 calls in all. The pass belongs to
+ * one posting, so it travels here and never in /auth/me. Both pass fields are
+ * absent on older backends. */
+export interface CoverLetterResponse {
+  cover_letter: string;
+  /** ISO UTC end of this posting's pass; "" for an account with no monthly limit. */
+  included_until?: string;
+  /** Calls left on the pass after this one; 0 when exempt. */
+  changes_left?: number;
 }
 
 export interface ResumeUploadResponse {
@@ -586,6 +603,12 @@ export interface AlertSettings {
   // predates the bar and never measured it — NOT the same as 0, which means it
   // measured and nothing cleared. Render the pre-bar line for null.
   last_above_min?: number | null;
+  // Phase 30 / B6.5: "monthly_limit" while this account's monthly uses are
+  // spent, so the morning emails wait for the 1st; "" otherwise. Worked out when
+  // the card is read, never from the last morning's skip. Absent on older backends.
+  paused_reason?: string;
+  // "YYYY-MM-DD", the day the mornings resume, while paused; "" otherwise.
+  resumes_on?: string;
 }
 export interface AlertRunResult {
   ran: boolean;
@@ -594,6 +617,9 @@ export interface AlertRunResult {
   above_min?: number; // of new_count, how many cleared the fit bar
   emailed: boolean;
   error: string;
+  // "monthly_limit" when a scheduled morning did not run for want of a use (ran
+  // false, error empty); "" when the run was not skipped. Absent on older backends.
+  skipped_reason?: string;
 }
 export interface JobSearchResult {
   context: SearchContext;
@@ -682,7 +708,9 @@ export interface KitProcessResult {
   remaining: number;
 }
 
-/** Free public CV-vs-JD scan (no signup, deterministic only). */
+/** The CV scan at /tools/scan (Phase 30 / A2): deterministic keyword coverage
+ * and a few resume checks. The names are the backend's models, kept from when
+ * the scan was a public page. */
 export interface FreeScanCheck {
   id: "email" | "phone" | "length" | "numbers";
   severity: "good" | "warn";
@@ -865,6 +893,28 @@ export interface Me {
   is_admin: boolean;
 }
 
+/** One account as the admin API lists it (GET /admin/users, `X-App-Key`). No
+ * page reads it yet; it mirrors the backend so the admin's plan switch (Phase 30
+ * / B7) has a shape on this side, and check-mirrors 32(j) holds its Phase 30
+ * names to Python. */
+export interface UserOut {
+  id: number;
+  name: string;
+  email: string;
+  invite_code: string;
+  is_admin: boolean;
+  is_active: boolean;
+  created_at: string;
+  /** "" = not measured, never "has not visited". */
+  last_seen_at: string;
+  login_email: string;
+  verified: boolean;
+  inbox_enabled: boolean;
+  plan: string; // "free" | "unlimited"
+  /** What this account's pool spent this UTC month. */
+  uses_this_month: number;
+}
+
 /** The account behind `AuthMe`. */
 export interface AuthUser {
   id: number;
@@ -895,6 +945,45 @@ export interface AuthMe {
   signup_open: boolean;
   google_enabled: boolean;
   user: AuthUser | null;
+  /** This month's uses for a signed-in caller (Phase 30 / B7); null for a
+   * signed-out one, absent on an older backend. `getAuthMe` hands it to
+   * lib/usesStore.ts, which is where pages read it. */
+  usage?: UsageOut | null;
+}
+
+/** One open session pass as /auth/me lists it: interview practice or screening
+ * answers. Relative seconds, never a timestamp, so a phone whose clock is wrong
+ * cannot end a pass early. Mirrors backend `UsagePassOut` (check-mirrors 32(j)). */
+export interface UsagePassOut {
+  calls_left: number;
+  expires_in_s: number;
+}
+
+/** This month's uses (Phase 30 / B7). Mirrors backend `UsageOut` field for
+ * field (check-mirrors 32(j)). */
+export interface UsageOut {
+  plan: string; // "free" | "unlimited"
+  /** null = no monthly limit: the admin, plan "unlimited", or the limit switched off. */
+  limit: number | null;
+  used: number;
+  /** null exactly when `limit` is. */
+  remaining: number | null;
+  resets_on: string; // "YYYY-MM-DD", the 1st of the next UTC month
+  by_feature: Record<string, number>; // this month's net uses per feature id
+  /** The open interview and screening passes, newest per feature; {} with no limit. */
+  passes: Record<string, UsagePassOut>;
+}
+
+/** The 429 detail of the monthly free limit. `remaining` is the true count and
+ * not always 0: a kits batch bigger than what is left is refused with it. */
+export interface MonthlyLimitDetail {
+  code: "monthly_limit";
+  feature: string;
+  plan: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  resets_on: string; // "YYYY-MM-DD"
 }
 
 /** POST /auth/verify. `signed_in` says whether THIS browser holds the session

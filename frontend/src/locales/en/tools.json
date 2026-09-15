@@ -3,6 +3,10 @@
   "sub": "Focused, single-purpose helpers for your search.",
   "back": "All tools",
   "cards": {
+    "scan": {
+      "title": "CV scan",
+      "body": "See which of a job's keywords your resume already covers, in Hebrew or English."
+    },
     "outreach": {
       "title": "Outreach Studio",
       "body": "Skip the ATS black hole — a connection note, cold email, and referral ask to reach a real person."

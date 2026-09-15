@@ -67,6 +67,9 @@ import { VersionHistoryModal } from "./jobs/VersionHistory";
 import { SearchScanPanel } from "./jobs/ScanPanel";
 import { EASE, filteredSummary, inputCls, normalizeJobUrl, SOURCE_IDS, sourceLabel } from "./jobs/shared";
 
+// The most listings one ranking takes: the backend's job_match.MAX_MATCH_LISTINGS,
+// which answers more with a 400 (Phase 30 / B4.3).
+const MAX_MATCH_LISTINGS = 10;
 
 export default function JobsPage() {
   const { t } = useTranslation("jobs");
@@ -116,7 +119,6 @@ export default function JobsPage() {
   const [showReplace, setShowReplace] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
-  const [autoSearched, setAutoSearched] = useState(false); // first upload kicks off a search automatically
   const [sourceErrorsDismissed, setSourceErrorsDismissed] = useState(false);
 
   // -- History state --
@@ -153,7 +155,14 @@ export default function JobsPage() {
     progress: searchProgress,
     liveMatches,
     cancelled,
+    dropped,
   } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
+  // A dropped stream may still finish on the server and write its jobs to
+  // History (the store has already let go of the cached copy), so the History
+  // tab reads again the next time it opens instead of showing what it held.
+  useEffect(() => {
+    if (dropped) setHistory(null);
+  }, [dropped]);
   const [resultSort, setResultSort] = useState<"fit" | "date">("fit");
   const [historySort, setHistorySort] = useState<"searched" | "fit" | "date">("searched");
 
@@ -298,8 +307,15 @@ export default function JobsPage() {
   }, [searchResult]);
 
   /** Save an uploaded resume as the master (shared logic with TailorPage) and
-   * update this page in place — no reload needed. The first-ever upload also
-   * auto-starts a job search so jobs appear without another click. */
+   * update this page in place — no reload needed.
+   *
+   * It starts NO search, for every plan (Phase 30 / C10). The first upload used
+   * to run one by itself, and a search now uses 1 of the month's uses: a new
+   * user spent one on a search they never tapped, under copy saying uploading
+   * is free. Not gated on the plan either, because the admin is exempt whatever
+   * `plan` says, so a plan-gated auto-search would be a flow the owner never
+   * sees on his own account. A search starts from the Find jobs button, and
+   * check-mirrors 32(h) keeps it there. */
   async function onResumeUploaded(r: ResumeModel, l: FactsLedger) {
     const firstUpload = !master?.resume;
     const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
@@ -325,28 +341,27 @@ export default function JobsPage() {
     // clearing them read, correctly, as "replacing my resume deleted my search
     // settings". A stale job title is one field the user can see and edit; the
     // other six are not worth destroying to freshen it.
-    if (firstUpload && !searching) {
-      setAutoSearched(true);
-      setMode("search");
-      setRequestedSources([...SOURCE_IDS]); // non-customized search scans every board
-      startJobSearch(r, onboardingCtx()); // magic moment: upload → jobs appear
-    }
+    // The first upload lands on the search tab, beside its button, and that is all.
+    if (firstUpload) setMode("search");
   }
 
+  // `/jobs/match` refuses more than MAX_MATCH_LISTINGS in one ranking (Phase 30 /
+  // B4.3: one use covers one ranking, and every listing is two model calls), so
+  // the queue stops at that number instead of letting the request fail.
   function addDraft() {
-    if (draft.trim().length < 20) return;
-    setListings((p) => [...p, draft.trim()]);
+    if (draft.trim().length < 20 || listings.length >= MAX_MATCH_LISTINGS) return;
+    setListings((p) => (p.length >= MAX_MATCH_LISTINGS ? p : [...p, draft.trim()]));
     setDraft("");
   }
 
   async function addUrl() {
-    if (!url.trim()) return;
+    if (!url.trim() || listings.length >= MAX_MATCH_LISTINGS) return;
     setFetching(true);
     setError("");
     try {
       const text = await fetchJob(url);
       if (text.trim().length < 20) throw new Error(t("manual.noText"));
-      setListings((p) => [...p, text]);
+      setListings((p) => (p.length >= MAX_MATCH_LISTINGS ? p : [...p, text]));
       setUrl("");
       toast("success", t("manual.fetched"));
     } catch (e: any) {
@@ -580,11 +595,13 @@ export default function JobsPage() {
                 </Button>
               )}
               {searchError && <span className="text-sm text-danger">{searchError}</span>}
+              {/* Not an error: the server may still finish this search, and then
+                  its jobs are in History and its use is kept (Phase 30 / C3). */}
+              {dropped && <span className="text-sm text-warn">{t("search.connectionDropped")}</span>}
             </div>
           </Card>
 
           <SearchScanPanel
-            auto={autoSearched}
             searching={searching}
             startedAt={startedAt}
             progress={searchProgress}
@@ -598,7 +615,7 @@ export default function JobsPage() {
               authoritative result replaces them. Also the partial-results
               surface when an interrupted search still scored some jobs. */}
           {liveMatches.length > 0 &&
-            (searching || (!searchResult && (!!searchError || cancelled))) && (
+            (searching || (!searchResult && (!!searchError || dropped || cancelled))) && (
             <div className="space-y-4">
               {searching ? (
                 <p aria-live="polite" className="text-xs text-ink-muted">
@@ -822,7 +839,7 @@ export default function JobsPage() {
                 placeholder={t("manual.pastePlaceholder")}
                 className="mt-3 min-h-[140px] w-full resize-y rounded-xl border border-line bg-bg-soft p-3 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
               />
-              <Button size="sm" className="mt-2" variant="secondary" icon={<Plus size={14} />} disabled={draft.trim().length < 20} onClick={addDraft}>
+              <Button size="sm" className="mt-2" variant="secondary" icon={<Plus size={14} />} disabled={draft.trim().length < 20 || listings.length >= MAX_MATCH_LISTINGS} onClick={addDraft}>
                 {t("manual.addListing")}
               </Button>
             </Card>
@@ -838,7 +855,14 @@ export default function JobsPage() {
                   dir="ltr"
                   className={`flex-1 ${inputCls}`}
                 />
-                <Button size="sm" variant="secondary" loading={fetching} icon={<Link2 size={14} />} onClick={addUrl}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={fetching}
+                  icon={<Link2 size={14} />}
+                  disabled={listings.length >= MAX_MATCH_LISTINGS}
+                  onClick={addUrl}
+                >
                   {t("manual.fetch")}
                 </Button>
               </div>
@@ -867,6 +891,11 @@ export default function JobsPage() {
             <Button size="lg" loading={running} icon={<Trophy size={18} />} disabled={listings.length === 0} onClick={rank}>
               {t("manual.rank", { count: listings.length })}
             </Button>
+            {/* Said where the limit bites, once the queue is full; both add
+                controls above are disabled at the same number. */}
+            {listings.length >= MAX_MATCH_LISTINGS && (
+              <span className="text-xs text-ink-muted">{t("manual.maxListings", { max: MAX_MATCH_LISTINGS })}</span>
+            )}
             {error && <span className="text-sm text-danger">{error}</span>}
           </Card>
 

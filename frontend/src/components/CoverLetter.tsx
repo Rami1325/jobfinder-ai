@@ -29,7 +29,7 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
     setError("");
     setLoading(true);
     try {
-      const letter = await coverLetter(resume, jd, extra ? `${tone}, ${extra}` : tone);
+      const { cover_letter: letter } = await coverLetter(resume, jd, extra ? `${tone}, ${extra}` : tone);
       setText(letter);
       onGenerated?.(letter);
     } catch (e: any) {

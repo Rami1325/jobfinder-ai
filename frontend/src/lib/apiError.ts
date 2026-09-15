@@ -3,11 +3,26 @@
 // daily cap on /jobs/search and /tailor) send an object — which must never be
 // rendered raw ("[object Object]").
 import i18n from "../i18n";
+import type { MonthlyLimitDetail } from "../types";
+import { formatUsesDate, usedUpMonth } from "./usesStore";
 
 // Must stay in sync with the `action` strings passed to check_and_count in the
 // backend (app/core/usage.py callers). `inbox` is the Gmail scanner's own cap:
 // emails classified per day, charged by a sync and never by an AI request.
-type LimitAction = "search" | "tailor" | "llm" | "submit" | "inbox";
+// `upload`, `jd_analyze` and `search_context` are Phase 30's caps on three free
+// model routes that are sub-steps of counted flows (counting them against the
+// monthly uses would make one tailor cost 2), and `scan` is the CV scan's own
+// daily cap on top of its monthly use (B4.6). check-mirrors 32(c) renders all four.
+type LimitAction =
+  | "search"
+  | "tailor"
+  | "llm"
+  | "submit"
+  | "inbox"
+  | "upload"
+  | "jd_analyze"
+  | "search_context"
+  | "scan";
 
 interface DailyLimitDetail {
   code: "daily_limit";
@@ -24,6 +39,10 @@ const LIMIT_KEYS: Record<LimitAction, string> = {
   llm: "dailyLimit.llm",
   submit: "dailyLimit.submit",
   inbox: "dailyLimit.inbox",
+  upload: "dailyLimit.upload",
+  jd_analyze: "dailyLimit.jdAnalyze",
+  search_context: "dailyLimit.searchContext",
+  scan: "dailyLimit.scan",
 };
 
 // Prompt-size limits (backend app/llm/limits.py). Same structured-detail shape
@@ -161,6 +180,25 @@ function authMessage(e: unknown, code: string): string | null {
   return key ? i18n.t(key, { ns: "auth" }) : null;
 }
 
+/** A 429 from the monthly free limit (Phase 30): this month's uses are spent.
+ * Not a session ending and not a daily cap, so a page that branches on it can
+ * say when uses come back instead of "try again". */
+export function isMonthlyLimit(e: unknown): boolean {
+  return apiErrorCode(e) === "monthly_limit";
+}
+
+/** "You've used all your uses for September. More on October 1.", in the
+ * reader's language. The month named is the one that ran out, the month before
+ * `resets_on`; a refusal with no readable date gets the sentence that names none. */
+function monthlyLimitMessage(detail: Partial<MonthlyLimitDetail>): string {
+  const resetsOn = typeof detail.resets_on === "string" ? detail.resets_on : "";
+  const date = formatUsesDate(resetsOn, i18n.language);
+  const month = usedUpMonth(resetsOn, i18n.language);
+  return date && month
+    ? i18n.t("uses.limitReached", { ns: "common", month, date })
+    : i18n.t("uses.limitReachedBare", { ns: "common" });
+}
+
 /** Translated message for an API error, or `fallback` when there's nothing
  * better. Structured (non-string) details are mapped to friendly copy or
  * swallowed — never returned raw. */
@@ -170,6 +208,7 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     const key = LIMIT_KEYS[detail.action] ?? "dailyLimit.generic";
     return i18n.t(key, { ns: "common", cap: detail.cap });
   }
+  if (codeOf(detail) === "monthly_limit") return monthlyLimitMessage(detail as Partial<MonthlyLimitDetail>);
   if (isSizeLimit(detail)) {
     // Keyed per kind: a resume that is too big and a job ad that is too big
     // need different advice (trim the CV vs paste less of the posting).

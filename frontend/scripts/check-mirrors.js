@@ -2339,8 +2339,8 @@ try {
 }
 
 // --------------------------------------------------------------------------- //
-// `backend/app/core/resume_review.py`, read as a LITERAL. ONE loader and ONE
-// tuple parser, shared by checks 26 and 27.
+// The backend's Python source, read as a LITERAL. ONE loader and ONE tuple
+// parser, shared by checks 26, 27, 32(b) and 32(j).
 //
 // PURE NODE, no interpreter, on check 23's terms and for check 23's reason:
 // check-mirrors runs FIRST in `npm run build` and on every Vercel CI build,
@@ -2348,45 +2348,59 @@ try {
 // check that cannot run in CI, i.e. one that has stopped firing, which is the
 // 21.7 failure mode this whole file exists for.
 //
-// DEGRADES LOUDLY, and only on ENOENT. `vercel.json` roots the frontend service
-// at `frontend/`, so `../backend` may not be in that build's context; every
-// other failure — a permissions error, a parse that comes up short — is a red
-// build. GitHub Actions checks the whole repo out and runs `npm run build` from
-// frontend/ on every push and PR, so both comparisons have a home that does not
-// depend on how Vercel packages a service. The skip is remembered so the final
-// summary line admits it too: a warning printed above a bare "mirrors ok" is a
+// DEGRADES LOUDLY, and only when `backend/` ITSELF is absent. `vercel.json`
+// roots the frontend service at `frontend/`, so `../backend` may not be in that
+// build's context, and that is the one legitimate reason not to read a file. A
+// `backend/` that is here WITHOUT the file is a red build: that is a file that
+// moved or was renamed, and a check that skips on it has quietly stopped
+// guarding anything. (Checks 26 and 27 used to skip on the file's own ENOENT;
+// Phase 30's 32(b) asked for the stricter rule, and one loader has one rule.)
+// Every other failure, a permissions error or a parse that comes up short, is
+// red too. GitHub Actions checks the whole repo out and runs `npm run build`
+// from frontend/ on every push and PR, so the comparisons have a home that does
+// not depend on how Vercel packages a service. A skip is remembered so the final
+// summary line admits it: a warning printed above a bare "mirrors ok" is a
 // warning somebody reads as noise.
 //
 // ONE loader rather than one per check, for check 6's reason: two readers of the
 // same file are free to disagree about it while both stay green. It is called
-// lazily so a missing file lands in a check's own try/catch, and a non-ENOENT
-// failure re-throws there as a loud `fail`.
-const RESUME_REVIEW_PY = path.join(HERE, "..", "..", "backend", "app", "core", "resume_review.py");
-let reviewSkip = null;
-let reviewSrcCache; // undefined = not attempted yet, null = ENOENT
-function reviewSource() {
-  if (reviewSrcCache !== undefined) return reviewSrcCache;
+// lazily, so a missing file lands in the calling check's own try/catch as a
+// loud `fail`.
+const BACKEND_DIR = path.join(HERE, "..", "..", "backend");
+const pySkips = new Set(); // the checks that read no Python because backend/ is absent
+const pyCache = new Map(); // path under backend/ -> its source
+function pySource(relPath, who) {
+  if (!fs.existsSync(BACKEND_DIR)) {
+    if (!pySkips.has(who))
+      console.warn(
+        `\n  ! ${who} DEGRADED: ${BACKEND_DIR} is not in this build, so backend/${relPath} was NOT\n` +
+          `    read and its Python half did not run. Its frontend half still ran.\n` +
+          `    This is expected only where the frontend is built without the repo around it;\n` +
+          `    CI (.github/workflows/ci.yml) checks the whole repo out, so it runs there.\n`,
+      );
+    pySkips.add(who);
+    return null;
+  }
+  if (pyCache.has(relPath)) return pyCache.get(relPath);
+  let src;
   try {
-    reviewSrcCache = fs.readFileSync(RESUME_REVIEW_PY, "utf8");
+    src = fs.readFileSync(path.join(BACKEND_DIR, ...relPath.split("/")), "utf8");
   } catch (e) {
     if (e.code !== "ENOENT") throw e;
-    reviewSrcCache = null;
-    reviewSkip = `${RESUME_REVIEW_PY} not readable`;
-    console.warn(
-      `\n  ! checks 26 + 27 DEGRADED: ${RESUME_REVIEW_PY} is not readable from this build, so the\n` +
-        `    review's path grammar was NOT compared against lib/resumeBlocks.ts and its check ids\n` +
-        `    were NOT resolved against either locale. The frontend halves — the BLOCK_PATTERNS\n` +
-        `    floor and ReviewPanel's own call shape — still ran.\n` +
-        `    This is expected only where the frontend is built without the repo around it;\n` +
-        `    CI (.github/workflows/ci.yml) checks the whole repo out, so both run there.\n`,
+    throw new Error(
+      `backend/ is in this build but backend/${relPath} is not, so ${who} has nothing to read. ` +
+        "The file moved or was renamed: point the check at its new home, do not delete the assertion",
     );
   }
-  return reviewSrcCache;
+  pyCache.set(relPath, src);
+  return src;
 }
 
 /**
- * The entries of a `NAME: tuple[str, ...] = (` literal in resume_review.py,
- * written one quoted entry per line.
+ * The entries of a `NAME … = (` tuple literal in a backend Python file, written
+ * one quoted entry per line. `file` names that file in every message. The
+ * opening line may end in a `#` comment (quota.py's FEATURES says there who
+ * reads it); two entries may never share a line.
  *
  * Deliberately a LINE grammar rather than a bracket matcher plus a regex sweep.
  * A `#` comment inside the tuple can hold a parenthesis AND a quoted string, so
@@ -2400,10 +2414,10 @@ function reviewSource() {
  * two entries onto one line is a red build carrying an instruction, never a
  * silently short list that compares equal by accident.
  */
-function pyTuple(src, name) {
-  const open = new RegExp(`^${name}\\b[^=\\n]*=\\s*\\(\\s*$`, "m").exec(src);
+function pyTuple(src, name, file) {
+  const open = new RegExp(`^${name}\\b[^=\\n]*=\\s*\\(\\s*(?:#.*)?$`, "m").exec(src);
   if (!open)
-    throw new Error(`resume_review.py has no \`${name} … = (\` opening a one-entry-per-line tuple`);
+    throw new Error(`${file} has no \`${name} … = (\` opening a one-entry-per-line tuple`);
   const items = [];
   for (const raw of src.slice(open.index + open[0].length).split("\n")) {
     const line = raw.trim();
@@ -2412,12 +2426,12 @@ function pyTuple(src, name) {
     const m = /^"([^"]*)"\s*,?\s*(?:#.*)?$/.exec(line);
     if (!m)
       throw new Error(
-        `resume_review.py: cannot read \`${line}\` inside ${name} — this parser wants exactly one ` +
+        `${file}: cannot read \`${line}\` inside ${name} — this parser wants exactly one ` +
           "quoted entry per line (see check 26 on why it is a line grammar, not a bracket matcher)",
       );
     items.push(m[1]);
   }
-  throw new Error(`resume_review.py: ${name} is never closed by a \`)\` on its own line`);
+  throw new Error(`${file}: ${name} is never closed by a \`)\` on its own line`);
 }
 
 // ---- 26. the block-path grammar is ONE grammar --------------------------- //
@@ -2475,9 +2489,9 @@ try {
   // sixteenth to both is fine, a parser that has stopped matching is not.
   if (ts.length < 14) throw new Error(`BLOCK_PATTERNS parsed as ${ts.length} entries`);
 
-  const src = reviewSource();
+  const src = pySource("app/core/resume_review.py", "check 26");
   if (src !== null) {
-    const py = pyTuple(src, "PATH_SHAPES");
+    const py = pyTuple(src, "PATH_SHAPES", "resume_review.py");
     if (py.length < 14) throw new Error(`PATH_SHAPES parsed as ${py.length} entries`);
 
     // A duplicate would let set-equality pass while one side quietly carries a
@@ -2688,9 +2702,9 @@ try {
     );
   const prefix = [...at.label][0];
 
-  const src = reviewSource();
+  const src = pySource("app/core/resume_review.py", "check 27");
   if (src !== null) {
-    const ids = pyTuple(src, "CHECK_IDS");
+    const ids = pyTuple(src, "CHECK_IDS", "resume_review.py");
     // Floor well under the twenty-six ids today: a check table shrinks by one
     // when a check is deleted, and it does not shrink to two without a parser
     // having stopped matching.
@@ -3893,6 +3907,642 @@ try {
   fail(`public link target check could not run: ${e.message}`);
 }
 
+// ---- 32(b). every monthly-use feature has a name in both locales ---------- //
+// Phase 30 gives every account one shared pool of monthly uses, and the Settings
+// plan card spells out where this month's went: `uses.features.<id>` per
+// feature, "Tailored jobs 3 · Job searches 2". The ids are declared in PYTHON,
+// as `quota.FEATURES`, so tsc cannot see a new one, and check 8 stays green
+// while a name is missing from BOTH locales: a new charge would print
+// "uses.features.x" at 12px in Hebrew on the one card whose job is to say what
+// a use was spent on.
+//
+// Read with check 26's line grammar, which is why FEATURES is written one entry
+// per line. Floor 13, today's count: a parser that stopped matching reads
+// nothing, and nothing then goes red.
+//
+// Degrades only when backend/ is ABSENT. A backend/ without app/core/quota.py is
+// a red build (pySource): that is a file that moved.
+try {
+  const src = pySource("app/core/quota.py", "check 32(b)");
+  if (src !== null) {
+    const ids = pyTuple(src, "FEATURES", "quota.py");
+    if (ids.length < 13)
+      throw new Error(`quota.py's FEATURES parsed as ${ids.length} entries (expected at least 13)`);
+    const seen = new Set();
+    const dupes = ids.filter((id) => (seen.has(id) ? true : (seen.add(id), false)));
+    if (dupes.length)
+      fail(`quota.py lists ${[...new Set(dupes)].map((i) => `\`${i}\``).join(", ")} in FEATURES more than once.`);
+    for (const loc of ["en", "he"]) {
+      const common = JSON.parse(read(`locales/${loc}/common.json`));
+      const missing = ids.filter((id) => !resolvesIn(common, `uses.features.${id}`));
+      if (missing.length)
+        fail(
+          `locales/${loc}/common.json: uses.features.{${missing.join(", ")}} missing — the plan card would ` +
+            "print the raw key as the name of what a use was spent on. Check 8 stays green while both " +
+            "locales are equally wrong.",
+        );
+    }
+  }
+  // The reader, both directions, on FEATURES' own shape: a comment on the
+  // opening line and a comment between entries are read past, and two entries
+  // packed onto one line are refused rather than half-read.
+  const probe =
+    'FEATURES = (   # one quoted entry per line (32(b))\n    "tailor",\n    # a note with "quotes" (and parens)\n    "scan",\n)\n';
+  if (pyTuple(probe, "FEATURES", "probe.py").join() !== "tailor,scan")
+    fail("check 32(b)'s tuple reader cannot read FEATURES' own shape (a comment on the opening line)");
+  let packed = false;
+  try {
+    pyTuple('FEATURES = (\n    "tailor", "scan",\n)\n', "FEATURES", "probe.py");
+  } catch {
+    packed = true;
+  }
+  if (!packed) fail("check 32(b)'s tuple reader half-reads two entries packed onto one line instead of refusing them");
+  // The loader's rule, in the direction that matters: with backend/ present, a
+  // file that is not there is an error, never a skip.
+  if (fs.existsSync(BACKEND_DIR)) {
+    let refused = false;
+    try {
+      pySource("app/core/__check_mirrors_no_such_file__.py", "check 32(b)'s loader probe");
+    } catch {
+      refused = true;
+    }
+    if (!refused)
+      fail("pySource skips a file backend/ does not have, so a moved quota.py would switch check 32(b) off silently");
+  }
+} catch (e) {
+  fail(`monthly-use feature name check could not run: ${e.message}`);
+}
+
+// ---- 32(c). a monthly-limit refusal says when uses come back (EXECUTED) ---- //
+// Phase 30's 429 `monthly_limit` carries the numbers a sentence needs:
+// `{code, feature, plan, limit, used, remaining, resets_on}`. Through the old
+// table it fell to the caller's generic failure line (or, read as the daily cap,
+// "try again tomorrow", which is false for a month), and `isSessionEnded` must
+// not read it as a dead session either, or /verify's "log in again" state would
+// answer a spent month.
+//
+// Four new daily caps arrive with it (upload, jd_analyze, search_context and the
+// scan's own), and each needs its own line: an action the table does not name
+// falls back to the generic sentence, which is the defect LIMIT_KEYS was written
+// to stop ("you're out of searches" said to someone who hit another cap).
+//
+// EXECUTED, F5's mechanism, with an i18n stub that RECORDS what it is asked, so
+// the probe sees the month and the date the sentence is handed, not just its key.
+try {
+  const asked = [];
+  const commonKeys = new Set();
+  const i18nStub = {
+    __esModule: true,
+    language: "en",
+    t: (key, opts) => {
+      asked.push([key, opts || {}]);
+      if (opts?.ns === "common") commonKeys.add(key);
+      return `T:${key}`;
+    },
+  };
+  i18nStub.default = i18nStub;
+  const ae = runProbeBundle("apierror-uses", `export * from "./lib/apiError";\n`, { "../i18n": i18nStub });
+  for (const name of ["apiErrorMessage", "isSessionEnded"])
+    if (typeof ae[name] !== "function") throw new Error(`lib/apiError.ts no longer exports ${name}`);
+  const err = (status, detail) => ({ response: { status, data: { detail } } });
+  const LIMIT = {
+    code: "monthly_limit",
+    feature: "tailor",
+    plan: "free",
+    limit: 10,
+    used: 10,
+    remaining: 0,
+    resets_on: "2026-10-01",
+  };
+  const render = (e) => {
+    asked.length = 0;
+    const text = ae.apiErrorMessage(e, "FALLBACK");
+    const last = asked[asked.length - 1] || [undefined, {}];
+    return { text, opts: last[1] };
+  };
+
+  const spent = render(err(429, LIMIT));
+  if (spent.text !== "T:uses.limitReached" || spent.opts.ns !== "common") {
+    fail(
+      `a 429 monthly_limit renders ${JSON.stringify(spent.text)} instead of common's "uses.limitReached" — ` +
+        "the user is told something failed, or that a daily cap resets tomorrow, when the month's uses ran out.",
+    );
+  } else {
+    if (!/Sep/i.test(spent.opts.month ?? "") || !/Oct/i.test(spent.opts.date ?? "") || !/\b1\b/.test(spent.opts.date ?? ""))
+      fail(
+        `for resets_on 2026-10-01 the monthly-limit sentence is handed month=${JSON.stringify(spent.opts.month)} ` +
+          `and date=${JSON.stringify(spent.opts.date)}; it must name the month that ran out (September) and ` +
+          "the day uses come back (October 1).",
+      );
+    // December rolls into January: the month that ran out is the one BEFORE resets_on.
+    const dec = render(err(429, { ...LIMIT, resets_on: "2027-01-01" }));
+    if (!/Dec/i.test(dec.opts.month ?? "") || !/Jan/i.test(dec.opts.date ?? ""))
+      fail(
+        `for resets_on 2027-01-01 the sentence is handed month=${JSON.stringify(dec.opts.month)} and ` +
+          `date=${JSON.stringify(dec.opts.date)}; it must be December and January 1.`,
+      );
+    i18nStub.language = "he";
+    const he = render(err(429, LIMIT));
+    i18nStub.language = "en";
+    const HEBREW = /[֐-׿]/;
+    if (!HEBREW.test(he.opts.month ?? "") || !HEBREW.test(he.opts.date ?? ""))
+      fail(
+        `in Hebrew the monthly-limit sentence is handed month=${JSON.stringify(he.opts.month)} and ` +
+          `date=${JSON.stringify(he.opts.date)}; both must be formatted in Hebrew, or an English month name ` +
+          "lands in the middle of a right-to-left sentence.",
+      );
+  }
+  // No readable date is still the monthly limit, and never "More on ." or an Invalid Date.
+  const bare = render(err(429, { ...LIMIT, resets_on: "" }));
+  if (
+    !/^T:uses\./.test(bare.text) ||
+    (bare.text === "T:uses.limitReached" && !bare.opts.date) ||
+    /Invalid|NaN|undefined/.test(JSON.stringify(bare.opts))
+  )
+    fail(
+      `a monthly_limit with no resets_on renders ${JSON.stringify(bare.text)} with ${JSON.stringify(bare.opts)}; ` +
+        "it must still be a uses.* sentence, and one that promises no date it does not have.",
+    );
+
+  if (typeof ae.isMonthlyLimit !== "function") {
+    fail("lib/apiError.ts exports no isMonthlyLimit, so a page cannot tell a spent month from any other refusal");
+  } else {
+    if (!ae.isMonthlyLimit(err(429, LIMIT))) fail("isMonthlyLimit misses a 429 monthly_limit");
+    for (const [label, e] of [
+      ["the daily cap", err(429, { code: "daily_limit", action: "tailor", cap: 3 })],
+      ["a sign-in throttle", err(429, { code: "too_many_attempts", retry_after: 30 })],
+      ["a dropped connection", { message: "Network Error" }],
+    ])
+      if (ae.isMonthlyLimit(e)) fail(`isMonthlyLimit fires on ${label}, which is not the monthly limit`);
+  }
+  if (ae.isSessionEnded(err(429, LIMIT)))
+    fail("isSessionEnded reads a spent month as a dead session, so /verify would ask a signed-in account to log in again");
+
+  // The daily cap keeps its own line beside the monthly one.
+  const dailyTailor = render(err(429, { code: "daily_limit", action: "tailor", cap: 3 }));
+  if (dailyTailor.text !== "T:dailyLimit.tailor")
+    fail(`the daily tailor cap now renders ${JSON.stringify(dailyTailor.text)} instead of dailyLimit.tailor`);
+
+  // Phase 30's four daily caps: each its own sentence, none the generic one.
+  const lines = new Map();
+  for (const action of ["upload", "jd_analyze", "search_context", "scan"]) {
+    const got = render(err(429, { code: "daily_limit", action, cap: 5 })).text;
+    if (!/^T:dailyLimit\./.test(got) || got === "T:dailyLimit.generic")
+      fail(
+        `the daily "${action}" cap renders ${JSON.stringify(got)}: lib/apiError.ts's LIMIT_KEYS must name it ` +
+          "(B4.6), or the user reads the generic line.",
+      );
+    else if ([...lines.values()].includes(got)) fail(`the daily "${action}" cap shares ${got} with another action`);
+    lines.set(action, got);
+  }
+  // …and the false-positive half: an action this build has never heard of is
+  // still the generic line, never another action's sentence.
+  const unknown = render(err(429, { code: "daily_limit", action: "some_future_cap", cap: 5 })).text;
+  if (unknown !== "T:dailyLimit.generic")
+    fail(`a daily cap this build has never heard of renders ${JSON.stringify(unknown)} instead of dailyLimit.generic`);
+
+  // Every common key the probe was handed resolves in both locales.
+  for (const loc of ["en", "he"]) {
+    const common = JSON.parse(read(`locales/${loc}/common.json`));
+    for (const key of commonKeys)
+      if (!resolvesIn(common, key))
+        fail(`locales/${loc}/common.json is missing "${key}" (rendered by lib/apiError.ts) — the refusal would show the raw key.`);
+  }
+} catch (e) {
+  fail(`monthly-limit message probe could not run: ${e.message}`);
+}
+
+// ---- 32(e). the uses store: when a counted control is out (EXECUTED) ------- //
+// `lib/usesStore.ts` holds what this page knows about the month's uses, and its
+// `outFor` is the ONE thing allowed to disable a counted control. Wrong in either
+// direction costs something real: out too eagerly locks a user out of a call the
+// server would serve for free (a screening pass with answers left, a tailor the
+// fit check already paid for); out too lazily only lets the server refuse. So
+// every "covered" case is pinned beside the case that is not.
+//
+// Time comes from `Date.now()` alone, so the probe drives the clock by replacing
+// it. A pass's deadline is set on ARRIVAL from the relative seconds the server
+// sends, so a phone whose clock is wrong cannot end a pass early.
+//
+// The store schedules one re-emit at the earliest pass deadline on a REAL timer:
+// `resetUses()` in `finally` is what lets this build exit, instead of waiting an
+// hour for a pass the probe opened.
+//
+// Then the wiring, because an executed store nothing writes to guards nothing
+// (check 31's words): the /auth/me answer, the response headers on the axios
+// path and on the search stream, the 429 in the shared onRejected, and the
+// dropped-stream sentence.
+try {
+  const us = runProbeBundle("uses-store", `export * from "./lib/usesStore";\n`);
+  for (const name of ["setUsage", "noteUsesHeaders", "noteMonthlyLimit", "outFor", "getUsesState", "resetUses"])
+    if (typeof us[name] !== "function") throw new Error(`lib/usesStore.ts does not export ${name}`);
+  const realNow = Date.now;
+  let clock = Date.UTC(2026, 8, 15, 12, 0, 0);
+  Date.now = () => clock;
+  try {
+    const HOUR = 3600;
+    const LIMIT_DETAIL = {
+      code: "monthly_limit",
+      feature: "tailor",
+      plan: "free",
+      limit: 10,
+      used: 10,
+      remaining: 0,
+      resets_on: "2026-10-01",
+    };
+    const usage = (over = {}) => ({
+      plan: "free",
+      limit: 10,
+      used: 10,
+      remaining: 0,
+      resets_on: "2026-10-01",
+      by_feature: {},
+      passes: {},
+      ...over,
+    });
+    const pass = (calls_left, expires_in_s) => ({ calls_left, expires_in_s });
+
+    // At 0 left, an open screening pass covers screening, and only screening.
+    us.setUsage(usage({ passes: { screening: pass(3, HOUR) } }));
+    if (us.outFor("screening"))
+      fail('outFor("screening") is true at 0 left with a screening pass holding 3 answers — the button is disabled for an answer the server includes.');
+    if (!us.outFor("tailor"))
+      fail('outFor("tailor") is false at 0 left because a SCREENING pass is open — a pass covers its own feature only.');
+    clock += HOUR * 1000 + 1;
+    if (!us.outFor("screening"))
+      fail("a screening pass still covers after its deadline, so the button stays enabled into a certain 429.");
+    clock -= HOUR * 1000 + 1;
+    us.setUsage(usage({ passes: { screening: pass(0, HOUR) } }));
+    if (!us.outFor("screening")) fail("a screening pass with calls_left 0 still covers.");
+    // The same pass through the headers, Headers-style get() and plain-object style.
+    us.setUsage(usage());
+    us.noteUsesHeaders({ get: (name) => (name.toLowerCase() === "x-uses-pass" ? "screening;5;600" : null) });
+    if (us.outFor("screening")) fail("an X-Uses-Pass header read through get() did not open the pass.");
+    us.noteUsesHeaders({ "x-uses-pass": "screening;0;0" });
+    if (!us.outFor("screening")) fail("X-Uses-Pass `screening;0;0` (the pass was closed) left it open.");
+
+    // A per-posting inclusion: the fit check's tailor, a cover letter's changes.
+    us.setUsage(usage());
+    const iso = (ms) => new Date(ms).toISOString();
+    if (us.outFor("tailor", iso(clock + 60_000)))
+      fail('outFor("tailor", <future ISO>) is true at 0 left — the fit check already paid for this tailor.');
+    if (!us.outFor("tailor", iso(clock - 60_000)))
+      fail('outFor("tailor", <past ISO>) is false at 0 left — an inclusion that has ended covers nothing.');
+    // Read in a zone that is not UTC: on a UTC build machine (CI) a local-time
+    // parse is indistinguishable from the right one, and this would pass by
+    // never firing. F7's mechanism.
+    const prevTZ = process.env.TZ;
+    process.env.TZ = "Asia/Jerusalem";
+    try {
+      if (new Date(clock).getTimezoneOffset() === 0)
+        throw new Error("process.env.TZ did not take effect, so the no-offset case proves nothing");
+      if (us.outFor("tailor", iso(clock + 60_000).replace(/Z$/, "")))
+        fail("an included-until with no offset is read in the device's local time instead of UTC, so it ends hours early or late.");
+    } finally {
+      if (prevTZ === undefined) delete process.env.TZ;
+      else process.env.TZ = prevTZ;
+    }
+
+    // The false-positive half: nothing else is ever out.
+    us.setUsage(usage({ used: 7, remaining: 3 }));
+    if (us.outFor("tailor")) fail("outFor is true with 3 uses left.");
+    us.setUsage(null);
+    if (us.outFor("tailor"))
+      fail("outFor is true when this page does not know the count (a failed /auth/me) — unknown must never disable a control.");
+    us.setUsage(usage({ plan: "unlimited", limit: null, used: 0, remaining: null }));
+    if (us.outFor("tailor")) fail("outFor is true for a plan with no monthly limit.");
+
+    // A 429 writes the numbers it carries, and never forces 0.
+    us.setUsage(usage({ used: 5, remaining: 5 }));
+    us.noteMonthlyLimit({ ...LIMIT_DETAIL, used: 8, remaining: 2 });
+    if (us.getUsesState()?.remaining !== 2)
+      fail(
+        `a kits batch 429 carrying remaining 2 left the store at ${JSON.stringify(us.getUsesState()?.remaining)} — ` +
+          "the writer takes the refusal's own count (the batch was bigger than what is left, not zero).",
+      );
+    us.resetUses();
+    us.noteMonthlyLimit({ ...LIMIT_DETAIL });
+    const made = us.getUsesState();
+    if (!made || made.limit !== 10 || made.remaining !== 0 || made.resetsOn !== "2026-10-01")
+      fail(`a 429 against an empty store left it as ${JSON.stringify(made)}; it must take limit, remaining and resets_on from the refusal.`);
+    us.setUsage(usage({ used: 9, remaining: 1, passes: { screening: pass(2, HOUR), interview: pass(9, HOUR) } }));
+    us.noteMonthlyLimit({ ...LIMIT_DETAIL, feature: "screening" });
+    const after = us.getUsesState();
+    if (after?.passes?.screening)
+      fail("a 429 for screening left the screening pass open — the server just proved nothing covers that call.");
+    if (!after?.passes?.interview) fail("a 429 for screening closed the INTERVIEW pass too.");
+
+    // resets_on arrives: the last minute of the month is out, the 1st is not.
+    us.setUsage(usage());
+    clock = Date.UTC(2026, 8, 30, 23, 59, 0);
+    if (!us.outFor("tailor")) fail("outFor is false at 0 left in the last minute of the month.");
+    clock = Date.UTC(2026, 9, 1, 0, 0, 30);
+    if (us.outFor("tailor")) fail("outFor is still true on the day resets_on arrives, when the month's uses are back.");
+  } finally {
+    us.resetUses();
+    Date.now = realNow;
+  }
+
+  // The writers, as C3 names them.
+  const client = decomment(read("api/client.ts"));
+  for (const [marker, re, harm] of [
+    ["function onRejected", /\bnoteMonthlyLimit\(\s*detail\s*\)/, "a 429 monthly_limit never reaches the uses store, so the page keeps offering a control the server refuses"],
+    ["export async function getAuthMe", /\bsetUsage\(/, "the /auth/me answer never reaches the uses store, so no page knows the count"],
+    ["export async function searchJobsStream", /\bnoteUsesHeaders\(\s*resp\.headers\s*\)/, "the search stream's X-Uses-Remaining is never read"],
+    ["export async function searchJobsStream", /\bgetAuthMe\(/, "an error frame does not re-read /auth/me, so a search the server refunded still shows its use spent"],
+  ])
+    if (!re.test(fnSource(client, marker)))
+      fail(`api/client.ts: ${marker.replace(/^export (?:async )?/, "")} — ${harm}.`);
+  const interceptor = /api\.interceptors\.response\.use\(([\s\S]*?)\n\);/.exec(client);
+  if (!interceptor) throw new Error("could not find `api.interceptors.response.use(…\\n);` in api/client.ts");
+  const READS_ON_SUCCESS = /^\s*\(\s*response\s*\)\s*=>\s*\{\s*noteUsesHeaders\(\s*response\.headers\s*\)/;
+  if (!READS_ON_SUCCESS.test(interceptor[1]))
+    fail(
+      "api/client.ts: axios has no success-side interceptor reading X-Uses-Remaining and X-Uses-Pass, so a " +
+        "counted call never moves the count on screen.",
+    );
+  if (READS_ON_SUCCESS.test("\n  undefined,\n  (error) => {\n    noteUsesHeaders(response.headers);"))
+    fail("check 32(e)'s interceptor pin accepts a rejection-only interceptor");
+  const store = decomment(read("state/jobSearchStore.ts"));
+  if (!/\bisConnectionDropped\(/.test(store) || !/\binvalidateData\(\s*"history"\s*\)/.test(store))
+    fail(
+      "state/jobSearchStore.ts: a search stream that drops is reported as a generic failure and History is " +
+        "not re-read, although the server may finish the search and write its jobs there.",
+    );
+  if (!/\bt\("search\.connectionDropped"\)/.test(decomment(read("pages/JobsPage.tsx"))))
+    fail(
+      "pages/JobsPage.tsx never says the connection dropped (search.connectionDropped), so a dropped search " +
+        "reads as a failure and invites a second search that uses another use.",
+    );
+} catch (e) {
+  fail(`uses store probe could not run: ${e.message}`);
+}
+
+// ---- 32(f). every tool in the menu and on the Tools page has a name -------- //
+// Phase 30 moves the CV scan into the tools, and a tool is listed in TWO tables:
+// AppLayout's `toolsSubNav` (the menu) and ToolsPage's `tools` (the cards). The
+// menu renders its label as a TEMPLATE literal, tTools(`cards.${item.key}.title`),
+// which check 9 cannot see (it resolves literal `t("nav.*")` calls), and the
+// cards do the same for `.title` and `.body`. Check 8 stays green while a key is
+// missing from BOTH tools.json files, so a new tool's raw key renders at 13px in
+// the menu, in Hebrew.
+//
+// The two tables are held to ONE list as well: the menu is documented as
+// mirroring the cards, and a tool in only one of them is reachable from one
+// place only.
+try {
+  const table = (file, marker) => {
+    const src = decomment(read(file));
+    const at = src.indexOf(marker);
+    if (at === -1) throw new Error(`could not find \`${marker}\` in ${file}`);
+    const end = src.indexOf("] as const", at);
+    if (end === -1) throw new Error(`\`${marker}\` in ${file} is not closed by \`] as const\``);
+    const rows = rowsOf(src.slice(at, end));
+    if (rows.length < 6 || rows.some((r) => !r.key || !r.to))
+      throw new Error(
+        `read ${rows.length} rows out of ${file}'s \`${marker}\`, not all with a key and a to — the table's shape changed`,
+      );
+    return rows;
+  };
+  const rowsOf = (text) =>
+    [...text.matchAll(/\{[^{}]*\}/g)].map((m) => ({
+      key: /\bkey:\s*"([^"]+)"/.exec(m[0])?.[1],
+      to: /\bto:\s*"([^"]+)"/.exec(m[0])?.[1],
+    }));
+  const nav = table("layouts/AppLayout.tsx", "const toolsSubNav = [");
+  const cards = table("pages/ToolsPage.tsx", "const tools = [");
+  const pairs = (rows) => rows.map((r) => `${r.key} → ${r.to}`);
+  const onlyNav = pairs(nav).filter((p) => !pairs(cards).includes(p));
+  const onlyCards = pairs(cards).filter((p) => !pairs(nav).includes(p));
+  if (onlyNav.length)
+    fail(`layouts/AppLayout.tsx lists ${onlyNav.join(", ")} in the Tools menu, but pages/ToolsPage.tsx has no such card.`);
+  if (onlyCards.length)
+    fail(
+      `pages/ToolsPage.tsx has a card for ${onlyCards.join(", ")} that the Tools menu in layouts/AppLayout.tsx ` +
+        "does not list, so that tool is reachable from one place only.",
+    );
+  for (const loc of ["en", "he"]) {
+    const tools = JSON.parse(read(`locales/${loc}/tools.json`));
+    const missing = new Set();
+    for (const r of nav) if (!resolvesIn(tools, `cards.${r.key}.title`)) missing.add(`cards.${r.key}.title`);
+    for (const r of cards)
+      for (const leaf of ["title", "body"])
+        if (!resolvesIn(tools, `cards.${r.key}.${leaf}`)) missing.add(`cards.${r.key}.${leaf}`);
+    if (missing.size)
+      fail(
+        `locales/${loc}/tools.json is missing ${[...missing].join(", ")} — the Tools menu or the Tools page ` +
+          "renders the raw key. Check 8 stays green while both locales are equally wrong.",
+      );
+  }
+  // Both directions on the row reader and on the lookup.
+  const probeRows = rowsOf('[\n  { to: "/tools/scan", key: "scan", icon: ScanSearch },\n  { icon: ScanEye, key: "xray", to: "/tools/xray" },\n]');
+  if (probeRows.map((r) => `${r.key}${r.to}`).join() !== "scan/tools/scan,xray/tools/xray")
+    fail("check 32(f)'s row reader cannot read a table row whichever order its properties are written in");
+  const toolsEn = JSON.parse(read("locales/en/tools.json"));
+  if (resolvesIn(toolsEn, "cards.__no_such_tool__.title") || !resolvesIn(toolsEn, "cards.xray.title"))
+    fail("check 32(f)'s lookup cannot tell a present tool name from a missing one");
+} catch (e) {
+  fail(`tools label check could not run: ${e.message}`);
+}
+
+// ---- 32(h). uploading a resume on /jobs starts no search ------------------- //
+// Before Phase 30 the first upload on the Jobs page auto-ran a job search. A
+// search now uses 1 of the month's uses, and that screen sits under copy saying
+// uploading is free, on the page onboarding sent every new user to: a use spent
+// on a search nobody tapped. For EVERY plan, not only free ones: the admin is
+// exempt whatever `plan` says, so a plan-gated auto-search would be a flow the
+// owner never sees on his own account.
+//
+// A search starts from a tap on the control that carries its note, and nowhere
+// else. Scoped to `onResumeUploaded`, because the same page legitimately starts
+// one from the Find jobs button (`runSearch`), and that half is asserted too, or
+// "make it pass" is satisfied by deleting search from the page.
+try {
+  const page = decomment(read("pages/JobsPage.tsx"));
+  const SEARCH_CALL = /\b(?:startJobSearch|searchJobs|searchJobsStream)\s*\(/;
+  const upload = fnSource(page, "function onResumeUploaded");
+  if (!/\bpersistMaster\(/.test(upload))
+    throw new Error("sliced something that is not onResumeUploaded (it never calls persistMaster)");
+  const hit = SEARCH_CALL.exec(upload);
+  if (hit)
+    fail(
+      `pages/JobsPage.tsx: onResumeUploaded calls ${hit[0]}…) — uploading a resume starts a job search that ` +
+        "uses 1 of the month's uses, under copy that says uploading is free. Leave the search to the Find jobs button.",
+    );
+  if (!SEARCH_CALL.test(fnSource(page, "function runSearch")))
+    throw new Error("runSearch no longer starts a search, so this check's scope has moved: find where the Find jobs button starts one");
+  // Both directions on the detector.
+  if (!SEARCH_CALL.test(upload.replace("{", "{\n    startJobSearch(r, onboardingCtx());")))
+    fail("check 32(h) cannot see a search call spliced into onResumeUploaded");
+  if (!SEARCH_CALL.test("void searchJobsStream(resume, null, onProgress);"))
+    fail("check 32(h) misses a direct searchJobsStream call");
+  if (SEARCH_CALL.test('setMode("search");\nsetShowReplace(false);'))
+    fail('check 32(h) reads setMode("search") as starting a search');
+} catch (e) {
+  fail(`no-auto-search check could not run: ${e.message}`);
+}
+
+// ---- 32(i). onboarding follows the page it opens on (EXECUTED) ------------- //
+// A1 carries a destination through sign-up (the landing's scan button lands on
+// /tools/scan), and the first-visit modal then preselected "Find matching jobs"
+// and sent everyone to /jobs on its primary button, undoing A1 on every route
+// and leading straight to the auto-search 32(h) removes. The choice now follows
+// the page: /app is tailor, /jobs is jobs, /interview is interview, and anything
+// else chooses nothing.
+try {
+  const ob = runProbeBundle("onboarding", `export * from "./lib/onboarding";\n`);
+  if (typeof ob.onboardingOptionFor !== "function") {
+    fail("lib/onboarding.ts exports no onboardingOptionFor, so the first-visit modal cannot follow the page it opens on");
+  } else {
+    for (const [pathname, want] of [
+      ["/app", "tailor"],
+      ["/jobs", "jobs"],
+      ["/interview", "interview"],
+      ["/tools/scan", null],
+      ["/tools/xray", null],
+      // A prefix is not the page.
+      ["/jobsearch", null],
+      ["/interviews", null],
+      ["/", null],
+    ]) {
+      const got = ob.onboardingOptionFor(pathname);
+      if (got !== want)
+        fail(`onboardingOptionFor(${JSON.stringify(pathname)}) is ${JSON.stringify(got)}, not ${JSON.stringify(want)}.`);
+    }
+  }
+  const modal = decomment(read("components/OnboardingModal.tsx"));
+  const CONSTANT = /\buseState\s*(?:<[^;\n]*?>)?\(\s*["'](?:jobs|tailor|interview)["']\s*\)/;
+  if (!/\bonboardingOptionFor\(/.test(modal))
+    fail("components/OnboardingModal.tsx does not call onboardingOptionFor(, so its choice cannot follow the page it opens on.");
+  if (CONSTANT.test(modal))
+    fail(
+      "components/OnboardingModal.tsx seeds its choice with a constant option again, so every new user is " +
+        "steered to that page whatever page they came to.",
+    );
+  // Both directions on the detector, on the shape that shipped.
+  if (!CONSTANT.test('useState<(typeof HELP_OPTIONS)[number]["id"]>("jobs")'))
+    fail("check 32(i) cannot see the shipped constant seed");
+  if (CONSTANT.test("useState<OnboardingOption | null>(() => onboardingOptionFor(pathname))"))
+    fail("check 32(i) fires on a seed derived from the page");
+} catch (e) {
+  fail(`onboarding probe could not run: ${e.message}`);
+}
+
+// ---- 32(j). the monthly-uses contract matches the backend's models --------- //
+// Both lanes of Phase 30 build against the same shapes (spec H0), and the
+// frontend half of each is hand-written in types.ts: `UsageOut` on AuthMe, the
+// admin's `plan` / `uses_this_month`, the paused alert, the skipped morning, and
+// the two per-posting inclusions. tsc checks the frontend against its OWN
+// mirror, never against Python, so a field renamed on one side compiles green
+// and reads `undefined` at runtime, which the uses store takes as "unknown" and
+// answers with no note at all, silently.
+//
+// `UsageOut` and its pass are compared as whole field sets; the other models by
+// the Phase 30 names only, because their older fields are not this check's to
+// hold. The TypeScript half always runs; the Python half degrades only when
+// backend/ is absent.
+try {
+  const tsKeys = (src, name) => {
+    const m = new RegExp(`export interface ${name}\\b[^{]*\\{`).exec(src);
+    if (!m) throw new Error(`types.ts has no \`export interface ${name}\``);
+    return topLevelKeys(blockAfter(src.slice(m.index), "{", name));
+  };
+  /** Field names of a Pydantic class: its body's lines at the field indent,
+   * with docstrings blanked first so a sentence in one cannot read as a field. */
+  const pyFields = (src, name) => {
+    const bare = src.replace(/"""[\s\S]*?"""|'''[\s\S]*?'''/g, '""');
+    const m = new RegExp(`^class ${name}\\([^)]*\\):[ \\t]*(?:#.*)?$`, "m").exec(bare);
+    if (!m) throw new Error(`models/__init__.py has no \`class ${name}(…):\``);
+    const fields = [];
+    for (const line of bare.slice(m.index + m[0].length).split("\n").slice(1)) {
+      if (/^\S/.test(line)) break; // the next top-level statement ends the class
+      const f = /^ {4}([A-Za-z_]\w*)\s*:(?!=)/.exec(line);
+      if (f) fields.push(f[1]);
+    }
+    if (!fields.length) throw new Error(`read no fields out of class ${name} in models/__init__.py`);
+    return fields;
+  };
+
+  const types = decomment(read("types.ts"));
+  const WHOLE = [
+    ["UsageOut", "UsageOut"],
+    ["UsagePassOut", "UsagePassOut"],
+  ];
+  const NAMES = [
+    ["AuthMe", "AuthMe", ["usage"]],
+    ["UserOut", "UserOut", ["plan", "uses_this_month"]],
+    ["AlertSettingsOut", "AlertSettings", ["paused_reason", "resumes_on"]],
+    ["AlertRunResult", "AlertRunResult", ["skipped_reason"]],
+    ["UsageOut", "UsageOut", ["passes"]],
+    ["FitCheckResult", "FitCheckResult", ["tailor_included_until"]],
+    ["CoverLetterResponse", "CoverLetterResponse", ["included_until", "changes_left"]],
+  ];
+  for (const [, ts, names] of NAMES) {
+    let keys;
+    try {
+      keys = tsKeys(types, ts);
+    } catch (e) {
+      fail(`${e.message} — the backend sends it (Phase 30 contract), and nothing on this side can read it.`);
+      continue;
+    }
+    const missing = names.filter((n) => !keys.includes(n));
+    if (missing.length)
+      fail(
+        `types.ts: interface ${ts} has no ${missing.join(", ")} — the backend sends ${missing.length > 1 ? "them" : "it"} ` +
+          "(Phase 30 contract), and a page reading through this type reads undefined.",
+      );
+  }
+
+  const src = pySource("app/models/__init__.py", "check 32(j)");
+  if (src !== null) {
+    if (pyFields(src, "UsageOut").length < 7)
+      throw new Error("read fewer than 7 fields out of models/__init__.py's UsageOut — the class body changed shape");
+    for (const [py, , names] of NAMES) {
+      const fields = pyFields(src, py);
+      const missing = names.filter((n) => !fields.includes(n));
+      if (missing.length)
+        fail(
+          `backend/app/models/__init__.py: class ${py} has no ${missing.join(", ")}, which types.ts mirrors — ` +
+            "one side was renamed and the other was not.",
+        );
+    }
+    for (const [py, ts] of WHOLE) {
+      let keys;
+      try {
+        keys = tsKeys(types, ts);
+      } catch (e) {
+        fail(`${e.message} — it mirrors models/__init__.py's ${py}.`);
+        continue;
+      }
+      const fields = pyFields(src, py);
+      const onlyPy = fields.filter((f) => !keys.includes(f));
+      const onlyTs = keys.filter((k) => !fields.includes(k));
+      if (onlyPy.length || onlyTs.length)
+        fail(
+          `types.ts's ${ts} and models/__init__.py's ${py} disagree` +
+            (onlyPy.length ? `: only Python has ${onlyPy.join(", ")}` : "") +
+            (onlyTs.length ? `${onlyPy.length ? ";" : ":"} only TypeScript has ${onlyTs.join(", ")}` : "") +
+            ". The uses store reads these names, and a missing one reads as unknown, with no note, silently.",
+        );
+    }
+  }
+
+  // Both directions on the two readers.
+  const PROBE_PY =
+    'class Probe(BaseModel):\n    """A docstring that says\n    plan: a sentence at the field indent."""\n\n' +
+    "    limit: Optional[int] = None\n    def method(self) -> str:\n        inner: int = 1\n        return \"\"\n\n\n" +
+    "class Next(BaseModel):\n    other: int = 0\n";
+  if (pyFields(PROBE_PY, "Probe").join() !== "limit")
+    fail("check 32(j)'s Python reader reads a docstring, a method body or the next class as a field");
+  const PROBE_TS = decomment(
+    "export interface Probe {\n  limit: number | null;\n  // passes: a comment, not a field\n  nested: { inner: string };\n  resets_on?: string;\n}\n",
+  );
+  if (tsKeys(PROBE_TS, "Probe").join() !== "limit,nested,resets_on")
+    fail("check 32(j)'s TypeScript reader reads a comment or a nested key as a field, or misses an optional one");
+} catch (e) {
+  fail(`monthly-uses contract check could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
@@ -3902,5 +4552,5 @@ if (problems.length) {
 console.log(
   `mirrors ok — ${sectionKeys.length} edit sections, en/he parity across all namespaces` +
     (templateSkip ? ` — but the template specs were NOT compared (${templateSkip})` : "") +
-    (reviewSkip ? ` — and the review mirrors were NOT compared (${reviewSkip})` : ""),
+    (pySkips.size ? ` — and ${[...pySkips].join(", ")} read NO Python (backend/ is not in this build)` : ""),
 );

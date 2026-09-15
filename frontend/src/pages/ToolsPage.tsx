@@ -1,14 +1,19 @@
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ScanEye, Contact, Mail, Send, MessageSquareText, ArrowUpRight, Wrench, Building2 } from "lucide-react";
+import { ScanEye, ScanSearch, Contact, Mail, Send, MessageSquareText, ArrowUpRight, Wrench, Building2 } from "lucide-react";
 import { TiltedCard } from "../components/ui";
 
-// Six cards, which is hole-free at both 2 and 3 columns, so nothing here is
-// featured any more. The ATS scanner used to LEAD this grid as a wide
-// `sm:col-span-2` cell and the resume health check sat beside it as an
-// ordinary card; the review replaced both, and it lives on the document at
-// /app rather than on a page of its own (PLAN 28.8).
+// Seven cards, and nothing here is featured. The CV scan joined in Phase 30,
+// when it moved from the public /scan into the app, and it leads beside the ATS
+// X-ray, the other tool that reads a resume the way a machine does; seven
+// leaves one card alone on the last row at both 2 and 3 columns. The ATS
+// scanner used to LEAD this grid as a wide `sm:col-span-2` cell and the resume
+// health check sat beside it as an ordinary card; the review replaced both, and
+// it lives on the document at /app rather than on a page of its own (PLAN 28.8).
+// AppLayout's `toolsSubNav` lists the same tools: check-mirrors 32(f) holds the
+// two tables to one list and resolves every card's copy in both locales.
 const tools = [
+  { to: "/tools/scan", icon: ScanSearch, key: "scan" },
   { to: "/tools/xray", icon: ScanEye, key: "xray" },
   { to: "/tools/company-brief", icon: Building2, key: "brief" },
   { to: "/tools/outreach", icon: Send, key: "outreach" },

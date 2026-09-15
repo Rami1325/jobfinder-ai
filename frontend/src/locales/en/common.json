@@ -98,7 +98,32 @@
     "llm": "Daily limit reached — you've used all {{cap}} AI requests for today. Try again tomorrow.",
     "submit": "Daily limit reached — you've sent all {{cap}} applications for today. Try again tomorrow.",
     "inbox": "Daily limit reached — {{cap}} emails were sorted today. The rest are read tomorrow.",
+    "upload": "Daily limit reached — you've uploaded {{cap}} resumes today. Try again tomorrow.",
+    "jdAnalyze": "Daily limit reached — {{cap}} job descriptions were read today. Try again tomorrow.",
+    "searchContext": "Daily limit reached — you've asked for search suggestions {{cap}} times today. Try again tomorrow.",
+    "scan": "Daily limit reached — you've run all {{cap}} CV scans for today. Try again tomorrow.",
     "generic": "Daily limit reached — you've used your {{cap}} for today. Try again tomorrow."
+  },
+  "uses": {
+    "limitReached": "You've used all your uses for {{month}}. More on {{date}}.",
+    "limitReachedBare": "You've used all your uses for this month.",
+    "onboarding_one": "Your free plan includes {{count}} use a month. Uploading your resume is free.",
+    "onboarding_other": "Your free plan includes {{count}} uses a month. Uploading your resume is free.",
+    "features": {
+      "tailor": "Tailored jobs",
+      "search": "Job searches",
+      "company_brief": "Company briefs",
+      "scan": "CV scans",
+      "interview": "Interview practice",
+      "cover_letter": "Cover letters",
+      "linkedin": "LinkedIn profiles",
+      "follow_up": "Follow-up emails",
+      "outreach": "Outreach messages",
+      "screening": "Screening answers, extension autofill included",
+      "fit_check": "Fit checks",
+      "rewrites": "Bullet rewrites",
+      "job_alert": "Job alert emails"
+    }
   },
   "placeholder": {
     "body": "This section is being built. Check back shortly."
@@ -131,7 +156,8 @@
       }
     },
     "skip": "Skip",
-    "start": "Let's go"
+    "start": "Let's go",
+    "continue": "Continue"
   },
   "sizeLimit": {
     "resume": "That CV is too large to process ({{size}} KB; the limit is {{cap}} KB). It was NOT saved. Remove images or split it, then upload again.",

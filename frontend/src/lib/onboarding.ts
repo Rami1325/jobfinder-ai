@@ -34,6 +34,27 @@ export function clearOnboarding(): void {
   }
 }
 
+/** Where each first-visit choice leads. The modal adds its icons and its copy. */
+export const ONBOARDING_ROUTES = {
+  jobs: "/jobs",
+  tailor: "/app",
+  interview: "/interview",
+} as const;
+
+export type OnboardingOption = keyof typeof ONBOARDING_ROUTES;
+
+/** The choice that matches the page the modal opened on, or null for any other
+ * page (Phase 30 / C7). Sign-up carries its destination in `next`, so the first
+ * page a new account sees is the one it came for, and the modal must not steer
+ * it anywhere else; it used to preselect "Find matching jobs" and send everyone
+ * to /jobs. Exact paths only, where a trailing slash is the same page. */
+export function onboardingOptionFor(pathname: string): OnboardingOption | null {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  for (const option of Object.keys(ONBOARDING_ROUTES) as OnboardingOption[])
+    if (ONBOARDING_ROUTES[option] === path) return option;
+  return null;
+}
+
 /** The target role from onboarding, "" when unanswered. */
 export function onboardingRole(): string {
   try {

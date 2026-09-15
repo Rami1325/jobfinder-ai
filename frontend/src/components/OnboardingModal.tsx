@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Briefcase, FileText, MessageSquareText } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Briefcase, FileText, MessageSquareText, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { saveOnboarding } from "../lib/onboarding";
+import { ONBOARDING_ROUTES, onboardingOptionFor, saveOnboarding, type OnboardingOption } from "../lib/onboarding";
+import { useUsesState } from "../lib/usesStore";
 import { Button, Modal } from "./ui";
 import { cn } from "../lib/cn";
 
@@ -13,21 +14,31 @@ interface Props {
 
 const TIMELINES = ["now", "soon", "exploring"] as const;
 
-const HELP_OPTIONS = [
-  { id: "jobs", to: "/jobs", icon: Briefcase },
-  { id: "tailor", to: "/app", icon: FileText },
-  { id: "interview", to: "/interview", icon: MessageSquareText },
-] as const;
+// Where each choice leads lives in lib/onboarding.ts, beside the function that
+// matches a page to a choice, so the two cannot name different routes.
+const HELP_OPTIONS: { id: OnboardingOption; icon: LucideIcon }[] = [
+  { id: "jobs", icon: Briefcase },
+  { id: "tailor", icon: FileText },
+  { id: "interview", icon: MessageSquareText },
+];
 
 /** First-visit, 3-question goal onboarding: target role, timeline, and where
- * help is needed first — the last answer routes to Jobs, Tailor, or Interview.
- * Any way of closing persists, so it never shows twice. */
+ * help is needed first. Any way of closing persists, so it never shows twice.
+ *
+ * The choice FOLLOWS THE PAGE it opens on (Phase 30 / C7). Sign-up carries the
+ * visitor's destination, so a new account landing on /tools/scan or /app came
+ * for that page; preselecting "Find matching jobs" and sending everyone to
+ * /jobs undid that on every route. On a page that is none of the three nothing
+ * is chosen and the button only continues, and it moves to another page only
+ * when the choice IS another page. check-mirrors 32(i) pins both. */
 export default function OnboardingModal({ open, onClose }: Props) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const uses = useUsesState();
   const [role, setRole] = useState("");
   const [timeline, setTimeline] = useState("");
-  const [help, setHelp] = useState<(typeof HELP_OPTIONS)[number]["id"]>("jobs");
+  const [help, setHelp] = useState<OnboardingOption | null>(() => onboardingOptionFor(pathname));
 
   function finish(navigateTo?: string) {
     saveOnboarding({ role: role.trim(), timeline });
@@ -35,11 +46,19 @@ export default function OnboardingModal({ open, onClose }: Props) {
     if (navigateTo) navigate(navigateTo);
   }
 
+  // The chosen page, unless it is the page the modal is on.
+  const destination = help && onboardingOptionFor(pathname) !== help ? ONBOARDING_ROUTES[help] : undefined;
+
   return (
     <Modal open={open} onClose={() => finish()} title={t("onboarding.title")} maxWidth="max-w-xl">
-      <p className="-mt-2 mb-5 text-sm text-ink-muted">{t("onboarding.sub")}</p>
+      <p className="-mt-2 text-sm text-ink-muted">{t("onboarding.sub")}</p>
+      {/* Only a number this page knows (Phase 30 / C7): nothing for the admin, a
+          plan with no monthly limit, or an /auth/me that could not be read. */}
+      {typeof uses?.limit === "number" && (
+        <p className="mt-1 text-sm text-ink-muted">{t("uses.onboarding", { count: uses.limit })}</p>
+      )}
 
-      <div className="space-y-5">
+      <div className="mt-5 space-y-5">
         <div>
           <label htmlFor="onboarding-role" className="text-sm font-medium text-ink">
             {t("onboarding.roleLabel")}
@@ -106,8 +125,8 @@ export default function OnboardingModal({ open, onClose }: Props) {
         <Button variant="ghost" onClick={() => finish()}>
           {t("onboarding.skip")}
         </Button>
-        <Button onClick={() => finish(HELP_OPTIONS.find((o) => o.id === help)?.to)}>
-          {t("onboarding.start")}
+        <Button onClick={() => finish(destination)}>
+          {help ? t("onboarding.start") : t("onboarding.continue")}
         </Button>
       </div>
     </Modal>

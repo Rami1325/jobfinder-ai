@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   ChevronDown,
   ScanEye,
+  ScanSearch,
   Building2,
   Send,
   Contact,
@@ -76,9 +77,12 @@ const moreNav: NavEntry[] = [
   { to: "/interview", labelKey: "nav.interview", icon: MessageSquareText },
 ];
 
-// Sub-tools listed under the Tools entry — mirrors the cards on ToolsPage
-// (labels come from the "tools" namespace so the two stay in sync).
+// Sub-tools listed under the Tools entry, the same list as the cards on
+// ToolsPage (labels come from the "tools" namespace). The label is a template
+// literal check 9 cannot resolve, so check-mirrors 32(f) holds this table and
+// ToolsPage's to one list and resolves every name in both locales.
 const toolsSubNav = [
+  { to: "/tools/scan", key: "scan", icon: ScanSearch },
   { to: "/tools/xray", key: "xray", icon: ScanEye },
   { to: "/tools/company-brief", key: "brief", icon: Building2 },
   { to: "/tools/outreach", key: "outreach", icon: Send },

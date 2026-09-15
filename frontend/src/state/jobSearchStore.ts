@@ -1,8 +1,9 @@
 // Module-level store for the LinkedIn job search so an in-flight search
 // survives route changes: JobsPage unmounts when the user navigates away, but
 // the request promise and its outcome live here, not in component state.
-import { searchJobs, searchJobsStream, type SearchProgressEvent } from "../api/client";
+import { isConnectionDropped, searchJobs, searchJobsStream, type SearchProgressEvent } from "../api/client";
 import { apiErrorMessage } from "../lib/apiError";
+import { invalidateData } from "../lib/dataCache";
 import type { JobMatch, JobSearchResult, ResumeModel, SearchContext } from "../types";
 
 export type JobSearchState = {
@@ -16,6 +17,11 @@ export type JobSearchState = {
   // the page can show the jobs scored before the search was interrupted.
   liveMatches: JobMatch[];
   cancelled: boolean; // user hit Cancel — liveMatches kept as partial results
+  // The stream ended with no result and no error frame (Phase 30 / C3): the
+  // connection dropped, and the server may still finish the search and write its
+  // jobs to History. JobsPage says so in its own words (search.connectionDropped).
+  // It is not an `error`: nothing says the search failed, and it has used its use.
+  dropped: boolean;
 };
 
 let state: JobSearchState = {
@@ -26,6 +32,7 @@ let state: JobSearchState = {
   progress: null,
   liveMatches: [],
   cancelled: false,
+  dropped: false,
 };
 const listeners = new Set<() => void>();
 
@@ -68,6 +75,7 @@ export function startJobSearch(resume: ResumeModel, customize: SearchContext | n
     progress: null,
     liveMatches: [],
     cancelled: false,
+    dropped: false,
   });
   searchJobsStream(
     resume,
@@ -98,13 +106,20 @@ export function startJobSearch(resume: ResumeModel, customize: SearchContext | n
       if (id === seq) set({ searching: false, result: r, progress: null, liveMatches: [] });
     })
     .catch((e: unknown) => {
+      if (id !== seq) return;
       // liveMatches is intentionally left as-is: on an interrupted search the
       // page shows the jobs scored so far alongside the error.
-      if (id === seq)
-        set({
-          searching: false,
-          progress: null,
-          error: apiErrorMessage(e, "Something went wrong."),
-        });
+      if (isConnectionDropped(e)) {
+        // A finished search writes its jobs to History on the server's own
+        // worker, with nobody reading the stream, so History is read fresh.
+        invalidateData("history");
+        set({ searching: false, progress: null, dropped: true });
+        return;
+      }
+      set({
+        searching: false,
+        progress: null,
+        error: apiErrorMessage(e, "Something went wrong."),
+      });
     });
 }

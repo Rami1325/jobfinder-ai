@@ -116,14 +116,12 @@ function ScanTickerRow({
  * 120 ms stagger, hold long enough to read, then the panel collapses and
  * hands off to the result cards entering below. */
 export function SearchScanPanel({
-  auto,
   searching,
   startedAt,
   progress,
   result,
   requestedSources,
 }: {
-  auto: boolean;
   searching: boolean;
   startedAt: number | null;
   progress: SearchProgressEvent | null;
@@ -259,7 +257,7 @@ export function SearchScanPanel({
                 )}
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-ink">
-                    {auto ? t("search.searchingAuto") : t("search.searchingManual")}
+                    {t("search.searchingManual")}
                   </p>
                   <p aria-live="polite" className="mt-0.5 truncate text-xs text-ink-muted">
                     {stageLine} · {t("search.elapsed", { time: formatElapsed(elapsed) })}

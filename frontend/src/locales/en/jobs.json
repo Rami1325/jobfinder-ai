@@ -2,8 +2,8 @@
   "title": "Jobs",
   "sub": "Find jobs that fit your master resume — or add listings yourself — and rank them best to worst.",
   "gate": {
-    "title": "Upload your resume — we'll find jobs that fit",
-    "body": "We read your resume, work out what role and location suit you, and search job listings for the best matches — automatically. It's saved as your master resume for tailoring and interview prep too."
+    "title": "Upload your resume, then find jobs that fit",
+    "body": "We read your resume and work out what role and location suit you. Then one tap searches job listings for the best matches. It's saved as your master resume for tailoring and interview prep too."
   },
   "replaceTitle": "Replace master resume",
   "replaceBody": "Hebrew and English resumes are saved separately — uploading a file updates the master in its own language and leaves the other untouched. Tailor, Interview, and Tools use them too.",
@@ -160,7 +160,7 @@
     "worldwideTag": "incl. worldwide",
     "cta": "Find jobs for me",
     "cancel": "Cancel",
-    "searchingAuto": "Resume saved — we're finding jobs that fit it and scoring each one. This can take a minute or two.",
+    "connectionDropped": "The connection dropped. If the search finishes, its jobs will be in History. Searching again uses another use.",
     "searchingManual": "Searching job listings and scoring each one against your resume — this can take a minute or two.",
     "stages": {
       "boards": "Searching job boards…",
@@ -339,6 +339,7 @@
     "queued_other": "{{count}} listings queued",
     "rank_one": "Rank {{count}} job by fit",
     "rank_other": "Rank {{count}} jobs by fit",
+    "maxListings": "Up to {{max}} listings per ranking.",
     "fetched": "Fetched job posting",
     "noText": "No readable text found at that URL.",
     "fetchError": "Could not fetch that URL.",

@@ -3,6 +3,7 @@ import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT, UNVERIFIED_EVENT } from "../lib/ac
 import { cachedFetch, clearDataCache, invalidateData } from "../lib/dataCache";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { noteDraftOwner } from "../lib/draft";
+import { noteMonthlyLimit, noteUsesHeaders, setUsage } from "../lib/usesStore";
 import type {
   AlertRunResult,
   AlertSettings,
@@ -14,6 +15,7 @@ import type {
   CompanyBriefResult,
   ChatTurn,
   CoverageResult,
+  CoverLetterResponse,
   FitCheckResult,
   FactsLedger,
   FeedbackOut,
@@ -109,6 +111,10 @@ api.interceptors.request.use((config) => {
  * 403 `email_unverified`: an account that has not confirmed its address, sent
  * to /verify. NOT for /auth/* URLs. Those routes answer an unverified account
  * themselves, and the verify page is what calls them.
+ *
+ * 429 `monthly_limit` (Phase 30): the uses store takes the numbers the refusal
+ * carries, from either path. Nothing redirects; the page that made the call
+ * says so through `apiErrorMessage`.
  */
 function onRejected(
   status: number | undefined,
@@ -123,21 +129,33 @@ function onRejected(
     return;
   }
   const code = (detail as { code?: unknown } | null | undefined)?.code;
+  if (status === 429 && code === "monthly_limit") noteMonthlyLimit(detail);
   const path = url.startsWith("/") ? url.slice(1) : url;
   if (status === 403 && code === "email_unverified" && !path.startsWith("auth/")) {
     window.dispatchEvent(new Event(UNVERIFIED_EVENT));
   }
 }
 
-api.interceptors.response.use(undefined, (error) => {
-  onRejected(
-    error?.response?.status,
-    error?.config?.url ?? "",
-    error?.response?.data?.detail,
-    Boolean(error?.config?.headers?.["X-App-Key"]),
-  );
-  return Promise.reject(error);
-});
+// Both sides read the monthly-uses headers (Phase 30 / C3). A counted call's
+// response carries X-Uses-Remaining, and X-Uses-Pass for an interview or
+// screening pass; an ERROR response can carry them too, because a failed call's
+// refund restores the count on the response that reports the failure.
+api.interceptors.response.use(
+  (response) => {
+    noteUsesHeaders(response.headers);
+    return response;
+  },
+  (error) => {
+    noteUsesHeaders(error?.response?.headers);
+    onRejected(
+      error?.response?.status,
+      error?.config?.url ?? "",
+      error?.response?.data?.detail,
+      Boolean(error?.config?.headers?.["X-App-Key"]),
+    );
+    return Promise.reject(error);
+  },
+);
 
 export async function uploadResume(file: File): Promise<ResumeUploadResponse> {
   const form = new FormData();
@@ -164,17 +182,20 @@ export async function recordRejectedPhrases(rejected: string[]): Promise<void> {
   await api.post("/profile/writing-prefs", { rejected });
 }
 
+/** The letter, and the 24-hour pass it rode (Phase 30 / B5): the first letter for
+ * a posting uses 1, and changes to it within the pass are included. The pass is
+ * per posting, so it comes back on this response, never in /auth/me. */
 export async function coverLetter(
   resume: ResumeModel,
   jd: JDModel,
   tone = "professional",
-): Promise<string> {
-  const { data } = await api.post<{ cover_letter: string }>("/cover-letter", {
+): Promise<CoverLetterResponse> {
+  const { data } = await api.post<CoverLetterResponse>("/cover-letter", {
     resume,
     jd,
     tone,
   });
-  return data.cover_letter;
+  return data;
 }
 
 /** "Rami Bar - AppsFlyer" from whatever parts exist; falls back to "resume". */
@@ -358,6 +379,9 @@ export async function searchJobsStream(
     body: JSON.stringify({ resume, customize: customize ?? null }),
     signal,
   });
+  // The use was reserved before the stream opened, so its count rides these
+  // headers like any other counted call's (Phase 30 / B4.2).
+  noteUsesHeaders(resp.headers);
   const isSse = (resp.headers.get("content-type") || "").includes("text/event-stream");
   if (!resp.ok || !isSse || !resp.body) {
     let detail: unknown;
@@ -392,7 +416,16 @@ export async function searchJobsStream(
   const decoder = new TextDecoder();
   let buffer = "";
   for (;;) {
-    const { done, value } = await reader.read();
+    let chunk: Awaited<ReturnType<typeof reader.read>>;
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      // The user's Cancel aborts the read, and that is theirs to report. Any
+      // other failed read is the connection going away mid-search.
+      if (signal?.aborted) throw e;
+      throw connectionDropped();
+    }
+    const { done, value } = chunk;
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     let nl: number;
@@ -405,14 +438,34 @@ export async function searchJobsStream(
     }
   }
   if (out.error) {
+    // The server refunds a failed search on its worker, outside this request,
+    // where no header can carry the count back, so /auth/me is asked again
+    // (Phase 30 / C3). It writes the uses store itself; a failure changes nothing.
+    void getAuthMe().catch(() => {});
     throw { response: { status: out.error.status ?? 502, data: { detail: out.error.detail } } };
   }
   if (!out.result) {
     // Stream ended without a terminal frame (connection dropped mid-search).
-    throw { response: { status: 0, data: { detail: "" } } };
+    throw connectionDropped();
   }
   invalidateData("history"); // the backend records every search into history
   return out.result;
+}
+
+const DROPPED = "connection_dropped";
+
+/** A search stream that ended with no result and no error frame: the connection
+ * dropped. The server may still finish, write the jobs to History and keep the
+ * use, so a caller says that instead of reporting a failure. It keeps the axios
+ * error shape (status 0), so `apiErrorMessage` still reads it anywhere else. */
+function connectionDropped() {
+  return { response: { status: 0, data: { detail: "" } }, dropped: DROPPED };
+}
+
+/** Whether a `searchJobsStream` failure is a dropped connection rather than an
+ * answer from the server (and never a user's Cancel, which is an abort). */
+export function isConnectionDropped(e: unknown): boolean {
+  return (e as { dropped?: unknown } | null | undefined)?.dropped === DROPPED;
 }
 
 export async function searchContext(resume: ResumeModel): Promise<SearchContext> {
@@ -532,12 +585,15 @@ export async function clearJobHistory(): Promise<void> {
   invalidateData("history");
 }
 
-/** Free public CV-vs-JD scan — no access code, nothing stored server-side. */
-export async function freeScan(file: File, jdText: string): Promise<FreeScanResult> {
+/** The CV scan (Phase 30 / A2): an app tool behind the sign-in, like every other
+ * feature. Deterministic, nothing stored server-side. It uses 1 of the month's
+ * uses and has its own daily cap; a file the server refuses or cannot read gives
+ * the use back. It was the public, anonymous `/public/scan` until Phase 30. */
+export async function scanResume(file: File, jdText: string): Promise<FreeScanResult> {
   const form = new FormData();
   form.append("file", file);
   form.append("jd_text", jdText);
-  const { data } = await api.post<FreeScanResult>("/public/scan", form);
+  const { data } = await api.post<FreeScanResult>("/tools/scan", form);
   return data;
 }
 
@@ -640,7 +696,7 @@ export async function reviewResume(
 }
 
 /** Model rewordings for the rewritable findings — the ONE part of the review
- * that spends. COSTS ONE AI CREDIT and is capped, which is exactly why it sits
+ * that spends. USES 1 of the month's uses and is capped, which is why it sits
  * behind a button instead of riding the debounce: everything else on this
  * surface is free, and a review that quietly billed per keystroke would be the
  * uncapped-route defect wearing the other hat.
@@ -664,9 +720,10 @@ export async function reviewRewrites(
 }
 
 /** Read a posting and score the resume against it, before any tailoring.
- * COSTS ONE AI CREDIT — reading a posting is a model call, and there is no
- * version of this that is free. Returns the analysed JD so tailoring afterwards
- * does not pay to read the same posting again. */
+ * USES 1 of the month's uses: reading a posting is a model call, and there is
+ * no version of this that is free. That use also covers tailoring the same
+ * analysed job for 24 hours (`tailor_included_until`, Phase 30 / B4.4), and the
+ * JD comes back so the tailor does not pay to read the same posting again. */
 export async function checkFit(resume: ResumeModel, jdText: string): Promise<FitCheckResult> {
   const { data } = await api.post<FitCheckResult>("/jobs/fit", { resume, jd_text: jdText });
   return data;
@@ -737,6 +794,10 @@ export async function getAuthMe(): Promise<AuthMe> {
   // The resume draft remembers which account wrote it, and is offered to no
   // one else (lib/draft.ts). Every answer updates it, signed out included.
   noteDraftOwner(data.user?.id ?? null);
+  // This month's uses go to the uses store (lib/usesStore.ts), from every
+  // answer, a signed-out one included (which leaves the count unknown).
+  // AppLayout's guard is the first, and it answers before the shell renders.
+  setUsage(data.usage ?? null);
   return data;
 }
 
