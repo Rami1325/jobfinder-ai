@@ -28,9 +28,9 @@ os.environ["USE_STUB_LLM"] = "true"
 os.environ["SENTRY_DSN"] = ""
 # Must be set before any app.* import — app.db.database builds the engine at import time.
 os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(tempfile.mkdtemp(), "smoke.db").replace("\\", "/")
-# Turn the access-code gate ON for the whole suite so the HTTP checks in
-# section 17 can prove /public/scan is exempt while everything else 401s.
-# Harmless elsewhere: only requests through the ASGI middleware see the gate.
+# Turn the access-code gate ON for the whole suite, so every HTTP check meets the
+# gate the way production does: a route without a credential 401s unless the gate
+# exempts it. Harmless elsewhere: only requests through the ASGI middleware see it.
 os.environ["APP_ACCESS_CODE"] = "smoke-gate-code"
 # Tiny tailor cap so section 19 can hit the daily limit offline via the stub
 # LLM; admins are exempt, so only the minted friend user feels it.
@@ -59,8 +59,19 @@ for _smtp_var in ("ALERT_SMTP_HOST", "ALERT_SMTP_USER", "ALERT_SMTP_PASSWORD", "
 for _p29_var in (
     "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "INBOX_TOKEN_KEY", "INBOX_MODEL_ID",
     "SIGNUP_MODE", "AUTH_SECRET", "INBOX_ACCESS",
+    # Phase 30: the sign-in client, blank so /auth/me's google_enabled stays False.
+    "GOOGLE_SIGNIN_CLIENT_ID", "GOOGLE_SIGNIN_CLIENT_SECRET",
 ):
     os.environ[_p29_var] = ""
+# Phase 30 (monthly uses): the pool and the four new daily caps, each set to its
+# documented default EXPLICITLY, so a developer .env holding FREE_MONTHLY_USES=0
+# cannot switch section 32's limit off from outside this file. A check that is not
+# about the pool and meets it gets its user a plan, never a change here.
+os.environ["FREE_MONTHLY_USES"] = "10"
+os.environ["DAILY_UPLOAD_CAP"] = "10"
+os.environ["DAILY_JD_ANALYZE_CAP"] = "30"
+os.environ["DAILY_SEARCH_CONTEXT_CAP"] = "10"
+os.environ["DAILY_SCAN_CAP"] = "20"
 os.environ["INBOX_FAKE_PROVIDER"] = "false"
 os.environ["GOOGLE_OAUTH_TESTING"] = "true"
 # Auth mail runs in "smtp" mode with SMTP blank — the configuration whose 503
@@ -13664,7 +13675,7 @@ try:
             "asks 'who am I' through, so it may never 401",
             _me28_anon.status_code == 200
             and _j28(_me28_anon) == {"authenticated": False, "verified": False, "method": "", "signup_open": True,
-                                     "google_enabled": False, "user": None},
+                                     "google_enabled": False, "user": None, "usage": None},
             _me28_anon.text[:200],
         )
         _maya28 = {"name": "Maya", "email": "  Maya@Example.com ", "password": _maya28_pw, "locale": "en"}
@@ -17477,6 +17488,873 @@ check(
     "R1/R2 source pins: job_market, arabic_omit and numerals import no model, no network and no clock (AST)",
     all(not (_imports31(m) & _forbid31) for m in (_jm31, _ao31, _num31)),
     str({m.__name__: sorted(_imports31(m) & _forbid31) for m in (_jm31, _ao31, _num31)}),
+)
+
+# ---------------------------------------------------------------------------
+# 32. Monthly uses (Phase 30 / B): one shared pool of FREE_MONTHLY_USES a month per
+# person, spent by every AI feature and never reset by a wipe or a close.
+# The rules every check here keeps (spec B8.0): each quota assertion runs as a user
+# minted in THIS section, because the admin writes no quota rows and a check copied
+# from an admin-driven section passes by never firing; a charge is proven by its +n
+# ledger event before anything is said about a skip or a refund; and each catch
+# sits beside its false-positive twin. Injected dates are RELATIVE to the real
+# month, never literals, because the once-a-day prune reads the real clock: a
+# literal far from today could have it delete a row a check is still reading.
+# ---------------------------------------------------------------------------
+import ast as _ast32  # noqa: E402
+import inspect as _insp32  # noqa: E402
+import threading as _thr32  # noqa: E402
+from datetime import date as _date32, datetime as _dt32, timedelta as _td32, timezone as _tz32  # noqa: E402
+
+from fastapi import Depends as _Depends32, HTTPException as _HTTPExc32  # noqa: E402
+from sqlalchemy import create_engine as _ce32, event as _saev32, func as _func32, select as _sel32  # noqa: E402
+from sqlalchemy.dialects import postgresql as _pg32, sqlite as _sqlite32  # noqa: E402
+
+from app.api import inbox_routes as _iroutes32, routes as _routes32  # noqa: E402
+from app.api.deps import current_user as _current_user32  # noqa: E402
+from app.core import accounts as _acc32, quota as _q32, review_rewrites as _rr32  # noqa: E402
+from app.db import database as _dbm32  # noqa: E402
+from app.db.database import get_db as _get_db32  # noqa: E402
+from app.db.models import UsageEvent as _UE32, UsageMonth as _UM32, UsagePass as _UP32  # noqa: E402
+from app.db.models import User as _U32, UserLogin as _UL32  # noqa: E402
+from app.db.users import new_invite_code as _new_code32  # noqa: E402
+
+_UTC32 = _tz32.utc
+_PLUS3_32 = _tz32(_td32(hours=3))
+
+
+def _shift32(year, month, months):  # noqa: ANN001
+    """(year, month) moved by a number of months."""
+    index = year * 12 + (month - 1) + months
+    return index // 12, index % 12 + 1
+
+
+def _period32(year, month):  # noqa: ANN001
+    return f"{year:04d}-{month:02d}"
+
+
+_real32 = _q32.utc_now()
+_THIS32 = _dt32(_real32.year, _real32.month, 15, 12, 0, tzinfo=_UTC32)  # mid this month, UTC
+_P_THIS32 = _period32(_real32.year, _real32.month)
+_ny32, _nm32 = _shift32(_real32.year, _real32.month, 1)
+_NEXT32 = _dt32(_ny32, _nm32, 1, 0, 30, tzinfo=_UTC32)  # 00:30Z on the 1st of next month
+_P_NEXT32 = _period32(_ny32, _nm32)
+
+
+def _mint32(client, name, email=""):  # noqa: ANN001
+    """A plan-free friend, minted the way the admin mints one (POST /admin/users)."""
+    body = _j28(client.post("/admin/users", json={"name": name, "email": email}, headers=_ADMIN_H))
+    return body.get("id"), {"X-App-Key": body.get("invite_code", "")}
+
+
+def _reserve32(uid, feature="tailor", n=1, now=None):  # noqa: ANN001
+    """One reserve on its own session: (Charge, None), or (None, the 429)."""
+    d = SessionLocal()
+    try:
+        return _q32.reserve(d, d.get(_U32, uid), feature, n, now=now), None
+    except _HTTPExc32 as exc:
+        return None, exc
+    finally:
+        d.close()
+
+
+def _snap32(uid, now=None):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return _q32.snapshot(d, d.get(_U32, uid), now or _q32.utc_now())
+    finally:
+        d.close()
+
+
+def _key32(uid):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return _q32.quota_key(d, d.get(_U32, uid))
+    finally:
+        d.close()
+
+
+def _rows32(uid, key):  # noqa: ANN001
+    """(month rows of the pool, ledger events written by the user, passes of the user)."""
+    d = SessionLocal()
+    try:
+        return (
+            int(d.execute(_sel32(_func32.count()).select_from(_UM32).where(_UM32.quota_key == key)).scalar() or 0),
+            int(d.execute(_sel32(_func32.count()).select_from(_UE32).where(_UE32.user_id == uid)).scalar() or 0),
+            int(d.execute(_sel32(_func32.count()).select_from(_UP32).where(_UP32.user_id == uid)).scalar() or 0),
+        )
+    finally:
+        d.close()
+
+
+def _pool32(key, period):  # noqa: ANN001
+    """(used, SUM(delta)) for one pool and month; the invariant is that the two are equal."""
+    d = SessionLocal()
+    try:
+        used = d.execute(_sel32(_UM32.used).where(_UM32.quota_key == key, _UM32.period == period)).scalar()
+        total = d.execute(
+            _sel32(_func32.coalesce(_func32.sum(_UE32.delta), 0))
+            .where(_UE32.quota_key == key, _UE32.period == period)
+        ).scalar()
+        return (None if used is None else int(used)), int(total or 0)
+    finally:
+        d.close()
+
+
+def _ledger32(key, period):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return [tuple(r) for r in d.execute(
+            _sel32(_UE32.feature, _UE32.delta, _UE32.refunded, _UE32.ref)
+            .where(_UE32.quota_key == key, _UE32.period == period).order_by(_UE32.id)
+        ).all()]
+    finally:
+        d.close()
+
+
+def _email_user32(email):  # noqa: ANN001
+    """A verified email account written straight to the tables, for pool-key checks that need no mail."""
+    d = SessionLocal()
+    try:
+        user = _U32(name="Pool " + email, email=email, invite_code=_new_code32(), signup_source="email")
+        d.add(user)
+        d.flush()
+        uid = user.id
+        d.add(_UL32(user_id=uid, email=email, password_hash="", email_verified_at=_dt32.now(_UTC32)))
+        d.commit()
+        return uid
+    finally:
+        d.close()
+
+
+def _raises_value_error32(fn):  # noqa: ANN001
+    try:
+        fn()
+    except ValueError:
+        return True
+    except Exception:  # noqa: BLE001 - any other outcome fails the check
+        return False
+    return False
+
+
+def _signup32(client, name, email, password):  # noqa: ANN001
+    """Sign up over HTTP: (user id, raw session token, response). TestClient is ONE address, so the auth
+    throttles are cleared first, as section 28 does between independent scenarios."""
+    _reset_auth_throttles28()
+    client.cookies.clear()
+    resp = client.post("/auth/signup", json={"name": name, "email": email, "password": password}, headers=_XRW)
+    token = resp.cookies.get("jf_session") or ""
+    client.cookies.clear()
+    return (_j28(resp).get("user") or {}).get("id"), token, resp
+
+
+def _verify32(client, email, token):  # noqa: ANN001
+    resp = client.post("/auth/verify", json={"code": _last_mail28(email, "code")}, headers=_ck28(token, _XRW))
+    client.cookies.clear()
+    return resp
+
+
+def _named32(fn):  # noqa: ANN001
+    """Every Name and attribute a function's source mentions (parsed, so prose in a docstring is not a mention)."""
+    names = set()
+    for node in _ast32.walk(_ast32.parse(_insp32.getsource(fn))):
+        if isinstance(node, _ast32.Name):
+            names.add(node.id)
+        elif isinstance(node, _ast32.Attribute):
+            names.add(node.attr)
+    return names
+
+
+# --- 32.0 The data model: the four columns the shim adds to live tables ------------------
+_legacy32_path = os.path.join(tempfile.mkdtemp(), "legacy_quota.db").replace("\\", "/")
+_legacy32 = _ce32("sqlite:///" + _legacy32_path)
+with _legacy32.connect() as _lc32:
+    _lc32.exec_driver_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(255), invite_code VARCHAR(128))")
+    _lc32.exec_driver_sql("INSERT INTO users (name, invite_code) VALUES ('Friend', 'legacy-quota-32')")
+    _lc32.exec_driver_sql("CREATE TABLE job_alerts (id INTEGER PRIMARY KEY, user_id INTEGER)")
+    _lc32.exec_driver_sql("INSERT INTO job_alerts (user_id) VALUES (1)")
+    _lc32.exec_driver_sql("CREATE TABLE tailor_kits (id INTEGER PRIMARY KEY, user_id INTEGER)")
+    _lc32.exec_driver_sql("INSERT INTO tailor_kits (user_id) VALUES (1)")
+    _lc32.commit()
+_engine_real32 = _dbm32.engine
+_dbm32.engine = _legacy32
+try:
+    _dbm32._migrate_missing_columns()
+finally:
+    _dbm32.engine = _engine_real32
+with _legacy32.connect() as _lc32:
+    _shim32 = (
+        tuple(_lc32.exec_driver_sql("SELECT plan FROM users").fetchone()),
+        tuple(_lc32.exec_driver_sql("SELECT last_skip FROM job_alerts").fetchone()),
+        tuple(_lc32.exec_driver_sql("SELECT quota_event_id, quota_refunded FROM tailor_kits").fetchone()),
+    )
+_legacy32.dispose()
+check(
+    "B2 shim: EXISTING rows gain plan 'free' (the owner's call: every account starts limited), last_skip '', and a "
+    "kit with NO quota event (NULL, not refunded), so a kit queued before Phase 30 is never refunded a use it never paid",
+    _shim32 == (("free",), ("",), (None, 0)),
+    str(_shim32),
+)
+
+_prev32_env = _env29(APP_BASE_URL="https://app.jobfinder.test")
+_ae28._resolve_sender = lambda: _capture_auth_mail28
+try:
+    with TestClient(_fastapi_app) as _c32:
+        # --- 32.1 The pool ---------------------------------------------------------------
+        _pool_uid32, _POOL32_H = _mint32(_c32, "Pool Friend")
+        _pool_key32 = _key32(_pool_uid32)
+        _ten32 = [_reserve32(_pool_uid32, "tailor", now=_THIS32) for _ in range(10)]
+        check(
+            "32.1 pool: a minted friend's key is its own u:<id> pool, and ten reserves each land with a +1 ledger "
+            "event of their own — used == 10 == SUM(delta)",
+            _pool_key32 == f"u:{_pool_uid32}"
+            and all(c is not None and e is None and c.event_id is not None for c, e in _ten32)
+            and len({c.event_id for c, _ in _ten32 if c is not None}) == 10
+            and _ledger32(_pool_key32, _P_THIS32) == [("tailor", 1, 0, "")] * 10
+            and _pool32(_pool_key32, _P_THIS32) == (10, 10),
+            str(_ledger32(_pool_key32, _P_THIS32)[:2]),
+        )
+        _eleventh32 = _reserve32(_pool_uid32, "tailor", now=_THIS32)
+        check(
+            "32.1 pool: the 11th is a 429 carrying the exact monthly_limit detail, and it writes nothing",
+            _eleventh32[0] is None and _eleventh32[1] is not None and _eleventh32[1].status_code == 429
+            and _eleventh32[1].detail == {
+                "code": "monthly_limit", "feature": "tailor", "plan": "free", "limit": 10, "used": 10,
+                "remaining": 0, "resets_on": _q32.resets_on(_THIS32).isoformat(),
+            }
+            and _pool32(_pool_key32, _P_THIS32) == (10, 10) and len(_ledger32(_pool_key32, _P_THIS32)) == 10,
+            str(_eleventh32[1].detail if _eleventh32[1] is not None else _eleventh32),
+        )
+        _admin_key32 = _key32(_admin_row_id)
+        _admin32_before = _rows32(_admin_row_id, _admin_key32)
+        _admin32 = _reserve32(_admin_row_id, "tailor", now=_THIS32)
+        check(
+            "32.1 exempt: the admin's reserve returns an event-less Charge and writes no month row, event or pass — "
+            "beside the friend above, whose identical reserve wrote +1 each time",
+            _admin32[1] is None and _admin32[0] is not None and _admin32[0].event_id is None
+            and _admin32_before == (0, 0, 0) and _rows32(_admin_row_id, _admin_key32) == (0, 0, 0),
+            str(_admin32_before),
+        )
+        _unl_uid32, _ = _mint32(_c32, "Unlimited Friend")
+        _unl_key32 = f"u:{_unl_uid32}"
+        _unl32_free = _reserve32(_unl_uid32, "search", now=_THIS32)
+        _unl32_rows_free = _rows32(_unl_uid32, _unl_key32)
+        _unl32_patch = _c32.patch(f"/admin/users/{_unl_uid32}", json={"plan": "unlimited"}, headers=_ADMIN_H)
+        _unl32_more = [_reserve32(_unl_uid32, "search", now=_THIS32) for _ in range(3)]
+        check(
+            "32.1 exempt: plan 'unlimited' has no monthly limit — while free the user's reserve wrote +1; once the "
+            "admin sets the plan, three reserves write nothing and the snapshot's limit is null",
+            _unl32_free[0] is not None and _unl32_free[0].event_id is not None and _unl32_rows_free == (1, 1, 0)
+            and _unl32_patch.status_code == 200
+            and all(c is not None and c.event_id is None for c, _ in _unl32_more)
+            and _rows32(_unl_uid32, _unl_key32) == (1, 1, 0)
+            and _snap32(_unl_uid32, _THIS32).limit is None,
+            _unl32_patch.text[:120],
+        )
+        _off_uid32, _ = _mint32(_c32, "Kill Switch Friend")
+        _off_key32 = f"u:{_off_uid32}"
+        _off32_limit = _snap32(_off_uid32, _THIS32).limit
+        _off32_env = _env29(FREE_MONTHLY_USES="0")
+        try:
+            _off32 = _reserve32(_off_uid32, "tailor", now=_THIS32)
+            _off32_rows = _rows32(_off_uid32, _off_key32)
+            _off32_snap_limit = _snap32(_off_uid32, _THIS32).limit
+        finally:
+            _restore29(_off32_env)
+        _off32_back = _reserve32(_off_uid32, "tailor", now=_THIS32)
+        check(
+            "32.1 exempt: FREE_MONTHLY_USES=0 switches the limit off and writes nothing — the same user read limit 10 "
+            "before, and the moment the setting is restored its next reserve writes +1",
+            _off32_limit == 10 and _off32[0] is not None and _off32[0].event_id is None
+            and _off32_rows == (0, 0, 0) and _off32_snap_limit is None
+            and _off32_back[0] is not None and _off32_back[0].event_id is not None
+            and _rows32(_off_uid32, _off_key32) == (1, 1, 0),
+            str(_off32_rows),
+        )
+
+        # --- 32.2 Period and clock ----------------------------------------------------------
+        check(
+            "32.2 clock: the period is the UTC month — at 00:30 on the 1st, +03:00 is still the OLD month and Z the new",
+            _q32.period_of(_dt32(2026, 10, 1, 0, 30, tzinfo=_PLUS3_32)) == "2026-09"
+            and _q32.period_of(_dt32(2026, 10, 1, 0, 30, tzinfo=_UTC32)) == "2026-10",
+        )
+        check(
+            "32.2 clock: resets_on is the 1st of the next month and rolls December into January (September is the twin)",
+            _q32.resets_on(_dt32(2026, 12, 15, 9, 0, tzinfo=_UTC32)) == _date32(2027, 1, 1)
+            and _q32.resets_on(_dt32(2026, 9, 30, 23, 59, tzinfo=_UTC32)) == _date32(2026, 10, 1),
+        )
+        _naive_uid32, _ = _mint32(_c32, "Naive Clock")
+        _naive32 = _dt32(_THIS32.year, _THIS32.month, 15, 12, 0)
+
+        def _naive_pass32():
+            d = SessionLocal()
+            try:
+                with _q32.pass_charged(d, d.get(_U32, _naive_uid32), "interview", now=_naive32):
+                    pass
+            finally:
+                d.close()
+
+        def _naive_refund32():
+            d = SessionLocal()
+            try:
+                _q32.refund_units(d, _ten32[0][0].event_id, 1, ref="refund:naive", now=_naive32)
+            finally:
+                d.close()
+
+        check(
+            "32.2 clock: a NAIVE now is refused (ValueError) by period_of, reserve, refund_units and pass_charged, and "
+            "nothing is written or refunded — local time or UTC is the ambiguity the 'Posted N days ago' bug was — "
+            "while the same instant made aware is accepted",
+            _raises_value_error32(lambda: _q32.period_of(_naive32))
+            and _raises_value_error32(lambda: _reserve32(_naive_uid32, "tailor", now=_naive32))
+            and _raises_value_error32(_naive_refund32)
+            and _raises_value_error32(_naive_pass32)
+            and _rows32(_naive_uid32, f"u:{_naive_uid32}") == (0, 0, 0)
+            and _pool32(_pool_key32, _P_THIS32) == (10, 10)
+            and _q32.period_of(_naive32.replace(tzinfo=_UTC32)) == _P_THIS32,
+        )
+        _roll_uid32, _ = _mint32(_c32, "Month Rollover")
+        _roll_key32 = f"u:{_roll_uid32}"
+        _roll32_fill = [_reserve32(_roll_uid32, "search", now=_THIS32) for _ in range(10)]
+        _roll32_full = _reserve32(_roll_uid32, "search", now=_THIS32)
+        _roll32_old = _reserve32(_roll_uid32, "search", now=_dt32(_ny32, _nm32, 1, 0, 30, tzinfo=_PLUS3_32))
+        _roll32_next_snap = _snap32(_roll_uid32, _NEXT32)
+        _roll32_new = _reserve32(_roll_uid32, "search", now=_NEXT32)
+        check(
+            "32.2 period: ten uses fill this month (the 11th is a 429); on the 1st of next month the same pool reads "
+            "0 used and 10 left, and the reserve lands in THAT month while this one stays at 10",
+            all(c is not None for c, _ in _roll32_fill)
+            and _roll32_full[1] is not None and _roll32_full[1].status_code == 429
+            and _roll32_next_snap.used == 0 and _roll32_next_snap.remaining == 10
+            and _roll32_next_snap.resets_on == _q32.resets_on(_NEXT32).isoformat()
+            and _roll32_new[0] is not None and _roll32_new[0].period == _P_NEXT32
+            and _pool32(_roll_key32, _P_NEXT32) == (1, 1) and _pool32(_roll_key32, _P_THIS32) == (10, 10),
+            f"{_roll32_next_snap} {_pool32(_roll_key32, _P_NEXT32)}",
+        )
+        check(
+            "32.2 period: …and 00:30 on that same 1st written in +03:00 is still THIS month, so it meets the full pool "
+            "(a 429 reporting used 10) — the twin of the reserve that landed",
+            _roll32_old[0] is None and _roll32_old[1] is not None and _roll32_old[1].status_code == 429
+            and _roll32_old[1].detail.get("used") == 10,
+        )
+
+        # --- 32.10 Wipe, close, and whose pool it is ------------------------------------------
+        _wipe_names32 = _named32(_routes32._wipe_user_rows)
+        _close_names32 = _named32(_routes32.close_my_account)
+        _QUOTA_MODELS32 = {"UsageMonth", "UsageEvent", "UsagePass"}
+        check(
+            "32.10 AST: _wipe_user_rows and close_my_account name none of UsageMonth / UsageEvent / UsagePass — a wipe "
+            "that reset the pool would make 'Delete my data' a free reset — and the walker is live: it sees TailorKit "
+            "and UsageLog in the wipe and purge_on_close in the close",
+            not (_wipe_names32 & _QUOTA_MODELS32) and not (_close_names32 & _QUOTA_MODELS32)
+            and {"TailorKit", "UsageLog"} <= _wipe_names32 and "purge_on_close" in _close_names32,
+            str(sorted((_wipe_names32 | _close_names32) & _QUOTA_MODELS32)),
+        )
+        _keep_uid32, _KEEP32_H = _mint32(_c32, "Keeps Its Count")
+        _keep_key32 = f"u:{_keep_uid32}"
+        _reserve32(_keep_uid32, "company_brief", now=_THIS32)
+        _kd32 = SessionLocal()
+        try:
+            with _q32.pass_charged(_kd32, _kd32.get(_U32, _keep_uid32), "interview", now=_THIS32):
+                pass
+        finally:
+            _kd32.close()
+        _keep32_before = _rows32(_keep_uid32, _keep_key32)
+        _keep32_data = _c32.request("DELETE", "/profile/data", headers=_KEEP32_H)
+        _keep32_after_data = _rows32(_keep_uid32, _keep_key32)
+        _keep32_close = _c32.request("DELETE", "/profile/account", headers=_KEEP32_H)
+        _keep32_after_close = _rows32(_keep_uid32, _keep_key32)
+        check(
+            "32.10 wipe: rows in all three quota tables SURVIVE 'Delete my data' AND 'Close my account' — present "
+            "before (a month row, two +1 events, one open pass) and identical after each door, the count still 2",
+            _keep32_before == (1, 2, 1)
+            and _keep32_data.status_code == 200 and _keep32_after_data == _keep32_before
+            and _keep32_close.status_code == 200 and _keep32_after_close == _keep32_before
+            and _pool32(_keep_key32, _P_THIS32) == (2, 2),
+            f"{_keep32_before} {_keep32_after_data} {_keep32_after_close} {_keep32_close.text[:80]}",
+        )
+        check(
+            "32.10 canonical email: normalised, cut at the first '+' when something precedes it, and dots dropped for "
+            "gmail.com and googlemail.com only (mapped to gmail.com) — a bare leading '+' is left alone",
+            _q32.canonical_email("  A.B+x@GMail.com ") == "ab@gmail.com"
+            and _q32.canonical_email("a.b@googlemail.com") == "ab@gmail.com"
+            and _q32.canonical_email("first.last+jobs@corp.com") == "first.last@corp.com"
+            and _q32.canonical_email("+tag@corp.com") == "+tag@corp.com",
+        )
+        _g1_32 = _email_user32("q.pool32+x@gmail.com")
+        _g2_32 = _email_user32("qpool32@gmail.com")
+        _gkeys32 = (_key32(_g1_32), _key32(_g2_32))
+        _g32_charge = _reserve32(_g1_32, "scan", now=_THIS32)
+        check(
+            "32.10 pool key: a gmail alias shares the base address's pool — a use by one shows in the other's "
+            "snapshot — and the key is a keyed hash, never the address itself",
+            _gkeys32[0] == _gkeys32[1] and _gkeys32[0].startswith("em:") and "pool32" not in _gkeys32[0]
+            and _g32_charge[0] is not None and _g32_charge[0].event_id is not None
+            and _snap32(_g2_32, _THIS32).used == 1,
+            str(_gkeys32),
+        )
+        _c1_32 = _email_user32("first.last.pool32@corp.example")
+        _c2_32 = _email_user32("firstlast.pool32@corp.example")
+        _i1_32, _ = _mint32(_c32, "Same Inbox One", "same.inbox32@example.com")
+        _i2_32, _ = _mint32(_c32, "Same Inbox Two", "same.inbox32@example.com")
+        _reserve32(_c1_32, "scan", now=_THIS32)
+        _reserve32(_i1_32, "scan", now=_THIS32)
+        check(
+            "32.10 pool key twins: dots are dropped for gmail ONLY (first.last@ and firstlast@ elsewhere are two "
+            "pools), and two invite users sharing one users.email are two pools (u:<id> each) — each use stays where "
+            "it was spent",
+            _key32(_c1_32) != _key32(_c2_32)
+            and _snap32(_c1_32, _THIS32).used == 1 and _snap32(_c2_32, _THIS32).used == 0
+            and _key32(_i1_32) == f"u:{_i1_32}" and _key32(_i2_32) == f"u:{_i2_32}"
+            and _snap32(_i1_32, _THIS32).used == 1 and _snap32(_i2_32, _THIS32).used == 0,
+        )
+        _carry_email32 = "carry.pool32@example.com"
+        _carry_uid32, _carry_tok32, _carry_su32 = _signup32(_c32, "Carry", _carry_email32, "carry pool passphrase one")
+        _carry_ver32 = _verify32(_c32, _carry_email32, _carry_tok32)
+        _carry_key32 = _key32(_carry_uid32) if _carry_uid32 else ""
+        _carry_uses32 = [_reserve32(_carry_uid32, "tailor", now=_THIS32) for _ in range(4)] if _carry_uid32 else []
+        _carry_close32 = _c32.request("DELETE", "/profile/account", headers=_ck28(_carry_tok32, _XRW))
+        _c32.cookies.clear()
+        _again_uid32, _again_tok32, _again_su32 = _signup32(
+            _c32, "Carry Again", _carry_email32, "carry pool passphrase two"
+        )
+        _again_ver32 = _verify32(_c32, _carry_email32, _again_tok32)
+        _fresh_uid32, _fresh_tok32, _fresh_su32 = _signup32(
+            _c32, "Fresh Pool", "fresh.pool32@example.com", "fresh pool passphrase"
+        )
+        _again_snap32 = _snap32(_again_uid32, _THIS32) if _again_uid32 else None
+        check(
+            "32.10 close: closing the account does not reset this month's count — the same address signed up again is "
+            "a NEW user on the SAME pool, carrying its 4 uses; a different address starts at 0 (the twin)",
+            _carry_su32.status_code == 200 and _carry_ver32.status_code == 200
+            and len(_carry_uses32) == 4 and all(c is not None for c, _ in _carry_uses32)
+            and _carry_close32.status_code == 200
+            and _again_su32.status_code == 200 and _again_ver32.status_code == 200
+            and _again_uid32 not in (None, _carry_uid32)
+            and _key32(_again_uid32) == _carry_key32
+            and _again_snap32 is not None and _again_snap32.used == 4 and _again_snap32.remaining == 6
+            and _fresh_su32.status_code == 200 and _snap32(_fresh_uid32, _THIS32).used == 0,
+            f"{_carry_close32.text[:80]} | {_again_su32.text[:80]} | {_again_snap32}",
+        )
+        _ex_email32 = "exhausted.pool32@example.com"
+        _ex_uid32, _ex_tok32, _ex_su32 = _signup32(_c32, "Exhausts", _ex_email32, "exhausted pool passphrase")
+        _ex_ver32 = _verify32(_c32, _ex_email32, _ex_tok32)
+        _ex_fill32 = [_reserve32(_ex_uid32, "search", now=_THIS32) for _ in range(10)] if _ex_uid32 else []
+        _ex_close32 = _c32.request("DELETE", "/profile/account", headers=_ck28(_ex_tok32, _XRW))
+        _c32.cookies.clear()
+        _mv_uid32, _mv_tok32, _mv_su32 = _signup32(_c32, "Moves", "moving.pool32@example.com", "moving pool passphrase")
+        _mv_before32 = _snap32(_mv_uid32, _THIS32) if _mv_uid32 else None
+        _reset_auth_throttles28()
+        _mv_change32 = _c32.post("/auth/change-email", json={"email": _ex_email32}, headers=_ck28(_mv_tok32, _XRW))
+        _c32.cookies.clear()
+        _mv_ver32 = _verify32(_c32, _ex_email32, _mv_tok32)
+        _mv_after32 = _snap32(_mv_uid32, _THIS32) if _mv_uid32 else None
+        _mv_refused32 = _reserve32(_mv_uid32, "tailor", now=_THIS32) if _mv_uid32 else (None, None)
+        check(
+            "32.10 change-email: the pool follows the login's address at RESERVE time, never a stamp from signup — an "
+            "unverified signup (its own fresh pool: limit 10, used 0) that moves to an exhausted address and verifies "
+            "gets the exhausted pool, and its next reserve is a 429",
+            _ex_su32.status_code == 200 and _ex_ver32.status_code == 200
+            and len(_ex_fill32) == 10 and all(c is not None for c, _ in _ex_fill32)
+            and _ex_close32.status_code == 200 and _mv_su32.status_code == 200
+            and _mv_before32 is not None and _mv_before32.limit == 10 and _mv_before32.used == 0
+            and _mv_change32.status_code == 200 and _mv_ver32.status_code == 200
+            and _mv_after32 is not None and _mv_after32.used == 10 and _mv_after32.remaining == 0
+            and _mv_refused32[1] is not None and _mv_refused32[1].status_code == 429,
+            f"{_mv_change32.text[:100]} | {_mv_ver32.text[:100]} | {_mv_after32}",
+        )
+        _prune_now32 = _q32.utc_now()
+        _py1_32, _pm1_32 = _shift32(_prune_now32.year, _prune_now32.month, -1)
+        _py2_32, _pm2_32 = _shift32(_prune_now32.year, _prune_now32.month, -2)
+        _P_PREV32, _P_OLD32 = _period32(_py1_32, _pm1_32), _period32(_py2_32, _pm2_32)
+        _P_NOW32 = _period32(_prune_now32.year, _prune_now32.month)
+        _PRUNE_KEY32 = "u:prune-check-32"
+        _prev_start32 = _dt32(_py1_32, _pm1_32, 1)  # naive UTC, the form the column stores
+        _pd32 = SessionLocal()
+        try:
+            for _per32 in (_P_OLD32, _P_PREV32, _P_NOW32):
+                _pd32.add(_UM32(quota_key=_PRUNE_KEY32, period=_per32, used=1, updated_at=_prev_start32))
+                _pd32.add(_UE32(quota_key=_PRUNE_KEY32, period=_per32, feature="tailor", delta=1, refunded=0,
+                                ref="prune-check-32", created_at=_prev_start32))
+            _pd32.add(_UP32(user_id=-32, feature="interview", ref="", opened_at=_prev_start32 - _td32(days=2),
+                            expires_at=_prev_start32 - _td32(days=1), calls=1, max_calls=60))
+            _pd32.add(_UP32(user_id=-32, feature="interview", ref="", opened_at=_prev_start32,
+                            expires_at=_prev_start32 + _td32(days=1), calls=1, max_calls=60))
+            _pd32.commit()
+            _q32.prune(_pd32, _prune_now32)
+            _left_months32 = sorted(
+                _pd32.execute(_sel32(_UM32.period).where(_UM32.quota_key == _PRUNE_KEY32)).scalars().all()
+            )
+            _left_events32 = sorted(
+                _pd32.execute(_sel32(_UE32.period).where(_UE32.quota_key == _PRUNE_KEY32)).scalars().all()
+            )
+            _left_passes32 = sorted(_pd32.execute(_sel32(_UP32.expires_at).where(_UP32.user_id == -32)).scalars().all())
+        finally:
+            _pd32.close()
+        check(
+            "32.10 prune: months older than the previous one go — month rows, events, and passes that expired before "
+            "the previous month began — while the previous month is KEPT, so a boundary refund still lands",
+            _left_months32 == [_P_PREV32, _P_NOW32] and _left_events32 == [_P_PREV32, _P_NOW32]
+            and _left_passes32 == [_prev_start32 + _td32(days=1)],
+            f"{_left_months32} {_left_events32} {_left_passes32}",
+        )
+        _day_uid32, _ = _mint32(_c32, "Daily Prune")
+        _DAY_KEY32 = "u:prune-day-32"
+
+        def _seed_old32():
+            d = SessionLocal()
+            try:
+                d.add(_UM32(quota_key=_DAY_KEY32, period=_P_OLD32, used=0, updated_at=_prev_start32))
+                d.commit()
+            finally:
+                d.close()
+
+        def _old_left32():
+            d = SessionLocal()
+            try:
+                return int(
+                    d.execute(_sel32(_func32.count()).select_from(_UM32).where(_UM32.quota_key == _DAY_KEY32)).scalar()
+                    or 0
+                )
+            finally:
+                d.close()
+
+        _q32._pruned_on = ""
+        _seed_old32()
+        _day_first32 = _reserve32(_day_uid32, "tailor")
+        _day_left_first32 = _old_left32()
+        _seed_old32()
+        _day_second32 = _reserve32(_day_uid32, "tailor")
+        _day_left_second32 = _old_left32()
+        check(
+            "32.10 prune: the first reserve of each UTC day prunes (a stale month row seeded before it is gone), and "
+            "the second reserve that day does not prune again (a row seeded between the two stays)",
+            _day_first32[0] is not None and _day_left_first32 == 0
+            and _day_second32[0] is not None and _day_left_second32 == 1,
+            f"{_day_left_first32} {_day_left_second32}",
+        )
+
+        # --- 32.11 The SQL shape ------------------------------------------------------------
+        _il_uid32, _ = _mint32(_c32, "Interleave Last Unit")
+        _il2_uid32, _ = _mint32(_c32, "Interleave Two Left")
+        for _ in range(9):
+            _reserve32(_il_uid32, "tailor", now=_THIS32)
+        for _ in range(8):
+            _reserve32(_il2_uid32, "tailor", now=_THIS32)
+        _il32 = {"armed": False, "uid": None, "inner": None}
+
+        def _il_hook32(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+            if _il32["armed"] and statement.lstrip().upper().startswith("UPDATE USAGE_MONTHS SET USED"):
+                _il32["armed"] = False
+                _il32["inner"] = _reserve32(_il32["uid"], "tailor", now=_THIS32)
+
+        def _interleaved32(uid):  # noqa: ANN001
+            """Reserve once, with ANOTHER reserve for the same user forced in right before this one's take."""
+            _il32.update(armed=True, uid=uid, inner=None)
+            _saev32.listen(_dbm32.engine, "before_cursor_execute", _il_hook32)
+            try:
+                return _reserve32(uid, "tailor", now=_THIS32), _il32["inner"]
+            finally:
+                _il32["armed"] = False
+                _saev32.remove(_dbm32.engine, "before_cursor_execute", _il_hook32)
+
+        _il_outer32, _il_inner32 = _interleaved32(_il_uid32)
+        check(
+            "32.11 interleave: another request takes the LAST unit between this reserve's upsert and its take — the "
+            "take is conditional, so this one is a 429 reporting used 10, and used == limit == SUM(delta), never 11",
+            _il_inner32 is not None and _il_inner32[0] is not None
+            and _il_outer32[1] is not None and _il_outer32[1].status_code == 429
+            and _il_outer32[1].detail.get("used") == 10
+            and _pool32(f"u:{_il_uid32}", _P_THIS32) == (10, 10),
+            f"inner={_il_inner32} outer={_il_outer32}",
+        )
+        _il2_outer32, _il2_inner32 = _interleaved32(_il2_uid32)
+        check(
+            "32.11 interleave twin: with 2 left the same interleave costs nobody anything — both land, and used == 10 "
+            "== SUM(delta)",
+            _il2_inner32 is not None and _il2_inner32[0] is not None and _il2_outer32[0] is not None
+            and _pool32(f"u:{_il2_uid32}", _P_THIS32) == (10, 10),
+            f"inner={_il2_inner32} outer={_il2_outer32}",
+        )
+        _st_uid32, _ = _mint32(_c32, "Stale Session")
+        for _ in range(9):
+            _reserve32(_st_uid32, "tailor", now=_THIS32)
+        _stale32 = SessionLocal(expire_on_commit=False)
+        _st_exc32 = None
+        try:
+            _st_row32 = _stale32.execute(
+                _sel32(_UM32).where(_UM32.quota_key == f"u:{_st_uid32}", _UM32.period == _P_THIS32)
+            ).scalars().one()
+            _st_user32 = _stale32.get(_U32, _st_uid32)
+            _st_other32 = _reserve32(_st_uid32, "tailor", now=_THIS32)
+            _st_seen32 = _st_row32.used
+            try:
+                _q32.reserve(_stale32, _st_user32, "tailor", now=_THIS32)
+            except _HTTPExc32 as _exc32:
+                _st_exc32 = _exc32
+        finally:
+            _stale32.close()
+        check(
+            "32.11 stale caller: a session still holding the month row at used 9 (another request took the 10th) is "
+            "refused with used 10 in the detail — the count is read back with SQL, never off the caller's ORM object",
+            _st_other32[0] is not None and _st_seen32 == 9
+            and _st_exc32 is not None and _st_exc32.status_code == 429
+            and _st_exc32.detail.get("used") == 10 and _st_exc32.detail.get("remaining") == 0,
+            str(_st_exc32.detail if _st_exc32 is not None else None),
+        )
+        _race_uid32, _ = _mint32(_c32, "Thread Race")
+        _race_out32: list[str] = []
+        _race_lock32 = _thr32.Lock()
+
+        def _race_one32():
+            try:
+                charge, refusal = _reserve32(_race_uid32, "tailor", now=_THIS32)
+                kind = "ok" if charge is not None else f"http{refusal.status_code}"
+            except Exception as exc:  # noqa: BLE001 - a crash is exactly what this check is for
+                kind = f"crash:{type(exc).__name__}:{str(exc)[:80]}"
+            with _race_lock32:
+                _race_out32.append(kind)
+
+        _race_threads32 = [_thr32.Thread(target=_race_one32) for _ in range(14)]
+        for _t32 in _race_threads32:
+            _t32.start()
+        for _t32 in _race_threads32:
+            _t32.join(120)
+        _race_pool32 = _pool32(f"u:{_race_uid32}", _P_THIS32)
+        check(
+            "32.11 thread race (no-crash only): 14 threads reserving at once each end as a Charge or a 429, never a "
+            "crash, and the pool balances — used == SUM(delta) == the number that landed, at most the limit",
+            len(_race_out32) == 14 and all(k in ("ok", "http429") for k in _race_out32)
+            and _race_pool32[0] == _race_pool32[1] == _race_out32.count("ok") <= 10,
+            str(sorted(set(_race_out32))) + f" {_race_pool32}",
+        )
+        _sql_now32 = _dt32(2026, 9, 15, 12, 0, tzinfo=_UTC32)
+        _lit32 = {"literal_binds": True}
+        _compiled32 = {
+            _dname32: {
+                "upsert": str(_q32._month_upsert(_dname32, "em:k32", "2026-09", 7, _sql_now32)
+                              .compile(dialect=_dialect32, compile_kwargs=_lit32)),
+                "take": str(_q32._month_take("em:k32", "2026-09", 1, 10, _sql_now32)
+                            .compile(dialect=_dialect32, compile_kwargs=_lit32)),
+                "pass": str(_q32._pass_take(7, "interview", "", _sql_now32)
+                            .compile(dialect=_dialect32, compile_kwargs=_lit32)),
+                "ride": str(_q32._pass_take(7, _q32.FIT_RIDE, "ab12", _sql_now32)
+                            .compile(dialect=_dialect32, compile_kwargs=_lit32)),
+            }
+            for _dname32, _dialect32 in (("sqlite", _sqlite32.dialect()), ("postgresql", _pg32.dialect()))
+        }
+
+        def _pass_shape32(sql, feature):  # noqa: ANN001
+            inner, _paren, outer = sql.rpartition(")")
+            return (
+                "max(" in inner and "LIMIT" not in sql.upper() and "ORDER BY" not in sql.upper()
+                and f"= '{feature}'" in inner
+                and "usage_passes.expires_at >" in outer and "usage_passes.calls < usage_passes.max_calls" in outer
+            )
+
+        check(
+            "32.11 compiled SQL, sqlite AND postgresql: the month upsert is ON CONFLICT (quota_key, period) DO NOTHING "
+            "and the take is ONE conditional UPDATE — SET used=(usage_months.used + 1) … usage_months.used + 1 <= 10",
+            all("ON CONFLICT (quota_key, period) DO NOTHING" in c["upsert"]
+                and "SET used=(usage_months.used + 1)" in c["take"] and "usage_months.used + 1 <= 10" in c["take"]
+                for c in _compiled32.values()),
+            _compiled32["postgresql"]["take"][:200],
+        )
+        check(
+            "32.11 compiled SQL: the pass take and the fit-ride claim are narrowed by max(id) with no LIMIT or ORDER BY "
+            "and keep their OUTER conditions (Postgres re-checks only the outer WHERE after a lock wait) — and the "
+            "shape test is live: an ORDER BY … LIMIT take fails it",
+            all(_pass_shape32(c["pass"], "interview") and _pass_shape32(c["ride"], "tailor_after_fit")
+                for c in _compiled32.values())
+            and not _pass_shape32(
+                "UPDATE usage_passes SET calls=(calls + 1) WHERE id = (SELECT id FROM usage_passes WHERE "
+                "feature = 'interview' ORDER BY id DESC LIMIT 1)", "interview"),
+            _compiled32["sqlite"]["pass"][:300],
+        )
+
+        # --- 32.12 (first half) What /auth/me says, and the header wiring ----------------------
+        _me_uid32, _ME32_H = _mint32(_c32, "Usage Reader")
+        for _feat32 in ("tailor", "tailor", "search"):
+            _reserve32(_me_uid32, _feat32)
+        _me32 = _c32.get("/auth/me", headers=_ME32_H)
+        _me_now32 = _q32.utc_now()
+        check(
+            "32.12 /auth/me: a free user's usage is plan, limit 10, used 3, remaining 7, the reset date, the "
+            "per-feature breakdown summed off the ledger and no passes — and this free route carries no uses header",
+            _me32.status_code == 200
+            and _j28(_me32).get("usage") == {
+                "plan": "free", "limit": 10, "used": 3, "remaining": 7,
+                "resets_on": _q32.resets_on(_me_now32).isoformat(),
+                "by_feature": {"tailor": 2, "search": 1}, "passes": {},
+            }
+            and "x-uses-remaining" not in _me32.headers and "x-uses-pass" not in _me32.headers,
+            _me32.text[:300],
+        )
+        _admin_usage32 = _j28(_c32.get("/auth/me", headers=_ADMIN_H)).get("usage")
+        check(
+            "32.12 /auth/me twin: the admin's usage has a null limit and a null remaining and lists no pass",
+            isinstance(_admin_usage32, dict) and "limit" in _admin_usage32 and _admin_usage32["limit"] is None
+            and _admin_usage32.get("remaining") is None and _admin_usage32.get("passes") == {},
+            str(_admin_usage32),
+        )
+        _PROBE_PATHS32 = ("/__smoke32/uses-reserve", "/__smoke32/uses-pass")
+
+        def _probe_reserve32(db=_Depends32(_get_db32), user=_Depends32(_current_user32)):  # noqa: ANN001, B008
+            _q32.reserve(db, user, "linkedin")
+            return {"ok": True}
+
+        def _probe_pass32(db=_Depends32(_get_db32), user=_Depends32(_current_user32)):  # noqa: ANN001, B008
+            with _q32.pass_charged(db, user, "interview"):
+                pass
+            return {"ok": True}
+
+        _routes_before32 = len(_fastapi_app.router.routes)
+        _fastapi_app.add_api_route(_PROBE_PATHS32[0], _probe_reserve32, methods=["GET"])
+        _fastapi_app.add_api_route(_PROBE_PATHS32[1], _probe_pass32, methods=["GET"])
+        try:
+            _wire_uid32, _WIRE32_H = _mint32(_c32, "Header Wiring")
+            _reserve32(_wire_uid32, "tailor")
+            _w_free32 = _c32.get(_PROBE_PATHS32[0], headers=_WIRE32_H)
+            _w_admin32 = _c32.get(_PROBE_PATHS32[0], headers=_ADMIN_H)
+            _w_open32 = _c32.get(_PROBE_PATHS32[1], headers=_WIRE32_H)
+            _w_ride32 = _c32.get(_PROBE_PATHS32[1], headers=_WIRE32_H)
+            _w_me32 = _j28(_c32.get("/auth/me", headers=_WIRE32_H)).get("usage") or {}
+        finally:
+            _fastapi_app.router.routes[:] = [
+                r for r in _fastapi_app.router.routes if getattr(r, "path", "") not in _PROBE_PATHS32
+            ]
+        _w_pass_me32 = (_w_me32.get("passes") or {}).get("interview") or {}
+        check(
+            "32.12 wiring: uses_meter runs INSIDE the gate — a counted call by a free user carries X-Uses-Remaining = "
+            "limit - used read after the write (10 - 2 = 8), while the admin's identical call carries none",
+            _w_free32.status_code == 200 and _w_free32.headers.get("x-uses-remaining") == "8"
+            and "x-uses-pass" not in _w_free32.headers
+            and _w_admin32.status_code == 200 and "x-uses-remaining" not in _w_admin32.headers,
+            f"{dict(_w_free32.headers)} | {dict(_w_admin32.headers)}",
+        )
+        check(
+            "32.12 wiring: a call that opens a pass carries X-Uses-Pass interview;59;<seconds> beside the new remaining "
+            "(7); a ride on it is one call lower at the same remaining; and /auth/me lists that open pass",
+            _w_open32.status_code == 200 and _w_open32.headers.get("x-uses-remaining") == "7"
+            and _w_open32.headers.get("x-uses-pass", "").startswith("interview;59;")
+            and _w_ride32.status_code == 200 and _w_ride32.headers.get("x-uses-remaining") == "7"
+            and _w_ride32.headers.get("x-uses-pass", "").startswith("interview;58;")
+            and _w_pass_me32.get("calls_left") == 58 and 0 < _w_pass_me32.get("expires_in_s", 0) <= 3 * 3600,
+            f"{_w_open32.headers.get('x-uses-pass')} | {_w_ride32.headers.get('x-uses-pass')} | {_w_me32}",
+        )
+        check(
+            "32.12 wiring: the probe routes are removed again, so the mounted route set is what it was before",
+            len(_fastapi_app.router.routes) == _routes_before32
+            and not any(getattr(r, "path", "") in _PROBE_PATHS32 for r in _fastapi_app.router.routes),
+        )
+
+        # --- 32.14 The admin sets a plan -----------------------------------------------------
+        _plan_uid32, _ = _mint32(_c32, "Plan Holder")
+
+        def _listed32():
+            return {u.get("id"): u for u in _j28(_c32.get("/admin/users", headers=_ADMIN_H)).get("users", [])}
+
+        _pl_up32 = _c32.patch(f"/admin/users/{_plan_uid32}", json={"plan": "unlimited"}, headers=_ADMIN_H)
+        _pl_list_up32 = _listed32()
+        _pl_down32 = _c32.patch(f"/admin/users/{_plan_uid32}", json={"plan": "free"}, headers=_ADMIN_H)
+        _pl_bad32 = _c32.patch(
+            f"/admin/users/{_plan_uid32}", json={"plan": "gold", "name": "Renamed By A Bad Patch"}, headers=_ADMIN_H
+        )
+        _pl_list32 = _listed32()
+        check(
+            "32.14 admin plan: 'unlimited' and 'free' persist through PATCH and read back on the list; 'gold' is a 400 "
+            "that applies NOTHING — not even the name sent beside it",
+            _pl_up32.status_code == 200 and _j28(_pl_up32).get("plan") == "unlimited"
+            and _pl_list_up32.get(_plan_uid32, {}).get("plan") == "unlimited"
+            and _pl_down32.status_code == 200 and _j28(_pl_down32).get("plan") == "free"
+            and _pl_bad32.status_code == 400
+            and _pl_list32.get(_plan_uid32, {}).get("plan") == "free"
+            and _pl_list32.get(_plan_uid32, {}).get("name") == "Plan Holder",
+            _pl_bad32.text[:160],
+        )
+        check(
+            "32.14 admin list: uses_this_month is the pool's count this month — 3 for the usage reader, the SAME shared "
+            "count on both gmail aliases, 0 for a friend who has used nothing",
+            _pl_list32.get(_me_uid32, {}).get("uses_this_month") == 3
+            and _pl_list32.get(_g1_32, {}).get("uses_this_month") == 1
+            and _pl_list32.get(_g2_32, {}).get("uses_this_month") == 1
+            and _pl_list32.get(_plan_uid32, {}).get("uses_this_month") == 0,
+            str({k: _pl_list32.get(k, {}).get("uses_this_month") for k in (_me_uid32, _g1_32, _g2_32, _plan_uid32)}),
+        )
+        _gd32 = SessionLocal()
+        try:
+            _gd32.get(_U32, _plan_uid32).plan = "gold"
+            _gd32.commit()
+        finally:
+            _gd32.close()
+        _gold_snap32 = _snap32(_plan_uid32, _THIS32)
+        _gold_charge32 = _reserve32(_plan_uid32, "tailor", now=_THIS32)
+        check(
+            "32.14 unknown plan: a stored value that is neither free nor unlimited reads as FREE (fail toward the "
+            "limit) — the snapshot says free with limit 10, a reserve writes +1, and the admin list says free",
+            _gold_snap32.plan == "free" and _gold_snap32.limit == 10
+            and _gold_charge32[0] is not None and _gold_charge32[0].event_id is not None
+            and _listed32().get(_plan_uid32, {}).get("plan") == "free",
+        )
+finally:
+    _ae28._resolve_sender = _real_resolve_sender28
+    _restore29(_prev32_env)
+
+
+# --- 32.15 (first half) Source pins, and where the crons prune --------------------------
+def _names_of32(nodes):  # noqa: ANN001
+    names = set()
+    for node in nodes:
+        if isinstance(node, _ast32.Import):
+            names |= {part for alias in node.names for part in alias.name.split(".")}
+        elif isinstance(node, _ast32.ImportFrom):
+            names |= set((node.module or "").split(".")) | {alias.name for alias in node.names}
+    return names
+
+
+def _imports32(source):  # noqa: ANN001
+    return _names_of32(_ast32.walk(_ast32.parse(source)))
+
+
+def _top_imports32(source):  # noqa: ANN001
+    return _names_of32(_ast32.parse(source).body)
+
+
+def _calls32(fn, owner, attr):  # noqa: ANN001
+    return any(
+        isinstance(n, _ast32.Call) and isinstance(n.func, _ast32.Attribute) and n.func.attr == attr
+        and isinstance(n.func.value, _ast32.Name) and n.func.value.id == owner
+        for n in _ast32.walk(_ast32.parse(_insp32.getsource(fn)))
+    )
+
+
+_quota_src32 = _insp32.getsource(_q32)
+_FORBID32 = {"llm", "client", "get_llm_client", "openai", "urllib", "requests", "httpx", "socket", "job_search"}
+check(
+    "32.15 source pin: quota.py imports no model client, no network and never job_search (parsed, not grepped: its "
+    "docstring names what it refuses) — and the walker is live, finding get_llm_client in review_rewrites",
+    not (_imports32(_quota_src32) & _FORBID32)
+    and "get_llm_client" in _imports32(_insp32.getsource(_rr32)),
+    str(sorted(_imports32(_quota_src32) & _FORBID32)),
+)
+check(
+    "32.15 import direction: accounts imports quota at module level and quota imports accounts only inside "
+    "canonical_email, so loading the two has no cycle",
+    "quota" in _top_imports32(_insp32.getsource(_acc32))
+    and "accounts" not in _top_imports32(_quota_src32)
+    and "accounts" in _imports32(_insp32.getsource(_q32.canonical_email)),
+)
+check(
+    "32.15 clock: quota owns its clock — utc_now is defined in quota itself, never borrowed from job_search, and is aware",
+    _q32.utc_now.__module__ == "app.core.quota" and _q32.utc_now().tzinfo is not None,
+)
+check(
+    "B2 prune: both crons prune quota rows, because pruning only on a reserve keeps a quiet instance's rows for ever "
+    "(the FIXB B19 precedent) — and the detector is live: it sees the inbox cron's prune_security_log the same way, "
+    "and no quota prune in the nudges cron",
+    _calls32(_routes32.cron_job_alert, "quota", "prune") and _calls32(_iroutes32.inbox_cron, "quota", "prune")
+    and _calls32(_iroutes32.inbox_cron, "auth_throttle", "prune_security_log")
+    and not _calls32(_routes32.cron_nudges, "quota", "prune"),
 )
 
 _reached_end = True

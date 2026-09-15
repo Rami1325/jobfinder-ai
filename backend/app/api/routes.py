@@ -23,6 +23,7 @@ from app.core import auto_submit
 from app.core import inbox_apply
 from app.core import inbox_sync as inbox_sync_core
 from app.core import nudges as nudges_core
+from app.core import quota
 from app.core.sessions import clear_session_cookie, revoke_all
 from app.core.resume_review import review_resume
 from app.core.ats_xray import xray
@@ -874,6 +875,14 @@ def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertCron
         auth = request.headers.get("authorization", "")
         if not hmac.compare_digest(auth, f"Bearer {secret}"):
             raise HTTPException(401, "Bad cron secret.")
+    # Phase 30 / B2: quota rows older than the previous month are pruned here and
+    # by the inbox cron, not only on a day's first reserve, or a quiet instance
+    # keeps them for ever (the FIXB B19 precedent). Housekeeping: it may never
+    # cost the alerts.
+    try:
+        quota.prune(db, quota.utc_now())
+    except Exception:  # noqa: BLE001 - best effort
+        db.rollback()
     results, skipped = alerts_core.run_all_alerts(db)
     return AlertCronResult(users=len(results) + skipped, results=results, skipped=skipped)
 
@@ -1916,7 +1925,7 @@ def close_my_account(
     return DeleteAccountResult(data=result, deactivated=True)
 
 
-def _user_out(u: User, login: UserLogin | None = None) -> UserOut:
+def _user_out(u: User, login: UserLogin | None = None, uses: int = 0) -> UserOut:
     return UserOut(
         id=u.id,
         name=u.name,
@@ -1931,7 +1940,14 @@ def _user_out(u: User, login: UserLogin | None = None) -> UserOut:
             u.is_admin, u.signup_source, login.email_verified_at if login is not None else None
         ),
         inbox_enabled=bool(u.inbox_enabled),
+        plan=quota.plan_of(u),
+        uses_this_month=uses,
     )
+
+
+def _uses_this_month(db: Session, user_id: int, login: UserLogin | None) -> int:
+    key = quota.key_for(user_id, login.email if login is not None else None)
+    return quota.used_by_keys(db, {key}, quota.period_of(quota.utc_now())).get(key, 0)
 
 
 @router.post("/admin/users", response_model=UserOut)
@@ -1951,7 +1967,11 @@ def admin_list_users(
 ) -> UserList:
     rows = db.execute(select(User).order_by(User.id)).scalars().all()
     logins = {row.user_id: row for row in db.execute(select(UserLogin)).scalars().all()}
-    return UserList(users=[_user_out(u, logins.get(u.id)) for u in rows])
+    # Phase 30 / B7: each user's pool key comes from the login already loaded, and
+    # this month's counts for all of them from ONE query.
+    keys = {u.id: quota.key_for(u.id, logins[u.id].email if u.id in logins else None) for u in rows}
+    uses = quota.used_by_keys(db, set(keys.values()), quota.period_of(quota.utc_now()))
+    return UserList(users=[_user_out(u, logins.get(u.id), uses=uses.get(keys[u.id], 0)) for u in rows])
 
 
 @router.patch("/admin/users/{user_id}", response_model=UserOut)
@@ -1961,11 +1981,15 @@ def admin_update_user(
     db: Session = Depends(get_db),
     _admin: User = Depends(admin_user),
 ) -> UserOut:
-    """Deactivate (revoke) / reactivate / rename a user. Admin accounts can't
-    be deactivated — that would lock the owner out."""
+    """Deactivate (revoke) / reactivate / rename a user, allow Gmail, or set the
+    plan. Admin accounts can't be deactivated — that would lock the owner out."""
     u = db.get(User, user_id)
     if not u:
         raise HTTPException(404, "User not found.")
+    # Phase 30 / B7: checked BEFORE anything is applied, so a bad plan never
+    # half-applies the other fields sent beside it.
+    if body.plan is not None and body.plan not in quota.PLANS:
+        raise HTTPException(400, 'The plan must be "free" or "unlimited".')
     if body.is_active is not None:
         if u.is_admin and not body.is_active:
             raise HTTPException(400, "Can't deactivate an admin account.")
@@ -1983,9 +2007,13 @@ def admin_update_user(
         # while the Google app is in Testing, the account must also be one of its
         # test users, or Google's own consent page refuses it.
         u.inbox_enabled = body.inbox_enabled
+    if body.plan is not None:
+        # "unlimited" lifts the monthly limit only; the daily caps still apply.
+        u.plan = body.plan
     db.commit()
     db.refresh(u)
-    return _user_out(u, accounts_core.login_for(db, u.id))
+    login = accounts_core.login_for(db, u.id)
+    return _user_out(u, login, uses=_uses_this_month(db, u.id, login))
 
 
 @router.get("/admin/feedback", response_model=FeedbackList)

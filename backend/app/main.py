@@ -15,6 +15,7 @@ from app.api.auth_routes import router as auth_router
 from app.api.inbox_routes import router as inbox_router
 from app.api.routes import router
 from app.config import get_settings
+from app.core import quota
 from app.core.accounts import AuthError, is_verified
 from app.core.sessions import COOKIE_NAME, set_session_cookie
 from app.db.database import init_db
@@ -160,6 +161,34 @@ async def llm_metering(request: Request, call_next):
     with meter() as tally:
         request.state.llm_tally = tally
         return await call_next(request)
+
+
+@app.middleware("http")
+async def uses_meter(request: Request, call_next):
+    """Carry this request's monthly-uses count to the client (Phase 30 / B7).
+
+    Every ledger write in app/core/quota.py records what it left on a holder
+    bound HERE, and the headers come from it once the route has answered:
+    `X-Uses-Remaining: <int>`, and for an interview or screening pass
+    `X-Uses-Pass: <feature>;<calls_left>;<expires_in_s>` (`;0;0` once the pass
+    was deleted or closed). A middleware for the reason `llm_metering` gives: a
+    ContextVar cannot be bound inside a FastAPI yield dependency.
+
+    Declared ABOVE `access_gate`, so it runs INSIDE the gate and
+    `request.state.user_id` is already the caller. A write reaches the holder only
+    for the user it was bound to, which keeps a cron request that charges many
+    users from handing any of them a header. The app is same-origin in dev (the
+    Vite proxy) and in production (the /api mount), so CORS needs no
+    `expose_headers`.
+    """
+    with quota.bind_uses(getattr(request.state, "user_id", None) or None) as holder:
+        response = await call_next(request)
+    if holder.remaining is not None:
+        response.headers["X-Uses-Remaining"] = str(holder.remaining)
+    if holder.pass_ is not None:
+        feature, calls_left, expires_in_s = holder.pass_
+        response.headers["X-Uses-Pass"] = f"{feature};{calls_left};{expires_in_s}"
+    return response
 
 
 class _Identity(NamedTuple):

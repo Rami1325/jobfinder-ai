@@ -41,6 +41,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import unicodedata
@@ -55,6 +56,7 @@ from starlette.requests import Request
 from app.config import get_settings
 from app.core import auth_email
 from app.core import auth_throttle as throttle
+from app.core import quota
 from app.core.passwords import (
     MAX_BYTES,
     dummy_hash,
@@ -75,7 +77,9 @@ from app.core.sessions import (
 )
 from app.db.models import AuthEvent, AuthSession, AuthToken, User, UserLogin
 from app.db.users import ensure_admin, new_invite_code
-from app.models import AuthMe, AuthUser
+from app.models import AuthMe, AuthUser, UsageOut
+
+logger = logging.getLogger(__name__)
 
 VERIFY = "verify_email"
 RESET = "reset_password"
@@ -168,7 +172,12 @@ def whoami(db: Session, request: Request) -> tuple[User | None, str, int | None]
 
 def me(db: Session, user: User | None, method: str) -> AuthMe:
     """The /auth/me payload. `google_enabled` and `google_linked` stay False:
-    Google sign-in is deferred (amendment S1)."""
+    Google sign-in is deferred (amendment S1).
+
+    `usage` is this month's uses (Phase 30 / B7) for a signed-in caller and None
+    for an anonymous one. Every sign-in response is built here, so reading the
+    pool is best effort: a failure reports usage as unknown (None), never a
+    login that succeeded answering 500."""
     if user is None:
         return AuthMe(signup_open=signup_open())
     login = login_for(db, user.id)
@@ -187,7 +196,18 @@ def me(db: Session, user: User | None, method: str) -> AuthMe:
             google_linked=False,
             signup_source=user.signup_source or "",
         ),
+        usage=_usage(db, user),
     )
+
+
+def _usage(db: Session, user: User) -> UsageOut | None:
+    user_id = user.id
+    try:
+        return quota.snapshot(db, user, quota.utc_now())
+    except Exception:  # noqa: BLE001 - unknown usage is honest; a 500 on sign-in is not
+        db.rollback()
+        logger.warning("could not read this month's uses for user %s", user_id, exc_info=True)
+        return None
 
 
 # --- mailed tokens -----------------------------------------------------------------

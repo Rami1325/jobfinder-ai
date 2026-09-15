@@ -566,6 +566,9 @@ class UserUpdate(BaseModel):
     email: Optional[str] = None
     # Phase 29 / B2: may this account connect Gmail while INBOX_ACCESS=allowlist.
     inbox_enabled: Optional[bool] = None
+    # Phase 30 / B7: "free" or "unlimited". The route validates it, so anything
+    # else is a 400 with a sentence, never FastAPI's list-shaped 422.
+    plan: Optional[str] = None
 
 
 class UserOut(BaseModel):
@@ -586,6 +589,11 @@ class UserOut(BaseModel):
     login_email: str = ""
     verified: bool = True
     inbox_enabled: bool = False
+    # Phase 30 / B7: the stored plan (an unknown value reads as "free", the way it
+    # is enforced) and what this user's pool spent this UTC month. Two accounts on
+    # one pool (a gmail alias) show the same count.
+    plan: str = "free"
+    uses_this_month: int = 0
 
 
 class UserList(BaseModel):
@@ -678,6 +686,34 @@ class AuthUser(BaseModel):
     signup_source: str = ""  # "" = invite code / admin, "email" = self-service
 
 
+class UsagePassOut(BaseModel):
+    """One open session pass as /auth/me lists it (interview practice, screening answers)."""
+
+    calls_left: int = 0
+    # Relative seconds, never a timestamp: a phone whose clock is wrong would
+    # otherwise end the pass early. The client works out its deadline on arrival.
+    expires_in_s: int = 0
+
+
+class UsageOut(BaseModel):
+    """This month's uses (Phase 30 / B7), on AuthMe.usage. Its field names are a
+    cross-lane contract with the TypeScript mirror (check-mirrors 32(j))."""
+
+    # "free" or "unlimited"
+    plan: str = "free"
+    # None = no monthly limit: the admin, plan "unlimited", or the limit switched off
+    limit: Optional[int] = None
+    used: int = 0
+    # None exactly when limit is
+    remaining: Optional[int] = None
+    # "YYYY-MM-DD", the 1st of the next UTC month
+    resets_on: str = ""
+    # SUM(delta) per feature this month
+    by_feature: dict[str, int] = Field(default_factory=dict)
+    # the open interview and screening passes, newest per feature; always empty with no limit
+    passes: dict[str, UsagePassOut] = Field(default_factory=dict)
+
+
 class AuthMe(BaseModel):
     """GET /auth/me — always 200, anonymous callers included. Deliberately not
     `MeOut`, which is pinned byte-for-byte and stays exactly what it was."""
@@ -688,6 +724,8 @@ class AuthMe(BaseModel):
     signup_open: bool = True
     google_enabled: bool = False  # deferred (amendment S1); always False
     user: Optional[AuthUser] = None
+    # Phase 30 / B7: this month's uses for a signed-in caller; None for an anonymous one.
+    usage: Optional[UsageOut] = None
 
 
 class SignupIn(BaseModel):

@@ -31,6 +31,21 @@ class Settings(BaseSettings):
     daily_llm_cap: int = 150
     # Auto-submit (PLAN 8.4): real applications sent per user per day.
     daily_submit_cap: int = 10
+    # Monthly uses (Phase 30 / B2, app/core/quota.py): one shared pool of this many
+    # uses a month per person, spent by every AI feature. The admin and plan
+    # "unlimited" are exempt; <= 0 switches the monthly limit off (the daily caps'
+    # kill-switch shape). The landing, FAQ and privacy copy state the number in
+    # both locales, so changing it means editing that copy too.
+    free_monthly_uses: int = 10
+    # Daily caps for the model calls that are sub-steps of a counted flow and so
+    # stay OFF the monthly pool (Phase 30 / B4.6): counting them would make one
+    # tailor cost two uses. Each is its own usage_log action; admins are exempt,
+    # plan "unlimited" is NOT, and <= 0 disables a cap.
+    daily_upload_cap: int = 10
+    daily_jd_analyze_cap: int = 30
+    daily_search_context_cap: int = 10
+    # The CV scan's own daily cap, beside its monthly charge (Phase 30 / A2).
+    daily_scan_cap: int = 20
     # Upload limits. Both upload routes read the file into memory to parse it,
     # and /public/scan takes NO access code, so an unbounded read is a free way
     # to exhaust a serverless instance. A resume is a couple of hundred kB; 10 MB

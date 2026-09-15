@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -68,6 +68,13 @@ class User(Base):
     # users, so an account nobody added must not be offered a button Google's
     # own consent page will refuse.
     inbox_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Phase 30 / B2: "free" is limited to FREE_MONTHLY_USES a month
+    # (app/core/quota.py); "unlimited" has no monthly limit, though the daily caps
+    # still apply. The admin is exempt whatever this says, and an unknown value
+    # reads as "free", failing toward the limit. The "free" DEFAULT is the owner's
+    # call: the ADD-COLUMN shim backfills it onto every existing row, the invite
+    # codes included.
+    plan: Mapped[str] = mapped_column(String(16), default="free")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -330,6 +337,11 @@ class TailorKit(Base):
     # Auto-submit outcome (PLAN 8.4). Nullable/default-empty for the shim.
     submit_note: Mapped[str] = mapped_column(Text, default="")
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # Phase 30 / B4.1: the batch charge that paid for this kit, and whether its
+    # use already came back. NULL for a kit queued before Phase 30 and for an
+    # exempt caller's kit, and a kit with no event is never refunded: it never paid.
+    quota_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    quota_refunded: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -422,6 +434,10 @@ class JobAlert(Base):
     # row already holds the recipient address; independent of `enabled`.
     nudge_emails: Mapped[bool] = mapped_column(Boolean, default=False)
     last_nudge_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # Phase 30 / B6: why the last scheduled morning did not run ("monthly_limit"),
+    # "" when it ran. Only a "Last morning skipped" line reads it: whether the
+    # alert is paused NOW is worked out from the pool when the card is read.
+    last_skip: Mapped[str] = mapped_column(String(24), default="")
 
 
 class SavedResumeVersion(Base):
@@ -693,3 +709,94 @@ class MailEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+
+
+# --------------------------------------------------------------------------- #
+# Monthly uses (Phase 30 / B2, app/core/quota.py). Three NEW tables, so
+# create_all makes them with their unique constraint and index. None of them
+# holds user content (a keyed hash, a user id, a month, feature names, counts),
+# and that is why neither privacy door touches them: a wipe or a close that
+# reset the pool would make "Delete my data", or closing and signing up again, a
+# free reset of the limit (the Phase 29 A7 rule). `quota.prune` deletes them once
+# they are older than the previous month.
+# --------------------------------------------------------------------------- #
+class UsageMonth(Base):
+    """How many uses one pool spent in one UTC month.
+
+    Keyed by `quota_key`, never by user: a pool is a person (a keyed hash of the
+    canonical sign-in address), so a closed account's successor on the same
+    address finds the same row. `used` only moves through one conditional UPDATE
+    each way, and always equals SUM(delta) of that month's ledger events.
+    """
+
+    __tablename__ = "usage_months"
+    __table_args__ = (UniqueConstraint("quota_key", "period", name="uq_usage_months_key_period"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    quota_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    # The user whose write created the row. A plain column, not the key: the pool
+    # outlives any one account.
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    period: Mapped[str] = mapped_column(String(7), default="")  # "YYYY-MM", UTC
+    used: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class UsageEvent(Base):
+    """The append-only ledger behind `usage_months.used`.
+
+    `delta` is +n for a charge and -n for a refund or a fit-ride
+    reclassification; `refunded` holds how many units of a charge already came
+    back, which is what makes a refund happen at most once. The breakdown
+    /auth/me shows is SUM(delta) GROUP BY feature for one pool and month.
+    """
+
+    __tablename__ = "usage_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
+    quota_key: Mapped[str] = mapped_column(String(40), default="", index=True)
+    period: Mapped[str] = mapped_column(String(7), default="")
+    feature: Mapped[str] = mapped_column(String(24), default="")
+    delta: Mapped[int] = mapped_column(Integer, default=0)
+    refunded: Mapped[int] = mapped_column(Integer, default=0)
+    # "" for a charge, "refund:<event id>" (":kit:<kit id>" added for a kit) for a
+    # refund, "ride:<pass id>" for a fit ride's reclassification.
+    ref: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class UsagePass(Base):
+    """A session pass: one use covering a run of calls (interview practice,
+    screening answers, a cover letter's changes), or a fit check's one-tailor
+    ride (`feature = "tailor_after_fit"`).
+
+    Per USER, while the use that opened it is charged to the pool. `calls` bounds
+    the calls MADE, failed ones included; `succeeded`, `failed` and
+    `opener_failed` decide whether a pass on which nothing was served gets its
+    use back (quota.pass_charged).
+    """
+
+    __tablename__ = "usage_passes"
+    __table_args__ = (Index("ix_usage_passes_lookup", "user_id", "feature", "ref", "expires_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=None)
+    feature: Mapped[str] = mapped_column(String(24), default="")
+    # "" for interview practice and screening answers; the analysed JD's hash for a
+    # cover letter and a fit ride, which each belong to one posting.
+    ref: Mapped[str] = mapped_column(String(64), default="")
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    max_calls: Mapped[int] = mapped_column(Integer, default=1)
+    event_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    succeeded: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    opener_failed: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
 from app.config import Settings, get_settings
-from app.core import accounts, auth_throttle, google_oauth, inbox_apply, inbox_sync, token_crypto
+from app.core import accounts, auth_throttle, google_oauth, inbox_apply, inbox_sync, quota, token_crypto
 from app.core.gmail_api import GmailMailbox, MessageGone
 from app.core.inbox_fake import DEMO_EMAIL
 from app.core.sessions import cookie_path, hkey, is_https, token_hash
@@ -478,6 +478,11 @@ def inbox_cron(request: Request, db: Session = Depends(get_db)) -> InboxCronResu
     # happen. Housekeeping: it may never cost the sync.
     try:
         auth_throttle.prune_security_log(db)
+    except Exception:  # noqa: BLE001 - best effort
+        db.rollback()
+    # Phase 30 / B2: the same for quota rows older than the previous month.
+    try:
+        quota.prune(db, quota.utc_now())
     except Exception:  # noqa: BLE001 - best effort
         db.rollback()
     results, skipped = inbox_sync.run_all_inbox(db)
