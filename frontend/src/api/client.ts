@@ -850,8 +850,9 @@ export async function logout(): Promise<void> {
   await api.post("/auth/logout");
 }
 
-/** Either a 6-digit `code`, which needs this browser's pending session, or the
- * email link's `token`, which needs no session and never creates one. */
+/** Either a 6-digit `code` or the email link's `token`. Both confirm only from a
+ * signed-in session of the account being confirmed (FIXB B1), on any device,
+ * and the link never creates one: `signed_in` says this browser held it. */
 export async function verifyEmail(payload: {
   code?: string;
   token?: string;

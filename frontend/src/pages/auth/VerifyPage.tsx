@@ -7,6 +7,8 @@ import { Button } from "../../components/ui";
 import { apiErrorCode, apiErrorMessage, isSessionEnded, retryAfterSeconds } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
 import { withNext } from "../../lib/safeNext";
+import { signOut } from "../../lib/session";
+import { consumeStoredLink, rememberVerifyLink } from "../../lib/verifyLink";
 import type { AuthMe } from "../../types";
 import {
   AuthCard,
@@ -36,11 +38,12 @@ function clock(seconds: number): string {
 /**
  * /verify: the email link (`?token=`) or the 6-digit code.
  *
- * Two entrances because two situations exist. A phone's mail app often opens
- * links in its own browser, which does not hold the session that signed up, so
- * the code covers "I am reading the mail on the device I signed up on". The
- * link covers every other device, and verifies the account without signing
- * that other browser in.
+ * Both confirm the address only from a signed-in session of that account
+ * (FIXB B1: otherwise a squatter who signs up with someone else's address has
+ * that person's tap confirm the squatter's account). The code covers the
+ * device the person signed up on. The link covers any device once they log in
+ * there: opened without that session, its token is kept for the tab
+ * (lib/verifyLink.ts), and the code page spends it right after the log in.
  */
 export default function VerifyPage() {
   const [params] = useSearchParams();
@@ -59,6 +62,16 @@ export default function VerifyPage() {
  * `signed_in` only says whether THIS browser already held the session that has
  * just become verified. It picks between "Continue" and "log in". The link
  * itself never signs anyone in.
+ *
+ * Without a session of the link's account the server answers session_required.
+ * The token is then kept for this tab, and /auth/me is asked who this browser
+ * is BEFORE a card renders, because the two answers point different ways.
+ * Signed out: log in here, or enter the code where you signed up. Signed in,
+ * which can only be another account (a session of this one would have
+ * confirmed): /login forwards a signed-in visitor straight past its form, so
+ * the card offers "Log out and continue" through the shared sign-out, or
+ * staying. Nothing here navigates by itself, because only the reader knows
+ * which device and which account they mean. check-mirrors 30 pins all of it.
  */
 function ConfirmLink({ token }: { token: string }) {
   const { t } = useTranslation("auth");
@@ -66,10 +79,20 @@ function ConfirmLink({ token }: { token: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState<{ signedIn: boolean } | null>(null);
-  // The link cannot be confirmed from a browser without the right session.
-  // That is a direction (log in, or use the code where you signed up), not an
-  // error, and the gate's own 401 detail is English whatever the page is in.
-  const [ended, setEnded] = useState(false);
+  // Set once the link could not be confirmed from this browser: who /auth/me
+  // says is signed in here, or "unknown" when it could not be asked. That is a
+  // direction, not an error, and the gate's own 401 detail is English whatever
+  // the page is in.
+  const [ended, setEnded] = useState<AuthMe | "unknown" | null>(null);
+  const [leaving, setLeaving] = useState(false);
+
+  async function whoIsHere(): Promise<AuthMe | "unknown"> {
+    try {
+      return await getAuthMe();
+    } catch {
+      return "unknown";
+    }
+  }
 
   async function confirm() {
     if (busy) return;
@@ -79,10 +102,86 @@ function ConfirmLink({ token }: { token: string }) {
       const r = await verifyEmail({ token });
       setDone({ signedIn: r.signed_in });
     } catch (err) {
-      if (isSessionEnded(err)) setEnded(true);
-      else setError(apiErrorMessage(err, t("errors.generic")));
+      if (isSessionEnded(err)) {
+        // Kept for this tab, so the log in that follows finishes confirming.
+        rememberVerifyLink(token);
+        setEnded(await whoIsHere());
+      } else setError(apiErrorMessage(err, t("errors.generic")));
     }
     setBusy(false);
+  }
+
+  async function askAgain() {
+    setBusy(true);
+    setEnded(await whoIsHere());
+    setBusy(false);
+  }
+
+  function logOutAndContinue() {
+    if (leaving) return;
+    setLeaving(true);
+    // The shared sign-out ends in the document load to the log in, and it
+    // leaves the kept link where it is.
+    void signOut(withNext("/login", next));
+  }
+
+  if (ended === "unknown") {
+    return (
+      <AuthCard title={t("verify.linkTitle")}>
+        <FormError message={t("verify.loadError")} />
+        <Button
+          type="button"
+          variant="secondary"
+          loading={busy}
+          onClick={askAgain}
+          className="mt-4 min-h-[44px] w-full"
+        >
+          {t("verify.retry")}
+        </Button>
+      </AuthCard>
+    );
+  }
+
+  if (ended?.authenticated) {
+    const email = ended.user?.email ?? "";
+    return (
+      <AuthCard
+        title={t("verify.linkTitle")}
+        sub={
+          email ? (
+            <>
+              {t("verify.otherAccountAs")} <bdi className="break-all font-medium text-ink">{email}</bdi>
+            </>
+          ) : (
+            t("verify.otherAccountAnon")
+          )
+        }
+      >
+        <p className="text-sm leading-relaxed text-ink">{t("verify.otherAccountBody")}</p>
+        {/* Said at rest, before the tap: the sign-out forgets a saved invite
+            code, and it may be this browser's only way back in. */}
+        {ended.method === "invite_code" && (
+          <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t("verify.otherAccountCode")}</p>
+        )}
+        <Button
+          type="button"
+          loading={leaving}
+          onClick={logOutAndContinue}
+          className="mt-4 min-h-[44px] w-full"
+        >
+          {t("verify.otherAccountLogOut")}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={leaving}
+          onClick={() => window.location.assign(next)}
+          className="mt-2 min-h-[44px] w-full"
+        >
+          {t("verify.otherAccountStay")}
+        </Button>
+      </AuthCard>
+    );
   }
 
   if (ended) {
@@ -197,11 +296,23 @@ function EnterCode() {
   useEffect(() => {
     let live = true;
     getAuthMe()
-      .then((m) => {
+      .then(async (m) => {
         if (!live) return;
         if (!m.authenticated) window.location.assign(withNext("/login", next));
         else if (m.verified) window.location.assign(next);
-        else setMe(m);
+        else {
+          // A confirmation link this tab kept before the log in (ConfirmLink)
+          // finishes here, with this session. Never through redirected(): a
+          // kept link of ANOTHER account answers session_required, and that
+          // leaves the person on this form rather than sending them to log in
+          // again. Mail scanners cannot reach this: it is a POST made after a
+          // person logged in.
+          const link = await consumeStoredLink((kept) => verifyEmail({ token: kept }));
+          // Not gated on `live`: the token is forgotten once it verified, so a
+          // dropped result would leave nothing to move this page on.
+          if (link === "verified") window.location.assign(next);
+          else if (live) setMe(m);
+        }
       })
       .catch(() => {
         if (live) setLoadFailed(true);

@@ -3109,6 +3109,9 @@ try {
 //   F8 a failed Gmail connect was consumed from the URL and never shown when
 //      the Settings card rendered nothing.
 //   F9 the extension-key rotation and the Google revoke result were dropped.
+//
+// Extended in Phase 30 (D), same method: the confirmation link opened in a
+// browser without its account's session, below the F2 block.
 
 /** Bundle `contents` (resolved from src/) and run it. `stubs` maps an import
  * path as written to the object it should return: `../i18n` cannot run in
@@ -3508,6 +3511,308 @@ try {
     fail("check 30's copy rule refuses a true sentence");
 } catch (e) {
   fail(`privacy copy check could not run: ${e.message}`);
+}
+
+// D (Phase 30): the confirmation link works on any device, after a log in.
+//
+// Opened in a browser with no session of its account, the link is 400
+// session_required, and FIXB B1 keeps that rule so a squatter's link still
+// cannot verify on a stranger's click. Until D the page showed "session ended"
+// with a Log in link and DROPPED the link's token on the way, so the log in
+// that followed landed on the 6-digit code the person did not have in front of
+// them. Signed in to ANOTHER account it was worse: /login forwards a verified
+// visitor straight to `next`, so that Log in link never reached a form at all.
+//
+//   D1 ConfirmLink keeps the token (lib/verifyLink.ts), asks /auth/me who this
+//      browser is before rendering, and never sends the reader to /login by
+//      itself: logging in here and entering the code where they signed up are
+//      both ways on, and only the reader knows which device they are holding.
+//   D3 EnterCode spends a kept token at mount. Never through `redirected()`,
+//      which sends session_required to /login: a kept link that belongs to
+//      another account would bounce a person who has just logged in straight
+//      back out, for ever. And its "verified" outcome is not gated on the
+//      effect's `live` flag: the token is forgotten once it verified, so a
+//      dropped result would leave nothing to move the page on.
+//   The shared sign-out (lib/session.ts) never touches sessionStorage, or "Log
+//   out and continue" would forget the very link it continues with. That pin is
+//   only as good as there being ONE sign-out, so that is pinned too.
+
+/** The balanced `opener(...)` call around index `at` in `src` (from the last
+ * `opener` before `at` to its matching close paren), or null when `at` is in
+ * none. String literals are skipped, so a paren inside a message cannot end
+ * the call early. `opener` must end with "(". */
+function enclosingCall(src, at, opener) {
+  for (let start = src.lastIndexOf(opener, at); start !== -1; start = start ? src.lastIndexOf(opener, start - 1) : -1) {
+    let depth = 0;
+    for (let i = start + opener.length - 1; i < src.length; i++) {
+      const c = src[i];
+      if (c === '"' || c === "'" || c === "`") {
+        for (i++; i < src.length && src[i] !== c; i++) if (src[i] === "\\") i++;
+        continue;
+      }
+      if (c === "(") depth++;
+      else if (c === ")" && --depth === 0) {
+        if (at < i) return src.slice(start, i + 1);
+        break;
+      }
+    }
+  }
+  return null;
+}
+
+/** What is wrong with ConfirmLink's session-ended branch, given its source. */
+function confirmLinkProblems(body) {
+  const out = [];
+  if (!/\brememberVerifyLink\(/.test(body))
+    out.push(
+      "does not keep the link's token when this browser holds no session of its account (rememberVerifyLink), " +
+        "so the log in that follows lands on the 6-digit code instead of finishing",
+    );
+  if (!/\bgetAuthMe\(/.test(body))
+    out.push(
+      "does not ask /auth/me who this browser is before showing the card, so a browser signed in to another " +
+        "account gets a Log in link that /login forwards straight past",
+    );
+  if (/\bassign\(\s*(?:withNext\(\s*)?["'`]\/login\b/.test(body))
+    out.push(
+      "sends the browser to /login by itself. It must show the card and let the reader choose: log in on this " +
+        "device, or enter the code where they signed up",
+    );
+  return out;
+}
+
+/** What is wrong with the way EnterCode spends a kept link, given its source. */
+function storedLinkProblems(body) {
+  const at = body.search(/\bconsumeStoredLink\(/);
+  if (at === -1)
+    return [
+      "does not spend a confirmation link kept before logging in (consumeStoredLink), so the person types " +
+        "the code the link already carried",
+    ];
+  const effect = enclosingCall(body, at, "useEffect(");
+  if (effect === null) return ["spends the kept link outside a mount effect; it must run when the page opens"];
+  const out = [];
+  if (/\bredirected\(/.test(effect))
+    out.push(
+      "routes the kept link's outcome through redirected(), which sends session_required to /login: a link " +
+        "that belongs to another account bounces a person who has just logged in back out, for ever",
+    );
+  const after = effect.slice(effect.search(/\bconsumeStoredLink\(/));
+  const verified = after.search(/["']verified["']/);
+  const move = verified === -1 ? -1 : after.slice(verified).search(/\bassign\(/);
+  if (move === -1) out.push('does not move the page on when the kept link comes back "verified"');
+  else if (/\blive\b/.test(after.slice(0, verified + move)))
+    out.push(
+      'gates the "verified" move on the effect\'s `live` flag. The token is already forgotten, so a dropped ' +
+        "result leaves a verified account sitting on the code form",
+    );
+  return out;
+}
+
+const savedSessionStorage = globalThis.sessionStorage;
+try {
+  globalThis.sessionStorage = memoryStorage();
+  globalThis.window.sessionStorage = globalThis.sessionStorage;
+  let vl = null;
+  try {
+    vl = runProbeBundle("verifylink", `export * from "./lib/verifyLink";\n`);
+  } catch (e) {
+    fail(
+      "a confirmation link opened before logging in is lost on the way: there is no lib/verifyLink.ts to " +
+        `keep its token for this tab (${String(e.message).split("\n")[0]}).`,
+    );
+  }
+  if (vl) {
+    for (const fn of ["rememberVerifyLink", "peekVerifyLink", "consumeStoredLink"])
+      if (typeof vl[fn] !== "function") throw new Error(`lib/verifyLink.ts does not export ${fn}`);
+    const KEY = "jf-verify-link";
+    const tab = () => globalThis.sessionStorage;
+    // The shape secrets.token_urlsafe(32) mints: 43 base64url characters.
+    const TOKEN = "q3Zt_8mB-Lx2vR9pYw4KdN7cHs1uJf6eGa0oTi5bWnE";
+
+    // A round trip, kept for THIS TAB, and looking at it does not spend it.
+    const devicesBefore = localStorage._map.size;
+    vl.rememberVerifyLink(TOKEN);
+    if (vl.peekVerifyLink() !== TOKEN) fail("peekVerifyLink does not return the token rememberVerifyLink kept");
+    if (vl.peekVerifyLink() !== TOKEN) fail("peekVerifyLink forgets a token it only looked at");
+    if (!tab()._map.has(KEY))
+      fail(`rememberVerifyLink does not keep the token under sessionStorage "${KEY}"`);
+    if (localStorage._map.size !== devicesBefore)
+      fail("rememberVerifyLink writes to localStorage: a confirmation link must stay in the tab that opened it");
+
+    // A bad shape and a stale entry read as nothing, and are dropped.
+    const planted = (value) => {
+      tab().clear();
+      tab().setItem(KEY, value);
+      return vl.peekVerifyLink();
+    };
+    for (const [label, value] of [
+      ["a token with characters no link carries", JSON.stringify({ token: "abc/../x?y=1&z=2", at: Date.now() })],
+      ["a token over 128 characters", JSON.stringify({ token: "a".repeat(129), at: Date.now() })],
+      ["an entry that is not JSON", "{not json"],
+      ["an entry with no time", JSON.stringify({ token: TOKEN })],
+      ["a token stored two hours ago", JSON.stringify({ token: TOKEN, at: Date.now() - 2 * 3600_000 })],
+    ]) {
+      if (planted(value) !== null) fail(`peekVerifyLink returns ${label}`);
+      else if (tab()._map.has(KEY)) fail(`peekVerifyLink refuses ${label} but leaves it stored`);
+    }
+    // The legitimate half: the longest token the server accepts, and one a minute old.
+    if (planted(JSON.stringify({ token: "b".repeat(128), at: Date.now() })) !== "b".repeat(128))
+      fail("peekVerifyLink refuses a 128-character token, which the server still reads");
+    if (planted(JSON.stringify({ token: TOKEN, at: Date.now() - 60_000 })) !== TOKEN)
+      fail("peekVerifyLink refuses a token kept a minute ago");
+    tab().clear();
+    vl.rememberVerifyLink("not a token!");
+    if (tab()._map.has(KEY)) fail("rememberVerifyLink keeps a value that is not a link token");
+
+    // consumeStoredLink: "none", "verified" and "failed", and what each leaves behind.
+    const err = (status, detail) => ({ response: { status, data: { detail } } });
+    let sent = [];
+    const answer = (value) => async (token) => {
+      sent.push(token);
+      return value;
+    };
+    tab().clear();
+    const none = await vl.consumeStoredLink(answer({ verified: true, signed_in: true }));
+    if (none !== "none" || sent.length)
+      fail(`consumeStoredLink with nothing kept returned ${JSON.stringify(none)} after ${sent.length} request(s); it must be "none" and send nothing`);
+    vl.rememberVerifyLink(TOKEN);
+    sent = [];
+    const ok = await vl.consumeStoredLink(answer({ verified: true, signed_in: true }));
+    if (ok !== "verified") fail(`consumeStoredLink returned ${JSON.stringify(ok)} for a link that verified`);
+    if (sent.length !== 1 || sent[0] !== TOKEN) fail("consumeStoredLink does not send the kept token, exactly once");
+    if (tab()._map.has(KEY)) fail("a kept link that verified is not forgotten, so it would be sent again");
+    for (const [label, thrown, kept] of [
+      ["a 400 session_required (another account is signed in)", err(400, { code: "session_required" }), true],
+      ["a dropped connection", { message: "Network Error" }, true],
+      ["a server error", err(500, "Internal Server Error"), true],
+      ["a 400 used", err(400, { code: "used" }), false],
+      ["a 400 expired", err(400, { code: "expired" }), false],
+      ["a 400 invalid", err(400, { code: "invalid" }), false],
+    ]) {
+      tab().clear();
+      vl.rememberVerifyLink(TOKEN);
+      let out;
+      try {
+        out = await vl.consumeStoredLink(async () => {
+          throw thrown;
+        });
+      } catch (e) {
+        fail(`consumeStoredLink rejects on ${label} (${e?.message ?? e}); it must never throw`);
+        continue;
+      }
+      if (out !== "failed") fail(`consumeStoredLink returned ${JSON.stringify(out)} for ${label}, not "failed"`);
+      if (kept && !tab()._map.has(KEY))
+        fail(`consumeStoredLink forgets the kept link on ${label}, which a log out and a log in could still spend`);
+      if (!kept && tab()._map.has(KEY))
+        fail(`consumeStoredLink keeps the link after ${label}: it is spent, and would be sent on every visit`);
+    }
+    // It never rejects, whatever the verifier or the storage does.
+    for (const [label, verify] of [
+      ["a verifier that throws before it returns a promise", () => {
+        throw new Error("boom");
+      }],
+      ["a verifier that rejects with nothing", () => Promise.reject(null)],
+      ["a verifier that resolves with nothing", async () => undefined],
+      ["a 200 that is not verified", async () => ({ verified: false, signed_in: false })],
+    ]) {
+      tab().clear();
+      vl.rememberVerifyLink(TOKEN);
+      try {
+        const out = await vl.consumeStoredLink(verify);
+        if (out !== "failed") fail(`consumeStoredLink returned ${JSON.stringify(out)} for ${label}, not "failed"`);
+      } catch (e) {
+        fail(`consumeStoredLink rejects for ${label} (${e?.message ?? e}); it must never throw`);
+      }
+    }
+    const blocked = () => {
+      throw new Error("storage is blocked");
+    };
+    globalThis.sessionStorage = { getItem: blocked, setItem: blocked, removeItem: blocked, clear: blocked };
+    globalThis.window.sessionStorage = globalThis.sessionStorage;
+    try {
+      vl.rememberVerifyLink(TOKEN);
+      if (vl.peekVerifyLink() !== null) fail("peekVerifyLink returns a token from storage it cannot read");
+      const out = await vl.consumeStoredLink(answer({ verified: true, signed_in: true }));
+      if (out !== "none") fail(`consumeStoredLink returned ${JSON.stringify(out)} with storage blocked, not "none"`);
+    } catch (e) {
+      fail(`lib/verifyLink.ts throws when sessionStorage is blocked (${e.message}); the code form must still open`);
+    }
+  }
+} catch (e) {
+  fail(`verify link probe could not run: ${e.message}`);
+} finally {
+  globalThis.sessionStorage = savedSessionStorage;
+  if (globalThis.window) delete globalThis.window.sessionStorage;
+}
+
+try {
+  const verify = decomment(read("pages/auth/VerifyPage.tsx"));
+  for (const p of confirmLinkProblems(fnSource(verify, "function ConfirmLink"))) fail(`/verify: the link confirm ${p}.`);
+  for (const p of storedLinkProblems(fnSource(verify, "function EnterCode"))) fail(`/verify: the code page ${p}.`);
+
+  // Both detectors, both directions, on fixtures: each fires on its defect and
+  // stays quiet on the shipped shape.
+  const CONFIRM_OK =
+    "function ConfirmLink() {\n  try { await verifyEmail({ token }); } catch (err) {\n" +
+    "    if (isSessionEnded(err)) { rememberVerifyLink(token); setEnded(await getAuthMe()); }\n  }\n" +
+    '  const leave = () => void signOut(withNext("/login", next));\n  const stay = () => window.location.assign(next);\n}\n';
+  if (confirmLinkProblems(CONFIRM_OK).length)
+    fail(`check 30's link-confirm detector refuses the shipped shape: ${confirmLinkProblems(CONFIRM_OK)[0]}`);
+  const AUTO = CONFIRM_OK.replace(
+    "setEnded(await getAuthMe());",
+    'const me = await getAuthMe(); if (!me.authenticated) window.location.assign(withNext("/login", next));',
+  );
+  if (confirmLinkProblems(AUTO).length !== 1 || confirmLinkProblems(CONFIRM_OK.replace("rememberVerifyLink(token);", "")).length !== 1)
+    fail("check 30's link-confirm detector misses an automatic /login, or a token that is not kept");
+
+  const ENTER_OK =
+    "function EnterCode() {\n  useEffect(() => {\n    let live = true;\n    getAuthMe().then(async (m) => {\n" +
+    "      if (!live) return;\n      const link = await consumeStoredLink((token) => verifyEmail({ token }));\n" +
+    '      if (link === "verified") window.location.assign(next);\n      else if (live) setMe(m);\n    });\n' +
+    "  }, [next]);\n  function redirected(err) { return false; }\n  async function submitCode() { if (redirected(err)) return; }\n}\n";
+  if (storedLinkProblems(ENTER_OK).length)
+    fail(`check 30's kept-link detector refuses the shipped shape: ${storedLinkProblems(ENTER_OK)[0]}`);
+  for (const [label, defect] of [
+    ["an outcome routed through redirected()", ENTER_OK.replace("else if (live) setMe(m);", 'else if (link === "failed") redirected(link);')],
+    ["a verified move gated on live", ENTER_OK.replace('if (link === "verified")', 'if (link === "verified" && live)')],
+    ["a spend outside a mount effect", ENTER_OK.replace("useEffect(() => {", "(async () => {")],
+  ])
+    if (storedLinkProblems(defect).length === 0) fail(`check 30's kept-link detector misses ${label}`);
+
+  // lib/session.ts: the ONE sign-out, and it leaves this tab's storage alone.
+  const TOUCHES_TAB = /\bsessionStorage\b/;
+  if (!TOUCHES_TAB.test("sessionStorage.clear();") || TOUCHES_TAB.test(decomment("// never sessionStorage\nconst a = 1;\n")))
+    fail("check 30's sessionStorage detector cannot tell a call from a comment");
+  if (!fs.existsSync(path.join(SRC, "lib", "session.ts"))) {
+    fail("there is no lib/session.ts: the sign-out /verify's \"Log out and continue\" needs is not shared");
+  } else {
+    const session = decomment(read("lib/session.ts"));
+    if (!/export\s+async\s+function\s+signOut\s*\(\s*\w+/.test(session))
+      fail("lib/session.ts does not export the shared signOut(destination)");
+    if (TOUCHES_TAB.test(session))
+      fail(
+        "lib/session.ts touches sessionStorage: \"Log out and continue\" on /verify would forget the confirmation " +
+          "link this tab is keeping, and the log in that follows could not finish confirming.",
+      );
+  }
+  const definers = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(path.join(SRC, dir), { withFileTypes: true })) {
+      const rel = dir ? `${dir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(rel);
+      else if (/\.tsx?$/.test(entry.name) && /\b(?:function\s+signOut\s*\(|(?:const|let)\s+signOut\s*=)/.test(decomment(read(rel))))
+        definers.push(rel);
+    }
+  };
+  walk("");
+  if (definers.join() !== "lib/session.ts")
+    fail(
+      `signOut is defined in ${definers.join(", ") || "no file"}; there must be exactly one, in lib/session.ts. ` +
+        "A second copy is the one a new store is forgotten in, and the sessionStorage pin guards only one.",
+    );
+} catch (e) {
+  fail(`verify link wiring check could not run: ${e.message}`);
 }
 
 globalThis.window = savedGlobals.window;

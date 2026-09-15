@@ -30,10 +30,10 @@ import {
   rotateExtensionKey,
   updateResumePrefs,
 } from "../api/client";
-import { signOut } from "../layouts/AppLayout";
 import { ACCESS_CODE_KEY } from "../lib/accessCode";
 import { apiErrorMessage } from "../lib/apiError";
 import { clearKeyRotated, keyRotatedNotice, markKeyRotated, readKeyRotation } from "../lib/authResults";
+import { signOut } from "../lib/session";
 import { formatUsesDate } from "../lib/usesStore";
 import LanguageSwitch from "../components/LanguageSwitch";
 import ThemeToggle from "../components/ThemeToggle";
@@ -776,7 +776,7 @@ export default function SettingsPage() {
       // device's account-scoped state (the resume draft, the onboarding
       // answers, both caches) and ends in a document load to the landing, so
       // a closed account leaves nothing behind for the next person to sign in.
-      setTimeout(() => void signOut(), 800);
+      setTimeout(() => void signOut("/"), 800);
       return true;
     } catch {
       toast("error", t("danger.closeError"));
@@ -853,7 +853,7 @@ export default function SettingsPage() {
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => void signOut()}
+            onClick={() => void signOut("/")}
             // The door glyph points out to the right; in RTL "out" is the other
             // way, so it mirrors with the reading direction.
             icon={<LogOut size={14} className="rtl:-scale-x-100" />}

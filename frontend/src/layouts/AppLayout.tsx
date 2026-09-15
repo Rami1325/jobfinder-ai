@@ -39,14 +39,10 @@ import FeedbackButton from "../components/FeedbackButton";
 import LanguageSwitch from "../components/LanguageSwitch";
 import OnboardingModal from "../components/OnboardingModal";
 import ThemeToggle from "../components/ThemeToggle";
-import { getAuthMe, logout } from "../api/client";
-import { clearDataCache } from "../lib/dataCache";
-import { resetMasterCache } from "../hooks/useMasterResume";
-import { ACCESS_CODE_KEY } from "../lib/accessCode";
-import { clearDraft } from "../lib/draft";
-import { clearInboxHints } from "../lib/inboxHint";
-import { clearOnboarding, isOnboarded } from "../lib/onboarding";
+import { getAuthMe } from "../api/client";
+import { isOnboarded } from "../lib/onboarding";
 import { authRedirectUrl } from "../lib/safeNext";
+import { signOut } from "../lib/session";
 import { usesFor, useUsesState } from "../lib/usesStore";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 import { getKitsState, loadKits, subscribeKits } from "../state/kitsStore";
@@ -91,48 +87,6 @@ const toolsSubNav = [
   { to: "/tools/linkedin", key: "linkedin", icon: Contact },
   { to: "/tools/follow-up", key: "followup", icon: Mail },
 ] as const;
-
-/**
- * The one sign-out.
- *
- * Forgetting the access code is only half of it: every store in this app is a
- * module-level binding that outlives the router — tailorStore, kitsStore,
- * jobSearchStore and useMasterResume's cache all still hold the previous user's
- * resume and search results — so this ends in a DOCUMENT LOAD, never a
- * <Navigate>. A route change would repaint the marketing page with the last
- * person's CV one tab away.
- *
- * Exported, and there is exactly ONE definition: `SettingsPage` imports this
- * rather than repeating the four lines, because "forget this user" is precisely
- * the pair that drifts — the day a fifth module-level store is added, only one
- * of two copies gets it, and the copy that missed it repaints the marketing
- * page with the previous user's CV one tab away. A page importing from a layout
- * is the odd part; the tidier home is a `lib/session.ts` both sides import, and
- * that is a file move, not a behaviour change, whenever a third caller appears.
- *
- * With accounts there is a server half, and it goes FIRST: `logout()` ends this
- * session, so the cookie cannot sign anyone back in. Its failure is ignored. An
- * expired session or a dropped connection must not strand someone who asked to
- * leave, and everything after it is local. The local half now forgets more
- * than the code: the resume draft (lib/draft.ts — DraftRestoreBar would offer
- * it to the next account on this device as that account's own CV) and the
- * onboarding answers (whose target role would prefill that account's search),
- * and the Gmail-sync hints that account hid on the tracker.
- */
-export async function signOut(): Promise<void> {
-  try {
-    await logout();
-  } catch {
-    /* the session may already be gone; forgetting this device still happens */
-  }
-  localStorage.removeItem(ACCESS_CODE_KEY);
-  clearDraft();
-  clearOnboarding();
-  clearInboxHints();
-  clearDataCache();
-  resetMasterCache();
-  window.location.assign("/");
-}
 
 /** Escape, or a pointerdown anywhere outside `ref`, closes an open popover.
  *
@@ -522,7 +476,7 @@ function AccountMenu({
             </Link>
             <button
               type="button"
-              onClick={() => void signOut()}
+              onClick={() => void signOut("/")}
               className={cn(item, "text-ink-muted hover:bg-panel-2/60 hover:text-ink")}
             >
               {/* The door glyph points out to the right; in RTL "out" is the
