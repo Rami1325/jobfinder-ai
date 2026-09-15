@@ -8974,6 +8974,818 @@ finally:
     else:
         _PROV.pop(_GEO_WW, None)
 
+# 21c-bis. Worldwide jobs only from high-paying countries (Phase 30 J, 2026-09-15).
+# LinkedIn's "European Union" location returns postings in EVERY member state, and
+# the owner's daily email carried Sofia and Bucharest. `pay_market` places a card's
+# location in a country, and `search_jobs` hides a worldwide-origin posting that
+# names one below the line BEFORE selection (so it takes no slot, is never
+# fetched and costs no model call), then returns the ones it displaced in
+# `filtered` with reason "market". Every catch sits beside the location it must
+# not hide: a guard that deletes a real job is the worst failure this can have.
+#
+# Self-contained on purpose: everything below is imported under its own `_pm`
+# names and reads only `check` and `resume` from above.
+import ast as _pm_ast  # noqa: E402
+import inspect as _pm_inspect  # noqa: E402
+from datetime import date as _pm_date, timedelta as _pm_td  # noqa: E402
+from pathlib import Path as _pm_Path  # noqa: E402
+
+import app.core.pay_market as _pm  # noqa: E402
+from app.core import job_search as _pm_js, mailer as _pm_mailer  # noqa: E402
+from app.core.alerts import (  # noqa: E402
+    get_alert as _pm_get_alert,
+    run_alert as _pm_run_alert,
+    update_alert as _pm_update_alert,
+)
+from app.core.providers import PROVIDERS as _pm_PROV  # noqa: E402
+from app.core.providers.base import JobHit as _pm_Hit  # noqa: E402
+from app.core.providers.linkedin import parse_search_results as _pm_parse  # noqa: E402
+from app.db.database import SessionLocal as _pm_Session  # noqa: E402
+from app.db.history import list_search_hits as _pm_history  # noqa: E402
+from app.db.models import SavedResume as _pm_SavedResume  # noqa: E402
+from app.db.users import mint_user as _pm_mint  # noqa: E402
+from app.models import SearchContext as _pm_Ctx  # noqa: E402
+
+# --- the classifier, on LinkedIn's own strings ------------------------------------
+_PM_COUNTRY_CASES = {
+    # The complaint, verbatim from the owner's alert history.
+    "Bulgaria": "BG",
+    "Sofia, Sofia City, Bulgaria": "BG",
+    "Sofia City, Bulgaria": "BG",
+    "Bucharest, Bucharest, Romania": "RO",
+    "Bucharest, Romania": "RO",
+    # The keeps, verbatim production samples.
+    "Munich, Bavaria, Germany": "DE",
+    "Grasbrunn, Bavaria, Germany": "DE",
+    "Berlin, Germany": "DE",
+    "Hürth, North Rhine-Westphalia, Germany": "DE",
+    "The Randstad, Netherlands": "NL",
+    "Arnhem, Gelderland, Netherlands": "NL",
+    "Dublin, County Dublin, Ireland": "IE",
+    "United Kingdom": "GB",
+    "Kings Langley, England, United Kingdom": "GB",
+    "Manchester Area, United Kingdom": "GB",
+    "City Of London, England, United Kingdom": "GB",
+    "United States": "US",
+    "California, United States": "US",
+}
+_pm_wrong = {
+    loc: _pm.country_of(loc) for loc, want in _PM_COUNTRY_CASES.items() if _pm.country_of(loc) != want
+}
+check(
+    "pay market: LinkedIn's own location strings resolve to their country — Sofia and Bucharest (the "
+    "complaint) beside Germany, the Netherlands, Ireland, the UK and the US (the keeps)",
+    _pm_wrong == {},
+    str(_pm_wrong),
+)
+# A US place is written "City, ST", and two of those codes are also places abroad.
+# "Atlanta, GA" is the US, not the country Georgia; "Jersey City, NJ" is the US, not
+# Jersey. So neither Georgia nor Jersey is an alias, and "Tbilisi, Georgia" is
+# unknown by design. So is "Athens, Georgia": the city table would otherwise read
+# it as Greece and hide a US job. Only an UPPERCASE pair is a state ("Hamburg, de"
+# is Germany, never Delaware), and a state name still wins when LinkedIn appends
+# metro wording to it, or "Naples, Florida Metropolitan Area" would be Italy.
+_PM_US_CASES = {
+    "Chicago, IL": "US",
+    "Atlanta, GA": "US",
+    "Jersey City, NJ": "US",
+    "Wilmington, DE": "US",
+    "Greater St. Louis": "US",
+    "Naples, Florida Metropolitan Area": "US",
+    "Tbilisi, Georgia": None,
+    "Athens, Georgia": None,
+    "St Helier, Jersey": None,
+    "Hamburg, de": "DE",
+    "Naples Metropolitan Area": "IT",
+}
+_pm_wrong = {loc: _pm.country_of(loc) for loc, want in _PM_US_CASES.items() if _pm.country_of(loc) != want}
+check(
+    "pay market: 'Atlanta, GA' and 'Jersey City, NJ' are the US, while 'Tbilisi, Georgia' and 'Athens, Georgia' "
+    "stay unknown and a lowercase 'de' is not Delaware",
+    _pm_wrong == {},
+    str(_pm_wrong),
+)
+# Diacritics fold before any lookup, including the letters NFKD leaves whole (ł),
+# and metro wording is stripped for the city table without eating a name that
+# begins with "The".
+_PM_FOLD_CASES = {
+    "Paris, Île-de-France, France": "FR",
+    "Île-de-France, France": "FR",
+    "Sofia Metropolitan Area": "BG",
+    "Greater Warsaw Area": "PL",
+    "Berlin Metropolitan Area": "DE",
+    "Kraków Metropolitan Area": "PL",
+    "Wrocław Metropolitan Area": "PL",
+    "Łódź Metropolitan Area": "PL",
+    "The Hague Metropolitan Area": "NL",
+}
+_pm_wrong = {loc: _pm.country_of(loc) for loc, want in _PM_FOLD_CASES.items() if _pm.country_of(loc) != want}
+check(
+    "pay market: diacritics fold (Île-de-France, Łódź) and metro names resolve through the city table "
+    "(Sofia, Greater Warsaw, Berlin, The Hague)",
+    _pm_wrong == {},
+    str(_pm_wrong),
+)
+_PM_UNKNOWN = [
+    "", "   ", "European Union", "EU", "EMEA", "Europe", "European Economic Area",
+    "Remote", "Worldwide", "Anywhere", "Latin America",
+]
+check(
+    "pay market: an empty location or a region tag names no country and is UNKNOWN, never a verdict",
+    all(_pm.country_of(loc) is None and _pm.high_pay_market(loc) is None for loc in _PM_UNKNOWN),
+    str({loc: _pm.country_of(loc) for loc in _PM_UNKNOWN if _pm.country_of(loc) is not None}),
+)
+# Five countries a remote posting can name are deliberately NOT in the table,
+# because the rule's own source cannot put them below the line: Qatar (132% of
+# Israel) and Hong Kong (111%) are above it, the UAE has no 2025 figure (91.8% in
+# 2024), and Liechtenstein and Taiwan have no World Bank figure at all. Naming them
+# would hide jobs the rule keeps. Beside them, two named countries the same data
+# does put below the line.
+_PM_ABSENT = (
+    "Doha, Qatar", "Hong Kong SAR", "Hong Kong, Hong Kong SAR", "Hong Kong",
+    "Dubai, United Arab Emirates", "Vaduz, Liechtenstein", "Taipei City, Taiwan",
+)
+
+
+def _pm_absent_kept() -> bool:
+    return all(_pm.high_pay_market(loc) is None for loc in _PM_ABSENT)
+
+
+check(
+    "pay market: a country the rule cannot place below the line is unknown and kept (Qatar, Hong Kong, the UAE, "
+    "Liechtenstein, Taiwan), while Saudi Arabia and Japan, which it can, are hidden",
+    _pm_absent_kept()
+    and _pm.high_pay_market("Riyadh, Saudi Arabia") is False
+    and _pm.high_pay_market("Tokyo, Japan") is False,
+    str({loc: _pm.high_pay_market(loc) for loc in _PM_ABSENT}),
+)
+# ...and those samples CAN fail. The check above exists to catch one of the five
+# being added back, so every alias that would add one back, in either table, must
+# turn it red. "Hong Kong SAR" alone could not: an added "hong kong" never matches
+# that last segment, while it does hide "Hong Kong" and "Hong Kong, Hong Kong SAR",
+# the forms such an alias actually reaches. A sample the alias never reaches passes
+# by never firing. Each alias is added, read and taken out again in turn.
+_PM_READDED = (
+    ("_COUNTRIES", "hong kong", "HK"), ("_CITIES", "hong kong", "HK"),
+    ("_COUNTRIES", "qatar", "QA"), ("_CITIES", "doha", "QA"),
+    ("_COUNTRIES", "united arab emirates", "AE"), ("_CITIES", "dubai", "AE"),
+    ("_COUNTRIES", "liechtenstein", "LI"), ("_COUNTRIES", "taiwan", "TW"),
+    ("_CITIES", "taipei city", "TW"),
+)
+_pm_silent: list[str] = []
+for _pm_table_name, _pm_alias_key, _pm_alias_code in _PM_READDED:
+    _pm_table = getattr(_pm, _pm_table_name)
+    _pm_prior = _pm_table.pop(_pm_alias_key, None)
+    _pm_table[_pm_alias_key] = _pm_alias_code
+    try:
+        if _pm_absent_kept():
+            _pm_silent.append(f"{_pm_table_name}[{_pm_alias_key!r}]")
+    finally:
+        if _pm_prior is None:
+            del _pm_table[_pm_alias_key]
+        else:
+            _pm_table[_pm_alias_key] = _pm_prior
+check(
+    "pay market: those samples go red when any of the five is added back to either table, Hong Kong included",
+    _pm_silent == [] and _pm_absent_kept(),
+    f"aliases the samples never see: {_pm_silent}",
+)
+_PM_VERDICTS = {
+    "Sofia, Sofia City, Bulgaria": False,
+    "Bucharest, Romania": False,
+    "Greater Warsaw Area": False,
+    "Berlin, Germany": True,
+    "The Randstad, Netherlands": True,
+    "Dublin, County Dublin, Ireland": True,
+    "United Kingdom": True,
+    "Chicago, IL": True,
+    "Paris, Île-de-France, France": True,
+    "Helsinki, Uusimaa, Finland": True,
+    "Tel Aviv, Israel": True,
+    "European Union": None,
+    "": None,
+}
+_pm_wrong = {
+    loc: _pm.high_pay_market(loc) for loc, want in _PM_VERDICTS.items() if _pm.high_pay_market(loc) is not want
+}
+check(
+    "pay market: Bulgaria, Romania and Poland are False; Germany, the Netherlands, Ireland, the UK, the US, "
+    "France, Finland and Israel are True; unknown stays None",
+    _pm_wrong == {},
+    str(_pm_wrong),
+)
+check(
+    "pay market: the allowlist is EXACTLY the 19 countries at or above 85% of Israel's 2025 GNI per capita — "
+    "France (86.6%) in; New Zealand (83.0%), Italy and Spain out",
+    _pm.HIGH_PAY_COUNTRIES
+    == frozenset("IL US GB CA AU SG CH NO IS IE LU DK NL SE AT DE BE FI FR".split())
+    and len(_pm.HIGH_PAY_COUNTRIES) == 19
+    and not {"NZ", "IT", "ES"} & _pm.HIGH_PAY_COUNTRIES,
+    str(sorted(_pm.HIGH_PAY_COUNTRIES)),
+)
+# PUERTO RICO READS AS THE US, and that is a recorded decision, not something the
+# tables happen to do. The World Bank lists it as its own economy at $27,320 for
+# 2025, 48.6% of Israel's and below the line. But it is a US jurisdiction that
+# LinkedIn writes as a US place ("San Juan, PR"), the build spec folds it into the
+# US beside DC, and a place this module could read two ways errs toward KEEPING the
+# posting, as "Valletta, MT" does. Hiding it is two table entries plus this check.
+# Beside it, a country in the same hemisphere that the rule does hide, so the fold
+# cannot pass for a regional keep.
+check(
+    "pay market: Puerto Rico reads as the US by recorded decision (its own 2025 figure, 48.6% of Israel's, is "
+    "below the line), while Mexico is hidden",
+    _pm.country_of("San Juan, PR") == "US"
+    and _pm.country_of("Puerto Rico") == "US"
+    and _pm.high_pay_market("San Juan, Puerto Rico") is True
+    and "puerto rico" not in _pm._COUNTRIES
+    and _pm.high_pay_market("Mexico City, Mexico") is False,
+    str({loc: _pm.country_of(loc) for loc in ("San Juan, PR", "Puerto Rico", "Mexico City, Mexico")}),
+)
+
+# --- purity and the importer census (AST, never grep) ----------------------------
+# The docstring NAMES what the module refuses (the model, the network, the clock),
+# so a substring pin would read the promise as the violation.
+_PM_SRC = _pm_inspect.getsource(_pm)
+
+
+def _pm_imported_modules(src: str) -> set[str]:
+    """Every module `src` imports, by its full dotted name (a leading "." per
+    relative level)."""
+    mods: set[str] = set()
+    for node in _pm_ast.walk(_pm_ast.parse(src)):
+        if isinstance(node, _pm_ast.Import):
+            mods |= {alias.name for alias in node.names}
+        elif isinstance(node, _pm_ast.ImportFrom):
+            mods.add("." * node.level + (node.module or ""))
+    return mods
+
+
+# EXACTLY these imports, never a denylist of names. A denylist cannot see the app's
+# own modules: `from app.core.scorer import fit_score` puts the model in charge of a
+# verdict with every forbidden-name pin still green, which is keyword_guard's lesson.
+# The module needs nothing from `app`, so an exact set costs nothing.
+_PM_ALLOWED_IMPORTS = {"__future__", "re", "unicodedata"}
+
+
+def _pm_is_pure(src: str) -> bool:
+    clock = {
+        n.attr for n in _pm_ast.walk(_pm_ast.parse(src)) if isinstance(n, _pm_ast.Attribute)
+    } & {"now", "utcnow", "today"}
+    return _pm_imported_modules(src) == _PM_ALLOWED_IMPORTS and not clock
+
+
+# Each probe reaches the model, the network or the clock, five of them through the
+# app's OWN modules, and the pin must refuse every one.
+_PM_IMPURE = (
+    "from app.core.scorer import fit_score",
+    "from app.core.jd_analyzer import analyze_jd",
+    "from app.core.job_match import _http_get",
+    "from app.core.job_search import utc_now",
+    "from app.core import scorer",
+    "import app.llm.client",
+    "from datetime import datetime",
+    "stamp = __import__('datetime').datetime.now()",
+)
+_pm_unrefused = [probe for probe in _PM_IMPURE if _pm_is_pure(_PM_SRC + "\n" + probe + "\n")]
+check(
+    "pay market: the classifier imports EXACTLY __future__, re and unicodedata and reads no clock (AST), so the "
+    "app's own model, network and clock one import away are refused too",
+    len(_PM_SRC) > 2000 and _pm_is_pure(_PM_SRC) and _pm_unrefused == [],
+    f"imports={sorted(_pm_imported_modules(_PM_SRC))} not refused={_pm_unrefused}",
+)
+# ONE call site. A second importer would gate on something other than the origin
+# stamp and contradict the search about the same posting, which is the correction
+# the geo work recorded as the one that mattered most.
+_PM_APP_DIR = _pm_Path(_pm.__file__).parents[1]
+_PM_IMPORTERS: list[str] = []
+_PM_SCANNED = 0
+for _pm_py in sorted(_PM_APP_DIR.rglob("*.py")):
+    _PM_SCANNED += 1
+    _pm_rel = str(_pm_py.relative_to(_PM_APP_DIR)).replace("\\", "/")
+    if _pm_rel == "core/pay_market.py":
+        continue
+    _pm_found = False
+    for _pm_node in _pm_ast.walk(_pm_ast.parse(_pm_py.read_text(encoding="utf-8"))):
+        if isinstance(_pm_node, _pm_ast.ImportFrom):
+            _pm_found |= (_pm_node.module or "").split(".")[-1] == "pay_market" or any(
+                a.name == "pay_market" for a in _pm_node.names
+            )
+        elif isinstance(_pm_node, _pm_ast.Import):
+            _pm_found |= any(a.name.split(".")[-1] == "pay_market" for a in _pm_node.names)
+    if _pm_found:
+        _PM_IMPORTERS.append(_pm_rel)
+check(
+    "pay market: exactly one importer in the whole app — core/job_search.py",
+    _PM_IMPORTERS == ["core/job_search.py"] and _PM_SCANNED > 40,
+    f"importers={_PM_IMPORTERS} ({_PM_SCANNED} modules scanned)",
+)
+
+# --- the LinkedIn card parser feeds the classifier verbatim -------------------------
+_PM_CARDS = """<ul><li>
+  <a class="base-card__full-link" href="https://bg.linkedin.com/jobs/view/python-developer-at-payco-4412345678?refId=a&amp;trackingId=b">x</a>
+  <h3 class="base-search-card__title">Python Developer</h3>
+  <h4 class="base-search-card__subtitle"><a class="hidden-nested-link">PayCo</a></h4>
+  <span class="job-search-card__location">
+    Sofia, Sofia City, Bulgaria
+  </span>
+</li><li>
+  <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/4412345679">y</a>
+  <h3 class="base-search-card__title">Backend Engineer</h3>
+  <h4 class="base-search-card__subtitle"><a>WindyCo</a></h4>
+  <span class="job-search-card__location">Chicago, IL</span>
+</li><li>
+  <a class="base-card__full-link" href="https://de.linkedin.com/jobs/view/4412345680">z</a>
+  <h3 class="base-search-card__title">Data Engineer</h3>
+  <h4 class="base-search-card__subtitle"><a>RhineCo</a></h4>
+  <span class="job-search-card__location">H&uuml;rth, North Rhine-Westphalia, Germany</span>
+</li></ul>"""
+_pm_cards = _pm_parse(_PM_CARDS)
+check(
+    "pay market: the LinkedIn card parser hands over the location text verbatim (whitespace collapsed, entities "
+    "unescaped, the state code's case kept) and each one resolves",
+    [c["location"] for c in _pm_cards]
+    == ["Sofia, Sofia City, Bulgaria", "Chicago, IL", "Hürth, North Rhine-Westphalia, Germany"]
+    and [_pm.country_of(c["location"]) for c in _pm_cards] == ["BG", "US", "DE"],
+    str([c["location"] for c in _pm_cards]),
+)
+
+# --- end to end, through the real fan-out -------------------------------------------
+_PM_JD = "Python and SQL work on a distributed backend."
+
+
+def _pm_hit(slug: str, location: str, posted_at: str, title: str = "", company: str = "") -> "_pm_Hit":
+    # Distinct title AND company per posting unless a twin is the point: the fan-out
+    # also dedupes by content, and a fixture that collapses passes by never firing.
+    # `description` stays EMPTY so a skipped fetch is observable (21c's lesson).
+    return _pm_Hit(
+        source=_pm_js.WORLDWIDE_BOARD,
+        title=title or f"Python Developer {slug}",
+        company=company or f"PayCo {slug}",
+        location=location,
+        url=f"https://pay.test/{slug}",
+        posted_at=posted_at,
+    )
+
+
+class _PmBoard:
+    """Registered UNDER the worldwide board's name, because only that board's
+    worldwide queries are stamped: a fake under any other name could never reach
+    the gate this section pins. Fresh hit objects per query, because
+    `_search_board` stamps each query's hits with that query's origin."""
+
+    name = _pm_js.WORLDWIDE_BOARD
+
+    def __init__(self, by_location: dict) -> None:
+        self.by_location = by_location
+        self.fetched: list[str] = []
+
+    def search(self, ctx):  # noqa: ANN001
+        return [_pm_hit(*spec) for spec in self.by_location.get(ctx.location, [])]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        slug = hit.url.rsplit("/", 1)[-1]
+        self.fetched.append(slug)
+        return "" if slug == "nodesc" else _PM_JD
+
+
+class _PmDescBoard(_PmBoard):
+    """`_PmBoard` with a description per slug: an empty one for a fetch that fails,
+    or a posting's own restriction sentence. Every other slug reads `_PM_JD`."""
+
+    def __init__(self, by_location: dict, descs: dict) -> None:
+        super().__init__(by_location)
+        self.descs = descs
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        slug = hit.url.rsplit("/", 1)[-1]
+        self.fetched.append(slug)
+        return self.descs.get(slug, _PM_JD)
+
+
+def _pm_slugs(items) -> list[str]:  # noqa: ANN001
+    return [i.url.rsplit("/", 1)[-1] for i in items]
+
+
+def _pm_ctx(**over) -> "_pm_Ctx":  # noqa: ANN003
+    base = dict(
+        job_title="Python Developer", location="Tel Aviv", work_mode="remote",
+        include_worldwide=True, sources=[_pm_js.WORLDWIDE_BOARD], max_age_days=0, limit=5,
+    )
+    return _pm_Ctx(**(base | over))
+
+
+def _pm_search(ctx, **kw):  # noqa: ANN001, ANN003, ANN202
+    """(result, error), CAUGHT: an uncaught raise here would abort the process and
+    turn one red check into hundreds that silently never ran."""
+    try:
+        return _pm_js.search_jobs(resume, ctx, **kw), ""
+    except Exception as e:  # noqa: BLE001
+        return None, f"{type(e).__name__}: {e}"
+
+
+_PM_LOCAL = [
+    ("local", "Tel Aviv, Israel", "2099-01-09"),
+    # A Bulgarian location the user's OWN query returned: visible from Israel by
+    # construction, so it must never even be classified.
+    ("both", "Sofia, Bulgaria", "2099-01-08"),
+]
+_PM_EU = [
+    ("both", "Sofia, Bulgaria", "2099-01-08"),  # the same URL: local wins
+    ("sofia", "Sofia, Sofia City, Bulgaria", "2099-01-07"),
+    ("eu", "European Union", "2099-01-06"),  # names no country: unknown, KEPT
+    ("nodesc", "Berlin, Germany", "2099-01-05"),  # kept, and its description never arrives
+    ("munich", "Munich, Bavaria, Germany", "2099-01-04"),  # ranked BELOW Sofia
+]
+_pm_real_board = _pm_PROV.get(_pm_js.WORLDWIDE_BOARD)
+_pm_real_verdict = _pm.high_pay_market
+_pm_classified: list[str] = []
+
+
+def _pm_spy(location):  # noqa: ANN001, ANN202
+    _pm_classified.append(location)
+    return _pm_real_verdict(location)
+
+
+# `job_search` calls `pay_market.high_pay_market` through the module, so this spy
+# sees the real call path; the ON run below proves it does before OFF reads zero.
+_pm.high_pay_market = _pm_spy
+try:
+    _pm_board = _PmBoard({"Tel Aviv": _PM_LOCAL, "European Union": _PM_EU})
+    _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _pm_board
+    _pm_events: list[dict] = []
+    _pmr, _pmr_err = _pm_search(_pm_ctx(), progress=_pm_events.append)
+    _pmr_ranked = sorted(_pm_slugs(_pmr.matches)) if _pmr else []
+    _pmr_rows = [(f.url.rsplit("/", 1)[-1], f.reason, f.location) for f in _pmr.filtered] if _pmr else []
+    _pmr_row = _pmr.filtered[0] if _pmr and _pmr.filtered else None
+    # Without the filter the five slots were local, both, sofia, eu, nodesc.
+    check(
+        "pay market search: the Sofia posting is hidden BEFORE selection and never fetched, and the German "
+        "posting that ranked below it takes its slot",
+        _pmr_err == ""
+        and _pmr_ranked == ["both", "eu", "local", "munich"]
+        and "sofia" not in _pm_board.fetched
+        and "munich" in _pm_board.fetched,
+        _pmr_err or f"ranked={_pmr_ranked} fetched={_pm_board.fetched}",
+    )
+    check(
+        "pay market search: the hidden posting is RETURNED as one `filtered` row with reason 'market', its "
+        "location as the evidence, and no score",
+        _pmr_rows == [("sofia", "market", "Sofia, Sofia City, Bulgaria")]
+        and _pmr_row is not None
+        and not hasattr(_pmr_row, "overall")
+        and _pmr_row.geo_restriction is None
+        and _pmr_row.ghost is None,
+        str(_pmr_rows),
+    )
+    check(
+        "pay market search: `skipped` is exactly the one unfetchable posting; the market row is not in the "
+        "selection, so counting it would read 0",
+        _pmr is not None and _pmr.skipped == 1,
+        f"skipped={_pmr.skipped if _pmr else None}",
+    )
+    _pm_scoring = [e for e in _pm_events if e["stage"] == "scoring"]
+    check(
+        "pay market search: the scoring progress total is the final selection (five slots, the hidden posting "
+        "never counted)",
+        len(_pm_scoring) == 5
+        and sorted(e["index"] for e in _pm_scoring) == [1, 2, 3, 4, 5]
+        and all(e["total"] == 5 for e in _pm_scoring)
+        and len([e for e in _pm_events if e["stage"] == "match"]) == 4,
+        str([(e["index"], e["total"]) for e in _pm_scoring]),
+    )
+    check(
+        "pay market search: the gate is the origin stamp — the Sofia posting the LOCAL query also returned is "
+        "ranked and never classified, and an unplaceable 'European Union' location is kept",
+        "both" in _pmr_ranked
+        and "eu" in _pmr_ranked
+        and "Sofia, Bulgaria" not in _pm_classified
+        and set(_pm_classified)
+        == {"Sofia, Sofia City, Bulgaria", "European Union", "Berlin, Germany", "Munich, Bavaria, Germany"},
+        str(sorted(set(_pm_classified))),
+    )
+    _pm_on_calls = len(_pm_classified)
+    _pm_classified.clear()
+    _pmo, _pmo_err = _pm_search(_pm_ctx(include_worldwide=False))
+    check(
+        "pay market search: with include_worldwide OFF the classifier is never called (and it was, with it on)",
+        _pm_on_calls > 0
+        and _pm_classified == []
+        and _pmo_err == ""
+        and _pmo is not None
+        and sorted(_pm_slugs(_pmo.matches)) == ["both", "local"]
+        and _pmo.filtered == [],
+        _pmo_err or f"on={_pm_on_calls} off={_pm_classified}",
+    )
+
+    # Every posting in a low-pay country: "none posted in the last N days" would be
+    # false, and raising would destroy the list. The all-filtered 200.
+    _pm_all_low = _PmBoard({
+        "Tel Aviv": [],
+        "European Union": [
+            ("sofia", "Sofia, Sofia City, Bulgaria", "2099-01-07"),
+            ("bucharest", "Bucharest, Bucharest, Romania", "2099-01-06"),
+        ],
+    })
+    _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _pm_all_low
+    _pma, _pma_err = _pm_search(_pm_ctx())
+    check(
+        "pay market search: when every posting is in a low-pay country the search is a 200 with no matches and "
+        "the rows, not a NoResultsError",
+        _pma_err == ""
+        and _pma is not None
+        and _pma.matches == []
+        and _pma.skipped == 0
+        and [(f.url.rsplit("/", 1)[-1], f.reason) for f in _pma.filtered]
+        == [("sofia", "market"), ("bucharest", "market")]
+        and _pm_all_low.fetched == [],
+        _pma_err or f"filtered={[(f.url, f.reason) for f in _pma.filtered]} fetched={_pm_all_low.fetched}",
+    )
+    # The false-positive half: that 200 is ONLY for hidden rows. A search whose
+    # postings are all old AND off-keyword still raises its own, true, message.
+    _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _PmBoard(
+        {"Tel Aviv": [("bookkeeper", "Tel Aviv, Israel", "2000-01-01", "Bookkeeper", "LedgerCo")]}
+    )
+    _pms, _pms_err = _pm_search(_pm_ctx(max_age_days=30))
+    check(
+        "pay market search: a search with nothing hidden and nothing recent still raises 'none posted in the "
+        "last N days'",
+        _pms is None
+        and _pms_err.startswith("NoResultsError")
+        and "none posted in the last 30 days" in _pms_err,
+        _pms_err or "did not raise",
+    )
+
+    # DISPLACED-ONLY. Thirty hidden postings, three kept cards (one of them a
+    # content twin), five slots. Only the hidden postings an unfiltered selection
+    # would have given a slot are reported. `twin-low` is a hidden content twin of
+    # the kept `k1`: an unfiltered selection run on the REAL objects would append
+    # it to k1's `also_on`, handing a kept card an "Also on" link to a posting the
+    # user was just told is hidden. The kept twin stays linked, which is what
+    # proves this fixture can produce an "Also on" at all.
+    _PM_LOW_PLACES = (
+        "Sofia, Sofia City, Bulgaria", "Bucharest, Bucharest, Romania",
+        "Warsaw, Mazowieckie, Poland", "Kraków, Małopolskie, Poland",
+    )
+    _PM_TWIN = ("Python Developer twin", "PayCo twin")
+    _pm_pool_specs = [
+        ("p1", _PM_LOW_PLACES[0]),
+        ("k1", "Amsterdam, North Holland, Netherlands", *_PM_TWIN),
+        ("twin-low", "Kraków, Małopolskie, Poland", *_PM_TWIN),
+        ("p2", _PM_LOW_PLACES[1]),
+        ("p3", _PM_LOW_PLACES[2]),
+        ("k2", "Dublin, County Dublin, Ireland"),
+        ("twin-kept", "Rotterdam, South Holland, Netherlands", *_PM_TWIN),
+    ] + [(f"p{i}", _PM_LOW_PLACES[i % 4]) for i in range(4, 30)]
+    _pm_pool = [  # newest first, in the order written above
+        (slug, place, (_pm_date(2099, 12, 31) - _pm_td(days=i)).isoformat(), *rest)
+        for i, (slug, place, *rest) in enumerate(_pm_pool_specs)
+    ]
+    _pm_hidden_urls = {f"https://pay.test/{s[0]}" for s in _pm_pool if _pm_real_verdict(s[1]) is False}
+    _pm_pool_board = _PmBoard({"Tel Aviv": [], "European Union": _pm_pool})
+    _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _pm_pool_board
+    _pmp, _pmp_err = _pm_search(_pm_ctx(limit=5))
+    _pmp_matches = _pmp.matches if _pmp else []
+    _pmp_k1 = next((m for m in _pmp_matches if m.url.endswith("/k1")), None)
+    check(
+        "pay market search: only the hidden postings that would have taken a slot are reported (3 of 30, in "
+        "selection order), never the whole pool",
+        _pmp_err == ""
+        and len(_pm_hidden_urls) == 30
+        and _pmp is not None
+        and [(f.url.rsplit("/", 1)[-1], f.reason) for f in _pmp.filtered]
+        == [("p1", "market"), ("p2", "market"), ("p3", "market")]
+        and sorted(_pm_slugs(_pmp_matches)) == ["k1", "k2"]
+        and sorted(_pm_pool_board.fetched) == ["k1", "k2"],
+        _pmp_err or f"filtered={_pm_slugs(_pmp.filtered)} ranked={_pm_slugs(_pmp_matches)}",
+    )
+    check(
+        "pay market search: no kept card gains an 'Also on' link to a hidden posting, while its kept twin is "
+        "still linked",
+        _pmp_k1 is not None
+        and [a.url for a in _pmp_k1.also_on] == ["https://pay.test/twin-kept"]
+        and not any(a.url in _pm_hidden_urls for m in _pmp_matches for a in m.also_on),
+        str([(m.url, [a.url for a in m.also_on]) for m in _pmp_matches]),
+    )
+
+    # THE ALERT PATH, with the real `search_jobs`: the email and the history carry
+    # `result.matches` only. A minted user whose alert is DISABLED and run with
+    # force=True, so the row can never join a later cron's due list; the bar is 0,
+    # so the stub's canned fit is not the variable.
+    _pm_run, _pm_hist, _pm_sent = None, [], []
+    _pm_db = _pm_Session()
+    _pm_real_smtp, _pm_real_send = _pm_mailer.smtp_configured, _pm_mailer.send_email
+    try:
+        _pm_uid = _pm_mint(_pm_db, "Pay Market").id
+        _pm_db.add(_pm_SavedResume(
+            user_id=_pm_uid, label="Pay market master", language="en", resume_json=resume.model_dump_json(),
+        ))
+        _pm_db.commit()
+        _pm_update_alert(
+            _pm_db, _pm_uid, enabled=False, email="pay.market@example.com", context=_pm_ctx(), min_score=0,
+        )
+        _pm_mailer.smtp_configured = lambda: True
+        _pm_mailer.send_email = lambda to, subject, text, html="": _pm_sent.append((to, subject, text, html))
+        _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _PmBoard({
+            "Tel Aviv": [],
+            "European Union": [
+                ("alert-sofia", "Sofia, Sofia City, Bulgaria", "2099-02-02"),
+                ("alert-munich", "Munich, Bavaria, Germany", "2099-02-01"),
+            ],
+        })
+        _pm_run = _pm_run_alert(_pm_db, _pm_uid, force=True, search_fn=_pm_js.search_jobs)
+        _pm_hist = sorted(h.url for h in _pm_history(_pm_db, _pm_uid))
+    finally:
+        _pm_mailer.smtp_configured, _pm_mailer.send_email = _pm_real_smtp, _pm_real_send
+        _pm_db.close()
+    _pm_mail = " ".join(part for sent in _pm_sent for part in sent[1:])
+    check(
+        "pay market, the alert path: the real search emails the German job and not the Bulgarian one, and "
+        "history records only the German one",
+        _pm_run is not None
+        and _pm_run.ran is True
+        and _pm_run.error == ""
+        and _pm_run.emailed is True
+        and _pm_run.total == 1
+        and len(_pm_sent) == 1
+        and "https://pay.test/alert-munich" in _pm_sent[0][2]
+        and "https://pay.test/alert-munich" in _pm_sent[0][3]
+        and "alert-sofia" not in _pm_mail
+        and "Sofia" not in _pm_mail
+        and _pm_hist == ["https://pay.test/alert-munich"],
+        f"run={_pm_run} sent={len(_pm_sent)} history={_pm_hist}",
+    )
+
+    # A HIDDEN POSTING WHOSE ROLE IS ON THE PAGE IS NOT REPORTED. Unfiltered, the
+    # newer Sofia copy took the slot and its content twin in Berlin (same title and
+    # company, another URL) folded into it as "Also on"; filtered, Berlin takes that
+    # slot. Reported anyway, the page showed "1 job hidden: it's in a country where
+    # pay is well below Israel's" under a ranked card with the identical title and
+    # company, calling a job hidden while it was on the page.
+    _PM_ROLE = ("Python Developer role twin", "PayCo role twin")
+    _pmt_board = _PmBoard({
+        "Tel Aviv": [],
+        "European Union": [
+            ("tw-sofia", "Sofia, Sofia City, Bulgaria", "2099-05-02", *_PM_ROLE),
+            ("tw-berlin", "Berlin, Germany", "2099-05-01", *_PM_ROLE),
+        ],
+    })
+    _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _pmt_board
+    _pmt, _pmt_err = _pm_search(_pm_ctx())
+    check(
+        "pay market search: a hidden posting whose content twin is ranked on the page is not reported as hidden",
+        _pmt_err == ""
+        and _pmt is not None
+        and [(m.url.rsplit("/", 1)[-1], [a.url for a in m.also_on]) for m in _pmt.matches] == [("tw-berlin", [])]
+        and _pmt.filtered == []
+        and "tw-sofia" not in _pmt_board.fetched,
+        _pmt_err or f"ranked={_pm_slugs(_pmt.matches)} filtered={[(f.url, f.reason) for f in _pmt.filtered]}",
+    )
+    # The false-positive half: the rule is "the role is ON THE PAGE", never "a twin
+    # exists". Two newer kept postings take both slots, so the Berlin twin never
+    # makes the page, the Sofia posting really did take a role off it, and it is
+    # still reported.
+    _pmn_board = _PmBoard({
+        "Tel Aviv": [],
+        "European Union": [
+            ("off-sofia", "Sofia, Sofia City, Bulgaria", "2099-06-04", *_PM_ROLE),
+            ("off-dublin", "Dublin, County Dublin, Ireland", "2099-06-03"),
+            ("off-vienna", "Vienna, Vienna, Austria", "2099-06-02"),
+            ("off-berlin", "Berlin, Germany", "2099-06-01", *_PM_ROLE),
+        ],
+    })
+    _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _pmn_board
+    _pmn, _pmn_err = _pm_search(_pm_ctx(limit=2))
+    check(
+        "pay market search: a hidden posting whose twin did NOT make the page is still reported",
+        _pmn_err == ""
+        and _pmn is not None
+        and sorted(_pm_slugs(_pmn.matches)) == ["off-dublin", "off-vienna"]
+        and [(f.url.rsplit("/", 1)[-1], f.reason) for f in _pmn.filtered] == [("off-sofia", "market")],
+        _pmn_err or f"ranked={_pm_slugs(_pmn.matches)} filtered={[(f.url, f.reason) for f in _pmn.filtered]}",
+    )
+
+    # A FAILED MORNING IS NOT A CLEAN ONE. Market rows describe postings that were
+    # never selected, so they may not answer for the ones that were: when every
+    # SELECTED posting fails to fetch or to score, the search raises exactly as it
+    # would with nothing hidden, because that raise is `run_alert`'s only error
+    # channel. As a 200, a throttled LinkedIn morning wrote `last_error = ""` and
+    # `last_above_min = 0` (a measured "none cleared") for a morning where nothing
+    # was scored; and an empty description leaves no `score_errors` to attribute,
+    # so the Jobs page read "0 ranked, 1 skipped" beside the market sentence with
+    # no warning at all.
+    _PM_FAILED = {
+        "Tel Aviv": [],
+        "European Union": [
+            ("fail-sofia", "Sofia, Sofia City, Bulgaria", "2099-07-02"),
+            ("fail-berlin", "Berlin, Germany", "2099-07-01"),
+        ],
+    }
+    _pmf_board = _PmDescBoard(_PM_FAILED, {"fail-berlin": ""})
+    _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _pmf_board
+    _pmf, _pmf_err = _pm_search(_pm_ctx())
+    check(
+        "pay market search: a hidden low-pay posting does not turn a failed fetch into a 200 — with every selected "
+        "posting unfetchable the search still raises the throttling error",
+        _pmf is None
+        and "couldn't fetch any of their descriptions" in _pmf_err
+        and "fail-berlin" in _pmf_board.fetched
+        and "fail-sofia" not in _pmf_board.fetched,
+        _pmf_err or f"200 matches={_pm_slugs(_pmf.matches)} filtered={[(f.url, f.reason) for f in _pmf.filtered]}",
+    )
+    _pm_real_score = _pm_js.analyze_and_score
+
+    def _pm_model_down(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise RuntimeError("model unavailable")
+
+    _pm_js.analyze_and_score = _pm_model_down
+    try:
+        _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _PmBoard(_PM_FAILED)
+        _pmm, _pmm_err = _pm_search(_pm_ctx())
+    finally:
+        _pm_js.analyze_and_score = _pm_real_score
+    check(
+        "pay market search: ...and with every selected posting failing to SCORE it still raises 'couldn't score any "
+        "of them', naming the model's error",
+        _pmm is None and "couldn't score any of them" in _pmm_err and "model unavailable" in _pmm_err,
+        _pmm_err or f"200 matches={_pm_slugs(_pmm.matches)} source_errors={_pmm.source_errors}",
+    )
+    # The false-positive half: a SELECTED posting filtered for its own reason is a
+    # decision, not a failure, so the all-filtered 200 still stands beside an
+    # unfetchable posting, and the market row rides along after the per-hit row.
+    _pmd_board = _PmDescBoard(
+        {
+            "Tel Aviv": [],
+            "European Union": [
+                ("mix-sofia", "Sofia, Sofia City, Bulgaria", "2099-08-03"),
+                ("mix-restricted", "Berlin, Germany", "2099-08-02"),
+                ("mix-nodesc", "Munich, Bavaria, Germany", "2099-08-01"),
+            ],
+        },
+        {
+            "mix-restricted": "Python and SQL. Applicants must be legally authorized to work in the United States.",
+            "mix-nodesc": "",
+        },
+    )
+    _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _pmd_board
+    _pmd, _pmd_err = _pm_search(_pm_ctx())
+    check(
+        "pay market search: a selected posting filtered for a stated restriction beside an unfetchable one is still "
+        "the all-filtered 200, with the market row after the per-hit row",
+        _pmd_err == ""
+        and _pmd is not None
+        and _pmd.matches == []
+        and _pmd.skipped == 1
+        and [(f.url.rsplit("/", 1)[-1], f.reason) for f in _pmd.filtered]
+        == [("mix-restricted", "restriction"), ("mix-sofia", "market")],
+        _pmd_err or f"skipped={_pmd.skipped} filtered={[(f.url, f.reason) for f in _pmd.filtered]}",
+    )
+    # The alert path for that failed morning, with the real `search_jobs`. Every
+    # read of the row happens inside the session: a commit expires the attributes,
+    # and a closed session cannot refresh them (the `last_seen_at` lesson).
+    _pmfa_run, _pmfa_state, _pmfa_sent, _pmfa_err = None, None, [], ""
+    _pmfa_db = _pm_Session()
+    _pmfa_smtp, _pmfa_send = _pm_mailer.smtp_configured, _pm_mailer.send_email
+    try:
+        _pmfa_uid = _pm_mint(_pmfa_db, "Pay Market Failed Morning").id
+        _pmfa_db.add(_pm_SavedResume(
+            user_id=_pmfa_uid, label="Pay market master", language="en", resume_json=resume.model_dump_json(),
+        ))
+        _pmfa_db.commit()
+        _pm_update_alert(
+            _pmfa_db, _pmfa_uid, enabled=False, email="pay.market.failed@example.com", context=_pm_ctx(),
+            min_score=0,
+        )
+        _pm_mailer.smtp_configured = lambda: True
+        _pm_mailer.send_email = lambda to, subject, text, html="": _pmfa_sent.append(subject)
+        _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _PmDescBoard(_PM_FAILED, {"fail-berlin": ""})
+        _pmfa_run = _pm_run_alert(_pmfa_db, _pmfa_uid, force=True, search_fn=_pm_js.search_jobs)
+        _pmfa_row = _pm_get_alert(_pmfa_db, _pmfa_uid)
+        _pmfa_state = (_pmfa_row.last_error, _pmfa_row.last_above_min)
+    except Exception as _pmfa_e:  # noqa: BLE001 - one red check, never an aborted suite
+        _pmfa_err = f"{type(_pmfa_e).__name__}: {_pmfa_e}"
+    finally:
+        _pm_mailer.smtp_configured, _pm_mailer.send_email = _pmfa_smtp, _pmfa_send
+        _pmfa_db.close()
+    check(
+        "pay market, the alert path: a morning whose every selected posting failed is recorded in last_error, sends "
+        "nothing, and leaves last_above_min unmeasured rather than a clean 0",
+        _pmfa_err == ""
+        and _pmfa_run is not None
+        and _pmfa_run.ran is True
+        and "couldn't fetch any of their descriptions" in _pmfa_run.error
+        and _pmfa_state is not None
+        and "couldn't fetch any of their descriptions" in (_pmfa_state[0] or "")
+        and _pmfa_state[1] is None
+        and _pmfa_sent == [],
+        _pmfa_err or f"run={_pmfa_run} state={_pmfa_state} sent={_pmfa_sent}",
+    )
+finally:
+    _pm.high_pay_market = _pm_real_verdict
+    if _pm_real_board is not None:
+        _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _pm_real_board
+    else:
+        _pm_PROV.pop(_pm_js.WORLDWIDE_BOARD, None)
+
 # 21d. The market memory (PLAN 28.3). `posting_sightings` is the only thing in
 # this app that can say how long a posting has REALLY been open: `job_search_hits`
 # updates in place and bumps `searched_at` on every write, is capped at the newest

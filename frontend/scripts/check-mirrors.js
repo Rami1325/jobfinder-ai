@@ -3413,6 +3413,266 @@ try {
 globalThis.window = savedGlobals.window;
 globalThis.localStorage = savedGlobals.localStorage;
 
+// ---- 31. the Jobs page's search and card copy resolves in both locales --- //
+// Phase 30 Part J gave the Jobs page's filtered list a third reason: a
+// worldwide posting in a country where pay is well below Israel's is hidden
+// before it takes a slot, with a counted sentence over the list
+// (`search.filteredMarket`) and a note on each revealed row (`card.marketNote`).
+// And NOTHING resolved the `jobs` namespace against the code that reads it.
+// Check 8 is parity-only, so a key missing from en AND he is green; 16 and 22
+// read tailor.json; 28 reads the landing's bundles; 29 the account pages' and
+// the inbox's; 9 is scoped to AppLayout.tsx. A new counted key ships in exactly
+// that shape, and a raw `search.filteredMarket` in amber above the list would
+// be check 28's `faq.kicker` on the page the daily alert's reader opens.
+//
+// The same reader as 28 and 29 (`boundCalls`), so every key is looked up in
+// the namespace its own `useTranslation` binding names (`jobs` in both files
+// today), with bundles loaded on demand, check 29's way.
+//
+// SCOPED to `search.*` and `card.*` in these two files: the prefixes the
+// filtered list and its rows read. Every other literal key in both files
+// resolved when this check was written, so a wider scope is a free follow-up,
+// not a defect this check is hiding.
+//
+// TWO floors per file. The first is `boundCalls`' own, on every literal call
+// the binding reads. The second is on the scoped subset, for check 22's reason
+// one level down: JobsPage.tsx carries far more literal calls outside
+// `search.*` than inside it (60 against 22 when this was written), so a floor
+// on the total would stay satisfied while every call this check exists for had
+// gone dark.
+//
+// Not seen, by design, exactly as in 28: a template literal (`card.geo.${key}`)
+// has no fixed key, and neither does a ternary argument
+// (`t(show ? "search.geoHide" : "search.geoShow")`) or a `<Trans i18nKey>`.
+// The keys the pay filter added are written as plain literal calls so that
+// this check can see them.
+try {
+  // [file, floor on every literal call, floor on the search.* / card.* calls].
+  // Floors sit just under what each file carries today (82 and 22 in
+  // JobsPage.tsx, 38 and 37 in cards.tsx), check 29's convention: adding or
+  // removing a string does not trip them, a call shape going dark does.
+  const files = [
+    ["pages/JobsPage.tsx", 72, 19],
+    ["pages/jobs/cards.tsx", 34, 33],
+  ];
+  const IN_SCOPE = /^(?:search|card)\./;
+
+  // The plural forms i18next asks for in each UI locale. A FIXED table, never
+  // `Intl.PluralRules` read at build time: the build machine's ICU is not the
+  // user's browser, and older CLDR gave Hebrew a `many` form that CLDR 48 (Node
+  // 24, ICU 78: one, two, other) no longer has, so reading the runtime would make
+  // this check's verdict depend on which Node ran the build. `_zero` is optional.
+  const PLURAL_FORMS = { en: ["one", "other"], he: ["one", "two", "other"] };
+  const FORM = /^(?:zero|one|two|few|many|other)$/;
+  // What the Jobs page needs of one key in one locale's bundle: [] when it can
+  // render the key for every count, otherwise each reason it cannot.
+  const keyProblems = (b, key, loc) => {
+    if (!resolvesIn(b, key))
+      return [
+        `is missing "${key}" — the Jobs page would render the raw key. Check 8 stays green while both ` +
+          "locales are equally wrong.",
+      ];
+    const parts = key.split(".");
+    const leaf = parts.pop();
+    const parent = parts.reduce((o, k) => o[k], b);
+    // A plain key: i18next reads it whatever the count.
+    if (parent[leaf] !== undefined) return [];
+    const forms = new Set(
+      Object.keys(parent)
+        .filter((k) => k.startsWith(`${leaf}_`))
+        .map((k) => k.slice(leaf.length + 1))
+        .filter((form) => FORM.test(form)),
+    );
+    const gaps = PLURAL_FORMS[loc].filter((form) => !forms.has(form));
+    return gaps.length
+      ? [
+          `has "${key}" without its ${gaps.map((g) => `_${g}`).join(" / ")} form — i18next has no fallback to ` +
+            "_other, so that count renders in English or as the raw key. Check 8 compares stems and stays green.",
+        ]
+      : [];
+  };
+
+  const bundles = new Map();
+  const bundle = (loc, ns) => {
+    const id = `${loc}/${ns}`;
+    if (!bundles.has(id)) {
+      const p = path.join(SRC, "locales", loc, `${ns}.json`);
+      bundles.set(id, fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf8")) : null);
+    }
+    return bundles.get(id);
+  };
+
+  for (const [f, floorAll, floorScoped] of files) {
+    const scoped = boundCalls(f, floorAll).filter(([, , key]) => IN_SCOPE.test(key));
+    if (scoped.length < floorScoped)
+      throw new Error(
+        `scraped only ${scoped.length} literal search.* / card.* calls from ${f} ` +
+          `(expected at least ${floorScoped}) — the call shape changed, so this check would pass by never firing`,
+      );
+    // Once per key: cards.tsx reads `card.untitled` four times, and one
+    // missing key is one defect, not four copies of the same sentence.
+    const keys = new Map();
+    for (const [, ns, key] of scoped) keys.set(`${ns}|${key}`, [ns, key]);
+    const missingBundle = new Set();
+    for (const [ns, key] of keys.values())
+      for (const loc of ["en", "he"]) {
+        const b = bundle(loc, ns);
+        if (!b) {
+          if (!missingBundle.has(`${loc}/${ns}`))
+            fail(`${f} reads namespace "${ns}", but locales/${loc}/${ns}.json does not exist.`);
+          missingBundle.add(`${loc}/${ns}`);
+        } else {
+          for (const problem of keyProblems(b, key, loc)) fail(`locales/${loc}/${ns}.json ${problem} (used by ${f})`);
+        }
+      }
+  }
+
+  // Both directions, for every part this check adds to the shared reader.
+  // The scope filter keeps the keys it exists for and drops their neighbours...
+  for (const key of ["search.filteredMarket", "card.marketNote"])
+    if (!IN_SCOPE.test(key)) fail(`check 31's scope filter drops "${key}", a key it exists to resolve`);
+  for (const key of ["cards.title", "searching.now", "history.card", "tabs.search"])
+    if (IN_SCOPE.test(key)) fail(`check 31's scope filter reads "${key}", which is outside search.* and card.*`);
+  // ...the reader sees the two call shapes those keys are written in, a
+  // counted call and an interpolated one...
+  for (const probe of [
+    't("search.filteredMarket", { count: market })',
+    't("card.marketNote", { location: job.location })',
+  ]) {
+    CALL.lastIndex = 0;
+    if (!CALL.test(probe))
+      fail(`check 31's reader cannot see ${probe}, so the key behind it would be resolved against nothing`);
+  }
+  // ...and the lookup resolves a key that exists ONLY under its plural
+  // suffixes, as every counted sentence does, while refusing a missing one.
+  const jobsEn = bundle("en", "jobs");
+  if (!jobsEn || !resolvesIn(jobsEn, "search.geoFiltered") || resolvesIn(jobsEn, "search.__no_such_key__"))
+    fail("check 31's lookup cannot tell a counted key from a missing one in jobs.json, so it would pass for ever");
+  // ...and a counted key is only as good as its plural set. `resolvesIn` accepts
+  // a key when ANY suffixed form exists, while i18next 26 has no fallback to
+  // `_other`: it tries the form the count selects, then the bare key, then the
+  // fallback language. Measured on these bundles: with `filteredMarket_other`
+  // gone a count of 3 renders the raw key in both locales, and with the Hebrew
+  // `_two` gone a count of 2 renders the ENGLISH sentence on the Hebrew page.
+  // Check 8 stays green on both, because it compares stems.
+  const jobsHe = bundle("he", "jobs");
+  const withoutForm = (b, key, form) => {
+    const copy = JSON.parse(JSON.stringify(b));
+    const parts = key.split(".");
+    const leaf = parts.pop();
+    delete parts.reduce((o, k) => o[k], copy)[`${leaf}_${form}`];
+    return copy;
+  };
+  const COUNTED = "search.filteredMarket";
+  if (!jobsEn || !jobsHe || keyProblems(jobsEn, COUNTED, "en").length || keyProblems(jobsHe, COUNTED, "he").length)
+    fail(`check 31 refuses the real ${COUNTED} plural sets, which are complete in both locales`);
+  for (const [loc, b, form, harm] of [
+    ["en", jobsEn, "other", "a count of 3 renders the raw key"],
+    ["he", jobsHe, "two", "a count of 2 renders the English sentence"],
+    ["he", jobsHe, "other", "a count of 3 renders the English sentence"],
+  ])
+    if (b && !keyProblems(withoutForm(b, COUNTED, form), COUNTED, loc).length)
+      fail(`check 31 passes a ${loc} ${COUNTED} with no _${form} form, although ${harm}`);
+  // ...while a plain interpolated key is never asked for plural forms.
+  if (
+    (jobsEn && keyProblems(jobsEn, "card.marketNote", "en").length) ||
+    (jobsHe && keyProblems(jobsHe, "card.marketNote", "he").length)
+  )
+    fail("check 31 asks the plain card.marketNote for plural forms it does not need");
+
+  // A passing `test` on a /g regex leaves `lastIndex` past the match, and
+  // `matchAll` COPIES it, so the next `boundCalls` would start scraping at
+  // that offset instead of at the top of its file. Check 28 happens to end on
+  // a failing test, which resets it; the reader probes above end on a passing
+  // one, so this check hands the shared reader back at zero for check 32 onward.
+  CALL.lastIndex = 0;
+} catch (e) {
+  fail(`jobs copy check could not run: ${e.message}`);
+}
+
+// ---- 31, continued: the filtered banner says what its rows say ----------- //
+// "Every job we found states a hiring restriction abroad" is a claim about EVERY
+// row under it. Its guard used to list the other reasons one by one (`closed ===
+// 0 && market === 0`), which goes false the moment a row arrives with a reason it
+// does not list: a tab opened before a deploy, reading a newer backend's
+// response, printed that sentence over rows that state no restriction at all.
+// The defect `market` itself had one release earlier, one reason later.
+//
+// So the counting lives in `filteredSummary` (pages/jobs/shared.ts) and is
+// EXECUTED here, check 17's mechanism, over every mix of up to two rows across
+// the five shapes a response can carry: no `reason` (a pre-Phase-28 row, which
+// IS a restriction), the three this build names, and one it has never heard of,
+// each with and without a ranked match and a skipped posting. Then two source
+// pins, because an executed helper the page does not call guards nothing: the
+// page counts through it, and shows the "every job" sentence exactly when it
+// says so, in that polarity.
+try {
+  const { filteredSummary } = runProbeBundle(
+    "filtered-summary",
+    'export { filteredSummary } from "./pages/jobs/shared";',
+  );
+  if (typeof filteredSummary !== "function") throw new Error("pages/jobs/shared.ts exports no filteredSummary");
+
+  const SHAPES = [undefined, "restriction", "closed", "market", "some_future_reason"];
+  const mixes = SHAPES.flatMap((a) => [[a], ...SHAPES.map((b) => [a, b])]);
+  const wrong = [];
+  for (const matches of [0, 1])
+    for (const skipped of [0, 1])
+      for (const reasons of mixes) {
+        const got = filteredSummary({
+          matches: Array(matches).fill({}),
+          skipped,
+          filtered: reasons.map((reason) => (reason === undefined ? {} : { reason })),
+        });
+        const restricted = reasons.filter((r) => r === undefined || r === "restriction").length;
+        const want = {
+          restricted,
+          closed: reasons.filter((r) => r === "closed").length,
+          market: reasons.filter((r) => r === "market").length,
+          // The sentence's own claim: nothing ranked, nothing skipped, and every
+          // row under it states a restriction.
+          everyRestricted: matches === 0 && skipped === 0 && restricted === reasons.length,
+        };
+        const off = Object.keys(want).filter((k) => got[k] !== want[k]);
+        if (off.length)
+          wrong.push(`${JSON.stringify({ matches, skipped, reasons })} gave ${off.map((k) => `${k}=${got[k]}`).join(", ")}`);
+      }
+  if (wrong.length)
+    fail(
+      `the Jobs page's filtered banner misdescribes its rows in ${wrong.length} of ${mixes.length * 4} mixes — ` +
+        wrong.slice(0, 3).join("; "),
+    );
+  // The two directions this exists for, named so a regression reads as itself.
+  const unknownMix = filteredSummary({
+    matches: [],
+    skipped: 0,
+    filtered: [{ reason: "restriction" }, { reason: "some_future_reason" }],
+  });
+  if (unknownMix.everyRestricted)
+    fail("the Jobs page says every job states a hiring restriction over a row whose reason this build has never heard of");
+  const legacy = filteredSummary({ matches: [], skipped: 0, filtered: [{}, { reason: "restriction" }] });
+  if (!legacy.everyRestricted || legacy.restricted !== 2)
+    fail("the Jobs page stopped reading a row with no reason as the restriction it was dropped for");
+
+  const page = decomment(read("pages/JobsPage.tsx"));
+  if (!/\bfilteredSummary\(\s*searchResult\s*\)/.test(page))
+    fail("JobsPage.tsx no longer counts its filtered banner through filteredSummary, so the pin above guards nothing it shows");
+  // Polarity, not presence (checks 15 and 21): an inverted `!everyRestricted ?`
+  // must not pass, while a destructured or a member read both may.
+  const EVERY = /(?:^|[^!\w.])(?:\w+\.)?everyRestricted\s*\?\s*t\("search\.geoAllFiltered"\)/;
+  if (!EVERY.test(page))
+    fail("JobsPage.tsx no longer shows search.geoAllFiltered exactly when everyRestricted is true");
+  for (const [probe, want] of [
+    ['{everyRestricted ? t("search.geoAllFiltered")', true],
+    ['{summary.everyRestricted ? t("search.geoAllFiltered")', true],
+    ['{!everyRestricted ? t("search.geoAllFiltered")', false],
+    ['{!summary.everyRestricted ? t("search.geoAllFiltered")', false],
+  ])
+    if (EVERY.test(probe) !== want) fail(`check 31's polarity pin reads ${probe} the wrong way round`);
+} catch (e) {
+  fail(`jobs banner check could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

@@ -59,10 +59,12 @@ class JobHit:
     # "United Kingdom", "European Union"), or "" for the context's own
     # location. Set by the fan-out's _search_board, NEVER by providers — the
     # remote-ness and the market live in the QUERY (f_WT=2 + location) and
-    # nothing in a LinkedIn card echoes them back. This is the gate on the
-    # geo-restriction classifier: with include_worldwide off every stamp is ""
-    # and the classifier is never called, so a normal search and every
-    # Israeli-board posting are structurally out of its reach.
+    # nothing in a LinkedIn card echoes them back. This is the gate on BOTH
+    # worldwide-only classifiers: the geo-restriction one, and the pay-market
+    # filter (`pay_market`, which reads `location`, because the "European
+    # Union" query returns every member state). With include_worldwide off
+    # every stamp is "" and neither is ever called, so a normal search and
+    # every Israeli-board posting are structurally out of their reach.
     origin_market: str = ""
     # Evidence text set by `fetch_description` when the BOARD ITSELF says the
     # posting is dead — the guest page's own banner ("No longer accepting

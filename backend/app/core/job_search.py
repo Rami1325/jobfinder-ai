@@ -9,6 +9,7 @@ of sinking it — the search only fails when every selected board fails.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import re
 import threading
@@ -28,6 +29,9 @@ from app.core.providers.linkedin import (  # noqa: F401 - re-exports
 )
 from app.core.geo_restriction import detect_geo_restriction
 from app.core.ghost_signals import Sighting, detect_ghost_signals, parse_board_date
+# The module, not the function: `_low_pay` calls `pay_market.high_pay_market`
+# through it, so a spy on the module attribute sees the real call path.
+from app.core import pay_market
 from app.core.relevance import RELEVANT_MIN, title_relevance
 from app.core.salary import extract_salary
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
@@ -63,10 +67,13 @@ SCORE_WORKERS = 5  # concurrent scoring workers; same-board detail fetches stay 
 
 # Worldwide-remote opt-in (SearchContext.include_worldwide + work_mode "remote" or "any"):
 # extra locations queried on the board(s) with global reach, targeting remote
-# roles hiring from high-earning markets. These queries are always remote-only
-# regardless of the context's work mode (see _board_queries). "European Union" is a real LinkedIn
-# location that covers the high-paying EU markets in one query — keep this list
-# short: every entry multiplies the per-board query count by len(job_titles).
+# roles. These queries are always remote-only regardless of the context's work
+# mode (see _board_queries). "European Union" is a real LinkedIn location, and it
+# returns postings in EVERY member state, Bulgaria and Romania included, not only
+# the high-paying ones: `pay_market` hides a posting whose location names a
+# low-pay country before selection (see `_low_pay`). It stays one query rather
+# than a list of the rich member states because every entry here multiplies the
+# per-board query count by len(job_titles), run serially against a board that 429s.
 WORLDWIDE_REMOTE_LOCATIONS: list[str] = ["United States", "United Kingdom", "European Union"]
 WORLDWIDE_BOARD = "linkedin"  # the only registered board with worldwide inventory
 
@@ -379,19 +386,98 @@ def select_hits(tiers: list[dict[str, list[JobHit]]], limit: int) -> list[JobHit
     return merged
 
 
+def _low_pay(hit: JobHit) -> bool:
+    """The pay-market gate: True ONLY for a worldwide-origin posting whose card
+    location names a country where pay is well below Israel's.
+
+    Gated on `origin_market` exactly as `_geo_for` is, and for the same reason:
+    with `include_worldwide` off this returns False without reading a
+    character, and a posting the user's OWN location query also returned has
+    already had its stamp cleared by `_search_board`'s local-wins pass, so it is
+    never hidden. `pay_market.high_pay_market` answers True / False / None and
+    only False hides: an unplaceable location ("European Union", "Remote", "")
+    is KEPT, because an unfamiliar format must never silently delete a real job.
+
+    It reads no `jd_text`, which is what lets it run BEFORE selection where the
+    geo gate cannot: the card's own location is the whole input."""
+    if not hit.origin_market:
+        return False
+    return pay_market.high_pay_market(hit.location) is False
+
+
+def _split_low_pay(
+    tiers: list[dict[str, list[JobHit]]],
+) -> tuple[list[dict[str, list[JobHit]]], list[JobHit]]:
+    """(kept_tiers, low_pay): every tier's per-board lists with the `_low_pay`
+    hits moved out, board order and within-board order unchanged, so
+    `select_hits` interleaves the kept pool exactly as it would have."""
+    kept_tiers: list[dict[str, list[JobHit]]] = []
+    low_pay: list[JobHit] = []
+    for tier in tiers:
+        kept: dict[str, list[JobHit]] = {}
+        for name, tier_hits in tier.items():
+            for hit in tier_hits:
+                if _low_pay(hit):
+                    low_pay.append(hit)
+                else:
+                    kept.setdefault(name, []).append(hit)
+        kept_tiers.append(kept)
+    return kept_tiers, low_pay
+
+
+def _displaced_low_pay(
+    tiers: list[dict[str, list[JobHit]]], low_pay: list[JobHit], limit: int
+) -> list[JobHit]:
+    """The low-pay hits an UNFILTERED selection would have given a slot, in that
+    selection's order: what the filter actually took off the page, never the
+    whole pool it read (up to 5 titles × 4 locations × 50 cards per board).
+
+    The unfiltered selection runs on COPIES. `_interleave_into` appends to
+    `prior.also_on` when it meets a content twin, so on the real objects it
+    would hand a kept card an "Also on" link to a posting the user is told is
+    hidden. `JobHit` is a dataclass, hence `copy.deepcopy`. Each copy is traced
+    back to its original by identity, so the rows describe exactly the hits
+    `_split_low_pay` moved out. Nothing is copied when nothing was hidden.
+    `search_jobs` then drops any whose content twin made the page anyway: that
+    role was not taken off it."""
+    if not low_pay:
+        return []
+    hidden = {id(hit) for hit in low_pay}
+    original: dict[int, JobHit] = {}
+    twin_tiers: list[dict[str, list[JobHit]]] = []
+    for tier in tiers:
+        twin_tier: dict[str, list[JobHit]] = {}
+        for name, tier_hits in tier.items():
+            twins: list[JobHit] = []
+            for hit in tier_hits:
+                twin = copy.deepcopy(hit)
+                original[id(twin)] = hit
+                twins.append(twin)
+            twin_tier[name] = twins
+        twin_tiers.append(twin_tier)
+    return [
+        original[id(twin)]
+        for twin in select_hits(twin_tiers, limit)
+        if id(original[id(twin)]) in hidden
+    ]
+
+
 def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str, str]]:
     """(job_title, location, work_mode, origin_market) tuples one board will be
     queried with — normally every keyword against the context's own location
     and work mode.
     The worldwide-remote opt-in (work_mode "remote"/"any" + include_worldwide)
-    adds each high-earning market in WORLDWIDE_REMOTE_LOCATIONS, but ONLY on
-    the board with global inventory — the local Israeli boards never see those
-    locations. Worldwide queries are always remote-only, even when the context's
-    work mode is "any": abroad, only remote roles are workable, while the local
-    location keeps the user's mode. A board the user unchecked in `sources` is
-    never queried AT ALL — not even by the worldwide pass (PLAN 15.9: the
-    checkboxes are authoritative; the pass riding an unchecked LinkedIn read as
-    a bug to the actual user). Pure; pinned by the smoke test.
+    adds each location in WORLDWIDE_REMOTE_LOCATIONS, but ONLY on the board
+    with global inventory — the local Israeli boards never see those
+    locations. Those locations say where we LOOK, not what a posting pays: the
+    "European Union" query returns every member state, and `_low_pay` hides the
+    postings in low-pay countries before selection. Worldwide queries are
+    always remote-only, even when the context's work mode is "any": abroad, only
+    remote roles are workable, while the local location keeps the user's mode.
+    A board the user unchecked in `sources` is never queried AT ALL — not even
+    by the worldwide pass (PLAN 15.9: the checkboxes are authoritative; the pass
+    riding an unchecked LinkedIn read as a bug to the actual user). Pure; pinned
+    by the smoke test.
 
     The fourth element is the ORIGIN MARKET — "" for the context's own location,
     the market name for each worldwide entry — and it is carried here rather
@@ -598,7 +684,56 @@ def search_jobs(
     # Relevance-first selection (PLAN 15.6): budget goes to title-relevant
     # postings first, then old-but-relevant backfill (marked stale), then
     # description-only matches. Old + irrelevant stays dropped.
-    hits = select_hits(tiered_by_source(hits_by_source, ctx.job_titles, ctx.max_age_days), ctx.limit)
+    tiers = tiered_by_source(hits_by_source, ctx.job_titles, ctx.max_age_days)
+    # The pay-market filter (Phase 30 J) runs HERE, BEFORE selection, and the
+    # position is the design. LinkedIn's "European Union" location returns
+    # postings in every member state, and `_low_pay` needs only the card's
+    # location, so a hidden posting takes no slot, is never fetched and costs no
+    # model call, and the freed slot refills from the kept pool in this same
+    # single round. That is not the two-round backfill the geo filter refused:
+    # `fetch_locks`, `matches_by_hit`, `geo_by_hit`, `ghost_by_hit`, the
+    # sightings keys and the SSE `total` below are all built from the final
+    # `hits`. The displaced rows are computed FIRST, from copies of the untouched
+    # tiers, because the kept selection appends to its own cards' `also_on`.
+    kept_tiers, low_pay = _split_low_pay(tiers)
+    displaced = _displaced_low_pay(tiers, low_pay, ctx.limit)
+    hits = select_hits(kept_tiers, ctx.limit)
+    # A displaced posting whose ROLE made the page anyway is not reported. Its
+    # content twin (same title and company, another URL, a kept location) folded
+    # into it as "Also on" while the hidden copy held the slot, and takes the slot
+    # itself once that copy is hidden: a "1 job hidden" row would call a job
+    # hidden while its identical card is ranked on the same page. Only a twin
+    # that made the page counts. One the freed slot never reached leaves the role
+    # off the page, so that row stays.
+    on_page = {content_key(hit.title, hit.company) for hit in hits} - {""}
+    market_rows = [
+        FilteredJob(
+            title=hit.title,
+            company=hit.company,
+            location=hit.location,
+            url=hit.url,
+            source=hit.source,
+            posted_at=hit.posted_at,
+            logo_url=hit.logo_url,
+            reason="market",
+        )
+        for hit in displaced
+        if content_key(hit.title, hit.company) not in on_page
+    ]
+    if not hits and market_rows:
+        # Every posting that survived tiering was in a low-pay country. "None
+        # posted in the last N days" would be false, and raising would destroy
+        # the list: this is the all-filtered 200 the restriction and closed
+        # filters already return, reached before scoring instead of after it.
+        # Nothing was selected, so nothing was skipped.
+        return JobSearchResult(
+            context=ctx,
+            matches=[],
+            skipped=0,
+            filtered=market_rows,
+            source_errors=source_errors,
+            source_empty=source_empty,
+        )
     if not hits:  # boards answered, but only with old postings that don't match the keywords
         raise NoResultsError(
             f"Found jobs, but none posted in the last {ctx.max_age_days} days — and the "
@@ -873,11 +1008,11 @@ def search_jobs(
     #
     # This is written as ONE reason per hit rather than two concatenated
     # comprehensions on purpose: two lists would emit TWO rows for a posting
-    # that trips both, `len(filtered)` would exceed the number of removed hits,
-    # and `skipped` below would go NEGATIVE. Today's order in `_build_match`
-    # (geo returns before ghost is even classified) makes the overlap
-    # unreachable — the rule is written down anyway so a future reordering
-    # cannot resurrect that arithmetic silently.
+    # that trips both, and `filtered` would report more removals than there
+    # were removed hits while `skipped` below counted them once. Today's order
+    # in `_build_match` (geo returns before ghost is even classified) makes the
+    # overlap unreachable — the rule is written down anyway so a future
+    # reordering cannot resurrect that double count silently.
     filter_reasons = [
         "restriction"
         if geo is not None and geo.blocking
@@ -912,27 +1047,48 @@ def search_jobs(
     # words. So it joins `filtered` under its own `reason` rather than inflating
     # `skipped`, which would tell the user the boards were throttling us at the
     # exact moment we had the clearest possible answer from one. The arithmetic
-    # survives the second kind because `filtered` is at most one row per hit by
-    # construction (see filter_reasons).
-    skipped = len(hits) - len(matches) - len(filtered)
+    # survives the second kind because `filter_reasons` holds at most one
+    # reason per hit by construction (see above).
+    #
+    # It subtracts the per-hit REASONS, never `len(filtered)`, and the market
+    # rows join `filtered` only AFTER it: a market row was never in `hits`, so
+    # counting it here would push `skipped` one lower per hidden posting, and
+    # below zero on a morning of Bulgarian cards.
+    skipped = len(hits) - len(matches) - sum(1 for reason in filter_reasons if reason)
+    filtered = filtered + market_rows
 
-    if not matches and filtered:
-        # Nothing ranked, but something was filtered. Return the 200 with the
-        # filtered list rather than raising: this is the maximum-suspicion case,
-        # the one where the user most needs to read what we fired on — and the
-        # throttling message below would send them to re-run a search that fails
-        # identically. The only existing contract this design changes.
+    if not matches and any(filter_reasons):
+        # Nothing ranked, but a SELECTED posting was filtered. Return the 200
+        # with the filtered list rather than raising: this is the maximum-
+        # suspicion case, the one where the user most needs to read what we
+        # fired on — and the throttling message below would send them to re-run
+        # a search that fails identically. The only existing contract this
+        # design changes.
         #
-        # It fires for EITHER reason. A morning where every posting the boards
-        # returned has closed is exactly as much a "we removed these on purpose,
-        # here they are" answer as a morning where every one states a hiring
-        # restriction — and raising would destroy the list in both. This
+        # It needs a PER-HIT reason, and market rows alone never make one. A
+        # market row describes a posting that was never selected, so it cannot
+        # answer for the ones that were: when every selected posting failed to
+        # fetch or to score, the search raises below exactly as it would with
+        # nothing hidden. That raise is `alerts.run_alert`'s only error channel.
+        # As a 200 it wrote `last_error = ""` and `last_above_min = 0` (a
+        # measured "none cleared") for a morning where nothing was scored, and a
+        # fetch failure leaves no `score_errors` to attribute, so the Jobs page
+        # showed no warning either. The market rows go with that raise; the
+        # failure is the truer answer. A search whose every posting was hidden
+        # before selection already returned its 200 above, where nothing was
+        # selected that could fail. With a per-hit reason present, the market
+        # rows ride along in this 200.
+        #
+        # A morning where every posting the boards returned has closed is
+        # exactly as much a "we removed these on purpose, here they are" answer
+        # as a morning where every one states a hiring restriction — and
+        # raising would destroy the list in both. This
         # function states no reason of its own: the response carries
         # `filtered[i].reason` and the UI switches on it, so nothing here can
         # tell a user their search was blocked by a hiring restriction when what
         # we actually found was a dead posting.
         #
-        # The guard is `filtered`, not "everything was filtered", so postings
+        # The guard is any per-hit reason, not "everything was filtered", so postings
         # that genuinely broke can be in here too — and their diagnostic must
         # not vanish with the raise we are skipping. Attribute each to the board
         # it came from, which is where the UI already reports board trouble; a

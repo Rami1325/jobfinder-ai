@@ -1164,8 +1164,10 @@ class GhostReport(BaseModel):
 
 class FilteredJob(BaseModel):
     """A posting removed before scoring — because it states a Tier-1 restriction,
-    or because the board says it is closed — returned so the removal is VISIBLE
-    and appealable rather than silent. `reason` says which.
+    because the board says it is closed, or because it came from the worldwide
+    pass and its location names a country where pay is well below Israel's —
+    returned so the removal is VISIBLE and appealable rather than silent.
+    `reason` says which.
 
     Deliberately carries no scores — it was never scored, and a zero would be a
     fabricated number."""
@@ -1182,7 +1184,13 @@ class FilteredJob(BaseModel):
     # pre-Phase-28 caller and every stored row stays honest. A row that predates
     # the field means "restriction", which is TRUE — this repo's "unknown is
     # never zero" rule, applied where the old value genuinely is known.
-    reason: str = "restriction"  # restriction | closed
+    #
+    # "market" (Phase 30 J): a worldwide-origin posting whose location names a
+    # country where pay is well below Israel's (`app.core.pay_market`). Its
+    # evidence is `location` itself, and `geo_restriction` and `ghost` stay None:
+    # it was hidden before selection, so it was never fetched and neither of
+    # those classifiers ran.
+    reason: str = "restriction"  # restriction | closed | market
     # The evidence behind reason == "closed" — the board's own words, or the
     # status it answered with. None when the removal was a restriction.
     ghost: Optional[GhostReport] = None
@@ -1250,11 +1258,15 @@ class SearchContext(BaseModel):
     # fan-out against JobHit.posted_at, keeping hits with no known date.
     max_age_days: int = 30
     # Worldwide-remote opt-in: when work_mode is "remote" or "any", ALSO search
-    # remote roles in high-earning markets (US/UK/EU — see
+    # remote roles in the US, the UK and the EU (see
     # job_search.WORLDWIDE_REMOTE_LOCATIONS) on the boards with global reach
     # (LinkedIn). Worldwide queries are always remote-only (with "any" the local
     # location keeps "any"). Local Israeli boards are never queried with those
-    # locations, and the flag is inert for "onsite"/"hybrid".
+    # locations, and the flag is inert for "onsite"/"hybrid". The EU query
+    # returns every member state, so a worldwide posting whose location names a
+    # country where pay is well below Israel's is hidden before selection
+    # (`app.core.pay_market`) and returned in `JobSearchResult.filtered` with
+    # reason "market".
     include_worldwide: bool = False
 
 
@@ -1281,11 +1293,12 @@ class JobSearchResult(BaseModel):
     skipped: int = 0  # listings found but not fetchable/scorable
     # Postings found but deliberately NOT scored, returned rather than silently
     # discarded so the user can see the count, read the sentence we fired on,
-    # and reveal them. Two reasons, and `FilteredJob.reason` says which: a
-    # Tier-1 hiring restriction stated abroad, or a board that says the posting
-    # is no longer accepting applications. NOT part of `skipped`, whose
-    # user-facing string means "not fetchable/scorable" — a filtered posting was
-    # perfectly fetchable, and folding either reason into it is exactly what
+    # and reveal them. Three reasons, and `FilteredJob.reason` says which: a
+    # Tier-1 hiring restriction stated abroad, a board that says the posting is
+    # no longer accepting applications, or a worldwide posting whose location
+    # names a country where pay is well below Israel's. NOT part of `skipped`,
+    # whose user-facing string means "not fetchable/scorable" — a filtered
+    # posting was fetchable, and folding any reason into it is exactly what
     # this list exists to prevent. ONE list, never a second one per reason: two
     # lists fragment the same idea and every caller has to remember both.
     filtered: list[FilteredJob] = Field(default_factory=list)

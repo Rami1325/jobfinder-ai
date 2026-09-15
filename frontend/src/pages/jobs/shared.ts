@@ -2,7 +2,7 @@
 // JobsPage.tsx — PLAN 12.5d). No JSX here.
 import type { TFunction } from "i18next";
 import { textLanguage } from "../../lib/lang";
-import type { JobMatch, KitJobIn, SearchContext } from "../../types";
+import type { JobMatch, JobSearchResult, KitJobIn, SearchContext } from "../../types";
 
 // House ease curve — shared by the scan ticker flips and JobsPage's tab/card motion.
 export const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -187,4 +187,40 @@ export function contextKey(c: SearchContext | null): string {
     c.max_age_days ?? 30,
     c.include_worldwide ?? false,
   ]);
+}
+
+/** The sentences over the Jobs page's filtered list, counted per reason: how
+ * many rows each one describes, and whether "Every job we found states a hiring
+ * restriction abroad" is TRUE of this result.
+ *
+ * ONE list on the wire, three reasons in it (Phase 30 J added `market`), so the
+ * count is taken PER REASON here rather than a list per reason being asked for
+ * on the API, and each reason is tested BY NAME. `reason` defaults to
+ * "restriction" on the backend and is absent on a pre-Phase-28 response, so a
+ * restriction is `!reason || reason === "restriction"`; the old count,
+ * "everything not literally closed", called a posting hidden for its country's
+ * pay a hiring restriction it never stated.
+ *
+ * Pure, so check-mirrors 31 EXECUTES it over every mix of reasons. */
+export function filteredSummary(result: Pick<JobSearchResult, "matches" | "skipped" | "filtered">): {
+  restricted: number;
+  closed: number;
+  market: number;
+  everyRestricted: boolean;
+} {
+  const filtered = result.filtered ?? [];
+  const restricted = filtered.filter((j) => !j.reason || j.reason === "restriction").length;
+  const closed = filtered.filter((j) => j.reason === "closed").length;
+  const market = filtered.filter((j) => j.reason === "market").length;
+  // "Every job we found states a hiring restriction abroad" is a claim about
+  // EVERY row, so it is tested as one: `restricted === filtered.length`. Listing
+  // the other reasons instead (`closed === 0 && market === 0`) went false for a
+  // row whose reason this build has never heard of, which a tab opened before a
+  // deploy reads from a newer backend.
+  const everyRestricted =
+    restricted > 0 &&
+    restricted === filtered.length &&
+    result.matches.length === 0 &&
+    result.skipped === 0;
+  return { restricted, closed, market, everyRestricted };
 }

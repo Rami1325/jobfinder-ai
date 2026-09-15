@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import {
   BadgeCheck,
+  Banknote,
   Briefcase,
   Ghost,
   Globe,
@@ -64,7 +65,7 @@ import { BatchTailorCard, KitRow } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
 import { VersionHistoryModal } from "./jobs/VersionHistory";
 import { SearchScanPanel } from "./jobs/ScanPanel";
-import { EASE, inputCls, normalizeJobUrl, SOURCE_IDS, sourceLabel } from "./jobs/shared";
+import { EASE, filteredSummary, inputCls, normalizeJobUrl, SOURCE_IDS, sourceLabel } from "./jobs/shared";
 
 
 export default function JobsPage() {
@@ -199,9 +200,10 @@ export default function JobsPage() {
   // to this", so hiding it would bury the shortlist.
   const [hideApplied, setHideApplied] = useState(false);
   // A one-way "show me anyway", not a saved preference: tapping it reveals the
-  // postings we dropped for a stated hiring restriction and does NOT re-run the
-  // search. Reset per result below, or the previous search's reveal leaks into
-  // the next one's list.
+  // postings the search dropped before scoring (a stated hiring restriction, a
+  // closed posting, or a worldwide posting in a country where pay is well below
+  // Israel's) and does NOT re-run the search. Reset per result below, or the
+  // previous search's reveal leaks into the next one's list.
   const [showRestricted, setShowRestricted] = useState(false);
   const isDone = (m: JobMatch) => {
     const s = statusFor(m);
@@ -724,45 +726,46 @@ export default function JobsPage() {
                 </div>
                 {(searchResult.filtered?.length ?? 0) > 0 &&
                   (() => {
-                    // ONE list on the wire, two reasons in it, so the count is
-                    // taken PER REASON here rather than a second list being
-                    // asked for on the API. `reason` defaults to "restriction"
-                    // on the backend and is absent on a pre-Phase-28 response,
-                    // so the test is "is it literally closed" — read the other
-                    // way round, every old payload would be counted as closed
-                    // and the banner would describe a search that never ran.
-                    const filtered = searchResult.filtered!;
-                    const closed = filtered.filter((j) => j.reason === "closed").length;
-                    const restricted = filtered.length - closed;
+                    // Counted per reason, by name, in `filteredSummary`
+                    // (jobs/shared.ts), which check-mirrors 31 executes over
+                    // every mix of reasons: the sentences below are claims
+                    // about the rows under them.
+                    const { restricted, closed, market, everyRestricted } =
+                      filteredSummary(searchResult);
                     return (
                       <p className="flex flex-wrap items-center gap-2 text-xs text-warn">
+                        {/* Each icon is held to its OWN sentence. As loose
+                            flex items, an icon stayed at the end of one line
+                            while its sentence wrapped onto the next, and at
+                            390px the long market sentence always wraps. */}
                         {restricted > 0 && (
-                          <>
-                            <Globe size={13} className="shrink-0" />
-                            {/* "Every job" is only true when nothing was
-                                dropped for another reason. `skipped` counts
-                                postings that failed to fetch or score, and
-                                claiming they stated a restriction contradicts
-                                the "N skipped" line directly above — and
-                                `closed === 0` is the same guard one release
-                                later: a list of dead postings sitting under a
-                                sentence that says every job we found states a
-                                hiring restriction abroad is the banner
-                                contradicting the rows it introduces. */}
-                            {searchResult.matches.length === 0 &&
-                            searchResult.skipped === 0 &&
-                            closed === 0
+                          <span className="flex min-w-0 items-start gap-1.5">
+                            <Globe size={13} className="mt-0.5 shrink-0" />
+                            {/* "Every job" is only true when every row under
+                                it states a restriction and nothing ranked or
+                                was skipped (`skipped` counts postings that
+                                failed to fetch or score, and claiming they
+                                stated a restriction contradicts the "N skipped"
+                                line directly above). `filteredSummary` decides
+                                that from the rows themselves. */}
+                            {everyRestricted
                               ? t("search.geoAllFiltered")
                               : t("search.geoFiltered", { count: restricted })}
-                          </>
+                          </span>
                         )}
                         {closed > 0 && (
-                          <>
-                            <Ghost size={13} className="shrink-0" />
+                          <span className="flex min-w-0 items-start gap-1.5">
+                            <Ghost size={13} className="mt-0.5 shrink-0" />
                             {t("search.filteredClosed", { count: closed })}
-                          </>
+                          </span>
                         )}
-                        {/* ONE toggle for both sentences: `showRestricted`
+                        {market > 0 && (
+                          <span className="flex min-w-0 items-start gap-1.5">
+                            <Banknote size={13} className="mt-0.5 shrink-0" />
+                            {t("search.filteredMarket", { count: market })}
+                          </span>
+                        )}
+                        {/* ONE toggle for all three sentences: `showRestricted`
                             reveals the whole `filtered` list, so a control per
                             reason would promise a filter this reveal does not
                             implement. */}

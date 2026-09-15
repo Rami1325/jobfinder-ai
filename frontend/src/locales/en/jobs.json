@@ -155,7 +155,7 @@
     },
     "sourcesLabel": "Job boards",
     "worldwide": "Include worldwide remote jobs",
-    "worldwideHint": "Also searches remote roles in high-earning markets (US, UK, EU) on LinkedIn — the local Israeli boards stay local.",
+    "worldwideHint": "Also searches remote roles in high-paying countries on LinkedIn (the US, the UK and most of Western and Northern Europe). Jobs listed in a lower-paying country are left out, and the local Israeli boards stay local.",
     "worldwideNeedsLinkedIn": "Runs on LinkedIn — check the LinkedIn board below to enable it.",
     "worldwideTag": "incl. worldwide",
     "cta": "Find jobs for me",
@@ -209,7 +209,9 @@
     "geoHide": "Hide them",
     "geoAllFiltered": "Every job we found states a hiring restriction abroad. Read what each one says before dismissing the search.",
     "filteredClosed_one": "{{count}} posting is no longer accepting applications",
-    "filteredClosed_other": "{{count}} postings are no longer accepting applications"
+    "filteredClosed_other": "{{count}} postings are no longer accepting applications",
+    "filteredMarket_one": "{{count}} job hidden: it's in a country where pay is well below Israel's.",
+    "filteredMarket_other": "{{count}} jobs hidden: they're in countries where pay is well below Israel's."
   },
   "workModes": {
     "any": "Any",
@@ -263,6 +265,7 @@
     },
     "geoNote": "Quoted from the posting — we report what it says, never whether you qualify.",
     "geoNotScored": "Not scored",
+    "marketNote": "Hidden because pay in {{location}} is well below Israel's.",
     "ghost": {
       "closed": "No longer accepting applications",
       "evergreen": "A general application, not a specific role",

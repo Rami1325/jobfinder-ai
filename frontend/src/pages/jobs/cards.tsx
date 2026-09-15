@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
   ArrowRight,
+  Banknote,
   Building2,
   ExternalLink,
   Ghost,
@@ -184,6 +185,38 @@ export function GeoNote({ geo }: { geo?: GeoRestriction | null }) {
   );
 }
 
+/** Why a worldwide posting was hidden before it took a result slot: its
+ * location names a country where pay is well below Israel's. That location is
+ * the only thing the backend's rule reads, so it is the evidence, and the
+ * sentence quotes it rather than naming a country we inferred from it.
+ *
+ * `GeoNote`'s shape, for `GeoNote`'s reasons: a full-width line with the
+ * evidence on the page, because there is no hover on a phone, and
+ * `break-words`, because the location is untrusted board text.
+ *
+ * The location is wrapped in FIRST STRONG ISOLATE ... POP DIRECTIONAL ISOLATE,
+ * the text form of `GeoNote`'s `<bdi dir="auto">`, because a `t()` value cannot
+ * carry an element. Measured in Chromium inside the Hebrew sentence: "Sofia,
+ * Sofia City, Bulgaria" and even "Sofia (Remote)" draw in order without it
+ * (brackets resolve as a pair), but "1000 Sofia, Bulgaria" draws its number
+ * out of place, and board text is untrusted.
+ *
+ * No `PostingNote` under it: "Quoted from the posting" is about a sentence the
+ * posting wrote, and this row quotes none. A Banknote, never a warning
+ * triangle, for `GeoNote`'s reason. */
+function MarketNote({ location }: { location: string }) {
+  const { t } = useTranslation("jobs");
+  if (!location) return null;
+  return (
+    <p className="mt-2 flex items-start gap-1.5 text-xs text-warn">
+      <Banknote size={12} className="mt-0.5 shrink-0" />
+      <span className="min-w-0 break-words">
+        {t("card.marketNote", { location: `\u2068${location}\u2069` })}
+      </span>
+    </p>
+  );
+}
+
 // Every ghost `kind` this build has a string for. A newer backend may emit a
 // kind we have never heard of, and `t("card.ghost.<unknown>")` renders the KEY
 // — a dotted path at 12px in amber, on the card, in production. So an unknown
@@ -319,11 +352,17 @@ function PostingNote({ geo, ghost }: { geo: boolean; ghost: boolean }) {
  * read as a zero fit, which is a number we never computed. */
 export function RestrictedRow({ job }: { job: FilteredJob }) {
   const { t } = useTranslation("jobs");
-  // One posting, one reason. `reason` defaults to "restriction" on the backend
-  // and is ABSENT on a pre-Phase-28 response, so the test is "is it literally
-  // closed" — read the other way round, an old payload would fall through to a
-  // row with no note at all, having stated a restriction we then never showed.
+  // One posting, one reason, each tested BY NAME. `reason` defaults to
+  // "restriction" on the backend and is ABSENT on a pre-Phase-28 response, so a
+  // restriction is `!reason || reason === "restriction"`: an old payload still
+  // shows the restriction it was dropped for. The old test, "anything not
+  // literally closed is a restriction", went false when `market` arrived: a
+  // posting hidden for its country's pay fell into the restriction branch and,
+  // having no restriction to quote, showed no reason at all. A reason this
+  // build has never heard of draws no note, which is the honest direction.
   const closed = job.reason === "closed";
+  const market = job.reason === "market";
+  const restriction = !job.reason || job.reason === "restriction";
   return (
     <JobResultCard>
       <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -342,9 +381,15 @@ export function RestrictedRow({ job }: { job: FilteredJob }) {
             {job.company || "—"}
             {job.location ? ` · ${job.location}` : ""}
           </p>
-          {closed ? <GhostNote ghost={job.ghost} /> : <GeoNote geo={job.geo_restriction} />}
+          {closed ? (
+            <GhostNote ghost={job.ghost} />
+          ) : market ? (
+            <MarketNote location={job.location} />
+          ) : restriction ? (
+            <GeoNote geo={job.geo_restriction} />
+          ) : null}
           <PostingNote
-            geo={!closed && !!job.geo_restriction}
+            geo={restriction && !!job.geo_restriction}
             ghost={closed && !!strongestGhostSignal(job.ghost)}
           />
           {job.url && (

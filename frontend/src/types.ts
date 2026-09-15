@@ -511,22 +511,29 @@ export interface GhostReport {
   signals: GhostSignal[];
 }
 /** A posting the search dropped BEFORE scoring — because it states a blocking
- * restriction, or because the board says it is closed. Carries no scores on
- * purpose: it was never scored, and a zero would be a fabricated number. */
+ * restriction, because the board says it is closed, or, for a worldwide
+ * posting only, because its location names a country where pay is well below
+ * Israel's. Carries no scores on purpose: it was never scored, and a zero would
+ * be a fabricated number. A `market` row never took a result slot at all: the
+ * pay filter runs before selection, so the job ranked below it took the slot. */
 export interface FilteredJob {
   title: string;
   company: string;
-  location: string;
+  location: string; // for reason === "market" this IS the evidence
   url: string;
   source: string;
   posted_at: string;
   logo_url: string;
-  geo_restriction?: GeoRestriction | null;
+  geo_restriction?: GeoRestriction | null; // the evidence behind "restriction"; null for "market"
   // Why it was dropped. The backend defaults it to "restriction", so a response
   // that predates Phase 28 means "restriction" — which is TRUE, not unknown.
-  // Read it in that direction: anything not literally "closed" is a restriction.
-  reason?: string; // restriction | closed
-  ghost?: GhostReport | null; // the evidence behind reason === "closed"
+  // Test each reason BY NAME: a restriction is `!reason || reason ===
+  // "restriction"`. The old reading, "anything not literally closed is a
+  // restriction", became false when `market` arrived: it would label a posting
+  // hidden for its country's pay with a hiring restriction it never stated. A
+  // reason this build has never heard of is none of the three.
+  reason?: string; // restriction | closed | market
+  ghost?: GhostReport | null; // the evidence behind reason === "closed"; null for "market"
 }
 /** Multi-turn mock interview (PLAN 11.3) — stateless backend, the client
  * sends the whole transcript with every turn. */
@@ -592,8 +599,10 @@ export interface JobSearchResult {
   context: SearchContext;
   matches: JobMatch[];
   skipped: number;
-  // Postings dropped before scoring for a stated hiring restriction abroad.
-  // NOT part of `skipped`. Absent on older backends.
+  // Postings dropped before scoring, one reason each (see FilteredJob.reason):
+  // a stated hiring restriction abroad, a closed posting, or a worldwide
+  // posting in a country where pay is well below Israel's. NOT part of
+  // `skipped`. Absent on older backends.
   filtered?: FilteredJob[];
   source_errors?: Record<string, string>; // provider id → error when a source actually failed; absent on older backends
   source_empty?: Record<string, string>; // provider id → note when a source worked but matched nothing; absent on older backends
