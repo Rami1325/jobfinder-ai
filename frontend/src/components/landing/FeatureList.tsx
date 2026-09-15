@@ -11,16 +11,17 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Eyebrow, Rise, Section } from "./ui";
+import { Eyebrow, Rise, Section, signupFor } from "./ui";
 
 /**
  * The six tools, as a list of destinations rather than six floating cards.
  *
- * Every `to` here is a route `App.tsx` already declares; this section is a
- * navigation contract, not a place to invent product surfaces. The whole row
- * is one link, so the target is the row and not the 14px arrow at the end of
- * it — and the arrow moves on hover and on FOCUS, so a keyboard user gets the
- * same signal a mouse user does.
+ * Every `to` here is a route `App.tsx` already declares, behind its sign-up
+ * door: a visitor on the landing has no account yet, and check-mirrors 32(a)
+ * holds both halves. This section is a navigation contract, not a place to
+ * invent product surfaces. The whole row is one link, so the target is the row
+ * and not the 14px arrow at the end of it — and the arrow moves on hover and on
+ * FOCUS, so a keyboard user gets the same signal a mouse user does.
  */
 
 interface Feature {
@@ -30,12 +31,12 @@ interface Feature {
 }
 
 const FEATURES: Feature[] = [
-  { key: "tailoring", to: "/app", icon: FileText },
-  { key: "interview", to: "/interview", icon: MessagesSquare },
-  { key: "jobs", to: "/jobs", icon: Target },
-  { key: "xray", to: "/tools/xray", icon: ScanLine },
-  { key: "linkedin", to: "/tools/linkedin", icon: Contact },
-  { key: "followUp", to: "/tools/follow-up", icon: Mail },
+  { key: "tailoring", to: signupFor("/app"), icon: FileText },
+  { key: "interview", to: signupFor("/interview"), icon: MessagesSquare },
+  { key: "jobs", to: signupFor("/jobs"), icon: Target },
+  { key: "xray", to: signupFor("/tools/xray"), icon: ScanLine },
+  { key: "linkedin", to: signupFor("/tools/linkedin"), icon: Contact },
+  { key: "followUp", to: signupFor("/tools/follow-up"), icon: Mail },
 ];
 
 export default function FeatureList() {

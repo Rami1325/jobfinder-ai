@@ -120,7 +120,7 @@ export default function TemplateStage() {
           </div>
 
           <div className="mt-8">
-            <Cta to="/app" arrow>
+            <Cta to="/signup" arrow>
               {t("landing.hero.ctaPrimary")}
             </Cta>
           </div>

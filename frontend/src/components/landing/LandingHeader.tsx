@@ -6,12 +6,13 @@ import Logo from "../Logo";
 import LanguageSwitch from "../LanguageSwitch";
 import { cn } from "../../lib/cn";
 import type { LandingMode } from "../../hooks/useLandingTheme";
+import { signupFor } from "./ui";
 
 /**
  * The landing's own header.
  *
- * It is not `MarketingLayout`'s: that one is shared with `/scan`, which keeps
- * its warm-paper design, and this one has to start INVISIBLE over the star
+ * It is not `MarketingLayout`'s: that one frames /privacy, which keeps its
+ * warm-paper design, and this one has to start INVISIBLE over the star
  * scene and only assert itself once the visitor has scrolled past the hero's
  * opening. Reusing it would have meant a `pathname === "/"` branch inside a
  * component two routes depend on.
@@ -140,7 +141,7 @@ export default function LandingHeader({
         </nav>
 
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          <Link to="/scan" className={cn(navLink, "hidden lg:inline-block")}>
+          <Link to={signupFor("/tools/scan")} className={cn(navLink, "hidden lg:inline-block")}>
             {t("header.freeScan")}
           </Link>
           <div className="hidden items-center gap-1 lg:flex">
@@ -197,7 +198,7 @@ export default function LandingHeader({
               ))}
               <li>
                 <Link
-                  to="/scan"
+                  to={signupFor("/tools/scan")}
                   onClick={() => setOpen(false)}
                   className="flex min-h-[48px] items-center border-b border-line/70 text-[16px] text-ink-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >

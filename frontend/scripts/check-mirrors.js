@@ -345,6 +345,27 @@ try {
   fail(`locale parity check could not run: ${e.message}`);
 }
 
+/**
+ * App.tsx's `<Route path>` list, read with the shape every route keeps: `path`
+ * as its FIRST attribute, which App.tsx asks for beside the account routes.
+ *
+ * ONE definition, shared by checks 9 and 32(a), for `resolvesIn`'s reason: both
+ * ask "does the app route this path?", and two copies of the reader or of the
+ * matcher would be free to disagree about the same path while both stayed
+ * green. `read` runs inside each check's own try, so a missing file is a loud
+ * `fail`, not a crash at import time.
+ */
+function appRoutes() {
+  const app = read("App.tsx");
+  const routes = [...app.matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]);
+  if (routes.length < 15) throw new Error(`parsed only ${routes.length} <Route path=> entries in App.tsx`);
+  if (!routes.includes("*")) throw new Error("App.tsx has no catch-all — this check's premise is gone");
+  return { app, routes };
+}
+
+/** A declared path as an exact matcher, where a `:param` stands for one segment. */
+const routePattern = (r) => new RegExp(`^${r.replace(/:[^/]+/g, "[^/]+")}$`);
+
 // ---- 9. nav destinations resolve, nav labels exist ------------------------ //
 // 22.9 rewired every nav destination and renamed two locale keys, and `tsc` can
 // see NEITHER: a route path is a string and a labelKey is a string. The two
@@ -367,13 +388,8 @@ try {
 // that actually shipped. If a second file ever grows a nav block, widen it
 // then — and re-read this note first.
 try {
-  const app = read("App.tsx");
-  const routes = [...app.matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]);
-  if (routes.length < 15) throw new Error(`parsed only ${routes.length} <Route path=> entries in App.tsx`);
-  if (!routes.includes("*")) throw new Error("App.tsx has no catch-all — this check's premise is gone");
-  const declared = routes
-    .filter((r) => r !== "*")
-    .map((r) => new RegExp(`^${r.replace(/:[^/]+/g, "[^/]+")}$`));
+  const { routes } = appRoutes();
+  const declared = routes.filter((r) => r !== "*").map(routePattern);
 
   const layout = read("layouts/AppLayout.tsx");
   // Both spellings: `to: "/x"` in the nav tables, `to="/x"` on the logo Links
@@ -3671,6 +3687,210 @@ try {
     if (EVERY.test(probe) !== want) fail(`check 31's polarity pin reads ${probe} the wrong way round`);
 } catch (e) {
   fail(`jobs banner check could not run: ${e.message}`);
+}
+
+// ---- 32(a). a public call to action is a sign-up door --------------------- //
+// Phase 30 is login first: "All the buttons that let the user use the app first
+// ask him to login or signup", the CV scan included. The landing and the
+// marketing shell are the pages a signed-out visitor reads, and the production
+// probe behind that decision (2026-09-15) found /scan fully usable from them
+// with no account, and two "Tailor my resume" buttons on /app, which greets a
+// NEW visitor with "Welcome back" instead of sign-up.
+//
+// Nothing watched where those links point. Check 9 is scoped to AppLayout.tsx,
+// check 28 resolves the landing's copy but not its targets, and `tsc` sees
+// nothing: a destination is a string. So a button pointed straight back at a
+// feature route builds green and opens the feature to anyone.
+//
+// The walk is every .ts/.tsx under components/landing/ and components/marketing/,
+// plus layouts/MarketingLayout.tsx and pages/Landing.tsx. Three rules:
+//   1. A string target (`to="…"`, `to: "…"`, `href="/…"`, `href: "/…"`) is a
+//      door a signed-out visitor may use as they are: /, /privacy, /login,
+//      /signup, or /app (an "Open app" link for a returning user, whom
+//      AppLayout's guard sends to /login), or an in-page `#` anchor.
+//   2. A feature is reached through `signupFor("<route>")`, and that route,
+//      stripped of `?…` and `#…`, is a destination App.tsx declares: never the
+//      catch-all, never an auth page (safeNext refuses those as a `next` and
+//      lands on /app), and never a redirect (a second trip through sign-up).
+//   3. Any other `to={…}` or `to: …` fails unless it is a registered
+//      pass-through: a component forwarding a `to` it was handed. A type
+//      annotation (`to: string`) and a number (a keyframe's `to: 1`) are not
+//      targets.
+// Rule 1 cannot tell a call to action's /app from an "Open app" link's, so the
+// two "Tailor my resume" buttons that moved from /app to /signup are not pinned
+// here. Every link that names a FEATURE route is.
+try {
+  const { app, routes } = appRoutes();
+
+  // Derived, never restated: the list safeNext itself refuses as a `next`.
+  const authDecl = read("lib/safeNext.ts").match(/export const AUTH_PAGES\s*=\s*\[([^\]]*)\]/);
+  if (!authDecl) throw new Error("could not find `export const AUTH_PAGES = [...]` in lib/safeNext.ts");
+  const authPages = [...authDecl[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  if (!authPages.includes("/signup"))
+    throw new Error(`read AUTH_PAGES as [${authPages.join(", ")}] from lib/safeNext.ts, with no /signup`);
+
+  // The catch-all is itself a <Navigate>, so finding it proves this reads the shape.
+  const redirects = [...app.matchAll(/<Route\s+path="([^"]+)"\s+element=\{\s*<Navigate\b/g)].map((m) => m[1]);
+  if (!redirects.includes("*"))
+    throw new Error("read no `<Route path=… element={<Navigate …>}>` redirects in App.tsx, not even the catch-all");
+
+  const destinations = routes
+    .filter((r) => r !== "*" && !authPages.includes(r) && !redirects.includes(r))
+    .map(routePattern);
+
+  const DOORS = new Set(["/", "/privacy", "/login", "/signup", "/app"]);
+  // Keyed by file, so the same expression anywhere else is still refused.
+  const PASS_THROUGH = {
+    "components/landing/ui.tsx": ["to"],
+    "components/landing/FeatureList.tsx": ["f.to"],
+    "components/landing/LandingFaq.tsx": ["more.to"],
+  };
+  const QUOTED = /^(["'])(.*)\1$/;
+  const SIGNUP = /^signupFor\(\s*(["'])(.*?)\1\s*\)$/;
+
+  /** The text inside the `{…}` that opens at `open`, skipping braces in strings. */
+  const braced = (src, open) => {
+    let depth = 0;
+    let quote = null;
+    for (let i = open; i < src.length; i++) {
+      const c = src[i];
+      if (quote) {
+        if (c === "\\") i++;
+        else if (c === quote) quote = null;
+      } else if (c === '"' || c === "'" || c === "`") quote = c;
+      else if (c === "{") depth++;
+      else if (c === "}" && --depth === 0) return src.slice(open + 1, i);
+    }
+    throw new Error("unbalanced `to={…}` expression");
+  };
+
+  /** Every link target in one source, judged by the three rules. */
+  const judgeTargets = (label, raw) => {
+    const src = decomment(raw);
+    const out = { targets: 0, passes: [], problems: [] };
+    const literal = (value, shape) => {
+      out.targets++;
+      if (!DOORS.has(value) && !value.startsWith("#"))
+        out.problems.push(
+          `${label}: ${shape} sends a signed-out visitor straight to "${value}". A public link that ` +
+            'starts a feature is a sign-up door, signupFor("<route>") from components/landing/ui.tsx; ' +
+            "only /, /privacy, /login, /signup, /app and #anchors are linked directly.",
+        );
+    };
+    const signup = (dest) => {
+      out.targets++;
+      const bare = dest.replace(/[?#].*$/, "");
+      if (!destinations.some((re) => re.test(bare)))
+        out.problems.push(
+          `${label}: signupFor("${dest}") names no destination App.tsx routes, so after signing up ` +
+            "the visitor lands on the catch-all, on /app (an auth page is refused as `next`) or back " +
+            "in sign-up (a redirect). Name the feature's own <Route path>.",
+        );
+    };
+    const expression = (expr, shape) => {
+      const e = expr.trim();
+      let m;
+      if ((m = e.match(QUOTED))) return literal(m[2], shape);
+      if ((m = e.match(SIGNUP))) return signup(m[2]);
+      out.targets++;
+      if ((PASS_THROUGH[label] || []).includes(e)) out.passes.push(e);
+      else
+        out.problems.push(
+          `${label}: ${shape} links through \`${e}\`, which this check cannot read. Use a string ` +
+            '(/, /privacy, /login, /signup, /app or a #anchor) or signupFor("<route>"); a component ' +
+            "that forwards a `to` it was handed is registered in check 32(a)'s PASS_THROUGH.",
+        );
+    };
+
+    for (const m of src.matchAll(/\bto=(["'])(.*?)\1/g)) literal(m[2], `to="${m[2]}"`);
+    for (const m of src.matchAll(/\bhref(?:=|:\s*)(["'])(\/.*?)\1/g)) literal(m[2], `href "${m[2]}"`);
+    for (const m of src.matchAll(/\bto=\{/g)) {
+      const e = braced(src, m.index + m[0].length - 1);
+      expression(e, `to={${e.trim()}}`);
+    }
+    // `to:` with no space before the colon is a property or a type annotation.
+    // A ternary (`ok ? to : "/signup"`) is spaced, and is not read as either.
+    for (const m of src.matchAll(/\bto\??:[ \t]*([^,;}\n]*)/g)) {
+      const value = m[1].trim();
+      if (/^string\b/.test(value) || /^-?\d/.test(value)) continue;
+      expression(value, `to: ${value}`);
+    }
+    return out;
+  };
+
+  // [path under src/, how many of its files must carry a link target]. A floor
+  // counts only files that carry one: most of the landing is canvas and copy.
+  const WALK = [
+    ["components/landing", 8],
+    ["components/marketing", 1],
+    ["layouts/MarketingLayout.tsx", 1],
+    ["pages/Landing.tsx", 0],
+  ];
+  const seenPasses = {};
+  for (const [entry, floor] of WALK) {
+    const full = path.join(SRC, entry);
+    const files = [];
+    if (fs.statSync(full).isDirectory())
+      (function walk(dir) {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (/\.tsx?$/.test(e.name)) files.push(p);
+        }
+      })(full);
+    else files.push(full);
+    let carrying = 0;
+    for (const f of files) {
+      const label = path.relative(SRC, f).split(path.sep).join("/");
+      const judged = judgeTargets(label, fs.readFileSync(f, "utf8"));
+      if (judged.targets) carrying++;
+      seenPasses[label] = judged.passes;
+      for (const p of judged.problems) fail(p);
+    }
+    if (carrying < floor)
+      throw new Error(
+        `only ${carrying} file(s) under ${entry} carry a link target (expected at least ${floor}), ` +
+          "so the walk or the link shape changed and the rules are reading nothing",
+      );
+  }
+  // A stale registration is either dead weight or the sign that a component's
+  // link prop was renamed, which leaves every link through it unread.
+  for (const [file, exprs] of Object.entries(PASS_THROUGH))
+    for (const e of exprs)
+      if (!(seenPasses[file] || []).includes(e))
+        fail(
+          `check 32(a) registers \`to={${e}}\` in ${file}, which no longer has it. Remove the entry, ` +
+            "or the link prop was renamed and every link through it is now unread.",
+        );
+
+  // Both directions, on every build: each rule must fire on the shape it forbids
+  // and stay quiet on the shape it allows, or it passes for ever by never firing.
+  const PROBES = [
+    ['<Cta to="/scan">', false],
+    ['<Cta to={signupFor("/tools/scann")}>', false],
+    ['<Link to="/privacy">', true],
+    ['{ key: "interview", to: signupFor("/interview"), icon: MessagesSquare }', true],
+    ['<Cta to={signupFor("/interview?from=landing#top")}>', true],
+    ['<Cta to={signupFor("/login")}>', false],
+    ['<Cta to={signupFor("/home")}>', false],
+    ['<a href="/jobs">', false],
+    ['{ href: "/jobs", key: "header.jobs" }', false],
+    ['<Link to="#faq">', true],
+    ["<Cta to={SCAN_URL}>", false],
+    ["<Link to={f.to}>", false],
+  ];
+  for (const [src, allowed] of PROBES) {
+    const { targets, problems } = judgeTargets("probe.tsx", src);
+    if (!targets) fail(`check 32(a) reads no link target in its own probe ${src}`);
+    else if (allowed && problems.length) fail(`check 32(a) fires on a link it must allow: ${src}`);
+    else if (!allowed && !problems.length) fail(`check 32(a) cannot detect its own defect shape: ${src}`);
+  }
+  if (judgeTargets("probe.tsx", "interface P { to: string; more?: { to: string } }").targets)
+    fail("check 32(a) reads a type annotation as a link target");
+  if (judgeTargets("probe.tsx", 'const dest = ok ? to : "/scan";').targets)
+    fail("check 32(a) reads a ternary as a `to:` property");
+} catch (e) {
+  fail(`public link target check could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

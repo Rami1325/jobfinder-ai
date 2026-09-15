@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import Logo from "../Logo";
+import { signupFor } from "../landing/ui";
 
 export default function Footer() {
   const { t } = useTranslation();
@@ -18,7 +19,7 @@ export default function Footer() {
             className="flex flex-wrap gap-x-6 gap-y-2.5 text-sm text-ink-muted"
           >
             <Link to="/app" className="hover:text-ink">{t("footer.app")}</Link>
-            <Link to="/scan" className="hover:text-ink">{t("footer.freeScan")}</Link>
+            <Link to={signupFor("/tools/scan")} className="hover:text-ink">{t("footer.freeScan")}</Link>
             <a href="#templates" className="hover:text-ink">{tm("templates.nav")}</a>
             <a href="#how" className="hover:text-ink">{t("footer.how")}</a>
             <a href="#faq" className="hover:text-ink">{t("footer.faq")}</a>

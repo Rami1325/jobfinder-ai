@@ -1,7 +1,7 @@
 {
-  "kicker": "Free scan · no signup",
+  "kicker": "CV scan",
   "title": "How well does your CV match the job?",
-  "sub": "Drop your resume, paste the job description, and see your keyword match instantly — Hebrew or English. No signup, no access code, and nothing is stored.",
+  "sub": "Drop your resume, paste the job description, and see your keyword match instantly, in Hebrew or English. Nothing is stored.",
   "resumeLabel": "Your resume",
   "drop": "Drop your resume here or click to browse",
   "fileTypes": ".docx · .pdf · .txt",
@@ -11,11 +11,10 @@
   "scan": "Scan my match",
   "scanning": "Scanning…",
   "error": "Scan failed — try again.",
-  "rateLimited": "Too many scans from this device — try again in a bit.",
   "privacy": "Nothing is saved. The scan runs and forgets.",
   "results": {
     "coverage": "Keyword match",
-    "coverageHint": "Deterministic keyword coverage — the same ATS-gate score the full app uses. No AI guesswork in this number.",
+    "coverageHint": "Deterministic keyword coverage — the same ATS-gate score the tailor uses. No AI guesswork in this number.",
     "matched": "Matched ({{count}})",
     "partial": "Partial ({{count}})",
     "missing": "Missing ({{count}})",
@@ -30,7 +29,7 @@
   },
   "cta": {
     "title": "Want the missing keywords fixed for you?",
-    "body": "The full app rewrites your resume for this exact job — with a code-enforced guard that makes sure it never invents anything about you. Hebrew and English, ATS-safe DOCX & PDF.",
+    "body": "Tailoring rewrites your resume for this exact job, with a code-enforced guard that makes sure it never invents anything about you. Hebrew and English, ATS-safe DOCX and PDF.",
     "button": "Get the full tailored rewrite"
   }
 }

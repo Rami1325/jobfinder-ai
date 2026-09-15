@@ -1,18 +1,18 @@
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
-import { Cta, Rise } from "./ui";
+import { Cta, Rise, signupFor } from "./ui";
 
 /**
- * The free scan, as one calm band rather than another card.
+ * The CV scan, as one calm band rather than another card.
  *
  * The old strip carried a competitor's monthly price. That was a claim about
  * someone else's pricing with no dated source behind it, and pricing research
  * is not part of a landing redesign — so it is gone, and the sentence that
  * replaces it describes what the scan actually returns.
  *
- * "No account or access code required" is verified rather than assumed:
- * `POST /public/scan` is outside the access gate and the whole check is
- * deterministic Python, which is also why it can be free.
+ * The note says "Free with an account", no longer "No account required": since
+ * Phase 30 every feature is login first, the scan included, so the button is a
+ * sign-up door to /tools/scan inside the app.
  */
 export default function ScanBand() {
   const { t } = useTranslation("marketing");
@@ -33,7 +33,7 @@ export default function ScanBand() {
               <p className="mt-3 text-[13px] text-ink-faint">{t("landing.scan.note")}</p>
             </div>
             <div className="shrink-0">
-              <Cta to="/scan" arrow>
+              <Cta to={signupFor("/tools/scan")} arrow>
                 {t("landing.hero.ctaSecondary")}
               </Cta>
             </div>

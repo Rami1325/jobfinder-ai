@@ -8,6 +8,7 @@ import Landing from "./pages/Landing";
 import AccessGate from "./components/AccessGate";
 import ScrollToTop from "./components/ScrollToTop";
 import { prefetchAppRoutes } from "./lib/prefetchRoutes";
+import { withNext } from "./lib/safeNext";
 
 // Lazy: everything behind a navigation gets its own chunk so the landing
 // visitor doesn't download the whole app. Module paths must stay in sync with
@@ -56,12 +57,10 @@ export default function App() {
         <Routes>
           {/* The landing owns its own shell (header, footer and the
               `.jobfinder-landing` token scope), so it sits OUTSIDE the
-              marketing layout. `/scan` keeps that layout, its warm-paper
-              palette and its aurora exactly as they were — which is the whole
-              reason the two were separated. */}
+              marketing layout, which keeps its warm-paper palette and its
+              aurora for /privacy. */}
           <Route path="/" element={<Landing />} />
           <Route element={<MarketingLayout />}>
-            <Route path="/scan" element={<ScanPage />} />
             {/* Public, and read before signing up as often as after: the
                 signup form links here. */}
             <Route path="/privacy" element={<PrivacyPage />} />
@@ -85,6 +84,9 @@ export default function App() {
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/kits/:id" element={<KitReviewPage />} />
             <Route path="/tools" element={<ToolsPage />} />
+            {/* The CV scan, an app feature since Phase 30. It was the public
+                /scan, which now redirects to sign-up (below). */}
+            <Route path="/tools/scan" element={<ScanPage />} />
             <Route path="/tools/xray" element={<XrayToolPage />} />
             <Route path="/tools/linkedin" element={<LinkedInToolPage />} />
             <Route path="/tools/follow-up" element={<FollowUpToolPage />} />
@@ -104,6 +106,15 @@ export default function App() {
               Back from bouncing off it, which matters for the installed PWA
               (manifest display: standalone) where there is no URL bar. */}
           <Route path="/home" element={<Navigate to="/app" replace />} />
+          {/* /scan was the public CV scan until Phase 30 made every feature
+              login first, and old links to it are still out there. They land
+              on sign-up with the scan as `next`, not on "Welcome back": most
+              people holding one have no account yet, and SignupPage forwards a
+              signed-in visitor straight on. Outside every layout group, and
+              `replace`, for /home's reasons. `withNext` comes from the
+              dependency-free lib/safeNext.ts, never the landing's `signupFor`,
+              because this file is the entry chunk. */}
+          <Route path="/scan" element={<Navigate to={withNext("/signup", "/tools/scan")} replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

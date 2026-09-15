@@ -12,11 +12,11 @@ import { useLandingTheme } from "../hooks/useLandingTheme";
 /**
  * The public landing page.
  *
- * ROUTE-OWNED, deliberately. It used to sit inside `MarketingLayout` with
- * `/scan`, sharing that layout's header, its warm-paper token scope and its
- * aurora. `/scan` still does, unchanged — this page carries its own header and
- * its own `.jobfinder-landing` token scope instead, so nothing here can reach
- * another route and `/scan` cannot drag the landing back to paper.
+ * ROUTE-OWNED, deliberately. It used to sit inside `MarketingLayout` with the
+ * public scan, sharing that layout's header, its warm-paper token scope and its
+ * aurora. `/privacy` still does. This page carries its own header and its own
+ * `.jobfinder-landing` token scope instead, so nothing here can reach another
+ * route and the marketing shell cannot drag the landing back to paper.
  *
  * The wrapper class is the whole isolation mechanism: `.jobfinder-landing`
  * re-declares --bg / --ink / --line / --accent on this subtree only (see
@@ -24,8 +24,8 @@ import { useLandingTheme } from "../hooks/useLandingTheme";
  * landing palette while `/app` keeps whatever the theme toggle chose.
  *
  * Order: one immersive opening, then the product itself, then how it is made,
- * then where else it is used, then the free way in, then the questions, then
- * the invitation. Each section is calmer than the one before it.
+ * then where else it is used, then the CV scan, then the questions, then the
+ * invitation. Each section is calmer than the one before it.
  */
 export default function Landing() {
   const { t } = useTranslation("marketing");

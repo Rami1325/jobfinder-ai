@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import Logo from "../Logo";
 import EchoCanvas from "./EchoCanvas";
-import { Cta, Rise } from "./ui";
+import { Cta, Rise, signupFor } from "./ui";
 import type { LandingMode } from "../../hooks/useLandingTheme";
 
 /**
@@ -39,10 +39,10 @@ export default function ClosingSection({ mode }: { mode: LandingMode }) {
             {tm("landing.closing.sub")}
           </p>
           <div className="mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
-            <Cta to="/app" arrow>
+            <Cta to="/signup" arrow>
               {tm("landing.hero.ctaPrimary")}
             </Cta>
-            <Cta to="/scan" variant="secondary">
+            <Cta to={signupFor("/tools/scan")} variant="secondary">
               {tm("landing.closing.ctaSecondary")}
             </Cta>
           </div>
@@ -64,7 +64,7 @@ export default function ClosingSection({ mode }: { mode: LandingMode }) {
             <Link to="/app" className="inline-flex min-h-[44px] items-center rounded hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
               {t("footer.app")}
             </Link>
-            <Link to="/scan" className="inline-flex min-h-[44px] items-center rounded hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+            <Link to={signupFor("/tools/scan")} className="inline-flex min-h-[44px] items-center rounded hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
               {t("footer.freeScan")}
             </Link>
             <a href="#templates" className="inline-flex min-h-[44px] items-center rounded hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">

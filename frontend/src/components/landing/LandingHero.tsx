@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import StarfieldCanvas from "./StarfieldCanvas";
-import { Cta } from "./ui";
+import { Cta, signupFor } from "./ui";
 import type { LandingMode } from "../../hooks/useLandingTheme";
 
 /**
@@ -120,7 +120,7 @@ export default function LandingHero({ mode }: { mode: LandingMode }) {
           <Cta to="/signup" arrow>
             {t("landing.hero.ctaPrimary")}
           </Cta>
-          <Cta to="/scan" variant="secondary">
+          <Cta to={signupFor("/tools/scan")} variant="secondary">
             {t("landing.hero.ctaSecondary")}
           </Cta>
         </div>

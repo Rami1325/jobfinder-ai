@@ -5,6 +5,7 @@ import Logo from "../components/Logo";
 import LanguageSwitch from "../components/LanguageSwitch";
 import ThemeToggle from "../components/ThemeToggle";
 import PaperAurora from "../components/marketing/PaperAurora";
+import { signupFor } from "../components/landing/ui";
 
 /**
  * Fine film grain (inline SVG feTurbulence tile, desaturated so it is
@@ -26,11 +27,12 @@ const NAV = [
  * The marketing shell.
  *
  * `paper` is the scoped token override (styles.css): it rebinds --bg / --ink /
- * --accent / … on THIS SUBTREE ONLY, so the landing and the free scan render
- * on warm white while /app, /jobs, /tools/*, /tracker keep the app's
- * dark default. The theme toggle still writes the global class on <html> and
- * still drives every app surface — it simply has no say over the marketing
- * page, which is a committed light design.
+ * --accent / … on THIS SUBTREE ONLY, so /privacy renders on warm white while
+ * /app, /jobs, /tools/*, /tracker keep the app's dark default. The landing
+ * owns its own shell, and the CV scan is an app page at /tools/scan. The theme
+ * toggle still writes the global class on <html> and still drives every app
+ * surface — it simply has no say over the marketing page, which is a committed
+ * light design.
  *
  * `isolate` creates a stacking context so the fixed aurora can sit under the
  * content without negative z-indexes leaking behind the document background.
@@ -65,7 +67,7 @@ export default function MarketingLayout() {
             </nav>
             <div className="flex shrink-0 items-center gap-2 sm:gap-3">
               <Link
-                to="/scan"
+                to={signupFor("/tools/scan")}
                 className="hidden text-sm font-medium text-ink-muted hover:text-ink lg:inline"
               >
                 {t("header.freeScan")}

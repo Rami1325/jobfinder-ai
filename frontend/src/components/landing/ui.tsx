@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { cn } from "../../lib/cn";
+import { withNext } from "../../lib/safeNext";
 
 /**
  * The landing's own three primitives.
@@ -48,6 +49,20 @@ export function Cta({ to, variant = "primary", className, children, arrow }: Cta
       {arrow && <ArrowRight size={17} aria-hidden className="rtl:-scale-x-100" />}
     </Link>
   );
+}
+
+/**
+ * The sign-up door to a feature: `/signup?next=<dest>`.
+ *
+ * Every feature is login first, the CV scan included, so a public call to
+ * action that starts one points here, and the landing and the marketing shell
+ * spell that rule once. `withNext` leaves the default destination off, so the
+ * door to /app is a plain /signup, and SignupPage forwards a visitor who is
+ * already signed in straight to `next`. check-mirrors 32(a) holds every link on
+ * those pages to this, or to a door a signed-out visitor can use as they are.
+ */
+export function signupFor(dest: string): string {
+  return withNext("/signup", dest);
 }
 
 /* -------------------------------------------------------------------------- */

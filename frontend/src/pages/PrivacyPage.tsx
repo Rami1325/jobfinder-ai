@@ -20,7 +20,7 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
 /**
  * /privacy — what JobFinder keeps, in plain language, in both languages.
  *
- * Under MarketingLayout, with /scan, because it is read BEFORE signing up as
+ * Under MarketingLayout because it is read BEFORE signing up as
  * often as after: the signup form links here, and so do the landing's Gmail
  * question and both footers.
  *

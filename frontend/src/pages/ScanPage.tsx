@@ -33,9 +33,10 @@ const groupMeta = {
 } as const;
 
 /**
- * Free public CV-vs-JD scan (PLAN 6): the no-signup landing wedge. Talks to
- * /public/scan, which is exempt from the access-code gate and 100%
- * deterministic — no LLM, nothing persisted.
+ * The CV-vs-JD scan (PLAN 6): deterministic keyword coverage and a few resume
+ * checks, with no LLM and nothing persisted. Since Phase 30 it is an app page
+ * at /tools/scan, behind AppLayout's sign-in guard like every other feature,
+ * and /scan redirects to sign-up. It still posts to /public/scan.
  */
 export default function ScanPage() {
   const { t } = useTranslation("scan");
@@ -56,13 +57,9 @@ export default function ScanPage() {
     try {
       const res = await freeScan(file, jd);
       setResult(res);
-    } catch (e: any) {
+    } catch (e) {
       setResult(null);
-      setError(
-        e?.response?.status === 429
-          ? t("rateLimited")
-          : apiErrorMessage(e, t("error")),
-      );
+      setError(apiErrorMessage(e, t("error")));
     } finally {
       setLoading(false);
     }

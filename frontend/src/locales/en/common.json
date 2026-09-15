@@ -24,7 +24,7 @@
     "features": "Features",
     "faq": "FAQ",
     "openApp": "Open app",
-    "freeScan": "Free CV scan",
+    "freeScan": "CV scan",
     "logIn": "Log in",
     "signUp": "Sign up"
   },
@@ -33,7 +33,7 @@
     "app": "App",
     "how": "How it works",
     "faq": "FAQ",
-    "freeScan": "Free CV scan",
+    "freeScan": "CV scan",
     "privacy": "Privacy"
   },
   "actions": {
