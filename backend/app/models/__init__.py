@@ -702,8 +702,8 @@ class AuthUser(BaseModel):
     email: str = ""  # the sign-in address when there is one, else users.email
     is_admin: bool = False
     has_password: bool = False
-    google_linked: bool = False  # Google sign-in is deferred; always False
-    signup_source: str = ""  # "" = invite code / admin, "email" = self-service
+    google_linked: bool = False  # a Google sign-in is linked to this login (Phase 30 / E4)
+    signup_source: str = ""  # "" = invite code / admin; "email" or "google" = self-service
 
 
 class UsagePassOut(BaseModel):
@@ -742,10 +742,25 @@ class AuthMe(BaseModel):
     verified: bool = False
     method: str = ""  # "invite_code" | "session" | "dev" (gate off) | "" (anonymous)
     signup_open: bool = True
-    google_enabled: bool = False  # deferred (amendment S1); always False
+    # Continue with Google is configured on this server (Phase 30 / E4), on BOTH
+    # returns: /login and /signup read it signed out to decide whether to show it.
+    google_enabled: bool = False
     user: Optional[AuthUser] = None
     # Phase 30 / B7: this month's uses for a signed-in caller; None for an anonymous one.
     usage: Optional[UsageOut] = None
+
+
+class GoogleStartIn(BaseModel):
+    """POST /auth/google/start (Phase 30 / E2). `next` is checked with safe_next;
+    a `page` other than "login" or "signup" reads as login."""
+
+    next: str = ""
+    locale: str = ""  # the language of any notice this sign-in mails
+    page: str = ""  # the page a refusal comes back to
+
+
+class GoogleStartOut(BaseModel):
+    url: str = ""
 
 
 class SignupIn(BaseModel):

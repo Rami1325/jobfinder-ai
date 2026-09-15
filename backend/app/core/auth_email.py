@@ -19,6 +19,12 @@ mails an hour; a "password changed" notice is held only to the global cap, so
 nobody can silence it by spending an address's allowance first). Auth mail
 rides the owner's own SMTP account, the one that also carries the job alerts.
 
+**Continue with Google adds two notices** (Phase 30 / E5): Google sign-in was
+added to an existing account, and a sign-in took over an unconfirmed email
+signup. Both are `notice` mail (global cap only), sent after the change they
+describe is committed, and best effort. In Hebrew the address or link they name
+sits on a line of its own, never inside a right-to-left sentence.
+
 **Never a password and never an extension key.** A mailbox is not a vault: the
 only secrets these messages carry are single-use and expire within the hour.
 """
@@ -64,6 +70,19 @@ _COPY: dict[str, dict[str, str]] = {
         "changed_act": "If this wasn't you, reset your password now:",
         "changed_act_nolink": "If this wasn't you, reset your password from the JobFinder login page.",
         "changed_button": "Reset my password",
+        "google_linked_subject": "JobFinder: Google sign-in was added to your account",
+        "google_linked_head": "Google sign-in was added",
+        "google_linked_lead": "Google sign-in was added to your JobFinder account for {address}.",
+        "google_linked_out": "Other devices were signed out.",
+        "google_linked_out_key": "Other devices were signed out and your extension key was replaced.",
+        "google_linked_act": "If this wasn't you, secure your Google account.",
+        "google_linked_password": "This account also has a password. If you did not set it, reset it with Forgot password.",
+        "google_superseded_subject": "JobFinder: you signed in with Google",
+        "google_superseded_head": "You signed in with Google",
+        "google_superseded_lead": "You signed in to JobFinder with Google. The password chosen when this account was created, before the address was confirmed, was removed, and other devices were signed out.",
+        "google_superseded_act": "Use Continue with Google, or set a password here:",
+        "google_superseded_act_nolink": "Use Continue with Google, or set a password with Forgot password on the JobFinder login page.",
+        "google_superseded_button": "Set a password",
         "link_fallback": "If the button doesn't work, open this link:",
         "footer": "Sent by JobFinder because of activity on your account",
     },
@@ -90,6 +109,19 @@ _COPY: dict[str, dict[str, str]] = {
         "changed_act": "אם זה לא אתם, אפסו את הסיסמה עכשיו:",
         "changed_act_nolink": "אם זה לא אתם, אפסו את הסיסמה מעמוד הכניסה של JobFinder.",
         "changed_button": "איפוס הסיסמה",
+        "google_linked_subject": "JobFinder: נוספה לחשבון שלך כניסה עם Google",
+        "google_linked_head": "נוספה כניסה עם Google",
+        "google_linked_lead": "נוספה כניסה עם Google לחשבון שלך ב-JobFinder, עבור הכתובת:",
+        "google_linked_out": "שאר המכשירים נותקו.",
+        "google_linked_out_key": "שאר המכשירים נותקו, ומפתח התוסף לדפדפן הוחלף.",
+        "google_linked_act": "אם זה לא אתם, אבטחו את חשבון Google שלכם.",
+        "google_linked_password": 'לחשבון הזה יש גם סיסמה. אם לא אתם הגדרתם אותה, אפסו אותה דרך "שכחתי סיסמה".',
+        "google_superseded_subject": "JobFinder: נכנסתם עם Google",
+        "google_superseded_head": "נכנסתם עם Google",
+        "google_superseded_lead": "נכנסתם ל-JobFinder עם Google. הסיסמה שנבחרה כשהחשבון נוצר, לפני שהכתובת אושרה, הוסרה, וכל שאר המכשירים נותקו.",
+        "google_superseded_act": "בפעם הבאה אפשר להיכנס עם Google, או להגדיר סיסמה כאן:",
+        "google_superseded_act_nolink": 'בפעם הבאה אפשר להיכנס עם Google, או להגדיר סיסמה דרך "שכחתי סיסמה" בעמוד הכניסה של JobFinder.',
+        "google_superseded_button": "הגדרת סיסמה",
         "link_fallback": "אם הכפתור לא עובד, פתחו את הקישור הזה:",
         "footer": "נשלח מ-JobFinder בעקבות פעילות בחשבון שלך",
     },
@@ -154,10 +186,42 @@ def build_password_changed_email(link: str = "", locale: str = "", key_rotated: 
     return c["changed_subject"], "\n".join(lines)
 
 
+def build_google_linked_email(
+    address: str, locale: str = "", *, has_password: bool = False, key_rotated: bool = False
+) -> tuple[str, str]:
+    """(subject, plain-text body): Google sign-in was added to an existing account
+    (Phase 30 / E5). The key clause appears only when the extension key was
+    replaced, and the password sentence only when the account also has one, so
+    the notice never claims what did not happen. English names the address inside
+    its sentence; the Hebrew copy has no placeholder, so the address follows on a
+    line of its own. Pure — smoke-pinned."""
+    c = _COPY[_lang(locale)]
+    lead = c["google_linked_lead"]
+    lines = [lead.format(address=address)] if "{address}" in lead else [lead, address]
+    lines.append(c["google_linked_out_key"] if key_rotated else c["google_linked_out"])
+    lines.append(c["google_linked_act"])
+    if has_password:
+        lines += ["", c["google_linked_password"]]
+    return c["google_linked_subject"], "\n".join(lines)
+
+
+def build_google_superseded_email(link: str = "", locale: str = "") -> tuple[str, str]:
+    """(subject, plain-text body): a Google sign-in took over an unconfirmed email
+    signup (Phase 30 / E5). `link` points at the forgot-password page, on a line
+    of its own; with none, no sentence mentions one. There is no extension-key
+    sentence: an unverified account could never read its key. Pure — smoke-pinned."""
+    c = _COPY[_lang(locale)]
+    lines = [c["google_superseded_lead"], ""]
+    lines += [c["google_superseded_act"], link] if link else [c["google_superseded_act_nolink"]]
+    return c["google_superseded_subject"], "\n".join(lines)
+
+
 def _html(locale: str, headline: str, lead: str, body: str = "", cta_label: str = "",
-          cta_href: str = "", tail: list[str] | None = None) -> str:
+          cta_href: str = "", tail: list[str] | None = None, lead_html: str = "") -> str:
     """The shared message frame: the alert/nudge email's dark theme, inline
-    styles and presentation tables only, every dynamic string escaped."""
+    styles and presentation tables only, every dynamic string escaped.
+    `lead_html`, when given, is lead markup the caller has ALREADY escaped (it
+    wraps an address in a left-to-right span) and replaces `lead`."""
     esc = html_lib.escape
     lang = _lang(locale)
     direction = "rtl" if lang == "he" else "ltr"
@@ -178,6 +242,7 @@ def _html(locale: str, headline: str, lead: str, body: str = "", cta_label: str 
         else ""
     )
     tail_html = "<br>".join(esc(line) for line in (tail or []))
+    lead_block = lead_html or esc(lead)
     return f"""<!doctype html>
 <html lang="{lang}" dir="{direction}">
 <head>
@@ -203,7 +268,7 @@ def _html(locale: str, headline: str, lead: str, body: str = "", cta_label: str 
               <tr>
                 <td dir="{direction}" align="{align}" style="padding:22px 24px;text-align:{align};">
                   <div style="color:{_EM['ink']};font:700 24px {_EM_FONT};">{esc(headline)}</div>
-                  <div style="padding-top:8px;color:{_EM['muted']};font:15px {_EM_FONT};line-height:1.5;">{esc(lead)}</div>
+                  <div style="padding-top:8px;color:{_EM['muted']};font:15px {_EM_FONT};line-height:1.5;">{lead_block}</div>
                   {body}
                 </td>
               </tr>
@@ -227,6 +292,14 @@ def _html(locale: str, headline: str, lead: str, body: str = "", cta_label: str 
 </table>
 </body>
 </html>"""
+
+
+def _paragraph(text: str) -> str:
+    """One more body paragraph in the lead's style, escaped."""
+    return (
+        f'<div style="padding-top:8px;color:{_EM["muted"]};font:15px {_EM_FONT};line-height:1.5;">'
+        f"{html_lib.escape(text)}</div>"
+    )
 
 
 def build_verify_email_html(code: str, link: str = "", locale: str = "", ttl_min: int = 60) -> str:
@@ -277,6 +350,39 @@ def build_password_changed_email_html(link: str = "", locale: str = "", key_rota
         cta_label=c["changed_button"],
         cta_href=link,
         tail=[c["changed_act"] if link else c["changed_act_nolink"]],
+    )
+
+
+def build_google_linked_email_html(
+    address: str, locale: str = "", *, has_password: bool = False, key_rotated: bool = False
+) -> str:
+    """HTML alternative. The address is always a `dir="ltr"` span: inside the
+    English sentence, and in a block of its own after the Hebrew one, so a
+    right-to-left paragraph never reorders it. Pure — smoke-pinned."""
+    c = _COPY[_lang(locale)]
+    esc = html_lib.escape
+    shown = f'<span dir="ltr">{esc(address)}</span>'
+    lead = c["google_linked_lead"]
+    if "{address}" in lead:
+        before, _, after = lead.partition("{address}")
+        lead_html = f"{esc(before)}{shown}{esc(after)}"
+    else:
+        lead_html = f'{esc(lead)}<div style="padding-top:6px;">{shown}</div>'
+    body = _paragraph(c["google_linked_out_key"] if key_rotated else c["google_linked_out"])
+    if has_password:
+        body += _paragraph(c["google_linked_password"])
+    return _html(locale, c["google_linked_head"], "", body=body, tail=[c["google_linked_act"]], lead_html=lead_html)
+
+
+def build_google_superseded_email_html(link: str = "", locale: str = "") -> str:
+    c = _COPY[_lang(locale)]
+    return _html(
+        locale,
+        c["google_superseded_head"],
+        c["google_superseded_lead"],
+        cta_label=c["google_superseded_button"],
+        cta_href=link,
+        tail=[c["google_superseded_act"] if link else c["google_superseded_act_nolink"]],
     )
 
 
@@ -367,4 +473,30 @@ def send_password_changed(
     link = f"{base}/forgot" if base else ""
     subject, text = build_password_changed_email(link, locale, key_rotated)
     html = build_password_changed_email_html(link, locale, key_rotated)
+    send_auth_email(db, to, subject, text, html, user_id=user_id, link=link, purpose="notice")
+
+
+def send_google_linked(
+    db: Session, request: Request | None, to: str, *, locale: str = "", user_id: int | None = None,
+    has_password: bool = False, key_rotated: bool = False,
+) -> None:
+    """Google sign-in was added to the account at `to` (Phase 30 / E5). A
+    `notice`: the global cap only, so nothing an address can spend first
+    silences it. The caller sends it after its commit and swallows
+    EmailUnavailable. `request` is taken for the same signature as every other
+    sender; this notice carries no link."""
+    subject, text = build_google_linked_email(to, locale, has_password=has_password, key_rotated=key_rotated)
+    html = build_google_linked_email_html(to, locale, has_password=has_password, key_rotated=key_rotated)
+    send_auth_email(db, to, subject, text, html, user_id=user_id, purpose="notice")
+
+
+def send_google_superseded(
+    db: Session, request: Request | None, to: str, *, locale: str = "", user_id: int | None = None,
+) -> None:
+    """A Google sign-in took over the unconfirmed signup at `to` (Phase 30 / E5),
+    mailed to the address Google just proved. A `notice`, like the one above."""
+    base = link_base(request)
+    link = f"{base}/forgot" if base else ""
+    subject, text = build_google_superseded_email(link, locale)
+    html = build_google_superseded_email_html(link, locale)
     send_auth_email(db, to, subject, text, html, user_id=user_id, link=link, purpose="notice")

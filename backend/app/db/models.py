@@ -525,7 +525,9 @@ class UserLogin(Base):
     # NULL until the address is proven. The gate refuses every feature to an
     # email signup while this is NULL (users.signup_source "" never needs it).
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
-    # Reserved for Google sign-in, which is deferred (Phase 29 amendment S1).
+    # Google's account id (`sub`), set when Continue with Google creates this
+    # login or links it (Phase 30 / E3). A Google sign-in is resolved by it and
+    # nothing else: an address that later changes at Google never re-keys it.
     google_sub: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)

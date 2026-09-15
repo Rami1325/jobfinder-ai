@@ -49,6 +49,11 @@ VERIFY_MAIL_COOLDOWN_S = 60
 FORGOT_PER_EMAIL = (3, 3600)
 FORGOT_PER_IP = (20, 3600)
 CHANGE_EMAIL_PER_USER = (5, 3600)
+# Continue with Google starts per network (Phase 30 / E2). The callback has NO
+# failure throttle: its state and binding cookie are 256-bit, so a limit would
+# guard nothing, and it would lock out a whole CGNAT address. Creating an account
+# through Google counts on SIGNUP_PER_IP, the same counter as the email door.
+GOOGLE_START_PER_IP = (30, 3600)
 # Wrong codes tolerated against ONE token; the next attempt is locked out even
 # with the right code, and a fresh code (resend) is the way forward.
 TOKEN_ATTEMPTS = 5

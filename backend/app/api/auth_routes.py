@@ -13,22 +13,50 @@ app/main.py. Rules every route here keeps:
 - **Which routes answer an anonymous caller is the gate's decision**
   (`_AUTH_OPTIONAL` in app/main.py). The ones that need a signed-in caller take
   `Depends(current_user)` like every other route in the app.
+
+Continue with Google (Phase 30 / E2) is the two routes at the bottom. Its
+callback is the one route here that never answers JSON: Google sent a browser,
+so every outcome, each refusal included, is a redirect to a page that can say
+what happened (`?google=<code>`).
 """
 from __future__ import annotations
 
+import hmac
+import json
+import secrets
+from datetime import timedelta
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
+
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import RedirectResponse
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
-from app.core import accounts
-from app.core.sessions import clear_session_cookie, set_session_cookie
+from app.config import get_settings
+from app.core import accounts, auth_throttle, google_oauth
+from app.core.sessions import (
+    as_utc,
+    clear_session_cookie,
+    client_ip,
+    cookie_path,
+    hkey,
+    is_https,
+    naive_utc,
+    safe_next,
+    set_session_cookie,
+    token_hash,
+    utc_now,
+)
 from app.db.database import get_db
-from app.db.models import User
+from app.db.models import AuthToken, User
 from app.models import (
     AuthMe,
     ChangeEmailIn,
     ExtensionKeyOut,
     ForgotIn,
+    GoogleStartIn,
+    GoogleStartOut,
     LoginIn,
     LogoutOthersOut,
     OkOut,
@@ -43,6 +71,16 @@ from app.models import (
 )
 
 router = APIRouter()
+
+# Continue with Google (Phase 30 / E2).
+GOOGLE_SIGNIN = "google_signin"  # auth_tokens.purpose of a sign-in's state row
+# Binds the Google round trip to the browser that started it. Named apart from
+# the Gmail connect's jf_oauth, so a sign-in and a connect in one browser never
+# overwrite each other's binding.
+GSI_COOKIE = "jf_gsi"
+GSI_TTL = timedelta(minutes=10)
+_PAGES = ("login", "signup")
+_GOOGLE_ISS = "https://accounts.google.com"
 
 
 def _private(response: Response) -> None:
@@ -176,3 +214,198 @@ def auth_rotate_extension_key(
     """A new key; the old one stops opening the gate the moment this commits."""
     _private(response)
     return ExtensionKeyOut(key=accounts.rotate_extension_key(db, user))
+
+
+# --- Continue with Google (Phase 30 / E2) -----------------------------------------------
+@router.post("/auth/google/start", response_model=GoogleStartOut)
+def auth_google_start(
+    request: Request,
+    response: Response,
+    body: GoogleStartIn | None = None,
+    db: Session = Depends(get_db),
+) -> GoogleStartOut:
+    """Google's account chooser URL, and a short-lived `jf_gsi` cookie binding the
+    round trip to THIS browser: the state row keeps only an HMAC of the cookie,
+    so the URL is useless in any other browser.
+
+    404 google_disabled until the sign-in client is configured; 30 starts an
+    hour per network. The state row is minted here directly rather than through
+    `accounts._issue`, whose pruning runs only when an account's token is minted,
+    so this route prunes old sign-in rows itself — past the security log's
+    RETENTION, not past now, so a row that expired a minute ago is still found and
+    its callback can say `expired` rather than `state_invalid`.
+    """
+    _private(response)
+    if not google_oauth.signin_configured():
+        raise accounts.AuthError(404, "google_disabled")
+    body = body or GoogleStartIn()
+    now = utc_now()
+    attempt = auth_throttle.hit(
+        db, "google_start", auth_throttle.ip_key(client_ip(request)), *auth_throttle.GOOGLE_START_PER_IP, now=now
+    )
+    if attempt.retry_after:
+        raise accounts.AuthError(429, "too_many_attempts", retry_after=attempt.retry_after)
+    db.execute(
+        delete(AuthToken)
+        .where(AuthToken.purpose == GOOGLE_SIGNIN, AuthToken.expires_at < naive_utc(now - auth_throttle.RETENTION))
+        .execution_options(synchronize_session=False)
+    )
+    verifier, challenge = google_oauth.pkce_pair()
+    state, nonce, binding = secrets.token_urlsafe(32), secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    db.add(AuthToken(
+        user_id=None,
+        purpose=GOOGLE_SIGNIN,
+        token_hash=token_hash(state),
+        payload=json.dumps({
+            "verifier": verifier,
+            "nonce": nonce,
+            "binding": hkey("google-signin", binding),
+            "next": safe_next(body.next),
+            "locale": (body.locale or "")[:16],
+            "page": body.page if body.page in _PAGES else "login",
+        }),
+        expires_at=now + GSI_TTL,
+        created_at=now,
+    ))
+    db.commit()
+    response.set_cookie(
+        GSI_COOKIE, binding, max_age=int(GSI_TTL.total_seconds()), path=cookie_path(request),
+        secure=is_https(request), httponly=True, samesite="lax",
+    )
+    return GoogleStartOut(url=google_oauth.signin_authorize_url(state=state, code_challenge=challenge, nonce=nonce))
+
+
+def _with_query(target: str, key: str, value: str) -> str:
+    """`target` with one more query parameter; its own query and fragment are kept
+    byte for byte."""
+    parts = urlsplit(target)
+    extra = urlencode({key: value})
+    return urlunsplit(("", "", parts.path, f"{parts.query}&{extra}" if parts.query else extra, parts.fragment))
+
+
+def _payload(row: AuthToken) -> dict:
+    try:
+        value = json.loads(row.payload or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+@router.get("/auth/google/callback")
+def auth_google_callback(
+    request: Request,
+    db: Session = Depends(get_db),
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    iss: str = "",
+) -> RedirectResponse:
+    """Google sends the browser back here, and it ALWAYS leaves with a redirect.
+    An AuthError would render as JSON, so every refusal is caught here, and any
+    other exception becomes `try_again`.
+
+    In order: sign-in configured (disabled); the state row, by hash and purpose
+    (state_invalid), still live (expired); the jf_gsi cookie matching the row's
+    binding, in constant time (state_mismatch); Google's `iss` when present
+    (state_invalid); an atomic single-use claim of the row (state_invalid);
+    Google's `error` (cancelled for access_denied, else google_error) or no code
+    (state_invalid); the code exchange (exchange_failed); the id_token's claims
+    (token_invalid); and the account itself (`accounts.google_sign_in`, whose
+    refusals keep their own codes).
+
+    A refusal before the binding matches goes to /login with no next: nothing
+    yet proves the state belongs to this browser, so nothing in it is used. From
+    the iss check on, a refusal goes back to the page the flow started from, with
+    its next (left out when it is /app). There is no failure throttle: the state
+    and the binding are 256-bit, so one would guard nothing and would lock out a
+    whole CGNAT address.
+    """
+    dest = {"page": "", "next": ""}
+
+    def leave(target: str) -> RedirectResponse:
+        out = RedirectResponse(target, status_code=302)
+        out.headers["Cache-Control"] = "no-store"
+        out.delete_cookie(GSI_COOKIE, path=cookie_path(request), secure=is_https(request), httponly=True,
+                          samesite="lax")
+        return out
+
+    def fail(reason: str) -> RedirectResponse:
+        try:
+            auth_throttle.record(db, "google_fail", auth_throttle.ip_key(client_ip(request)))
+        except Exception:  # noqa: BLE001 - the security log may never cost the redirect
+            db.rollback()
+        if not dest["page"]:
+            return leave("/login?google=" + quote(reason, safe=""))
+        target = f"/{dest['page']}?google={quote(reason, safe='')}"
+        if dest["next"] != "/app":
+            target += "&next=" + quote(dest["next"], safe="")
+        return leave(target)
+
+    try:
+        if not google_oauth.signin_configured():
+            return fail("disabled")
+        now = utc_now()
+        row = None
+        if state and len(state) <= 128:
+            row = db.execute(
+                select(AuthToken).where(AuthToken.token_hash == token_hash(state), AuthToken.purpose == GOOGLE_SIGNIN)
+            ).scalars().first()
+        if row is None:
+            return fail("state_invalid")
+        if (as_utc(row.expires_at) or now) <= now:
+            return fail("expired")
+        row_id, payload = row.id, _payload(row)
+        binding = request.cookies.get(GSI_COOKIE, "")
+        expected = str(payload.get("binding") or "")
+        if not binding or not expected or not hmac.compare_digest(hkey("google-signin", binding), expected):
+            return fail("state_mismatch")
+        page = payload.get("page")
+        dest["page"] = page if page in _PAGES else "login"
+        dest["next"] = safe_next(str(payload.get("next") or ""))
+        if iss and iss != _GOOGLE_ISS:
+            return fail("state_invalid")
+        claimed = db.execute(
+            update(AuthToken)
+            .where(AuthToken.id == row_id, AuthToken.consumed_at.is_(None))
+            .values(consumed_at=now)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        db.commit()
+        if not claimed:
+            return fail("state_invalid")
+        if error:
+            return fail("cancelled" if error == "access_denied" else "google_error")
+        if not code:
+            return fail("state_invalid")
+        try:
+            tokens = google_oauth.exchange_signin_code(code, str(payload.get("verifier") or ""))
+        except google_oauth.GoogleAuthError:
+            return fail("exchange_failed")
+        try:
+            claims = google_oauth._signin_claims(
+                tokens,
+                client_id=get_settings().google_signin_client_id,
+                nonce=str(payload.get("nonce") or ""),
+                now=utc_now(),
+            )
+        except google_oauth.GoogleAuthError:
+            return fail("token_invalid")
+        try:
+            user_id, raw_session, outcome = accounts.google_sign_in(
+                db, request, claims, str(payload.get("locale") or "")
+            )
+        except accounts.AuthError as exc:
+            return fail(exc.code)
+        target = dest["next"]
+        if outcome == "supersede":
+            target = _with_query(target, "google", "superseded")
+        out = leave(target)
+        set_session_cookie(out, request, raw_session)
+        try:
+            auth_throttle.record(db, f"google_{outcome}", auth_throttle.ip_key(client_ip(request)), user_id)
+        except Exception:  # noqa: BLE001 - the security log may never cost the sign-in
+            db.rollback()
+        return out
+    except Exception:  # noqa: BLE001 - a redirect is the only answer this route has
+        db.rollback()
+        return fail("try_again")

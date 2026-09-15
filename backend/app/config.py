@@ -218,11 +218,21 @@ class Settings(BaseSettings):
     # CRON_SECRET, then APP_ACCESS_CODE, so a deployment is never keyed on a
     # public constant; rotating whichever one is in use resets every throttle.
     auth_secret: str = ""
-    # Google OAuth client, for the Gmail connect. Google SIGN-IN is deferred
-    # (Phase 29 amendment S1): nothing in the account routes reads these, and
-    # /auth/me reports google_enabled false regardless.
+    # Google OAuth client for the Gmail connect (Phase 29 / B2), in the Google
+    # Cloud project that stays in Testing. Sign-in never reads these.
     google_client_id: str = ""
     google_client_secret: str = ""
+    # Continue with Google (Phase 30 / E): the Web client of a SEPARATE Google
+    # Cloud project, "JobFinder Sign-in" (In production, basic scopes only).
+    # Separate because revocation is project-wide (a Gmail Disconnect would end
+    # the sign-in grant too), the restricted-scope user cap belongs to a project,
+    # and include_granted_scopes would pull gmail.readonly into a sign-in. There is
+    # NO fallback to the Gmail pair above: one would silently put sign-in on the
+    # Gmail project. Sign-in is on when both of these and APP_BASE_URL are set,
+    # and /auth/me reports it as google_enabled. The redirect URI to register is
+    # APP_BASE_URL + /api/auth/google/callback.
+    google_signin_client_id: str = ""
+    google_signin_client_secret: str = ""
 
     # Gmail inbox scanner (Phase 29 / B2): reads employer replies and files them
     # on the tracker. Nothing below does anything until the Google client above,

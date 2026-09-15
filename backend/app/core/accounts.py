@@ -32,9 +32,15 @@ critique found in the first draft:
   sign-in; any other password is `email_taken`.
 - **Brute-force limits survive closing the account** (A7) — see auth_throttle.
 
-Google sign-in, `/auth/claim` and the per-device sessions list are deferred
-(amendment S1). With them gone, the only unverified logins that can exist belong
-to email signups — which is exactly what makes the A2 takeover safe.
+Continue with Google (Phase 30 / E) keeps that last property intact. Every
+account it creates is created VERIFIED, because Google already proved the
+address, and a Google sign-in on an unverified email signup supersedes it the A2
+way (the password removed, every session and the extension key gone). So the only
+unverified logins that can exist still belong to email signups, which is exactly
+what makes the A2 takeover safe. Google keys on its `sub`, refuses an address it
+is not the authority for, and can never reach an admin or invite-code account:
+neither has a login row. `/auth/claim` and the per-device sessions list stay
+deferred.
 """
 from __future__ import annotations
 
@@ -56,6 +62,7 @@ from starlette.requests import Request
 from app.config import get_settings
 from app.core import auth_email
 from app.core import auth_throttle as throttle
+from app.core import google_oauth
 from app.core import quota
 from app.core.passwords import (
     MAX_BYTES,
@@ -171,29 +178,34 @@ def whoami(db: Session, request: Request) -> tuple[User | None, str, int | None]
 
 
 def me(db: Session, user: User | None, method: str) -> AuthMe:
-    """The /auth/me payload. `google_enabled` and `google_linked` stay False:
-    Google sign-in is deferred (amendment S1).
+    """The /auth/me payload.
+
+    `google_enabled` says whether Continue with Google is configured. It is read
+    once and put on BOTH returns, because the signed-out one is exactly what
+    /login and /signup read to decide whether to show the button (Phase 30 / E4).
+    `google_linked` says whether this login holds a Google `sub`.
 
     `usage` is this month's uses (Phase 30 / B7) for a signed-in caller and None
     for an anonymous one. Every sign-in response is built here, so reading the
     pool is best effort: a failure reports usage as unknown (None), never a
     login that succeeded answering 500."""
+    google_enabled = google_oauth.signin_configured()
     if user is None:
-        return AuthMe(signup_open=signup_open())
+        return AuthMe(signup_open=signup_open(), google_enabled=google_enabled)
     login = login_for(db, user.id)
     return AuthMe(
         authenticated=True,
         verified=is_verified(user.is_admin, user.signup_source, login.email_verified_at if login else None),
         method=method,
         signup_open=signup_open(),
-        google_enabled=False,
+        google_enabled=google_enabled,
         user=AuthUser(
             id=user.id,
             name=user.name or "",
             email=(login.email if login is not None else user.email) or "",
             is_admin=bool(user.is_admin),
             has_password=bool(login is not None and login.password_hash),
-            google_linked=False,
+            google_linked=bool(login is not None and login.google_sub),
             signup_source=user.signup_source or "",
         ),
         usage=_usage(db, user),
@@ -519,11 +531,14 @@ def verify(db: Session, request: Request, *, token: str = "", code: str = "") ->
     A LINK never mints a session: mail security scanners open links before the
     owner does, so a link that signed its opener in would hand the account to
     the scanner. And since FIXB B1 a link verifies ONLY from a live session of
-    the same account: otherwise a squatter who signs up with someone else's
+    the same ACCOUNT: otherwise a squatter who signs up with someone else's
     address has that person's click on "Confirm my email" verify the squatter's
-    account. Opened anywhere else it is 400 session_required, and the page tells
-    the reader to enter the 6-digit code on the device where they signed up. A
-    CODE needs that pending session too.
+    account. The rule is the account, not the session the signup created, so a
+    log in to that account on any device opens the link too (Phase 30 / D): the
+    page keeps the link's token through the log in and spends it afterwards.
+    Opened with no session, or another account's, it is 400 session_required,
+    and the page says to log in on this device or to enter the 6-digit code
+    where the account was created. A CODE needs a session of the account too.
     """
     now = utc_now()
     if token:
@@ -776,22 +791,29 @@ def reset(db: Session, request: Request, *, token: str, password: str) -> tuple[
 
 
 def change_password(db: Session, request: Request, user: User, *, current: str, new: str) -> bool:
-    """Change the password from Settings. The current one is required whenever
-    one is set (and throttled like a login, or a stolen session could grind it);
-    every OTHER session is signed out and the extension key is replaced (FIXB
-    B1). Returns whether the key was replaced."""
+    """Change the password from Settings. The current one is always required (and
+    throttled like a login, or a stolen session could grind it); every OTHER
+    session is signed out and the extension key is replaced (FIXB B1). Returns
+    whether the key was replaced.
+
+    A login with NO password, i.e. a Google-only account, is refused with
+    password_not_set (Phase 30 / E4). There is no current password to check, so
+    allowing it would turn a stolen Google session into a lasting password
+    credential. Such an account adds a password through Forgot password, which
+    proves the mailbox."""
     s = get_settings()
     now = utc_now()
     login = login_for(db, user.id)
     if login is None:
         raise AuthError(400, "no_login")
     user_id, email, locale, stored = user.id, login.email, user.locale, login.password_hash
-    if stored:
-        events = _password_attempt(db, email, request, now)
-        ok, _ = verify_password(current or "", stored, s.auth_scrypt_n)
-        if not ok:
-            raise AuthError(400, "invalid_credentials")
-        _forget_all(db, events)
+    if not stored:
+        raise AuthError(400, "password_not_set")
+    events = _password_attempt(db, email, request, now)
+    ok, _ = verify_password(current or "", stored, s.auth_scrypt_n)
+    if not ok:
+        raise AuthError(400, "invalid_credentials")
+    _forget_all(db, events)
     reason = validate_password(new, email)
     if reason:
         raise AuthError(400, "weak_password", reason=reason)
@@ -859,3 +881,203 @@ def purge_on_close(db: Session, user_id: int) -> None:
         .values(user_id=None)
         .execution_options(synchronize_session=False)
     )
+
+
+# --- Continue with Google (Phase 30 / E3) ---------------------------------------------------
+GOOGLE = "google"  # users.signup_source of an account a Google sign-in created
+
+
+def _claims_name(claims: dict) -> str:
+    """The name Google gave: `name`, else `given_name`, else ""."""
+    for key in ("name", "given_name"):
+        value = claims.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:255]
+    return ""
+
+
+def google_sign_in(db: Session, request: Request, claims: dict, locale: str = "") -> tuple[int, str, str]:
+    """Resolve the account a Google sign-in belongs to and sign this browser in.
+    Returns (user id, raw session token, outcome), the outcome being "login",
+    "signup", "link" or "supersede". Every refusal is an AuthError whose code the
+    callback puts on the page it redirects to.
+
+    `claims` come only from `google_oauth._signin_claims`, so the issuer, the
+    audience, the nonce, the clock and `email_verified is True` are proven. Then:
+
+    1. **The sub decides.** A login holding this `sub` signs in, whatever address
+       the token carries now (`login.email` is never re-keyed from a token), or
+       account_inactive.
+    2. **Google must be the authority for the address**: gmail.com, or a verified
+       address carrying `hd` (a Workspace domain). Anything else is
+       not_authoritative, for a new address AND an existing one, because the
+       ownership of a third-party address may have changed since Google verified
+       it. googlemail.com is not documented as Google's, so it is refused too.
+    3. Admin and invite-code accounts have no login row, so nothing below can
+       reach them: Google on such an address makes a separate account, or finds
+       an email login on it like anyone else's.
+    4. **By address.** No login: a NEW account, created verified with no password
+       and no mail, on the same per-network signup throttle as the email door. A
+       login holding another sub: linked_elsewhere, never re-linked by email. A
+       verified login: LINK. An unverified one: SUPERSEDE.
+
+    Every write happens in ONE commit that also holds the new session, so a
+    refusal leaves nothing behind. A conditional UPDATE matching no row (the
+    address changed between the lookup and the write) and an IntegrityError on
+    the address or the sub are both try_again. Nothing here revokes a Google
+    grant: sign-in never holds one.
+    """
+    raw_email = claims.get("email")
+    email = normalize_email(raw_email if isinstance(raw_email, str) else "")
+    sub = claims.get("sub")
+    if not valid_email(email) or not isinstance(sub, str) or not sub:
+        raise AuthError(400, "token_invalid")
+    authoritative = email.endswith("@gmail.com") or (claims.get("email_verified") is True and bool(claims.get("hd")))
+    now = utc_now()
+    start_locale = _locale(locale)
+    known = db.execute(select(UserLogin).where(UserLogin.google_sub == sub)).scalars().first()
+    if known is not None:
+        user = db.get(User, known.user_id)
+        if user is None or not user.is_active:
+            raise AuthError(403, "account_inactive")
+        user_id = user.id
+        raw_session = create_session(db, user_id, request, now)
+        db.commit()
+        return user_id, raw_session, "login"
+    if not authoritative:
+        raise AuthError(403, "not_authoritative")
+    login = login_by_email(db, email)
+    if login is None:
+        return _google_signup(db, request, claims, email, sub, start_locale, now)
+    user = db.get(User, login.user_id)
+    if user is None or not user.is_active:
+        raise AuthError(403, "account_inactive")
+    if login.google_sub:
+        # Another sub (this one was looked up first). Never re-linked by email.
+        raise AuthError(409, "linked_elsewhere")
+    if login.email_verified_at is not None:
+        return _google_link(db, request, login, user, email, sub, start_locale, now)
+    return _google_supersede(db, request, claims, login, user, email, sub, start_locale, now)
+
+
+def _google_signup(
+    db: Session, request: Request, claims: dict, email: str, sub: str, locale: str, now: datetime
+) -> tuple[int, str, str]:
+    """A new account, created VERIFIED with no password and no mail: Google has
+    proved the address. It counts on the SAME per-network `signup` counter as the
+    email door, so one network's hourly allowance covers both."""
+    if not signup_open():
+        raise AuthError(403, "signup_closed")
+    attempt = throttle.hit(db, "signup", throttle.ip_key(client_ip(request)), *throttle.SIGNUP_PER_IP, now=now)
+    if attempt.retry_after:
+        raise AuthError(429, "too_many_attempts", retry_after=attempt.retry_after)
+    user = User(
+        name=_claims_name(claims) or email.split("@", 1)[0][:255],
+        email=email,
+        invite_code=new_invite_code(),
+        signup_source=GOOGLE,
+        locale=locale,
+        created_at=now,
+    )
+    db.add(user)
+    try:
+        db.flush()
+        user_id = user.id
+        db.add(UserLogin(user_id=user_id, email=email, password_hash="", email_verified_at=now, google_sub=sub,
+                         created_at=now))
+        db.flush()
+        raw_session = create_session(db, user_id, request, now)
+        db.commit()
+    except IntegrityError:
+        # A concurrent sign-in won the unique address or sub between the lookup and here.
+        db.rollback()
+        raise AuthError(409, "try_again") from None
+    return user_id, raw_session, "signup"
+
+
+def _google_link(
+    db: Session, request: Request, login: UserLogin, user: User, email: str, sub: str, locale: str, now: datetime
+) -> tuple[int, str, str]:
+    """A VERIFIED login gains the sub. In the same commit every session is revoked
+    (before this browser's new one is minted) and the extension key rotated, so
+    whoever held a session or had read the key keeps neither. Then a best-effort
+    notice, mentioning the password when the account has one."""
+    user_id, login_id = user.id, login.id
+    has_password = bool(login.password_hash)
+    mail_locale = user.locale or locale
+    try:
+        linked = db.execute(
+            update(UserLogin)
+            .where(
+                UserLogin.id == login_id,
+                UserLogin.email == email,
+                UserLogin.google_sub.is_(None),
+                UserLogin.email_verified_at.is_not(None),
+            )
+            .values(google_sub=sub)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if linked != 1:
+            db.rollback()
+            raise AuthError(409, "try_again")
+        revoke_all(db, user_id, now=now)
+        rotated = _rotate_extension_key(user)
+        raw_session = create_session(db, user_id, request, now)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise AuthError(409, "try_again") from None
+    try:
+        auth_email.send_google_linked(db, request, email, locale=mail_locale, user_id=user_id,
+                                      has_password=has_password, key_rotated=rotated)
+    except auth_email.EmailUnavailable:
+        pass  # a notice is best-effort: the link it describes has already happened
+    return user_id, raw_session, "link"
+
+
+def _google_supersede(
+    db: Session, request: Request, claims: dict, login: UserLogin, user: User, email: str, sub: str, locale: str,
+    now: datetime,
+) -> tuple[int, str, str]:
+    """An UNVERIFIED email signup on an address Google just proved is taken over,
+    the way Phase 29's A2 reset takes one over: the password chosen before the
+    address was confirmed is removed, the address is verified, the name and
+    locale come from this sign-in, the extension key is rotated, every mailed
+    token is consumed and every session revoked. Whoever registered the address
+    first keeps nothing. Then a best-effort notice to the address Google proved,
+    which is the person signing in."""
+    user_id, login_id = user.id, login.id
+    try:
+        taken = db.execute(
+            update(UserLogin)
+            .where(
+                UserLogin.id == login_id,
+                UserLogin.email == email,
+                UserLogin.google_sub.is_(None),
+                UserLogin.email_verified_at.is_(None),
+            )
+            .values(password_hash="", google_sub=sub, email_verified_at=now)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if taken != 1:
+            db.rollback()
+            raise AuthError(409, "try_again")
+        name = _claims_name(claims)
+        if name:
+            user.name = name
+        if locale:
+            user.locale = locale
+        mail_locale = user.locale or ""
+        _rotate_extension_key(user)
+        consume_tokens(db, user_id, (VERIFY, RESET), now)
+        revoke_all(db, user_id, now=now)
+        raw_session = create_session(db, user_id, request, now)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise AuthError(409, "try_again") from None
+    try:
+        auth_email.send_google_superseded(db, request, email, locale=mail_locale, user_id=user_id)
+    except auth_email.EmailUnavailable:
+        pass  # a notice is best-effort: the takeover it describes has already happened
+    return user_id, raw_session, "supersede"

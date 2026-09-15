@@ -16044,9 +16044,12 @@ try:
         _binding29, _oauth_cookie29 = _jar29(_start29, "jf_oauth")
         check(
             "connect: start answers Google's consent URL — gmail.readonly, offline + consent (a refresh token every "
-            "time), PKCE S256, the APP_BASE_URL redirect — and binds the round trip to this browser with jf_oauth",
+            "time) with include_granted_scopes, PKCE S256, the APP_BASE_URL redirect — and binds the round trip to "
+            "this browser with jf_oauth (the twin of section 33's pin that the SIGN-IN URL never sends "
+            "include_granted_scopes or access_type)",
             _start29.status_code == 200 and _us29(_url29).hostname == "accounts.google.com"
             and _go29.GMAIL_SCOPE in _q_start29.get("scope", "") and _q_start29.get("access_type") == "offline"
+            and _q_start29.get("include_granted_scopes") == "true"
             and _q_start29.get("prompt") == "consent" and _q_start29.get("code_challenge_method") == "S256"
             and _q_start29.get("redirect_uri") == "https://app.jobfinder.test/api/inbox/google/callback"
             and bool(_binding29) and "httponly" in _oauth_cookie29.lower() and "max-age=600" in _oauth_cookie29.lower()
@@ -16525,6 +16528,32 @@ try:
             "B1: …while the session that signed up opens the same link and is verified in place (the false-positive half)",
             _l30_own.status_code == 200 and _j28(_l30_own) == {"verified": True, "signed_in": True},
             _l30_own.text[:100],
+        )
+        # Phase 30 / D: the rule above keys on the ACCOUNT, not on the session that signed up, so logging in to that
+        # account on another device and opening the link there verifies it. The frontend keeps the link's token
+        # through a log in and spends it afterwards; this pins the backend half it depends on.
+        _reset_auth_throttles28()
+        _c30.cookies.clear()
+        _d30_su = _c30.post("/auth/signup", json={"name": "Dalia", "email": "dalia30@example.com",
+                                                 "password": "dalia first passphrase"}, headers=_XRW)
+        _d30_signup_tok = _d30_su.cookies.get("jf_session") or ""
+        _uid28(_d30_su)
+        _d30_link = _token_of28(_last_mail28("dalia30@example.com", "link"))
+        _c30.cookies.clear()
+        _d30_login = _c30.post("/auth/login", json={"email": "dalia30@example.com",
+                                                   "password": "dalia first passphrase"}, headers=_XRW)
+        _d30_login_tok = _d30_login.cookies.get("jf_session") or ""
+        _c30.cookies.clear()
+        _d30_verify = _c30.post("/auth/verify", json={"token": _d30_link}, headers=_ck28(_d30_login_tok, _XRW))
+        _c30.cookies.clear()
+        check(
+            "D: a verify LINK opened with only a LOGIN cookie — a new session of the SAME account, as on another "
+            "device after logging in — verifies it, while the signup's own session was never sent",
+            _d30_su.status_code == 200 and bool(_d30_link)
+            and _d30_login.status_code == 200 and _d30_login_tok not in ("", _d30_signup_tok)
+            and _d30_verify.status_code == 200 and _j28(_d30_verify) == {"verified": True, "signed_in": True}
+            and (_login_row28("dalia30@example.com") or {}).get("verified") is True,
+            f"{_d30_login.status_code} {_d30_verify.status_code} {_d30_verify.text[:100]}",
         )
 
         # B1: the extension key does not outlive a password change, logout-others or a reset.
@@ -18504,6 +18533,52 @@ check(
     _calls32(_routes32.cron_job_alert, "quota", "prune") and _calls32(_iroutes32.inbox_cron, "quota", "prune")
     and _calls32(_iroutes32.inbox_cron, "auth_throttle", "prune_security_log")
     and not _calls32(_routes32.cron_nudges, "quota", "prune"),
+)
+
+
+# --- 32.15 (second half) The id_token's claims have ONE reader ----------------------------
+def _call_sites32(name):  # noqa: ANN001
+    """(file name, innermost enclosing function, call node) for every call of `name` anywhere under app/ — parsed,
+    never grepped, so a docstring that names the function is not a call."""
+    sites = {}
+    for path in sorted(_Path29(_acc32.__file__).resolve().parents[1].rglob("*.py")):
+        tree = _ast32.parse(path.read_text(encoding="utf-8"))
+        for fn in _ast32.walk(tree):  # breadth-first: a nested def overwrites its parent, so the innermost wins
+            if isinstance(fn, (_ast32.FunctionDef, _ast32.AsyncFunctionDef)):
+                for node in _ast32.walk(fn):
+                    if isinstance(node, _ast32.Call):
+                        called = getattr(node.func, "attr", "") or getattr(node.func, "id", "")
+                        if called == name:
+                            sites[id(node)] = (path.name, fn, node)
+    return list(sites.values())
+
+
+def _reads_exchange32(site):  # noqa: ANN001
+    """The claims call's token response is the very name exchange_signin_code's result was bound to, earlier in the
+    same function: the claims come from the token endpoint's answer and from nothing the browser carried."""
+    _file, fn, call = site
+    arg = call.args[0] if call.args else None
+    return isinstance(arg, _ast32.Name) and any(
+        isinstance(node, _ast32.Assign) and isinstance(node.value, _ast32.Call)
+        and (getattr(node.value.func, "attr", "") or getattr(node.value.func, "id", "")) == "exchange_signin_code"
+        and any(isinstance(t, _ast32.Name) and t.id == arg.id for t in node.targets)
+        and node.lineno < call.lineno
+        for node in _ast32.walk(fn)
+    )
+
+
+_claims_sites32 = _call_sites32("_signin_claims")
+_exchange_sites32 = _call_sites32("exchange_code")
+check(
+    "32.15 source pin: google_oauth._signin_claims has exactly ONE caller in app/ — the sign-in callback "
+    "(auth_routes.auth_google_callback) — and it reads the token response exchange_signin_code returned just before; "
+    "the walker is live, finding the Gmail exchange_code once, in the Gmail callback",
+    len(_claims_sites32) == 1
+    and (_claims_sites32[0][0], _claims_sites32[0][1].name) == ("auth_routes.py", "auth_google_callback")
+    and _reads_exchange32(_claims_sites32[0])
+    and [(f, fn.name) for f, fn, _node in _exchange_sites32] == [("inbox_routes.py", "inbox_google_callback")],
+    f"claims={[(f, fn.name, n.lineno) for f, fn, n in _claims_sites32]} "
+    f"exchange={[(f, fn.name) for f, fn, _n in _exchange_sites32]}",
 )
 
 # ---------------------------------------------------------------------------
@@ -21068,6 +21143,8 @@ _ROUTE_COST = {
     ("POST", "/auth/logout-others"): "free",
     ("GET", "/auth/extension-key"): "free",
     ("POST", "/auth/extension-key/rotate"): "free",
+    ("POST", "/auth/google/start"): "free",
+    ("GET", "/auth/google/callback"): "free",
     # free: the profile, the tracker, search settings and history, the alerts card, the registries
     ("GET", "/profile/me"): "free",
     ("GET", "/profile/resume"): "free",
@@ -21823,6 +21900,15 @@ try:
                  lambda s: _as32("POST", "/auth/reset", _XRW, json={
                      "token": _token_of28(_last_mail28(_E2_32, "link")), "password": _PW3_32}),
                  statuses=(200,))
+        # Continue with Google (Phase 30 / E): the sign-in client is blank in this sweep, so start answers 404
+        # google_disabled and the callback still leaves with a redirect. Section 33 drives the configured flow.
+        _plain32(("POST", "/auth/google/start"),
+                 lambda s: _as32("POST", "/auth/google/start", _XRW, json={"next": "", "locale": "en", "page": "login"}),
+                 setup=_throttles_cleared32, statuses=(404,))
+        _plain32(("GET", "/auth/google/callback"),
+                 lambda s: _as32("GET", "/auth/google/callback", params={"code": "sweep", "state": "sweep"},
+                                 follow_redirects=False),
+                 statuses=(302,))
 finally:
     _ae28._resolve_sender = _real_resolve_sender28
     _go29._transport = _real_transport32
@@ -22020,6 +22106,1135 @@ check(
     "32.13(c) the sweep drove every row of _ROUTE_COST — no mounted route was left undriven",
     {key for key in _sweep32 if len(key) == 2} == set(_ROUTE_COST),
     f"undriven={sorted(set(_ROUTE_COST) - set(_sweep32))}",
+)
+
+
+# ---------------------------------------------------------------------------
+# 33. Continue with Google (Phase 30 / E): a server-side code flow with PKCE on a
+# sign-in client of its OWN, keyed on Google's `sub`. The claims are read off the
+# id_token the token endpoint handed back over TLS, never off anything the
+# browser carried. Hermetic: `google_oauth._transport` is a fake Google whose
+# token endpoint answers a SIGN-IN exchange (a form whose redirect_uri is the
+# sign-in callback) only for the sign-in client's id and secret, and hands every
+# other request to section 29's Gmail fake; auth mail is captured through the
+# `auth_email._resolve_sender` seam. The harness clears the cookie jar after every
+# start and sends `jf_gsi` by hand, and clears the auth throttles before each
+# scenario, because TestClient is ONE network address. The Google parts of 32.10
+# run here, where the harness is. Each catch sits beside its false-positive twin.
+# ---------------------------------------------------------------------------
+import base64 as _b64_33  # noqa: E402
+import copy as _copy33  # noqa: E402
+import hashlib as _hl33  # noqa: E402
+import json as _json33  # noqa: E402
+import time as _time33  # noqa: E402
+from urllib.parse import parse_qs as _pqs33, urlsplit as _us33  # noqa: E402
+
+from app.api import auth_routes as _ar33  # noqa: E402
+from app.core import accounts as _acc33, auth_email as _ae33, google_oauth as _go33  # noqa: E402
+from app.core import sentry_scrub as _scrub33  # noqa: E402
+from app.db.models import AuthEvent as _AEv33, AuthToken as _ATok33, User as _U33, UserLogin as _UL33  # noqa: E402
+
+_SIGNIN_ID33 = "smoke-signin.apps.googleusercontent.com"
+_SIGNIN_SECRET33 = "smoke-signin-secret"
+_GMAIL_ID33 = _google_env29["GOOGLE_CLIENT_ID"]
+_GMAIL_SECRET33 = _google_env29["GOOGLE_CLIENT_SECRET"]
+_BASE33 = _google_env29["APP_BASE_URL"]
+_SIGNIN_REDIRECT33 = _BASE33 + "/api/auth/google/callback"
+_DROP33 = object()
+
+
+def _b64url33(raw):  # noqa: ANN001
+    return _b64_33.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _jwt33(claims):  # noqa: ANN001
+    """An UNSIGNED id_token, header.payload.signature. The sign-in flow reads a token that came straight from the token
+    endpoint over TLS and checks no signature, so the test needs none."""
+    header = _b64url33(_json33.dumps({"alg": "RS256", "kid": "smoke-33", "typ": "JWT"}).encode("utf-8"))
+    return f"{header}.{_b64url33(_json33.dumps(claims).encode('utf-8'))}.smoke-signature-33"
+
+
+def _with33(claims, over):  # noqa: ANN001
+    """`claims` with `over` applied; a value of _DROP33 removes that claim."""
+    out = dict(claims)
+    for key, value in over.items():
+        if value is _DROP33:
+            out.pop(key, None)
+        else:
+            out[key] = value
+    return out
+
+
+# --- 33a. What an id_token must say before anyone is signed in (pure, an injected clock) -----------------------
+_claims_fn33 = getattr(_go33, "_signin_claims", None)
+_T33 = _dt28(2026, 9, 15, 12, 0, tzinfo=_tz28.utc)
+_TS33 = int(_T33.timestamp())
+_UNIT33 = {
+    "iss": "https://accounts.google.com", "aud": _SIGNIN_ID33, "sub": "109876543210987654321",
+    "email": "dana.unit33@gmail.com", "email_verified": True, "iat": _TS33 - 30, "exp": _TS33 + 3000,
+    "nonce": "nonce-unit-33",
+}
+
+
+def _verdict33(token_response, nonce="nonce-unit-33"):  # noqa: ANN001
+    """'ok' (claims came back), the GoogleAuthError code, or what else happened — never a raise into the suite."""
+    if _claims_fn33 is None:
+        return "missing"
+    try:
+        out = _claims_fn33(token_response, client_id=_SIGNIN_ID33, nonce=nonce, now=_T33)
+    except _go33.GoogleAuthError as exc:
+        return exc.code
+    except Exception as exc:  # noqa: BLE001
+        return f"raised {type(exc).__name__}"
+    return "ok" if isinstance(out, dict) and out.get("sub") else f"returned {out!r}"[:60]
+
+
+def _v33(**over):  # noqa: ANN003
+    return _verdict33({"id_token": _jwt33(_with33(_UNIT33, over))})
+
+
+try:
+    _unit_out33 = (_claims_fn33({"id_token": _jwt33(_UNIT33)}, client_id=_SIGNIN_ID33, nonce="nonce-unit-33", now=_T33)
+                   if _claims_fn33 is not None else None)
+except Exception as _e33:  # noqa: BLE001 - asserted below
+    _unit_out33 = f"raised {type(_e33).__name__}: {_e33}"
+_ok33 = [_v33(iss="accounts.google.com"), _v33(aud=[_SIGNIN_ID33]), _v33(azp=_SIGNIN_ID33)]
+check(
+    "33 claims: a well-formed id_token passes and hands back its claims — both iss spellings Google documents, aud as "
+    "the client id or a list holding it, azp absent or equal to the client",
+    _unit_out33 == _UNIT33 and _ok33 == ["ok"] * 3,
+    f"{str(_unit_out33)[:120]} {_ok33}",
+)
+_aud_bad33 = [_v33(iss="https://evil.example"), _v33(iss=["https://accounts.google.com"]), _v33(aud=_GMAIL_ID33),
+              _v33(aud=[_GMAIL_ID33]), _v33(azp=_GMAIL_ID33)]
+check(
+    "33 claims: …while a foreign iss, the GMAIL client as aud (alone or in a list) and a wrong azp are each "
+    "token_invalid — a token Google issued to another client is not a sign-in to this one",
+    _aud_bad33 == ["token_invalid"] * 5,
+    str(_aud_bad33),
+)
+_clock33 = [_v33(exp=_TS33 - 59), _v33(exp=_TS33 - 61), _v33(iat=_TS33 + 299), _v33(iat=_TS33 + 301),
+            _v33(exp=_DROP33), _v33(exp=True)]
+check(
+    "33 claims: the clock allows 60 s of skew on exp and 300 s on iat, to the second — exp at now-59 passes and "
+    "now-61 fails, iat at now+299 passes and now+301 fails — and a token with no numeric exp fails",
+    _clock33 == ["ok", "token_invalid", "ok", "token_invalid", "token_invalid", "token_invalid"],
+    str(_clock33),
+)
+_nonce33 = [_v33(nonce="another-nonce"), _v33(nonce=_DROP33), _verdict33({"id_token": _jwt33(_UNIT33)}, nonce="")]
+_verified33 = [_v33(email_verified=False), _v33(email_verified="false"), _v33(email_verified="true"),
+               _v33(email_verified=_DROP33)]
+check(
+    "33 claims: the nonce must be the one this browser's start issued (another, a missing one, or an empty expected "
+    "nonce all fail) and email_verified must be the boolean true — false, the string 'false', the string 'true' and "
+    "a missing claim all fail",
+    _nonce33 == ["token_invalid"] * 3 and _verified33 == ["token_invalid"] * 4,
+    f"{_nonce33} {_verified33}",
+)
+_shape33 = [_v33(sub=""), _v33(sub="9" * 256), _v33(sub=123456789), _v33(email=""), _v33(email=_DROP33), _v33(hd=7),
+            _verdict33({}), _verdict33({"id_token": "only.two"}), _verdict33({"id_token": "a.%%%.c"}),
+            _verdict33({"id_token": 42})]
+check(
+    "33 claims: sub is a string of 1-255 characters, email a non-empty string and hd a string when present — and a "
+    "response without an id_token, or one that is not three base64url segments, is token_invalid",
+    _shape33 == ["token_invalid"] * 10 and [_v33(sub="9" * 255), _v33(hd="acme.example")] == ["ok", "ok"],
+    str(_shape33),
+)
+
+
+# --- 33b. The two notices (pure builders) -------------------------------------------------------------------------
+def _built33(name, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    """A builder's answer, or an empty one when it does not exist or raises — asserted, never an aborted suite."""
+    empty = "" if name.endswith("_html") else ("", "")
+    fn = getattr(_ae33, name, None)
+    if fn is None:
+        return empty
+    try:
+        return fn(*args, **kwargs)
+    except Exception:  # noqa: BLE001 - asserted below
+        return empty
+
+
+_gl_key33 = _built33("build_google_linked_email", "dana@gmail.com", "en", has_password=False, key_rotated=True)[1]
+_gl_nokey33 = _built33("build_google_linked_email", "dana@gmail.com", "en", has_password=False, key_rotated=False)[1]
+_gl_pw33 = _built33("build_google_linked_email", "dana@gmail.com", "en", has_password=True, key_rotated=False)[1]
+_gl_nokey_html33 = _built33("build_google_linked_email_html", "dana@gmail.com", "en", has_password=False,
+                            key_rotated=False)
+_gl_full_html33 = _built33("build_google_linked_email_html", "dana@gmail.com", "en", has_password=True,
+                           key_rotated=True)
+check(
+    "33 mail: the linked notice names the address, says other devices were signed out and the extension key was "
+    "replaced, and tells a reader who did not do this to secure their Google account — in the text and the HTML",
+    "Google sign-in was added to your JobFinder account for dana@gmail.com." in _gl_key33
+    and "Other devices were signed out and your extension key was replaced." in _gl_key33
+    and "If this wasn't you, secure your Google account." in _gl_key33
+    and "dana@gmail.com" in _gl_full_html33 and "extension key was replaced" in _gl_full_html33
+    and "secure your Google account" in _gl_full_html33,
+    _gl_key33[:300],
+)
+check(
+    "33 mail: …each clause only where it is true — with no key rotation the key clause is gone from the text and the "
+    "HTML, and only an account that also has a password is told to reset it if it did not set it",
+    "extension" not in _gl_nokey33.lower() and "Other devices were signed out." in _gl_nokey33
+    and bool(_gl_nokey_html33) and "extension" not in _gl_nokey_html33.lower()
+    and "password" not in _gl_key33.lower() and "password" not in _gl_nokey_html33.lower()
+    and "This account also has a password. If you did not set it, reset it with Forgot password." in _gl_pw33
+    and "also has a password" in _gl_full_html33,
+    f"{_gl_nokey33[:200]} | {_gl_pw33[:200]}",
+)
+_gl_he33 = _built33("build_google_linked_email", "dana@gmail.com", "he", has_password=True, key_rotated=True)
+_gl_he_html33 = _built33("build_google_linked_email_html", "dana@gmail.com", "he", has_password=True, key_rotated=True)
+_gl_he_lines33 = (_gl_he33[1] or "").splitlines()
+check(
+    "33 mail: in Hebrew the address sits on its own line in the text and in its own dir=ltr span in the HTML — never "
+    "inside a Hebrew sentence — beside the Hebrew key and password sentences, in a right-to-left message",
+    "dana@gmail.com" in _gl_he_lines33
+    and not any("dana@gmail.com" in line and _re28.search("[֐-׿]", line) for line in _gl_he_lines33)
+    and _re28.search(r'>\s*<span dir="ltr">dana@gmail\.com</span>\s*<', _gl_he_html33 or "") is not None
+    and 'dir="rtl"' in (_gl_he_html33 or "") and "התוסף" in (_gl_he33[1] or "") and "סיסמה" in (_gl_he33[1] or "")
+    and "Google" in (_gl_he33[0] or ""),
+    (_gl_he33[1] or "")[:300],
+)
+_gs33 = _built33("build_google_superseded_email", f"{_BASE33}/forgot", "en")
+_gs_html33 = _built33("build_google_superseded_email_html", f"{_BASE33}/forgot", "en")
+_gs_nolink33 = _built33("build_google_superseded_email", "", "en")
+_gs_nolink_html33 = _built33("build_google_superseded_email_html", "", "en")
+_gs_he33 = _built33("build_google_superseded_email", f"{_BASE33}/forgot", "he")
+check(
+    "33 mail: the superseded notice says this was a Google sign-in, that the password chosen before the address was "
+    "confirmed was removed and other devices were signed out, and points at /forgot — never mentioning an extension key",
+    "You signed in to JobFinder with Google." in (_gs33[1] or "")
+    and "before the address was confirmed, was removed, and other devices were signed out." in (_gs33[1] or "")
+    and f"{_BASE33}/forgot" in (_gs33[1] or "") and f'href="{_BASE33}/forgot"' in (_gs_html33 or "")
+    and "extension" not in (_gs33[1] or "").lower() and bool(_gs_html33)
+    and "extension" not in (_gs_html33 or "").lower(),
+    (_gs33[1] or "")[:300],
+)
+check(
+    "33 mail: …with no link base the link is dropped and no sentence promises one, and in Hebrew the link sits on its "
+    "own line",
+    bool(_gs_nolink33[1]) and "http" not in _gs_nolink33[1] and "Forgot password" in _gs_nolink33[1]
+    and bool(_gs_nolink_html33) and "href=" not in _gs_nolink_html33
+    and f"{_BASE33}/forgot" in (_gs_he33[1] or "").splitlines(),
+    f"{_gs_nolink33[1][:200]} | {(_gs_he33[1] or '')[:200]}",
+)
+
+# --- 33c. Over HTTP: the harness ------------------------------------------------------------------------------------
+_g33 = {"pending": None, "challenge": "", "token_status": 0, "forms": []}
+
+
+def _s256_33(verifier):  # noqa: ANN001
+    return _b64url33(_hl33.sha256((verifier or "").encode("ascii", "replace")).digest())
+
+
+def _google33(method, url, headers, body, timeout):  # noqa: ANN001
+    """Google for section 33. A token request whose redirect_uri is the SIGN-IN callback is a sign-in exchange: it
+    answers the pending id_token only for the sign-in client's id and secret, and only for a PKCE verifier whose S256
+    is the challenge the authorize URL showed. Everything else is section 29's Gmail fake."""
+    form = {k: v[0] for k, v in _pqs33((body or b"").decode("utf-8")).items()}
+    settings33 = get_settings()
+    base = (settings33.app_base_url or "").strip().rstrip("/")
+    if url.startswith(_go29.TOKEN_URL) and form.get("redirect_uri") == base + "/api/auth/google/callback":
+        _g33["forms"].append(form)
+        signin_id = getattr(settings33, "google_signin_client_id", "")
+        signin_secret = getattr(settings33, "google_signin_client_secret", "")
+        if not (signin_id and form.get("client_id") == signin_id and form.get("client_secret") == signin_secret):
+            return 401, b'{"error": "invalid_client"}'
+        if _g33["token_status"]:
+            return int(_g33["token_status"]), b'{"error": "server_error"}'
+        if _s256_33(form.get("code_verifier", "")) != _g33["challenge"]:
+            return 400, b'{"error": "invalid_grant"}'
+        return 200, _json33.dumps({
+            "access_token": "at-signin-33", "expires_in": 3599, "token_type": "Bearer", "scope": "openid email profile",
+            "id_token": _jwt33(_g33["pending"] or {}),
+        }).encode("utf-8")
+    return _google29(method, url, headers, body, timeout)
+
+
+def _claims33(email, sub, **over):  # noqa: ANN001, ANN003
+    """Claims for a live round, on the REAL clock (the callback reads it); the round fills in the nonce."""
+    now = int(_time33.time())
+    return _with33({"iss": "https://accounts.google.com", "aud": _SIGNIN_ID33, "azp": _SIGNIN_ID33, "sub": sub,
+                    "email": email, "email_verified": True, "iat": now - 5, "exp": now + 3600}, over)
+
+
+def _start33(client, page="login", next_="", locale="en"):  # noqa: ANN001
+    """POST /auth/google/start: (response, authorize URL, its parsed query, (jf_gsi value, its Set-Cookie))."""
+    client.cookies.clear()
+    resp = client.post("/auth/google/start", json={"next": next_, "locale": locale, "page": page}, headers=_XRW)
+    client.cookies.clear()
+    url = _j28(resp).get("url", "") if resp.status_code == 200 else ""
+    return resp, url, {k: v[0] for k, v in _pqs33(_us33(url).query).items()}, _jar29(resp, "jf_gsi")
+
+
+def _callback33(client, state, binding, **params):  # noqa: ANN001, ANN003
+    client.cookies.clear()
+    resp = client.get("/auth/google/callback", params={"state": state, **params},
+                      headers={"Cookie": f"jf_gsi={binding}"} if binding else {}, follow_redirects=False)
+    client.cookies.clear()
+    return resp
+
+
+def _round33(client, claims, *, page="login", next_="", locale="en", params=None, reset=True):  # noqa: ANN001
+    """One whole Continue with Google: start, Google answering with `claims` (the start's nonce unless the claims name
+    their own), and the callback with this browser's jf_gsi. Clears the auth throttles first unless told not to."""
+    if reset:
+        _reset_auth_throttles28()
+    start, url, query, (binding, gsi_cookie) = _start33(client, page, next_, locale)
+    _g33["pending"] = _with33({"nonce": query.get("nonce", "")}, claims)
+    _g33["challenge"] = query.get("code_challenge", "")
+    resp = _callback33(client, query.get("state", ""), binding, **({"code": "code-33"} if params is None else params))
+    return {"start": start, "url": url, "query": query, "binding": binding, "gsi_cookie": gsi_cookie, "resp": resp,
+            "session": _jar29(resp, "jf_session")[0]}
+
+
+def _where33(resp):  # noqa: ANN001
+    """(path, parsed query) of a redirect — compared as parameters, never as a string."""
+    parts = _us33(_loc29(resp))
+    return parts.path, _pqs33(parts.query, keep_blank_values=True)
+
+
+def _cookie_names33(resp):  # noqa: ANN001
+    return {value.split("=", 1)[0] for value in resp.headers.get_list("set-cookie")}
+
+
+def _me33(client, token):  # noqa: ANN001
+    client.cookies.clear()
+    body = _j28(client.get("/auth/me", headers=_ck28(token)))
+    client.cookies.clear()
+    return body
+
+
+def _uid33(me):  # noqa: ANN001
+    return (me.get("user") or {}).get("id")
+
+
+def _login33(email=None, sub=None):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        column, value = (_UL33.email, email) if email is not None else (_UL33.google_sub, sub)
+        row = d.execute(_sel29(_UL33).where(column == value)).scalars().first()
+        return None if row is None else {
+            "id": row.id, "user_id": row.user_id, "email": row.email, "password_hash": row.password_hash,
+            "verified": row.email_verified_at is not None, "google_sub": row.google_sub,
+        }
+    finally:
+        d.close()
+
+
+def _has_login33(uid):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return d.execute(_sel29(_UL33.id).where(_UL33.user_id == uid)).scalar() is not None
+    finally:
+        d.close()
+
+
+def _user33(uid):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        user = d.get(_U33, uid) if uid is not None else None
+        return {} if user is None else {
+            "invite_code": user.invite_code, "signup_source": user.signup_source, "name": user.name,
+            "locale": user.locale, "is_active": user.is_active,
+        }
+    finally:
+        d.close()
+
+
+def _events33(kind):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return [tuple(r) for r in d.execute(_sel29(_AEv33.kind, _AEv33.user_id).where(_AEv33.kind == kind)).all()]
+    finally:
+        d.close()
+
+
+def _key_works33(client, key):  # noqa: ANN001
+    client.cookies.clear()
+    status = client.get("/applications", headers={"X-App-Key": key}).status_code if key else 0
+    client.cookies.clear()
+    return status
+
+
+def _ext_key33(client, token):  # noqa: ANN001
+    client.cookies.clear()
+    key = _j28(client.get("/auth/extension-key", headers=_ck28(token))).get("key", "")
+    client.cookies.clear()
+    return key
+
+
+_prev33_env = _env29(**_google_env29, GOOGLE_SIGNIN_CLIENT_ID=_SIGNIN_ID33, GOOGLE_SIGNIN_CLIENT_SECRET=_SIGNIN_SECRET33,
+                     SIGNUP_MODE="open")
+_prev33_transport = _go29._transport
+_go29._transport = _google33
+_ae28._resolve_sender = lambda: _capture_auth_mail28
+try:
+    with TestClient(_fastapi_app) as _c33:
+        # --- configuration (a): only the Gmail client is set -------------------------------------------------------
+        _prev33_a = _env29(GOOGLE_SIGNIN_CLIENT_ID="", GOOGLE_SIGNIN_CLIENT_SECRET="")
+        try:
+            _reset_auth_throttles28()
+            _a33_anon = _me33(_c33, "")
+            _a33_admin = _j28(_c33.get("/auth/me", headers=_ADMIN_H))
+            _c33.cookies.clear()
+            _a33_start = _c33.post("/auth/google/start", json={"next": "", "locale": "en", "page": "login"},
+                                   headers=_XRW)
+            _c33.cookies.clear()
+            _a33_callback = _callback33(_c33, "any-state-33", "", code="code-33")
+        finally:
+            _restore29(_prev33_a)
+        check(
+            "33 config (a): with ONLY the Gmail client set, sign-in is off — google_enabled is false on both /auth/me "
+            "returns (anonymous and signed in), start is 404 google_disabled, and the callback lands on "
+            "/login?google=disabled: nothing falls back to the Gmail pair",
+            _a33_anon.get("google_enabled") is False and _a33_admin.get("authenticated") is True
+            and _a33_admin.get("google_enabled") is False
+            and _a33_start.status_code == 404 and _code28(_a33_start) == "google_disabled"
+            and _where33(_a33_callback) == ("/login", {"google": ["disabled"]}),
+            f"{_a33_anon.get('google_enabled')} {_a33_start.status_code} {_a33_start.text[:80]} {_loc29(_a33_callback)}",
+        )
+
+        # --- configuration (b): both clients; a first sign-in creates the account ---------------------------------
+        _b33_anon = _me33(_c33, "")
+        _g33["forms"].clear()
+        _b33 = _round33(_c33, _claims33("new.google33@gmail.com", "g-new-33", name="Noa Google"))
+        _b33_q = _b33["query"]
+        _b33_form = _g33["forms"][-1] if _g33["forms"] else {}
+        _b33_login = _login33("new.google33@gmail.com") or {}
+        _b33_me = _me33(_c33, _b33["session"])
+        _b33_user = _b33_me.get("user") or {}
+        _b33_signups = _events33("google_signup")
+        check(
+            "33 config (b): with BOTH clients set, /auth/me says google_enabled true and start answers Google's page for "
+            "the SIGN-IN client — its id, and the redirect APP_BASE_URL + /api/auth/google/callback",
+            _b33_anon.get("google_enabled") is True and _b33["start"].status_code == 200
+            and _us33(_b33["url"]).hostname == "accounts.google.com"
+            and _b33_q.get("client_id") == _SIGNIN_ID33 and _b33_q.get("redirect_uri") == _SIGNIN_REDIRECT33,
+            f"{_b33['start'].status_code} {_b33['start'].text[:80]} {_b33_q.get('client_id')}",
+        )
+        check(
+            "33 authorize URL (the behavioural pin, parsed): scope 'openid email profile', response_type code, "
+            "prompt=select_account, a state, a nonce and an S256 challenge — and never access_type, "
+            "include_granted_scopes or prompt=consent (29g pins that the Gmail URL does send include_granted_scopes)",
+            _b33_q.get("scope") == "openid email profile" and _b33_q.get("response_type") == "code"
+            and _b33_q.get("prompt") == "select_account" and len(_b33_q.get("state", "")) >= 32
+            and len(_b33_q.get("nonce", "")) >= 32 and _b33_q.get("code_challenge_method") == "S256"
+            and len(_b33_q.get("code_challenge", "")) == 43
+            and "access_type" not in _b33_q and "include_granted_scopes" not in _b33_q,
+            str(sorted(_b33_q)),
+        )
+        check(
+            "33 start: jf_gsi is HttpOnly, SameSite=Lax, 600 seconds, Path=/ on the bare app and not Secure over plain "
+            "http — a cookie named apart from the Gmail flow's jf_oauth",
+            bool(_b33["binding"]) and "httponly" in _b33["gsi_cookie"].lower()
+            and "samesite=lax" in _b33["gsi_cookie"].lower() and "max-age=600" in _b33["gsi_cookie"].lower()
+            and "path=/;" in _b33["gsi_cookie"].lower() and "secure" not in _b33["gsi_cookie"].lower(),
+            _b33["gsi_cookie"],
+        )
+        check(
+            "33 config (b): the code exchange carries the sign-in id, the sign-in secret, the sign-in redirect and a "
+            "PKCE verifier whose S256 is the challenge Google was shown",
+            _b33_form.get("client_id") == _SIGNIN_ID33 and _b33_form.get("client_secret") == _SIGNIN_SECRET33
+            and _b33_form.get("redirect_uri") == _SIGNIN_REDIRECT33
+            and _b33_form.get("grant_type") == "authorization_code" and _b33_form.get("code") == "code-33"
+            and len(_b33_form.get("code_verifier", "")) >= 43
+            and _s256_33(_b33_form.get("code_verifier", "")) == _b33_q.get("code_challenge"),
+            str({k: v for k, v in _b33_form.items() if k != "client_secret"}),
+        )
+        check(
+            "33 new account: a first Google sign-in on a gmail.com address creates the account VERIFIED, with no "
+            "password and the sub on its login, and signs this browser in — /auth/me says verified, google_linked, "
+            "signup_source google, the name Google gave, and google_enabled on the signed-in return too",
+            _b33["resp"].status_code == 302 and _loc29(_b33["resp"]) == "/app" and _b33["session"] != ""
+            and _b33_login.get("verified") is True and _b33_login.get("password_hash") == ""
+            and _b33_login.get("google_sub") == "g-new-33"
+            and _b33_me.get("authenticated") is True and _b33_me.get("verified") is True
+            and _b33_me.get("method") == "session" and _b33_me.get("google_enabled") is True
+            and _b33_user.get("has_password") is False and _b33_user.get("google_linked") is True
+            and _b33_user.get("signup_source") == "google" and _b33_user.get("name") == "Noa Google",
+            f"{_loc29(_b33['resp'])} {_b33_login} {str(_b33_me)[:200]}",
+        )
+        check(
+            "33 new account: no mail is sent (Google already proved the address), the callback clears jf_gsi, and the "
+            "sign-in is in the security log as google_signup",
+            _mail_to28("new.google33@gmail.com") == []
+            and "max-age=0" in _jar29(_b33["resp"], "jf_gsi")[1].lower()
+            and _uid33(_b33_me) is not None and ("google_signup", _uid33(_b33_me)) in _b33_signups,
+            f"{_jar29(_b33['resp'], 'jf_gsi')[1]} {_b33_signups}",
+        )
+        _c33.cookies.clear()
+        _gm33_start = _c33.post("/inbox/google/start", json={}, headers=_ADMIN_H)
+        _c33.cookies.clear()
+        _gm33_q = {k: v[0] for k, v in _pqs33(_us33(_j28(_gm33_start).get("url", "")).query).items()}
+        _google_log29.clear()
+        try:
+            _go33.exchange_code("gmail-code-33", "v" * 64)
+        except _go33.GoogleAuthError:
+            pass
+        _gm33_form = next((f for _m, u, f in _google_log29 if u.startswith(_go29.TOKEN_URL)), {})
+        check(
+            "33 config (b): …and a Gmail connect in the SAME config still uses the GMAIL client — its id on the consent "
+            "URL, and its id, secret and own redirect on the exchange — so neither pair ever stands in for the other",
+            _gm33_start.status_code == 200 and _gm33_q.get("client_id") == _GMAIL_ID33
+            and _gm33_q.get("redirect_uri") == _BASE33 + "/api/inbox/google/callback"
+            and _gm33_form.get("client_id") == _GMAIL_ID33 and _gm33_form.get("client_secret") == _GMAIL_SECRET33
+            and _gm33_form.get("redirect_uri") == _BASE33 + "/api/inbox/google/callback",
+            f"{_gm33_start.status_code} {_gm33_q.get('client_id')} {_gm33_form.get('client_id')}",
+        )
+        _reset_auth_throttles28()
+        _c33.cookies.clear()
+        _co33_gmail = _c33.post("/inbox/google/start", json={}, headers=_ADMIN_H)
+        _co33_signin = _c33.post("/auth/google/start", json={"next": "", "locale": "en", "page": "login"},
+                                 headers=_XRW)
+        _co33_oauth_before, _co33_gsi_before = _c33.cookies.get("jf_oauth"), _c33.cookies.get("jf_gsi")
+        _co33_state = {k: v[0] for k, v in _pqs33(_us33(_j28(_co33_signin).get("url", "")).query).items()}.get(
+            "state", "")
+        _co33_callback = _c33.get("/auth/google/callback", params={"state": _co33_state, "error": "access_denied"},
+                                  follow_redirects=False)
+        _co33_oauth_after, _co33_gsi_after = _c33.cookies.get("jf_oauth"), _c33.cookies.get("jf_gsi")
+        _c33.cookies.clear()
+        check(
+            "33 cookies: jf_gsi and jf_oauth live side by side in one browser — each start sets only its own cookie, "
+            "and the sign-in callback (a cancel that found its binding in the jar) clears only jf_gsi, so a Gmail "
+            "connect started in the same browser keeps its binding",
+            _co33_gmail.status_code == 200 and _co33_signin.status_code == 200
+            and _cookie_names33(_co33_gmail) == {"jf_oauth"} and _cookie_names33(_co33_signin) == {"jf_gsi"}
+            and bool(_co33_oauth_before) and bool(_co33_gsi_before) and _co33_oauth_before != _co33_gsi_before
+            and _where33(_co33_callback)[1].get("google") == ["cancelled"]
+            and _cookie_names33(_co33_callback) == {"jf_gsi"}
+            and _co33_oauth_after == _co33_oauth_before and not _co33_gsi_after,
+            f"{_cookie_names33(_co33_gmail)} {_cookie_names33(_co33_signin)} {_loc29(_co33_callback)} "
+            f"{_cookie_names33(_co33_callback)} gsi_after={_co33_gsi_after!r}",
+        )
+
+        # --- configuration (c): only the sign-in client; (d): a token issued to the Gmail client --------------------
+        _prev33_c = _env29(GOOGLE_CLIENT_ID="", GOOGLE_CLIENT_SECRET="")
+        try:
+            _c33_anon = _me33(_c33, "")
+            _c33_round = _round33(_c33, _claims33("only.signin33@gmail.com", "g-only-33"))
+            _c33_me = _me33(_c33, _c33_round["session"])
+            _c33_gmail_ready = _is29.google_ready(get_settings())
+        finally:
+            _restore29(_prev33_c)
+        check(
+            "33 config (c): with ONLY the sign-in client set, /auth/me says google_enabled true and a full sign-in sets "
+            "a session that works — while Gmail sync stays off (google_ready false): the sign-in client never "
+            "switches the Gmail flow on either",
+            _c33_anon.get("google_enabled") is True and _c33_round["resp"].status_code == 302
+            and _loc29(_c33_round["resp"]) == "/app" and _c33_round["session"] != ""
+            and _c33_me.get("authenticated") is True and _c33_me.get("verified") is True
+            and _c33_gmail_ready is False,
+            f"{_c33_anon.get('google_enabled')} {_loc29(_c33_round['resp'])} {_c33_gmail_ready}",
+        )
+        _d33 = _round33(_c33, _claims33("aud.neg33@gmail.com", "g-aud-33", aud=_GMAIL_ID33, azp=_DROP33),
+                        page="signup", next_="/tracker")
+        check(
+            "33 config (d): an id_token issued to the GMAIL client (aud) is token_invalid over HTTP — back on the page "
+            "the flow started from with its next kept — and it creates no account and sets no session",
+            _d33["resp"].status_code == 302
+            and _where33(_d33["resp"]) == ("/signup", {"google": ["token_invalid"], "next": ["/tracker"]})
+            and _login33("aud.neg33@gmail.com") is None and _users_with_email28("aud.neg33@gmail.com") == 0
+            and _d33["session"] == "",
+            _loc29(_d33["resp"]),
+        )
+
+        # --- account states --------------------------------------------------------------------------------------
+        _ks33_mail_before = len(_mail28)
+        _ks33 = _round33(_c33, _claims33("renamed.google33@gmail.com", "g-new-33"))
+        _ks33_me = _me33(_c33, _ks33["session"])
+        check(
+            "33 known sub: the sub decides — a later sign-in whose token carries a CHANGED email signs in the same "
+            "account, the stored address is not re-keyed, no second account appears, and no mail is sent",
+            _loc29(_ks33["resp"]) == "/app" and _ks33["session"] != ""
+            and _uid33(_ks33_me) is not None and _uid33(_ks33_me) == _uid33(_b33_me)
+            and (_login33("new.google33@gmail.com") or {}).get("google_sub") == "g-new-33"
+            and _login33("renamed.google33@gmail.com") is None
+            and _users_with_email28("renamed.google33@gmail.com") == 0 and len(_mail28) == _ks33_mail_before,
+            f"{_loc29(_ks33['resp'])} {_uid33(_ks33_me)} vs {_uid33(_b33_me)}",
+        )
+        _c33.cookies.clear()
+        _pw33_google = _c33.post("/auth/password", json={"current_password": "", "new_password": "a google era passphrase"},
+                                 headers=_ck28(_ks33["session"], _XRW))
+        _c33.cookies.clear()
+        check(
+            "33 passwords: a Google-only account cannot set a password from Settings — change_password with no stored "
+            "password is 400 password_not_set and writes nothing (a stolen Google session must not become a lasting "
+            "password); Forgot password, which proves the mailbox, is the way to add one",
+            _pw33_google.status_code == 400 and _code28(_pw33_google) == "password_not_set"
+            and (_login33("new.google33@gmail.com") or {}).get("password_hash") == ""
+            and _me33(_c33, _ks33["session"]).get("authenticated") is True,
+            _pw33_google.text[:120],
+        )
+
+        _lk33_email = "link.google33@gmail.com"
+        _lk33_uid, _lk33_tok, _lk33_su = _signup32(_c33, "Lior Link", _lk33_email, "lior link passphrase")
+        _lk33_ver = _verify32(_c33, _lk33_email, _lk33_tok)
+        _lk33_key_before = _ext_key33(_c33, _lk33_tok)
+        _lk33_pool_key = _key32(_lk33_uid) if _lk33_uid else ""
+        _lk33_uses = [_reserve32(_lk33_uid, "tailor") for _ in range(2)] if _lk33_uid else []
+        _lk33_used_before = _snap32(_lk33_uid).used if _lk33_uid else None
+        _lk33_mail_before = len(_mail_to28(_lk33_email))
+        _lk33 = _round33(_c33, _claims33(_lk33_email, "g-link-33", name="Lior Google"), next_="/tracker")
+        _lk33_mails = _mail_to28(_lk33_email)[_lk33_mail_before:]
+        _lk33_me = _me33(_c33, _lk33["session"])
+        _lk33_login = _login33(_lk33_email) or {}
+        _lk33_key_after = _ext_key33(_c33, _lk33["session"])
+        check(
+            "33 link: a Google sign-in on a VERIFIED password account links it — the sub lands on that login, the "
+            "password stays, this browser is signed in to the SAME account, and it lands on next with no google= flag",
+            _lk33_su.status_code == 200 and _lk33_ver.status_code == 200
+            and _lk33["resp"].status_code == 302 and _where33(_lk33["resp"]) == ("/tracker", {})
+            and _lk33["session"] != "" and _uid33(_lk33_me) == _lk33_uid
+            and _lk33_login.get("google_sub") == "g-link-33" and _lk33_login.get("password_hash", "") != ""
+            and (_lk33_me.get("user") or {}).get("google_linked") is True
+            and (_lk33_me.get("user") or {}).get("has_password") is True,
+            f"{_loc29(_lk33['resp'])} {_lk33_login.get('google_sub')} {str(_lk33_me)[:160]}",
+        )
+        check(
+            "33 link: every session from before is dead and the extension key read before is a 401 — while the new "
+            "session and the new key both work",
+            _lk33_key_before != "" and _me33(_c33, _lk33_tok).get("authenticated") is False
+            and _key_works33(_c33, _lk33_key_before) == 401
+            and _lk33_key_after not in ("", _lk33_key_before) and _key_works33(_c33, _lk33_key_after) == 200,
+            f"old key={_key_works33(_c33, _lk33_key_before)} new key={_key_works33(_c33, _lk33_key_after)}",
+        )
+        check(
+            "33 link: exactly one notice goes to the address — the linked notice, naming the address, saying the key "
+            "was replaced and, since this account also has a password, telling the reader to reset it if they did not "
+            "set it",
+            len(_lk33_mails) == 1 and "Google" in _lk33_mails[0]["subject"]
+            and _lk33_email in _lk33_mails[0]["text"] and "extension key" in _lk33_mails[0]["text"]
+            and "also has a password" in _lk33_mails[0]["text"],
+            str([(m["subject"], m["text"][:120]) for m in _lk33_mails]),
+        )
+        check(
+            "32.10 Google: linking Google mid-month leaves the pool exactly as it was — the link DID happen (the sub is "
+            "on the login), and the key (derived from the address, never the sub) and used are both unchanged",
+            _lk33_login.get("google_sub") == "g-link-33"
+            and len(_lk33_uses) == 2 and all(c is not None for c, _ in _lk33_uses) and _lk33_used_before == 2
+            and bool(_lk33_uid) and _key32(_lk33_uid) == _lk33_pool_key and _snap32(_lk33_uid).used == 2,
+            f"{_lk33_used_before} {_snap32(_lk33_uid) if _lk33_uid else None}",
+        )
+        _c33.cookies.clear()
+        _pw33_twin = _c33.post("/auth/password", json={"current_password": "lior link passphrase",
+                                                       "new_password": "lior google era passphrase"},
+                               headers=_ck28(_lk33["session"], _XRW))
+        _c33.cookies.clear()
+        check(
+            "33 passwords: …while a linked account that HAS a password still changes it with the current one (the "
+            "false-positive half)",
+            _pw33_twin.status_code == 200,
+            _pw33_twin.text[:120],
+        )
+
+        _sp33_email = "super.google33@gmail.com"
+        _sp33_uid, _sp33_tok, _sp33_su = _signup32(_c33, "Sara Signup", _sp33_email, "sara super passphrase")
+        _sp33_code_before = _user33(_sp33_uid).get("invite_code")
+        _sp33_mail_before = len(_mail_to28(_sp33_email))
+        _sp33 = _round33(_c33, _claims33(_sp33_email, "g-super-33", name="Sara Google"), next_="/tracker?x=1")
+        _sp33_mails = _mail_to28(_sp33_email)[_sp33_mail_before:]
+        _sp33_login = _login33(_sp33_email) or {}
+        _sp33_user = _user33(_sp33_uid)
+        _sp33_me = _me33(_c33, _sp33["session"])
+        _c33.cookies.clear()
+        _sp33_old_password = _c33.post("/auth/login", json={"email": _sp33_email, "password": "sara super passphrase"},
+                                       headers=_XRW)
+        _c33.cookies.clear()
+        check(
+            "33 supersede: a Google sign-in on an UNVERIFIED email signup takes it over (Phase 29's A2 shape) — the "
+            "password is removed, the address verified, the sub stored, the name and locale come from this sign-in, "
+            "and the browser lands on next with google=superseded appended beside next's own query",
+            _sp33_su.status_code == 200 and _sp33["resp"].status_code == 302
+            and _where33(_sp33["resp"]) == ("/tracker", {"x": ["1"], "google": ["superseded"]})
+            and _sp33["session"] != "" and _uid33(_sp33_me) == _sp33_uid
+            and _sp33_login.get("password_hash") == "" and _sp33_login.get("verified") is True
+            and _sp33_login.get("google_sub") == "g-super-33"
+            and _sp33_user.get("name") == "Sara Google" and _sp33_user.get("locale") == "en"
+            and (_sp33_me.get("user") or {}).get("has_password") is False,
+            f"{_loc29(_sp33['resp'])} {_sp33_login} {_sp33_user}",
+        )
+        check(
+            "33 supersede: whatever the first registrant held is gone — the signup's session is dead, its password no "
+            "longer signs in, and the extension key was replaced",
+            _me33(_c33, _sp33_tok).get("authenticated") is False
+            and _sp33_old_password.status_code == 400 and _code28(_sp33_old_password) == "invalid_credentials"
+            and bool(_sp33_code_before) and _sp33_user.get("invite_code") not in (None, "", _sp33_code_before),
+            f"{_me33(_c33, _sp33_tok).get('authenticated')} {_sp33_old_password.status_code}",
+        )
+        check(
+            "33 supersede: exactly one superseded notice goes to the address Google just proved — pointing at /forgot "
+            "and saying nothing about an extension key",
+            len(_sp33_mails) == 1 and "Google" in _sp33_mails[0]["subject"]
+            and f"{_BASE33}/forgot" in _sp33_mails[0]["text"]
+            and "extension" not in _sp33_mails[0]["text"].lower() and "extension" not in _sp33_mails[0]["html"].lower(),
+            str([(m["subject"], m["text"][:120]) for m in _sp33_mails]),
+        )
+
+        _au33_third = _round33(_c33, _claims33("dana.third33@outlook.example", "g-third-33"))
+        _au33_ws = _round33(_c33, _claims33("dana@acme-ws33.example", "g-ws-33", hd="acme-ws33.example"))
+        _au33_owner_uid, _au33_owner_tok, _au33_owner_su = _signup32(_c33, "Third Party Owner",
+                                                                     "owner.third33@example.org",
+                                                                     "third party owner passphrase")
+        _au33_owner_ver = _verify32(_c33, "owner.third33@example.org", _au33_owner_tok)
+        _au33_existing = _round33(_c33, _claims33("owner.third33@example.org", "g-third-existing-33"))
+        check(
+            "33 authority: an address Google verified but does not host (no hd) is not_authoritative for a NEW account "
+            "and for an EXISTING verified one (its ownership may have changed since) — nothing is created or linked — "
+            "beside a Workspace address carrying hd, which signs in",
+            _where33(_au33_third["resp"]) == ("/login", {"google": ["not_authoritative"]})
+            and _login33("dana.third33@outlook.example") is None
+            and _users_with_email28("dana.third33@outlook.example") == 0 and _au33_third["session"] == ""
+            and _au33_owner_ver.status_code == 200
+            and _where33(_au33_existing["resp"]) == ("/login", {"google": ["not_authoritative"]})
+            and (_login33("owner.third33@example.org") or {}).get("google_sub") is None
+            and _me33(_c33, _au33_owner_tok).get("authenticated") is True
+            and _loc29(_au33_ws["resp"]) == "/app" and _au33_ws["session"] != ""
+            and (_login33("dana@acme-ws33.example") or {}).get("google_sub") == "g-ws-33",
+            f"{_loc29(_au33_third['resp'])} | {_loc29(_au33_existing['resp'])} | {_loc29(_au33_ws['resp'])}",
+        )
+        _au33_gm = _round33(_c33, _claims33("dana.gm33@googlemail.com", "g-gm-33"))
+        check(
+            "33 authority: @googlemail.com is not_authoritative too — Google does not document it as its own domain",
+            _where33(_au33_gm["resp"]) == ("/login", {"google": ["not_authoritative"]})
+            and _login33("dana.gm33@googlemail.com") is None,
+            _loc29(_au33_gm["resp"]),
+        )
+
+        _prev33_closed = _env29(SIGNUP_MODE="closed")
+        try:
+            _cl33_new = _round33(_c33, _claims33("closed.new33@gmail.com", "g-closed-33"))
+            _cl33_known = _round33(_c33, _claims33("new.google33@gmail.com", "g-new-33"))
+        finally:
+            _restore29(_prev33_closed)
+        check(
+            "33 signup closed: with SIGNUP_MODE=closed a NEW Google account is refused (signup_closed, nothing written) "
+            "— while an existing Google account still signs in (the false-positive half)",
+            _where33(_cl33_new["resp"]) == ("/login", {"google": ["signup_closed"]})
+            and _login33("closed.new33@gmail.com") is None and _users_with_email28("closed.new33@gmail.com") == 0
+            and _loc29(_cl33_known["resp"]) == "/app" and _cl33_known["session"] != "",
+            f"{_loc29(_cl33_new['resp'])} | {_loc29(_cl33_known['resp'])}",
+        )
+
+        _in33_ws_uid = (_login33(sub="g-ws-33") or {}).get("user_id", 0)
+        _in33_off_ws = _c33.patch(f"/admin/users/{_in33_ws_uid}", json={"is_active": False}, headers=_ADMIN_H)
+        _c33.cookies.clear()
+        _in33_by_sub = _round33(_c33, _claims33("dana@acme-ws33.example", "g-ws-33", hd="acme-ws33.example"))
+        _in33_email_uid, _in33_email_tok, _in33_email_su = _signup32(_c33, "Inactive Email", "inactive.email33@gmail.com",
+                                                                     "inactive email passphrase")
+        _in33_off_email = _c33.patch(f"/admin/users/{_in33_email_uid or 0}", json={"is_active": False},
+                                     headers=_ADMIN_H)
+        _c33.cookies.clear()
+        _in33_by_email = _round33(_c33, _claims33("inactive.email33@gmail.com", "g-inactive-33"))
+        check(
+            "33 inactive: a deactivated account is account_inactive whether it is found by its sub or by its address "
+            "— no session is minted and no sub is stored",
+            _in33_off_ws.status_code == 200 and _in33_off_email.status_code == 200
+            and _where33(_in33_by_sub["resp"]) == ("/login", {"google": ["account_inactive"]})
+            and _in33_by_sub["session"] == ""
+            and _where33(_in33_by_email["resp"]) == ("/login", {"google": ["account_inactive"]})
+            and _in33_by_email["session"] == ""
+            and _login33("inactive.email33@gmail.com") is not None
+            and (_login33("inactive.email33@gmail.com") or {}).get("google_sub") is None,
+            f"{_loc29(_in33_by_sub['resp'])} | {_loc29(_in33_by_email['resp'])}",
+        )
+        _le33 = _round33(_c33, _claims33(_lk33_email, "g-other-33"))
+        check(
+            "33 linked_elsewhere: an address whose login already holds a DIFFERENT sub is refused — never re-linked by "
+            "email — and the stored sub is unchanged",
+            _where33(_le33["resp"]) == ("/login", {"google": ["linked_elsewhere"]}) and _le33["session"] == ""
+            and (_login33(_lk33_email) or {}).get("google_sub") == "g-link-33",
+            _loc29(_le33["resp"]),
+        )
+
+        _cu33_uid, _CU33_H = _mint32(_c33, "Code Friend 33", "code.user33@gmail.com")
+        _cu33_code_before = _user33(_cu33_uid).get("invite_code")
+        _cu33 = _round33(_c33, _claims33("code.user33@gmail.com", "g-code-33"))
+        _cu33_me = _me33(_c33, _cu33["session"])
+        _c33.cookies.clear()
+        _cu33_code_me = _j28(_c33.get("/auth/me", headers=_CU33_H))
+        _c33.cookies.clear()
+        check(
+            "33 invite codes never link: Google on the address an invite user's users.email holds creates a SEPARATE "
+            "Google account (there is no use_code refusal), and the code account keeps its code, still opens the gate "
+            "as itself, and gains no login",
+            _loc29(_cu33["resp"]) == "/app" and _uid33(_cu33_me) not in (None, _cu33_uid)
+            and (_cu33_me.get("user") or {}).get("signup_source") == "google"
+            and bool(_cu33_code_before) and _user33(_cu33_uid).get("invite_code") == _cu33_code_before
+            and _uid33(_cu33_code_me) == _cu33_uid and not _has_login33(_cu33_uid),
+            f"{_loc29(_cu33['resp'])} google={_uid33(_cu33_me)} code={_cu33_uid}",
+        )
+        _cl33_email = "code.login33@gmail.com"
+        _cl33_d = SessionLocal()
+        try:
+            _cl33_user = _U33(name="Code With Login", email=_cl33_email, invite_code=_new_code32(), signup_source="")
+            _cl33_d.add(_cl33_user)
+            _cl33_d.flush()
+            _cl33_uid, _cl33_code = _cl33_user.id, _cl33_user.invite_code
+            _cl33_d.add(_UL33(user_id=_cl33_uid, email=_cl33_email, password_hash="",
+                              email_verified_at=_dt28.now(_tz28.utc)))
+            _cl33_d.commit()
+        finally:
+            _cl33_d.close()
+        _cl33 = _round33(_c33, _claims33(_cl33_email, "g-codelogin-33"))
+        _cl33_mails = _mail_to28(_cl33_email)
+        check(
+            "33 a code account holding a VERIFIED email login is linked like anyone's — the sub lands on that login and "
+            "this browser signs in to it — and its invite code, the friend's only way in, is NOT rotated, so the notice "
+            "carries no key clause (and, with no password, no reset sentence)",
+            _loc29(_cl33["resp"]) == "/app" and _uid33(_me33(_c33, _cl33["session"])) == _cl33_uid
+            and (_login33(_cl33_email) or {}).get("google_sub") == "g-codelogin-33"
+            and _user33(_cl33_uid).get("invite_code") == _cl33_code and _key_works33(_c33, _cl33_code) == 200
+            and len(_cl33_mails) == 1 and "extension" not in _cl33_mails[0]["text"].lower()
+            and "password" not in _cl33_mails[0]["text"].lower(),
+            str([m["text"][:160] for m in _cl33_mails]),
+        )
+
+        _rc33_email, _rc33_moved = "race.google33@gmail.com", "race.moved33@gmail.com"
+        _rc33_uid, _rc33_tok, _rc33_su = _signup32(_c33, "Race", _rc33_email, "race condition passphrase")
+        _rc33_hook = {"moved": False}
+        _real_login_by_email33 = _acc33.login_by_email
+
+        def _interleaved_login_by_email33(db, email):  # noqa: ANN001
+            """The real lookup, then the same address change change_email makes, committed by ANOTHER request."""
+            row = _real_login_by_email33(db, email)
+            if row is not None and email == _rc33_email and not _rc33_hook["moved"]:
+                other = SessionLocal()
+                try:
+                    other.get(_UL33, row.id).email = _rc33_moved
+                    other.get(_U33, row.user_id).email = _rc33_moved
+                    other.commit()
+                    _rc33_hook["moved"] = True
+                finally:
+                    other.close()
+            return row
+
+        _acc33.login_by_email = _interleaved_login_by_email33
+        try:
+            _rc33 = _round33(_c33, _claims33(_rc33_email, "g-race-33"))
+        finally:
+            _acc33.login_by_email = _real_login_by_email33
+        _rc33_login = _login33(_rc33_moved) or {}
+        check(
+            "33 race: an address change (change_email on the unverified login) committed between the lookup and the "
+            "write makes the conditional UPDATE match nothing — try_again, no sub stored, the password and the "
+            "unverified state untouched, no session",
+            _rc33_su.status_code == 200 and _rc33_hook["moved"] is True
+            and _where33(_rc33["resp"]) == ("/login", {"google": ["try_again"]}) and _rc33["session"] == ""
+            and _rc33_login.get("google_sub") is None and _rc33_login.get("password_hash", "") != ""
+            and _rc33_login.get("verified") is False,
+            f"{_rc33_hook} {_loc29(_rc33['resp'])} {_rc33_login}",
+        )
+
+        _ns33_email = "nosender.google33@gmail.com"
+        _ns33_uid, _ns33_tok, _ns33_su = _signup32(_c33, "No Sender", _ns33_email, "no sender passphrase")
+        _ns33_mail_before = len(_mail28)
+        _ae28._resolve_sender = lambda: None
+        try:
+            _ns33 = _round33(_c33, _claims33(_ns33_email, "g-nosender-33"), next_="/tracker")
+        finally:
+            _ae28._resolve_sender = lambda: _capture_auth_mail28
+        check(
+            "33 no sender: with no way to send auth mail the supersede still completes — the notice is best effort, "
+            "and the takeover it describes has already happened (signed in, password removed, sub stored, "
+            "google=superseded)",
+            _ns33_su.status_code == 200
+            and _where33(_ns33["resp"]) == ("/tracker", {"google": ["superseded"]}) and _ns33["session"] != ""
+            and (_login33(_ns33_email) or {}).get("password_hash") == ""
+            and (_login33(_ns33_email) or {}).get("google_sub") == "g-nosender-33"
+            and len(_mail28) == _ns33_mail_before,
+            _loc29(_ns33["resp"]),
+        )
+
+        # --- the token and the flow -------------------------------------------------------------------------------
+        _rp33 = _round33(_c33, _claims33("replay.google33@gmail.com", "g-replay-33"))
+        _rp33_again = _callback33(_c33, _rp33["query"].get("state", ""), _rp33["binding"], code="code-33")
+        _nb33_start, _nb33_url, _nb33_q, (_nb33_binding, _nb33_cookie) = _start33(_c33)
+        _nb33 = _callback33(_c33, _nb33_q.get("state", ""), "", code="code-33")
+        _wrongb33 = _callback33(_c33, _nb33_q.get("state", ""), "not-the-binding-33", code="code-33")
+        check(
+            "33 replay and binding: the state is single-use — a completed callback replayed WITH its cookie is "
+            "state_invalid and signs nobody in — and a callback without the jf_gsi cookie, or with another value in it, "
+            "is state_mismatch at /login",
+            _loc29(_rp33["resp"]) == "/app" and _rp33["session"] != ""
+            and _where33(_rp33_again)[1].get("google") == ["state_invalid"]
+            and _jar29(_rp33_again, "jf_session")[0] == ""
+            and _where33(_nb33) == ("/login", {"google": ["state_mismatch"]})
+            and _where33(_wrongb33) == ("/login", {"google": ["state_mismatch"]}),
+            f"{_loc29(_rp33_again)} | {_loc29(_nb33)} | {_loc29(_wrongb33)}",
+        )
+        _reset_auth_throttles28()
+        _cn33_start, _cn33_url, _cn33_q, (_cn33_binding, _cn33_cookie) = _start33(_c33, page="signup",
+                                                                                  next_="/app?tailor_app=42")
+        _cancel33 = _callback33(_c33, _cn33_q.get("state", ""), _cn33_binding, error="access_denied")
+        _unknown33 = _callback33(_c33, "no-such-state-33", _cn33_binding, code="code-33")
+        _up33_start, _up33_url, _up33_q, (_up33_binding, _up33_cookie) = _start33(_c33, page="admin", next_="/tracker")
+        _up33 = _callback33(_c33, _up33_q.get("state", ""), _up33_binding, error="access_denied")
+        _ap33_start, _ap33_url, _ap33_q, (_ap33_binding, _ap33_cookie) = _start33(_c33, page="login", next_="")
+        _ap33 = _callback33(_c33, _ap33_q.get("state", ""), _ap33_binding, error="access_denied")
+        check(
+            "33 where a failure lands: a cancel on Google's page, started from /signup with next=/app?tailor_app=42, "
+            "comes back to /signup with google=cancelled and that next (compared as parsed parameters) — while a "
+            "failure before the binding matches (an unknown state) goes to /login with no next at all",
+            _where33(_cancel33) == ("/signup", {"google": ["cancelled"], "next": ["/app?tailor_app=42"]})
+            and _where33(_unknown33) == ("/login", {"google": ["state_invalid"]}),
+            f"{_loc29(_cancel33)} | {_loc29(_unknown33)}",
+        )
+        check(
+            "33 where a failure lands: …a page the start did not recognise reads as login, and a next of /app is left "
+            "out (it is where a sign-in lands anyway)",
+            _where33(_up33) == ("/login", {"google": ["cancelled"], "next": ["/tracker"]})
+            and _where33(_ap33) == ("/login", {"google": ["cancelled"]}),
+            f"{_loc29(_up33)} | {_loc29(_ap33)}",
+        )
+        _reset_auth_throttles28()
+        _ge33_start, _ge33_url, _ge33_q, (_ge33_binding, _ge33_cookie) = _start33(_c33)
+        _ge33 = _callback33(_c33, _ge33_q.get("state", ""), _ge33_binding, error="server_error")
+        _mc33_start, _mc33_url, _mc33_q, (_mc33_binding, _mc33_cookie) = _start33(_c33)
+        _mc33 = _callback33(_c33, _mc33_q.get("state", ""), _mc33_binding)
+        _g33["token_status"] = 500
+        try:
+            _ex33 = _round33(_c33, _claims33("exchange.fail33@gmail.com", "g-exchange-33"), reset=False)
+        finally:
+            _g33["token_status"] = 0
+        _iss_bad33 = _round33(_c33, _claims33("iss.bad33@gmail.com", "g-iss-bad-33"), reset=False,
+                              params={"code": "code-33", "iss": "https://evil.example"})
+        _iss_ok33 = _round33(_c33, _claims33("iss.ok33@gmail.com", "g-iss-ok-33"), reset=False,
+                             params={"code": "code-33", "iss": "https://accounts.google.com"})
+        _xp33_start, _xp33_url, _xp33_q, (_xp33_binding, _xp33_cookie) = _start33(_c33)
+        _xp33_d = SessionLocal()
+        try:
+            _xp33_row = _xp33_d.execute(_sel29(_ATok33).where(
+                _ATok33.token_hash == _sess28.token_hash(_xp33_q.get("state", "")))).scalars().first()
+            if _xp33_row is not None:
+                _xp33_row.expires_at = _dt28.now(_tz28.utc) - _td28(minutes=1)
+                _xp33_d.commit()
+        finally:
+            _xp33_d.close()
+        _xp33 = _callback33(_c33, _xp33_q.get("state", ""), _xp33_binding, code="code-33")
+        check(
+            "33 refusals in order: another Google error is google_error, a callback with no code is state_invalid, a "
+            "failed exchange is exchange_failed, a foreign iss is state_invalid while Google's own iss signs in, and an "
+            "expired state is expired at /login — and none of the refusals creates an account",
+            _where33(_ge33)[1].get("google") == ["google_error"]
+            and _where33(_mc33)[1].get("google") == ["state_invalid"]
+            and _where33(_ex33["resp"])[1].get("google") == ["exchange_failed"]
+            and _login33("exchange.fail33@gmail.com") is None
+            and _where33(_iss_bad33["resp"])[1].get("google") == ["state_invalid"]
+            and _login33("iss.bad33@gmail.com") is None
+            and _loc29(_iss_ok33["resp"]) == "/app" and _iss_ok33["session"] != ""
+            and _where33(_xp33) == ("/login", {"google": ["expired"]}),
+            f"{_loc29(_ge33)} | {_loc29(_mc33)} | {_loc29(_ex33['resp'])} | {_loc29(_iss_bad33['resp'])} | "
+            f"{_loc29(_iss_ok33['resp'])} | {_loc29(_xp33)}",
+        )
+        _nx33_ok = _round33(_c33, _claims33("next.ok33@gmail.com", "g-next-ok-33"), next_="/tracker?x=1")
+        _nx33_evil = _round33(_c33, _claims33("next.evil33@gmail.com", "g-next-evil-33"), next_="//evil.com")
+        check(
+            "33 next: a sign-in follows next=/tracker?x=1 exactly, and next=//evil.com falls back to /app",
+            _loc29(_nx33_ok["resp"]) == "/tracker?x=1" and _nx33_ok["session"] != ""
+            and _loc29(_nx33_evil["resp"]) == "/app" and _nx33_evil["session"] != "",
+            f"{_loc29(_nx33_ok['resp'])} | {_loc29(_nx33_evil['resp'])}",
+        )
+
+        # --- throttles, and the prune ------------------------------------------------------------------------------
+        _reset_auth_throttles28()
+        _st33 = []
+        for _i33 in range(31):
+            _c33.cookies.clear()
+            _st33_resp = _c33.post("/auth/google/start", json={"next": "", "locale": "en", "page": "login"},
+                                   headers=_XRW)
+            _st33.append((_st33_resp.status_code, _code28(_st33_resp), _detail28(_st33_resp).get("retry_after")))
+        _c33.cookies.clear()
+        check(
+            "33 throttle: start is limited per network — the 30th start in an hour is a 200 and the 31st a 429 "
+            "too_many_attempts that says when to retry",
+            [s for s, _code, _retry in _st33[:30]] == [200] * 30
+            and _st33[30][:2] == (429, "too_many_attempts") and (_st33[30][2] or 0) > 0,
+            str(_st33[28:]),
+        )
+        _reset_auth_throttles28()
+        _th33_email = []
+        for _i33 in range(3):
+            _c33.cookies.clear()
+            _th33_email.append(_c33.post("/auth/signup", json={
+                "name": f"Throttle {_i33}", "email": f"throttle{_i33}.email33@example.com",
+                "password": "throttle signup passphrase"}, headers=_XRW).status_code)
+        _c33.cookies.clear()
+        _th33_google = [_round33(_c33, _claims33(f"throttle{i}.google33@gmail.com", f"g-throttle-{i}-33"), reset=False)
+                        for i in range(2)]
+        _th33_sixth = _round33(_c33, _claims33("sixth.google33@gmail.com", "g-sixth-33"), reset=False)
+        _th33_known = _round33(_c33, _claims33("new.google33@gmail.com", "g-new-33"), reset=False)
+        check(
+            "33 throttle: creating a Google account counts on the SAME per-network signup counter as the email door — "
+            "after three email signups and two Google accounts in the hour, a sixth account is refused "
+            "(google=too_many_attempts) and no User or UserLogin row is written for it",
+            _th33_email == [200, 200, 200]
+            and all(_loc29(r["resp"]) == "/app" and r["session"] != "" for r in _th33_google)
+            and _where33(_th33_sixth["resp"])[1].get("google") == ["too_many_attempts"]
+            and _th33_sixth["session"] == "" and _login33("sixth.google33@gmail.com") is None
+            and _users_with_email28("sixth.google33@gmail.com") == 0,
+            f"{_th33_email} {[_loc29(r['resp']) for r in _th33_google]} {_loc29(_th33_sixth['resp'])}",
+        )
+        check(
+            "33 throttle: …while signing in to an account that already exists is not a creation, and still works at "
+            "the limit (the false-positive half)",
+            _loc29(_th33_known["resp"]) == "/app" and _th33_known["session"] != "",
+            _loc29(_th33_known["resp"]),
+        )
+        _pr33_now = _dt28.now(_tz28.utc)
+        _PR33_ROWS = {"prune-old-33": _pr33_now - _td28(days=31), "prune-recent-33": _pr33_now - _td28(minutes=1),
+                      "prune-live-33": _pr33_now + _td28(minutes=9)}
+        _pr33_d = SessionLocal()
+        try:
+            for _pr33_raw, _pr33_expires in _PR33_ROWS.items():
+                _pr33_d.add(_ATok33(user_id=None, purpose="google_signin", token_hash=_sess28.token_hash(_pr33_raw),
+                                    payload="{}", expires_at=_pr33_expires,
+                                    created_at=_pr33_expires - _td28(minutes=10)))
+            _pr33_d.commit()
+        finally:
+            _pr33_d.close()
+        _reset_auth_throttles28()
+        _pr33_start = _start33(_c33)[0]
+        _pr33_d = SessionLocal()
+        try:
+            _pr33_left = set(_pr33_d.execute(_sel29(_ATok33.token_hash).where(
+                _ATok33.token_hash.in_([_sess28.token_hash(raw) for raw in _PR33_ROWS]))).scalars().all())
+        finally:
+            _pr33_d.close()
+        check(
+            "33 prune: start deletes google_signin rows that expired more than 30 days ago — and keeps one that expired "
+            "a minute ago (its callback can still say expired) and a live one",
+            _pr33_start.status_code == 200
+            and _pr33_left == {_sess28.token_hash("prune-recent-33"), _sess28.token_hash("prune-live-33")},
+            f"{_pr33_start.status_code} kept {len(_pr33_left)}",
+        )
+
+        # --- 32.10's Google part: a Google account spends the pool of its ADDRESS -----------------------------------
+        _cy33_email = "carry.google33@gmail.com"
+        _cy33_one_uid, _cy33_one_tok, _cy33_one_su = _signup32(_c33, "Carry Google One", _cy33_email,
+                                                               "carry google passphrase one")
+        _cy33_one_ver = _verify32(_c33, _cy33_email, _cy33_one_tok)
+        _cy33_key = _key32(_cy33_one_uid) if _cy33_one_uid else ""
+        _cy33_uses = [_reserve32(_cy33_one_uid, "tailor") for _ in range(3)] if _cy33_one_uid else []
+        _cy33_one_close = _c33.request("DELETE", "/profile/account", headers=_ck28(_cy33_one_tok, _XRW))
+        _c33.cookies.clear()
+        _cy33_two_uid, _cy33_two_tok, _cy33_two_su = _signup32(_c33, "Carry Google Two", _cy33_email,
+                                                               "carry google passphrase two")
+        _cy33_two_ver = _verify32(_c33, _cy33_email, _cy33_two_tok)
+        _cy33_two_used = _snap32(_cy33_two_uid).used if _cy33_two_uid else None
+        _cy33_two_close = _c33.request("DELETE", "/profile/account", headers=_ck28(_cy33_two_tok, _XRW))
+        _c33.cookies.clear()
+        _cy33_three = _round33(_c33, _claims33(_cy33_email, "g-carry-33"))
+        _cy33_three_uid = _uid33(_me33(_c33, _cy33_three["session"]))
+        _cy33_three_snap = _snap32(_cy33_three_uid) if _cy33_three_uid else None
+        check(
+            "32.10 Google: closing resets the month through NO door — close, sign up again by email (the 3 uses "
+            "carried), close again, then Continue with Google on the same address: a NEW Google account on the SAME "
+            "pool, still at 3 of 10",
+            _cy33_one_su.status_code == 200 and _cy33_one_ver.status_code == 200
+            and len(_cy33_uses) == 3 and all(c is not None for c, _ in _cy33_uses)
+            and _cy33_one_close.status_code == 200
+            and _cy33_two_su.status_code == 200 and _cy33_two_ver.status_code == 200 and _cy33_two_used == 3
+            and _cy33_two_close.status_code == 200
+            and _loc29(_cy33_three["resp"]) == "/app"
+            and _cy33_three_uid not in (None, _cy33_one_uid, _cy33_two_uid)
+            and _user33(_cy33_three_uid).get("signup_source") == "google"
+            and _key32(_cy33_three_uid) == _cy33_key
+            and _cy33_three_snap is not None and _cy33_three_snap.used == 3 and _cy33_three_snap.remaining == 7,
+            f"{_cy33_two_used} {_loc29(_cy33_three['resp'])} {_cy33_three_snap}",
+        )
+
+    # --- structure: the /api mount -----------------------------------------------------------------------------------
+    _outer33 = _FastAPI28()
+    _outer33.mount("/api", _fastapi_app)
+    with TestClient(_outer33) as _mnt33:
+        _reset_auth_throttles28()
+        _mnt33_start = _mnt33.post("/api/auth/google/start", json={"next": "", "locale": "en", "page": "login"},
+                                   headers=_XRW)
+        _mnt33.cookies.clear()
+        _mnt33_q = {k: v[0] for k, v in _pqs33(_us33(_j28(_mnt33_start).get("url", "")).query).items()}
+        _mnt33_binding, _mnt33_gsi = _jar29(_mnt33_start, "jf_gsi")
+        _g33["pending"] = _with33(_claims33("mount.google33@gmail.com", "g-mount-33"), {"nonce": _mnt33_q.get("nonce", "")})
+        _g33["challenge"] = _mnt33_q.get("code_challenge", "")
+        _mnt33_callback = _mnt33.get("/api/auth/google/callback",
+                                     params={"code": "code-33", "state": _mnt33_q.get("state", "")},
+                                     headers={"Cookie": f"jf_gsi={_mnt33_binding}"}, follow_redirects=False)
+        _mnt33.cookies.clear()
+    _mnt33_cookies = {value.split("=", 1)[0]: value.lower() for value in _mnt33_callback.headers.get_list("set-cookie")}
+    check(
+        "33 structure: under Vercel's /api mount the jf_gsi cookie's Path is /api, so the browser sends it back to "
+        "/api/auth/google/callback — and the session that callback sets, and the jf_gsi it clears, are on /api too",
+        _mnt33_start.status_code == 200 and "path=/api;" in _mnt33_gsi.lower()
+        and _mnt33_callback.status_code == 302 and "path=/api;" in _mnt33_cookies.get("jf_session", "")
+        and "path=/api;" in _mnt33_cookies.get("jf_gsi", "") and "max-age=0" in _mnt33_cookies.get("jf_gsi", ""),
+        f"{_mnt33_start.status_code} {_mnt33_gsi} | {_mnt33_callback.status_code} {_mnt33_cookies}",
+    )
+finally:
+    _ae28._resolve_sender = _real_resolve_sender28
+    _go29._transport = _prev33_transport
+    _restore29(_prev33_env)
+
+
+# --- 33 structure: nothing revokes, both doors are optional, and Sentry never keeps the callback's query ---------------
+def _called33(fn):  # noqa: ANN001
+    """Every function name fn's source calls (parsed, nested defs included), or None when fn does not exist."""
+    if fn is None:
+        return None
+    names = set()
+    for node in _ast32.walk(_ast32.parse(_tw32.dedent(_insp32.getsource(fn)))):
+        if isinstance(node, _ast32.Call):
+            names.add(getattr(node.func, "attr", "") or getattr(node.func, "id", ""))
+    return names
+
+
+_signin_code33 = {
+    "auth_routes.auth_google_start": _called33(getattr(_ar33, "auth_google_start", None)),
+    "auth_routes.auth_google_callback": _called33(getattr(_ar33, "auth_google_callback", None)),
+    "accounts.google_sign_in": _called33(getattr(_acc33, "google_sign_in", None)),
+    **{f"accounts.{name}": _called33(fn) for name, fn in sorted(vars(_acc33).items())
+       if name.startswith("_google") and _insp32.isfunction(fn)},
+    **{f"google_oauth.{name}": _called33(getattr(_go33, name, None))
+       for name in ("signin_configured", "signin_authorize_url", "exchange_signin_code", "_signin_claims")},
+}
+_account_google_calls33 = set().union(*[calls for name, calls in _signin_code33.items()
+                                         if name.startswith("accounts.") and calls])
+check(
+    "33 structure: sign-in code never hands a grant back — neither Google handler, nor accounts.google_sign_in and its "
+    "google helpers, nor google_oauth's sign-in functions call revoke or revoke_stored_grant (sessions.revoke_all is "
+    "allowed); the walker is live, finding revoke_all in the account code, revoke in the Gmail callback and "
+    "revoke_stored_grant in Disconnect",
+    all(calls is not None for calls in _signin_code33.values())
+    and not any({"revoke", "revoke_stored_grant"} & calls for calls in _signin_code33.values() if calls)
+    and "revoke_all" in _account_google_calls33
+    and "revoke" in (_called33(_iroutes32.inbox_google_callback) or set())
+    and "revoke_stored_grant" in (_called33(_iroutes32.inbox_disconnect) or set()),
+    str({name: (None if calls is None else sorted(calls & {"revoke", "revoke_stored_grant", "revoke_all"}))
+         for name, calls in _signin_code33.items()}),
+)
+check(
+    "33 structure: both new doors are _AUTH_OPTIONAL — start answers a signed-out login page, and Google's redirect "
+    "back carries no credential header",
+    {"/auth/google/start", "/auth/google/callback"} <= _main28._AUTH_OPTIONAL,
+    str(sorted(_main28._AUTH_OPTIONAL)),
+)
+_se33_events = [
+    {"request": {"url": "https://app.jobfinder.test/api/auth/google/callback", "method": "GET",
+                 "query_string": "code=abc&state=def"}, "message": "sign-in callback probe"},
+    {"request": {"url": "https://app.jobfinder.test/api/inbox/google/callback", "method": "GET",
+                 "query_string": "code=ghi&state=jkl"}, "message": "gmail callback probe"},
+    {"request": {"url": "https://app.jobfinder.test/api/jobs/history", "method": "GET",
+                 "query_string": "view=recent&limit=5"}, "message": "another route probe"},
+]
+_se33_out = [_scrub33.scrub_event(_copy33.deepcopy(event)) for event in _se33_events]
+_se33_dump = [_json33.dumps(event, default=str) if event is not None else "" for event in _se33_out]
+check(
+    "33 Sentry: an event from /api/auth/google/callback keeps neither the authorization code nor the state — the "
+    "query string is dropped, and the Gmail callback's too — while an event on any other path keeps its query string "
+    "(the false-positive half)",
+    _se33_out[0] is not None and "abc" not in _se33_dump[0] and "def" not in _se33_dump[0]
+    and _se33_out[1] is not None and "ghi" not in _se33_dump[1] and "jkl" not in _se33_dump[1]
+    and _se33_out[2] is not None and (_se33_out[2].get("request") or {}).get("query_string") == "view=recent&limit=5",
+    str(_se33_dump)[:400],
 )
 
 _reached_end = True

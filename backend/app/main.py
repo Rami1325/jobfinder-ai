@@ -132,6 +132,10 @@ _AUTH_OPTIONAL = frozenset({
     # route checks its own state, binding cookie and session (amendment O1); the
     # cron is called by Vercel's scheduler and checks its own Bearer secret.
     "/inbox/google/callback", "/inbox/cron",
+    # Phase 30 / E2. Continue with Google starts on a signed-out login page, and
+    # Google's redirect back carries no credential header: the callback checks
+    # its own state, the jf_gsi binding cookie and the id_token's claims.
+    "/auth/google/start", "/auth/google/callback",
 })
 # The doors an UNVERIFIED account must still be able to open, or verifying would
 # be impossible to finish or to escape: resend the code, fix a mistyped address,
