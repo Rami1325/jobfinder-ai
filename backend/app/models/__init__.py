@@ -638,7 +638,8 @@ class FeedbackList(BaseModel):
 
 
 class DeleteMyDataResult(BaseModel):
-    """Row counts wiped by DELETE /profile/data (PLAN 7.5)."""
+    """Row counts removed by DELETE /profile/data, plus whether the Gmail grant
+    really went back (PLAN 7.5; Phase 30 / B2 for the two carve-outs below)."""
 
     resumes: int = 0
     # Version history (PLAN 20.8/N1). These hold FULL past resumes, so a wipe
@@ -647,6 +648,12 @@ class DeleteMyDataResult(BaseModel):
     applications: int = 0
     history: int = 0
     alerts: int = 0
+    # Daily-cap counters (`usage_log`). On /profile/data this counts rows from
+    # EARLIER UTC days ONLY — today's are the live daily counters, and a wipe
+    # that took them would reset every daily cap. DELETE /profile/account adds
+    # today's rows into this SAME number, since a deactivated id can never spend
+    # them. The three monthly-uses tables are in neither figure: they are never
+    # wiped, because the pool belongs to the person, not to the account.
     usage: int = 0
     feedback: int = 0
     kits: int = 0

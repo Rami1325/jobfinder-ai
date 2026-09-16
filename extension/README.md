@@ -21,6 +21,8 @@ Clips the job posting on the current page into your JobFinder **application trac
    - **Cover letter** pasted into a textarea explicitly labeled as one.
 3. **It never clicks submit.** You review the form and send it yourself — ToS-safe everywhere, including LinkedIn.
 
+**Since Phase 30 the AI answers cost monthly uses.** One use covers up to 6 screening answers for about 3 hours, so a normal autofill spends 1. If the account has no uses left this month the API refuses each answer with `429 monthly_limit`, and **this version fills nothing and says nothing** — check the uses line in the web app's account menu. Clipping a job to the tracker, and attaching a resume rendered from an already-approved kit, cost no uses.
+
 Safety rails built into the filler: it only touches fields inside an open dialog or a form that has a file upload (so page search boxes are never filled), skips invisible fields (honeypots), never overwrites anything you already typed, and fills each field kind at most once. If the popup finds a **processed-but-unreviewed** kit for the current job, it links you to its review page instead.
 
 ## Install (load unpacked)
@@ -38,7 +40,9 @@ Right-click the extension icon → **Options** (or the gear in the popup):
 
 - **App URL** — default `https://jobfinder-hazel-pi.vercel.app`. For local dev: `http://localhost:5173`.
 - **API URL** — leave empty to use App URL + `/api`. For local dev set `http://localhost:8000`.
-- **Access code** — the deployment's `APP_ACCESS_CODE`. **Without it every save returns 401** on the public instance. Locally (no access code configured on the backend) it can stay empty.
+- **Access code** — your personal extension key. **Without it every save returns 401** on the public instance. Locally (no access code configured on the backend) it can stay empty.
+  - For an **email account**, copy it from the web app: Settings → the extension key (show / copy / replace). It is replaced whenever you reset your password, change it, or use "sign out of other devices", so paste the new one in after any of those.
+  - For an **invite-code account** it is that invite code, and for the admin it is the deployment's `APP_ACCESS_CODE`, which never rotates.
 - **Test connection** pings `GET {API URL}/health` to confirm the server is reachable (it does not validate the access code — a wrong code shows up as a 401 on the first save).
 
 Settings are stored in `chrome.storage.sync`, so they roam with your Chrome profile.
