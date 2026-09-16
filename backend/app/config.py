@@ -34,8 +34,12 @@ class Settings(BaseSettings):
     # Monthly uses (Phase 30 / B2, app/core/quota.py): one shared pool of this many
     # uses a month per person, spent by every AI feature. The admin and plan
     # "unlimited" are exempt; <= 0 switches the monthly limit off (the daily caps'
-    # kill-switch shape). The landing, FAQ and privacy copy state the number in
-    # both locales, so changing it means editing that copy too.
+    # kill-switch shape). TWO copy strings state the number by hand and must be
+    # edited with it — `landing.hero.access` and `landing.faq.a3` in
+    # frontend/src/locales/{en,he}/marketing.json, four strings in all. Every
+    # in-app sentence interpolates it from `UsageOut` (`common.json` `uses.*`),
+    # and no privacy string carries the number at all (it states the retention
+    # rule instead), so nothing else needs touching.
     free_monthly_uses: int = 10
     # Daily caps for the model calls that are sub-steps of a counted flow and so
     # stay OFF the monthly pool (Phase 30 / B4.6): counting them would make one
