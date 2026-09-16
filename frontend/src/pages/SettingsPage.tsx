@@ -647,6 +647,50 @@ function ResumePrivacyCard() {
   );
 }
 
+/** This month's uses on the free plan (Phase 30 / C6): the allowance, what was
+ * used on what, when it resets, and what never counts.
+ *
+ * Only for a plan with a monthly limit. The admin and plan "unlimited" have no
+ * limit to show, and a card calling them "Free plan" would be false. It reads the
+ * /auth/me answer this page already fetched, because the per-feature breakdown
+ * lives only there. Its `uses.*` keys are literal calls through `tCommon`, the
+ * name this file already binds to common.json, for check-mirrors 32(d).
+ *
+ * The breakdown appends each count to its feature's own label with a space, so
+ * a LABEL THAT IS A CLAUSE swallows the number it is given: "Screening answers,
+ * extension autofill included 3" read as a sentence about the extension rather
+ * than as this month's three. The label is the short name now and the extension
+ * belongs to its own line, shown only when screening is in the breakdown --
+ * check-mirrors 32(b) refuses a feature name carrying a comma. */
+function PlanCard({ usage }: { usage: UsageOut }) {
+  const { t: tCommon } = useTranslation();
+  const { i18n } = useTranslation();
+  const spent = Object.entries(usage.by_feature ?? {})
+    .filter(([, n]) => typeof n === "number" && n > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const used = spent.map(
+    ([feature, n]) =>
+      `${tCommon(`uses.features.${feature}`, { defaultValue: tCommon("uses.plan.other") })} ${n}`,
+  );
+  const resets = formatUsesDate(usage.resets_on, i18n.language);
+  return (
+    <Card>
+      <CardTitle className="flex items-center gap-2">
+        <Gauge size={16} className="text-accent-soft" /> {tCommon("uses.plan.title")}
+      </CardTitle>
+      <div className="mt-3 space-y-1 text-sm">
+        <p className="text-ink">{tCommon("uses.plan.free", { count: usage.limit ?? 0 })}</p>
+        <p className="text-ink-muted">{used.length ? used.join(" · ") : tCommon("uses.plan.none")}</p>
+        {spent.some(([feature]) => feature === "screening") && (
+          <p className="text-xs text-ink-faint">{tCommon("uses.plan.screeningNote")}</p>
+        )}
+        {resets && <p className="text-ink-muted">{tCommon("uses.plan.resets", { date: resets })}</p>}
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-ink-muted">{tCommon("uses.plan.alwaysFree")}</p>
+    </Card>
+  );
+}
+
 /** The account surface: appearance, who you are, the extension key, and the
  * two ways out.
  *
@@ -661,40 +705,6 @@ function ResumePrivacyCard() {
  * also switches it off everywhere. Both ship, clearly separated, because a
  * tester wanting a clean slate and someone leaving for good are not the same
  * person. */
-/** This month's uses on the free plan (Phase 30 / C6): the allowance, what was
- * used on what, when it resets, and what never counts.
- *
- * Only for a plan with a monthly limit. The admin and plan "unlimited" have no
- * limit to show, and a card calling them "Free plan" would be false. It reads the
- * /auth/me answer this page already fetched, because the per-feature breakdown
- * lives only there. Its `uses.*` keys are literal calls through `tCommon`, the
- * name this file already binds to common.json, for check-mirrors 32(d). */
-function PlanCard({ usage }: { usage: UsageOut }) {
-  const { t: tCommon } = useTranslation();
-  const { i18n } = useTranslation();
-  const used = Object.entries(usage.by_feature ?? {})
-    .filter(([, n]) => typeof n === "number" && n > 0)
-    .sort((a, b) => b[1] - a[1])
-    .map(
-      ([feature, n]) =>
-        `${tCommon(`uses.features.${feature}`, { defaultValue: tCommon("uses.plan.other") })} ${n}`,
-    );
-  const resets = formatUsesDate(usage.resets_on, i18n.language);
-  return (
-    <Card>
-      <CardTitle className="flex items-center gap-2">
-        <Gauge size={16} className="text-accent-soft" /> {tCommon("uses.plan.title")}
-      </CardTitle>
-      <div className="mt-3 space-y-1 text-sm">
-        <p className="text-ink">{tCommon("uses.plan.free", { count: usage.limit ?? 0 })}</p>
-        <p className="text-ink-muted">{used.length ? used.join(" · ") : tCommon("uses.plan.none")}</p>
-        {resets && <p className="text-ink-muted">{tCommon("uses.plan.resets", { date: resets })}</p>}
-      </div>
-      <p className="mt-3 text-xs leading-relaxed text-ink-muted">{tCommon("uses.plan.alwaysFree")}</p>
-    </Card>
-  );
-}
-
 export default function SettingsPage() {
   const { t } = useTranslation("settings");
   // The wipe copy is reused VERBATIM from common.json rather than restated

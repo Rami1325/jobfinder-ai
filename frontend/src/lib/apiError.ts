@@ -175,6 +175,20 @@ export function isSessionEnded(e: unknown): boolean {
   return (e as ErrorShape)?.response?.status === 401 || apiErrorCode(e) === "session_required";
 }
 
+/** The server answered, and answered with a failure of its OWN (5xx).
+ *
+ * The one class of failure that can happen after a session pass has already
+ * been charged: `pass_charged` runs behind the handler's own checks, so a 400,
+ * a 422, the gate's 401/403, a daily-cap 429 and a request that never got a
+ * response all leave the pass untouched, while a 502 or a 503 was raised from
+ * inside it. A caller keeping its own count of what a pass has left decrements
+ * on this and on nothing else: counting a refusal the pass never saw can
+ * disable a control the server would still have served for free. */
+export function isServerFailure(e: unknown): boolean {
+  const status = (e as ErrorShape)?.response?.status;
+  return typeof status === "number" && status >= 500;
+}
+
 /** The `retry_after` seconds a 429 `too_many_attempts` carries, or null. */
 export function retryAfterSeconds(e: unknown): number | null {
   const detail = detailOf(e) as { retry_after?: unknown } | undefined;

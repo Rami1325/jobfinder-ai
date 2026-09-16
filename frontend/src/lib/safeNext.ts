@@ -23,6 +23,20 @@ export type AuthPage = (typeof AUTH_PAGES)[number];
 /** Where a refused or missing `next` goes: the document, which is the app. */
 const FALLBACK = "/app";
 
+/** The longest `next` anyone may hand us, in characters.
+ *
+ * The backend twin (`sessions.safe_next`) carries the same number, and there it
+ * is load-bearing: Phase 30's anonymous `POST /auth/google/start` STORES the
+ * value it is given, and the callback later rebuilds its redirect from the
+ * stored copy -- so an unbounded `next` is megabytes written into the database
+ * by a caller with no account, and a `Location` header long enough that an HTTP
+ * client refuses the sign-in outright. Nothing on this side is stored, but both
+ * validators answer the same question about the same link, and a link this side
+ * follows while the other refuses is the disagreement this file exists to
+ * prevent. The longest real destination is the extension handoff
+ * `/app?tailor_app=<id>`, far under it. */
+const MAX_NEXT = 512;
+
 const BACKSLASH = 0x5c;
 const DEL = 0x7f;
 
@@ -68,6 +82,7 @@ export function isAuthPage(pathname: string): boolean {
  */
 export function safeNext(value: string | null | undefined): string {
   if (!value) return FALLBACK;
+  if (value.length > MAX_NEXT) return FALLBACK;
   let decoded: string;
   try {
     decoded = decodeURIComponent(value);

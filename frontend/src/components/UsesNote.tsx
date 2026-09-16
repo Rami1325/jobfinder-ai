@@ -15,6 +15,12 @@ interface Props {
   children?: ReactNode;
   /** The sentence while the call is covered. Default: the feature's own, or none. */
   covered?: ReactNode;
+  /** The sentence at zero, in place of the generic one. For a surface where the
+   * generic list of what stays free would contradict the control it sits under:
+   * the review panel's checks ARE free, and naming "the review" as free
+   * directly beneath that panel's one paid button reads as a contradiction
+   * rather than as reassurance. */
+  atZero?: ReactNode;
   /** A control inside an open session (a model answer, practice feedback, the
    * mock interview's Send and End): it says nothing while the session covers it,
    * and its caller never disables it mid-session. */
@@ -31,7 +37,16 @@ interface Props {
  * "0 left" about a count nobody measured would be a false sentence at the moment
  * of decision. At zero the caller disables the control on `useUses(...).out`,
  * the only thing allowed to disable one, and this line says when uses come back
- * and what stays free.
+ * and what stays free -- or what the caller's own `atZero` says instead, where
+ * that generic list would contradict the surface it renders on.
+ *
+ * A NUMBER IN ONE OF THESE SENTENCES IS WHAT IS LEFT, never the allowance. The
+ * two-clause notes (the fit check, the cover letter) used to interpolate
+ * `limit`, so with one use left they read "Uses 1 of your 10" while every other
+ * counted button on the same account read "This uses your last use this month."
+ * -- and the warning ink below is computed from `remaining`, so the colour and
+ * the number disagreed. Both now name `remaining`, which is also the number the
+ * `_one` forms were written for.
  *
  * Every sentence is a LITERAL `t("uses.…")` call, one per state, never a
  * template literal: check-mirrors 32(d) resolves each one in both common.json
@@ -39,7 +54,15 @@ interface Props {
  * The pass numbers (3 hours, 6 answers) are the backend's `quota.PASS_RULES`,
  * written into the copy as the spec states them.
  */
-export default function UsesNote({ feature, includedUntil, children, covered, inSession, className }: Props) {
+export default function UsesNote({
+  feature,
+  includedUntil,
+  children,
+  covered,
+  atZero,
+  inSession,
+  className,
+}: Props) {
   const { t } = useTranslation();
   const { i18n } = useTranslation();
   const uses = useUses(feature, includedUntil);
@@ -48,8 +71,12 @@ export default function UsesNote({ feature, includedUntil, children, covered, in
   const lang = i18n.language;
   let text: ReactNode = null;
   if (uses.out) {
-    const date = formatUsesDate(uses.resetsOn, lang);
-    text = date ? t("uses.out", { date }) : t("uses.outBare");
+    if (atZero !== undefined) {
+      text = atZero;
+    } else {
+      const date = formatUsesDate(uses.resetsOn, lang);
+      text = date ? t("uses.out", { date }) : t("uses.outBare");
+    }
   } else if (uses.covered) {
     if (inSession) return null;
     if (covered !== undefined) text = covered;
@@ -68,7 +95,7 @@ export default function UsesNote({ feature, includedUntil, children, covered, in
   } else if (feature === "screening") {
     text = t("uses.passScreening");
   } else if (feature === "fit_check") {
-    text = t("uses.fitCheck", { count: uses.limit ?? 0 });
+    text = t("uses.fitCheck", { count: uses.remaining ?? 0 });
   } else {
     text = t("uses.note", { count: uses.remaining ?? 0 });
   }

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { apiErrorMessage, isMonthlyLimit } from "../lib/apiError";
+import { apiErrorMessage, isMonthlyLimit, isServerFailure } from "../lib/apiError";
 import { Copy, RefreshCw, Wand2, Scissors } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { coverLetter } from "../api/client";
@@ -50,11 +50,16 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
       setPass(res.included_until ? { until: res.included_until, left: res.changes_left ?? 0, posting } : null);
       onGenerated?.(res.cover_letter);
     } catch (e: any) {
-      // A monthly-limit refusal proves no pass covered this call. Any other
-      // failure on a pass still used its slot on the server (a failed change
-      // keeps its slot), so the count here goes down with it.
+      // A monthly-limit refusal proves no pass covered this call. A 5xx is the
+      // only failure raised from INSIDE the pass -- `pass_charged` runs after
+      // the handler's own checks -- so it is the only one that spent a slot,
+      // and the only one this count goes down with. A 400, a 422, a 401, a 403
+      // or a request that never reached the server left the pass alone: taking
+      // a slot for those turns `left` to 0 early, and at 0 uses left that
+      // DISABLES Generate on a call the server would still have included,
+      // which is the one error a local count may not make.
       if (isMonthlyLimit(e)) setPass(null);
-      else setPass((p) => (p ? { ...p, left: Math.max(0, p.left - 1) } : p));
+      else if (isServerFailure(e)) setPass((p) => (p ? { ...p, left: Math.max(0, p.left - 1) } : p));
       setError(apiErrorMessage(e, t("cover.error")));
     } finally {
       setLoading(false);
@@ -121,7 +126,7 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
         }
         className="mt-2"
       >
-        {tCommon("uses.coverLetter", { count: uses.limit ?? 0 })}
+        {tCommon("uses.coverLetter", { count: uses.remaining ?? 0 })}
       </UsesNote>
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       {text && (

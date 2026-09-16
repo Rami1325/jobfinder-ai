@@ -225,14 +225,18 @@ export default function ScanPage() {
             </ul>
           </Card>
 
-          {/* The next step: have the missing keywords worked into the resume */}
+          {/* The next step, on the page where it happens: /app is the
+              document and its tailor overlay. This pointed at /jobs, the job
+              search, under a sentence that promises a tailored rewrite -- a
+              button that does not keep its own promise, and for a brand-new
+              account the first navigation it takes. */}
           <Card className="border-accent/40">
             <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <CardTitle>{t("cta.title")}</CardTitle>
                 <p className="mt-1 max-w-xl text-sm text-ink-muted">{t("cta.body")}</p>
               </div>
-              <Link to="/jobs" className="shrink-0">
+              <Link to="/app" className="shrink-0">
                 <Button size="lg" icon={<ArrowRight size={18} className="rtl:-scale-x-100" />}>
                   {t("cta.button")}
                 </Button>

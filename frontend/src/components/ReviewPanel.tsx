@@ -4,7 +4,7 @@ import { Crosshair, Info, Sparkles } from "lucide-react";
 import { inlineField, readBlock } from "../lib/resumeBlocks";
 import { Button } from "./ui";
 import UsesNote from "./UsesNote";
-import { useUses } from "../lib/usesStore";
+import { formatUsesDate, useUses } from "../lib/usesStore";
 import { cn } from "../lib/cn";
 import type { ResumeModel, ReviewFinding, ReviewResult, ReviewRewrite } from "../types";
 
@@ -335,8 +335,13 @@ export default function ReviewPanel({
   onSuggestRewrites,
 }: Props) {
   const { t } = useTranslation("tailor");
+  // The uses copy lives in common.json, so it is read through its own named
+  // binding (check 28's one-identifier rule, check-mirrors 32(d)'s namespace).
+  const { t: tCommon } = useTranslation();
+  const { i18n } = useTranslation();
   // Before the early returns below, where every hook has to be.
   const rewriteUses = useUses("rewrites");
+  const rewriteResets = formatUsesDate(rewriteUses.resetsOn, i18n.language);
 
   if (failed && !data) return <p className="text-sm text-danger">{t("doc.review.failed")}</p>;
   if (!data) return null;
@@ -450,7 +455,19 @@ export default function ReviewPanel({
           >
             {t("doc.review.rewrites")}
           </Button>
-          <UsesNote feature="rewrites" />
+          {/* Its OWN zero line. The generic one lists "the review" among what
+              stays free, and under this panel's only paid button that reads as
+              a contradiction -- so the sentence here names what is still free
+              on this surface: the checks above, which re-run on every
+              keystroke on an uncapped route. */}
+          <UsesNote
+            feature="rewrites"
+            atZero={
+              rewriteResets
+                ? tCommon("uses.outRewrites", { date: rewriteResets })
+                : tCommon("uses.outRewritesBare")
+            }
+          />
 
           {rewritesError && <p className="text-sm text-danger">{rewritesError}</p>}
 
