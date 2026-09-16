@@ -342,6 +342,13 @@ class TailorKit(Base):
     # exempt caller's kit, and a kit with no event is never refunded: it never paid.
     quota_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     quota_refunded: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Phase 30 review (COST-4): how many times a killed run of this kit has been
+    # put back in the queue. A requeue never charges again (B4.1), so this count
+    # is the only bound on re-running it; `kits._requeue_stuck` fails the kit and
+    # gives its use back once the retries are spent, and a re-batch resets it to
+    # 0. `default=0` so the ADD-COLUMN shim backfills 0, which is honest on a
+    # legacy row: nothing had been counted there.
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

@@ -18,7 +18,10 @@ back through `refund_kit`, at most once (`quota_refunded`). A kit with no event
 (queued before Phase 30, or by an exempt caller) never refunds: it never paid.
 A kit is CLAIMED with one conditional UPDATE, and the write that ends its run is
 conditional on that claim, so two process-next calls can never run one kit
-twice or refund it twice.
+twice or refund it twice. A kit left "running" by a killed invocation is put back
+at most `MAX_REQUEUES` times: the requeue is free by design, so the retry COUNT
+is the only bound on re-running it, and the run after the last one fails the kit
+and gives its use back.
 
 `process_next_kit` takes injectable `analyze_fn`/`tailor_fn` (same pattern as
 alerts.run_alert's `search_fn`) so the smoke test drives the whole loop
@@ -59,6 +62,15 @@ MAX_BATCH = 10  # kits enqueued per call; also the ceiling the UI offers
 # A "running" kit older than this is a crashed/killed invocation (serverless
 # timeouts leave no chance to mark it failed) — requeue it on the next call.
 STUCK_RUNNING = timedelta(minutes=10)
+# How many times a stuck kit is put back before it is failed instead. A requeue
+# is never charged again (B4.1) — billing the user's daily cap for our own crash
+# is what OD-3 refuses — so this count is the only thing standing between a
+# pipeline that dies every time and an unlimited free re-run of it: measured at
+# 5 model calls a drain, 0 uses and 0 daily-cap units (Phase 30 review, COST-4).
+MAX_REQUEUES = 2
+# What the kit says once they are spent. A user can act on it: the same job still
+# tailors on the document page, which needs no queue.
+RETRIES_SPENT = "Tailoring kept timing out — try this job from the Tailor page."
 
 # The claim, the requeue and the terminal write are Core statements on the table:
 # their rowcount is the decision, and none of them should wait on the ORM
@@ -151,9 +163,11 @@ def enqueue_kits(
     from a fake that returns nothing). If it raises, nothing was queued, and its
     own commit can't flush half-built kit rows. Every kit queued here, fresh or a
     requeued failure, carries that event id with `quota_refunded` False, which
-    is what `refund_kit` gives back. If the commit that writes the kits fails
-    after the charge, the whole charge is refunded before the error propagates:
-    nothing was queued, so nothing was bought."""
+    is what `refund_kit` gives back. A requeued failure that still owes a use is
+    refunded first, because the new event id overwrites the only pointer to the
+    old charge (Phase 30 review, P30-C1). If the commit that writes the kits
+    fails after the charge, the whole charge is refunded before the error
+    propagates: nothing was queued, so nothing was bought."""
     # NO geo backstop here, deliberately — one was written and removed. It ran
     # `detect_geo_restriction` on every job with no gate, while `search_jobs`
     # gates on `JobHit.origin_market`. The two therefore disagreed about the
@@ -199,6 +213,26 @@ def enqueue_kits(
         if row is None:
             row = TailorKit(user_id=user.id, url=job.url)
             db.add(row)
+        elif row.quota_event_id is not None and not row.quota_refunded:
+            # A failed kit whose use never came back — its refund found no month
+            # row to restore, say. Give it back BEFORE the new event replaces the
+            # old id, or that charge is reachable from NO kit and can never be
+            # refunded at all (Phase 30 review, P30-C1). `refund_kit` is the
+            # exactly-once claim, so a kit whose use already came back is
+            # untouched here.
+            if refund_kit(db, row.id):
+                # Clear the flag the refund CLAIMED (claiming it is how it is
+                # exactly-once), through Core, because `row.quota_refunded =
+                # False` in the reset below cannot do it: the ORM compares
+                # against the value it LOADED, which is already False, so it
+                # emits no UPDATE and the claimed True survives into the new run
+                # — where it would refuse that run its own refund. Measured on a
+                # driven requeue, not reasoned about.
+                db.execute(update(_KITS).where(_KITS.c.id == row.id).values(quota_refunded=False))
+            else:
+                logger.warning(
+                    "a requeued kit's earlier charge (event %s) could not be given back", row.quota_event_id
+                )
         # Fresh enqueue and failed-kit requeue share the same reset.
         row.status = "queued"
         row.job_title = job.title
@@ -221,8 +255,10 @@ def enqueue_kits(
         row.application_id = None
         row.started_at = None
         row.processed_at = None
+        row.attempts = 0  # a new run gets the whole retry budget back
         # Phase 30 / B4.1: the charge that paid for THIS run of the kit. A
-        # requeued failure was refunded under its old event, so it starts over.
+        # requeued failure gave its old use back — at the latest just above — so
+        # it starts over owing nothing.
         row.quota_event_id = event_id
         row.quota_refunded = False
         queued.append(row)
@@ -302,24 +338,51 @@ def _pick_master(db: Session, user_id: int, jd_language: str) -> SavedResume | N
 
 
 def _requeue_stuck(db: Session, user_id: int) -> None:
-    """Put this user's kits left "running" past STUCK_RUNNING back in the queue.
+    """Put this user's kits left "running" past STUCK_RUNNING back in the queue —
+    at most MAX_REQUEUES times each — and fail the ones whose retries are spent,
+    giving their use back.
 
     One conditional UPDATE in the claim's own form, so a kit is only taken back
     while it is still the stuck run it looked like. A requeued kit keeps its
-    charge: running it again never charges again. It always commits, even when
-    nothing matched, because an open write transaction here would hold SQLite's
-    write lock for the rest of the call.
+    charge: running it again never charges again. That is exactly why the retry
+    needs a bound of its own — a killed invocation writes no terminal status, so
+    nothing marks the kit failed and nothing refunds it, and every later drain
+    re-ran the whole pipeline for free, without limit (Phase 30 review, COST-4:
+    measured at 5 model calls per drain with the monthly count and the daily
+    tailor count both unmoved). A kit that has died MAX_REQUEUES times will die
+    again, so the next stuck run ends it: `status = "failed"` with an error the
+    user can act on, written in the same conditional form so it lands only while
+    the kit is still that stuck run, and `refund_kit` hands back the use the
+    batch paid for. The refund joins this transaction, so the status and the use
+    land together, and it is exactly-once: a kit already refunded is untouched.
+
+    It always commits, even when nothing matched, because an open write
+    transaction here would hold SQLite's write lock for the rest of the call.
     """
     cutoff = _now().replace(tzinfo=None) - STUCK_RUNNING
+    stuck = (
+        _KITS.c.status == "running",
+        or_(_KITS.c.started_at.is_(None), _KITS.c.started_at < cutoff),
+    )
     db.execute(
         update(_KITS)
-        .where(
-            _KITS.c.user_id == user_id,
-            _KITS.c.status == "running",
-            or_(_KITS.c.started_at.is_(None), _KITS.c.started_at < cutoff),
-        )
-        .values(status="queued", started_at=None)
+        .where(_KITS.c.user_id == user_id, *stuck, _KITS.c.attempts < MAX_REQUEUES)
+        .values(status="queued", started_at=None, attempts=_KITS.c.attempts + 1)
     )
+    # Whatever is still stuck after that has spent its retries: the UPDATE above
+    # cannot have touched these rows, and nothing here changes `attempts`.
+    spent = db.execute(
+        select(_KITS.c.id)
+        .where(_KITS.c.user_id == user_id, *stuck, _KITS.c.attempts >= MAX_REQUEUES)
+    ).scalars().all()
+    for kit_id in spent:
+        ended = db.execute(
+            update(_KITS)
+            .where(_KITS.c.id == kit_id, *stuck)
+            .values(status="failed", error=RETRIES_SPENT, processed_at=_now().replace(tzinfo=None))
+        ).rowcount
+        if ended == 1:
+            refund_kit(db, kit_id)
     db.commit()
 
 
