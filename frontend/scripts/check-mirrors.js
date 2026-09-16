@@ -3122,6 +3122,18 @@ try {
 //
 // Extended in Phase 30 (D), same method: the confirmation link opened in a
 // browser without its account's session, below the F2 block.
+//
+// Extended again by the PHASE 30 REVIEW, same method — each reproduced on the
+// committed code before it was fixed:
+//   P1 the emailed confirmation link's card was titled "Your session ended" on
+//      a device that had never held a session.
+//   P2 with the pool empty, the alerts card explained its disabled Run now in
+//      the last line of the card, below the customize hint.
+//   P3 the scan's closing card promised a tailored rewrite and navigated to
+//      the job search.
+//   P4 the cover letter lowered this posting's remaining changes for refusals
+//      the server's pass never saw, which can disable a call it would serve.
+//   P5 safeNext had no length ceiling at all, while its backend twin now does.
 
 /** Bundle `contents` (resolved from src/) and run it. `stubs` maps an import
  * path as written to the object it should return: `../i18n` cannot run in
@@ -3222,6 +3234,26 @@ try {
   }
   for (const value of ["//evil.com", "/login", "https://evil.com"])
     if (sn.safeNext(value) !== "/app") fail(`safeNext(${JSON.stringify(value)}) is no longer refused`);
+
+  // P5: the ceiling. The backend twin (`sessions.safe_next`) carries the same
+  // 512, and there it is load-bearing — Phase 30's anonymous
+  // POST /auth/google/start STORES the `next` it is handed, and the callback
+  // rebuilds its redirect from the stored copy, so an unbounded value is
+  // megabytes written into the database by a caller with no account and a
+  // Location header an HTTP client refuses outright. Measured here before the
+  // fix: a 120,016-character path came back byte-identical.
+  const oversize = `/app?tailor_app=${"a".repeat(600)}`;
+  if (sn.safeNext(oversize) !== "/app")
+    fail(
+      `safeNext() handed back a ${oversize.length}-character destination instead of /app. The backend twin ` +
+        "refuses one, and a `next` this side follows while the other refuses it is exactly the disagreement " +
+        "lib/safeNext.ts exists to prevent.",
+    );
+  // …and the legitimate half: a long but real destination still survives whole,
+  // or the ceiling is refusing links people actually follow.
+  const longReal = `/tracker?inbox=connected&note=${"a".repeat(400)}`;
+  if (sn.safeNext(longReal) !== longReal)
+    fail(`safeNext() refused a real ${longReal.length}-character in-app destination; the ceiling is too low`);
 
   // F6: a validated next remembered at /forgot is used after the reset.
   localStorage.clear();
@@ -3828,6 +3860,122 @@ try {
 globalThis.window = savedGlobals.window;
 globalThis.localStorage = savedGlobals.localStorage;
 
+// P1-P4: the rest of the Phase 30 review's frontend fixes. Source pins, because
+// each is a component's wiring rather than a function a node process can call;
+// the one predicate that IS a function is executed by 32(c).
+try {
+  // P1. Two cards on /verify say a session ended. Only one of them is about a
+  // session that ended: the other is the emailed link, opened in whatever
+  // browser the mail app owns, which never held a session of that account — so
+  // "Your session ended" there reads as "you were logged out" to someone who
+  // never logged in, and it is the first thing they read. Driven in a fresh
+  // context with no cookie ever set, that card rendered "Your session ended"
+  // over the new any-device instruction.
+  const verify = decomment(read("pages/auth/VerifyPage.tsx"));
+  const cardTitle = (text, subKey) => {
+    const m = new RegExp(
+      `<AuthCard\\s+title=\\{t\\("(verify\\.[^"]+)"\\)\\}\\s*sub=\\{t\\("${subKey.replace(/\./g, "\\.")}"\\)\\}`,
+    ).exec(text);
+    return m ? m[1] : null;
+  };
+  const linkTitle = cardTitle(verify, "verify.endedLinkBody");
+  const codeTitle = cardTitle(verify, "verify.endedBody");
+  if (!linkTitle || !codeTitle) {
+    fail(
+      "check 30 cannot read /verify's two session-ended cards (the emailed link's and the code form's), so " +
+        "the title rule below is reading nothing",
+    );
+  } else {
+    if (linkTitle === codeTitle)
+      fail(
+        `/verify gives both session-ended cards the title "${linkTitle}". The emailed link opens in a browser ` +
+          "that never held a session, so a title asserting one ended is false for the case Part D exists to " +
+          "serve. Give the link branch its own title and leave that one where a session really did end.",
+      );
+    for (const [what, key] of [
+      ["the emailed link's card", linkTitle],
+      ["the expired code form's card", codeTitle],
+    ])
+      for (const loc of ["en", "he"]) {
+        const auth = JSON.parse(read(`locales/${loc}/auth.json`));
+        if (!resolvesIn(auth, key))
+          fail(`locales/${loc}/auth.json is missing "${key}", the title of ${what} on /verify.`);
+      }
+  }
+  // The reader, both directions, on fixtures.
+  const CARDS = (a, b) =>
+    `<AuthCard title={t("${a}")} sub={t("verify.endedLinkBody")}>\n` +
+    `<AuthCard title={t("${b}")} sub={t("verify.endedBody")}>\n`;
+  if (cardTitle(CARDS("verify.endedLinkTitle", "verify.endedTitle"), "verify.endedLinkBody") !== "verify.endedLinkTitle")
+    fail("check 30's /verify card reader cannot pair a title with its own sub-line");
+  if (cardTitle(CARDS("verify.endedTitle", "verify.endedTitle"), "verify.endedBody") !== "verify.endedTitle")
+    fail("check 30's /verify card reader cannot read the shape it forbids, so it would pass for ever");
+
+  // P2. WHERE the alerts card's paused line renders, not only that it resolves.
+  // With the pool empty it was the last line of the card, under the customize
+  // hint, while a ticked "Email me new jobs" and a disabled Run now sat at the
+  // top with nothing to account for them — measured at 390px in both locales.
+  // It belongs beside the controls it explains.
+  const alerts = decomment(read("pages/jobs/AlertsCard.tsx"));
+  const runNowAt = alerts.indexOf("uses.runNow");
+  const pausedAt = alerts.indexOf("uses.alertPaused");
+  const customizeAt = alerts.indexOf('t("alerts.customize")');
+  if (runNowAt === -1 || pausedAt === -1 || customizeAt === -1)
+    fail(
+      "check 30 cannot find the alerts card's Run now note, its paused line or its customize toggle, so the " +
+        "ordering rule below is reading nothing",
+    );
+  else if (!(runNowAt < pausedAt && pausedAt < customizeAt))
+    fail(
+      "pages/jobs/AlertsCard.tsx renders the paused line away from the controls it explains. It must sit just " +
+        "after Run now's own note and before the customize toggle: at the foot of the card the reader meets " +
+        "an enabled toggle and a dead button first, and the one sentence that accounts for both is the " +
+        "furthest thing from them.",
+    );
+
+  // P3. The scan's closing card names tailoring specifically ("Tailoring
+  // rewrites your resume for this exact job", under "Get the full tailored
+  // rewrite"), and tailoring is /app. It pointed at /jobs, the search — and
+  // since Phase 30 the scan is the landing's main secondary door, so this is
+  // the first navigation many brand-new accounts take.
+  const scan = decomment(read("pages/ScanPage.tsx"));
+  const links = [...scan.matchAll(/<Link\s+to="([^"]+)"/g)].map((m) => m[1]);
+  if (links.length !== 1)
+    fail(
+      `check 30 reads ${links.length} <Link to="…"> in pages/ScanPage.tsx, not the one closing-card call to ` +
+        "action, so its destination is pinned by nothing",
+    );
+  else if (links[0] !== "/app")
+    fail(
+      `pages/ScanPage.tsx sends "Get the full tailored rewrite" to ${links[0]}. Tailoring is /app; the copy ` +
+        "above the button promises a tailored rewrite, so any other destination is a promise the tap does " +
+        "not keep.",
+    );
+
+  // P4. The cover letter holds its own count of what this posting's pass has
+  // left, and it lowered that count for every failure but the monthly limit —
+  // measured, `isMonthlyLimit` is false for a 422, a 400, a 401, a 403 and a
+  // dropped connection alike, none of which reached the pass. Only a 5xx is
+  // raised from inside it. 32(c) executes the predicate; this pins the branch.
+  const letter = decomment(read("components/CoverLetter.tsx"));
+  const GATED = /else if \(\s*isServerFailure\(\s*e\s*\)\s*\)\s*setPass\(/;
+  if (!/setPass\(\(p\)/.test(letter))
+    fail("check 30 cannot find CoverLetter's local pass decrement, so the rule below is reading nothing");
+  else if (!GATED.test(letter))
+    fail(
+      "components/CoverLetter.tsx lowers this posting's remaining changes without asking whether the server's " +
+        "pass ever saw the failure (isServerFailure). A 400, a 422, a 401, a 403 or a request that never got " +
+        "a response spent no slot, and counting one drives the count to 0 early — which at 0 uses left " +
+        "disables Generate on a call the server would still have included.",
+    );
+  if (GATED.test("if (isMonthlyLimit(e)) setPass(null);\n      else setPass((p) => p);"))
+    fail("check 30's cover-letter reader accepts an ungated decrement");
+  if (!GATED.test("else if (isServerFailure(e))\n        setPass((p) => p);"))
+    fail("check 30's cover-letter reader cannot read the gated decrement it requires");
+} catch (e) {
+  fail(`Phase 30 review fix check could not run: ${e.message}`);
+}
+
 // ---- 31. the Jobs page's search and card copy resolves in both locales --- //
 // Phase 30 Part J gave the Jobs page's filtered list a third reason: a
 // worldwide posting in a country where pay is well below Israel's is hidden
@@ -4108,6 +4256,39 @@ try {
   const QUOTED = /^(["'])(.*)\1$/;
   const SIGNUP = /^signupFor\(\s*(["'])(.*?)\1\s*\)$/;
 
+  // THE HELPER ITSELF, and not only its name. Rule 2 reads the route inside
+  // signupFor("…") and trusts the rest to the helper, so its BODY was the one
+  // indirection nothing here looked at: changed to `return dest;`, every public
+  // call to action becomes the bare feature route again and AppLayout's guard
+  // greets a brand-new visitor with "Welcome back" — the exact defect the
+  // 2026-09-15 production probe recorded. Measured on this tree before this
+  // pin: with that one-line mutation in place, check-mirrors printed
+  // "mirrors ok" and the build stayed green.
+  const HELPER = "components/landing/ui.tsx";
+  const signupHelper = (text) => {
+    const m = text.match(
+      /export function signupFor\(\s*(\w+)\s*:\s*string\s*\)\s*:\s*string\s*\{\s*return\s+withNext\(\s*"\/signup"\s*,\s*(\w+)\s*\)\s*;?\s*\}/,
+    );
+    return !!m && m[1] === m[2];
+  };
+  if (!signupHelper(decomment(read(HELPER))))
+    fail(
+      `${HELPER}: signupFor no longer reads \`return withNext("/signup", <its own argument>)\`. Every public ` +
+        "call to action goes through it, so a body that hands back the bare route — or /login, or a fixed " +
+        "destination — reopens the feature to a signed-out visitor with 32(a), check 9 and tsc all green.",
+    );
+  // Both directions on fixtures: the reader must read the shipped helper and
+  // refuse each way the body can stop being a sign-up door.
+  const HELPER_OK = 'export function signupFor(dest: string): string {\n  return withNext("/signup", dest);\n}\n';
+  if (!signupHelper(HELPER_OK)) fail("check 32(a)'s signupFor reader cannot read the shipped helper");
+  for (const [label, mutant] of [
+    ["a body that hands back the bare route", HELPER_OK.replace('withNext("/signup", dest)', "dest")],
+    ["a body that sends the visitor to /login", HELPER_OK.replace('"/signup"', '"/login"')],
+    ["a body that drops the destination", HELPER_OK.replace(", dest)", ', "/app")')],
+    ["a body that forwards some other value", HELPER_OK.replace("(dest: string)", "(dest: string, other: string)").replace(", dest)", ", other)")],
+  ])
+    if (signupHelper(mutant)) fail(`check 32(a)'s signupFor reader accepts ${label}`);
+
   /** The text inside the `{…}` that opens at `open`, skipping braces in strings. */
   const braced = (src, open) => {
     let depth = 0;
@@ -4268,6 +4449,7 @@ try {
 //
 // Degrades only when backend/ is ABSENT. A backend/ without app/core/quota.py is
 // a red build (pySource): that is a file that moved.
+const CLAUSE = /[,;،]/;
 try {
   const src = pySource("app/core/quota.py", "check 32(b)");
   if (src !== null) {
@@ -4278,6 +4460,13 @@ try {
     const dupes = ids.filter((id) => (seen.has(id) ? true : (seen.add(id), false)));
     if (dupes.length)
       fail(`quota.py lists ${[...new Set(dupes)].map((i) => `\`${i}\``).join(", ")} in FEATURES more than once.`);
+    // The plan card renders "<label> <count>" and joins the rows with " · ",
+    // so a label that is a CLAUSE swallows the number it is handed: "Screening
+    // answers, extension autofill included 3 · Job searches 2" reads as a
+    // sentence about the extension rather than as this month's three (measured
+    // in both locales). A feature name is a NAME; anything it needs to add goes
+    // in its own line, which is where uses.plan.screeningNote now is.
+    const labelAt = (cat, id) => `uses.features.${id}`.split(".").reduce((o, k) => (o == null ? o : o[k]), cat);
     for (const loc of ["en", "he"]) {
       const common = JSON.parse(read(`locales/${loc}/common.json`));
       const missing = ids.filter((id) => !resolvesIn(common, `uses.features.${id}`));
@@ -4287,8 +4476,22 @@ try {
             "print the raw key as the name of what a use was spent on. Check 8 stays green while both " +
             "locales are equally wrong.",
         );
+      const clause = ids.filter((id) => CLAUSE.test(String(labelAt(common, id) ?? "")));
+      if (clause.length)
+        fail(
+          `locales/${loc}/common.json: uses.features.{${clause.join(", ")}} reads as a clause rather than a ` +
+            "name, and the plan card appends this month's count straight onto it, so the number is read as " +
+            "part of the sentence. Keep the label a name and give the rest its own line.",
+        );
     }
   }
+  // The clause reader, both directions: it must fire on the label that shipped
+  // and stay quiet on the name that replaced it, or "keep the labels short" is
+  // satisfied by a detector that never fires.
+  if (!CLAUSE.test("Screening answers, extension autofill included") || CLAUSE.test("Screening answers"))
+    fail("check 32(b)'s clause detector cannot tell a label that is a clause from one that is a name");
+  if (!CLAUSE.test("תשובות סינון, כולל מילוי אוטומטי בתוסף") || CLAUSE.test("תשובות סינון"))
+    fail("check 32(b)'s clause detector does not read the Hebrew label the same way");
   // The reader, both directions, on FEATURES' own shape: a comment on the
   // opening line and a comment between entries are read past, and two entries
   // packed onto one line are refused rather than half-read.
@@ -4423,6 +4626,42 @@ try {
   }
   if (ae.isSessionEnded(err(429, LIMIT)))
     fail("isSessionEnded reads a spent month as a dead session, so /verify would ask a signed-in account to log in again");
+
+  // The predicate a session pass's own count rests on (Phase 30 review, known
+  // item 5). `pass_charged` runs AFTER the handler's own checks, so a 5xx is
+  // the only failure that can have spent a slot: a 400, a 422, the gate's
+  // 401/403, a daily-cap 429 and a request that never got a response all left
+  // the pass untouched. Measured before this existed: `isMonthlyLimit` is false
+  // for every one of them, so the cover letter's `else` branch lowered its
+  // remaining changes on all of them — and at 0 uses left a local count
+  // reaching 0 DISABLES Generate, on a call the server would still have
+  // included for free. Check 30 pins the branch; this pins the predicate.
+  if (typeof ae.isServerFailure !== "function") {
+    fail(
+      "lib/apiError.ts exports no isServerFailure, so a caller holding a session pass cannot tell a failure " +
+        "raised inside the pass from a refusal the pass never saw",
+    );
+  } else {
+    for (const [label, e] of [
+      ["a 502 raised inside the pass", err(502, "Cover letter failed.")],
+      ["a 503", err(503, "Unavailable.")],
+    ])
+      if (!ae.isServerFailure(e)) fail(`isServerFailure misses ${label}, so a slot the pass really spent is never counted`);
+    for (const [label, e] of [
+      ["a 422 refused before the pass", err(422, [{ msg: "field required" }])],
+      ["a 400 from the handler's own checks", err(400, "Job description required.")],
+      ["the gate's 401", err(401, "Access code required.")],
+      ["a 403", err(403, { code: "email_unverified" })],
+      ["the daily cap", err(429, { code: "daily_limit", action: "tailor", cap: 3 })],
+      ["a spent month", err(429, LIMIT)],
+      ["a dropped connection", { message: "Network Error" }],
+    ])
+      if (ae.isServerFailure(e))
+        fail(
+          `isServerFailure fires on ${label}, which never reached the pass — counting it can disable a call ` +
+            "the server would have served",
+        );
+  }
 
   // The daily cap keeps its own line beside the monthly one.
   const dailyTailor = render(err(429, { code: "daily_limit", action: "tailor", cap: 3 }));
@@ -4653,6 +4892,16 @@ try {
     // more uses than are left, and its sentence is the one place that says so.
     ["pages/jobs/kits.tsx", 1, ["uses.batchCap"]],
     ["components/CoverLetter.tsx", 1, []],
+    // The overlay's two counted buttons share ONE line, and `uses.fitOrTailor`
+    // is it — required BY NAME, because the state it prices is the state that
+    // had no line at all (Phase 30 review, known item 4): with no fit reading
+    // on screen both Check fit and Tailor are live and both spend, and the only
+    // sentence there described the fit check.
+    ["components/TailorOverlay.tsx", 1, ["uses.fitOrTailor"]],
+    // The review panel's own zero line, required by name for the same reason:
+    // the generic one lists "the review" among what stays free, directly under
+    // the one button in that panel that spends.
+    ["components/ReviewPanel.tsx", 2, ["uses.outRewrites"]],
   ];
   const API_ERROR = "lib/apiError.ts";
   const API_FLOOR = 2;

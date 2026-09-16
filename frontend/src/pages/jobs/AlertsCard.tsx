@@ -456,6 +456,16 @@ export function AlertsCard({
       <UsesNote feature="search" className="mt-2">
         {tCommon("uses.runNow")}
       </UsesNote>
+      {/* Beside the two controls it explains -- the ticked "Email me new jobs"
+          above it and the disabled Run now -- and not at the foot of the card.
+          It used to be the last line of all, under the customize hint, so the
+          reader met an enabled toggle and a dead button first and the one
+          sentence that accounts for both was the furthest thing from them. */}
+      {paused && (
+        <p className="mt-1 text-xs text-warn">
+          {pausedDate ? tCommon("uses.alertPaused", { date: pausedDate }) : tCommon("uses.alertPausedBare")}
+        </p>
+      )}
 
       {/* The fit bar. Its own row rather than a sixth control in the row above:
           at 390px that row already wraps to three lines, and this is a sentence
@@ -500,11 +510,6 @@ export function AlertsCard({
 
       <div className="mt-3 space-y-1 text-xs text-ink-muted">
         {unsaved && <p className="text-warn">{t("alerts.unsaved")}</p>}
-        {paused && (
-          <p className="text-warn">
-            {pausedDate ? tCommon("uses.alertPaused", { date: pausedDate }) : tCommon("uses.alertPausedBare")}
-          </p>
-        )}
         {settings.last_run_at && (
           <p>
             {/* The bar line only for a run that actually measured against one.

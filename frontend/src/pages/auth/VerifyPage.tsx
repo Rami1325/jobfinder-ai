@@ -68,10 +68,18 @@ export default function VerifyPage() {
  * is BEFORE a card renders, because the two answers point different ways.
  * Signed out: log in here, or enter the code where you signed up. Signed in,
  * which can only be another account (a session of this one would have
- * confirmed): /login forwards a signed-in visitor straight past its form, so
- * the card offers "Log out and continue" through the shared sign-out, or
- * staying. Nothing here navigates by itself, because only the reader knows
- * which device and which account they mean. check-mirrors 30 pins all of it.
+ * confirmed): /login forwards a VERIFIED signed-in visitor straight past its
+ * form, so the card offers "Log out and continue" through the shared sign-out,
+ * or staying. (An unverified visitor keeps the form, with a line pointing
+ * here, which is why that reason has to name the verified case.) Nothing here
+ * navigates by itself, because only the reader knows which device and which
+ * account they mean.
+ *
+ * The signed-out card carries its OWN title. It borrowed "Your session ended",
+ * which is false for the case this flow exists for -- the mail app opens the
+ * link in a browser that never held a session, and nobody was logged out -- so
+ * that title stays on the card below, where a session really did end.
+ * check-mirrors 30 pins all of it.
  */
 function ConfirmLink({ token }: { token: string }) {
   const { t } = useTranslation("auth");
@@ -186,7 +194,7 @@ function ConfirmLink({ token }: { token: string }) {
 
   if (ended) {
     return (
-      <AuthCard title={t("verify.endedTitle")} sub={t("verify.endedLinkBody")}>
+      <AuthCard title={t("verify.endedLinkTitle")} sub={t("verify.endedLinkBody")}>
         <Link to={withNext("/login", next)} className={primaryLinkCls}>
           {t("verify.endedLogIn")}
         </Link>

@@ -62,6 +62,12 @@ const TOP_MISSING = 8;
  * straight away, and the Tailor note says so for as long as
  * `tailor_included_until` holds.
  *
+ * TAILORING STRAIGHT FROM HERE SPENDS ITS OWN USE, and with no fit reading on
+ * screen BOTH buttons are live -- so the line under them prices either one. It
+ * priced Check fit alone, which is the cheaper-looking half of the choice: at
+ * one use left, tapping Tailor spent that last use under a warning-ink
+ * sentence about a button the user had not pressed.
+ *
  * The draft is local. The page writes `jdText` into a module-level store on
  * every keystroke, and inside a modal that would make Cancel do nothing.
  */
@@ -79,6 +85,8 @@ export default function TailorOverlay({
   overrideCount = 0,
 }: Props) {
   const { t } = useTranslation("tailor");
+  // The uses copy lives in common.json, through its own named binding.
+  const { t: tCommon } = useTranslation();
   const [draft, setDraft] = useState(jdText);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -269,15 +277,18 @@ export default function TailorOverlay({
             </>
           )}
         </div>
-        {/* The cost, stated under the buttons that spend it. Before a fit
-            reading it describes Check fit, whose use also covers tailoring the
-            same job; with this posting's reading on screen it describes Tailor,
-            which that reading includes while it lasts. Nothing at all for an
+        {/* The cost, stated under the buttons that spend it. With no fit
+            reading on screen both buttons are live and both spend, so one line
+            prices either one and says what checking fit first buys; with this
+            posting's reading up, Tailor is the only counted control left and
+            that reading includes it while it lasts. Nothing at all for an
             account with no monthly limit or an unknown count. */}
         {cached ? (
           <UsesNote feature="tailor" includedUntil={includedUntil} className="text-end" />
         ) : (
-          <UsesNote feature="fit_check" className="text-end" />
+          <UsesNote feature="fit_check" className="text-end">
+            {tCommon("uses.fitOrTailor", { count: fitUses.remaining ?? 0 })}
+          </UsesNote>
         )}
         {!ready && <p className="text-end text-xs text-ink-muted">{t("overlay.needsJd")}</p>}
       </div>
