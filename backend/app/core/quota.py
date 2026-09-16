@@ -46,7 +46,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Iterator
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
@@ -505,6 +505,12 @@ def refund_units(
     `delta` units of a charge can ever come back, across requests and processes.
     With `commit=False` it joins the caller's transaction (a kit's status write),
     and a failure undoes only its own write instead of rolling the caller back.
+
+    The response HEADER it leaves behind reads the CURRENT month, which is the
+    pool the caller can still spend (Phase 30 review, known item 2). The two
+    differ across a month boundary — a kit paid for on the 31st that fails after
+    midnight — and a header carrying last month's remaining had the client report
+    a fresh month as used up until its next /auth/me.
     """
     moment = _clock(now)
     if event_id is None or n <= 0:
@@ -524,7 +530,7 @@ def refund_units(
     if marked != 1:
         if commit:
             db.rollback()
-        return False
+        return False  # already given back, up to this charge's own delta
     restored = db.execute(
         update(_MONTHS)
         .where(_MONTHS.c.quota_key == key, _MONTHS.c.period == period, _MONTHS.c.used >= n)
@@ -545,7 +551,7 @@ def refund_units(
         owner = db.get(User, user_id)
         limit = limit_for(owner) if owner is not None else None
         if limit is not None:
-            holder.remaining = max(0, limit - _used(db, key, period))
+            holder.remaining = max(0, limit - _used(db, key, period_of(moment)))
     return True
 
 
@@ -661,9 +667,21 @@ def _read_pass(db: Session, use: PassUse) -> None:
 
 def _close_if_nothing_served(db: Session, use: PassUse, user_id: int, now: datetime) -> None:
     """B5.3 step 3, in the transaction the caller opened: a pass whose opener failed
-    and on which every ride failed too is closed and refunded once. A pass on
-    which ANY call succeeded keeps its use, so forcing the opener to fail late
-    buys nothing."""
+    and on which nothing was served is closed and refunded once. A pass on which
+    ANY call succeeded keeps its use, so forcing the opener to fail late buys
+    nothing.
+
+    The condition is `succeeded == 0` with at least one recorded failure, where
+    it used to be the stricter `failed == calls - 1` (Phase 30 review, P30-C2). A
+    ride commits its call BEFORE its outcome is known, so a ride that never
+    recorded one — a lost worker, a bookkeeping write that failed — left `failed`
+    permanently short of `calls - 1` and pinned the pass open for ever: the use
+    was kept for a pass on which nothing was ever served, which is the opposite
+    of what this rule promises. Every pass the old condition closed still closes
+    (`calls <= 1` keeps the no-rider shape). The cost runs one way only: a rider
+    still in flight beside one that failed can now have its pass closed under it,
+    so a call that then succeeds was served for a use we had given back —
+    generous to the person, and bounded by the calls already taken."""
     at = naive_utc(now)
     closed = db.execute(
         update(_PASSES)
@@ -671,7 +689,7 @@ def _close_if_nothing_served(db: Session, use: PassUse, user_id: int, now: datet
             _PASSES.c.id == use.pass_id,
             _PASSES.c.opener_failed.is_(True),
             _PASSES.c.succeeded == 0,
-            _PASSES.c.failed == _PASSES.c.calls - 1,
+            or_(_PASSES.c.failed >= 1, _PASSES.c.calls <= 1),
             _PASSES.c.expires_at > at,
         )
         .values(expires_at=at, max_calls=_PASSES.c.calls)
@@ -840,6 +858,12 @@ def settle_fit_ride(
     a reclassification that cannot land leaves `used` right and only the
     breakdown still saying fit_check, where raising would lose the user a
     tailored resume the ride had already paid for.
+
+    The events land in the fit's month; the response HEADER reads the CURRENT
+    one (Phase 30 review, known item 2). A fit check at 23:00 on the 31st whose
+    covered tailor arrives at 00:30 is the case: the header and /auth/me must
+    describe the same pool, and last month's number reads as a fresh month
+    already used up.
     """
     moment = _clock(now)
     user_id, _plan, limit = _who(user)
@@ -866,7 +890,7 @@ def settle_fit_ride(
             )
             _insert_event(db, user_id=user_id, key=key, period=period, feature="tailor", delta=1, ref=ride, now=moment)
             db.commit()
-        _note_remaining(db, user_id, key, period, limit)
+        _note_remaining(db, user_id, key, period_of(moment), limit)
     except Exception:  # noqa: BLE001 - the tailor was served; never turn it into an error
         try:
             db.rollback()

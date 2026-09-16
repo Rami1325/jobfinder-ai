@@ -185,17 +185,24 @@ def me(db: Session, user: User | None, method: str) -> AuthMe:
     /login and /signup read to decide whether to show the button (Phase 30 / E4).
     `google_linked` says whether this login holds a Google `sub`.
 
-    `usage` is this month's uses (Phase 30 / B7) for a signed-in caller and None
-    for an anonymous one. Every sign-in response is built here, so reading the
-    pool is best effort: a failure reports usage as unknown (None), never a
-    login that succeeded answering 500."""
+    `usage` is this month's uses (Phase 30 / B7) for a signed-in, VERIFIED caller
+    and None for anyone else. An unverified caller is refused every feature by
+    the gate, so it can spend nothing and there is no honest reading of the pool
+    to hand it — and the pool is keyed on the CANONICAL address, so handing one
+    over told an unverified alias signup (`victimperson+snoop@gmail.com`) how
+    much the real owner of that address had used this month, of what, and from
+    an open pass roughly when (Phase 30 review, known item 1 / SEC-5). Every
+    sign-in response is built here, so reading the pool is best effort: a failure
+    reports usage as unknown (None), never a login that succeeded answering
+    500."""
     google_enabled = google_oauth.signin_configured()
     if user is None:
         return AuthMe(signup_open=signup_open(), google_enabled=google_enabled)
     login = login_for(db, user.id)
+    verified = is_verified(user.is_admin, user.signup_source, login.email_verified_at if login else None)
     return AuthMe(
         authenticated=True,
-        verified=is_verified(user.is_admin, user.signup_source, login.email_verified_at if login else None),
+        verified=verified,
         method=method,
         signup_open=signup_open(),
         google_enabled=google_enabled,
@@ -208,7 +215,7 @@ def me(db: Session, user: User | None, method: str) -> AuthMe:
             google_linked=bool(login is not None and login.google_sub),
             signup_source=user.signup_source or "",
         ),
-        usage=_usage(db, user),
+        usage=_usage(db, user) if verified else None,
     )
 
 

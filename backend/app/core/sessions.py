@@ -43,6 +43,13 @@ RENEW_EVERY = timedelta(hours=12)
 # a device string and a coarse address, i.e. they are a sign-in log, and the
 # privacy page promises that log does not outlive 30 days.
 RETENTION = timedelta(days=30)
+# The longest `next` this app carries through a sign-in. Phase 30 is the first
+# time an anonymous caller's `next` is STORED — the Google sign-in state row
+# keeps it for the round trip — and safe_next had no size rule at all: one POST
+# wrote megabytes into the database, kept for RETENTION, and came back as a
+# Location header no client would follow (Phase 30 review, SEC-2). The longest
+# real destination is the extension's `/app?tailor_app=<id>`, far under this.
+MAX_NEXT = 512
 
 
 def utc_now() -> datetime:
@@ -215,10 +222,16 @@ def safe_next(value: str | None, base: str | None = None) -> str:
     such case (`/..//evil.com`), so the test is the segment itself, not a
     resolution. No real in-app destination contains one; a dot inside a
     segment, a query or a fragment is untouched.
+
+    **The size ceiling lives HERE** (`MAX_NEXT`), not at each door, so every
+    caller inherits it — including the Google callback, which re-derives its
+    destination from the STORED state row rather than from a request body, so a
+    bound on that route's model alone could not keep an oversize value out of a
+    Location header (Phase 30 review, SEC-2).
     """
     fallback = "/app"
     candidate = value or ""
-    if not candidate:
+    if not candidate or len(candidate) > MAX_NEXT:
         return fallback
     forms = [candidate]
     current = candidate

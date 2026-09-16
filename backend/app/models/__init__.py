@@ -752,9 +752,16 @@ class AuthMe(BaseModel):
 
 class GoogleStartIn(BaseModel):
     """POST /auth/google/start (Phase 30 / E2). `next` is checked with safe_next;
-    a `page` other than "login" or "signup" reads as login."""
+    a `page` other than "login" or "signup" reads as login.
 
-    next: str = ""
+    `next` is bounded here so an oversize body is REFUSED (422) instead of being
+    silently rewritten to /app: this is an anonymous door, and its `next` is
+    STORED for the round trip (Phase 30 review, SEC-2). The ceiling that cannot
+    be forgotten is `sessions.MAX_NEXT`, inside safe_next itself, because the
+    callback re-derives its destination from the stored row rather than from a
+    request body."""
+
+    next: str = Field(default="", max_length=512)
     locale: str = ""  # the language of any notice this sign-in mails
     page: str = ""  # the page a refusal comes back to
 
@@ -1590,7 +1597,7 @@ class ATSXrayResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Free public CV-vs-JD scan (no signup, deterministic only — PLAN 6)
+# The CV scan (POST /tools/scan: signed in, deterministic only — PLAN 6, Phase 30 / A2)
 # --------------------------------------------------------------------------- #
 class FreeScanCheck(BaseModel):
     id: str  # email | phone | length | numbers — stable ids the UI translates

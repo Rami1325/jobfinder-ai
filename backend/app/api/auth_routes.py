@@ -316,9 +316,14 @@ def auth_google_callback(
     A refusal before the binding matches goes to /login with no next: nothing
     yet proves the state belongs to this browser, so nothing in it is used. From
     the iss check on, a refusal goes back to the page the flow started from, with
-    its next (left out when it is /app). There is no failure throttle: the state
-    and the binding are 256-bit, so one would guard nothing and would lock out a
-    whole CGNAT address.
+    its next (left out when it is /app).
+
+    Every failure is recorded per network under `GOOGLE_FAIL_PER_IP`, and that
+    limit bounds the ROWS rather than the sign-in (Phase 30 review, SEC-1):
+    guessing a 256-bit state is hopeless whatever the limit, but this route is
+    anonymous and reaches `fail` before it has looked anything up, so one log row
+    per request was an unbounded write for anyone who found the URL. Over the
+    allowance the row is taken back and this redirect is exactly the same.
     """
     dest = {"page": "", "next": ""}
 
@@ -331,7 +336,12 @@ def auth_google_callback(
 
     def fail(reason: str) -> RedirectResponse:
         try:
-            auth_throttle.record(db, "google_fail", auth_throttle.ip_key(client_ip(request)))
+            # `hit`, never `record`: over the allowance it takes its own row back,
+            # which is the whole of what bounds an anonymous caller here. The Hit
+            # is deliberately ignored — being over the limit costs a log row,
+            # never the sign-in.
+            auth_throttle.hit(db, "google_fail", auth_throttle.ip_key(client_ip(request)),
+                              *auth_throttle.GOOGLE_FAIL_PER_IP)
         except Exception:  # noqa: BLE001 - the security log may never cost the redirect
             db.rollback()
         if not dest["page"]:

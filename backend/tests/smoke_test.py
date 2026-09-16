@@ -8483,11 +8483,35 @@ update_alert(_db4, _omer.id, enabled=False, email="omer@example.com", context=No
 _db4.close()
 
 with TestClient(_fastapi_app) as _tc:
-    _ncron = _tc.get("/jobs/nudges/cron")
+    # Since the Phase 30 review (SEC-4) this cron FAILS CLOSED like its two
+    # siblings: with the gate on and no secret configured it refuses, because an
+    # open URL is a mail trigger on the owner's own SMTP account — the resource
+    # the auth-mail budget protects, and one nudge mail is not counted against.
+    # `_env29` is 6,000 lines further down, so the variable is set and restored
+    # inline here, the way the alerts cron's own check does it.
+    _ncron_closed = _tc.get("/jobs/nudges/cron")
+    os.environ["CRON_SECRET"] = "smoke-cron-nudge"
+    get_settings.cache_clear()
+    try:
+        _ncron = _tc.get("/jobs/nudges/cron", headers={"Authorization": "Bearer smoke-cron-nudge"})
+        _ncron_wrong = _tc.get("/jobs/nudges/cron", headers={"Authorization": "Bearer not-the-secret"})
+    finally:
+        os.environ["CRON_SECRET"] = ""
+        get_settings.cache_clear()
     check(
-        "nudge cron endpoint is gate-exempt and reports opted-in users",
+        "nudge cron endpoint is gate-exempt and reports opted-in users, with the Bearer secret",
         _ncron.status_code == 200 and _ncron.json()["users"] == 0,
         _ncron.text[:100],
+    )
+    check(
+        "SEC-4: with the gate on and CRON_SECRET empty the NUDGES cron refuses with 503 cron_unconfigured, exactly "
+        "like the alerts cron — the two siblings can no longer disagree about who may pull them, and an empty secret "
+        "was the one configuration where this one was an anonymous mail trigger — while a wrong Bearer is a 401 "
+        "beside the right one above, which runs",
+        _ncron_closed.status_code == 503
+        and _ncron_closed.json() == {"detail": {"code": "cron_unconfigured"}}
+        and _ncron_wrong.status_code == 401,
+        f"{_ncron_closed.status_code} {_ncron_closed.text[:100]} | {_ncron_wrong.status_code}",
     )
     # Mock interview endpoints (PLAN 11.3) through the real HTTP stack.
     _mi_resp = _tc.post(
@@ -16407,6 +16431,22 @@ check(
     all(_sess28.safe_next(v, _n30_base) == v for v in _n30_keep),
     str({v: _sess28.safe_next(v, _n30_base) for v in _n30_keep}),
 )
+_n30_over = "/app?x=" + "a" * (_sess28.MAX_NEXT - 6)  # one character over the ceiling
+_n30_edge = "/app?x=" + "a" * (_sess28.MAX_NEXT - 7)  # exactly at it
+check(
+    "SEC-2 (Phase 30 review): safe_next has a SIZE ceiling, so every caller inherits it — a destination one character "
+    "over MAX_NEXT falls back to /app. Phase 30 is the first time an anonymous caller's `next` is STORED, and the "
+    "route that re-derives it reads the stored row, not a request body, so this is the only bound it cannot dodge",
+    len(_n30_over) == _sess28.MAX_NEXT + 1 and _sess28.safe_next(_n30_over, _n30_base) == "/app",
+    f"{len(_n30_over)} characters -> {_sess28.safe_next(_n30_over, _n30_base)!r}",
+)
+check(
+    "SEC-2: …while a destination exactly AT the ceiling comes back untouched, and so does the longest real one the "
+    "app has (the extension's /app?tailor_app=<id>) — the false-positive half",
+    len(_n30_edge) == _sess28.MAX_NEXT and _sess28.safe_next(_n30_edge, _n30_base) == _n30_edge
+    and _sess28.safe_next("/app?tailor_app=42", _n30_base) == "/app?tailor_app=42",
+    f"{len(_n30_edge)} characters -> {len(_sess28.safe_next(_n30_edge, _n30_base))}",
+)
 _e30_bad = ["x<victim@y.com>", "a,b@y.com", "name <a@y.com>", '"a"@y.com', "a b@y.com", "a@y.com;b@z.com",
             "(c)a@y.com", "a@[1.2.3.4]", "a:b@y.com", "a\\b@y.com", "a@b@y.com", "a" * 243 + "@example.com"]
 check(
@@ -17717,6 +17757,10 @@ _P_THIS32 = _period32(_real32.year, _real32.month)
 _ny32, _nm32 = _shift32(_real32.year, _real32.month, 1)
 _NEXT32 = _dt32(_ny32, _nm32, 1, 0, 30, tzinfo=_UTC32)  # 00:30Z on the 1st of next month
 _P_NEXT32 = _period32(_ny32, _nm32)
+_pmy32, _pmm32 = _shift32(_real32.year, _real32.month, -1)
+_PREVM32 = _dt32(_pmy32, _pmm32, 15, 12, 0, tzinfo=_UTC32)  # mid LAST month — the one the prune keeps
+_P_PREVM32 = _period32(_pmy32, _pmm32)
+_MSTART32 = _dt32(_real32.year, _real32.month, 1, tzinfo=_UTC32)  # 00:00Z on the 1st of this month
 
 
 def _mint32(client, name, email=""):  # noqa: ANN001
@@ -18767,6 +18811,10 @@ def _interleave_kits32(uid):  # noqa: ANN001
     return state["nested"], outer, left
 
 
+import time as _time32  # noqa: E402
+
+from sqlalchemy import update as _upd32b  # noqa: E402
+
 _prev32b_env = _env29(DAILY_LLM_CAP="0", DAILY_TAILOR_CAP="0", DAILY_SEARCH_CAP="0")
 try:
     with TestClient(_fastapi_app) as _c32b:
@@ -18921,6 +18969,39 @@ try:
             and len(_mo_back32) == 1 and _event_period32(_mo_back32[0][0]) == _P_THIS32,
             f"{_pool32(_mo_key32, _P_THIS32)} {_pool32(_mo_key32, _P_NEXT32)} {_mo_back32}",
         )
+        _hm_uid32, _ = _mint32(_c32b, "Holder Month")
+        _hm_prev32 = [_reserve32(_hm_uid32, "tailor", now=_PREVM32)[0] for _ in range(9)]
+        _hm_this32 = [_reserve32(_hm_uid32, "search", now=_THIS32)[0] for _ in range(2)]
+        _hm_d32 = SessionLocal()
+        try:
+            with _q32.bind_uses(_hm_uid32) as _hm_holder32:
+                _q32.refund_units(_hm_d32, _hm_prev32[0].event_id, 1,
+                                  ref=f"refund:{_hm_prev32[0].event_id}", now=_THIS32)
+                _hm_across32 = _hm_holder32.remaining
+                _hm_snap_across32 = _snap32(_hm_uid32, _THIS32).remaining
+                _q32.refund_units(_hm_d32, _hm_this32[0].event_id, 1,
+                                  ref=f"refund:{_hm_this32[0].event_id}", now=_THIS32)
+                _hm_same32 = _hm_holder32.remaining
+                _hm_snap_same32 = _snap32(_hm_uid32, _THIS32).remaining
+        finally:
+            _hm_d32.close()
+        check(
+            "32.3 boundary header (Phase 30 review, known item 2): the -1 lands in the CHARGE's month but the header "
+            "describes the pool the caller can still spend — a LAST-month charge refunded now leaves the holder at "
+            "10 - this month's 2 used = 8, the same number /auth/me gives, where last month's count had a fresh "
+            "month reading as used up until the next /auth/me",
+            all(c is not None for c in _hm_prev32 + _hm_this32)
+            and _hm_across32 == _hm_snap_across32 == 8
+            and _pool32(f"u:{_hm_uid32}", _P_PREVM32) == (8, 8),
+            f"header={_hm_across32} /auth/me={_hm_snap_across32} last month={_pool32(f'u:{_hm_uid32}', _P_PREVM32)}",
+        )
+        check(
+            "32.3 boundary header twin: a SAME-month charge refunded in its own month moves the holder the ordinary "
+            "way — 9 left of 10, again equal to /auth/me — so the fix is about WHICH month is read, never about "
+            "ignoring the refund",
+            _hm_same32 == _hm_snap_same32 == 9,
+            f"header={_hm_same32} /auth/me={_hm_snap_same32}",
+        )
         _tw_uid32, _ = _mint32(_c32b, "Refund Twice")
         _tw_charge32 = _reserve32(_tw_uid32, "search", now=_THIS32)[0]
         _tw_d32 = SessionLocal()
@@ -18949,7 +19030,21 @@ try:
 
         _st_body32 = {"resume": _R32, "customize": None}
         _st_uid32, _ST32_H = _mint32(_c32b, "Stream Friend")
+        _real_refund32b = _q32.refund_units
+
+        def _slow_refund32(*args, **kwargs):  # noqa: ANN002, ANN003
+            """The refund, held open half a second (Phase 30 review, be2a-1).
+
+            `_worker` is `try: _refund_search() finally: events.put(("error", …))`, so the error frame cannot be
+            observable until the refund has returned. Reading the ledger the moment `.post` returns only PROVES
+            that while the refund is slow enough to lose a race it must not be in: a SQLite refund (a select, two
+            updates, an insert and a commit) usually lands before the read anyway, so the order could regress and
+            these two checks stay green. Half a second makes a frame-before-refund regression fail every run."""
+            _time32.sleep(0.5)
+            return _real_refund32b(*args, **kwargs)
+
         try:
+            _q32.refund_units = _slow_refund32
             _routes32.search_jobs = _search_400_32
             _st_400_32 = _c32b.post("/jobs/search/stream", json=_st_body32, headers=_ST32_H)
             _st_400_ev32 = _events32(_st_uid32)  # read the moment .post returned the frame
@@ -18957,6 +19052,9 @@ try:
             _st_502_32 = _c32b.post("/jobs/search/stream", json=_st_body32, headers=_ST32_H)
             _st_502_ev32 = _events32(_st_uid32)
             _st_502_pool32 = _pool32(f"u:{_st_uid32}", _P_THIS32)  # before the zero-match search adds its +1
+        finally:
+            _q32.refund_units = _real_refund32b
+        try:
             _routes32.search_jobs = _zero_search32
             _st_zero32 = _c32b.post("/jobs/search/stream", json=_st_body32, headers=_ST32_H)
             _st_zero_ev32 = _events32(_st_uid32)
@@ -18972,7 +19070,8 @@ try:
         check(
             "32.3 stream: a search that fails with a user-facing 400 is charged before the stream starts (header 9 on "
             "the 200 that carries it) and refunded BEFORE its error frame can be read — the ledger read the moment "
-            ".post returned already holds the -1 refund:<id>",
+            ".post returned already holds the -1 refund:<id>, with the refund held open half a second so a frame "
+            "queued ahead of it fails this every run instead of once in a while",
             _st_400_32.status_code == 200 and _hdr32(_st_400_32) == "9"
             and _sse_events(_st_400_32.text) == [("error", {"detail": "boards are down", "status": 400})]
             and len(_st_400_ev32) == 2 and _refunded32(_st_400_ev32, "search"),
@@ -19056,18 +19155,25 @@ try:
         _v_ok_tailor32 = _c32b.post("/tailor", json={"resume": _R32, "jd": _JDJ32}, headers=_V32_H)
         _v_ok_scan32 = _c32b.post("/tools/scan", files={"file": ("cv.txt", b"Dana Levi\nPython, SQL", "text/plain")},
                                   data={"jd_text": "Python developer."}, headers=_V32_H)
+        # The cover-letter catch this 422 needs (Phase 30 review, be2b-1): the route became a
+        # counted one after 32.4 was written, so its leg passed whether or not it ever charged.
+        _v_ok_cover32 = _c32b.post("/cover-letter", json={"resume": _R32, "jd": _JDJ32}, headers=_V32_H)
+        _v_cover_ref32 = _q32.jd_ref(_JD32.model_validate(_JDJ32))
         check(
             "32.4 a 422 never charges: a malformed /tailor, a /cover-letter with no job and a /tools/scan with no file "
             "are refused before the handler with no event and no header — on a user whose limit reads 10 and whose "
-            "valid tailor and scan right after DO write +1 each",
+            "valid tailor, scan and cover letter right after DO write +1 each, the cover letter under its posting's "
+            "own ref",
             _v_limit32 == 10
             and [r.status_code for r in _v_bad32] == [422, 422, 422]
             and all(_hdr32(r) is None for r in _v_bad32)
             and _v_after32 == []
             and _v_ok_tailor32.status_code == 200 and _v_ok_scan32.status_code == 200
-            and _shape32(_events32(_v_uid32)) == [("tailor", 1, 0, ""), ("scan", 1, 0, "")],
+            and _v_ok_cover32.status_code == 200
+            and _shape32(_events32(_v_uid32)) == [("tailor", 1, 0, ""), ("scan", 1, 0, ""),
+                                                  ("cover_letter", 1, 0, _v_cover_ref32)],
             f"{[r.status_code for r in _v_bad32]} {_v_ok_tailor32.status_code} {_v_ok_scan32.status_code} "
-            f"{_shape32(_events32(_v_uid32))}",
+            f"{_v_ok_cover32.status_code} {_shape32(_events32(_v_uid32))}",
         )
 
         # --- 32.5 Kits (B4.1): paid at batch, one use per kit, given back per kit ----------------------------------
@@ -19195,6 +19301,156 @@ try:
             and sorted(k[2] for k in _kits_of32(_kt_uid32)) == ["done", "done"]
             and [e[2] for e in _events32(_kt_uid32)] == [2],
             f"nested={_kt_nested32} outer={_kt_outer32} tailors={_kt_tailors32['n']}",
+        )
+        def _queue_kits32(uid, tag, n):  # noqa: ANN001
+            """`n` queued kit rows written straight to the table: no batch, so no charge and no cap — these checks are
+            about CLAIMING, not about paying, and a batch of 11 would breach both MAX_BATCH and the monthly limit."""
+            d = SessionLocal()
+            try:
+                for i in range(n):
+                    d.add(_TK32(user_id=uid, url=f"https://claim32.test/{tag}/{i}", status="queued",
+                                job_title=f"Claim32 {i}", company="ClaimCo32", jd_text=_KIT_JD))
+                d.commit()
+            finally:
+                d.close()
+
+        _real_claim32b = _kits32._claim_next
+        _cv_uid32, _CV32_H = _mint32(_c32b, "Claim Vanishes")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_CV32_H)
+        _queue_kits32(_cv_uid32, "vanish", 2)
+        _cv_state32 = {"n": 0}
+
+        def _claim_then_delete32(db, user_id):  # noqa: ANN001
+            """The claim, with the kit it just won DELETED by another request before the caller can read it."""
+            claim = _real_claim32b(db, user_id)
+            _cv_state32["n"] += 1
+            if claim is not None and _cv_state32["n"] == 1:
+                d = SessionLocal()
+                try:
+                    d.execute(_delete28(_TK32).where(_TK32.id == claim[0]))
+                    d.commit()
+                finally:
+                    d.close()
+            return claim
+
+        _kit_fakes32()
+        try:
+            _kits32._claim_next = _claim_then_delete32
+            _cv_db32 = SessionLocal()
+            try:
+                _cv_row32, _cv_left32 = _kits32.process_next_kit(_cv_db32, _cv_db32.get(_U32, _cv_uid32))
+            finally:
+                _cv_db32.close()
+            _cv1_uid32, _CV1_32_H = _mint32(_c32b, "Claim Vanishes Alone")
+            _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_CV1_32_H)
+            _queue_kits32(_cv1_uid32, "alone", 1)
+            _cv_state32["n"] = 0
+            _cv1_db32 = SessionLocal()
+            try:
+                _cv1_row32, _cv1_left32 = _kits32.process_next_kit(_cv1_db32, _cv1_db32.get(_U32, _cv1_uid32))
+            finally:
+                _cv1_db32.close()
+        finally:
+            _kits32._claim_next = _real_claim32b
+            _kit_reals32()
+        check(
+            "32.5 kits (Phase 30 review, be2a-3): when the kit a call CLAIMED is deleted before it can be read, the "
+            "call goes back for the next queued kit instead of answering None — the client's drain loop stops on a "
+            "null kit, so a None with work still queued left the rest of a batch sitting there until some later drain",
+            _cv_row32 is not None and _cv_row32.status == "done" and _cv_left32 == 0
+            and [k[2] for k in _kits_of32(_cv_uid32)] == ["done"],
+            f"row={None if _cv_row32 is None else (_cv_row32.id, _cv_row32.status)} left={_cv_left32} "
+            f"{_kits_of32(_cv_uid32)}",
+        )
+        check(
+            "32.5 kits twin: the same vanishing claim with NOTHING else queued still answers None — None has to mean "
+            "nothing is claimable, or the drain would never stop",
+            _cv1_row32 is None and _cv1_left32 == 0 and _kits_of32(_cv1_uid32) == [],
+            f"row={_cv1_row32} left={_cv1_left32} {_kits_of32(_cv1_uid32)}",
+        )
+        _cs_uid32, _CS32_H = _mint32(_c32b, "Claim Selects Again")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_CS32_H)
+        _queue_kits32(_cs_uid32, "steal", 11)
+        _cs_state32 = {"n": 0, "stolen": []}
+
+        def _now_and_steal32():  # noqa: ANN202
+            """kits._now, with another request taking the very candidate this attempt is about to claim.
+
+            The first read is the stuck-kit cutoff; after that one read per claim attempt, between choosing a
+            candidate and the conditional write that claims it. Ten kits are stolen that way — one whole MAX_BATCH
+            candidate list — and the 11th is left alone, so only a claim that SELECTS AGAIN can win anything."""
+            _cs_state32["n"] += 1
+            if 1 < _cs_state32["n"] <= 11:
+                d = SessionLocal()
+                try:
+                    stolen = d.execute(
+                        _sel32(_TK32.id).where(_TK32.user_id == _cs_uid32, _TK32.status == "queued")
+                        .order_by(_TK32.id).limit(1)
+                    ).scalar()
+                    if stolen is not None:
+                        d.execute(_upd32b(_TK32).where(_TK32.id == stolen).values(status="running"))
+                        d.commit()
+                        _cs_state32["stolen"].append(int(stolen))
+                finally:
+                    d.close()
+            return _real_kits_now32b()
+
+        _kit_fakes32()
+        try:
+            _kits32._now = _now_and_steal32
+            _cs_db32 = SessionLocal()
+            try:
+                _cs_row32, _cs_left32 = _kits32.process_next_kit(_cs_db32, _cs_db32.get(_U32, _cs_uid32))
+            finally:
+                _cs_db32.close()
+        finally:
+            _kits32._now = _real_kits_now32b
+            _kit_reals32()
+        check(
+            "32.5 kits (be2a-3): when every candidate of one batch is claimed away mid-attempt the claim SELECTS "
+            "AGAIN — one candidate list is capped at MAX_BATCH, so ten stolen kits used to answer None while an "
+            "11th sat queued — and that 11th kit now runs to done",
+            len(_cs_state32["stolen"]) == 10
+            and _cs_row32 is not None and _cs_row32.status == "done"
+            and _cs_row32.id not in _cs_state32["stolen"],
+            f"stolen={_cs_state32['stolen']} row={None if _cs_row32 is None else (_cs_row32.id, _cs_row32.status)}",
+        )
+        _kq_uid32, _KQ32_H = _mint32(_c32b, "Kit Refund Flag")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KQ32_H)
+        _kq_batch32 = _c32b.post("/kits/batch", json={"jobs": [_kit_job32("flag", 1)]}, headers=_KQ32_H)
+        _kq_kits32 = _kits_of32(_kq_uid32)
+        _kq_kit32 = _kq_kits32[0][0] if _kq_kits32 else 0
+        _kq_key32 = _key32(_kq_uid32)
+        _kq_d32 = SessionLocal()
+        try:
+            _kq_used32 = _kq_d32.execute(
+                _sel32(_UM32.used).where(_UM32.quota_key == _kq_key32, _UM32.period == _P_THIS32)
+            ).scalar()
+            # The charge's month row is GONE, the way a pruned month leaves it: the refund cannot land.
+            _kq_d32.execute(_delete28(_UM32).where(_UM32.quota_key == _kq_key32, _UM32.period == _P_THIS32))
+            _kq_d32.commit()
+            _kq_first32 = _kits32.refund_kit(_kq_d32, _kq_kit32, queued_only=True)
+            _kq_d32.commit()
+            _kq_flag32 = _kq_d32.execute(_sel32(_TK32.quota_refunded).where(_TK32.id == _kq_kit32)).scalar()
+            _kq_d32.add(_UM32(quota_key=_kq_key32, user_id=_kq_uid32, period=_P_THIS32,
+                              used=int(_kq_used32 or 1), updated_at=_q32.naive_utc(_THIS32)))
+            _kq_d32.commit()
+            _kq_second32 = _kits32.refund_kit(_kq_d32, _kq_kit32, queued_only=True)
+            _kq_d32.commit()
+            _kq_flag_after32 = _kq_d32.execute(_sel32(_TK32.quota_refunded).where(_TK32.id == _kq_kit32)).scalar()
+        finally:
+            _kq_d32.close()
+        check(
+            "32.5 kits (Phase 30 review, P30-C1): quota_refunded only ever means a use CAME BACK — a refund whose "
+            "month row is gone answers False and leaves the flag False, so the use is still owed, and the retry once "
+            "the row is back gives it (True, the flag set, used 0). The flag stuck True before, and every retry was "
+            "then refused by the kit's own flag while nothing had come back",
+            _kq_batch32.status_code == 200 and _kq_kit32 != 0
+            and _kq_first32 is False and bool(_kq_flag32) is False
+            and _kq_second32 is True and bool(_kq_flag_after32) is True
+            and _pool32(_kq_key32, _P_THIS32) == (0, 0),
+            f"first={_kq_first32} flag={_kq_flag32} second={_kq_second32} flag={_kq_flag_after32} "
+            f"pool={_pool32(_kq_key32, _P_THIS32)}",
         )
         _kd_uid32, _KD32_H = _mint32(_c32b, "Kit Delete")
         _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KD32_H)
@@ -19875,6 +20131,41 @@ try:
             and _pool32(f"u:{_fs_uid32}", _P_THIS32) == (1, 1),
             f"{[tuple(r)[:8] for r in _passes32(_fs_uid32)]} {_shape32(_events32(_fs_uid32))}",
         )
+        _nr_uid32b, _ = _mint32(_c32c, "Ride With No Outcome")
+        _pass_call32(_nr_uid32b, "interview", _THIS32)  # the opener, served
+        _nr_rows32b = _passes32(_nr_uid32b)
+        _nr_pid32b = _nr_rows32b[0].id if _nr_rows32b else 0
+        # A ride that TOOK its call and never recorded an outcome — a lost worker, or its own
+        # bookkeeping write failing — and an opener failure after it.
+        _set_pass32(_nr_pid32b, calls=2, opener_failed=True)
+        _pass_call32(_nr_uid32b, "interview", _THIS32, fail=True)  # a later ride that DOES report
+        _nr_after32b = _passes32(_nr_uid32b)
+        _nr_ev32b = _events32(_nr_uid32b)
+        _ns_uid32b, _ = _mint32(_c32c, "Ride With No Outcome But One Served")
+        _pass_call32(_ns_uid32b, "interview", _THIS32)
+        _ns_rows32b = _passes32(_ns_uid32b)
+        _set_pass32(_ns_rows32b[0].id if _ns_rows32b else 0, calls=2, opener_failed=True, succeeded=1)
+        _pass_call32(_ns_uid32b, "interview", _THIS32, fail=True)
+        check(
+            "32.6 (Phase 30 review, P30-C2): a ride that never recorded an outcome cannot pin a pass open for ever — "
+            "the close asks `succeeded == 0` with a failure recorded, where `failed == calls - 1` could never be true "
+            "again once one ride went unreported, so the use was KEPT for a pass on which nothing was ever served. It "
+            "closes now (max_calls = calls = 3) and the use comes back once",
+            _nr_pid32b != 0
+            and [(r.calls, r.max_calls, r.succeeded, r.failed) for r in _nr_after32b] == [(3, 3, 0, 1)]
+            and len(_nr_ev32b) == 2 and _refunded32(_nr_ev32b, "interview")
+            and _pool32(f"u:{_nr_uid32b}", _P_THIS32) == (0, 0),
+            f"{[tuple(r)[:8] for r in _nr_after32b]} {_shape32(_nr_ev32b)}",
+        )
+        check(
+            "32.6 twin: the SAME unreported ride on a pass where one call DID succeed keeps its use and stays open "
+            "(calls 3 of 60) — `succeeded == 0` is what decides, so widening the rule can never refund a pass that "
+            "served something",
+            [(r.calls, r.max_calls, r.succeeded, r.failed) for r in _passes32(_ns_uid32b)] == [(3, 60, 1, 1)]
+            and _shape32(_events32(_ns_uid32b)) == [("interview", 1, 0, "")]
+            and _pool32(f"u:{_ns_uid32b}", _P_THIS32) == (1, 1),
+            f"{[tuple(r)[:8] for r in _passes32(_ns_uid32b)]} {_shape32(_events32(_ns_uid32b))}",
+        )
         _cc_uid32, _ = _mint32(_c32c, "Five First Calls")
         _cc_out32, _cc_entered32 = _concurrent_first32(_cc_uid32, "interview", 5, _THIS32)
         check(
@@ -20218,6 +20509,38 @@ try:
             and [r.calls for r in _passes32(_fy_uid32)] == [1],
             f"{_j28(_fx_fit32).get('tailor_included_until')!r} {_shape32(_events32(_fx_uid32))} "
             f"{_shape32(_events32(_fy_uid32))}",
+        )
+        _sb_uid32, _ = _mint32(_c32c, "Settle Across The Boundary")
+        _SB_FIT32 = _MSTART32 - _td32(hours=1)        # 23:00Z on the last day of LAST month
+        _SB_TAILOR32 = _MSTART32 + _td32(minutes=30)  # 00:30Z on the 1st, inside the ride's 24 hours
+        for _ in range(8):
+            _reserve32(_sb_uid32, "search", now=_SB_FIT32)
+        _sb_fit32 = _reserve32(_sb_uid32, "fit_check", now=_SB_FIT32)[0]
+        _reserve32(_sb_uid32, "tailor", now=_SB_TAILOR32)
+        _reserve32(_sb_uid32, "tailor", now=_SB_TAILOR32)
+        _sb_d32 = SessionLocal()
+        try:
+            _q32.open_fit_ride(_sb_d32, _sb_d32.get(_U32, _sb_uid32), ref="boundary32",
+                               event_id=_sb_fit32.event_id if _sb_fit32 is not None else None, now=_SB_FIT32)
+            _sb_ride32 = _q32.claim_fit_ride(_sb_d32, _sb_d32.get(_U32, _sb_uid32), ref="boundary32",
+                                             now=_SB_TAILOR32)
+            with _q32.bind_uses(_sb_uid32) as _sb_holder32:
+                _q32.settle_fit_ride(_sb_d32, _sb_d32.get(_U32, _sb_uid32), _sb_ride32, now=_SB_TAILOR32)
+                _sb_header32 = _sb_holder32.remaining
+        finally:
+            _sb_d32.close()
+        _sb_snap32 = _snap32(_sb_uid32, _SB_TAILOR32)
+        check(
+            "32.16 across the boundary (Phase 30 review, known item 2): a fit check at 23:00 on the last day of a "
+            "month whose covered tailor lands at 00:30 on the 1st reclassifies in the FIT's month, while the header "
+            "that response carries describes THIS one — X-Uses-Remaining equals what /auth/me says (8 of 10), where "
+            "last month's number read as a fresh month already spent. The same-month covered tailor above, whose "
+            "header reads 9, is the twin",
+            _sb_ride32 is not None and _sb_header32 == _sb_snap32.remaining == 8
+            and _pool32(f"u:{_sb_uid32}", _P_PREVM32) == (9, 9)
+            and _sb_snap32.by_feature == {"tailor": 2},
+            f"header={_sb_header32} /auth/me={_sb_snap32.remaining} "
+            f"last month={_pool32(f'u:{_sb_uid32}', _P_PREVM32)} {_sb_snap32.by_feature}",
         )
         _fl9_uid32, _FL9_32_H = _mint32(_c32c, "Fit Spends The Last Use")
         _fill32(_fl9_uid32, 9)
@@ -21239,6 +21562,17 @@ def _calls_in32(fn):  # noqa: ANN001
     return found
 
 
+def _readable32(fn):  # noqa: ANN001
+    """Can fn's OWN source be read and parsed? `_calls_in32` records an empty call list when it cannot, and the
+    `free` class asks only that no charging call is there — so an endpoint nothing could read passed as free
+    without ever being examined (Phase 30 review, be3-2)."""
+    try:
+        _ast32.parse(_tw32.dedent(_insp32.getsource(_insp32.unwrap(fn))))
+    except (OSError, TypeError, SyntaxError):
+        return False
+    return True
+
+
 def _reach32(fn, depth=8):  # noqa: ANN001
     """{(module, name)} of every call fn makes, followed breadth-first into the functions it reaches in app.* and in
     fn's own module — never into app.core.quota, whose entry points are what is being looked for. A charge hidden in
@@ -21289,6 +21623,11 @@ def _cap_actions32(fn):  # noqa: ANN001
 def _shape_problem32(cls, fn, deps):  # noqa: ANN001
     """'' when fn has the source shape its cost class requires, else what is wrong."""
     kind, _, arg = cls.partition(":")
+    if not _readable32(fn):
+        # Every other class needs a call to be FOUND, so an unreadable source fails
+        # them already; `free` is satisfied by an empty call list, which is the
+        # "passes by never firing" shape this suite forbids (be3-2).
+        return "its source cannot be read, so its shape was never examined"
     reach = _reach32(fn)
     direct = _direct_quota32(fn)
     charging = sorted(name for module, name in reach if module == _q32.__name__ and name in _CHARGING32)
@@ -21377,6 +21716,11 @@ def _probe_reads_pool32(db, user):  # noqa: ANN001
     return _q32.snapshot(db, user)
 
 
+# An endpoint whose source cannot be read at all — the be3-2 shape. Built with exec
+# so `inspect.getsource` genuinely fails, which is what a lambda endpoint inside a
+# larger expression does today.
+_probe_exec_ns32: dict = {}
+exec("def _probe_unreadable32(db, user):\n    return {'ok': True}\n", _probe_exec_ns32)  # noqa: S102
 _probe_verdicts32 = [
     _shape_problem32("free", _probe_free_reserves32, set()),
     _shape_problem32("free", _probe_hides_its_charge32, set()),
@@ -21385,14 +21729,16 @@ _probe_verdicts32 = [
     _shape_problem32("charged:linkedin", _routes32.tools_linkedin, set()),
     _shape_problem32("free", _probe_reads_pool32, set()),
     _shape_problem32("free", _routes32.tools_review, {"llm_user"}),
+    _shape_problem32("free", _probe_exec_ns32["_probe_unreadable32"], set()),
 ]
 check(
     "32.13(b) the shape test is live: a function classed free that reserves, one that reserves through a helper of its "
     "own module, and one that calls quota.reserve under another name are each refused; charged:tailor is refused for "
-    "the LinkedIn route while charged:linkedin fits it; reading the pool (snapshot) is still free, and a free route "
-    "given an llm_user dependency is refused",
+    "the LinkedIn route while charged:linkedin fits it; reading the pool (snapshot) is still free, a free route given "
+    "an llm_user dependency is refused, and — Phase 30 review, be3-2 — so is one whose source cannot be READ, which "
+    "used to pass free by never being examined",
     all(_probe_verdicts32[:4]) and _probe_verdicts32[4] == "" and _probe_verdicts32[5] == ""
-    and _probe_verdicts32[6] != "",
+    and _probe_verdicts32[6] != "" and _probe_verdicts32[7] != "",
     str(_probe_verdicts32),
 )
 _shape_bad32 = {}
@@ -22056,12 +22402,19 @@ for _cap_key32, _cap_cls32 in _ROUTE_COST.items():
         )
 _sync_resp32 = _row_out32(("POST", "/inbox/sync"))[1].get("resp")
 _sync_body32 = _j28(_sync_resp32) if _sync_resp32 is not None else {}
+# The firing proof under every zero-row verdict below (Phase 30 review, be3-1): the user
+# these rows are driven as HAS a limit, so a zero is a measurement rather than an
+# exemption. Were it ever the admin, plan unlimited, or FREE_MONTHLY_USES <= 0, each
+# "wrote no rows" assertion would pass without the route being capable of writing one.
+_sw_snap32 = _snap32(_SW32["uid"])
 check(
     "32.13(c) the capped rows stay off the pool: a resume upload, a JD analysis and a search context each reach the "
     "model (calls > 0), an inbox sync reads the demo mailbox with the model (llm_calls > 0), and the inbox cron runs "
-    "— every one a 200 that writes zero quota rows and carries no uses header",
-    _cap_bad32 == {} and (_sync_body32.get("llm_calls") or 0) > 0,
-    f"{str(_cap_bad32)[:700]} sync={str(_sync_body32)[:160]}",
+    "— every one a 200 that writes zero quota rows and carries no uses header, driven as a user whose own pool reads "
+    "plan free, limit 10",
+    _sw_snap32.limit == 10 and _sw_snap32.plan == "free"
+    and _cap_bad32 == {} and (_sync_body32.get("llm_calls") or 0) > 0,
+    f"limit={_sw_snap32.limit} plan={_sw_snap32.plan} {str(_cap_bad32)[:600]} sync={str(_sync_body32)[:160]}",
 )
 _free_bad32 = {}
 for _free_key32, _free_cls32 in _ROUTE_COST.items():
@@ -22082,9 +22435,10 @@ for _free_key32, _free_cls32 in _ROUTE_COST.items():
 check(
     "32.13(c) free rows: every one — driven as the minted friend, as the admin for the admin-only routes, or "
     "anonymously and then on its own session for the account doors — answers its expected status and writes ZERO "
-    "rows in the three quota tables, with no uses header",
-    _free_bad32 == {},
-    str(_free_bad32)[:900],
+    "rows in the three quota tables, with no uses header; and the friend they run as has a limit (plan free, 10), so "
+    "each zero is a measurement and not an exemption",
+    _sw_snap32.limit == 10 and _sw_snap32.plan == "free" and _free_bad32 == {},
+    f"limit={_sw_snap32.limit} plan={_sw_snap32.plan} {str(_free_bad32)[:800]}",
 )
 _free_calls32 = {key: (_sweep32.get(key) or {}).get("calls", 0) for key, cls in _ROUTE_COST.items() if cls == "free"}
 _DETERMINISTIC32 = (("POST", "/render"), ("POST", "/tools/review"), ("POST", "/tools/coverage"),
@@ -22531,6 +22885,20 @@ try:
             and "samesite=lax" in _b33["gsi_cookie"].lower() and "max-age=600" in _b33["gsi_cookie"].lower()
             and "path=/;" in _b33["gsi_cookie"].lower() and "secure" not in _b33["gsi_cookie"].lower(),
             _b33["gsi_cookie"],
+        )
+        with TestClient(_fastapi_app) as _sec33:
+            _reset_auth_throttles28()
+            _sec33_start = _sec33.post("/auth/google/start", json={"next": "", "locale": "en", "page": "login"},
+                                       headers={**_XRW, "x-forwarded-proto": "https"})
+        _sec33_cookie = _jar29(_sec33_start, "jf_gsi")[1]
+        check(
+            "33 start (Phase 30 review, be4-1): jf_gsi IS Secure when the edge says https — read off the raw header of "
+            "a THROWAWAY client, the 28g way, because a Secure cookie in this section's jar would turn every later "
+            "request anonymous. The plain-http twin above is the other half: a hard-coded secure=False passed both "
+            "until this catch existed",
+            _sec33_start.status_code == 200 and "; secure" in _sec33_cookie.lower()
+            and "httponly" in _sec33_cookie.lower() and "samesite=lax" in _sec33_cookie.lower(),
+            _sec33_cookie,
         )
         check(
             "33 config (b): the code exchange carries the sign-in id, the sign-in secret, the sign-in redirect and a "
@@ -23081,6 +23449,29 @@ try:
             _loc29(_th33_known["resp"]) == "/app" and _th33_known["session"] != "",
             _loc29(_th33_known["resp"]),
         )
+        _reset_auth_throttles28()
+        _gf33_limit = _thr28.GOOGLE_FAIL_PER_IP[0]
+        _gf33_first = _callback33(_c33, "gf-first-33", "", code="x")
+        _gf33_one = len(_events33("google_fail"))
+        for _i33 in range(_gf33_limit + 9):
+            _callback33(_c33, f"gf-{_i33}-33", "", code="x")
+        _gf33_rows = len(_events33("google_fail"))
+        _gf33_after = _round33(_c33, _claims33("after.limit33@gmail.com", "g-after-limit-33"), reset=False)
+        check(
+            "33 throttle (Phase 30 review, SEC-1): a callback failure is recorded per network and those rows are "
+            "BOUNDED — the first anonymous failure writes one google_fail row, so the log is live, and "
+            f"{_gf33_limit + 10} of them leave at most the hourly allowance behind. One row per request was an "
+            "unbounded write, from an unauthenticated caller, kept for the security log's 30 days",
+            _gf33_one == 1 and _where33(_gf33_first) == ("/login", {"google": ["state_invalid"]})
+            and _gf33_rows == _gf33_limit,
+            f"after one={_gf33_one} after {_gf33_limit + 10}={_gf33_rows} allowance={_gf33_limit}",
+        )
+        check(
+            "33 throttle twin (SEC-1): over that allowance the sign-in STILL WORKS — the limit costs a log row, never "
+            "the round trip, so a whole CGNAT address behind one address is never locked out of signing in",
+            _loc29(_gf33_after["resp"]) == "/app" and _gf33_after["session"] != "",
+            f"{_loc29(_gf33_after['resp'])} session={bool(_gf33_after['session'])}",
+        )
         _pr33_now = _dt28.now(_tz28.utc)
         _PR33_ROWS = {"prune-old-33": _pr33_now - _td28(days=31), "prune-recent-33": _pr33_now - _td28(minutes=1),
                       "prune-live-33": _pr33_now + _td28(minutes=9)}
@@ -23107,6 +23498,54 @@ try:
             _pr33_start.status_code == 200
             and _pr33_left == {_sess28.token_hash("prune-recent-33"), _sess28.token_hash("prune-live-33")},
             f"{_pr33_start.status_code} kept {len(_pr33_left)}",
+        )
+        _reset_auth_throttles28()
+        _c33.cookies.clear()
+        _ln33_start = _c33.post("/auth/google/start", headers=_XRW, json={
+            "next": "/app?x=" + "a" * (_sess28.MAX_NEXT + 1), "locale": "en", "page": "login"})
+        _c33.cookies.clear()
+        _ln33_d = SessionLocal()
+        try:
+            _ln33_biggest = int(_ln33_d.execute(
+                _sel29(_func29.max(_func29.length(_ATok33.payload))).where(_ATok33.purpose == "google_signin")
+            ).scalar() or 0)
+        finally:
+            _ln33_d.close()
+
+        def _ln33_row(state, binding, target):  # noqa: ANN001
+            """A live sign-in state row written by hand — the shape a row stored BEFORE the cap existed has, which is
+            what the callback re-derives its destination from."""
+            d = SessionLocal()
+            try:
+                d.add(_ATok33(
+                    user_id=None, purpose="google_signin", token_hash=_sess28.token_hash(state),
+                    payload=_json33.dumps({"verifier": "v-33", "nonce": "n-33",
+                                           "binding": _sess28.hkey("google-signin", binding),
+                                           "next": target, "locale": "en", "page": "signup"}),
+                    expires_at=_dt28.now(_tz28.utc) + _td28(minutes=9),
+                    created_at=_dt28.now(_tz28.utc)))
+                d.commit()
+            finally:
+                d.close()
+
+        _ln33_row("ln-long-33", "ln-long-binding-33", "/tracker?x=" + "b" * _sess28.MAX_NEXT)
+        _ln33_row("ln-short-33", "ln-short-binding-33", "/tracker?x=1")
+        _ln33_long = _callback33(_c33, "ln-long-33", "ln-long-binding-33", error="access_denied")
+        _ln33_short = _callback33(_c33, "ln-short-33", "ln-short-binding-33", error="access_denied")
+        check(
+            "33 next (Phase 30 review, SEC-2): an oversize `next` is refused at the door (422) and NOTHING is stored — "
+            "this is an anonymous write into the database, kept for 30 days — and a row that PREDATES the cap cannot "
+            "put one in a Location either: the cancel redirect falls back to /app, so next is left out, because the "
+            "ceiling lives in safe_next, which is what the callback re-derives through",
+            _ln33_start.status_code == 422 and _ln33_biggest < 1024
+            and _where33(_ln33_long) == ("/signup", {"google": ["cancelled"]}),
+            f"{_ln33_start.status_code} biggest payload={_ln33_biggest} {_loc29(_ln33_long)}",
+        )
+        check(
+            "33 next twin (SEC-2): the same stored-row path with an ordinary destination still carries it — "
+            "/signup?google=cancelled&next=/tracker?x=1 — so the ceiling refuses length, never the feature",
+            _where33(_ln33_short) == ("/signup", {"google": ["cancelled"], "next": ["/tracker?x=1"]}),
+            _loc29(_ln33_short),
         )
 
         # --- 32.10's Google part: a Google account spends the pool of its ADDRESS -----------------------------------
@@ -23142,6 +23581,41 @@ try:
             and _key32(_cy33_three_uid) == _cy33_key
             and _cy33_three_snap is not None and _cy33_three_snap.used == 3 and _cy33_three_snap.remaining == 7,
             f"{_cy33_two_used} {_loc29(_cy33_three['resp'])} {_cy33_three_snap}",
+        )
+        # --- 32.10, the other half: who may READ a pool (Phase 30 review, known item 1 / SEC-5) --------------------
+        _vp33_email = "victim.person33@gmail.com"
+        _vp33_uid, _vp33_tok, _vp33_su = _signup32(_c33, "Victim Person", _vp33_email, "victim pool passphrase")
+        _vp33_ver = _verify32(_c33, _vp33_email, _vp33_tok)
+        for _feat33 in ("tailor", "tailor", "interview"):
+            _reserve32(_vp33_uid, _feat33)
+        _vp33_me = _me33(_c33, _vp33_tok).get("usage") or {}
+        _al33_email = "victimperson33+snoop@gmail.com"
+        _al33_uid, _al33_tok, _al33_su = _signup32(_c33, "Snoop", _al33_email, "alias pool passphrase")
+        _al33_su_usage = _j28(_al33_su).get("usage")
+        _al33_me = _me33(_c33, _al33_tok)
+        _al33_ver = _verify32(_c33, _al33_email, _al33_tok)
+        _al33_after = _me33(_c33, _al33_tok).get("usage") or {}
+        check(
+            "32.10 / SEC-5: an UNVERIFIED caller is told nothing about the pool — the signup response and /auth/me "
+            "both carry usage None. The pool follows the CANONICAL address, so an alias signup on someone else's "
+            "(victimperson33+snoop@ over victim.person33@) otherwise read the real owner's count, their per-feature "
+            "breakdown, and through an open pass roughly when they were last practising",
+            _al33_su.status_code == 200 and _j28(_al33_su).get("verified") is False
+            and _al33_su_usage is None and _al33_me.get("usage") is None
+            and _al33_me.get("authenticated") is True and _al33_me.get("verified") is False,
+            f"signup usage={_al33_su_usage} me usage={_al33_me.get('usage')} "
+            f"verified={_al33_me.get('verified')}",
+        )
+        check(
+            "32.10 / SEC-5 twin: a VERIFIED caller still reads its OWN pool — the victim's /auth/me says 3 of 10 with "
+            "the breakdown — and that same alias, once it verifies, gets the shared pool (3 used, the same key), "
+            "exactly as the canonical-address rule says: verification is the gate here, never the pool key",
+            _vp33_su.status_code == 200 and _vp33_ver.status_code == 200
+            and _vp33_me.get("used") == 3 and _vp33_me.get("limit") == 10
+            and _vp33_me.get("by_feature") == {"tailor": 2, "interview": 1}
+            and _al33_ver.status_code == 200 and _al33_after.get("used") == 3
+            and _key32(_al33_uid) == _key32(_vp33_uid),
+            f"victim={_vp33_me} alias after verifying={_al33_after}",
         )
 
     # --- structure: the /api mount -----------------------------------------------------------------------------------
@@ -23224,6 +23698,12 @@ _se33_events = [
                  "query_string": "code=ghi&state=jkl"}, "message": "gmail callback probe"},
     {"request": {"url": "https://app.jobfinder.test/api/jobs/history", "method": "GET",
                  "query_string": "view=recent&limit=5"}, "message": "another route probe"},
+    # The SEC-3 shapes: `request.url` is an OPTIONAL key, and with it absent or None the
+    # guard used to recognise nothing and send the code and the state on.
+    {"request": {"method": "GET", "query_string": "code=mno&state=pqr"}, "message": "no url on the event"},
+    {"request": {"url": None, "query_string": "code=stu&state=vwx"}, "message": "the url is None"},
+    {"transaction": "/api/auth/google/callback", "message": "recognised by the transaction",
+     "request": {"method": "GET", "query_string": "code=yz1&state=yz2"}},
 ]
 _se33_out = [_scrub33.scrub_event(_copy33.deepcopy(event)) for event in _se33_events]
 _se33_dump = [_json33.dumps(event, default=str) if event is not None else "" for event in _se33_out]
@@ -23234,7 +23714,17 @@ check(
     _se33_out[0] is not None and "abc" not in _se33_dump[0] and "def" not in _se33_dump[0]
     and _se33_out[1] is not None and "ghi" not in _se33_dump[1] and "jkl" not in _se33_dump[1]
     and _se33_out[2] is not None and (_se33_out[2].get("request") or {}).get("query_string") == "view=recent&limit=5",
-    str(_se33_dump)[:400],
+    str(_se33_dump[:3])[:400],
+)
+check(
+    "33 Sentry (Phase 30 review, SEC-3): the callback is not recognised by `request.url` alone — that key is optional, "
+    "and absent or None it dropped nothing at all. A query string with no readable url now counts as a callback, a "
+    "code+state pair is recognised by itself, and the event's transaction counts too — while the ordinary-route event "
+    "above, which has a url, still keeps its query string",
+    all(out is not None for out in _se33_out[3:])
+    and all((out.get("request") or {}).get("query_string") is None for out in _se33_out[3:])
+    and not any(secret in dump for dump, secret in zip(_se33_dump[3:], ("mno", "stu", "yz1"))),
+    str(_se33_dump[3:])[:400],
 )
 
 _reached_end = True

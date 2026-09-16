@@ -1107,13 +1107,25 @@ def cron_job_alert(request: Request, db: Session = Depends(get_db)) -> AlertCron
 def cron_nudges(request: Request, db: Session = Depends(get_db)) -> NudgeCronResult:
     """Vercel cron entrypoint for stale-application nudges (PLAN 11.4) —
     exempt from the X-App-Key gate (see main.py) and guarded by the same Bearer
-    CRON_SECRET. Unlike the alerts cron it stays open when no secret is set: it
-    reaches no model and spends no use, and Phase 30 leaves it as it was. Emails
-    every opted-in user whose 'applied' applications newly went stale."""
-    secret = get_settings().cron_secret
-    if secret:
+    CRON_SECRET.
+
+    It FAILS CLOSED like its siblings, the alerts and inbox crons (Phase 30
+    review, SEC-4): with the gate on and no secret configured it refuses with
+    503 cron_unconfigured. It reaches no model and spends no use, which is why
+    it used to stay open — but it does send mail on the owner's own SMTP
+    account, the resource the auth-mail budget exists to protect and one this
+    mail is not counted against, so an open URL is a mail trigger for anyone who
+    guesses the path. Two sibling crons disagreeing about who may call them is
+    worse than either rule. Emails every opted-in user whose 'applied'
+    applications newly went stale."""
+    s = get_settings()
+    secret = s.cron_secret
+    if not secret:
+        if s.app_access_code:
+            raise HTTPException(503, detail={"code": "cron_unconfigured"})
+    else:
         auth = request.headers.get("authorization", "")
-        if not hmac.compare_digest(auth, f"Bearer {secret}"):
+        if not hmac.compare_digest(auth.encode("utf-8"), f"Bearer {secret}".encode("utf-8")):
             raise HTTPException(401, "Bad cron secret.")
     results = nudges_core.run_all_nudges(db)
     return NudgeCronResult(users=len(results), results=results)

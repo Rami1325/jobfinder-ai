@@ -72,16 +72,40 @@ def _drop_frame_vars(value: Any) -> None:
             _drop_frame_vars(child)
 
 
+def _oauth_pair(query: Any) -> bool:
+    """A query string carrying BOTH an OAuth `code` and a `state` — the callback's
+    own shape, recognisable whatever route the event says it came from."""
+    if not isinstance(query, str):
+        return False
+    keys = {pair.split("=", 1)[0].strip().lower() for pair in query.replace(";", "&").split("&")}
+    return {"code", "state"} <= keys
+
+
 def _drop_callback_query(event: dict[str, Any]) -> None:
     """No query string on an event from an OAuth callback: it carries the
-    authorization code and the state, and neither is a configured secret."""
+    authorization code and the state, and neither is a configured secret.
+
+    Recognising the callback by `request.url` ALONE was not enough (Phase 30
+    review, SEC-3): that key is optional, so with it absent or None this dropped
+    nothing and sent the code and the state on. So the event's `transaction` is
+    read too, a `code` + `state` pair is recognised by itself, and a request that
+    carries a query string with NO readable url is treated as a callback rather
+    than as an ordinary route — failing toward dropping, which is the rule the
+    rest of this module follows. An ordinary event with a readable url keeps its
+    query string; that false-positive half is pinned beside the catch."""
     request = event.get("request")
     if not isinstance(request, dict):
         return
     url = request.get("url")
+    query = request.get("query_string")
     path = urlsplit(url).path if isinstance(url, str) else ""
-    if path.rstrip("/").endswith(_CALLBACK_SUFFIX):
-        request.pop("query_string", None)
+    transaction = event.get("transaction")
+    named = path or (transaction if isinstance(transaction, str) else "")
+    if not (named.rstrip("/").endswith(_CALLBACK_SUFFIX)
+            or (query is not None and (not path or _oauth_pair(query)))):
+        return
+    request.pop("query_string", None)
+    if isinstance(url, str):
         request["url"] = url.split("?", 1)[0].split("#", 1)[0]
 
 

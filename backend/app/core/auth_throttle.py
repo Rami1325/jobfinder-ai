@@ -49,11 +49,19 @@ VERIFY_MAIL_COOLDOWN_S = 60
 FORGOT_PER_EMAIL = (3, 3600)
 FORGOT_PER_IP = (20, 3600)
 CHANGE_EMAIL_PER_USER = (5, 3600)
-# Continue with Google starts per network (Phase 30 / E2). The callback has NO
-# failure throttle: its state and binding cookie are 256-bit, so a limit would
-# guard nothing, and it would lock out a whole CGNAT address. Creating an account
+# Continue with Google starts per network (Phase 30 / E2). Creating an account
 # through Google counts on SIGNUP_PER_IP, the same counter as the email door.
 GOOGLE_START_PER_IP = (30, 3600)
+# Callback failures per network (Phase 30 review, SEC-1). This limit does NOT
+# guard the sign-in — guessing the 256-bit state or the binding cookie is
+# hopeless either way — it bounds the ROWS. The callback answers an anonymous
+# caller, needs no state row to fail, and used to `record` one event per
+# request, so anyone who found the URL could grow this table for the 30 days of
+# RETENTION and bury the real sign-in log in noise. Over the allowance the
+# attempt's own row is taken back and the redirect is unchanged, so a whole
+# CGNAT address can still sign in; it only stops being logged. Generous on
+# purpose: every retry a real person makes is still recorded.
+GOOGLE_FAIL_PER_IP = (60, 3600)
 # Wrong codes tolerated against ONE token; the next attempt is locked out even
 # with the right code, and a fresh code (resend) is the way forward.
 TOKEN_ATTEMPTS = 5
