@@ -3519,7 +3519,17 @@ try {
     en: { forbid: /all other mail|personal mail|mail that is not about/i, need: /\bAI model\b/i },
     he: { forbid: /שאר הדואר|מיילים אישיים|מיילים שלא קשורים/, need: /מודל/ },
   };
+  // Phase 30 / D15 is the same class pointing the OTHER way. The CV scan moved
+  // INTO the tools menu as `POST /tools/scan`, and it is the one tool there that
+  // reaches no model at all — `app/core/free_scan.py` imports a tokenizer and the
+  // scorer and no client — so a sentence about what "the AI tools" send has to
+  // name it as the exception, or the page claims we send a file we never send.
+  const SCAN = {
+    en: { forbid: /\b(?:every|all)(?:\s+of)?\s+(?:the\s+)?(?:AI\s+)?tools?\b/i, need: /\bscan\b[^.]*\b(?:reaches no AI|no AI service)/i },
+    he: { forbid: /כל הכלים|כל כלי ה-AI/, need: /סריקת קורות החיים[^.]*(?:לא מגיעה|אינה מגיעה)/ },
+  };
   const RULES = [
+    ["auth", "privacy.ai.tools", SCAN],
     ["auth", "privacy.gmail.skips", MAIL],
     ["settings", "inbox.read2", MAIL],
     ["marketing", "landing.faq.a7", MAIL],
@@ -3540,7 +3550,8 @@ try {
       const why = claimProblem(at(locale(loc, ns), key), byLoc[loc]);
       if (why)
         fail(
-          `locales/${loc}/${ns}.json "${key}" ${why}. Alert digests and mail clearly not about an ` +
+          `locales/${loc}/${ns}.json "${key}" ${why}. The CV scan is scored in our own code and reaches no ` +
+            "AI service; alert digests and mail clearly not about an " +
             "application are skipped before any AI; other possibly-job mail is read by an AI model to decide; " +
             "the security log keeps a coarse network hint and device type for 30 days after the session ends; " +
             "auto-sync runs on opening the tracker only when the last sync is over 30 minutes old.",
@@ -3551,6 +3562,10 @@ try {
     fail("check 30's copy rule passes the old false sentence");
   if (claimProblem("Digests are skipped before any AI sees them. Other possibly-job emails are read by an AI model to decide.", MAIL.en))
     fail("check 30's copy rule refuses a true sentence");
+  if (!claimProblem("Tailoring, interview practice and the other AI tools send the resume and job text you give them to OpenAI to produce the result.", SCAN.en))
+    fail("check 30's copy rule passes the sentence that leaves the deterministic CV scan inside \"the other AI tools\"");
+  if (claimProblem("The other AI tools send your text to OpenAI. The CV scan is the exception: it reaches no AI service.", SCAN.en))
+    fail("check 30's copy rule refuses a true sentence about the scan");
 } catch (e) {
   fail(`privacy copy check could not run: ${e.message}`);
 }
