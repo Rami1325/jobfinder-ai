@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     daily_search_context_cap: int = 10
     # The CV scan's own daily cap, beside its monthly charge (Phase 30 / A2).
     daily_scan_cap: int = 20
+    # `/jobs/fetch` is NOT one of the three above: it reaches no model, so it is
+    # off the pool and has no tokens to meter. What it spends is one outbound GET
+    # per call from the deployment's own IPs — invocations, inbound bytes, and
+    # our standing with the boards — and it carried no cap of any kind until the
+    # Phase 30 review (COST-3). 60 is a ceiling a real user cannot reach: the UI
+    # calls it once per pasted URL.
+    daily_fetch_cap: int = 60
     # Upload limits. Both upload routes (/resume/upload and /tools/scan) read the
     # file into memory to parse it, and a free account costs nothing to make, so
     # an unbounded read is a cheap way to exhaust a serverless instance. A resume

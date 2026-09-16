@@ -613,7 +613,24 @@ def jobs_fit(
 
 
 @router.post("/jobs/fetch", response_model=JobFetchResponse)
-def jobs_fetch(body: JobFetchRequest) -> JobFetchResponse:
+def jobs_fetch(
+    body: JobFetchRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> JobFetchResponse:
+    """Read the posting at a URL the caller names, so the UI can take a link
+    instead of pasted text.
+
+    It reaches no model, so it costs no monthly use and has no tokens to meter —
+    `current_user`, never `metered_user` — and B4.7's decision that this route is
+    free stands. What it does spend is ONE outbound GET per call, through the
+    SSRF guard, from the deployment's own IPs: invocations, inbound bytes and our
+    standing with the boards. It carried no dependency and no cap of any kind
+    until the Phase 30 review (COST-3) — 20 consecutive calls as a plan-free
+    friend were 20 fetches with zero rows in every usage table — so it takes its
+    own daily cap, which bounds it without putting a deterministic route on the
+    pool."""
+    check_and_count(db, user, "fetch", get_settings().daily_fetch_cap)
     if not body.url.strip():
         raise HTTPException(400, "URL is empty.")
     try:

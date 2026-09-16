@@ -19452,6 +19452,152 @@ try:
             f"first={_kq_first32} flag={_kq_flag32} second={_kq_second32} flag={_kq_flag_after32} "
             f"pool={_pool32(_kq_key32, _P_THIS32)}",
         )
+        # A killed invocation leaves a kit "running" with no terminal write — the one state
+        # no caller can ask for, and the state STUCK_RUNNING exists for. The requeue is free
+        # by design (B4.1), so before `attempts` the same kit re-ran the whole pipeline on
+        # every drain, for ever: measured at 5 model calls a drain with the monthly count
+        # and the daily tailor count both unmoved (Phase 30 review, COST-4).
+        def _ks_kill32(kit_id):  # noqa: ANN001
+            d = SessionLocal()
+            try:
+                d.execute(_upd32b(_TK32).where(_TK32.id == kit_id).values(
+                    status="running", started_at=_q32.naive_utc(_q32.utc_now()) - _td32(minutes=30)))
+                d.commit()
+            finally:
+                d.close()
+
+        def _ks_row32(kit_id):  # noqa: ANN001
+            """(attempts, error) of one kit."""
+            d = SessionLocal()
+            try:
+                return d.execute(_sel32(_TK32.attempts, _TK32.error).where(_TK32.id == kit_id)).first()
+            finally:
+                d.close()
+
+        def _ks_drain32(name, kills):  # noqa: ANN001
+            """One batched kit, killed and drained `kills` times: (per-drain (status, header), tailor runs, uid, kit)."""
+            uid, headers = _mint32(_c32b, name)
+            _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=headers)
+            _c32b.post("/kits/batch", json={"jobs": [_kit_job32(f"stuck-{uid}", 1)]}, headers=headers)
+            kit_id = _kits_of32(uid)[0][0]
+            runs = {"n": 0}
+
+            def _tailor(resume, jd, ledger=None, **kw):  # noqa: ANN001
+                runs["n"] += 1
+                return _TRes32(tailored_resume=resume)
+
+            _kit_fakes32(_tailor)
+            try:
+                out = []
+                for _ in range(kills):
+                    _ks_kill32(kit_id)
+                    resp = _c32b.post("/kits/process-next", headers=headers)
+                    out.append(((_j28(resp).get("kit") or {}).get("status"), _hdr32(resp)))
+            finally:
+                _kit_reals32()
+            return out, runs["n"], uid, kit_id
+
+        _kx_out32, _kx_runs32, _kx_uid32, _kx_kit32 = _ks_drain32("Kit Stuck Spent", 4)
+        _kx_ev32 = _events32(_kx_uid32)
+        _kx_state32 = _ks_row32(_kx_kit32)
+        _kx_kits32 = _kits_of32(_kx_uid32)
+        check(
+            "32.5 kits (Phase 30 review, COST-4): a kit killed a THIRD time is FAILED with an error the user can act "
+            "on and its use is given back — one -1 refund:<event>:kit:<kit>, used 0 == SUM(delta), attempts stopped "
+            "at MAX_REQUEUES, and X-Uses-Remaining on the very response that refunded — and the spending stops: four "
+            "kills ran the pipeline twice. A requeue is never charged again, so the retry count is the only bound "
+            "there is; a fourth kill re-fails it and refunds NOTHING, because the refund is exactly-once",
+            [s for s, _h in _kx_out32] == ["done", "done", None, None]
+            and _kx_runs32 == 2
+            and _kx_state32 is not None and _kx_state32[0] == _kits32.MAX_REQUEUES == 2
+            and _kx_state32[1] == _kits32.RETRIES_SPENT
+            and [k[2] for k in _kx_kits32] == ["failed"] and [k[4] for k in _kx_kits32] == [True]
+            and [e[2] for e in _kx_ev32] == [1, -1]
+            and _kx_ev32[1][4] == f"refund:{_kx_ev32[0][0]}:kit:{_kx_kit32}"
+            and [h for _s, h in _kx_out32] == [None, None, "10", None]
+            and _pool32(_key32(_kx_uid32), _P_THIS32) == (0, 0),
+            f"out={_kx_out32} tailors={_kx_runs32} row={_kx_state32} kits={_kx_kits32} {_shape32(_kx_ev32)}",
+        )
+        _k1_out32, _k1_runs32, _k1_uid32, _k1_kit32 = _ks_drain32("Kit Stuck Once", 1)
+        check(
+            "32.5 kits twin (COST-4): a kit stuck ONCE — the case the requeue EXISTS for, and the one the old check "
+            "above still pins — keeps its retry and still reaches done: one attempt counted, one tailor run, no "
+            "refund, no header, used 1. Bounding the retry may not cost the crashed-invocation recovery",
+            [s for s, _h in _k1_out32] == ["done"] and _k1_runs32 == 1
+            and _ks_row32(_k1_kit32)[0] == 1
+            and [k[2] for k in _kits_of32(_k1_uid32)] == ["done"]
+            and [e[2] for e in _events32(_k1_uid32)] == [1]
+            and [h for _s, h in _k1_out32] == [None]
+            and _pool32(_key32(_k1_uid32), _P_THIS32) == (1, 1),
+            f"out={_k1_out32} tailors={_k1_runs32} row={_ks_row32(_k1_kit32)} {_shape32(_events32(_k1_uid32))}",
+        )
+        _ko_uid32, _KO32_H = _mint32(_c32b, "Kit Orphan Charge")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KO32_H)
+        _c32b.post("/kits/batch", json={"jobs": [_kit_job32("orphan", 1)]}, headers=_KO32_H)
+        _ko_key32 = _key32(_ko_uid32)
+        _ko_d32 = SessionLocal()
+        try:
+            # The charge's month row is GONE, the way a pruned month leaves it, so the
+            # refund the coming failure attempts cannot land and the use stays owed.
+            _ko_d32.execute(_delete28(_UM32).where(_UM32.quota_key == _ko_key32, _UM32.period == _P_THIS32))
+            _ko_d32.commit()
+        finally:
+            _ko_d32.close()
+        _kit_fakes32(_always_fail32)
+        try:
+            _ko_fail32 = _c32b.post("/kits/process-next", headers=_KO32_H)
+        finally:
+            _kit_reals32()
+        _ko_mid_ev32, _ko_mid_kits32 = _events32(_ko_uid32), _kits_of32(_ko_uid32)
+        _ko_d32 = SessionLocal()
+        try:  # the month row is back, so a refund can land again
+            _ko_d32.add(_UM32(quota_key=_ko_key32, user_id=_ko_uid32, period=_P_THIS32, used=1,
+                              updated_at=_q32.naive_utc(_THIS32)))
+            _ko_d32.commit()
+        finally:
+            _ko_d32.close()
+        _ko_rebatch32 = _c32b.post("/kits/batch", json={"jobs": [_kit_job32("orphan", 1)]}, headers=_KO32_H)
+        _ko_ev32, _ko_kits32 = _events32(_ko_uid32), _kits_of32(_ko_uid32)
+        check(
+            "32.5 kits (Phase 30 review, P30-C1, the orphan half): re-batching a failed kit that still owes a use "
+            "gives it back BEFORE the new charge overwrites the only pointer to it — the old +1 is marked refunded "
+            "and answered by its own -1 refund:<old event>:kit:<kit>, the kit carries the NEW event with its flag "
+            "False so its own refund still works, and used 1 == SUM(delta). The old charge used to be reachable from "
+            "no kit at all, so nothing could ever give it back",
+            _ko_fail32.status_code == 200
+            and _shape32(_ko_mid_ev32) == [("tailor", 1, 0, "")]
+            and [k[2] for k in _ko_mid_kits32] == ["failed"] and [k[4] for k in _ko_mid_kits32] == [False]
+            and _ko_rebatch32.status_code == 200
+            and [e[2] for e in _ko_ev32] == [1, 1, -1] and _ko_ev32[0][3] == 1
+            and _ko_ev32[2][1:] == ("tailor", -1, 0, f"refund:{_ko_ev32[0][0]}:kit:{_ko_kits32[0][0]}")
+            and [k[3] for k in _ko_kits32] == [_ko_ev32[1][0]] and [k[4] for k in _ko_kits32] == [False]
+            and _pool32(_ko_key32, _P_THIS32) == (1, 1),
+            f"mid={_shape32(_ko_mid_ev32)}/{_ko_mid_kits32} rebatch={_ko_rebatch32.status_code} "
+            f"{_shape32(_ko_ev32)} kits={_ko_kits32}",
+        )
+        _kn_uid32, _KN32_H = _mint32(_c32b, "Kit Requeue Refunded")
+        _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KN32_H)
+        _c32b.post("/kits/batch", json={"jobs": [_kit_job32("refunded", 1)]}, headers=_KN32_H)
+        _kit_fakes32(_always_fail32)
+        try:
+            _kn_fail32 = _c32b.post("/kits/process-next", headers=_KN32_H)
+        finally:
+            _kit_reals32()
+        _kn_mid_ev32 = _events32(_kn_uid32)
+        _kn_rebatch32 = _c32b.post("/kits/batch", json={"jobs": [_kit_job32("refunded", 1)]}, headers=_KN32_H)
+        _kn_ev32 = _events32(_kn_uid32)
+        check(
+            "32.5 kits twin (P30-C1): the ORDINARY requeue gives nothing extra back — a failed kit whose use already "
+            "came back at failure time re-batches to [+1, -1, +1] and never a second -1, so the refund stays "
+            "exactly-once and the new run is paid for exactly once",
+            _kn_fail32.status_code == 200 and [e[2] for e in _kn_mid_ev32] == [1, -1]
+            and _kn_rebatch32.status_code == 200
+            and [e[2] for e in _kn_ev32] == [1, -1, 1]
+            and [k[3] for k in _kits_of32(_kn_uid32)] == [_kn_ev32[2][0]]
+            and [k[4] for k in _kits_of32(_kn_uid32)] == [False]
+            and _pool32(_key32(_kn_uid32), _P_THIS32) == (1, 1),
+            f"mid={_shape32(_kn_mid_ev32)} {_shape32(_kn_ev32)} kits={_kits_of32(_kn_uid32)}",
+        )
         _kd_uid32, _KD32_H = _mint32(_c32b, "Kit Delete")
         _c32b.put("/profile/resume", json={"resume": _R32, "label": "Kit32 CV"}, headers=_KD32_H)
         _c32b.post("/kits/batch", json={"jobs": [_kit_job32("delete", 1), _kit_job32("delete", 2)]}, headers=_KD32_H)
@@ -20864,6 +21010,7 @@ _real_above_min32 = _al32.above_min
 _real_smtp32, _real_send32 = _mailer32.smtp_configured, _mailer32.send_email
 _real_transport32 = _go29._transport
 _real_kits_tailor32d = _kits32.tailor_resume
+_real_fetch32d = _routes32.fetch_job_text
 _real_run_alert_kw32 = dict(_al32.run_alert.__kwdefaults__ or {})
 _real_run_all_kw32 = dict(_al32.run_all_alerts.__kwdefaults__ or {})
 _tripped32: list[str] = []
@@ -21404,6 +21551,7 @@ finally:
 #   batch_paid            the kit was paid for at batch time; the route only gives a failed kit's use back
 #   own_cap:<action>      the inbox routes that spend model calls, bounded by their own daily cap
 #   free_capped:<action>  a model route kept off the pool, bounded by its own daily cap
+#   net_capped:<action>   no model at all, but it LEAVES THE MACHINE: bounded by its own daily cap
 #   refund_only           charges nothing, but gives a still-queued kit's use back
 #   free                  no charge, no refund, no model dependency; reading the pool is allowed
 # A route added without a class fails 32.13(a); a route whose source stops matching its class fails 32.13(b).
@@ -21439,13 +21587,15 @@ _ROUTE_COST = {
     ("DELETE", "/kits/{kit_id}"): "refund_only",
     ("DELETE", "/profile/data"): "refund_only",
     ("DELETE", "/profile/account"): "refund_only",
-    # free: the deterministic tools and the fetch
+    # net_capped: no model, so off the pool (B4.7) — but ONE outbound GET per call from the
+    # deployment's own IPs, which is what its own daily cap bounds (Phase 30 review, COST-3).
+    ("POST", "/jobs/fetch"): "net_capped:fetch",
+    # free: the deterministic tools
     ("POST", "/render"): "free",
     ("POST", "/tools/review"): "free",
     ("POST", "/tools/coverage"): "free",
     ("POST", "/tools/ats-xray"): "free",
     ("POST", "/tools/page-count"): "free",
-    ("POST", "/jobs/fetch"): "free",
     # free: kit actions
     ("GET", "/kits"): "free",
     ("GET", "/kits/{kit_id}"): "free",
@@ -21661,7 +21811,11 @@ def _shape_problem32(cls, fn, deps):  # noqa: ANN001
         if getattr(_is29, "INBOX_ACTION", None) != arg:
             return f"the inbox cap is not called {arg}"
         return "" if needed <= reach else f"does not reach {sorted(needed - reach)}"
-    if kind == "free_capped":
+    if kind in ("free_capped", "net_capped"):
+        # Same source shape — its own daily cap and no charging entry point. What
+        # separates them is whether the route reaches the MODEL, which no AST can
+        # settle for a route that only calls a fetch helper, so 32.13(c) drives it:
+        # free_capped must make calls, net_capped must make none.
         actions = _cap_actions32(fn)
         return "" if actions == {arg} else f"its own daily caps are {sorted(actions)}, not {arg}"
     if kind == "refund_only":
@@ -21730,15 +21884,20 @@ _probe_verdicts32 = [
     _shape_problem32("free", _probe_reads_pool32, set()),
     _shape_problem32("free", _routes32.tools_review, {"llm_user"}),
     _shape_problem32("free", _probe_exec_ns32["_probe_unreadable32"], set()),
+    _shape_problem32("net_capped:fetch", _routes32.jobs_fetch, set()),
+    _shape_problem32("net_capped:fetch", _routes32.tools_review, set()),
 ]
 check(
     "32.13(b) the shape test is live: a function classed free that reserves, one that reserves through a helper of its "
     "own module, and one that calls quota.reserve under another name are each refused; charged:tailor is refused for "
     "the LinkedIn route while charged:linkedin fits it; reading the pool (snapshot) is still free, a free route given "
     "an llm_user dependency is refused, and — Phase 30 review, be3-2 — so is one whose source cannot be READ, which "
-    "used to pass free by never being examined",
+    "used to pass free by never being examined. net_capped:fetch fits the job fetch, which calls that cap, and is "
+    "REFUSED for a handler that calls no daily cap at all — the COST-3 shape, and the half no driven request can "
+    "prove, since an uncapped fetch answers 200 exactly like a capped one",
     all(_probe_verdicts32[:4]) and _probe_verdicts32[4] == "" and _probe_verdicts32[5] == ""
-    and _probe_verdicts32[6] != "" and _probe_verdicts32[7] != "",
+    and _probe_verdicts32[6] != "" and _probe_verdicts32[7] != ""
+    and _probe_verdicts32[8] == "" and _probe_verdicts32[9] != "",
     str(_probe_verdicts32),
 )
 _shape_bad32 = {}
@@ -22109,9 +22268,16 @@ try:
         _plain32(("POST", "/jobs/greenhouse/companies"),
                  lambda s: _as32("POST", "/jobs/greenhouse/companies", _ADMIN_H, json={"board": "not a slug!"}),
                  statuses=(400,))
-        _plain32(("POST", "/jobs/fetch"),
-                 lambda s: _as32("POST", "/jobs/fetch", _SW32["h"], json={"url": "http://127.0.0.1:9/sweep"}),
-                 statuses=(400,))
+        def _fetch_drive32(state):  # noqa: ANN001
+            """The fetch with its seam patched: this suite never leaves the box, and a REFUSED
+            URL would only show the cap counting a refusal. A net_capped row answers 200."""
+            _routes32.fetch_job_text = lambda url: "Senior Python engineer at Acme. Python and SQL required."
+            try:
+                return _as32("POST", "/jobs/fetch", _SW32["h"], json={"url": "https://sweep32.test/job"})
+            finally:
+                _routes32.fetch_job_text = _real_fetch32d
+
+        _plain32(("POST", "/jobs/fetch"), _fetch_drive32)
         _plain32(("GET", "/kits"), lambda s: _as32("GET", "/kits", _SW32["h"]), statuses=(200,))
 
         def _review_kits32():
@@ -22384,7 +22550,7 @@ check(
 _cap_bad32 = {}
 for _cap_key32, _cap_cls32 in _ROUTE_COST.items():
     _cap_kind32 = _cap_cls32.partition(":")[0]
-    if _cap_kind32 not in ("free_capped", "own_cap"):
+    if _cap_kind32 not in ("free_capped", "own_cap", "net_capped"):
         continue
     _cap_rec32, _cap_out32 = _row_out32(_cap_key32)
     _cap_resp32 = _cap_out32.get("resp")
@@ -22395,6 +22561,10 @@ for _cap_key32, _cap_cls32 in _ROUTE_COST.items():
     )
     if _cap_kind32 == "free_capped":
         _cap_ok32 = _cap_ok32 and _cap_rec32.get("calls", 0) > 0
+    if _cap_kind32 == "net_capped":
+        # The other half of the class, and the reason it is not free_capped: a route
+        # that reaches the model does not belong here.
+        _cap_ok32 = _cap_ok32 and _cap_rec32.get("calls", 0) == 0
     if not _cap_ok32:
         _cap_bad32[_cap_key32] = (
             _cap_rec32.get("error"), getattr(_cap_resp32, "status_code", None),
@@ -22409,9 +22579,9 @@ _sync_body32 = _j28(_sync_resp32) if _sync_resp32 is not None else {}
 _sw_snap32 = _snap32(_SW32["uid"])
 check(
     "32.13(c) the capped rows stay off the pool: a resume upload, a JD analysis and a search context each reach the "
-    "model (calls > 0), an inbox sync reads the demo mailbox with the model (llm_calls > 0), and the inbox cron runs "
-    "— every one a 200 that writes zero quota rows and carries no uses header, driven as a user whose own pool reads "
-    "plan free, limit 10",
+    "model (calls > 0), the job fetch reaches NONE (net_capped: its cap bounds egress, not model spend), an inbox "
+    "sync reads the demo mailbox with the model (llm_calls > 0), and the inbox cron runs — every one a 200 that "
+    "writes zero quota rows and carries no uses header, driven as a user whose own pool reads plan free, limit 10",
     _sw_snap32.limit == 10 and _sw_snap32.plan == "free"
     and _cap_bad32 == {} and (_sync_body32.get("llm_calls") or 0) > 0,
     f"limit={_sw_snap32.limit} plan={_sw_snap32.plan} {str(_cap_bad32)[:600]} sync={str(_sync_body32)[:160]}",
@@ -22446,13 +22616,14 @@ _DETERMINISTIC32 = (("POST", "/render"), ("POST", "/tools/review"), ("POST", "/t
 check(
     "32.13(c) the /tools/ats-scan catch: no driven row that made a stub model call is classed free — every free row "
     "made ZERO calls on the StubClient class — and the counter is live: the tailor, the fit check, a resume upload and "
-    "the kit pipeline each made calls, while the six deterministic routes (render, review, coverage, x-ray, page "
-    "count, fetch) were driven and made none",
+    "the kit pipeline each made calls, while the six model-free routes (render, review, coverage, x-ray, page count, "
+    "fetch) were driven and made none. The call counts are read off the SWEEP, not off the free rows, because the "
+    "fetch is net_capped now (COST-3) and a `free`-only reader would have answered None for it and passed",
     [key for key, n in _free_calls32.items() if n > 0] == []
     and all((_sweep32.get(key) or {}).get("calls", 0) > 0
             for key in (("POST", "/tailor"), ("POST", "/jobs/fit"), ("POST", "/resume/upload"),
                         ("POST", "/kits/process-next")))
-    and all(key in _sweep32 and _free_calls32.get(key) == 0 for key in _DETERMINISTIC32),
+    and all(key in _sweep32 and (_sweep32.get(key) or {}).get("calls", -1) == 0 for key in _DETERMINISTIC32),
     f"free with calls={ {key: n for key, n in _free_calls32.items() if n > 0} } "
     f"live={[(key, (_sweep32.get(key) or {}).get('calls')) for key in (('POST', '/tailor'), ('POST', '/resume/upload'))]}",
 )
@@ -22460,6 +22631,62 @@ check(
     "32.13(c) the sweep drove every row of _ROUTE_COST — no mounted route was left undriven",
     {key for key in _sweep32 if len(key) == 2} == set(_ROUTE_COST),
     f"undriven={sorted(set(_ROUTE_COST) - set(_sweep32))}",
+)
+
+# --- 32.13(d) /jobs/fetch: no model, one outbound GET, its own daily cap ------------------------------------------
+# Phase 30 review, COST-3. The route had no dependency and no cap of ANY kind: 20
+# consecutive calls as a plan-free friend were 20 fetches with zero rows in every
+# usage table and no uses header. It stays off the monthly pool (B4.7) — it reaches
+# no model, so charging a use would be theatre — and what the cap bounds is the
+# invocations, the inbound bytes and our standing with the boards. `fetch_job_text`
+# is patched throughout: nothing leaves the box, and a refused URL would only show
+# the cap counting a refusal instead of a fetch.
+with TestClient(_fastapi_app) as _c32g:
+    _routes32.fetch_job_text = lambda url: "Senior Python engineer at Acme. Python and SQL required."
+    try:
+        _ft_uid32, _FT32_H = _mint32(_c32g, "Fetch Cap Twin")
+        with _Calls32() as _ft_calls32:
+            _ft_runs32 = [_c32g.post("/jobs/fetch", json={"url": f"https://fetch32.test/twin/{i}"},
+                                     headers=_FT32_H) for i in range(12)]
+        _ft_rows32 = _rows32(_ft_uid32, _key32(_ft_uid32))
+        _fc_env32 = _env29(DAILY_FETCH_CAP="2")
+        try:
+            _fc_uid32, _FC32_H = _mint32(_c32g, "Fetch Cap")
+            _fc_anon32 = _c32g.post("/jobs/fetch", json={"url": "https://fetch32.test/anon"})
+            with _Calls32() as _fc_calls32:
+                _fc_runs32 = [_c32g.post("/jobs/fetch", json={"url": f"https://fetch32.test/job/{i}"},
+                                         headers=_FC32_H) for i in range(3)]
+            _fc_rows32 = _rows32(_fc_uid32, _key32(_fc_uid32))
+        finally:
+            _restore29(_fc_env32)
+    finally:
+        _routes32.fetch_job_text = _real_fetch32d
+check(
+    "32.13(d) /jobs/fetch carries its own daily cap (Phase 30 review, COST-3): under a cap of 2, two fetches are "
+    "200s counting one 'fetch' unit each and the third is a 429 daily_limit naming the action and the cap; the door "
+    "still needs a credential (anonymous 401); and none of it touched the model or the pool — zero StubClient calls, "
+    "no month, event or pass row, and no X-Uses-Remaining on any response, because this route is off the pool by "
+    "decision (B4.7) and its cap bounds egress instead",
+    _fc_anon32.status_code == 401
+    and [r.status_code for r in _fc_runs32] == [200, 200, 429]
+    and _detail28(_fc_runs32[2]) == {"code": "daily_limit", "action": "fetch", "cap": 2}
+    and _ul32(_fc_uid32).get("fetch") == 2
+    and _fc_calls32.n == 0 and _fc_rows32 == (0, 0, 0)
+    and {_hdr32(r) for r in _fc_runs32} == {None},
+    f"anon={_fc_anon32.status_code} {[r.status_code for r in _fc_runs32]} {_fc_runs32[2].text[:140]} "
+    f"log={_ul32(_fc_uid32)} calls={_fc_calls32.n} rows={_fc_rows32}",
+)
+check(
+    "32.13(d) twin: the cap does not fire on real use — twelve pasted URLs under the DEFAULT cap are twelve 200s "
+    "counting twelve units (the UI calls this once per pasted URL, so 60 is a ceiling a person cannot reach), still "
+    "with no model call and nothing written to the pool",
+    [r.status_code for r in _ft_runs32] == [200] * 12
+    and _ul32(_ft_uid32).get("fetch") == 12
+    and get_settings().daily_fetch_cap == 60
+    and _ft_calls32.n == 0 and _ft_rows32 == (0, 0, 0)
+    and {_hdr32(r) for r in _ft_runs32} == {None},
+    f"{[r.status_code for r in _ft_runs32]} log={_ul32(_ft_uid32)} cap={get_settings().daily_fetch_cap} "
+    f"calls={_ft_calls32.n} rows={_ft_rows32}",
 )
 
 
