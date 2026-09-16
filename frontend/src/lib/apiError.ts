@@ -22,7 +22,8 @@ type LimitAction =
   | "upload"
   | "jd_analyze"
   | "search_context"
-  | "scan";
+  | "scan"
+  | "fetch";
 
 interface DailyLimitDetail {
   code: "daily_limit";
@@ -43,6 +44,7 @@ const LIMIT_KEYS: Record<LimitAction, string> = {
   jd_analyze: "dailyLimit.jdAnalyze",
   search_context: "dailyLimit.searchContext",
   scan: "dailyLimit.scan",
+  fetch: "dailyLimit.fetch",
 };
 
 // Prompt-size limits (backend app/llm/limits.py). Same structured-detail shape

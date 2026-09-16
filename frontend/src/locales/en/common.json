@@ -102,6 +102,7 @@
     "jdAnalyze": "Daily limit reached — {{cap}} job descriptions were read today. Try again tomorrow.",
     "searchContext": "Daily limit reached — you've asked for search suggestions {{cap}} times today. Try again tomorrow.",
     "scan": "Daily limit reached — you've run all {{cap}} CV scans for today. Try again tomorrow.",
+    "fetch": "Daily limit reached — you've opened {{cap}} job links for today. Try again tomorrow.",
     "generic": "Daily limit reached — you've used your {{cap}} for today. Try again tomorrow."
   },
   "uses": {

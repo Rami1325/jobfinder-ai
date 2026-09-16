@@ -4668,9 +4668,9 @@ try {
   if (dailyTailor.text !== "T:dailyLimit.tailor")
     fail(`the daily tailor cap now renders ${JSON.stringify(dailyTailor.text)} instead of dailyLimit.tailor`);
 
-  // Phase 30's four daily caps: each its own sentence, none the generic one.
+  // Phase 30's five daily caps: each its own sentence, none the generic one.
   const lines = new Map();
-  for (const action of ["upload", "jd_analyze", "search_context", "scan"]) {
+  for (const action of ["upload", "jd_analyze", "search_context", "scan", "fetch"]) {
     const got = render(err(429, { code: "daily_limit", action, cap: 5 })).text;
     if (!/^T:dailyLimit\./.test(got) || got === "T:dailyLimit.generic")
       fail(
