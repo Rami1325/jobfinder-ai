@@ -233,7 +233,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
 
   // THE DRAWER RESERVES ITS WIDTH FROM `lg` UP, where it has no backdrop and is
   // meant to sit BESIDE the document rather than over it. It is `position:
-  // fixed` and `main` is `mx-auto max-w-6xl`, so on any viewport whose centring
+  // fixed` and the page's column is centred (`.app-col`), so on any viewport whose centring
   // gutter is under 380px the drawer lands ON TOP of the content — measured at
   // 1707px in Hebrew: drawer 0-380 against a toolbar at 272-1424 and a tool rail
   // at 304-344, so the Tailor button, the template picker, both downloads and

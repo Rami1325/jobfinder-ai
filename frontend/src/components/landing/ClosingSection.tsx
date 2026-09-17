@@ -49,8 +49,10 @@ export default function ClosingSection({ mode }: { mode: LandingMode }) {
         </Rise>
       </section>
 
-      <footer className="border-t border-line px-5 py-12 sm:px-8 lg:px-14">
-        <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
+      {/* Edge to edge with the same px as LandingHeader, so the mark and the
+          nav links line up under the header's mark and buttons. */}
+      <footer className="border-t border-line px-5 py-12 sm:px-8">
+        <div className="flex w-full flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
           <div className="max-w-[42ch]">
             <Logo size={26} />
             <p className="mt-3 text-[14px] leading-relaxed text-ink-muted">

@@ -31,27 +31,16 @@ interface Props {
  * warning break onto its own line *and* stay inside the same sticky, blurred
  * bar — a failure that scrolls away is the one that gets missed.
  *
- * Sticky under the app header (`h-14` / 3.5rem) and bled out to the main
- * column's own padding with the negative margins, so content scrolling beneath
- * it passes under the blur at the edges too instead of peeking around it.
- *
- * Its glass and hairline run edge to edge like the header's, while the content
- * stays in the column. They are painted by `BAR_PAINT`, a border-image with a
- * horizontal OUTSET: outset paint is ink overflow, which never makes the page
- * scroll sideways, where a `100vw` box would (it counts the Windows scrollbar).
- * `border-b` stays for the 1px of layout and as the fallback line.
+ * Sticky under the app header (`h-14` / 3.5rem) and as wide as the window, the
+ * same as the header: on /app `main` is full width (AppLayout), so this bar's
+ * glass and hairline reach both edges with no bleed, and its `px-4 lg:px-8` is
+ * the header's own padding, so the title lines up under the logo and the last
+ * action under the account button. The document below it is centred by
+ * `.app-col`; this bar deliberately does not wear it.
  */
-const BAR_PAINT = {
-  borderImage:
-    "linear-gradient(rgb(var(--bg) / 0.85) calc(100% - 1px), rgb(var(--line) / 0.7) 0) fill 0 / 0 / 0 100vmax",
-};
-
 export default function DocumentToolbar({ title, badges, actions, notes }: Props) {
   return (
-    <div
-      style={BAR_PAINT}
-      className="sticky top-14 z-20 -mx-4 border-b border-line/70 px-4 py-2.5 backdrop-blur-xl lg:-mx-8 lg:px-8"
-    >
+    <div className="sticky top-14 z-20 border-b border-line/70 bg-bg/85 px-4 py-2.5 backdrop-blur-xl lg:px-8">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {/* `min-w-0` so a long name ellipsizes instead of shouldering the
             badges onto a line of their own.

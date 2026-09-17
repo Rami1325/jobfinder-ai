@@ -121,7 +121,11 @@ export default function LandingHeader({
           : "border-b border-transparent bg-transparent",
       )}
     >
-      <div className="mx-auto flex h-16 w-full max-w-[1160px] items-center justify-between gap-4 px-5 sm:px-8 md:h-[72px] lg:px-14">
+      {/* The full window width, not the sections' 1160px column: the mark sits
+          at the start edge and the sign-up pill at the end, like a site's top
+          bar. The px is the app header's 32px from `sm`, so the bar does not
+          jump when a visitor taps through to /login and on into the app. */}
+      <div className="flex h-16 w-full items-center justify-between gap-4 px-5 sm:px-8 md:h-[72px]">
         <Link
           to="/"
           aria-label={t("appName")}

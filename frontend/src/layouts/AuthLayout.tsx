@@ -32,7 +32,9 @@ export default function AuthLayout() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
-      <header className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-2 sm:px-6">
+      {/* Edge to edge, with the app header's px from `lg`, so the mark and the
+          controls sit where they will sit on the next screen. */}
+      <header className="flex w-full items-center justify-between gap-3 px-4 py-2 sm:px-6 lg:px-8">
         <Link
           to="/"
           aria-label={t("appName")}

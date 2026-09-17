@@ -1001,7 +1001,7 @@ export default function TailorPage() {
           the <h1>, up in DocumentToolbar. Two lines of chrome that said less
           than the CV's name does were the cheapest thing on this page to cut. */}
       {(jobTitle || company) && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        <div className="app-col flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           <Link
             to="/jobs"
             className="inline-flex items-center gap-1 text-accent-soft hover:underline"
@@ -1026,26 +1026,28 @@ export default function TailorPage() {
       )}
 
       {jobUrl && (
-        <Card className="border-accent/40">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <Briefcase size={16} className="shrink-0 text-accent-soft" />
-            <p className="min-w-0 truncate text-sm font-semibold text-ink">
-              {t("target.label", { title: jobTitle || t("target.fallback") })}
-              {company ? ` · ${company}` : ""}
-            </p>
-            <a
-              href={jobUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => setTailorState({ applyClicked: true })}
-              className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
-            >
-              {t("target.open")} <ExternalLink size={13} />
-            </a>
-            {applied && <Badge tone="mint">{t("target.appliedBadge")}</Badge>}
-          </div>
-          {!result && appliedPrompt}
-        </Card>
+        <div className="app-col">
+          <Card className="border-accent/40">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <Briefcase size={16} className="shrink-0 text-accent-soft" />
+              <p className="min-w-0 truncate text-sm font-semibold text-ink">
+                {t("target.label", { title: jobTitle || t("target.fallback") })}
+                {company ? ` · ${company}` : ""}
+              </p>
+              <a
+                href={jobUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setTailorState({ applyClicked: true })}
+                className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
+              >
+                {t("target.open")} <ExternalLink size={13} />
+              </a>
+              {applied && <Badge tone="mint">{t("target.appliedBadge")}</Badge>}
+            </div>
+            {!result && appliedPrompt}
+          </Card>
+        </div>
       )}
 
       {/* Page level, not inside the result gate. `startTailor` can swap the
@@ -1053,7 +1055,7 @@ export default function TailorPage() {
           is always on screen that swap happens under the user's eyes — so the
           notice has to be visible before any result exists. */}
       {langSwitched && (
-        <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-ink">
+        <div className="app-col flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-ink">
           <BadgeCheck size={15} className="shrink-0 text-accent-soft" />
           <span className="min-w-0">
             {t(`langSwitch.${langSwitched}`, { label: masterLabel || t("langSwitch.fallbackLabel") })}
@@ -1064,7 +1066,9 @@ export default function TailorPage() {
       {/* Gated on the MASTER: this restores a draft OF the master, and with a
           tailor result up the document on screen is not it. */}
       {draft && isMaster && (
-        <DraftRestoreBar savedAt={draft.savedAt} onKeep={keepDraft} onDiscard={discardDraft} />
+        <div className="app-col">
+          <DraftRestoreBar savedAt={draft.savedAt} onKeep={keepDraft} onDiscard={discardDraft} />
+        </div>
       )}
 
       {/* One row of chrome over the document: who this is, what has been
@@ -1343,243 +1347,249 @@ export default function TailorPage() {
         }
       />
 
-      {/* The document, or — with no resume yet — the one thing there is to do. */}
-      {shown ? (
-        <DocumentPanel
-          ref={docRef}
-          resume={shown}
-          template={template}
-          view={docView}
-          onView={setDocView}
-          // The rail owns the picker now, so the chosen template governs the
-          // on-screen preview, the real PDF, the x-ray AND the download at all
-          // times — not only once a tailor result exists.
-          onTemplate={setTemplate}
-          company={jd?.company ?? company}
-          marks={marks}
-          // The review's own vocabulary, kept apart from `marks` — see
-          // ResumeView's Props note on why one Map cannot hold both.
-          flags={reviewFlags}
-          review={review.data}
-          reviewStale={review.stale}
-          reviewFailed={review.failed}
-          // The tool's gate as well as its jump: no callback, no review panel.
-          onJumpToBlock={jumpToBlock}
-          // "Use this" goes through the SAME writer as a caret edit on the
-          // paper, so the master/tailored split has exactly one implementation:
-          // `applyBlockEdit` on the master, `setBlockOverride` on a tailored
-          // draft, and never `writeDraft` on either. A private write path in
-          // the panel would be the 23.7 defect on purpose — one keystroke
-          // through `applyBlockEdit` while a result is up nulls `result`,
-          // `tailoredFrom` and `rejectedEdits` and destroys the whole review.
-          onUseRewrite={canEditDoc ? commitInline : undefined}
-          activeBlock={spot?.path ?? null}
-          activeNonce={spot?.nonce}
-          onSelectBlock={selectBlock}
-          // The paper is typed on in both modes; `commitInline` is what routes
-          // a tailored edit into the override layer instead of the master.
-          onEditBlock={canEditDoc ? setEditPath : undefined}
-          onInlineCommit={canEditDoc ? commitInline : undefined}
-          // ADDING stays master-only, and the reason is the fabrication guard,
-          // not caution. It ran against `result.tailored_resume`; a claim typed
-          // in afterwards carries no verdict at all, while ScoreCard below goes
-          // on rendering `result.fabrication_flags` as though it described the
-          // document on screen. An added block also exists in neither the
-          // original nor the tailored resume, so it has no source anchor to be
-          // stored against. Adds belong in their own change, with their own
-          // guard story.
-          onAddSkill={isMaster ? addSkill : undefined}
-          onAdd={isMaster ? addToResume : undefined}
-          onAddNamed={isMaster ? addNamed : undefined}
-          onAddBullet={isMaster ? addBullet : undefined}
-          // In the add control's own place, so its absence is answered where
-          // the question gets asked rather than in a toolbar three scrolls up.
-          footNote={result ? t("edit.tailoredNoAdd") : undefined}
-          // Master only: replacing the file under a tailor review would be
-          // replacing the thing being reviewed. `onParsed` is the SAME handler
-          // the empty state uses, so the cold start and the replacement are one
-          // path.
-          onReplace={isMaster ? onParsed : undefined}
-        />
-      ) : (
-        <Card>
-          <CardTitle>{t("upload.title")}</CardTitle>
-          <div className="mt-3">
-            <ResumeUpload onParsed={onParsed} />
-          </div>
-          {/* The cold start, and it is now the SAME surface as everything else:
-              a blank page you type on. This replaced /builder — an 848-line
-              wizard that was a second editor for one resume, and produced the
-              "which one is my real CV" question it existed to avoid. */}
-          <button
-            type="button"
-            onClick={startFromScratch}
-            className="mt-3 inline-block text-sm text-accent-soft hover:underline"
-          >
-            {t("upload.buildLink")}
-          </button>
-        </Card>
-      )}
-
-      {/* The two numbers, as soon as either exists — a fit check produces one
-          before any tailoring. */}
-      {(fit || result) && shown && (
-        <ScoreCard
-          coverage={coverage.data}
-          coverageStale={coverage.stale}
-          fitScore={result ? result.score_after.fit_score : (fit?.fit_score ?? null)}
-          rationale={result ? result.score_after.rationale : fit?.rationale}
-          // THE STAMP THAT BELONGS TO THE NUMBER ABOVE IT, picked by the same
-          // condition and on the same line as the number, so the two cannot
-          // drift. One field served both readings until 23.8: the tailor's
-          // success branch re-stamped it, so after "Back to my resume" the tile
-          // paired the PRE-tailor fit reading with the TAILOR's clock — and the
-          // timestamp is the entire honesty mechanism of that tile, which
-          // deliberately shows one reading with no before/after and no delta.
-          scoredAt={result ? scoredAt : fitScoredAt}
-          flags={result?.fabrication_flags ?? []}
-          // The guard ran on the AI's rewrite; the document beside this tile —
-          // and in the PDF preview, the x-ray, both downloads and the tracker row
-          // — is `effectiveResume`, with the user's own sentences over it. The
-          // count is how the tile says which of the two it is describing.
-          overrideCount={overrideCount}
-        />
-      )}
-
-      {loading && (
-        <div className="space-y-4">
-          <Skeleton className="h-44 w-full" />
-          <Skeleton className="h-28 w-full" />
-        </div>
-      )}
-
-      <AnimatePresence>
-        {result && jd && effectiveResume && !loading && (
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="space-y-6"
-          >
-            <VoicePanel
-              report={result.voice_report}
-              plan={result.plan}
-            />
-            <MatchReport gaps={result.score_after.gaps} jdText={jdText} />
-
-            <ChangeLog
-              edits={edits}
-              changelog={result.changelog}
-              flags={result.fabrication_flags}
-              jdKeywords={result.score_after.gaps.map((g) => g.keyword)}
-              rejected={rejectedSet}
-              onSetRejected={(ids) => setTailorState({ rejectedEdits: ids })}
-              original={original}
-              effective={effectiveResume}
-              lengthReport={result.length_report}
-              plan={result.plan}
-              template={template}
-              onShowInDoc={showInDoc}
-              anchoredEdits={editBlock}
-              focusEdit={focusEdit}
-              overridden={overriddenEdits}
-              overrideCount={overrideCount}
-              onUseAi={(id) => resolveOverride(id, false)}
-              onUseOriginal={(id) => resolveOverride(id, true)}
-              onRestoreMine={restoreOverride}
-            />
-
-            <Card>
-              <CardTitle>{t("download.title")}</CardTitle>
-              {/* The picker moved to the document's own tool rail (PLAN 6:
-                  every option is ATS-safe by construction — no tables, text
-                  boxes or images in any of them). It was locked in here, which
-                  meant the design could only be chosen after a tailor had been
-                  paid for and never governed the master document at all. The
-                  note under the buttons still says what the .docx does. */}
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <Button
-                  icon={<Download size={16} />}
-                  onClick={() =>
-                    downloadResume(
-                      effectiveResume,
-                      "docx",
-                      resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
-                      template,
-                    )
-                  }
-                >
-                  {t("download.docx")}
-                </Button>
-                <Button
-                  variant="secondary"
-                  icon={<Download size={16} />}
-                  onClick={() =>
-                    downloadResume(
-                      effectiveResume,
-                      "pdf",
-                      resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
-                      template,
-                    )
-                  }
-                >
-                  {t("download.pdf")}
-                </Button>
-                <div className="flex-1" />
-                {jobUrl && (
-                  <a
-                    href={jobUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={() => setTailorState({ applyClicked: true })}
-                    className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
-                  >
-                    <ExternalLink size={14} /> {t("target.open")}
-                  </a>
-                )}
-                {applied && <Badge tone="mint">{t("target.appliedBadge")}</Badge>}
-                <Button variant="ghost" icon={<Save size={16} />} disabled={saved} onClick={save}>
-                  {saved ? t("save.saved") : t("save.cta")}
-                </Button>
-              </div>
-              {appliedPrompt}
-              {/* A two-column pick can't ship as .docx, so the ATS line is
-                  replaced (not stacked) by the plain-language fallback note —
-                  "single-column" would otherwise be false for its PDF. */}
-              <p className="mt-3 text-xs text-ink-muted">
-                {isPdfOnlyTemplate(template)
-                  ? t("download.docxFallback", { name: t(`download.templates.${template}.name`) })
-                  : t("download.atsNote")}
-              </p>
-              {/* The honest half of shipping two-column designs: don't just warn
-                  that a parser might interleave them — let the user SEE what one
-                  actually reads back from this exact file. It used to navigate to
-                  /tools/xray, which meant leaving the review to check the review;
-                  now it opens the ATS view in place, on the resume as it stands
-                  right now rather than on the saved master. */}
-              <button
-                type="button"
-                onClick={() => {
-                  setDocView("ats");
-                  requestAnimationFrame(() =>
-                    docRef.current?.scrollIntoView({ block: "start", behavior: smooth() }),
-                  );
-                }}
-                className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent-soft underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-              >
-                <ScanEye size={13} />
-                {t("download.xrayLink")}
-              </button>
-            </Card>
-
-            <CoverLetter
-              resume={effectiveResume}
-              jd={jd}
-              onGenerated={(letter) => setTailorState({ coverLetterText: letter, saved: false })}
-            />
-          </motion.div>
+      {/* Everything under the toolbar is the centred column (`.app-col`). The
+          toolbar is the one child that spans the window, like the header; the
+          edit sheet and the tailor overlay below portal out of the page and
+          stay outside this wrapper so nothing here can constrain them. */}
+      <div className="app-col space-y-6">
+        {/* The document, or — with no resume yet — the one thing there is to do. */}
+        {shown ? (
+          <DocumentPanel
+            ref={docRef}
+            resume={shown}
+            template={template}
+            view={docView}
+            onView={setDocView}
+            // The rail owns the picker now, so the chosen template governs the
+            // on-screen preview, the real PDF, the x-ray AND the download at all
+            // times — not only once a tailor result exists.
+            onTemplate={setTemplate}
+            company={jd?.company ?? company}
+            marks={marks}
+            // The review's own vocabulary, kept apart from `marks` — see
+            // ResumeView's Props note on why one Map cannot hold both.
+            flags={reviewFlags}
+            review={review.data}
+            reviewStale={review.stale}
+            reviewFailed={review.failed}
+            // The tool's gate as well as its jump: no callback, no review panel.
+            onJumpToBlock={jumpToBlock}
+            // "Use this" goes through the SAME writer as a caret edit on the
+            // paper, so the master/tailored split has exactly one implementation:
+            // `applyBlockEdit` on the master, `setBlockOverride` on a tailored
+            // draft, and never `writeDraft` on either. A private write path in
+            // the panel would be the 23.7 defect on purpose — one keystroke
+            // through `applyBlockEdit` while a result is up nulls `result`,
+            // `tailoredFrom` and `rejectedEdits` and destroys the whole review.
+            onUseRewrite={canEditDoc ? commitInline : undefined}
+            activeBlock={spot?.path ?? null}
+            activeNonce={spot?.nonce}
+            onSelectBlock={selectBlock}
+            // The paper is typed on in both modes; `commitInline` is what routes
+            // a tailored edit into the override layer instead of the master.
+            onEditBlock={canEditDoc ? setEditPath : undefined}
+            onInlineCommit={canEditDoc ? commitInline : undefined}
+            // ADDING stays master-only, and the reason is the fabrication guard,
+            // not caution. It ran against `result.tailored_resume`; a claim typed
+            // in afterwards carries no verdict at all, while ScoreCard below goes
+            // on rendering `result.fabrication_flags` as though it described the
+            // document on screen. An added block also exists in neither the
+            // original nor the tailored resume, so it has no source anchor to be
+            // stored against. Adds belong in their own change, with their own
+            // guard story.
+            onAddSkill={isMaster ? addSkill : undefined}
+            onAdd={isMaster ? addToResume : undefined}
+            onAddNamed={isMaster ? addNamed : undefined}
+            onAddBullet={isMaster ? addBullet : undefined}
+            // In the add control's own place, so its absence is answered where
+            // the question gets asked rather than in a toolbar three scrolls up.
+            footNote={result ? t("edit.tailoredNoAdd") : undefined}
+            // Master only: replacing the file under a tailor review would be
+            // replacing the thing being reviewed. `onParsed` is the SAME handler
+            // the empty state uses, so the cold start and the replacement are one
+            // path.
+            onReplace={isMaster ? onParsed : undefined}
+          />
+        ) : (
+          <Card>
+            <CardTitle>{t("upload.title")}</CardTitle>
+            <div className="mt-3">
+              <ResumeUpload onParsed={onParsed} />
+            </div>
+            {/* The cold start, and it is now the SAME surface as everything else:
+                a blank page you type on. This replaced /builder — an 848-line
+                wizard that was a second editor for one resume, and produced the
+                "which one is my real CV" question it existed to avoid. */}
+            <button
+              type="button"
+              onClick={startFromScratch}
+              className="mt-3 inline-block text-sm text-accent-soft hover:underline"
+            >
+              {t("upload.buildLink")}
+            </button>
+          </Card>
         )}
-      </AnimatePresence>
+
+        {/* The two numbers, as soon as either exists — a fit check produces one
+            before any tailoring. */}
+        {(fit || result) && shown && (
+          <ScoreCard
+            coverage={coverage.data}
+            coverageStale={coverage.stale}
+            fitScore={result ? result.score_after.fit_score : (fit?.fit_score ?? null)}
+            rationale={result ? result.score_after.rationale : fit?.rationale}
+            // THE STAMP THAT BELONGS TO THE NUMBER ABOVE IT, picked by the same
+            // condition and on the same line as the number, so the two cannot
+            // drift. One field served both readings until 23.8: the tailor's
+            // success branch re-stamped it, so after "Back to my resume" the tile
+            // paired the PRE-tailor fit reading with the TAILOR's clock — and the
+            // timestamp is the entire honesty mechanism of that tile, which
+            // deliberately shows one reading with no before/after and no delta.
+            scoredAt={result ? scoredAt : fitScoredAt}
+            flags={result?.fabrication_flags ?? []}
+            // The guard ran on the AI's rewrite; the document beside this tile —
+            // and in the PDF preview, the x-ray, both downloads and the tracker row
+            // — is `effectiveResume`, with the user's own sentences over it. The
+            // count is how the tile says which of the two it is describing.
+            overrideCount={overrideCount}
+          />
+        )}
+
+        {loading && (
+          <div className="space-y-4">
+            <Skeleton className="h-44 w-full" />
+            <Skeleton className="h-28 w-full" />
+          </div>
+        )}
+
+        <AnimatePresence>
+          {result && jd && effectiveResume && !loading && (
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+              className="space-y-6"
+            >
+              <VoicePanel
+                report={result.voice_report}
+                plan={result.plan}
+              />
+              <MatchReport gaps={result.score_after.gaps} jdText={jdText} />
+
+              <ChangeLog
+                edits={edits}
+                changelog={result.changelog}
+                flags={result.fabrication_flags}
+                jdKeywords={result.score_after.gaps.map((g) => g.keyword)}
+                rejected={rejectedSet}
+                onSetRejected={(ids) => setTailorState({ rejectedEdits: ids })}
+                original={original}
+                effective={effectiveResume}
+                lengthReport={result.length_report}
+                plan={result.plan}
+                template={template}
+                onShowInDoc={showInDoc}
+                anchoredEdits={editBlock}
+                focusEdit={focusEdit}
+                overridden={overriddenEdits}
+                overrideCount={overrideCount}
+                onUseAi={(id) => resolveOverride(id, false)}
+                onUseOriginal={(id) => resolveOverride(id, true)}
+                onRestoreMine={restoreOverride}
+              />
+
+              <Card>
+                <CardTitle>{t("download.title")}</CardTitle>
+                {/* The picker moved to the document's own tool rail (PLAN 6:
+                    every option is ATS-safe by construction — no tables, text
+                    boxes or images in any of them). It was locked in here, which
+                    meant the design could only be chosen after a tailor had been
+                    paid for and never governed the master document at all. The
+                    note under the buttons still says what the .docx does. */}
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <Button
+                    icon={<Download size={16} />}
+                    onClick={() =>
+                      downloadResume(
+                        effectiveResume,
+                        "docx",
+                        resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
+                        template,
+                      )
+                    }
+                  >
+                    {t("download.docx")}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    icon={<Download size={16} />}
+                    onClick={() =>
+                      downloadResume(
+                        effectiveResume,
+                        "pdf",
+                        resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
+                        template,
+                      )
+                    }
+                  >
+                    {t("download.pdf")}
+                  </Button>
+                  <div className="flex-1" />
+                  {jobUrl && (
+                    <a
+                      href={jobUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => setTailorState({ applyClicked: true })}
+                      className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
+                    >
+                      <ExternalLink size={14} /> {t("target.open")}
+                    </a>
+                  )}
+                  {applied && <Badge tone="mint">{t("target.appliedBadge")}</Badge>}
+                  <Button variant="ghost" icon={<Save size={16} />} disabled={saved} onClick={save}>
+                    {saved ? t("save.saved") : t("save.cta")}
+                  </Button>
+                </div>
+                {appliedPrompt}
+                {/* A two-column pick can't ship as .docx, so the ATS line is
+                    replaced (not stacked) by the plain-language fallback note —
+                    "single-column" would otherwise be false for its PDF. */}
+                <p className="mt-3 text-xs text-ink-muted">
+                  {isPdfOnlyTemplate(template)
+                    ? t("download.docxFallback", { name: t(`download.templates.${template}.name`) })
+                    : t("download.atsNote")}
+                </p>
+                {/* The honest half of shipping two-column designs: don't just warn
+                    that a parser might interleave them — let the user SEE what one
+                    actually reads back from this exact file. It used to navigate to
+                    /tools/xray, which meant leaving the review to check the review;
+                    now it opens the ATS view in place, on the resume as it stands
+                    right now rather than on the saved master. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDocView("ats");
+                    requestAnimationFrame(() =>
+                      docRef.current?.scrollIntoView({ block: "start", behavior: smooth() }),
+                    );
+                  }}
+                  className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent-soft underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+                >
+                  <ScanEye size={13} />
+                  {t("download.xrayLink")}
+                </button>
+              </Card>
+
+              <CoverLetter
+                resume={effectiveResume}
+                jd={jd}
+                onGenerated={(letter) => setTailorState({ coverLetterText: letter, saved: false })}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       {shown && (
         <BlockEditSheet

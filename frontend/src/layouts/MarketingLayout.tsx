@@ -54,7 +54,9 @@ export default function MarketingLayout() {
         />
 
         <header className="sticky top-0 z-30 border-b border-line/70 bg-bg/80 backdrop-blur-xl">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3.5">
+          {/* Edge to edge like the landing and app headers; the page below
+              keeps its own centred column. */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 sm:px-6 lg:px-8">
             <Link to="/" aria-label={t("appName")} className="shrink-0">
               <Logo size={28} />
             </Link>

@@ -562,10 +562,31 @@ select {
   background-color: rgb(var(--accent) / 0.14);
 }
 
-/* The review drawer is `position: fixed` at the inline-end edge and `main` is
-   `mx-auto max-w-6xl`, so on any viewport whose centring gutter is narrower than
-   the drawer, the drawer sits ON TOP of the document chrome — the sticky
-   toolbar, the tool rail, and at narrow desktop widths the paper itself.
+/* The content column on /app, where `main` is the full window width so the
+   sticky DocumentToolbar can span it (AppLayout). Everything else on that page
+   wears this class and lands exactly where `main`'s `mx-auto max-w-6xl px-4
+   lg:px-8` put it on every other page: 1rem in from each side below `lg`, 2rem
+   from `lg`, and never wider than 68rem (72rem less its 2rem padding).
+
+   Margins and max-width, never padding: a Card or a panel wearing this keeps
+   its own padding, and a `position: fixed` descendant is not re-anchored by
+   either. `100%` is `main`'s content box, so the review drawer's end padding
+   below narrows the column instead of letting the drawer cover it. */
+.app-col {
+  margin-inline: auto;
+  max-width: calc(100% - 2rem);
+}
+@media (min-width: 1024px) {
+  .app-col {
+    max-width: min(calc(100% - 4rem), 68rem);
+  }
+}
+
+/* The review drawer is `position: fixed` at the inline-end edge, and the page's
+   column is centred (`.app-col` above), so on any viewport whose centring gutter
+   is narrower than the drawer, the drawer sits ON TOP of the document chrome —
+   the sticky toolbar, the tool rail, and at narrow desktop widths the paper
+   itself.
 
    From `lg` up the drawer has no backdrop and is meant to sit BESIDE the
    document, so the page gives it room. Below `lg` there is deliberately no rule:

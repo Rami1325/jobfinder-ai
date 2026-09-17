@@ -608,6 +608,9 @@ function MobileTabBar({
 export default function AppLayout() {
   const { t } = useTranslation();
   const { pathname, hash } = useLocation();
+  // The document route is the one page whose sticky toolbar spans the window;
+  // see `main` below.
+  const docRoute = pathname.replace(/\/+$/, "") === "/app";
   const { searching } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
   // Kits load HERE, not on JobsPage. JobsPage called loadKits() only once its
   // Kits tab was open, which made a count on that tab unbuildable: it read zero
@@ -746,7 +749,11 @@ export default function AppLayout() {
           sit at 60 and stay above everything. */}
       <header className="sticky top-0 z-[45] h-14 border-b border-line/70">
         <div aria-hidden className="absolute inset-0 -z-10 bg-bg/85 backdrop-blur-xl" />
-        <div className="mx-auto flex h-full max-w-6xl items-center gap-2 px-4 lg:px-8">
+        {/* Full width, not the content column: the logo and Menu sit at the
+            window's start edge and the account cluster at its end, like any
+            site's top bar. The px is the SAME 4/8 the document toolbar uses on
+            /app, so the two bars' contents line up on both edges. */}
+        <div className="flex h-full items-center gap-2 px-4 lg:px-8">
           <Link to="/app" aria-label={t("appName")} onClick={closeAll} className="shrink-0">
             <Logo size={26} />
           </Link>
@@ -839,14 +846,19 @@ export default function AppLayout() {
           design (no exit choreography): product register, 160 ms, never makes
           the user wait.
 
-          A plain centered column now the rail is gone. The px must stay 4/8:
-          DocumentToolbar bleeds itself out with `-mx-4 lg:-mx-8` to reach the
-          column's own padding, and a different number leaves it peeking. */}
-      <main className="mx-auto max-w-6xl px-4 pb-24 pt-8 lg:px-8 lg:pb-10">
+          A centered column on every page but one. On /app `main` is the full
+          window width and TailorPage centres its own content with `.app-col`
+          (styles.css), because DocumentToolbar has to span the window like the
+          header above it while the paper stays in the column. A toolbar inside
+          a centered `main` can only reach the window edge through a 100vw
+          bleed, and 100vw counts the Windows scrollbar. */}
+      <main className={cn("pb-24 pt-8 lg:pb-10", !docRoute && "mx-auto max-w-6xl px-4 lg:px-8")}>
         {/* After the guard, never in the spinner branch above: it takes
             `google=superseded` out of the address as it mounts, and there it
             would be unmounted before anyone read it (check-mirrors 32(l)). */}
-        <GoogleNotice email={me?.email ?? ""} />
+        <div className={docRoute ? "app-col" : undefined}>
+          <GoogleNotice email={me?.email ?? ""} />
+        </div>
         <motion.div
           key={pathname}
           initial={{ opacity: 0, y: 6 }}
