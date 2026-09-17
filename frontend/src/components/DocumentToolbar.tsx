@@ -34,10 +34,24 @@ interface Props {
  * Sticky under the app header (`h-14` / 3.5rem) and bled out to the main
  * column's own padding with the negative margins, so content scrolling beneath
  * it passes under the blur at the edges too instead of peeking around it.
+ *
+ * Its glass and hairline run edge to edge like the header's, while the content
+ * stays in the column. They are painted by `BAR_PAINT`, a border-image with a
+ * horizontal OUTSET: outset paint is ink overflow, which never makes the page
+ * scroll sideways, where a `100vw` box would (it counts the Windows scrollbar).
+ * `border-b` stays for the 1px of layout and as the fallback line.
  */
+const BAR_PAINT = {
+  borderImage:
+    "linear-gradient(rgb(var(--bg) / 0.85) calc(100% - 1px), rgb(var(--line) / 0.7) 0) fill 0 / 0 / 0 100vmax",
+};
+
 export default function DocumentToolbar({ title, badges, actions, notes }: Props) {
   return (
-    <div className="sticky top-14 z-20 -mx-4 border-b border-line/70 bg-bg/85 px-4 py-2.5 backdrop-blur-xl lg:-mx-8 lg:px-8">
+    <div
+      style={BAR_PAINT}
+      className="sticky top-14 z-20 -mx-4 border-b border-line/70 px-4 py-2.5 backdrop-blur-xl lg:-mx-8 lg:px-8"
+    >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {/* `min-w-0` so a long name ellipsizes instead of shouldering the
             badges onto a line of their own.
