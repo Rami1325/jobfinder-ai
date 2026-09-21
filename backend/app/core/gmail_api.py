@@ -33,7 +33,7 @@ from email.utils import parseaddr
 from typing import Any, Protocol
 
 from app.core import google_oauth
-from app.core.inbox_rules import MessageMeta
+from app.core.inbox_rules import SPAM_OPERATOR, MessageMeta
 from app.llm.limits import clip_utf8
 
 # What one body may contribute to a classification, in UTF-8 KB. The prompt
@@ -209,6 +209,13 @@ class GmailMailbox:
 
     def list_ids(self, q: str, page_token: str | None = None) -> tuple[list[str], str | None]:
         params: list[tuple[str, str]] = [("q", q), ("maxResults", "500")]
+        if SPAM_OPERATOR in (q or "").split():
+            # P29-SPAM-RESCUE: Gmail lists no Spam (or Trash) unless asked, and a
+            # query naming `in:spam` asks for exactly that. An EXACT token, never a
+            # substring: `-in:spam` contains it, and switching this on for such a
+            # query would list Trash — and Spam, if the operator were ever dropped —
+            # into the listing the sync classifies and charges.
+            params.append(("includeSpamTrash", "true"))
         if page_token:
             params.append(("pageToken", page_token))
         data = self._get("/messages", params)
@@ -244,10 +251,15 @@ class FakeMessage:
     body: str = ""
     thread_id: str = ""
     rfc822_id: str = ""
+    # Gmail's system labels that change what a listing returns: "SPAM" or
+    # "TRASH". Empty = the inbox. Mutable, so a test can move a message the way
+    # "Not spam" does — same id, same internalDate.
+    labels: tuple[str, ...] = ()
 
 
 _AFTER = re.compile(r"(?:^|\s)after:(\d+)")
 _BEFORE = re.compile(r"(?:^|\s)before:(\d+)")
+_HIDDEN = frozenset({"SPAM", "TRASH"})
 
 
 class FakeMailbox:
@@ -257,6 +269,8 @@ class FakeMailbox:
     query's `after:`/`before:` epoch-second bounds — the windowed import depends
     on both. It does not implement Gmail's vocabulary search: every message in
     the window is listed, which is the harder case for the deterministic stage.
+    Like Gmail it leaves SPAM and TRASH out of a listing, and a query carrying
+    the exact token `in:spam` lists Spam and nothing else (P29-SPAM-RESCUE).
     Thread-safe, because the sync reads metadata from a pool. `calls` counts every
     read, and a message id in `fail_ids` fails like a network error.
     """
@@ -282,9 +296,11 @@ class FakeMailbox:
         after, before = _AFTER.search(q or ""), _BEFORE.search(q or "")
         lo = int(after.group(1)) * 1000 if after else None
         hi = int(before.group(1)) * 1000 if before else None
+        spam = SPAM_OPERATOR in (q or "").split()
         rows = [
             m for m in self._messages.values()
             if (lo is None or m.internal_ms >= lo) and (hi is None or m.internal_ms < hi)
+            and (("SPAM" in m.labels) if spam else not (_HIDDEN & set(m.labels)))
         ]
         rows.sort(key=lambda m: (-m.internal_ms, m.id))
         start = int(page_token) if page_token and page_token.isdigit() else 0

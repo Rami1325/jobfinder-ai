@@ -286,6 +286,9 @@ def inbox_google_callback(
         return fail("no_refresh_token")
     if switched:
         inbox_sync.revoke_stored_grant(conn)
+        # P29-SPAM-RESCUE: the old mailbox's parked Spam ids can never appear in
+        # the new mailbox's listings, so nothing could ever release them.
+        inbox_sync.drop_parked(db, user.id)
     if conn is None:
         conn = MailConnection(user_id=user.id)
         db.add(conn)

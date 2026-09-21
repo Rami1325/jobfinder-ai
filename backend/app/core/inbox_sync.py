@@ -29,6 +29,16 @@ so the UI never has to hold a phone in a foreground loop for it.
 A window ends five minutes before now, so a message Gmail accepted but has not
 indexed yet cannot fall behind a cursor that already moved past its timestamp.
 
+SPAM IS PARKED, NEVER READ (P29-SPAM-RESCUE). `messages.list` leaves Spam out,
+and "Not spam" keeps a message's id and its ORIGINAL internalDate, so a reply
+rescued after the cursor passed its date was never imported — the same class of
+defect as the unindexed message above. Each window is also listed for Spam, and
+the job mail Gmail filed there is parked by its id alone: no read, no model, no
+charge. When the default listing names a parked id again, the user rescued it:
+the ordinary walk handles it in date order while the cursor has not reached it,
+and the release pass (`_release_parked`) once it has — a pass that never moves
+the cursor. Either way the parked row goes in the same commit as the result.
+
 Metering (amendment I8): every model call runs inside this module's own
 `metering.meter()`, from a pool whose submits carry `copy_context().run` — a
 worker thread starts from an EMPTY context and would lose the tally — and the total
@@ -50,7 +60,7 @@ from typing import Callable
 from urllib.parse import quote
 
 from fastapi import HTTPException
-from sqlalchemy import case, delete, or_, select, update
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -90,6 +100,16 @@ _REAUTH_CODES = frozenset({"invalid_grant", "admin_policy_enforced"})
 # sender or a body.
 FAILED = "failed"
 SKIPPED = "skipped"
+# P29-SPAM-RESCUE: job mail Gmail filed in Spam when its window was listed. The
+# row holds the provider id and nothing about the mail: evidence is `spam` while
+# the message has never been charged, and the error code once a release of it
+# has been charged and failed (so the retry is free). `received_at` is the Spam
+# listing's lower bound — a "not before" for the release listing, never shown.
+PARKED = "parked"
+SPAM_EVIDENCE = "spam"
+# Gmail deletes Spam after 30 days, counted from when it arrived there, which is
+# no later than the run that parked it; a day of slack, then the row goes.
+PARK_DAYS = 31
 
 
 def utc_now() -> datetime:
@@ -231,8 +251,11 @@ class _Staged:
     stage: str  # noise | rule | model | skip
     verdict: Verdict | None = None
     outcome: str = ""  # model only: ok | gone | unclassifiable | failed | uncharged | skipped
-    retried: bool = False  # model only: an earlier run failed on this message (FIXB B3)
+    retried: bool = False  # model only: an earlier run failed on this message and was charged (FIXB B3)
     error: str = ""  # model only, on failure: body_failed | model_failed
+    # A `failed` or `parked` row holds this id: `_apply` consumes it, whatever the
+    # stage and whatever the outcome (P29-SPAM-RESCUE).
+    marked: bool = False
 
 
 @dataclass
@@ -251,6 +274,7 @@ class _Run:
     cards: list[_Card]
     exclude: tuple[str, ...]
     handled: int = 0
+    now: datetime | None = None  # the run's clock: when a row is parked, and the prune's "31 days ago"
 
     def over_budget(self) -> bool:
         return self.budget_s > 0 and self.clock() - self.started >= self.budget_s
@@ -428,12 +452,19 @@ def _sync(
         meta_cap=max(2 * max_messages, 100), result=result,
         cards=[_Card.of(a) for a in db.execute(select(Application).where(Application.user_id == user_id)).scalars().all()],
         exclude=own_alert_senders(s),
+        now=now,
     )
     horizon = _ms(now) - SETTLE_MS
     if not conn.window_lo_ms:
         conn.window_lo_ms = _ms(now) - max(1, conn.backfill_days or s.inbox_backfill_days) * DAY_MS
         db.commit()
-    while True:
+    # P29-SPAM-RESCUE: first what the user rescued from Spam after the cursor
+    # passed it. A release that stops — its budget, the daily cap, a failure it
+    # was charged for — stops the run, as a stuck message in a window does.
+    walk = _release_parked(run, conn_id)
+    if not walk:
+        result.has_more = True
+    while walk:
         conn = db.get(MailConnection, conn_id)
         lo = int(conn.window_lo_ms or 0)
         if lo >= horizon:
@@ -448,6 +479,9 @@ def _sync(
             result.has_more = True
             break
         ids, win_hi = _list_window(run, list_lo, win_hi)
+        # After the listing has settled the window: a halved window is parked
+        # over its halved bounds, never over the ones the halving abandoned.
+        _park(run, list_lo, win_hi, ids)
         metas, complete = _read_metas(run, ids)
         if not complete:
             result.error_code = "gmail_error"
@@ -499,21 +533,181 @@ def _list_window(run: _Run, lo_ms: int, hi_ms: int) -> tuple[list[str], int]:
         return (fresh if not overflow else _unstored(run, ids)), hi_ms
 
 
-def _unstored(run: _Run, ids: list[str]) -> list[str]:
-    """Ids with no stored row — a `failed` marker does not count as stored, so a
-    message that failed once is listed again for its one retry (FIXB B3)."""
+def _ids_with_rows(
+    run: _Run, ids: list[str], *, ignore: tuple[str, ...] = (), only: tuple[str, ...] = ()
+) -> set[str]:
+    """Which of `ids` have a row — not counting rows whose action is in `ignore`,
+    and only rows whose action is in `only` when that is given."""
     known: set[str] = set()
     for i in range(0, len(ids), 500):
-        known.update(
-            run.db.execute(
-                select(MailEvent.provider_message_id).where(
-                    MailEvent.user_id == run.user_id,
-                    MailEvent.provider_message_id.in_(ids[i:i + 500]),
-                    MailEvent.action != FAILED,
-                )
-            ).scalars().all()
+        query = select(MailEvent.provider_message_id).where(
+            MailEvent.user_id == run.user_id,
+            MailEvent.provider_message_id.in_(ids[i:i + 500]),
         )
+        if ignore:
+            query = query.where(MailEvent.action.not_in(ignore))
+        if only:
+            query = query.where(MailEvent.action.in_(only))
+        known.update(run.db.execute(query).scalars().all())
+    return known
+
+
+def _unstored(run: _Run, ids: list[str]) -> list[str]:
+    """Ids with no stored row. A `failed` marker does not count as stored, so a
+    message that failed once is listed again for its one retry (FIXB B3); nor
+    does a `parked` row, so a message rescued from Spam before the cursor reached
+    it is handled in order like any other (P29-SPAM-RESCUE)."""
+    known = _ids_with_rows(run, ids, ignore=(FAILED, PARKED))
     return [i for i in ids if i not in known]
+
+
+def _list_all(run: _Run, query: str) -> list[str]:
+    """Every id one query lists, page by page, up to LIST_HARD_STOP."""
+    ids: list[str] = []
+    token: str | None = None
+    while True:
+        page, token = run.box.list_ids(query, token)
+        ids.extend(page)
+        if not token or len(ids) >= LIST_HARD_STOP:
+            break
+    return list(dict.fromkeys(ids))
+
+
+def _park(run: _Run, list_lo: int, win_hi: int, listed: list[str]) -> None:
+    """P29-SPAM-RESCUE: remember, by id alone, the job mail Gmail filed in Spam
+    inside the window just listed — so that if the user rescues it after the
+    cursor has passed its date, the release pass can still bring it in.
+
+    Parked = what Gmail's own Spam listing names, minus what the default listing
+    just named (`listed`), minus every id that already has a row of any kind.
+    Nothing is read — no headers, no body — no model is called, and nothing is
+    charged: mail that stays in Spam is never imported, exactly as before.
+
+    Fails toward today's behaviour on every piece of Gmail behaviour the offline
+    suite cannot confirm: if Google ignored `in:spam`, the default listing's ids
+    are subtracted; if it ignored `includeSpamTrash`, nothing is listed; and if
+    the listing fails outright, nothing is parked and the window goes on — a
+    listing Gmail refuses may never stall the import. A message moved INTO Spam
+    in the moment between the two listings is not parked (accepted)."""
+    query = inbox_rules.build_query(list_lo // 1000 - 1, win_hi // 1000 + 1, run.exclude, spam=True)
+    try:
+        spam = _list_all(run, query)
+    except Exception as exc:  # noqa: BLE001 - fail toward today's behaviour, never toward a stalled import
+        log.warning("inbox: the Spam listing failed (%s); nothing parked for this window", type(exc).__name__)
+        return
+    default = set(listed)
+    candidates = [i for i in spam if i not in default]
+    if not candidates:
+        return
+    known = _ids_with_rows(run, candidates)
+    fresh = [i for i in candidates if i not in known]
+    if not fresh:
+        return
+    bound = datetime.fromtimestamp(max(0, list_lo // 1000 - 1), timezone.utc)
+    try:
+        for msg_id in fresh:
+            run.db.add(MailEvent(
+                user_id=run.user_id, provider_message_id=msg_id[:64], action=PARKED, evidence=SPAM_EVIDENCE,
+                received_at=bound, created_at=run.now or utc_now(),
+            ))
+        run.db.commit()
+    except Exception as exc:  # noqa: BLE001 - bookkeeping; the window itself is unaffected
+        run.db.rollback()
+        log.warning("inbox: parked Spam ids could not be stored (%s)", type(exc).__name__)
+
+
+def drop_parked(db: Session, user_id: int) -> int:
+    """Delete a user's parked Spam ids. For a reconnect to a DIFFERENT mailbox
+    (FIXB B8): the old mailbox's ids can never appear in the new one's listings.
+    No commit."""
+    return int(db.execute(
+        delete(MailEvent)
+        .where(MailEvent.user_id == user_id, MailEvent.action == PARKED)
+        .execution_options(synchronize_session=False)
+    ).rowcount or 0)
+
+
+def _naive_utc(dt: datetime) -> datetime:
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _read_each(run: _Run, ids: list[str]) -> list[tuple[str, str, MessageMeta | None]]:
+    """(id, outcome, meta) for every id, from a pool of POOL. Unlike `_read_metas`
+    a failed read does not end the batch: a released message has no cursor behind
+    it that a gap could jump."""
+    if not ids:
+        return []
+    with ThreadPoolExecutor(max_workers=POOL) as pool:
+        futures = [(msg_id, pool.submit(copy_context().run, _read_meta, run.box, msg_id)) for msg_id in ids]
+        return [(msg_id, *future.result()) for msg_id, future in futures]
+
+
+def _release_parked(run: _Run, conn_id: int) -> bool:
+    """P29-SPAM-RESCUE: import what the user rescued from Spam AFTER the cursor
+    passed it. False when the run should stop here (its budget, the daily cap, or
+    a failure it was charged for); `has_more` then says there is more to do.
+
+    One default-query listing over [the oldest parked row's bound, the cursor];
+    the ids in it that have a `parked` row are the rescued ones. Only those are
+    touched, so ordinary mail below the cursor is never read or classified again.
+    Each goes through the ordinary stages — metadata, rules, the charge, the
+    model — and `_apply` consumes its parked row in the same commit as the
+    tracker write. The cursor is NEVER written here: a rewind would make the next
+    run list a half-handled window again and re-charge its unstored mail.
+
+    Anything read above the cursor is left alone — the ordinary walk owns it and
+    will list it, and classifying it here too would charge it twice. A failed read
+    leaves its row untouched and uncharged for the next run; a message Gmail no
+    longer has takes its row with it. Rows parked more than PARK_DAYS ago are
+    pruned first, unread: Gmail has deleted that Spam."""
+    db = run.db
+    now = run.now or utc_now()
+    db.execute(
+        delete(MailEvent)
+        .where(
+            MailEvent.user_id == run.user_id,
+            MailEvent.action == PARKED,
+            MailEvent.created_at < _naive_utc(now - timedelta(days=PARK_DAYS)),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    db.commit()
+    oldest = db.execute(
+        select(func.min(MailEvent.received_at)).where(MailEvent.user_id == run.user_id, MailEvent.action == PARKED)
+    ).scalar()
+    oldest_at = inbox_apply.utc(oldest)
+    if oldest_at is None:
+        return True
+    lo_ms = _ms(oldest_at)
+    cursor = int(db.get(MailConnection, conn_id).cursor_ms or 0)
+    if cursor <= lo_ms:
+        return True  # nothing parked is behind the cursor yet — or a fresh import reset it to 0
+    if run.spent():
+        return False
+    listed = _list_all(run, inbox_rules.build_query(lo_ms // 1000 - 1, cursor // 1000 + 1, run.exclude))
+    parked = _ids_with_rows(run, listed, only=(PARKED,))
+    rescued = [msg_id for msg_id in listed if msg_id in parked]
+    if not rescued:
+        return True
+    if len(rescued) > run.meta_cap:
+        rescued = rescued[:run.meta_cap]
+        run.result.has_more = True
+    metas: list[MessageMeta] = []
+    gone: list[str] = []
+    for msg_id, outcome, meta in _read_each(run, rescued):
+        if outcome == "gone":
+            gone.append(msg_id[:64])
+        elif outcome == "ok" and meta is not None and meta.internal_ms <= cursor:
+            metas.append(meta)
+    if gone:
+        db.execute(
+            delete(MailEvent)
+            .where(MailEvent.user_id == run.user_id, MailEvent.action == PARKED,
+                   MailEvent.provider_message_id.in_(gone))
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+    return _handle_ordered(run, conn_id, sorted(metas, key=lambda m: (m.internal_ms, m.id)), release=True)
 
 
 def _read_meta(box: Mailbox, msg_id: str) -> tuple[str, MessageMeta | None]:
@@ -576,6 +770,13 @@ def _handle_window(run: _Run, conn_id: int, metas: list[MessageMeta], list_lo: i
         (m for m in metas if list_lo <= m.internal_ms < win_hi and m.internal_ms > cursor),
         key=lambda m: (m.internal_ms, m.id),
     )
+    return _handle_ordered(run, conn_id, ordered)
+
+
+def _handle_ordered(run: _Run, conn_id: int, ordered: list[MessageMeta], *, release: bool = False) -> bool:
+    """Handle messages already in date order, in chunks between budget checks.
+    True when all of them are done. `release` (the Spam release pass) handles
+    them without ever moving the cursor."""
     groups: list[list[MessageMeta]] = []
     for meta in ordered:
         if groups and groups[-1][0].internal_ms == meta.internal_ms:
@@ -595,7 +796,7 @@ def _handle_window(run: _Run, conn_id: int, metas: list[MessageMeta], list_lo: i
             model_calls += sum(1 for st in staged if st.stage == "model")
             pending += len(staged)
             position += 1
-        if not _process_chunk(run, conn_id, chunk):
+        if not _process_chunk(run, conn_id, chunk, release=release):
             return False
     return True
 
@@ -651,38 +852,65 @@ def _classify(run: _Run, items: list[_Staged]) -> None:
     record_tokens(run.db, run.user_id, tally.prompt, tally.completion, action=INBOX_TOKENS_ACTION)
 
 
-def _failed_before(run: _Run, ids: list[str]) -> set[str]:
-    """The ids an earlier run already failed on (and already charged)."""
+def _markers(run: _Run, ids: list[str]) -> dict[str, tuple[str, str]]:
+    """{id: (action, evidence)} for the ids a `failed` or `parked` row holds."""
     if not ids:
-        return set()
-    return set(run.db.execute(
-        select(MailEvent.provider_message_id).where(
-            MailEvent.user_id == run.user_id,
-            MailEvent.action == FAILED,
-            MailEvent.provider_message_id.in_(ids),
-        )
-    ).scalars().all())
+        return {}
+    return {
+        msg_id: (action, evidence or "")
+        for msg_id, action, evidence in run.db.execute(
+            select(MailEvent.provider_message_id, MailEvent.action, MailEvent.evidence).where(
+                MailEvent.user_id == run.user_id,
+                MailEvent.action.in_((FAILED, PARKED)),
+                MailEvent.provider_message_id.in_([(i or "")[:64] for i in ids]),
+            )
+        ).all()
+    }
 
 
-def _remember_failures(run: _Run, items: list[_Staged]) -> None:
-    """A `failed` marker per message that failed for the first time: the id and
-    an error code, nothing about the mail itself. Best effort — a concurrent run
-    that stored the id first changes nothing, since the next run retries anyway."""
-    if not items:
-        return
-    try:
-        for staged in items:
-            run.db.add(MailEvent(
-                user_id=run.user_id, provider_message_id=(staged.meta.id or "")[:64],
-                action=FAILED, evidence=staged.error or "failed",
-            ))
-        run.db.commit()
-    except Exception:  # noqa: BLE001 - bookkeeping on the failure path
-        run.db.rollback()
+def _charged_before(marker: tuple[str, str]) -> bool:
+    """An earlier run failed on this message AND was charged for it (FIXB B3): a
+    `failed` marker, or a parked row whose release failed once — its evidence is
+    then the error code instead of `spam` (P29-SPAM-RESCUE)."""
+    action, evidence = marker
+    return action == FAILED or (action == PARKED and evidence != SPAM_EVIDENCE)
 
 
-def _process_chunk(run: _Run, conn_id: int, chunk: list[list[_Staged]]) -> bool:
-    """Classify one chunk and apply it group by group, the cursor moving with each.
+def _remember_failures(run: _Run, items: list[_Staged], *, keep_parked: bool = False) -> None:
+    """Mark each message that failed for the first time — it was charged — so its
+    retry is free: the id and an error code, nothing about the mail itself.
+
+    One row per id (`uq_mail_events_message`), so a message whose id already has
+    a row is UPDATED in place, never inserted over (P29-SPAM-RESCUE): a `parked`
+    row becomes the `failed` marker on the ordinary walk, and keeps `parked`
+    with the error as its evidence on the release pass (`keep_parked`) — which
+    selects parked rows only, so a `failed` one would be stranded behind a cursor
+    that has already passed it. Each row commits on its own, so one conflict can
+    never roll back the others' markers. Best effort — a concurrent run that
+    stored the id first changes nothing, since the next run retries anyway."""
+    for staged in items:
+        msg_id = (staged.meta.id or "")[:64]
+        error = staged.error or "failed"
+        try:
+            row = run.db.execute(
+                select(MailEvent).where(MailEvent.user_id == run.user_id, MailEvent.provider_message_id == msg_id)
+            ).scalars().first()
+            if row is None:
+                run.db.add(MailEvent(user_id=run.user_id, provider_message_id=msg_id, action=FAILED, evidence=error))
+            elif row.action == PARKED:
+                if not keep_parked:
+                    row.action = FAILED
+                row.evidence = error
+            else:
+                continue  # stored meanwhile; the next run decides
+            run.db.commit()
+        except Exception:  # noqa: BLE001 - bookkeeping on the failure path
+            run.db.rollback()
+
+
+def _process_chunk(run: _Run, conn_id: int, chunk: list[list[_Staged]], *, release: bool = False) -> bool:
+    """Classify one chunk and apply it group by group, the cursor moving with each
+    — unless `release` (the Spam release pass), which never moves it.
 
     Failure isolation (FIXB B3). A message whose body read or model call fails
     stops the run at that message the FIRST time — a network blip must not skip
@@ -691,11 +919,14 @@ def _process_chunk(run: _Run, conn_id: int, chunk: list[list[_Staged]]) -> bool:
     `skipped` and the import moves past it. Before this, one unreadable message
     re-charged the whole chunk on every run and nothing after it was ever
     imported."""
-    wanted = [st for group in chunk for st in group if st.stage == "model"]
+    staged_all = [st for group in chunk for st in group]
+    markers = _markers(run, [st.meta.id for st in staged_all])
+    for staged in staged_all:
+        marker = markers.get((staged.meta.id or "")[:64])
+        staged.marked = marker is not None
+        staged.retried = staged.stage == "model" and marker is not None and _charged_before(marker)
+    wanted = [st for st in staged_all if st.stage == "model"]
     if wanted:
-        retried = _failed_before(run, [st.meta.id for st in wanted])
-        for staged in wanted:
-            staged.retried = staged.meta.id in retried
         fresh = [st for st in wanted if not st.retried]
         allowed = _charge(run, len(fresh)) if fresh else 0
         _classify(run, [st for st in wanted if st.retried] + fresh[:allowed])
@@ -713,11 +944,15 @@ def _process_chunk(run: _Run, conn_id: int, chunk: list[list[_Staged]]) -> bool:
             # retry is free.
             _remember_failures(run, [
                 st for later in chunk[index:] for st in later if st.stage == "model" and st.outcome == "failed"
-            ])
+            ], keep_parked=release)
             return False
         for staged in group:
             _apply(run, staged)
-        run.db.get(MailConnection, conn_id).cursor_ms = group[0].meta.internal_ms
+        if not release:
+            # The release pass handles mail BELOW the cursor: moving the cursor
+            # there would rewind it, and the next run would list a half-handled
+            # window again and re-charge its unstored mail (P29-SPAM-RESCUE).
+            run.db.get(MailConnection, conn_id).cursor_ms = group[0].meta.internal_ms
         run.db.commit()  # the group and the cursor move together
     return True
 
@@ -725,12 +960,18 @@ def _process_chunk(run: _Run, conn_id: int, chunk: list[list[_Staged]]) -> bool:
 def _apply(run: _Run, staged: _Staged) -> None:
     run.handled += 1
     run.result.scanned += 1
-    if staged.retried:
+    if staged.marked or staged.retried:
+        # A `failed` or `parked` row holds this id. It is consumed HERE, before
+        # any early return below — noise, a skip, not a job, a message gone — and
+        # in the same commit as whatever the email does (P29-SPAM-RESCUE): a
+        # parked row that outlived its message would be released, classified and
+        # charged again on every run, and one left beside a new event is a second
+        # row for the id, which the unique constraint refuses.
         marker = run.db.execute(
             select(MailEvent).where(
                 MailEvent.user_id == run.user_id,
                 MailEvent.provider_message_id == (staged.meta.id or "")[:64],
-                MailEvent.action == FAILED,
+                MailEvent.action.in_((FAILED, PARKED)),
             )
         ).scalars().first()
         if staged.outcome == SKIPPED:
