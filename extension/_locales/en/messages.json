@@ -127,6 +127,9 @@
   "autofillAnswersBlank": {
     "message": "Questions left blank: no answer came back."
   },
+  "autofillAnswersUnwritten": {
+    "message": "Questions left blank: the page changed before the answers could be written in."
+  },
   "uiLang": {
     "message": "en",
     "description": "The language of THIS file, en or he. The popup formats month names in it, so a date matches the sentence around it."

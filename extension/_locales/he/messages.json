@@ -127,6 +127,9 @@
   "autofillAnswersBlank": {
     "message": "שאלות פתוחות נשארו ריקות: לא התקבלה תשובה."
   },
+  "autofillAnswersUnwritten": {
+    "message": "שאלות פתוחות נשארו ריקות: העמוד השתנה לפני שהתשובות נכתבו בו."
+  },
   "uiLang": {
     "message": "he",
     "description": "The language of THIS file, en or he. The popup formats month names in it, so a date matches the sentence around it."

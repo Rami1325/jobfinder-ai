@@ -850,6 +850,7 @@ async function onAutofill() {
     var attempts = 0; // requests sent, refused ones included
     var drafted = 0; // answers that came back
     var refusal = null; // the last refusal, which the summary names
+    var unwritten = false; // a frame went away before its drafted answers were written
     if (resume) {
       showApplyStatus("", t("autofillAnswering"));
       var qResults = null;
@@ -901,7 +902,9 @@ async function onAutofill() {
             answered += (r && r.result) || 0;
           });
         } catch (e) {
-          /* the frame went away; the summary counts what was written */
+          // The frame went away (navigated, closed, or no longer ours) with
+          // this frame's answers drafted and none of them written.
+          unwritten = true;
         }
       }
     }
@@ -911,10 +914,16 @@ async function onAutofill() {
     if (total.cover) parts.push(t("autofillCoverAdded"));
     if (answered) parts.push(t("autofillAnswered", [String(answered)]));
     var line = parts.join(" · ");
-    // Green only when every question it asked about came back answered.
-    var blank = !!refusal || drafted < attempts;
-    if (blank) line += " " + t(refusal ? refusal.key : "autofillAnswersBlank", refusal ? refusal.subs : undefined);
-    showApplyStatus(blank ? "warn" : "ok", line + " " + t("autofillReviewNote"));
+    // Green only when every question it asked about came back answered AND
+    // reached the page. Writing fewer than were drafted is not a failure by
+    // itself: fillScreeningAnswers leaves a box the user typed into alone, on
+    // purpose. A frame that could not be written to at all is.
+    var notes = [];
+    if (refusal) notes.push(t(refusal.key, refusal.subs));
+    else if (drafted < attempts) notes.push(t("autofillAnswersBlank"));
+    if (unwritten) notes.push(t("autofillAnswersUnwritten"));
+    if (notes.length) line += " " + notes.join(" ");
+    showApplyStatus(notes.length ? "warn" : "ok", line + " " + t("autofillReviewNote"));
   } catch (err) {
     showApplyStatus("error", t("errNetwork"));
   } finally {

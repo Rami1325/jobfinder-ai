@@ -23,10 +23,11 @@ Clips the job posting on the current page into your JobFinder **application trac
 
 **Since Phase 30 the AI answers cost monthly uses.** One use covers up to 6 screening answers for about 3 hours, so a normal autofill spends 1. Clipping a job to the tracker, and attaching a resume rendered from an already-approved kit, cost no uses.
 
-**Since v0.4 the autofill says why a question was left blank.** When the API refuses an answer, the summary line turns amber (`warn`) and names the reason in the web app's own words, in English or Hebrew:
+**Since v0.4 the autofill says why a question was left blank.** When the API refuses an answer, or an answer cannot be written into the form, the summary line turns amber (`warn`) and names the reason in the web app's own words, in English or Hebrew:
 - no uses left this month (`429 monthly_limit`): "Questions left blank: you've used all your uses for September. More on October 1.";
 - today's AI requests used up (`429 daily_limit`): "…you've used all 150 AI requests for today. Try again tomorrow.";
-- a wrong or replaced extension key (`401`), a server it cannot reach, or any other error, with its status code.
+- a wrong or replaced extension key (`401`), a server it cannot reach, or any other error, with its status code;
+- answers that came back but could not be written, because the page or its form frame changed before they were written in. A box you had already typed into is left alone on purpose, and that does not count as a failure.
 
 A refusal that would repeat (the month or the day is used up, the key is dead, or the request itself is refused) **stops the autofill after that one request** instead of asking for every question, because each refused request still counts against the server's daily AI limit. A 400 or a 5xx skips only that question. The autofill asks at most 4 times per click, refused requests included. Answers it already drafted are still written in, and the refusal text itself is never put into the employer's form; it appears only in the popup. It never decides from a count before asking: an open screening pass (shared with the web app's Screening tool) still answers at 0 uses left.
 
