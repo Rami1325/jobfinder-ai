@@ -8,10 +8,10 @@ Hebrew and English search terms both work. The public posting URL comes from
 `JobInfo.Link` ("/job/<JobCode>/<hash>/") and stays on www.
 
 THE API HOST MOVED. In July 2026 the same path answered on www.drushim.co.il
-(the fixture was captured there); www is now a Next.js site whose /api/jobs/search is that site's 404 page
-(seen 2026-09-21), so every search here raised "Couldn't reach Drushim's job
-search" and the board silently contributed nothing — the fan-out reports it
-as one failed source among five. The endpoint answers on webapi.drushim.co.il
+(the fixture was captured there); www is now a Next.js site whose
+/api/jobs/search is that site's 404 page (seen 2026-09-21), so every search
+here raised "Couldn't reach Drushim's job search" and the board silently
+contributed nothing — the fan-out reports it as one failed source among five. The endpoint answers on webapi.drushim.co.il
 (the host the company logos were already served from) with the response shape
 unchanged, 10 results a page.
 

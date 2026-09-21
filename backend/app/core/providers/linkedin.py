@@ -163,8 +163,9 @@ def _fetch_cards(ctx: SearchContext) -> list[dict[str, str]]:
     posting arriving between two requests pushes the previous page's last card
     onto the next page. Not seen in either measured start=0/start=10 pair
     (2026-09-21), but it is the mechanism contiguity creates, and the repeat
-    would otherwise count toward `limit`. The short-page test reads the page's own count,
-    before this dedupe, so a repeat never makes a full page look short.
+    would otherwise count toward `limit`. The short-page test reads the page's
+    own count, before this dedupe, so a repeat never makes a full page look
+    short.
 
     Failure semantics are the fan-out's contract: a 429 on ANY page raises the
     rate-limit ValueError; any other failure on the first page raises; any
