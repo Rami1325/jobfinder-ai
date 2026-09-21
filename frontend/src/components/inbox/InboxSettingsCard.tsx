@@ -10,11 +10,18 @@ import {
   updateInboxSettings,
 } from "../../api/client";
 import { Badge, Button, Card, CardTitle, useToast } from "../ui";
-import { apiErrorMessage } from "../../lib/apiError";
 import { GOOGLE_PERMISSIONS_URL, readGoogleRevoked } from "../../lib/authResults";
 import { cn } from "../../lib/cn";
 import type { InboxStatus } from "../../types";
-import { formatDay, useAgo, useInboxRefusalText, useLocaleTag, useMinuteTick, useSyncErrorText } from "./shared";
+import {
+  formatDay,
+  isOffInviteList,
+  useAgo,
+  useInboxRefusalText,
+  useLocaleTag,
+  useMinuteTick,
+  useSyncErrorText,
+} from "./shared";
 
 /** The look-back choices offered before connecting. The server accepts 7-180;
  * three choices is a decision a thumb makes, and a slider is not. */
@@ -83,6 +90,13 @@ export default function InboxSettingsCard() {
         return t("inbox.callback.noRefreshToken");
       case "not_configured":
         return t("inbox.callback.notConfigured");
+      // The generic sentence ON PURPOSE (check-mirrors 37): Google answered with
+      // an error of its own, the code would not exchange, or the mailbox address
+      // could not be read. Starting again is all there is to do, which it says.
+      case "google_error":
+      case "exchange_failed":
+      case "profile_failed":
+        return t("inbox.callback.generic");
       default:
         return t("inbox.callback.generic");
     }
@@ -138,10 +152,14 @@ export default function InboxSettingsCard() {
   // `ready` without Google means the server offers only the demo mailbox.
   const demo = status.ready && !status.google_ready;
   const isDemo = status.provider === "fake";
-  const reauth = status.connected && status.status === "needs_reauth";
+  // Connected but off the invite list (FIXB B15): paused, not "Connected", and
+  // with no Reconnect, which the server would refuse the same way. Disconnect
+  // stays, for the reason this card renders at all.
+  const offList = isOffInviteList(status);
+  const reauth = !offList && status.connected && status.status === "needs_reauth";
   // An ordinary failed run leaves the connection "active" and says so only in
   // `last_error_code`, which the next good run clears (app/core/inbox_sync.py).
-  const failed = status.connected && !reauth && !!status.last_error_code;
+  const failed = !offList && status.connected && !reauth && !!status.last_error_code;
   // The reasons that say more than "reconnect": the weekly testing expiry, and
   // a grant that no longer includes Gmail.
   const reauthReason =
@@ -188,7 +206,7 @@ export default function InboxSettingsCard() {
       setStatus(await updateInboxSettings({ auto_sync: next }));
     } catch (e) {
       setStatus((s) => (s ? { ...s, auto_sync: !next } : s));
-      toast("error", apiErrorMessage(e, t("inbox.saveError")));
+      toast("error", refusal(e, t("inbox.saveError")));
     }
   }
 
@@ -208,7 +226,7 @@ export default function InboxSettingsCard() {
       const fresh = await getInboxStatus().catch(() => null);
       setStatus((s) => fresh ?? (s ? { ...s, connected: false, provider: "", email: "", status: "" } : s));
     } catch (e) {
-      toast("error", apiErrorMessage(e, t("inbox.disconnectError")));
+      toast("error", refusal(e, t("inbox.disconnectError")));
     }
     setDisconnecting(false);
   }
@@ -317,8 +335,14 @@ export default function InboxSettingsCard() {
                 </span>
                 <bdi>{status.email}</bdi>
               </span>
-              <Badge tone={reauth || failed ? "partial" : "mint"}>
-                {reauth ? t("inbox.state.needsReauth") : failed ? t("inbox.state.error") : t("inbox.state.active")}
+              <Badge tone={offList || reauth || failed ? "partial" : "mint"}>
+                {offList
+                  ? t("inbox.state.paused")
+                  : reauth
+                    ? t("inbox.state.needsReauth")
+                    : failed
+                      ? t("inbox.state.error")
+                      : t("inbox.state.active")}
               </Badge>
             </p>
             <p className="text-xs leading-relaxed text-ink-muted">
@@ -326,12 +350,13 @@ export default function InboxSettingsCard() {
               {" · "}
               {t("inbox.detected", { count: status.events_total })}
             </p>
+            {offList && <p className="text-xs leading-relaxed text-warn">{t("inbox.inviteOnly")}</p>}
             {failed && (
               <p className="text-xs leading-relaxed text-warn">{errorText(status.last_error_code)}</p>
             )}
           </div>
 
-          {!isDemo && (reauth || due) && (
+          {!isDemo && !offList && (reauth || due) && (
             <div
               className={cn(
                 "mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border px-3 py-2",

@@ -6,7 +6,7 @@ import { Badge, useToast } from "../ui";
 import { apiErrorCode, apiErrorMessage } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
 import { dateOfRecord } from "../../hooks/useTrackerMetrics";
-import type { ApplicationOut, InboxEvent } from "../../types";
+import type { ApplicationOut, InboxEvent, InboxStatus } from "../../types";
 
 /**
  * What the inbox surfaces share: the email-kind badge, dates in the UI
@@ -313,7 +313,12 @@ export function isRefusal(e: unknown): boolean {
 
 /** The inbox routes' structured refusals (`{"code": "inbox_..."}`) as
  * sentences. The backend sends codes so they are translated here; anything
- * else goes through `apiErrorMessage` with the caller's fallback. */
+ * else goes through `apiErrorMessage` with the caller's fallback.
+ *
+ * EVERY code app/api/inbox_routes.py can send a browser has an arm of its own
+ * (check-mirrors 37), and this is the only place under components/inbox/ that
+ * calls `apiErrorMessage`: a toast that called it directly showed a 403
+ * invite_only as "please try again". */
 export function useInboxRefusalText(): (e: unknown, fallback: string) => string {
   const { t } = useTranslation("tracker");
   return (e, fallback) => {
@@ -331,10 +336,34 @@ export function useInboxRefusalText(): (e: unknown, fallback: string) => string 
         return t("inbox.refusals.eventGone");
       case "invite_only":
         return t("inbox.bar.inviteOnly");
+      // Gmail, or the demo mailbox, is no longer set up on this server.
+      case "inbox_google_disabled":
+      case "inbox_fake_disabled":
+        return t("inbox.errors.server");
+      // A setting saved after a disconnect in another tab.
+      case "inbox_not_connected":
+        return t("inbox.errors.notConnected");
+      // A resolve naming neither a card nor "create". This page never sends
+      // one, so the caller's own "couldn't do that" is the honest sentence.
+      case "inbox_resolve_target":
+        return apiErrorMessage(e, fallback);
       default:
         return apiErrorMessage(e, fallback);
     }
   };
+}
+
+/** A CONNECTED Gmail account that is no longer on the invite list (FIXB B15).
+ *
+ * The connection row stays, so it can still be disconnected, but every sync of
+ * it answers `invite_only` without reading anything, and it writes no
+ * `last_sync_at`, so to a page that only reads the connection it looked
+ * healthy: a mint "Connected", a Sync button, and a background sync fired on
+ * every visit because the last sync never got any newer. The status says so in
+ * `reason`, and both surfaces read it through here. The demo mailbox reads
+ * nobody's mail and is exempt, as it is in `inbox_sync.sync_user`. */
+export function isOffInviteList(s: InboxStatus): boolean {
+  return s.connected && s.provider !== "fake" && s.reason === "invite_only";
 }
 
 /** "Open in Gmail", as a 44px target. Only for an https address: the link is
@@ -359,9 +388,15 @@ export function GmailLink({ url, className }: { url?: string; className?: string
 }
 
 /** A sync error code (`InboxSyncResult.error_code`, `InboxStatus.last_error_code`)
- * as a sentence. The codes are app/core/inbox_sync.py's: each one the user can
- * act on, or should not bother acting on, gets its own sentence, and any other
- * gets the generic line, never the raw code. "" for no error. */
+ * as a sentence. "" for no error.
+ *
+ * The codes are app/core/inbox_sync.py's, and EVERY one it can send has an arm
+ * of its own (check-mirrors 37 reads them from the backend). A code that gets
+ * the generic sentence gets it in the group below that says why, so the choice
+ * is visible rather than a default nobody made: FIXB B15's `invite_only` fell
+ * to the default that way and promised a retry that never comes. A code this
+ * build does not know, Google's own error strings included, gets the generic
+ * line, never the raw code. */
 export function useSyncErrorText(): (code: string) => string {
   const { t } = useTranslation("tracker");
   return (code) => {
@@ -373,8 +408,11 @@ export function useSyncErrorText(): (code: string) => string {
         return t("inbox.errors.reauthDue");
       case "missing_scope":
         return t("inbox.errors.missingScope");
+      // The grant is gone for good (inbox_sync's _REAUTH_CODES), or our copy
+      // of it cannot be read: only a reconnect helps.
       case "needs_reauth":
       case "invalid_grant":
+      case "admin_policy_enforced":
       case "token_unreadable":
         return t("inbox.errors.reauth");
       case "daily_limit":
@@ -382,11 +420,34 @@ export function useSyncErrorText(): (code: string) => string {
       // Another run (the cron, another tab) holds the mailbox.
       case "sync_in_progress":
         return t("inbox.errors.inProgress");
+      // FIXB B15: this account is off the Gmail invite list, so nothing will
+      // sync until it is back on. "It tries again" would be false.
+      case "invite_only":
+        return t("inbox.bar.inviteOnly");
+      // Disconnected in another tab, or on another device.
+      case "not_connected":
+        return t("inbox.errors.notConnected");
       // The server's problem, not the user's: there is nothing to reconnect.
       case "token_key_missing":
       case "google_not_configured":
       case "fake_disabled":
+      case "host_not_allowed":
         return t("inbox.errors.server");
+      // The generic sentence ON PURPOSE. A failed read, a failed model call or
+      // a dropped connection to Google is retried by the next run, which is
+      // what the sentence says. `inactive` and `error` never reach a signed-in
+      // page, so they get it for want of anything truer: the gate refuses a
+      // deactivated account first, and `error` is sync_user's fallback for a
+      // connection whose status is EMPTY (`conn.status or "error"`), which the
+      // column's "active" default and every write keep from happening.
+      case "internal":
+      case "gmail_error":
+      case "classify_failed":
+      case "network":
+      case "no_access_token":
+      case "inactive":
+      case "error":
+        return t("inbox.errors.generic");
       default:
         return t("inbox.errors.generic");
     }

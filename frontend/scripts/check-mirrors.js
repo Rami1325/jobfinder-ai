@@ -6339,6 +6339,1740 @@ try {
   fail(`size-limit sentence check could not run: ${e.message}`);
 }
 
+// ---- 37. every code the inbox sends has a sentence of its own --------------- //
+// P29-INBOX-CODES. The inbox backend talks to the page in three families of
+// codes, and each has a hand-written `switch` on this side that turns a code
+// into a sentence:
+//   - SYNC codes: `InboxSyncResult.error_code` and `InboxStatus.last_error_code`
+//     (app/core/inbox_sync.py, plus the connect routes that reset `last_error`)
+//     -> `useSyncErrorText` in components/inbox/shared.tsx;
+//   - ROUTE REFUSALS: `HTTPException(detail={"code": …})` in
+//     app/api/inbox_routes.py -> `useInboxRefusalText`, same file;
+//   - CALLBACK REASONS: the `/settings?inbox=<reason>` the Gmail callback
+//     redirects with -> `callbackMessage` in InboxSettingsCard.tsx.
+// Nothing compared the two sides, and one drifted where a user could read it.
+// FIXB B15 (1836d30) made a sync return `invite_only` for a connected user taken
+// off the allowlist, three hours after the switch was written, and touched no
+// frontend file. The code fell to `default`, so someone who can never sync again
+// was told "The last sync ran into a problem. It tries again on the next sync."
+//
+// So the codes are READ from the backend, and:
+//   37(a)-(c) every code in each family has a `case` of its OWN. An arm that
+//      returns the generic sentence is allowed: it makes "the generic sentence
+//      is right for this code" a decision a reviewer can see, instead of a
+//      default nobody chose. A `case` stacked on `default:` is not an arm of its
+//      own. Each `default` is pinned to its generic sentence and never to the code.
+//   37(d) no file under components/inbox/ can reach `apiErrorMessage` except
+//      through `useInboxRefusalText`. The name may appear only in shared.tsx's
+//      plain `import { … }` and inside the hook; any other mention (a call, an
+//      aliased import, `api.apiErrorMessage(…)`) and any namespace or dynamic
+//      import of lib/apiError fails. Call sites that went around the hook showed
+//      a refusal it translates as "please try again": a 403 invite_only on the
+//      tracker's Reconnect read "Couldn't start reconnecting".
+//   37(e) the other direction. Every case literal must be a code the backend
+//      really sends, and so must every code a component compares with
+//      `apiErrorCode(…)`, an `error_code` / `last_error_code`, a status `reason`
+//      or a connection `.status`, and every member of shared.tsx's ANSWERS. A
+//      backend rename otherwise leaves the comparison false for ever: the review
+//      sheet's `left` would put an email that was already filed back in the
+//      queue, and a renamed "needs_reauth" would hide Reconnect. Each
+//      `InboxStatus.reason` must also be compared in BOTH the bar and the
+//      Settings card, or a new reason hides both. A connection that is off the
+//      invite list is held to its own rendering, the import line included.
+//
+// WHAT IS READ, AND WHAT THROWS. Python is read as text (pySource + pyCode), not
+// through an AST, so every reader has a CLOSED grammar over the SITES it knows:
+// at a site, a value it cannot read throws an error that names the file's own
+// line. Every family also has NETS, so each other way of writing it that is named
+// below throws instead of going unread. What no reader or net can see is listed
+// under KNOWINGLY UNREAD, not claimed as covered.
+//   - A sync code is the value written to `error_code`, `last_error` or
+//     `last_error_code` in inbox_sync.py or inbox_routes.py: `x.error_code = …`
+//     or a bare `error_code = …` ANYWHERE on a line (after `if x:` or `;` too),
+//     an annotated default `last_error: str = …`, or an `error_code=` keyword
+//     (a black-formatted continuation line, two on one line). A keyword's value
+//     runs to the first top-level `,` or the `)` closing its call; a statement's
+//     to its end, across lines while a bracket is open. Both branches of a
+//     ternary are read and its condition is not; `X or "lit"` reads both sides.
+//     A term is one of four things:
+//       - a literal;
+//       - `code`, allowed only inside a def that has a `code` parameter. That def
+//         is an EMITTER, and the value passed as `code` at each call to it is read;
+//       - `conn.status`, which reads every connection status (below) except "active";
+//       - a pass-through, `result.error_code` or `conn.last_error`.
+//     At an emitter's call site, `e.code` is Google's: the code argument of every
+//     `GoogleAuthError(…)` in the google_oauth functions that def calls, followed
+//     through google_oauth's own helpers, plus inbox_sync's `_REAUTH_CODES`. That
+//     argument is read the same way (each literal branch is a code), and
+//     `_error_code(…)` is the ONE open-set shape it allows.
+//     NETS: an augmented or walrus write (`+=`, `:=`), a tuple assignment (the
+//     field among the targets, or a tuple as the value), the field named in a
+//     string (`setattr(r, "error_code", …)`, `model_copy(update={"error_code":
+//     …})`), and `**` unpacked into `InboxSyncResult(…)`, `MailConnection(…)` or
+//     `.values(…)`.
+//   - A connection status is the value of `x.status = …` for ANY receiver (so an
+//     alias `mc = conn; mc.status = …` is read), `x.status: T = …`, or a `status=`
+//     keyword (`MailConnection(…, status=…)`, a bulk
+//     `update(MailConnection).values(status=…)`), in the same two files. A term
+//     is a literal or the `conn.status` passthrough. Not a connection's, and not
+//     read: a bare local `status = …` (depth 0: inbox_routes' HTTP status), a def's
+//     own `status=` default, and anything inside a class in APP_STATUS_CLASSES
+//     (`_Card`, which copies an APPLICATION's status). NETS: the augmented and
+//     tuple forms, and `"status"` named in a string, as for sync codes.
+//   - A refusal is the detail of an `HTTPException(` in a top-level def of
+//     inbox_routes.py, keyword or positional. The detail is absent, a message
+//     literal (no code: lib/apiError reads one only out of an object), or a
+//     dict literal with one `"code"` key. The code is a literal, or an f-string
+//     with one placeholder that is a parameter of its own def (today `_finish`'s
+//     `refusal`). The f-string is expanded through every call to that def: the
+//     `inbox_apply.<fn>(…)` passed there, inline or through one variable, and every
+//     `return` in that fn must be a string literal. `cron_unconfigured` is the one
+//     server-only code, and only `def inbox_cron(` may raise it. NETS: any
+//     `"code":` key in the file that no such detail carried, any `code=` keyword
+//     of a `dict(…)`, and any `code=` keyword handed a string literal. Handing on
+//     a variable as `code=` is not a refusal (`exchange_code(code=code)` passes
+//     Google's OAuth code), and neither is a def's own `code="…"` default.
+//   - A callback reason is the argument passed to a nested `def X(reason…)` inside
+//     `inbox_google_callback` (today `fail` and `refuse`): a literal or a ternary
+//     of literals, or, inside an emitter only, its own `reason`. The same callback's
+//     `leave(path)` is read too. A literal `/settings?inbox=<reason>` is a reason;
+//     `/tracker?inbox=connected` is the success; a path with no `inbox=` carries
+//     none. `"/settings?inbox=" + quote(reason, …)` inside an emitter is the one
+//     computed path. NET: any `?inbox=` / `&inbox=` in the file that no leave()
+//     carried throws.
+//   - On the page, a comparison is `===` / `!==` against a literal, directly or
+//     through one `const` holding the compared value. Every `.status` so compared
+//     under components/inbox is read as the connection's: no inbox component
+//     compares an application's status with a literal today.
+// Google's OPEN set stays on `default` by design: its own `error` strings and
+// `http_<status>` arrive through `_error_code(…)` and `e.code` and never appear as
+// literals here. A Google string mapped on purpose goes in GOOGLE_PASSTHROUGH.
+// KNOWINGLY UNREAD (no reader, no net; rewrite into a read shape, or teach one):
+//   - a sync code or a connection status written from any other module
+//     (db/models.py's column defaults included), or through a name the text
+//     cannot see: `setattr` with a computed name, `model_copy(update=<variable>)`,
+//     `**` unpacked anywhere but the three calls above;
+//   - a GoogleAuthError raised outside google_oauth (gmail_api raises its own,
+//     which no emitter's `except` hands on today), or in a google_oauth function
+//     reached other than by its plain name (a method, a function passed as a value);
+//   - an inbox refusal raised outside inbox_routes.py (a dependency, the gate),
+//     or sent from inbox_routes.py some way the nets do not name (a `code=`
+//     keyword handed a variable, outside `dict(…)`);
+//   - a callback redirect whose `inbox=` is not written literally (urlencode);
+//   - a code or status the page compares other than with `===` / `!==` (a
+//     `switch` outside the three hooks, `.includes(…)`, a lookup table);
+//   - a wrapper of apiErrorMessage defined outside components/inbox.
+//
+// Floors sit just under today's counts. Check 29 resolves the key each arm
+// returns (literal t() calls, looked up in the namespace each binding names).
+// This check holds the arms to that literal shape so check 29 can see them.
+// Degrades only when backend/ is absent; the frontend half (the grammar, the
+// defaults, the wiring) still runs.
+const INBOX_SYNC_PY = "app/core/inbox_sync.py";
+const INBOX_ROUTES_PY = "app/api/inbox_routes.py";
+const INBOX_APPLY_PY = "app/core/inbox_apply.py";
+const GOOGLE_OAUTH_PY = "app/core/google_oauth.py";
+const INBOX_SERVER_ONLY = new Set(["cron_unconfigured"]); // never reaches a browser
+const GOOGLE_PASSTHROUGH = new Set(); // Google's own strings given a sentence on purpose; none today
+const PY_LIT = /^(["'])([^"'\\]*)\1$/;
+const SYNC_PASS = new Set(["result.error_code", "conn.last_error"]);
+
+/** The balanced bracket that opens at `src[open]`, skipping string contents:
+ * its inside, and the index just past its close. */
+function pyParen(src, open) {
+  let depth = 0;
+  let quote = null;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") quote = c;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c) && --depth === 0) return { inner: src.slice(open + 1, i), end: i + 1 };
+  }
+  throw new Error(`unbalanced bracket at \`${src.slice(open, open + 60).split("\n")[0]}\``);
+}
+
+/** An argument or parameter list split on its top-level commas (or on another
+ * top-level separator: `+` splits a concatenation into its pieces). */
+function pySplit(inner, sep = ",") {
+  const out = [];
+  let depth = 0;
+  let quote = null;
+  let start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") quote = c;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === sep && depth === 0) {
+      out.push(inner.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  if (inner.slice(start).trim()) out.push(inner.slice(start).trim());
+  return out;
+}
+
+/** The first argument-shaped piece of `text`: up to a top-level `,` or the `)`
+ * that closes the call it sits in. */
+function pyArgHead(text) {
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") quote = c;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) {
+      if (depth === 0) return text.slice(0, i);
+      depth--;
+    } else if (c === "," && depth === 0) return text.slice(0, i);
+  }
+  return text;
+}
+
+/** Per character of pyCode `code`: the bracket depth it sits at (a bracket
+ * itself counts at the depth outside it) and whether it is inside a string,
+ * plus `lineOf(index)`, 1-based. A string ends with its line: pyCodeLines has
+ * already blanked the only strings that can span lines. */
+function pyScan(code) {
+  const depth = new Int32Array(code.length + 1);
+  const inStr = new Uint8Array(code.length + 1);
+  const starts = [0];
+  let d = 0;
+  let quote = null;
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    depth[i] = d;
+    if (c === "\n") {
+      starts.push(i + 1);
+      quote = null;
+    } else if (quote) {
+      inStr[i] = 1;
+      if (c === "\\" && i + 1 < code.length && code[i + 1] !== "\n") {
+        depth[i + 1] = d;
+        inStr[i + 1] = 1;
+        i++;
+      } else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+      inStr[i] = 1;
+    } else if ("([{".includes(c)) d++;
+    else if (")]}".includes(c)) depth[i] = d = Math.max(0, d - 1);
+  }
+  depth[code.length] = d;
+  const lineOf = (idx) => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= idx) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
+  return { depth, inStr, lineOf };
+}
+
+/** The rest of the statement a value starts at `from`: up to the newline or `;`
+ * at the depth `from` sits at, so a bracketed value may span lines. */
+function pyStatementTail(code, scan, from) {
+  const base = scan.depth[from];
+  for (let j = from; j < code.length; j++)
+    if (!scan.inStr[j] && scan.depth[j] === base && (code[j] === "\n" || code[j] === ";")) return code.slice(from, j);
+  return code.slice(from);
+}
+
+/** Whether a plain `=` (not `==`, `<=`, `+=`, `:=`…) follows `from` at its own
+ * depth before its statement ends: `from` is then inside an assignment's targets. */
+function pyAssignsLater(code, scan, from) {
+  const base = scan.depth[from];
+  for (let j = from; j < code.length; j++) {
+    if (scan.inStr[j]) continue;
+    if (scan.depth[j] === base && (code[j] === "\n" || code[j] === ";")) return false;
+    if (code[j] === "=" && scan.depth[j] === base && code[j + 1] !== "=" && !"=!<>:+-*/%&|^@".includes(code[j - 1]))
+      return true;
+  }
+  return false;
+}
+
+/** The call whose bracket encloses index `idx` of pyCode `code`: { name, def },
+ * where `name` is the dotted name before the `(` ("" for a bare bracket or a
+ * list, dict or set literal) and `def` says the bracket is a def's signature.
+ * null at depth 0. */
+function pyCallee(code, scan, idx) {
+  const d = scan.depth[idx];
+  if (!d) return null;
+  for (let j = idx - 1; j >= 0; j--)
+    if (!scan.inStr[j] && scan.depth[j] === d - 1 && "([{".includes(code[j])) {
+      const before = code.slice(Math.max(0, j - 160), j);
+      const m = /([A-Za-z_][\w.]*)\s*$/.exec(before);
+      if (code[j] !== "(" || !m) return { name: "", def: false };
+      return { name: m[1], def: /\bdef\s+$/.test(before.slice(0, m.index)) };
+    }
+  return null;
+}
+
+/** 1-based [first, last] line spans of the top-level classes of pyCode `code`
+ * whose names are in `names`. */
+function pyClassSpans(code, names) {
+  const lines = code.split("\n");
+  const spans = [];
+  for (const m of code.matchAll(/^class (\w+)\b/gm)) {
+    if (!names.has(m[1])) continue;
+    const first = code.slice(0, m.index).split("\n").length;
+    let last = lines.length;
+    for (let i = first; i < lines.length; i++)
+      if (/^[^\s)]/.test(lines[i])) {
+        last = i;
+        break;
+      }
+    spans.push([first, last]);
+  }
+  return spans;
+}
+
+/** Every top-level def in pyCode `code`: name -> { body, params, line }, where
+ * `line` is the 1-based line of its `def`. */
+function pyDefsOf(code, file) {
+  const defs = new Map();
+  for (const m of code.matchAll(/^def (\w+)\(/gm)) {
+    const body = pyDef(code, m[1], file);
+    const params = pySplit(pyParen(body, body.indexOf("(")).inner)
+      .map((p) => p.replace(/^\*+/, "").split(/[:=]/)[0].trim())
+      .filter(Boolean);
+    defs.set(m[1], { body, params, line: code.slice(0, m.index).split("\n").length });
+  }
+  return defs;
+}
+
+/** The top-level def whose body holds 1-based line `n`, or null. */
+function pyHolder(defs, n) {
+  for (const [name, d] of defs) if (n >= d.line && n < d.line + d.body.split("\n").length) return { name, ...d };
+  return null;
+}
+
+/** Every call `name(` in `src` that is not its own `def`, as { at, args, line }. */
+function pyCalls(src, name) {
+  const out = [];
+  for (const m of src.matchAll(new RegExp(`(?<![\\w])${name}\\(`, "g"))) {
+    if (/\bdef\s+$/.test(src.slice(Math.max(0, m.index - 8), m.index))) continue;
+    out.push({
+      at: m.index,
+      args: pySplit(pyParen(src, m.index + name.length).inner),
+      line: src.slice(0, m.index).split("\n").length,
+    });
+  }
+  return out;
+}
+
+/** The operands that can become an expression's value: both branches of a
+ * ternary (never its condition) and both sides of `or`, parentheses dropped. */
+function pyTerms(expr) {
+  let e = expr.trim();
+  while (e.startsWith("(") && pyParen(e, 0).end === e.length) e = e.slice(1, -1).trim();
+  const tern = /^(.+?)\s+if\s+.+?\s+else\s+(.+)$/.exec(e);
+  if (tern) return [...pyTerms(tern[1]), ...pyTerms(tern[2])];
+  const parts = e.split(/\s+or\s+/);
+  return parts.length > 1 ? parts.flatMap(pyTerms) : [e];
+}
+
+/** The argument a call passes for parameter `param` at position `k`: its
+ * keyword form, else the k-th positional argument, else undefined. */
+function pyArgFor(args, param, k) {
+  const kw = args.find((a) => new RegExp(`^${param}\\s*=(?!=)`).test(a));
+  if (kw) return kw.replace(/^\w+\s*=\s*/, "");
+  const positional = args.filter((a) => !/^\w+\s*=(?!=)/.test(a));
+  return positional[k];
+}
+
+/** Every code the google_oauth functions `entries` can raise as
+ * `GoogleAuthError(<code>, …)`, following google_oauth's own defs they call.
+ * The code is read like a sync term: every literal branch of a ternary or an
+ * `or` is a code, the condition never. `_error_code(…)` is the ONE open-set
+ * shape (Google's own `error` string, or `http_<status>`), so it adds nothing
+ * and is allowed. Anything else throws and names the line. */
+function googleRaised(google, entries) {
+  const defs = pyDefsOf(google, GOOGLE_OAUTH_PY);
+  const codes = new Set();
+  const seen = new Set();
+  const queue = [...entries];
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen.has(name) || !defs.has(name)) continue;
+    seen.add(name);
+    const def = defs.get(name);
+    const lines = def.body.split("\n");
+    for (const call of pyCalls(def.body, "GoogleAuthError")) {
+      const shown = `backend/${GOOGLE_OAUTH_PY}:${def.line + call.line - 1}: \`${lines[call.line - 1].trim()}\``;
+      const arg = pyArgFor(call.args, "code", 0);
+      if (arg === undefined) throw new Error(`${shown} raises a GoogleAuthError with no code, so check 37 cannot read it`);
+      for (const term of pyTerms(arg)) {
+        const lit = PY_LIT.exec(term);
+        if (lit) {
+          if (lit[2]) codes.add(lit[2]);
+        } else if (!(/^_error_code\(/.test(term) && pyParen(term, term.indexOf("(")).end === term.length))
+          throw new Error(
+            `${shown} — the code \`${term}\` is neither a literal nor \`_error_code(…)\`, Google's open set. That ` +
+              "code reaches `last_error` through `_fail(…, e.code)`, so check 37 must read it: write it as a " +
+              "literal (a ternary of literals is read), or teach the reader the new shape",
+          );
+      }
+    }
+    for (const m of def.body.matchAll(/(?<![\w.])(\w+)\(/g)) queue.push(m[1]);
+  }
+  return { codes, seen };
+}
+
+const PY_SYNC_FIELD = "(?:error_code|last_error_code|last_error)";
+const PY_AUGMENTED = "(?:\\/\\/|\\*\\*|>>|<<|:|[-+*/%&|^@])=";
+// The classes whose `status` is an APPLICATION's, never a connection's: an
+// inbox_sync `_Card` copies a tracker card's status to match mail against it.
+const APP_STATUS_CLASSES = new Set(["_Card"]);
+
+/**
+ * 37(a)'s reader. Every code the backend can store in `InboxSyncResult.error_code`
+ * or `MailConnection.last_error`, and every status a connection can be given.
+ * `sources` is [[file, pyCode], …] and `google` is google_oauth.py's pyCode.
+ * Returns { codes, emitters, google, statuses }.
+ */
+function inboxSyncCodes(sources, google) {
+  const codes = new Set();
+  const googleCodes = new Set();
+  const statuses = new Set();
+  const files = sources.map(([file, code]) => ({
+    file,
+    code,
+    defs: pyDefsOf(code, file),
+    lines: code.split("\n"),
+    scan: pyScan(code),
+    app: pyClassSpans(code, APP_STATUS_CLASSES),
+  }));
+  const queue = [];
+  let useStatuses = false;
+  const where = (f, n, text) => `backend/${f.file}:${n}: \`${text.trim()}\``;
+  const unreadable = (f, n, text, why) =>
+    new Error(
+      `${where(f, n, text)} — ${why}. Check 37 reads only the shapes its header lists, so a new one ` +
+        "must be taught to it (or rewritten into a known one), never left unread",
+    );
+
+  // A term that became (part of) a stored code, at line n of file f, inside def `holder`.
+  const take = (term, f, n, text, holder, atCall) => {
+    const lit = PY_LIT.exec(term);
+    if (lit) {
+      if (lit[2]) codes.add(lit[2]);
+      return;
+    }
+    if (term === "code") {
+      if (!holder || !holder.params.includes("code"))
+        throw unreadable(f, n, text, "`code` here is not a parameter of the def it sits in, so nothing says what it holds");
+      queue.push(holder.name);
+      return;
+    }
+    if (!atCall && term === "conn.status") {
+      useStatuses = true;
+      return;
+    }
+    if (SYNC_PASS.has(term)) return;
+    if (atCall && (term === "e.code" || term === "exc.code")) {
+      const entries = holder ? [...holder.body.matchAll(/\bgoogle_oauth\.(\w+)\(/g)].map((m) => m[1]) : [];
+      if (!entries.length)
+        throw unreadable(f, n, text, "`e.code` is passed from a def that calls no google_oauth function");
+      for (const c of googleRaised(google, entries).codes) {
+        googleCodes.add(c);
+        codes.add(c);
+      }
+      const reauth = /^_REAUTH_CODES\s*=\s*frozenset\(\{([^}]*)\}\)/m.exec(f.code);
+      if (!reauth) throw unreadable(f, n, text, "`e.code` is passed through, and this file has no `_REAUTH_CODES = frozenset({…})`");
+      for (const m of reauth[1].matchAll(/(["'])([a-z][a-z_]*)\1/g)) codes.add(m[2]);
+      return;
+    }
+    throw unreadable(f, n, text, `the term \`${term}\` is not a literal, \`code\`, \`conn.status\` or a pass-through`);
+  };
+
+  // A site is found ANYWHERE in the file, not only at a line's start: after
+  // `if x:` or `db.flush();` too. Its depth says what it is. Inside a bracket it
+  // is a keyword (a black-formatted continuation line included), and its value
+  // runs to the first top-level `,` or the `)` closing the call, so a second
+  // keyword on the line is never read as part of it. At depth 0 it is a
+  // statement, and its value runs to the statement's end, across lines while a
+  // bracket is open. A statement assigning a tuple is refused.
+  const sites = (f, re) => [...f.code.matchAll(re)].filter((m) => !f.scan.inStr[m.index]);
+  const valueAt = (f, site, from, n) => {
+    if (f.scan.depth[site] > 0) return pyArgHead(f.code.slice(from));
+    const tail = pyStatementTail(f.code, f.scan, from);
+    if (pySplit(tail).length > 1)
+      throw unreadable(f, n, f.lines[n - 1], "a tuple assignment, which pairs its targets with its values by position");
+    return tail;
+  };
+  const WRITE = new RegExp(`(?<![\\w"'])${PY_SYNC_FIELD}\\s*=(?!=)`, "g");
+  const ANNOTATED = new RegExp(`^[ \\t]*(?:[A-Za-z_][\\w.]*\\.)?${PY_SYNC_FIELD}\\s*:(?!=)[^=\\n]*=(?!=)`, "gm");
+  const STATUS_ATTR = /\.status\s*=(?!=)/g; // `x.status = …`, any receiver, so an alias is read
+  const STATUS_ANNOTATED = /^[ \t]*[A-Za-z_][\w.]*\.status\s*:(?!=)[^=\n]*=(?!=)/gm; // `x.status: str = …`
+  const STATUS_KEYWORD = /(?<![\w."'])status\s*=(?!=)/g; // at depth 0 it is a local, not a keyword
+  for (const f of files) {
+    const line = (m) => f.scan.lineOf(m.index);
+    // Sync codes: every `=` write of the three fields, and an annotated default.
+    for (const m of [...sites(f, WRITE), ...sites(f, ANNOTATED)]) {
+      const n = line(m);
+      const rhs = valueAt(f, m.index, m.index + m[0].length, n);
+      if (!rhs.trim()) throw unreadable(f, n, f.lines[n - 1], "the value is missing");
+      for (const term of pyTerms(rhs)) take(term, f, n, f.lines[n - 1], pyHolder(f.defs, n), false);
+    }
+    // Connection statuses: an attribute write, or a `status=` keyword (the
+    // constructor, a bulk `.values(…)`), outside an application class and a
+    // def's own signature. A term is a literal or the `conn.status` passthrough.
+    const inApp = (n) => f.app.some(([a, b]) => n >= a && n <= b);
+    const takeStatus = (term, n) => {
+      const lit = PY_LIT.exec(term);
+      if (lit) {
+        if (lit[2]) statuses.add(lit[2]);
+      } else if (term !== "conn.status")
+        throw unreadable(
+          f,
+          n,
+          f.lines[n - 1],
+          `a status written as \`${term}\`, which is neither a literal nor \`conn.status\`. A status is read as a ` +
+            "connection's: if this is an application's, name its class in APP_STATUS_CLASSES",
+        );
+    };
+    for (const m of [...sites(f, STATUS_ATTR), ...sites(f, STATUS_ANNOTATED)]) {
+      const n = line(m);
+      if (!inApp(n)) for (const term of pyTerms(valueAt(f, m.index, m.index + m[0].length, n))) takeStatus(term, n);
+    }
+    for (const m of sites(f, STATUS_KEYWORD)) {
+      const n = line(m);
+      if (!f.scan.depth[m.index] || inApp(n) || pyCallee(f.code, f.scan, m.index)?.def) continue;
+      for (const term of pyTerms(pyArgHead(f.code.slice(m.index + m[0].length)))) takeStatus(term, n);
+    }
+    // THE NETS: every other way to write one of these fields throws.
+    const net = (m, why) => {
+      throw unreadable(f, line(m), f.lines[line(m) - 1], why);
+    };
+    const target = (m) => f.scan.depth[m.index] === 0 && pyAssignsLater(f.code, f.scan, m.index + m[0].length);
+    for (const m of sites(f, new RegExp(`(?<![\\w"'])${PY_SYNC_FIELD}\\s*${PY_AUGMENTED}`, "g")))
+      net(m, "an augmented or walrus assignment, whose value depends on what was there before");
+    for (const m of sites(f, new RegExp(`\\.status\\s*${PY_AUGMENTED}`, "g")))
+      net(m, "an augmented assignment of a status, whose value depends on what was there before");
+    for (const m of sites(f, new RegExp(`(?<![\\w"'])${PY_SYNC_FIELD}\\s*,`, "g")))
+      if (target(m)) net(m, "a tuple assignment, which pairs its targets with its values by position");
+    for (const m of sites(f, /\.status\s*,/g))
+      if (target(m)) net(m, "a tuple assignment of a status, which pairs its targets with its values by position");
+    for (const m of f.code.matchAll(/(["'])(error_code|last_error_code|last_error|status)\1/g))
+      if (!m.index || !f.scan.inStr[m.index - 1])
+        net(
+          m,
+          `the field \`${m[2]}\` is named in a string (setattr, a dict key, model_copy(update=…), .values({…})), ` +
+            "which is a write check 37 cannot read",
+        );
+    for (const name of ["InboxSyncResult", "MailConnection", "values"])
+      for (const call of pyCalls(f.code, name))
+        if (call.args.some((a) => a.startsWith("**")))
+          throw unreadable(f, call.line, f.lines[call.line - 1], `\`**\` unpacks fields into ${name}(…), which check 37 cannot see`);
+  }
+
+  // Each emitter's callers, until no new emitter turns up.
+  const emitters = [];
+  while (queue.length) {
+    const name = queue.shift();
+    if (emitters.includes(name)) continue;
+    emitters.push(name);
+    const home = files.find((f) => f.defs.has(name));
+    const k = home.defs.get(name).params.indexOf("code");
+    let calls = 0;
+    for (const f of files)
+      for (const call of pyCalls(f.code, name)) {
+        calls++;
+        const text = f.lines[call.line - 1];
+        const arg = pyArgFor(call.args, "code", k);
+        if (arg === undefined) throw unreadable(f, call.line, text, `this call to ${name} passes nothing for \`code\``);
+        for (const term of pyTerms(arg)) take(term, f, call.line, text, pyHolder(f.defs, call.line), true);
+      }
+    if (!calls)
+      throw new Error(
+        `backend/${home.file}: \`${name}\` stores its \`code\` parameter as a sync code and nothing calls it, ` +
+          "so this check cannot see what it is handed",
+      );
+  }
+  if (useStatuses) for (const s of statuses) if (s !== "active") codes.add(s);
+  return { codes, emitters, google: googleCodes, statuses };
+}
+
+/** One Python string literal, of either quote, escapes allowed, with an optional
+ * prefix: a message detail, which carries no code (lib/apiError's codeOf reads
+ * a code only out of an object detail). */
+const PY_STR = /^[rRbBuUfF]{0,2}(["'])(?:\\.|(?!\1)[^\\])*\1$/;
+const PY_CODE_KEY = /(["'])code\1\s*:/g;
+
+/**
+ * 37(b)'s reader. Every `{"code": …}` refusal in inbox_routes.py (pyCode
+ * `routes`), with the f-string expanded through inbox_apply.py (pyCode `apply`).
+ * Every `HTTPException(` in a top-level def is read: its detail, keyword or
+ * positional, is absent, a message literal (no code), or a dict literal with ONE
+ * `"code"` key. Anything else throws. So does any `"code":` key anywhere in the
+ * file that no HTTPException detail carried (a JSONResponse, a module-level
+ * raise, a class method), any `dict(code=…)`, and any `code=` keyword handed a
+ * string literal: the nets the header names. Returns
+ * { raised: code -> Set(def names), fns }.
+ */
+function inboxRefusalCodes(routes, apply) {
+  const rdefs = pyDefsOf(routes, INBOX_ROUTES_PY);
+  const adefs = pyDefsOf(apply, INBOX_APPLY_PY);
+  const raised = new Map();
+  const fns = new Set();
+  const carried = new Set(); // file lines holding a "code": key a detail carried
+  const add = (code, def) => {
+    if (!raised.has(code)) raised.set(code, new Set());
+    raised.get(code).add(def);
+  };
+  const flines = routes.split("\n");
+  for (const [name, def] of rdefs)
+    for (const call of pyCalls(def.body, "HTTPException")) {
+      const n = def.line + call.line - 1;
+      const at = `backend/${INBOX_ROUTES_PY}:${n}: \`${flines[n - 1].trim()}\` in ${name}`;
+      if (call.args.some((a) => a.startsWith("*")))
+        throw new Error(`${at} unpacks its arguments, so check 37 cannot see its detail`);
+      const detail = pyArgFor(call.args, "detail", 1);
+      if (detail === undefined || PY_STR.test(detail)) continue; // no detail, or a message: no code
+      if (!detail.startsWith("{") || pyParen(detail, 0).end !== detail.length)
+        throw new Error(
+          `${at} — its detail \`${detail}\` is neither a message literal nor a \`{"code": …}\` dict literal, so ` +
+            "check 37 cannot read the code it sends",
+        );
+      const keys = pySplit(pyParen(detail, 0).inner)
+        .map((e) => /^(["'])code\1\s*:\s*([\s\S]*)$/.exec(e))
+        .filter(Boolean);
+      const callSrc = def.body.slice(call.at, pyParen(def.body, call.at + "HTTPException".length).end);
+      const keyAt = [...callSrc.matchAll(PY_CODE_KEY)];
+      if (keys.length !== 1 || keyAt.length !== 1)
+        throw new Error(`${at} — a dict detail must carry exactly one "code" key, at its top level, and nowhere else in the call`);
+      carried.add(def.line + def.body.slice(0, call.at + keyAt[0].index).split("\n").length - 1);
+      const value = keys[0][2].trim();
+      const lit = PY_LIT.exec(value);
+      if (lit) {
+        add(lit[2], name);
+        continue;
+      }
+      const shown = `detail={"code": ${value}}`;
+      const fstr = /^f(["'])([^"'\\]*)\1$/.exec(value);
+      if (!fstr)
+        throw new Error(`backend/${INBOX_ROUTES_PY}: \`${shown}\` in ${name} is neither a literal nor an f-string, so check 37 cannot read what it sends`);
+      const holes = [...fstr[2].matchAll(/\{([^{}]*)\}/g)].map((h) => h[1]);
+      if (holes.length !== 1 || !def.params.includes(holes[0]))
+        throw new Error(
+          `backend/${INBOX_ROUTES_PY}: \`${shown}\` in ${name} is an f-string check 37 cannot expand. It reads ONE ` +
+            "placeholder that is a parameter of its own def, expanded through that def's callers",
+        );
+      const param = holes[0];
+      const [pre, post] = fstr[2].split(`{${param}}`);
+      let callers = 0;
+      for (const [caller, cdef] of rdefs)
+        for (const use of pyCalls(cdef.body, name)) {
+          callers++;
+          const arg = pyArgFor(use.args, param, def.params.indexOf(param)) ?? "";
+          let fn = /^inbox_apply\.(\w+)\(/.exec(arg)?.[1];
+          if (!fn && /^\w+$/.test(arg)) {
+            const held = [...cdef.body.matchAll(new RegExp(`^\\s*${arg}\\s*=(?!=)\\s*inbox_apply\\.(\\w+)\\(`, "gm"))];
+            if (held.length === 1) fn = held[0][1];
+          }
+          if (!fn)
+            throw new Error(
+              `backend/${INBOX_ROUTES_PY}: ${caller} passes \`${arg}\` to ${name} as \`${param}\`, which is neither an ` +
+                "`inbox_apply.<fn>(…)` call nor one variable assigned from one, so check 37 cannot read the refusals it carries",
+            );
+          fns.add(fn);
+          if (!adefs.has(fn)) throw new Error(`backend/${INBOX_APPLY_PY} has no top-level \`def ${fn}(\`, which ${caller} calls`);
+          for (const line of adefs.get(fn).body.split("\n")) {
+            const r = /^\s*return\b\s*(.*)$/.exec(line);
+            if (!r) continue;
+            const v = PY_LIT.exec(r[1].trim());
+            if (!v)
+              throw new Error(
+                `backend/${INBOX_APPLY_PY}: ${fn} returns \`${r[1].trim()}\`. Every return in a refusal function must be ` +
+                  'a string literal ("" is success), or check 37 cannot read the refusal it becomes',
+              );
+            if (v[2]) add(`${pre}${v[2]}${post}`, name);
+          }
+        }
+      if (!callers) throw new Error(`backend/${INBOX_ROUTES_PY}: ${name} builds its refusal from \`${param}\`, and nothing calls it`);
+    }
+  // The nets. pyCode has blanked docstrings and cut comments already.
+  //  - A "code": key no HTTPException detail carried is a refusal this reader
+  //    never saw.
+  //  - So is a `code=` keyword that builds a dict (`dict(code=…)`), or that is
+  //    handed a string literal (`Model(code="inbox_x")`). A variable handed on
+  //    as `code=` is not a refusal (`exchange_code(code=code)` passes Google's
+  //    OAuth code), and neither is a def's own `code="…"` default.
+  flines.forEach((line, i) => {
+    if (/(["'])code\1\s*:/.test(line) && !carried.has(i + 1))
+      throw new Error(
+        `backend/${INBOX_ROUTES_PY}:${i + 1}: \`${line.trim()}\` carries a "code" key that is not the detail of an ` +
+          "`HTTPException(` in a top-level def, so check 37 never reads the refusal it sends. Raise it as one, or " +
+          "teach the reader the new shape",
+      );
+  });
+  const scan = pyScan(routes);
+  for (const m of routes.matchAll(/(?<![\w."'])code\s*=(?!=)/g)) {
+    if (scan.inStr[m.index] || !scan.depth[m.index]) continue; // a local `code = …`, not a keyword
+    const callee = pyCallee(routes, scan, m.index);
+    if (callee?.def) continue;
+    const value = pyArgHead(routes.slice(m.index + m[0].length));
+    if (callee?.name === "dict" || pyTerms(value).some((t) => PY_STR.test(t))) {
+      const n = scan.lineOf(m.index);
+      throw new Error(
+        `backend/${INBOX_ROUTES_PY}:${n}: \`${flines[n - 1].trim()}\` sends \`code=${value.trim()}\` ` +
+          `${callee?.name === "dict" ? "as a dict key" : "as a literal"} that is not the detail of an \`HTTPException(\`, ` +
+          "so check 37 never reads the refusal it sends. Raise it as one, or teach the reader the new shape",
+      );
+    }
+  }
+  return { raised, fns };
+}
+
+/** The defs nested in a def's `body`: [{ name, params, from, to }], where
+ * from..to are the 1-based body lines from the nested `def` to the last line
+ * indented deeper than it (a multi-line signature's `) -> T:` stays its own). */
+function pyNestedDefs(body) {
+  const lines = body.split("\n");
+  const out = [];
+  for (const m of body.matchAll(/^([ \t]+)def (\w+)\(/gm)) {
+    const from = body.slice(0, m.index).split("\n").length;
+    let to = lines.length;
+    for (let i = from; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.trim() && l.length - l.trimStart().length <= m[1].length && !/^\s*\)/.test(l)) {
+        to = i;
+        break;
+      }
+    }
+    const params = pySplit(pyParen(body, m.index + m[0].length - 1).inner)
+      .map((p) => p.replace(/^\*+/, "").split(/[:=]/)[0].trim())
+      .filter(Boolean);
+    out.push({ name: m[2], params, from, to });
+  }
+  return out;
+}
+
+/**
+ * 37(c)'s reader. The reasons `inbox_google_callback` redirects with (pyCode
+ * `routes`), read two ways:
+ *   - through its nested `def X(reason…)` emitters (today `fail` and
+ *     `refuse`): each call passes a literal, a ternary of literals, or, inside an
+ *     emitter only, that emitter's own `reason`;
+ *   - through its nested `leave(path)`: a path is string literals and at most
+ *     one `quote(…)`. A literal `/settings?inbox=<reason>` is a reason,
+ *     `/tracker?inbox=connected` is the success, and a path with no `inbox=`
+ *     (the /login redirect) carries none. The one computed form is
+ *     `"/settings?inbox=" + quote(reason, …)` inside an emitter.
+ * Anything else throws. So does an `?inbox=` anywhere in the file that no
+ * leave() carried: a RedirectResponse built directly, or another route's.
+ * Returns { codes, emitters }.
+ */
+function inboxCallbackCodes(routes) {
+  const body = pyDef(routes, "inbox_google_callback", INBOX_ROUTES_PY);
+  const first = routes.slice(0, /^def inbox_google_callback\(/m.exec(routes).index).split("\n").length;
+  const nested = pyNestedDefs(body);
+  const emitters = nested.filter((d) => d.params[0] === "reason").map((d) => d.name);
+  if (!emitters.length)
+    throw new Error(`backend/${INBOX_ROUTES_PY}: inbox_google_callback has no nested \`def X(reason…)\` — the refusal shape changed`);
+  if (!nested.some((d) => d.name === "leave"))
+    throw new Error(`backend/${INBOX_ROUTES_PY}: inbox_google_callback has no nested \`def leave(\` — check 37 reads its redirects through it`);
+  const inEmitter = (n) => nested.some((d) => d.params[0] === "reason" && n >= d.from && n <= d.to);
+  const lines = body.split("\n");
+  const at = (n) => `backend/${INBOX_ROUTES_PY}:${first + n - 1}: \`${lines[n - 1].trim()}\` in inbox_google_callback`;
+  const codes = new Set();
+  for (const name of emitters)
+    for (const call of pyCalls(body, name)) {
+      const arg = pyArgFor(call.args, "reason", 0);
+      if (arg === undefined) throw new Error(`${at(call.line)} passes ${name} no reason`);
+      for (const term of pyTerms(arg)) {
+        const lit = PY_LIT.exec(term);
+        if (lit) {
+          if (lit[2]) codes.add(lit[2]);
+        } else if (term !== "reason" || !inEmitter(call.line))
+          throw new Error(
+            `${at(call.line)} passes \`${term}\` to ${name}. A reason is a literal (or a ternary of literals), or an ` +
+              "emitter forwarding its own `reason`",
+          );
+      }
+    }
+  const carried = new Set(); // file lines of every ?inbox= redirect leave() was read for
+  for (const call of pyCalls(body, "leave")) {
+    const arg = pyArgFor(call.args, "path", 0);
+    if (arg === undefined) throw new Error(`${at(call.line)} calls leave() with no path`);
+    const pieces = pySplit(arg, "+");
+    const text = [];
+    let quoted = null;
+    for (const p of pieces) {
+      const lit = PY_LIT.exec(p);
+      if (lit) text.push(lit[2]);
+      else if (quoted === null && /^quote\(/.test(p) && pyParen(p, 5).end === p.length) quoted = pySplit(pyParen(p, 5).inner)[0];
+      else
+        throw new Error(
+          `${at(call.line)} — leave() is sent \`${p}\`. Check 37 reads a path built from string literals and at most ` +
+            "one `quote(…)`, so that it sees every `?inbox=` reason",
+        );
+    }
+    if (!/[?&]inbox=/.test(text.join(""))) continue; // the /login redirect: no reason
+    const span = body.slice(call.at, pyParen(body, call.at + "leave".length).end).split("\n").length;
+    for (let k = 0; k < span; k++) carried.add(first + call.line - 1 + k);
+    if (quoted === null) {
+      const reason = /^\/settings\?inbox=([A-Za-z0-9_]+)$/.exec(text.join(""));
+      if (reason) codes.add(reason[1]);
+      else if (text.join("") !== "/tracker?inbox=connected")
+        throw new Error(
+          `${at(call.line)} redirects with ?inbox= to neither \`/settings?inbox=<reason>\` (which callbackMessage ` +
+            "says) nor the tracker's `?inbox=connected`",
+        );
+    } else if (!(pieces.length === 2 && text.join("") === "/settings?inbox=" && PY_LIT.test(pieces[0]) && quoted === "reason" && inEmitter(call.line)))
+      throw new Error(
+        `${at(call.line)} builds an ?inbox= path check 37 cannot read. The one computed path it reads is ` +
+          '`"/settings?inbox=" + quote(reason, …)` inside an emitter',
+      );
+  }
+  routes.split("\n").forEach((line, i) => {
+    if (/[?&]inbox=/.test(line) && !carried.has(i + 1))
+      throw new Error(
+        `backend/${INBOX_ROUTES_PY}:${i + 1}: \`${line.trim()}\` redirects with ?inbox= without going through ` +
+          "inbox_google_callback's leave(), so check 37 never reads the reason it sends",
+      );
+  });
+  return { codes, emitters };
+}
+
+/** The non-empty `InboxStatus.reason` values `_status` can set (pyCode `routes`). */
+function inboxReasons(routes) {
+  const body = pyDef(routes, "_status", INBOX_ROUTES_PY);
+  const reasons = new Set();
+  let sites = 0;
+  for (const m of body.matchAll(/(?:[(,]\s*|\.)reason\s*=(?!=)\s*/g)) {
+    sites++;
+    const arg = pyArgHead(body.slice(m.index + m[0].length).split("\n")[0]);
+    for (const term of pyTerms(arg)) {
+      const lit = PY_LIT.exec(term);
+      if (!lit) throw new Error(`backend/${INBOX_ROUTES_PY}: _status sets \`reason\` from \`${term}\`, which is not a literal`);
+      if (lit[2]) reasons.add(lit[2]);
+    }
+  }
+  if (!sites) throw new Error(`backend/${INBOX_ROUTES_PY}: _status no longer sets \`reason=\` — the status shape changed`);
+  return reasons;
+}
+
+const SWITCH_DEFAULT = Symbol("default");
+const SWITCH_STMT = [
+  [/^return\s+t\(\s*"([A-Za-z][\w.]*)"\s*\)\s*;?$/, (m) => ({ kind: "t", key: m[1] })],
+  [/^return\s+""\s*;?$/, () => ({ kind: "empty" })],
+  [/^return\s+apiErrorMessage\(\s*e\s*,\s*fallback\s*\)\s*;?$/, () => ({ kind: "api" })],
+];
+
+/**
+ * The arms of the one `switch` inside the function declared at `marker` in `src`:
+ * { arms: code -> statement, dflt, intoDefault }. A LINE grammar, for pyTuple's
+ * reason: after decomment, a line inside the switch is blank, or one or more
+ * `case "…":` / `default:` labels, optionally followed by exactly one of
+ * `return t("key")`, `return ""` or `return apiErrorMessage(e, fallback)`.
+ * Anything else throws and names the line. A case whose next statement is
+ * shared with `default:` is reported in `intoDefault`, never as an arm.
+ */
+function switchArms(src, marker, who) {
+  const fn = decomment(fnSource(src, marker));
+  const at = fn.indexOf("switch (");
+  if (at === -1) throw new Error(`${who} has no \`switch (\` any more — check 37 reads its arms from one`);
+  const arms = new Map();
+  const intoDefault = [];
+  let dflt = null;
+  let pending = [];
+  for (const raw of blockAfter(fn.slice(at), "switch (", who).split("\n")) {
+    let line = raw.trim();
+    if (!line) continue;
+    for (let m; (m = /^(?:case\s+"([^"]*)"|default)\s*:\s*/.exec(line)); line = line.slice(m[0].length))
+      pending.push(m[1] === undefined ? SWITCH_DEFAULT : m[1]);
+    if (!line) continue;
+    const hit = SWITCH_STMT.map(([re, make]) => {
+      const x = re.exec(line);
+      return x && { ...make(x), text: line };
+    }).find(Boolean);
+    if (!hit)
+      throw new Error(
+        `${who}: cannot read \`${line}\` inside its switch. Check 37 reads a \`case "…":\` label, \`default:\`, and ` +
+          'one of `return t("key")`, `return ""` or `return apiErrorMessage(e, fallback)`; keep each arm a literal ' +
+          "t() call so check 29 can resolve it",
+      );
+    if (!pending.length) throw new Error(`${who}: \`${line}\` has no case label leading to it`);
+    const withDefault = pending.includes(SWITCH_DEFAULT);
+    for (const label of pending)
+      if (label === SWITCH_DEFAULT) dflt = hit;
+      else if (withDefault) intoDefault.push(label);
+      else if (arms.has(label)) throw new Error(`${who}: case "${label}" appears twice`);
+      else arms.set(label, hit);
+    pending = [];
+  }
+  if (pending.length) throw new Error(`${who}: the switch ends on a label with no return`);
+  return { arms, dflt, intoDefault };
+}
+
+/**
+ * What is wrong between one switch and its backend family, as sentences. `backend`
+ * is the family's Set, or null when backend/ is absent (the frontend rules
+ * still run). `spec`: { who, family, dfltOk, dfltWant, empty, api }.
+ */
+function armProblems({ arms, dflt, intoDefault }, backend, spec) {
+  const out = [];
+  for (const code of intoDefault)
+    out.push(
+      `${spec.who}: case "${code}" falls straight into \`default:\`, so it has no sentence of its own. Give it its ` +
+        "own return, even one that returns the generic sentence, so the choice is visible.",
+    );
+  if (!dflt) out.push(`${spec.who} has no \`default:\`, so a code this build does not know would render nothing.`);
+  else if (!spec.dfltOk(dflt))
+    out.push(`${spec.who}'s default returns \`${dflt.text}\`, not ${spec.dfltWant}: an unknown code gets the generic sentence, never itself.`);
+  if (spec.empty && !arms.has("")) out.push(`${spec.who} has no \`case "":\`, so "no error" would print the generic error sentence.`);
+  for (const [code, stmt] of arms) {
+    if (code === "" && spec.empty && stmt.kind !== "empty")
+      out.push(`${spec.who}: case "" returns \`${stmt.text}\`, but "" means no error and must return "".`);
+    if (code !== "" && stmt.kind === "empty")
+      out.push(`${spec.who}: case "${code}" returns "", which reads as "no error" for a code that is one.`);
+    if (stmt.kind === "api" && !spec.api)
+      out.push(`${spec.who}: case "${code}" returns apiErrorMessage, which only the refusal hook may do.`);
+    const known = code === "" ? spec.empty : (backend?.has(code) ?? true) || GOOGLE_PASSTHROUGH.has(code);
+    if (!known)
+      out.push(
+        `${spec.who}: case "${code}" is not a ${spec.family} code the backend sends (37(e), the other direction). A ` +
+          "renamed code leaves this arm dead and the new one on the default. Rename it with the backend, or add a " +
+          "Google string to GOOGLE_PASSTHROUGH.",
+      );
+  }
+  if (backend)
+    for (const code of [...backend].sort())
+      if (!arms.has(code) && !intoDefault.includes(code))
+        out.push(
+          `${spec.who} has no case for the ${spec.family} code "${code}", which the backend sends, so it shows the ` +
+            "default sentence. Give it an arm: its own sentence, or the generic one returned on purpose.",
+        );
+  return out;
+}
+
+/** Every quoted code a component compares with `apiErrorCode(…)` (refusal), an
+ * `error_code` / `last_error_code` (sync), a `.reason` (reason) or a `.status`
+ * (connection), directly or through one `const` holding it:
+ * [{ family, code, text }]. A `.status` compared with a literal under
+ * components/inbox is the CONNECTION's (`InboxStatus.status`): an application's
+ * status is never compared with a literal there (the review sheet goes through
+ * STATUS_OF_KIND), so one that is would be reported, loudly, as a stale status. */
+function inboxComparisons(src) {
+  const code = decomment(src);
+  const alias = new Map();
+  const familyOf = (expr) =>
+    /^apiErrorCode\(/.test(expr)
+      ? "refusal"
+      : /\.(?:last_error_code|error_code)$/.test(expr)
+        ? "sync"
+        : /\.reason$/.test(expr)
+          ? "reason"
+          : /\.status$/.test(expr)
+            ? "connection"
+            : (alias.get(expr) ?? null);
+  for (const m of code.matchAll(/\bconst\s+(\w+)\s*=\s*(apiErrorCode\([^()]*\)|[\w.]+)\s*;/g)) {
+    const family = familyOf(m[2]);
+    if (family) alias.set(m[1], family);
+  }
+  const found = [];
+  const OPS = /(apiErrorCode\([^()]*\)|[\w.]+)\s*[!=]==?\s*"([^"]*)"|"([^"]*)"\s*[!=]==?\s*(apiErrorCode\([^()]*\)|[\w.]+)/g;
+  for (const m of code.matchAll(OPS)) {
+    const family = familyOf(m[1] ?? m[4]);
+    if (family) found.push({ family, code: m[2] ?? m[3], text: m[0] });
+  }
+  return found;
+}
+
+/** What in one components/inbox file could reach `apiErrorMessage` other than
+ * through `useInboxRefusalText`: [[line, text]]. That is every mention of the
+ * name (a call, a method call on a namespace, an aliased import, a value passed
+ * on), except, in shared.tsx only, its plain `import { … }` from lib/apiError and
+ * the calls inside the hook; and every namespace or dynamic import of
+ * lib/apiError, whose members the name scan cannot see. Comments are blanked
+ * with their newlines kept, so the line numbers are the file's own. */
+function directApiErrorCalls(file, src) {
+  const kept = src
+    .replace(/\r\n/g, "\n")
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/^[ \t]*\/\/.*$/gm, "");
+  const allowed = []; // [from, to) index ranges
+  if (file.endsWith("/shared.tsx")) {
+    const marker = "export function useInboxRefusalText";
+    if (kept.includes(marker)) {
+      const lo = kept.indexOf(marker);
+      allowed.push([lo, lo + fnSource(kept, marker).length]);
+    }
+    for (const m of kept.matchAll(/\bimport\s*\{[^}]*\}\s*from\s*["'][^"']*\/lib\/apiError["']/g))
+      if (!/\bapiErrorMessage\s+as\b/.test(m[0])) allowed.push([m.index, m.index + m[0].length]);
+  }
+  const hits = [
+    ...[...kept.matchAll(/\bapiErrorMessage\b/g)].filter((m) => !allowed.some(([a, b]) => m.index >= a && m.index < b)),
+    ...kept.matchAll(/\bimport\s*\*\s*as\s+\w+\s*from\s*["'][^"']*\/lib\/apiError["']/g),
+    ...kept.matchAll(/\bimport\(\s*["'][^"']*\/lib\/apiError["']\s*\)/g),
+  ];
+  const lines = kept.split("\n");
+  return hits
+    .map((m) => kept.slice(0, m.index).split("\n").length)
+    .sort((a, b) => a - b)
+    .filter((n, i, all) => all.indexOf(n) === i)
+    .map((n) => [n, lines[n - 1].trim()]);
+}
+
+/** pyCode with every line kept where it was: a multi-line docstring becomes
+ * `""` plus its own newlines, so a line number this check reports is the
+ * file's. (pyCode itself collapses it, which 32(g) never needed to mind.) */
+const pyCodeLines = (src) =>
+  pyCode(
+    src
+      .replace(/\r\n/g, "\n")
+      .replace(/"""[\s\S]*?"""|'''[\s\S]*?'''/g, (m) => `""${"\n".repeat((m.match(/\n/g) || []).length)}`),
+  );
+
+// The four backend files, read ONCE, in their own try: a file that is missing
+// while backend/ is present must be one loud failure, and must not leave
+// 37(b) and 37(c) quietly comparing nothing as if backend/ were absent.
+// null while backend/ is absent; the sets are null where a reader threw (its
+// own sub-check has already failed).
+let inboxBackend = null;
+try {
+  const sync = pySource(INBOX_SYNC_PY, "check 37");
+  const routes = pySource(INBOX_ROUTES_PY, "check 37");
+  const apply = pySource(INBOX_APPLY_PY, "check 37");
+  const google = pySource(GOOGLE_OAUTH_PY, "check 37");
+  if (![sync, routes, apply, google].includes(null))
+    inboxBackend = {
+      sync: pyCodeLines(sync),
+      routes: pyCodeLines(routes),
+      apply: pyCodeLines(apply),
+      google: pyCodeLines(google),
+    };
+} catch (e) {
+  fail(`check 37 could not read the inbox backend: ${e.message}`);
+}
+const inboxFamilies = { sync: null, refusal: null, callback: null, reasons: null, statuses: null };
+
+/** 37(e)'s rule: each comparison `found` (inboxComparisons, with its `file`)
+ * whose code the backend's `sets[family]` does not hold, as sentences. */
+function staleComparisons(found, sets) {
+  return found
+    .filter((c) => !sets[c.family].has(c.code) && !GOOGLE_PASSTHROUGH.has(c.code))
+    .map(
+      (c) =>
+        `check 37(e): components/inbox/${c.file} compares a ${c.family} ${c.family === "connection" ? "status" : "code"} ` +
+        `with "${c.code}" (\`${c.text}\`), which the backend never ${c.family === "connection" ? "writes" : "sends"}, so ` +
+        "that comparison can never be true. Rename it with the backend." +
+        (c.family === "connection"
+          ? " (Every `.status` compared with a literal here is read as the connection's; if this one is an " +
+            "application's, teach check 37 its receiver.)"
+          : ""),
+    );
+}
+const SHARED_TSX = "components/inbox/shared.tsx";
+const SETTINGS_CARD_TSX = "components/inbox/InboxSettingsCard.tsx";
+const SYNC_SPEC = {
+  who: "useSyncErrorText (components/inbox/shared.tsx)",
+  family: "sync",
+  dfltOk: (d) => d.kind === "t" && d.key === "inbox.errors.generic",
+  dfltWant: 'return t("inbox.errors.generic")',
+  empty: true,
+  api: false,
+};
+const REFUSAL_SPEC = {
+  who: "useInboxRefusalText (components/inbox/shared.tsx)",
+  family: "refusal",
+  dfltOk: (d) => d.kind === "api",
+  dfltWant: "return apiErrorMessage(e, fallback)",
+  empty: false,
+  api: true,
+};
+const CALLBACK_SPEC = {
+  who: "callbackMessage (components/inbox/InboxSettingsCard.tsx)",
+  family: "callback",
+  dfltOk: (d) => d.kind === "t" && d.key === "inbox.callback.generic",
+  dfltWant: 'return t("inbox.callback.generic")',
+  empty: false,
+  api: false,
+};
+
+// ---- 37(a). every sync code has an arm in useSyncErrorText ---- //
+try {
+  let codes = null;
+  if (inboxBackend) {
+    const got = inboxSyncCodes(
+      [
+        [INBOX_SYNC_PY, inboxBackend.sync],
+        [INBOX_ROUTES_PY, inboxBackend.routes],
+      ],
+      inboxBackend.google,
+    );
+    if (got.codes.size < 15)
+      throw new Error(`read only ${got.codes.size} sync codes out of inbox_sync.py and inbox_routes.py (expected at least 15)`);
+    if (got.google.size < 2)
+      throw new Error(`read only ${got.google.size} GoogleAuthError codes behind the e.code passthrough (expected at least 2)`);
+    if (!got.emitters.length) throw new Error("found no def that stores its `code` parameter (expected _fail and _note_error)");
+    if (!got.statuses.has("active") || !got.statuses.has("needs_reauth"))
+      throw new Error(`read the connection statuses [${[...got.statuses].sort()}], without "active" and "needs_reauth"`);
+    codes = got.codes;
+    inboxFamilies.sync = codes;
+    inboxFamilies.statuses = got.statuses;
+  }
+  const parsed = switchArms(read(SHARED_TSX), "export function useSyncErrorText", SYNC_SPEC.who);
+  for (const p of armProblems(parsed, codes, SYNC_SPEC)) fail(`check 37(a): ${p}`);
+
+  // The reader, both directions, on a fixture shaped like inbox_sync.py.
+  const SYNC_PROBE = pyCodeLines(
+    [
+      "def _emit(db, result, code):",
+      '    """error_code = "from_docstring"."""',
+      '    # result.error_code = "from_comment"',
+      '    x.error_code = "beta" if y == "not_a_code" else code',
+      '    if r.error_code == "compared":',
+      "        pass",
+      "",
+      "",
+      "def run(db, r, conn):",
+      '    _emit(db, r, "gamma")',
+      '    result.error_code = result.error_code or "delta"',
+      '    out = InboxSyncResult(user_id=1, error_code="theta")',
+      // A black-formatted call: each keyword on its own continuation line, the
+      // last one closing the call, and two keywords sharing a line.
+      "    return InboxSyncResult(",
+      "        user_id=1,",
+      '        error_code="iota",',
+      '        last_error="kappa")',
+      "    InboxSyncResult(",
+      '        error_code="mu", last_error="nu",',
+      "    )",
+      // A site after a colon or a semicolon, not at a line's start.
+      '    if conn is None: result.error_code = "omicron"',
+      '    db.flush(); r.last_error = "pi"',
+      // Every way a connection gets a status: the plain write, an alias, a bulk
+      // update and the constructor. A local named `status`, the page's copy of
+      // the connection's, and an application card's status are not written to
+      // any connection, and are not read.
+      '    conn.status = "paused"',
+      '    conn.status = "active"',
+      "    mc = conn",
+      '    mc.status = "held"',
+      '    db.execute(update(MailConnection).values(status="frozen"))',
+      '    db.add(MailConnection(user_id=1, status="parked"))',
+      "    status = 404 if gone else 409",
+      '    out.status = conn.status or ""',
+      '    result.error_code = conn.status or "error"',
+      "",
+      "",
+      "@dataclass",
+      "class _Card:",
+      "    status: str",
+      "",
+      "    @classmethod",
+      "    def of(cls, app):",
+      '        return cls(id=app.id, status=app.status or "saved")',
+      "",
+      "    def follow(self, app):",
+      '        self.status = app.status or "saved"',
+      "",
+      "",
+      "@dataclass",
+      "class _Tally:",
+      '    last_error: str = "rho"',
+      "",
+      "",
+      "def _fail(db, conn, result, code, *, reauth=False):",
+      '    result.error_code = "needs_reauth" if reauth else code',
+      "    conn.last_error = code",
+      "",
+      "",
+      "def _open(db, conn, result):",
+      "    try:",
+      "        google_oauth.refresh(token)",
+      "    except google_oauth.GoogleAuthError as e:",
+      "        _fail(db, conn, result, e.code, reauth=e.code in _REAUTH_CODES)",
+      "",
+      "",
+      '_REAUTH_CODES = frozenset({"grant_gone"})',
+    ].join("\n"),
+  );
+  // `_error_code(…)` is Google's open set and adds nothing; both branches of the
+  // ternary in `refresh` are codes; `_signin_claims` is never reached.
+  const GOOGLE_SRC = [
+    "def _http(url):",
+    "    if bad:",
+    '        raise GoogleAuthError("host_not_allowed")',
+    "    raise GoogleAuthError(_error_code(data, status), status)",
+    "",
+    "",
+    "def _error_code(data, status):",
+    '    return f"http_{status}"',
+    "",
+    "",
+    "def refresh(token):",
+    "    data = _http(TOKEN_URL)",
+    '    raise GoogleAuthError("no_access_token" if data else "empty_reply")',
+    "",
+    "",
+    "def _signin_claims(x):",
+    '    return GoogleAuthError("token_invalid")',
+  ].join("\n");
+  const GOOGLE_PROBE = pyCodeLines(GOOGLE_SRC);
+  const probe = inboxSyncCodes([["probe.py", SYNC_PROBE]], GOOGLE_PROBE);
+  const got = [...probe.codes].sort().join();
+  const want =
+    "beta,delta,empty_reply,error,frozen,gamma,grant_gone,held,host_not_allowed,iota,kappa,mu,needs_reauth," +
+    "no_access_token,nu,omicron,parked,paused,pi,rho,theta";
+  if (got !== want)
+    fail(
+      `check 37(a)'s sync reader reads [${got}] from its probe, not [${want}]: it misses a ternary branch, an ` +
+        "`or`, a keyword argument (on its own line, or two on one), a site after a colon or a semicolon, an " +
+        "annotated default, an emitter's caller, a connection status (written through an alias, a bulk update or " +
+        "the constructor), the e.code passthrough or a branch of Google's own ternary, or reads a condition, a " +
+        'comparison, a docstring, a comment, "active", a local named status, an application card\'s status or a ' +
+        "Google code no sync can reach.",
+    );
+  if ([...probe.statuses].sort().join() !== "active,frozen,held,parked,paused")
+    fail(`check 37(a) reads the connection statuses [${[...probe.statuses].sort()}] from its probe, not [active,frozen,held,parked,paused]`);
+  if (probe.emitters.join() !== "_emit,_fail")
+    fail(`check 37(a) finds the emitters [${probe.emitters.join()}] in its probe, not [_emit,_fail]`);
+  // `why`, when given, is what the refusal must say, so a probe that throws for
+  // some other reason cannot pass as a pin.
+  const refuses = (label, src, google = GOOGLE_PROBE, why = null) => {
+    let threw = null;
+    try {
+      inboxSyncCodes([["probe.py", pyCodeLines(src)]], google);
+    } catch (e) {
+      threw = e;
+    }
+    if (!threw) fail(`check 37(a)'s sync reader silently reads ${label} instead of refusing it`);
+    else if (why && !why.test(threw.message))
+      fail(`check 37(a)'s sync reader refuses ${label} for another reason: ${threw.message}`);
+  };
+  // The Google side's grammar is closed too: a code held in a variable, or one
+  // built as an f-string instead of through `_error_code`, is refused. Its
+  // control: the same sync fixture reads cleanly beside the ordinary Google one.
+  const SYNC_SRC = [
+    "def _fail(db, conn, result, code, *, reauth=False):",
+    "    conn.last_error = code",
+    "",
+    "",
+    "def _open(db, conn, result):",
+    "    try:",
+    "        google_oauth.refresh(token)",
+    "    except google_oauth.GoogleAuthError as e:",
+    "        _fail(db, conn, result, e.code, reauth=e.code in _REAUTH_CODES)",
+    "",
+    "",
+    '_REAUTH_CODES = frozenset({"grant_gone"})',
+  ].join("\n");
+  const control = [...inboxSyncCodes([["probe.py", pyCodeLines(SYNC_SRC)]], GOOGLE_PROBE).codes].sort().join();
+  if (control !== "empty_reply,grant_gone,host_not_allowed,no_access_token")
+    fail(`check 37(a)'s Google control reads [${control}], not [empty_reply,grant_gone,host_not_allowed,no_access_token]`);
+  const googleWith = (line) =>
+    pyCodeLines(GOOGLE_SRC.replace('raise GoogleAuthError("no_access_token" if data else "empty_reply")', line));
+  const NOT_READ = /neither a literal nor `_error_code/;
+  refuses("a Google code held in a variable", SYNC_SRC, googleWith('why = "no_access_token"\n    raise GoogleAuthError(why)'), NOT_READ);
+  refuses("a Google code built as an f-string", SYNC_SRC, googleWith('raise GoogleAuthError(f"http_{status}")'), NOT_READ);
+  refuses("a GoogleAuthError with no code", SYNC_SRC, googleWith("raise GoogleAuthError()"), /with no code/);
+  refuses("a helper's return value handed to an emitter", 'def _emit(db, result, code):\n    result.error_code = code\n\n\ndef run(db, r):\n    _emit(db, r, helper())\n');
+  refuses("`code` in a def with no `code` parameter", "def run(db, result):\n    result.error_code = code\n");
+  refuses("a computed value", "def run(db):\n    error_code = compute()\n");
+  refuses("an emitter nobody calls", "def _emit(db, result, code):\n    result.error_code = code\n");
+  // The nets: every other way to write a code or a status, each for its own reason.
+  const NOT_A_STATUS = /neither a literal nor `conn\.status`/;
+  const TUPLE = /a tuple assignment/;
+  const AUG = /an augmented/;
+  const NAMED = /is named in a string/;
+  const UNPACKED = /`\*\*` unpacks fields/;
+  const run = (body) => `def run(db, result, conn):\n${body.map((l) => `    ${l}`).join("\n")}\n`;
+  for (const [label, body, why] of [
+    ["a connection status that is not a literal", ["conn.status = pick()", 'result.error_code = conn.status or "error"'], NOT_A_STATUS],
+    ["an aliased status that is not a literal", ["mc = conn", "mc.status = pick()"], NOT_A_STATUS],
+    ["a bulk-updated status that is not a literal", ["db.execute(update(MailConnection).values(status=pick()))"], NOT_A_STATUS],
+    ["an application's status outside its class", ['card.status = app.status or "saved"'], NOT_A_STATUS],
+    ["a code as the first target of a tuple", ['result.error_code, _x = "brand_new", 1'], TUPLE],
+    ["a code as a later target of a tuple", ['_x, result.error_code = 1, "brand_new"'], TUPLE],
+    ["a status as a target of a tuple", ['conn.status, _x = "paused", 1'], TUPLE],
+    ["an augmented code", ['result.error_code += "_more"'], AUG],
+    ["an augmented status", ['conn.status += "_more"'], AUG],
+    ["a code set by setattr", ['setattr(result, "error_code", "brand_new")'], NAMED],
+    ["a code set by model_copy", ['result = result.model_copy(update={"error_code": "brand_new"})'], NAMED],
+    ["a status set by setattr", ['setattr(conn, "status", "paused")'], NAMED],
+    ["a result built by unpacking", ["result = InboxSyncResult(**extra)"], UNPACKED],
+    ["a bulk update built by unpacking", ["db.execute(update(MailConnection).values(**changes))"], UNPACKED],
+  ])
+    refuses(label, run(body), GOOGLE_PROBE, why);
+  // Their false-positive twins read cleanly: a comparison, a read passed on as
+  // an argument, a returned tuple, and a local named `status`.
+  try {
+    inboxSyncCodes(
+      [
+        [
+          "probe.py",
+          pyCodeLines(
+            run([
+              'if result.error_code == "x" or conn.status != "active": pass',
+              "log(result.error_code, conn.status)",
+              "pair = result.error_code, conn.status",
+              "status = 404 if gone else 409",
+              "raise HTTPException(status, detail=result.error_code)",
+            ]),
+          ),
+        ],
+      ],
+      GOOGLE_PROBE,
+    );
+  } catch (e) {
+    fail(`check 37(a)'s nets fire on code that writes no code and no status: ${e.message}`);
+  }
+} catch (e) {
+  fail(`check 37(a) (inbox sync codes) could not run: ${e.message}`);
+}
+
+// ---- 37(b). every route refusal has an arm in useInboxRefusalText ---- //
+try {
+  let browser = null;
+  if (inboxBackend) {
+    const { raised, fns } = inboxRefusalCodes(inboxBackend.routes, inboxBackend.apply);
+    if (raised.size < 10) throw new Error(`read only ${raised.size} refusal codes out of inbox_routes.py (expected at least 10)`);
+    if (fns.size < 2) throw new Error(`expanded the inbox_{refusal} f-string through only ${fns.size} inbox_apply functions (expected at least 2)`);
+    for (const code of INBOX_SERVER_ONLY) {
+      const defs = [...(raised.get(code) ?? [])];
+      if (defs.some((d) => d !== "inbox_cron"))
+        fail(
+          `check 37(b): "${code}" is exempt from needing a sentence only because the cron is the one route that sends ` +
+            `it, and ${defs.filter((d) => d !== "inbox_cron").join(", ")} raises it too, where a browser would read it.`,
+        );
+    }
+    browser = new Set([...raised.keys()].filter((c) => !INBOX_SERVER_ONLY.has(c)));
+    inboxFamilies.refusal = browser;
+  }
+  const parsed = switchArms(read(SHARED_TSX), "export function useInboxRefusalText", REFUSAL_SPEC.who);
+  for (const p of armProblems(parsed, browser, REFUSAL_SPEC)) fail(`check 37(b): ${p}`);
+
+  // The reader, both directions, on fixtures shaped like the two real files.
+  const ROUTES = pyCodeLines(
+    [
+      "def _finish(db, event, user, refusal):",
+      "    if refusal:",
+      '        raise HTTPException(409, detail={"code": f"inbox_{refusal}"})',
+      "",
+      "",
+      "def route_a(db, ev, u):",
+      '    """Refuses with detail={"code": "from_docstring"}."""',
+      "    return _finish(db, ev, u, inbox_apply.a(db))",
+      "",
+      "",
+      "def route_b(db, ev, u):",
+      "    r = inbox_apply.b(db)",
+      "    return _finish(db, ev, u, r)",
+      "",
+      "",
+      "def route_c(db):",
+      '    raise HTTPException(400, {"code": "inbox_z"})',
+      "",
+      "",
+      "def inbox_cron(db):",
+      '    raise HTTPException(503, detail={"code": "cron_unconfigured"})',
+      "    raise HTTPException(401, \"Bad cron secret, don't retry.\")",
+    ].join("\n"),
+  );
+  const APPLY = pyCodeLines(['def a(db):', '    if x:', '        return "x"', '    return ""', "", "", 'def b(db):', '    return "y"'].join("\n"));
+  const probe = inboxRefusalCodes(ROUTES, APPLY);
+  const got = [...probe.raised.keys()].sort().join();
+  if (got !== "cron_unconfigured,inbox_x,inbox_y,inbox_z")
+    fail(
+      `check 37(b)'s refusal reader reads [${got}] from its probe, not [cron_unconfigured,inbox_x,inbox_y,inbox_z]: ` +
+        "it misses the inline or the variable-held inbox_apply call or a positional dict detail, reads a " +
+        "docstring or a plain message detail, or counts \"\" as a refusal.",
+    );
+  if ([...(probe.raised.get("cron_unconfigured") ?? [])].join() !== "inbox_cron")
+    fail("check 37(b) cannot tell which def raises the server-only code, so it cannot hold that code to the cron");
+  const refuses = (label, routes, apply, why = null) => {
+    let threw = null;
+    try {
+      inboxRefusalCodes(pyCodeLines(routes), pyCodeLines(apply));
+    } catch (e) {
+      threw = e;
+    }
+    if (!threw) fail(`check 37(b)'s refusal reader silently reads ${label} instead of refusing it`);
+    else if (why && !why.test(threw.message))
+      fail(`check 37(b)'s refusal reader refuses ${label} for another reason: ${threw.message}`);
+  };
+  refuses(
+    "a refusal function returning a helper's value",
+    'def _finish(db, e, u, refusal):\n    raise HTTPException(409, detail={"code": f"inbox_{refusal}"})\n\n\ndef r(db):\n    return _finish(db, e, u, inbox_apply.a(db))\n',
+    "def a(db):\n    return helper()\n",
+  );
+  refuses(
+    "an f-string with two placeholders",
+    'def _finish(db, a, b):\n    raise HTTPException(409, detail={"code": f"inbox_{a}_{b}"})\n',
+    "",
+  );
+  refuses("a code held in a variable", 'def r(db, code):\n    raise HTTPException(409, detail={"code": code})\n', "");
+  const NOT_A_DETAIL = /neither a message literal nor/;
+  refuses("a detail held in a variable", "def r(db, d):\n    raise HTTPException(409, detail=d)\n", "", NOT_A_DETAIL);
+  refuses("a detail built by dict()", 'def r(db):\n    raise HTTPException(409, dict(code="inbox_q"))\n', "", NOT_A_DETAIL);
+  refuses(
+    'a `{"code": …}` that is not an HTTPException detail',
+    'def r(db):\n    return JSONResponse(status_code=409, content={"code": "inbox_q"})\n',
+    "",
+    /carries a "code" key that is not the detail/,
+  );
+  refuses(
+    "a `dict(code=…)` that is not an HTTPException detail",
+    'def r(db):\n    return JSONResponse(status_code=404, content={"detail": dict(code=picked)})\n',
+    "",
+    /sends `code=picked` as a dict key/,
+  );
+  refuses(
+    "a literal `code=` keyword that is not an HTTPException detail",
+    'def r(db):\n    return JSONResponse(status_code=404, content=Refusal(code="inbox_q").model_dump())\n',
+    "",
+    /sends `code="inbox_q"` as a literal/,
+  );
+  // Their false-positive twins: Google's OAuth code handed on by keyword, a
+  // def's own default, and a local named `code` are not refusals.
+  try {
+    inboxRefusalCodes(
+      pyCodeLines(
+        [
+          'def _swap(code="unused", verifier=""):',
+          "    return google_oauth.exchange_code(code=code, verifier=verifier)",
+          "",
+          "",
+          "def r(db):",
+          "    code = request.query_params.get(name)",
+          "    return _swap(code=code)",
+        ].join("\n"),
+      ),
+      APPLY,
+    );
+  } catch (e) {
+    fail(`check 37(b)'s refusal nets fire on a \`code=\` that sends no refusal: ${e.message}`);
+  }
+} catch (e) {
+  fail(`check 37(b) (inbox refusals) could not run: ${e.message}`);
+}
+
+// ---- 37(c). every callback reason has an arm in callbackMessage ---- //
+try {
+  let codes = null;
+  if (inboxBackend) {
+    const got = inboxCallbackCodes(inboxBackend.routes);
+    if (got.codes.size < 10)
+      throw new Error(`read only ${got.codes.size} reasons out of inbox_google_callback (expected at least 10)`);
+    codes = got.codes;
+    inboxFamilies.callback = codes;
+  }
+  const parsed = switchArms(read(SETTINGS_CARD_TSX), "function callbackMessage", CALLBACK_SPEC.who);
+  for (const p of armProblems(parsed, codes, CALLBACK_SPEC)) fail(`check 37(c): ${p}`);
+
+  const CALLBACK_PROBE = [
+    '@router.get("/inbox/google/callback")',
+    "def inbox_google_callback(",
+    "    request: Request,",
+    '    code: str = "",',
+    ") -> RedirectResponse:",
+    '    """Every refusal is fail("from_a_docstring")."""',
+    "    def leave(path: str) -> RedirectResponse:",
+    "        return RedirectResponse(path)",
+    "",
+    "    def fail(reason: str) -> RedirectResponse:",
+    '        return leave("/settings?inbox=" + quote(reason, safe=""))  # fail("from_a_comment")',
+    "",
+    "    if error:",
+    '        return fail("access_denied" if error == "access_denied" else "google_error")',
+    "    if caller is None:",
+    '        return leave("/login?next=" + quote("/settings", safe=""))',
+    "    if bad_token:",
+    '        return leave("/settings?inbox=token_error")',
+    "",
+    "    def refuse(reason: str) -> RedirectResponse:",
+    '        google_oauth.revoke(str(tokens.get("refresh_token") or ""))',
+    "        return fail(reason)",
+    "",
+    "    if not google_oauth.grants_gmail(tokens):",
+    '        return refuse("missing_scope")',
+    '    return leave("/tracker?inbox=connected")',
+    "",
+    "",
+    '@router.get("/next")',
+    "def next_route():",
+    '    return fail("not_this_function")',
+  ].join("\n");
+  const probe = inboxCallbackCodes(pyCodeLines(CALLBACK_PROBE));
+  const got = [...probe.codes].sort().join();
+  if (got !== "access_denied,google_error,missing_scope,token_error" || probe.emitters.join() !== "fail,refuse")
+    fail(
+      `check 37(c)'s callback reader reads [${got}] through [${probe.emitters.join()}] from its probe, not ` +
+        "[access_denied,google_error,missing_scope,token_error] through [fail,refuse]: it misses a nested emitter, " +
+        "a ternary branch or a reason leave() sends directly, or reads a condition, a docstring, a comment, " +
+        "leave()'s success path, the /login redirect or the next function.",
+    );
+  const refusesCb = (label, src, why) => {
+    let threw = null;
+    try {
+      inboxCallbackCodes(pyCodeLines(src));
+    } catch (e) {
+      threw = e;
+    }
+    if (!threw) fail(`check 37(c)'s callback reader silently skips ${label} instead of refusing it`);
+    else if (!why.test(threw.message)) fail(`check 37(c)'s callback reader refuses ${label} for another reason: ${threw.message}`);
+  };
+  const direct = 'return leave("/settings?inbox=token_error")';
+  const SKIPS_LEAVE = /without going through/;
+  refusesCb("a reason held in a variable", CALLBACK_PROBE.replace('refuse("missing_scope")', "refuse(picked)"), /passes `picked` to refuse/);
+  refusesCb("`reason` passed from outside an emitter", CALLBACK_PROBE.replace('refuse("missing_scope")', "refuse(reason)"), /passes `reason` to refuse/);
+  refusesCb("a leave() whose path is a variable", CALLBACK_PROBE.replace(direct, "return leave(target)"), /leave\(\) is sent `target`/);
+  refusesCb("a leave() carrying ?inbox= to another page", CALLBACK_PROBE.replace(direct, 'return leave("/jobs?inbox=token_error")'), /to neither/);
+  refusesCb("an ?inbox= redirect that skips leave()", CALLBACK_PROBE.replace(direct, 'return RedirectResponse("/settings?inbox=token_error")'), SKIPS_LEAVE);
+  refusesCb(
+    "an ?inbox= redirect in another route",
+    `${CALLBACK_PROBE}\n\n\ndef other_route():\n    return RedirectResponse("/settings?inbox=elsewhere")\n`,
+    SKIPS_LEAVE,
+  );
+} catch (e) {
+  fail(`check 37(c) (Gmail callback reasons) could not run: ${e.message}`);
+}
+
+// ---- 37(d). every inbox refusal goes through useInboxRefusalText ---- //
+try {
+  const dir = path.join(SRC, "components", "inbox");
+  const files = fs.readdirSync(dir).filter((f) => /\.tsx?$/.test(f));
+  if (files.length < 5) throw new Error(`found only ${files.length} source files under components/inbox — the files moved`);
+  // Every mention, not only a plain call: an aliased import, a namespace import
+  // (`api.apiErrorMessage(…)`) and a dynamic import each reach it under a name
+  // a call scan never looks for.
+  for (const f of files)
+    for (const [n, text] of directApiErrorCalls(`components/inbox/${f}`, read(`components/inbox/${f}`)))
+      fail(
+        `check 37(d): components/inbox/${f}:${n} can reach apiErrorMessage without useInboxRefusalText ` +
+          `(\`${text}\`), so an inbox refusal shown there skips its sentence. Call \`useInboxRefusalText()\`'s ` +
+          "function instead: it falls back to apiErrorMessage for everything it does not translate.",
+      );
+  // Both directions, on shared.tsx's shape: its own import, the hook's default
+  // and a doc comment stay quiet; a component's call, an aliased import, a
+  // namespace import, a method call on it and a dynamic import each fire.
+  const HOOK = [
+    'import { apiErrorCode, apiErrorMessage } from "../../lib/apiError";',
+    "export function useInboxRefusalText(): (e: unknown, fallback: string) => string {",
+    "  return (e, fallback) => {",
+    "    /** anything else goes through `apiErrorMessage(e, fallback)` */",
+    "    switch (apiErrorCode(e)) {",
+    "      default:",
+    "        return apiErrorMessage(e, fallback);",
+    "    }",
+    "  };",
+    "}",
+    "export function Other() {",
+    '  toast("error", apiErrorMessage(e, t("x")));', // 12
+    "}",
+    'import { apiErrorMessage as msg } from "../../lib/apiError";', // 14
+    'import * as api from "../../lib/apiError";', // 15
+    'const text = api.apiErrorMessage(e, t("y"));', // 16
+    'const lazy = import("../../lib/apiError");', // 17
+    "// apiErrorMessage in a line comment",
+  ].join("\n");
+  const hits = directApiErrorCalls("components/inbox/shared.tsx", HOOK).map(([n]) => n);
+  if (hits.join() !== "12,14,15,16,17")
+    fail(
+      `check 37(d)'s detector reports [${hits.join()}] on its probe, not [12,14,15,16,17]: it fires on shared.tsx's ` +
+        "own import, the hook's default or a comment, or misses a direct call, an aliased, namespace or dynamic " +
+        "import, or a call through a namespace.",
+    );
+  const elsewhere = directApiErrorCalls("components/inbox/InboxBar.tsx", HOOK.split("\n").slice(0, 1).join("\n"));
+  if (elsewhere.length !== 1)
+    fail("check 37(d) lets a component other than shared.tsx import apiErrorMessage");
+} catch (e) {
+  fail(`check 37(d) (inbox refusal wiring) could not run: ${e.message}`);
+}
+
+// ---- 37(e). every code the page compares with is one the backend sends ---- //
+try {
+  const files = fs.readdirSync(path.join(SRC, "components", "inbox")).filter((f) => /\.tsx?$/.test(f));
+  const seen = { sync: [], refusal: [], reason: [], connection: [] };
+  const perFile = new Map();
+  for (const f of files) {
+    const found = inboxComparisons(read(`components/inbox/${f}`));
+    perFile.set(f, found);
+    for (const c of found) seen[c.family].push({ ...c, file: f });
+  }
+  const floors = { sync: 3, refusal: 2, reason: 2, connection: 2 };
+  for (const [family, least] of Object.entries(floors))
+    if (seen[family].length < least)
+      throw new Error(`read only ${seen[family].length} ${family}-code comparisons under components/inbox (expected at least ${least})`);
+  const ansAt = /\bconst\s+ANSWERS\s*=\s*new\s+Set\(\s*\[([^\]]*)\]\s*\)/.exec(decomment(read(SHARED_TSX)));
+  if (!ansAt) throw new Error("components/inbox/shared.tsx has no `const ANSWERS = new Set([…])` any more");
+  const answers = [...ansAt[1].matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  if (answers.length < 2) throw new Error(`read only ${answers.length} codes out of ANSWERS (expected at least 2)`);
+
+  if (inboxBackend) {
+    const reasons = inboxReasons(inboxBackend.routes);
+    if (!reasons.size) throw new Error("_status sets no non-empty reason (expected invite_only)");
+    inboxFamilies.reasons = reasons;
+    const sets = {
+      sync: inboxFamilies.sync,
+      refusal: inboxFamilies.refusal,
+      reason: reasons,
+      connection: inboxFamilies.statuses,
+    };
+    for (const [family, set] of Object.entries(sets))
+      if (!set) throw new Error(`the backend's ${family} codes were not read (37(a)-(c) failed above)`);
+    for (const p of staleComparisons(Object.values(seen).flat(), sets)) fail(p);
+    for (const code of answers)
+      if (!sets.refusal.has(code))
+        fail(`check 37(e): shared.tsx's ANSWERS lists "${code}", which no inbox route sends, so its tone is never used.`);
+    for (const reason of reasons)
+      for (const f of ["InboxBar.tsx", "InboxSettingsCard.tsx"])
+        if (!(perFile.get(f) ?? []).some((c) => c.family === "reason" && c.code === reason))
+          fail(
+            `check 37(e): InboxStatus.reason can be "${reason}", and components/inbox/${f} never compares with it, ` +
+              "so that state renders as if nothing were wrong there. Handle it in the bar AND the Settings card.",
+          );
+  }
+
+  // A CONNECTED account off the invite list (FIXB B15) is the one reason that
+  // reaches a connection, and it looked healthy on both surfaces: a mint
+  // "Connected" badge, a Sync button that can only be refused, and a background
+  // sync on every visit, because a refused sync moves no timestamp. The
+  // comparisons above are satisfied by the not-connected branches alone, so the
+  // helper both surfaces read is held to its own comparison and to its callers:
+  // the bar's render and its background-sync guard, and the Settings card.
+  const offSrc = decomment(fnSource(read(SHARED_TSX), "export function isOffInviteList"));
+  if (!/\.reason\s*===\s*"invite_only"/.test(offSrc) || !/\.provider\s*!==\s*"fake"/.test(offSrc))
+    fail(
+      "check 37(e): shared.tsx's isOffInviteList no longer reads `reason === \"invite_only\"` with the demo mailbox " +
+        "exempt, which is the backend's own rule (inbox_sync.sync_user).",
+    );
+  const bar = decomment(read("components/inbox/InboxBar.tsx"));
+  const guard = bar.split("\n").find((l) => /\bs\.status\s*===\s*"needs_reauth"/.test(l) && /\breturn;/.test(l)) ?? "";
+  if (!/isOffInviteList\(\s*s\s*\)/.test(guard))
+    fail(
+      "check 37(e): InboxBar's background-sync guard does not skip a connection that is off the invite list, so " +
+        "every visit fires a sync the server can only refuse.",
+    );
+  if ((bar.match(/\bisOffInviteList\(/g) ?? []).length < 2)
+    fail("check 37(e): InboxBar does not render the off-the-invite-list state (isOffInviteList is called once or never).");
+  // B15's early return never moves `window_lo_ms`, so an account taken off the
+  // list mid-import keeps `backfilling` true for ever: the import line has to be
+  // held off too, or the bar says "Importing your last N days" next to the
+  // invite-only line, about an import that cannot run.
+  const importLine = /\bconst\s+importDays\s*=([^;]*);/.exec(bar);
+  if (!importLine) throw new Error("InboxBar has no `const importDays = …;` any more — the import line moved");
+  if (!/^\s*offList\s*\?\s*0\s*:/.test(importLine[1]))
+    fail(
+      "check 37(e): InboxBar's import line is not held off for a connection that is off the invite list " +
+        `(\`const importDays =${importLine[1]};\`), so it says an import is running that no sync will ever continue.`,
+    );
+  if (!/\bisOffInviteList\(/.test(decomment(read(SETTINGS_CARD_TSX))))
+    fail("check 37(e): the Settings card shows a connection that is off the invite list as Connected.");
+
+  // The comparison reader, both directions.
+  const CMP = [
+    "const code = apiErrorCode(e);",
+    'const left = code === "inbox_not_reviewd" || code === "inbox_not_found";',
+    'if (last.error_code === "sync_in_progress") x();',
+    'if ("invite_only" !== status.reason) y();',
+    'if (ev.action === "created") z();',
+    '// if (status.reason === "from_a_comment") w();',
+    'const reauth = !offList && status.status === "needs_reauht";',
+    'if (s.status !== "active") v();',
+    'if (ev.new_status === "applied") u();',
+  ].join("\n");
+  const found = inboxComparisons(CMP).map((c) => ({ ...c, file: "probe.tsx" }));
+  const cmp = found
+    .map((c) => `${c.family}:${c.code}`)
+    .sort()
+    .join();
+  const cmpWant =
+    "connection:active,connection:needs_reauht,reason:invite_only,refusal:inbox_not_found," +
+    "refusal:inbox_not_reviewd,sync:sync_in_progress";
+  if (cmp !== cmpWant)
+    fail(
+      `check 37(e)'s comparison reader reads [${cmp}] from its probe, not [${cmpWant}]: it misses a code held in a ` +
+        "const, a reversed comparison or a family (a connection's status among them), or reads an unrelated " +
+        "field, an email's `new_status` or a comment.",
+    );
+  // Its rule, both directions: the stale names fire and the real ones do not.
+  const flagged = staleComparisons(found, {
+    sync: new Set(["sync_in_progress"]),
+    refusal: new Set(["inbox_not_review", "inbox_not_found"]),
+    reason: new Set(["invite_only"]),
+    connection: new Set(["active", "needs_reauth"]),
+  });
+  if (flagged.length !== 2 || !flagged.some((p) => p.includes('"needs_reauht"')) || !flagged.some((p) => p.includes('"inbox_not_reviewd"')))
+    fail(`check 37(e) does not report exactly the two stale comparisons in its probe: [${flagged.join(" | ")}]`);
+  // The rules, both directions: a stale rename fires, the real name and a
+  // Google string the backend names (invalid_grant, from _REAUTH_CODES) pass,
+  // and a case stacked on default is not an arm.
+  const armsOf = (lines) =>
+    switchArms(`export function h() {\n  return (code) => {\n    switch (code) {\n${lines.join("\n")}\n    }\n  };\n}\n`, "export function h", "probe");
+  const REF = { ...REFUSAL_SPEC, who: "probe" };
+  const stale = armProblems(armsOf(['      case "inbox_not_reviewd":', '        return t("k");', "      default:", "        return apiErrorMessage(e, fallback);"]), new Set(["inbox_not_review"]), REF);
+  if (!stale.some((p) => p.includes('"inbox_not_reviewd" is not')) || !stale.some((p) => p.includes('"inbox_not_review", which')))
+    fail("check 37(e) does not report a stale renamed arm AND the new code left on the default");
+  const SYNC = { ...SYNC_SPEC, who: "probe" };
+  const fine = armProblems(
+    armsOf(['      case "":', '        return "";', '      case "invalid_grant":', '        return t("inbox.errors.reauth");', "      default:", '        return t("inbox.errors.generic");']),
+    new Set(["invalid_grant"]),
+    SYNC,
+  );
+  if (fine.length) fail(`check 37's rules fire on a switch with nothing wrong in it: ${fine.join(" | ")}`);
+  const pairing = armProblems(armsOf(['      case "":', '        return "";', '      case "a":', '        return t("k.a");', "      default:", '        return t("inbox.errors.generic");']), new Set(["a", "b"]), SYNC);
+  if (pairing.length !== 1 || !pairing[0].includes('"b"'))
+    fail(`check 37 cannot tell a code with an arm from a code without one: [${pairing.join(" | ")}]`);
+  const stacked = armsOf(['      case "":', '        return "";', '      case "d":', "      default:", '        return t("inbox.errors.generic");']);
+  if (stacked.arms.has("d") || stacked.intoDefault.join() !== "d" || !armProblems(stacked, new Set(["d"]), SYNC).some((p) => p.includes("falls straight into")))
+    fail("check 37 counts a case stacked on default: as an arm of its own");
+  const both = armsOf(['      // case "c":', '      case "a": case "b": return t("k.ab");', '      case "":', '        return "";', "      default:", '        return t("inbox.errors.generic");']);
+  if ([...both.arms.keys()].sort().join() !== ",a,b" || both.arms.get("a").key !== "k.ab")
+    fail("check 37's switch reader misreads two labels on one line, or reads a commented-out case");
+  const loose = armProblems(armsOf(['      case "":', '        return "";', '      case "x":', '        return "";', "      default:", '        return t("inbox.errors.other");']), null, SYNC);
+  if (!loose.some((p) => p.includes('case "x" returns ""')) || !loose.some((p) => p.includes("default returns")))
+    fail("check 37 lets a real code return \"\", or lets the default return something other than the generic sentence");
+  for (const [label, bad] of [
+    ["a default returning the raw code", "        return code;"],
+    ["an arm computing its sentence", "        return t(`inbox.errors.${code}`);"],
+  ]) {
+    let threw = false;
+    try {
+      armsOf(['      case "x":', bad, "      default:", '        return t("inbox.errors.generic");']);
+    } catch {
+      threw = true;
+    }
+    if (!threw) fail(`check 37's switch reader accepts ${label} instead of refusing it`);
+  }
+  const twoFns = [
+    "export function h() {",
+    "  return (code) => {",
+    "    switch (code) {",
+    "      default:",
+    '        return t("g");',
+    "    }",
+    "  };",
+    "}",
+    "export function other() {",
+    "  switch (code) {",
+    '    case "other_fn":',
+    '      return t("k");',
+    "  }",
+    "}",
+  ].join("\n");
+  if (switchArms(twoFns, "export function h", "probe").arms.size !== 0)
+    fail("check 37's switch reader reads the arms of the NEXT function");
+} catch (e) {
+  fail(`check 37(e) (inbox codes, the other direction) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
