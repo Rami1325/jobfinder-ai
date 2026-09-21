@@ -3714,6 +3714,346 @@ check(
     and "require_within" in _lim_inspect.getsource(_jd_analyzer_mod),
 )
 
+# --- 14b-6 (P30-PASS-SIZE). Every builder parameter is MEASURED or NAMED ------------------------------------------
+# Until this block the guard read three parameter names and skipped every value that was not a string, so five
+# parameters on the session passes' builders reached the model unmeasured: the mock-interview transcript (a list,
+# re-sent whole every turn, with no limit on turns or length), a question, a practice answer and the client-sent
+# analysed JD (`jd_json`, also on the tailor's own builders) — beside the cover letter's `tone`. A multi-MB
+# transcript went to OpenAI, and its context overflow then told the user their CV was too long. Every check below
+# is DRIVEN through the builders, never grepped, and each catch sits beside its false-positive twin. The caps are
+# read at call time, with the documented default as the fallback, so on a build without them the checks go red
+# instead of aborting the suite.
+_ps_s = get_settings()
+_PS_ANS = getattr(_ps_s, "max_answer_kb", 16)
+_PS_TR = getattr(_ps_s, "max_transcript_kb", 256)
+_PS_JD = _ps_s.max_jd_kb
+check(
+    "P30-PASS-SIZE caps: an answer or a question 16 KB, a transcript 256 KB, a client-sent analysed JD 4 x the "
+    "job-ad cap (derived from the analyser's always-on INPUT cap, never the output cap), and the scorecard the "
+    "transcript cap plus two answers",
+    getattr(_ps_s, "max_answer_kb", None) == 16
+    and getattr(_ps_s, "max_transcript_kb", None) == 256
+    and getattr(_ps_s, "max_jd_json_kb", None) == 4 * _PS_JD
+    and getattr(_ps_s, "max_scorecard_transcript_kb", None) == 256 + 2 * 16,
+    f"answer={getattr(_ps_s, 'max_answer_kb', None)} transcript={getattr(_ps_s, 'max_transcript_kb', None)} "
+    f"jd_json={getattr(_ps_s, 'max_jd_json_kb', None)} scorecard={getattr(_ps_s, 'max_scorecard_transcript_kb', None)}",
+)
+
+
+def _ps_env(**values):  # noqa: ANN003
+    """Set env vars and clear the settings cache; returns what to restore (section 29's _env29, needed earlier)."""
+    previous = {k: os.environ.get(k) for k in values}
+    for k, v in values.items():
+        os.environ[k] = v
+    get_settings.cache_clear()
+    return previous
+
+
+def _ps_restore(previous):  # noqa: ANN001
+    for k, v in previous.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    get_settings.cache_clear()
+
+
+def _ps_kind(call):  # noqa: ANN001
+    """The kind a builder call is refused with, None when it is not refused, or 'raised <Type>' for anything else
+    (so a build that crashes on a list reads as a failed check, never an aborted suite)."""
+    try:
+        call()
+    except InputTooLarge as exc:
+        return exc.kind
+    except Exception as exc:  # noqa: BLE001
+        return f"raised {type(exc).__name__}"
+    return None
+
+
+def _ps_fill(target_bytes, turns=()):  # noqa: ANN001
+    """`turns`, then ONE interviewer turn padded so the transcript the model reads — `_format_transcript`, role
+    prefixes and newlines included — is exactly `target_bytes` long."""
+    head = list(turns) + [("interviewer", "")]
+    base = utf8_bytes(_lim_prompts._format_transcript(head))
+    return list(turns) + [("interviewer", "q" * (target_bytes - base))]
+
+
+def _ps_chat(transcript):  # noqa: ANN001
+    return _ps_kind(lambda: _lim_prompts.interview_chat_user('{"name":"Jane"}', "", transcript))
+
+
+def _ps_card(transcript):  # noqa: ANN001
+    return _ps_kind(lambda: _lim_prompts.interview_scorecard_user('{"name":"Jane"}', "", transcript))
+
+
+# Ten answers of 15 KB: each under the per-answer cap, so only the TOTAL can refuse them.
+_PS_CAND = [("candidate", "a" * (15 * 1024))] * 10
+_ps_at = _ps_fill(_PS_TR * 1024, _PS_CAND)
+_ps_over = _ps_fill(_PS_TR * 1024 + 1, _PS_CAND)
+check(
+    "P30-PASS-SIZE transcript: a chat transcript one byte over the cap, measured as the text the model reads, is "
+    "refused as kind 'transcript' — and the same transcript exactly AT the cap is not",
+    _ps_chat(_ps_over) == "transcript" and _ps_chat(_ps_at) is None,
+    f"over={_ps_chat(_ps_over)} at={_ps_chat(_ps_at)}",
+)
+# The false-positive twin that sized the cap: the pass allows 60 calls, i.e. an opener and 59 answers, so an honest
+# session can send 59 exchanges. Sized against the prompt's 6-8 question arc instead, 128 KB fired on this one.
+_PS_HE_ANSWER = ("בתפקיד האחרון הובלתי את המעבר של מערכת התשלומים לענן, ועבדתי עם צוות של שישה מהנדסים. " * 20)[:900]
+_PS_HE_TURN = ("תודה. שאלת המשך: ספרו לי על החלטה טכנית שקיבלתם ושהתבררה כשגויה, ומה עשיתם אחריה. " * 10)[:500]
+_ps_full = [pair for _ in range(59) for pair in (("interviewer", _PS_HE_TURN), ("candidate", _PS_HE_ANSWER))]
+_ps_full_kb = utf8_bytes(_lim_prompts._format_transcript(_ps_full)) / 1024
+check(
+    "P30-PASS-SIZE twin: a FULL-PASS honest Hebrew session — 59 exchanges of a 900-character answer and a "
+    "500-character interviewer turn — passes both the chat and the scorecard builder",
+    _ps_chat(_ps_full) is None and _ps_card(_ps_full) is None and 120 < _ps_full_kb < _PS_TR,
+    f"{_ps_full_kb:.0f} KB against a {_PS_TR} KB cap",
+)
+
+# The scorecard reads one reply and one refused answer more than the chat ever accepted, so a session the chat has
+# just refused can always be scored. It is refused with its OWN kind: the chat's sentence says "end the session to
+# get your scorecard", which would send someone whose scorecard was refused round in a loop.
+_PS_SC = _PS_TR + 2 * _PS_ANS
+_ps_sc_over = _ps_fill(_PS_SC * 1024 + 1, _PS_CAND)
+_ps_sc_at = _ps_fill(_PS_SC * 1024, _PS_CAND)
+_ps_sc_mid = _ps_fill((_PS_TR + 1) * 1024, _PS_CAND)
+check(
+    "P30-PASS-SIZE scorecard: one byte over the transcript cap plus two answers is refused as kind 'session' "
+    "(never 'transcript'), exactly at it passes, and the transcript cap + 1 KB fails the CHAT but passes the "
+    "scorecard — the stranded-session case",
+    _ps_card(_ps_sc_over) == "session" and _ps_card(_ps_sc_at) is None
+    and _ps_chat(_ps_sc_mid) == "transcript" and _ps_card(_ps_sc_mid) is None,
+    f"over={_ps_card(_ps_sc_over)} at={_ps_card(_ps_sc_at)} mid chat={_ps_chat(_ps_sc_mid)} card={_ps_card(_ps_sc_mid)}",
+)
+_ps_prev = _ps_env(MAX_TRANSCRIPT_KB="0")
+try:
+    _ps_mb = _ps_fill(1024 * 1024, _PS_CAND)
+    _ps_off = (_ps_chat(_ps_mb), _ps_card(_ps_mb))
+finally:
+    _ps_restore(_ps_prev)
+check(
+    "P30-PASS-SIZE kill switch: MAX_TRANSCRIPT_KB=0 lets a 1 MB transcript through BOTH builders — the scorecard's "
+    "derived allowance switches off with the chat cap, and never turns into a 32 KB cap of its own",
+    _ps_off == (None, None) and getattr(get_settings(), "max_transcript_kb", 256) == _PS_TR,
+    str(_ps_off),
+)
+
+# Each CANDIDATE turn is the user's own answer and gets its own cap and sentence ("shorten it"), because the client
+# hands a refused answer back to the draft. An INTERVIEWER turn is model text: telling the user to shorten it would
+# be false, so it counts toward the total only. The scorecard does not re-check each turn — nothing on it can be
+# edited, so a per-turn refusal there could only strand a session an old tab kept a long answer in.
+_ps_17 = "a" * (17 * 1024)
+_ps_he3k = ("ניהלתי צוות של חמישה מהנדסים ובניתי את תשתית הנתונים מאפס. " * 60)[:1700]
+_ps_t3_cand = [("interviewer", "Tell me about a project."), ("candidate", _ps_17), ("interviewer", "q" * 3000)]
+_ps_t3_int = [("interviewer", _ps_17), ("candidate", "It went well."), ("interviewer", "q" * 3000)]
+_ps_t3_he = [("interviewer", "Tell me about a project."), ("candidate", _ps_he3k)]
+check(
+    "P30-PASS-SIZE per answer: one 17 KB CANDIDATE turn in a ~20 KB transcript is refused as kind 'answer'; the "
+    "same 17 KB as an INTERVIEWER turn is not; a 3 KB Hebrew answer passes; and the scorecard does not re-check "
+    "each turn",
+    _ps_chat(_ps_t3_cand) == "answer" and _ps_chat(_ps_t3_int) is None and _ps_chat(_ps_t3_he) is None
+    and _ps_card(_ps_t3_cand) is None and utf8_bytes(_ps_he3k) > 2 * 1024,
+    f"cand={_ps_chat(_ps_t3_cand)} int={_ps_chat(_ps_t3_int)} he={_ps_chat(_ps_t3_he)} card={_ps_card(_ps_t3_cand)}",
+)
+# The role string is part of what the model reads (`ROLE: text`), so it is measured with it. (The route also takes
+# the role as a two-value Literal, pinned over HTTP in section 32.)
+check(
+    "P30-PASS-SIZE the role counts: a transcript whose ROLE strings alone carry it past the cap is refused, "
+    "because the guard measures the formatted text, not the answers",
+    _ps_chat([("x" * (_PS_TR * 1024), "hi")]) == "transcript",
+    str(_ps_chat([("x" * (_PS_TR * 1024), "hi")])),
+)
+
+# A question and a practice answer. A refused QUESTION gets its own kind: telling someone to shorten "the answer"
+# when it was the question that was too long is the false-sentence defect this whole change exists to remove.
+_ps_q_he = ("מה הייתה ההחלטה הטכנית הקשה ביותר שקיבלתם, ולמה? " * 20)[:500]  # the extension clips at 500 characters
+_ps_16 = "b" * (_PS_ANS * 1024)
+_ps_t4 = {
+    "feedback(answer)": _ps_kind(lambda: _lim_prompts.interview_feedback_user("{}", "Why us?", _ps_17)),
+    "feedback(question)": _ps_kind(lambda: _lim_prompts.interview_feedback_user("{}", _ps_17, "Because.")),
+    "answer(question)": _ps_kind(lambda: _lim_prompts.interview_answer_user("{}", "{}", _ps_17)),
+    "screening(question)": _ps_kind(lambda: _lim_prompts.screening_user("{}", "", _ps_17)),
+}
+_ps_t4_ok = {
+    "screening(500-char Hebrew question)": _ps_kind(lambda: _lim_prompts.screening_user("{}", "", _ps_q_he)),
+    "answer(500-char Hebrew question)": _ps_kind(lambda: _lim_prompts.interview_answer_user("{}", "{}", _ps_q_he)),
+    "feedback(3 KB Hebrew answer)": _ps_kind(lambda: _lim_prompts.interview_feedback_user("{}", _ps_q_he, _ps_he3k)),
+    "feedback(answer exactly at the cap)": _ps_kind(lambda: _lim_prompts.interview_feedback_user("{}", "Q", _ps_16)),
+}
+check(
+    "P30-PASS-SIZE question/answer: a 17 KB practice answer is refused as 'answer', and a 17 KB question on the "
+    "feedback, model-answer and screening builders as 'question', never 'answer'",
+    _ps_t4 == {
+        "feedback(answer)": "answer", "feedback(question)": "question",
+        "answer(question)": "question", "screening(question)": "question",
+    },
+    str(_ps_t4),
+)
+check(
+    "P30-PASS-SIZE twin: the extension's 500-character Hebrew question, a 3 KB Hebrew practice answer and an answer "
+    "exactly at the cap all pass",
+    all(v is None for v in _ps_t4_ok.values()),
+    str(_ps_t4_ok),
+)
+
+# The client-sent analysed JD. Its cap is DERIVED from the analyser's input cap (4 x max_jd_kb): an analysed JD is
+# model output read from at most max_jd_kb of text. Not from llm_max_output_tokens, which can be 0 (off) or dropped
+# by the capability probe. The twin is HAND-BUILT, because the stub analyser returns a small canned JD whatever it
+# reads: the largest ad the analyser accepts, copied WHOLE into three lists, which a real analysis never reaches.
+from app.models import JDModel as _PS_JDModel  # noqa: E402
+
+_PS_HE_SENT = "אחריות על תכנון, פיתוח ותחזוקה של שירותי צד שרת בסביבת ענן מבוזרת, כולל ניטור וזמינות גבוהה."
+_ps_sents: list[str] = []
+while utf8_bytes("\n".join(_ps_sents + [f"{len(_ps_sents)}. {_PS_HE_SENT}"])) <= _PS_JD * 1024:
+    _ps_sents.append(f"{len(_ps_sents)}. {_PS_HE_SENT}")
+_PS_MAX_JD = _PS_JDModel(
+    job_title="מהנדס/ת תוכנה בכיר/ה", company="חברת תשתיות ענן", seniority="senior", language="he", market="IL",
+    hard_skills=["Python", "Kubernetes", "PostgreSQL", "Kafka"], soft_skills=["עבודת צוות", "תקשורת"],
+    responsibilities=list(_ps_sents), qualifications=list(_ps_sents), keywords=list(_ps_sents),
+)
+_ps_max_jd_json = _PS_MAX_JD.model_dump_json()
+_ps_max_jd_kb = utf8_bytes(_ps_max_jd_json) / 1024
+_ps_big_jd_json = _PS_JDModel(responsibilities=["x" * (4 * _PS_JD * 1024)]).model_dump_json()
+_PS_JD_BUILDERS = {
+    "cover_letter": lambda j: _lim_prompts.cover_letter_user("{}", j, "warm"),
+    "interview_questions": lambda j: _lim_prompts.interview_questions_user("{}", j),
+    "interview_answer": lambda j: _lim_prompts.interview_answer_user("{}", j, "Why us?"),
+    "fit_score": lambda j: _lim_prompts.fit_score_user("{}", j),
+    "plan_cv": lambda j: _lim_prompts.plan_cv_user("{}", j),
+    "tailor": lambda j: _lim_prompts.tailor_user("{}", j),
+}
+_ps_jd_over = {n: _ps_kind(lambda b=b: b(_ps_big_jd_json)) for n, b in _PS_JD_BUILDERS.items()}
+_ps_jd_max = {n: _ps_kind(lambda b=b: b(_ps_max_jd_json)) for n, b in _PS_JD_BUILDERS.items()}
+check(
+    "P30-PASS-SIZE jd_json: an analysed JD over 4 x the job-ad cap is refused as kind 'jd' by all six builders "
+    "that take one (cover letter, interview questions and answer, fit score, plan, tailor)",
+    set(_ps_jd_over.values()) == {"jd"},
+    str(_ps_jd_over),
+)
+check(
+    "P30-PASS-SIZE twin: a hand-built maximal Hebrew JD — the largest ad the analyser accepts, copied whole into "
+    "responsibilities, qualifications AND keywords — passes all six",
+    all(v is None for v in _ps_jd_max.values()) and 90 < _ps_max_jd_kb < 4 * _PS_JD
+    and _ps_kind(lambda: _lim_prompts.analyze_jd_user("\n".join(_ps_sents))) is None,
+    f"{_ps_max_jd_kb:.0f} KB: {_ps_jd_max}",
+)
+_ps_prev = _ps_env(LLM_MAX_OUTPUT_TOKENS="0")
+try:
+    _ps_jd_nocap = _ps_kind(lambda: _lim_prompts.fit_score_user("{}", _ps_big_jd_json))
+finally:
+    _ps_restore(_ps_prev)
+_ps_prev = _ps_env(MAX_JD_KB="0")
+try:
+    _ps_jd_off = (
+        _ps_kind(lambda: _lim_prompts.fit_score_user("{}", _ps_big_jd_json)),
+        _ps_kind(lambda: _lim_prompts.analyze_jd_user("x" * (40 * 1024))),
+    )
+finally:
+    _ps_restore(_ps_prev)
+check(
+    "P30-PASS-SIZE kill switches: with LLM_MAX_OUTPUT_TOKENS=0 the jd_json cap still holds (it does not ride on the "
+    "output cap), and MAX_JD_KB=0 switches BOTH job-ad checks off together",
+    _ps_jd_nocap == "jd" and _ps_jd_off == (None, None) and get_settings().max_jd_kb == _PS_JD,
+    f"no output cap: {_ps_jd_nocap}; MAX_JD_KB=0: {_ps_jd_off}",
+)
+
+# THE PIN, INVERTED. The old pin (above) looked for three names; a parameter called anything else passed it green.
+# This one walks EVERY module-level `*_user` builder, decorated or not, and every parameter must be measured by the
+# rule table or named on `_UNMEASURED` — keyed by (builder, parameter), so allowing `company` for one builder can
+# never quietly cover the next builder that takes a user-typed `company` — with a reason of a known category. A
+# builder that measures anything must carry the `__bounded__` marker (read off the function, never the source
+# text), and one without it must be named on `_UNDECORATED`. Stale entries are red too.
+_PS_CATEGORIES = ("server", "schema", "clipped", "third-party", "known open")
+
+
+def _ps_unclassified(mod):  # noqa: ANN001
+    """What the prompt module leaves unaccounted for, as sentences; [] when every parameter is."""
+    tables = {n: getattr(mod, n, None) for n in ("_MEASURED", "_MEASURED_IN", "_UNMEASURED", "_UNDECORATED")}
+    missing = [n for n, t in tables.items() if not (isinstance(t, dict) and t)]
+    if missing:
+        return [f"prompts.py has no {', '.join(missing)} table(s)"]
+    measured, measured_in, unmeasured, undecorated = tables.values()
+    out: list[str] = []
+    builders = {n: f for n, f in vars(mod).items() if n.endswith("_user") and _lim_inspect.isfunction(f)}
+    if len(builders) < 20:
+        out.append(f"only {len(builders)} *_user builders were found (expected at least 20) — the walk broke")
+    settings = get_settings()
+    for rule in [*measured.values(), *measured_in.values()]:
+        for attr in (rule.cap, rule.turn_cap):
+            if attr and not isinstance(getattr(settings, attr, None), int):
+                out.append(f"a rule reads settings.{attr}, which is not an int setting")
+    params: dict[str, list[str]] = {}
+    for name, fn in sorted(builders.items()):
+        params[name] = list(_lim_inspect.signature(fn).parameters)
+        marked = getattr(fn, "__bounded__", False) is True
+        measures = [p for p in params[name] if (name, p) in measured_in or p in measured]
+        for p in params[name]:
+            if p in measures:
+                continue
+            reason = unmeasured.get((name, p))
+            if not (isinstance(reason, str) and reason.split(":")[0] in _PS_CATEGORIES and len(reason) > 25):
+                out.append(f"{name}({p}) is neither measured nor on _UNMEASURED with a categorised reason")
+        if measures and not marked:
+            out.append(f"{name} measures {measures} but is not @_bounded")
+        if not marked and not (isinstance(undecorated.get(name), str) and undecorated.get(name)):
+            out.append(f"{name} is not @_bounded and _UNDECORATED does not name it")
+        if marked and name in undecorated:
+            out.append(f"{name} is @_bounded but still named on _UNDECORATED")
+    for builder, param in [*unmeasured, *measured_in]:
+        if param not in params.get(builder, []):
+            out.append(f"({builder}, {param}) names a builder parameter that does not exist")
+    for builder in undecorated:
+        if builder not in builders:
+            out.append(f"_UNDECORATED names {builder}, which does not exist")
+    return out
+
+
+_ps_real = _ps_unclassified(_lim_prompts)
+
+
+def x_probe_user(resume_json: str, transcript: list[tuple[str, str]]) -> str:  # an undecorated builder
+    return f"{resume_json}{transcript}"
+
+
+def _ps_probe_b(resume_json: str, extra_notes: str) -> str:
+    return f"{resume_json}{extra_notes}"
+
+
+_ps_probe_b.__name__ = "y_probe_user"
+_ps_probes: dict[str, list[str]] = {}
+try:
+    setattr(_lim_prompts, "x_probe_user", x_probe_user)
+    _ps_probes["undecorated"] = _ps_unclassified(_lim_prompts)
+    delattr(_lim_prompts, "x_probe_user")
+    _ps_bounded = getattr(_lim_prompts, "_bounded")
+    setattr(_lim_prompts, "y_probe_user", _ps_bounded(_ps_probe_b))
+    _ps_probes["unclassified"] = _ps_unclassified(_lim_prompts)
+finally:
+    for _ps_n in ("x_probe_user", "y_probe_user"):
+        if hasattr(_lim_prompts, _ps_n):
+            delattr(_lim_prompts, _ps_n)
+_ps_probes["restored"] = _ps_unclassified(_lim_prompts)
+check(
+    "P30-PASS-SIZE the inverted pin: every parameter of every *_user builder in prompts.py, decorated or not, is "
+    "measured or named on _UNMEASURED with a categorised reason, and every builder that measures one is @_bounded",
+    _ps_real == [],
+    "; ".join(_ps_real) or f"{sum(1 for n in vars(_lim_prompts) if n.endswith('_user'))} builders accounted for",
+)
+check(
+    "P30-PASS-SIZE the pin probed both ways: an undecorated builder taking `transcript` is red, a decorated builder "
+    "with an unclassified parameter is red, and both removed it is green again",
+    any("x_probe_user" in p for p in _ps_probes.get("undecorated", []))
+    and any("y_probe_user(extra_notes)" in p for p in _ps_probes.get("unclassified", []))
+    and _ps_probes.get("restored") == _ps_real == [],
+    str({k: [p for p in v if "probe" in p] for k, v in _ps_probes.items()}),
+)
+# The non-string skip is gone for every measured name: a value it cannot measure is a loud TypeError, never a
+# parameter that silently goes unmeasured (which is how the transcript list slipped through).
+check(
+    "P30-PASS-SIZE a measured parameter the guard cannot measure raises instead of being skipped",
+    _ps_kind(lambda: _lim_prompts.interview_feedback_user("{}", "Q", ["not", "a", "string"])) == "raised TypeError",
+    str(_ps_kind(lambda: _lim_prompts.interview_feedback_user("{}", "Q", ["not", "a", "string"]))),
+)
+
 # 14c. Drushim provider: response parser pinned against a trimmed real fixture
 import json as _json  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -20391,6 +20731,127 @@ try:
             and [r.feature for r in _passes32(_ph_uid32)] == ["screening"],
             f"{_ph_big32.status_code} {_hdr32(_ph_big32)} {_phdr32(_ph_big32)} {_shape32(_ph_big_ev32)} "
             f"{_ph_ok32.status_code}/{_hdr32(_ph_ok32)}",
+        )
+
+        # --- 32.6 (P30-PASS-SIZE): a pass route's OWN inputs are measured, and a refusal lands where 32.6 says -------
+        # The builder-level caps are pinned in 14b-6; these drive them through the routes. A size refusal is raised
+        # INSIDE the pass, exactly like the oversize resume above: an opener gives its use straight back, and a ride
+        # keeps its slot (a failed ride always does). The shape refusals (`ChatTurn.role`, `tone`) are 422s, which
+        # FastAPI raises before the handler, so they never reach the pass at all.
+        def _ps_json32(pairs):  # noqa: ANN001
+            return [{"role": r, "text": t} for r, t in pairs]
+
+        def _ps_chat32(headers, pairs):  # noqa: ANN001
+            return _c32c.post("/interview/chat", headers=headers,
+                              json={"resume": _R32, "jd_text": "", "transcript": _ps_json32(pairs)})
+
+        _PS_OVER32 = _ps_fill(_PS_TR * 1024 + 1, _PS_CAND)
+        _pso_uid32, _PSO32_H = _mint32(_c32c, "Oversize Transcript Opener")
+        _pso32 = _ps_chat32(_PSO32_H, _PS_OVER32)
+        _pso_ev32 = _events32(_pso_uid32)
+        check(
+            "32.6 (P30-PASS-SIZE) HTTP: a mock-interview OPENER whose transcript is over the cap is a 413 "
+            "input_too_large of kind 'transcript' that opened the pass and gave the use straight back — a +1/-1 "
+            "interview pair, no pass row, X-Uses-Remaining 10 and X-Uses-Pass interview;0;0, the shape 32.6 pins for "
+            "the resume",
+            _pso32.status_code == 413 and _detail28(_pso32).get("code") == "input_too_large"
+            and _detail28(_pso32).get("kind") == "transcript"
+            and len(_pso_ev32) == 2 and _refunded32(_pso_ev32, "interview") and _passes32(_pso_uid32) == []
+            and _hdr32(_pso32) == "10" and _phdr32(_pso32) == "interview;0;0",
+            f"{_pso32.status_code} {_detail28(_pso32)} {_shape32(_pso_ev32)} {_hdr32(_pso32)} {_phdr32(_pso32)}",
+        )
+        _psr_uid32, _PSR32_H = _mint32(_c32c, "Oversize Transcript Ride")
+        _psr_open32 = _ps_chat32(_PSR32_H, [])
+        _psr_big32 = _ps_chat32(_PSR32_H, _PS_OVER32)
+        _psr_mid32 = [(r.calls, r.succeeded, r.failed) for r in _passes32(_psr_uid32)]
+        _psr_ok32 = _ps_chat32(_PSR32_H, [("interviewer", "Tell me about yourself."), ("candidate", "I build APIs.")])
+        _psr_end32 = [(r.calls, r.succeeded, r.failed) for r in _passes32(_psr_uid32)]
+        check(
+            "32.6 (P30-PASS-SIZE) HTTP: the same oversize transcript as a RIDE on a served pass is a 413 'transcript' "
+            "that keeps its slot and charges nothing — calls 2 with 1 failed, no new ledger event, the use kept "
+            "(header 9, interview;58;) — and a normal transcript on the same pass is then served (calls 3, 1 "
+            "succeeded, interview;57;)",
+            _psr_open32.status_code == 200 and (_phdr32(_psr_open32) or "").startswith("interview;59;")
+            and _psr_big32.status_code == 413 and _detail28(_psr_big32).get("kind") == "transcript"
+            and _psr_mid32 == [(2, 0, 1)] and _hdr32(_psr_big32) == "9"
+            and (_phdr32(_psr_big32) or "").startswith("interview;58;")
+            and _psr_ok32.status_code == 200 and _psr_end32 == [(3, 1, 1)]
+            and (_phdr32(_psr_ok32) or "").startswith("interview;57;")
+            and _shape32(_events32(_psr_uid32)) == [("interview", 1, 0, "")],
+            f"{_psr_open32.status_code}/{_phdr32(_psr_open32)} {_psr_big32.status_code}/{_detail28(_psr_big32)} "
+            f"{_psr_mid32} {_psr_ok32.status_code}/{_phdr32(_psr_ok32)} {_psr_end32}",
+        )
+        # The stranded session, as an OLD open tab sends it: the chat accepted a transcript, the interviewer replied,
+        # and the next answer (16 KB, at the per-answer cap) tipped it over — the old client leaves that refused
+        # answer in the transcript. The scorecard must still read it: that is what its allowance is for.
+        _pss_uid32, _PSS32_H = _mint32(_c32c, "Stranded Session")
+        _pss_ok32 = _ps_fill(_PS_TR * 1024 - 512, _PS_CAND)
+        _pss_full32 = _pss_ok32 + [("interviewer", "Thanks. Next: " + "q" * 900), ("candidate", "c" * (_PS_ANS * 1024))]
+        _pss_chat32 = _ps_chat32(_PSS32_H, _pss_full32)
+        _pss_card32 = _c32c.post("/interview/scorecard", headers=_PSS32_H,
+                                 json={"resume": _R32, "jd_text": "", "transcript": _ps_json32(_pss_full32)})
+        check(
+            "32.6 (P30-PASS-SIZE) HTTP: the stranded session — an accepted transcript, the interviewer's reply and one "
+            "refused 16 KB answer — is refused by /interview/chat as 'transcript' and still SCORED by "
+            "/interview/scorecard",
+            _pss_chat32.status_code == 413 and _detail28(_pss_chat32).get("kind") == "transcript"
+            and _pss_card32.status_code == 200,
+            f"chat {_pss_chat32.status_code} {_detail28(_pss_chat32)}; scorecard {_pss_card32.status_code} "
+            f"{_detail28(_pss_card32) or _pss_card32.text[:120]}",
+        )
+        # `ChatTurn.role` is the two-value union the TypeScript mirror already declares, so an invented role is a
+        # shape error with no false-positive risk.
+        _psx_uid32, _PSX32_H = _mint32(_c32c, "Chat Role Shape")
+        _psx_bad32 = _ps_chat32(_PSX32_H, [("x", "Hello?")])
+        _psx_after32 = (_events32(_psx_uid32), _passes32(_psx_uid32))
+        _psx_ok32 = _ps_chat32(_PSX32_H, [("interviewer", "Why this role?"), ("candidate", "The product.")])
+        check(
+            "32.6 (P30-PASS-SIZE) HTTP: a transcript turn whose role is neither 'interviewer' nor 'candidate' is a 422 "
+            "refused before the pass — no event, no pass row, no header — while the two real roles are served",
+            _psx_bad32.status_code == 422 and _psx_after32 == ([], []) and _hdr32(_psx_bad32) is None
+            and _phdr32(_psx_bad32) is None and _psx_ok32.status_code == 200,
+            f"{_psx_bad32.status_code} {_psx_after32} {_psx_ok32.status_code}",
+        )
+        # `tone` is a closed set the UI builds (four tones, two fixed requests): its longest value is 48 characters.
+        _pst_uid32, _PST32_H = _mint32(_c32c, "Cover Letter Tone")
+
+        def _pst32(tone):  # noqa: ANN001
+            return _c32c.post("/cover-letter", headers=_PST32_H, json={"resume": _R32, "jd": _JDJ32, "tone": tone})
+
+        _pst_first32 = _pst32("professional")
+        _pst_after_first32 = (_shape32(_events32(_pst_uid32)), [r.calls for r in _passes32(_pst_uid32)])
+        _pst_big32 = _pst32("warm, " + "x" * (10 * 1024))
+        _pst_after_big32 = (_shape32(_events32(_pst_uid32)), [r.calls for r in _passes32(_pst_uid32)])
+        _pst_long32 = _pst32("enthusiastic, make it more specific to this role")
+        check(
+            "32.6 (P30-PASS-SIZE) HTTP: a 10 KB cover-letter tone is a 422 before the pass — no new event and the "
+            "pass's calls unchanged — while the longest tone the UI builds is served and rides the posting's pass",
+            _pst_first32.status_code == 200 and _pst_big32.status_code == 422
+            and _pst_after_big32 == _pst_after_first32 == ([("cover_letter", 1, 0, _q32.jd_ref(_JD32.model_validate(_JDJ32)))], [1])
+            and _pst_long32.status_code == 200
+            and [r.calls for r in _passes32(_pst_uid32)] == [2]
+            and len(_events32(_pst_uid32)) == 1,
+            f"{_pst_first32.status_code} {_pst_after_first32} {_pst_big32.status_code} {_pst_after_big32} "
+            f"{_pst_long32.status_code} {[r.calls for r in _passes32(_pst_uid32)]}",
+        )
+        # The jd_json cap reaches the tailor's own builders, so both directions are driven through /tailor: the
+        # maximal Hebrew JD is tailored, and an oversize one is a 413 whose monthly use `charged` gives back (the
+        # daily tailor count it spent is never refunded — only a crafted body can reach it).
+        _psj_uid32, _PSJ32_H = _mint32(_c32c, "Maximal Hebrew JD")
+        _psj_ok32 = _c32c.post("/tailor", headers=_PSJ32_H,
+                               json={"resume": _R32, "jd": _PS_MAX_JD.model_dump(mode="json")})
+        _psj_big32 = _c32c.post("/tailor", headers=_PSJ32_H,
+                                json={"resume": _R32, "jd": _PS_JDModel.model_validate_json(_ps_big_jd_json).model_dump(mode="json")})
+        _psj_ev32 = _events32(_psj_uid32)
+        check(
+            "32.6 (P30-PASS-SIZE) HTTP: /tailor serves the hand-built maximal Hebrew JD, and refuses an analysed JD over "
+            "4 x the job-ad cap as a 413 input_too_large of kind 'jd' whose use is refunded",
+            _psj_ok32.status_code == 200
+            and _psj_big32.status_code == 413 and _detail28(_psj_big32).get("kind") == "jd"
+            and [(f, d) for _i, f, d, _r, _ref in _psj_ev32] == [("tailor", 1), ("tailor", 1), ("tailor", -1)]
+            and _hdr32(_psj_big32) == "9",
+            f"{_psj_ok32.status_code} {_psj_ok32.text[:120] if _psj_ok32.status_code != 200 else ''} "
+            f"{_psj_big32.status_code} {_detail28(_psj_big32)} {_shape32(_psj_ev32)} {_hdr32(_psj_big32)}",
         )
 
         # --- 32.7 The screening pass (B5): up to six answers for one use ---------------------------------------------
