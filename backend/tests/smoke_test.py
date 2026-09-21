@@ -20445,6 +20445,91 @@ try:
             f"{[(r.status_code, _hdr32(r), _phdr32(r)) for r in _sch32]}",
         )
 
+        # --- 32.7 extension transport (P30-EXT-LIMIT) ------------------------------------------------------------------
+        # The wire the Chrome extension's autofill reads, driven with ONLY {"X-App-Key": code}, its exact header set: no
+        # X-Requested-With and no cookie (a fresh client, so this block's jar cannot lend one, and it must still be empty
+        # afterwards). Installed builds up to 0.3 read none of it; 0.4's screeningRefusal (extension/popup.js, pinned by
+        # check-mirrors 35) parses exactly these bodies. Every call spends a daily `llm` unit BEFORE the monthly reserve
+        # and that unit is never given back, which is why 0.4 stops after the first refusal instead of asking for every
+        # question. This block runs at DAILY_LLM_CAP=0, where check_and_count records nothing at all, so the cap is
+        # turned back on around these calls (the rule at the head of this part of 32).
+        _EXT_Q32 = {"resume": _R32, "jd_text": "Python role at Acme.", "question": "Why do you want to work here?"}
+        _ext_env32 = _env29(DAILY_LLM_CAP="3")
+        try:
+            with TestClient(_fastapi_app) as _ext32:
+                _xl_uid32, _XL32_H = _mint32(_c32c, "Extension At Limit")
+                _fill32(_xl_uid32, 10)
+                _xl32 = _ext32.post("/tools/screening-answer", headers=_XL32_H, json=_EXT_Q32)
+                _xl_now32 = _q32.utc_now()
+                _xl_llm32 = _ul32(_xl_uid32).get("llm")
+                _xl_pool32 = _pool32(f"u:{_xl_uid32}", _q32.period_of(_xl_now32))
+                _xt_uid32, _XT32_H = _mint32(_c32c, "Extension Rides At Zero")
+                _fill32(_xt_uid32, 9)
+                _xt32 = [_ext32.post("/tools/screening-answer", headers=_XT32_H, json=_EXT_Q32) for _ in range(2)]
+                _xt_llm32 = _ul32(_xt_uid32).get("llm")
+                _xt_pool32 = _pool32(f"u:{_xt_uid32}", _q32.period_of(_q32.utc_now()))
+                _xt_jar32 = len(_ext32.cookies)
+        finally:
+            _restore29(_ext_env32)
+        check(
+            "32.7 extension transport (P30-EXT-LIMIT): a free user with the month spent and NO open pass, calling with the "
+            "extension's headers alone, gets 429 {code monthly_limit, feature screening, plan free, limit 10, used 10, "
+            "remaining 0, resets_on the 1st of next UTC month} — the body 0.4 turns into 'you've used all your uses for "
+            "<month>. More on <date>.' — with no X-Uses-Remaining and no X-Uses-Pass, no pass row and the pool still "
+            "(10, 10); and the refused call HAS spent a daily llm unit (0 -> 1), so asking again for the next question "
+            "only spends more",
+            _xl32.status_code == 429
+            and _detail28(_xl32) == {
+                "code": "monthly_limit", "feature": "screening", "plan": "free", "limit": 10, "used": 10,
+                "remaining": 0, "resets_on": _q32.resets_on(_xl_now32).isoformat(),
+            }
+            and _hdr32(_xl32) is None and _phdr32(_xl32) is None
+            and _passes32(_xl_uid32) == [] and _xl_pool32 == (10, 10)
+            and _xl_llm32 == 1,
+            f"{_xl32.status_code} {_detail28(_xl32)} {_hdr32(_xl32)} {_phdr32(_xl32)} pool={_xl_pool32} llm={_xl_llm32}",
+        )
+        check(
+            "32.7 extension transport twin: 0 uses left is NOT refused — a user at 9 of 10 whose first extension call "
+            "opens a screening pass with the last use gets 200 with X-Uses-Remaining 0 and X-Uses-Pass screening;5;, and "
+            "the next call rides it (200, remaining 0, screening;4;) with the pool still (10, 10). So neither the popup nor "
+            "a web tab may skip or disable an answer on the count alone: only the server's refusal decides",
+            [r.status_code for r in _xt32] == [200, 200]
+            and all((_j28(r).get("answer") or "").strip() for r in _xt32)
+            and [_hdr32(r) for r in _xt32] == ["0", "0"]
+            and (_phdr32(_xt32[0]) or "").startswith("screening;5;")
+            and (_phdr32(_xt32[1]) or "").startswith("screening;4;")
+            and _xt_pool32 == (10, 10) and _xt_llm32 == 2
+            and _xt_jar32 == 0,
+            f"{[(r.status_code, _hdr32(r), _phdr32(r)) for r in _xt32]} pool={_xt_pool32} llm={_xt_llm32} "
+            f"cookies={_xt_jar32}",
+        )
+        _ext_env32 = _env29(DAILY_LLM_CAP="1")
+        try:
+            with TestClient(_fastapi_app) as _ext32:
+                _xd_uid32, _XD32_H = _mint32(_c32c, "Extension Daily Limit")
+                _xd_first32 = _ext32.post("/tools/screening-answer", headers=_XD32_H, json=_EXT_Q32)
+                _xd_ev1_32, _xd_rows1_32 = _events32(_xd_uid32), [tuple(r)[:6] for r in _passes32(_xd_uid32)]
+                _xd_second32 = _ext32.post("/tools/screening-answer", headers=_XD32_H, json=_EXT_Q32)
+                _xd_ev2_32, _xd_rows2_32 = _events32(_xd_uid32), [tuple(r)[:6] for r in _passes32(_xd_uid32)]
+                _xd_llm32 = _ul32(_xd_uid32).get("llm")
+        finally:
+            _restore29(_ext_env32)
+        check(
+            "32.7 extension transport, daily first: at DAILY_LLM_CAP=1 the first extension call is a 200 that opens a "
+            "screening pass (+1 screening), and the second is 429 {code daily_limit, action llm, cap 1} — the body 0.4 turns "
+            "into 'you've used all 1 AI requests for today' — refused BEFORE the monthly pool, so it writes no ledger event, "
+            "takes no pass call, and leaves the daily count at 1",
+            _xd_first32.status_code == 200
+            and _shape32(_xd_ev1_32) == [("screening", 1, 0, "")]
+            and len(_xd_rows1_32) == 1 and _xd_rows1_32[0][3] == 1
+            and _xd_second32.status_code == 429
+            and _detail28(_xd_second32) == {"code": "daily_limit", "action": "llm", "cap": 1}
+            and _xd_ev2_32 == _xd_ev1_32 and _xd_rows2_32 == _xd_rows1_32
+            and _xd_llm32 == 1,
+            f"{_xd_first32.status_code} {_xd_second32.status_code} {_detail28(_xd_second32)} "
+            f"events={_shape32(_xd_ev2_32)} passes={_xd_rows2_32} llm={_xd_llm32}",
+        )
+
         # --- 32.8 Rewrites (B4.5): a use only when the model would be asked -------------------------------------------
         _RW_CV32 = _RV_RW_CV.model_dump(mode="json")
         _TIDY32 = _tidy.model_dump(mode="json")
