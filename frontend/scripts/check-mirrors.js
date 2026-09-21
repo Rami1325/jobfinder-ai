@@ -3137,8 +3137,10 @@ try {
 
 /** Bundle `contents` (resolved from src/) and run it. `stubs` maps an import
  * path as written to the object it should return: `../i18n` cannot run in
- * node (import.meta.glob), and none of these probes needs a real catalogue. */
-function runProbeBundle(name, contents, stubs = {}) {
+ * node (import.meta.glob), and none of these probes needs a real catalogue.
+ * `define` is esbuild's, for a module that reads `import.meta.env` at load
+ * (api/client.ts), which a cjs bundle would otherwise read as undefined. */
+function runProbeBundle(name, contents, stubs = {}, define = {}) {
   const esbuild = createRequire(import.meta.url)("esbuild");
   const built = esbuild.buildSync({
     stdin: { contents, resolveDir: SRC, sourcefile: `check-mirrors-${name}.ts`, loader: "tsx" },
@@ -3150,6 +3152,7 @@ function runProbeBundle(name, contents, stubs = {}) {
     logLevel: "silent",
     external: Object.keys(stubs),
     jsx: "automatic",
+    define,
   });
   const mod = { exports: {} };
   const req = createRequire(import.meta.url);
@@ -6414,7 +6417,9 @@ try {
       const M429 = [429, { detail: { code: "monthly_limit", feature: "screening", plan: "free", limit: 10, used: 10, remaining: 0, resets_on: "2026-10-01" } }];
       const D429 = [429, { detail: { code: "daily_limit", action: "llm", cap: 150 } }];
       const OK = (answer) => [200, { answer }];
-      const runAutofill = async (loc, frames, script) => {
+      // `fill` stands in for the page: how many of a frame's answers it takes, or
+      // "throw" when the frame went away before they could be written.
+      const runAutofill = async (loc, frames, script, fill = (texts) => texts.length) => {
         const asked = [];
         const fills = [];
         const env = {
@@ -6440,8 +6445,11 @@ try {
                 result: Array.from({ length: n }, (_, q) => ({ n: q + 1, question: `Frame ${f}, question ${q + 1}: why this role?` })),
               }));
             if (func.name === "fillScreeningAnswers") {
-              fills.push({ frameIds: target.frameIds ? [...target.frameIds] : null, texts: args[0].map((a) => a.text) });
-              return [{ result: args[0].length }];
+              const texts = args[0].map((a) => a.text);
+              fills.push({ frameIds: target.frameIds ? [...target.frameIds] : null, texts });
+              const took = fill(texts, target.frameIds?.[0]);
+              if (took === "throw") throw new Error("Frame with ID 5 was removed.");
+              return [{ result: took }];
             }
             throw new Error(`unexpected injection ${func.name}`);
           },
@@ -6457,8 +6465,8 @@ try {
           text: els.applyStatusText?.textContent ?? "",
         };
       };
-      const scenario = async (label, loc, frames, script, want) => {
-        const got = await runAutofill(loc, frames, script);
+      const scenario = async (label, loc, frames, script, want, fill) => {
+        const got = await runAutofill(loc, frames, script, fill);
         const wrong = [];
         if (got.requests !== want.requests) wrong.push(`${got.requests} screening requests, not ${want.requests}`);
         if (JSON.stringify(got.fills) !== JSON.stringify(want.fills)) wrong.push(`wrote ${JSON.stringify(got.fills)}, not ${JSON.stringify(want.fills)}`);
@@ -6472,6 +6480,7 @@ try {
         say(loc, "autofillOutOfUses", loc === "en" ? ["September", "October 1"] : ["ספטמבר", "1 באוקטובר"]),
         say(loc, "autofillAnswersBlank"),
         say(loc, "autofillAnswersFailed", ["502"]),
+        say(loc, "autofillAnswersUnwritten"),
       ];
       await scenario("the first answer is refused 429 monthly_limit", "en", [4, 4], [M429], {
         requests: 1,
@@ -6515,6 +6524,39 @@ try {
         kind: "warn",
         says: [say("en", "autofillDailyLimit", ["150"])],
       });
+      // Every answer came back, but the frame went away before they were written:
+      // a green "Filled N fields" over empty boxes is what this check exists to stop.
+      await scenario("every answer drafted, the frame gone before they were written", "en", [4, 4], [], {
+        requests: 4,
+        fills: [{ frameIds: [0], texts: four() }],
+        kind: "warn",
+        says: [say("en", "autofillAnswersUnwritten")],
+        never: [say("en", "autofillAnswered", ["4"]), say("en", "autofillAnswersBlank")],
+      }, () => "throw");
+      await scenario("one frame written, the other gone", "he", [2, 3], [], {
+        requests: 4,
+        fills: [
+          { frameIds: [0], texts: ["Answer 1", "Answer 2"] },
+          { frameIds: [5], texts: ["Answer 3", "Answer 4"] },
+        ],
+        kind: "warn",
+        says: [say("he", "autofillAnswered", ["2"]), say("he", "autofillAnswersUnwritten")],
+      }, (texts, frameId) => (frameId === 5 ? "throw" : texts.length));
+      await scenario("the month runs out, and the frame is gone too", "en", [4, 4], [OK("First answer."), M429], {
+        requests: 2,
+        fills: [{ frameIds: [0], texts: ["First answer."] }],
+        kind: "warn",
+        says: [say("en", "autofillOutOfUses", ["September", "October 1"]), say("en", "autofillAnswersUnwritten")],
+      }, () => "throw");
+      // The false-positive half: fillScreeningAnswers leaves a box the user typed
+      // into alone ON PURPOSE, so writing fewer than it was handed is not a failure.
+      await scenario("the user had typed into three of the boxes", "en", [4, 4], [], {
+        requests: 4,
+        fills: [{ frameIds: [0], texts: four() }],
+        kind: "ok",
+        says: [say("en", "autofillAnswered", ["1"])],
+        never: blankSentences("en"),
+      }, () => 1);
       // The false-positive half: every answer comes back, the line stays green
       // and names no refusal, and the cap still holds at four REQUESTS.
       await scenario("every answer comes back", "en", [4, 4], [], {
@@ -6567,12 +6609,61 @@ function staleTabProblems(layoutSrc) {
     );
   if (/location\.(?:assign|replace|href)|\bnavigate\(/.test(body))
     out.push("AppLayout's visibilitychange handler redirects; AccessGate owns a session that ended, the refresh only writes the uses store");
-  if (!/\bshouldRefreshUses\(/.test(body)) out.push("AppLayout's visibilitychange handler is not throttled by shouldRefreshUses (lib/usesStore.ts)");
+  // The throttle, read by its SHAPE and not by its name (checks 15/21: pin which
+  // way a gate points). A visibility test flipped to `!==` re-reads a HIDDEN tab
+  // and never a shown one, and a dropped `last = now` leaves the throttle
+  // counting from mount, so every show after the first minute re-reads
+  // /auth/me. Both passed a pin that only asked for `shouldRefreshUses(`.
+  //   let <last> = Date.now();                           the mount's ask counts
+  //   if (!shouldRefreshUses(<now>, <last>, <visible>)) return;
+  //   <last> = <now>;                                    after the gate
+  //   void refreshUses(<id>);                            after the gate
+  const SHAPE = 'if (!shouldRefreshUses(now, last, document.visibilityState === "visible")) return;';
+  const gate = /\bif\s*\(\s*!\s*shouldRefreshUses\s*\(/.exec(body);
+  let gateEnd = -1;
+  if (!gate) {
+    out.push(
+      /\bshouldRefreshUses\s*\(/.test(body)
+        ? `AppLayout's visibilitychange handler calls shouldRefreshUses, but not as \`${SHAPE}\`, so which way its gate points cannot be read`
+        : "AppLayout's visibilitychange handler is not throttled by shouldRefreshUses (lib/usesStore.ts)",
+    );
+  } else {
+    const g = callParts(body, gate.index + gate[0].length - 1);
+    const ret = /^\s*\)\s*return\s*;?/.exec(body.slice(g.end + 1));
+    if (!ret) out.push(`AppLayout's shouldRefreshUses gate does not return when it says no; it must read \`${SHAPE}\``);
+    gateEnd = g.end + 1 + (ret ? ret[0].length : 0);
+    const [nowArg = "", lastArg = "", visArg = ""] = g.args.map((a) => a.trim());
+    if (g.args.length !== 3) out.push(`AppLayout calls shouldRefreshUses with ${g.args.length} arguments; it must read \`${SHAPE}\``);
+    if (!/^(?:document\.visibilityState\s*===\s*(["'])visible\1|!\s*document\.hidden)$/.test(visArg))
+      out.push(
+        `AppLayout's shouldRefreshUses is told the tab is visible when ${JSON.stringify(visArg)}; it must be ` +
+          '`document.visibilityState === "visible"` (or `!document.hidden`), or the tab re-reads its uses while HIDDEN ' +
+          "and never when it is shown",
+      );
+    const nowOk =
+      /^Date\.now\(\)$/.test(nowArg) ||
+      (/^[A-Za-z_$][\w$]*$/.test(nowArg) && new RegExp(`\\bconst\\s+${nowArg}\\s*=\\s*Date\\.now\\(\\)`).test(body.slice(0, gate.index)));
+    if (!nowOk) out.push(`AppLayout's shouldRefreshUses is given ${JSON.stringify(nowArg)} as the time; it must be Date.now(), or a const holding it`);
+    if (!/^[A-Za-z_$][\w$]*$/.test(lastArg))
+      out.push(`AppLayout's shouldRefreshUses is given ${JSON.stringify(lastArg)} as the last ask; it must be the variable the handler stamps`);
+    else {
+      const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const stampTo = nowOk && nowArg !== "Date.now()" ? `(?:${esc(nowArg)}|Date\\.now\\(\\))` : "Date\\.now\\(\\)";
+      if (!new RegExp(`(?<![\\w$.])${esc(lastArg)}\\s*=(?!=)\\s*${stampTo}(?=\\s*[;\\n}])`).test(body.slice(gateEnd)))
+        out.push(
+          `AppLayout's visibilitychange handler never stamps \`${lastArg} = ${nowArg || "Date.now()"}\` after the gate, so the ` +
+            "throttle counts from mount and every show after the first minute re-reads /auth/me",
+        );
+      if (!new RegExp(`\\blet\\s+${esc(lastArg)}\\s*=\\s*Date\\.now\\(\\)`).test(body.slice(0, gate.index)))
+        out.push(`${lastArg} does not start at Date.now() in the effect: the guard's own /auth/me, just answered, is the last ask`);
+    }
+  }
   const call = /\brefreshUses\(\s*([A-Za-z_$][\w$]*)\s*\)/.exec(body);
   if (!call) {
     out.push("AppLayout's visibilitychange handler does not call refreshUses(<the guard's user id>)");
     return out;
   }
+  if (gateEnd !== -1 && call.index < gateEnd) out.push("AppLayout's visibilitychange handler calls refreshUses before its throttle gate");
   const id = call[1];
   if (!new RegExp(`\\b${id}\\b`).test(deps))
     out.push(`AppLayout's visibilitychange effect does not depend on ${id}, the id it refreshes for (deps: ${deps || "none"})`);
@@ -6588,11 +6679,13 @@ function staleTabProblems(layoutSrc) {
   return out;
 }
 
-/** What is wrong with client.ts's refreshUses, as sentences. */
+/** What client.ts's refreshUses may never do, read from its source, as
+ * sentences. What it MUST do (write the store for the same account and for no
+ * other answer) is not readable from source: `void usage; setUsage(data.usage
+ * ?? null)` names both functions and writes another account's count. That half
+ * is EXECUTED, by refreshUsesBehaviour below. */
 function refreshUsesProblems(body) {
   const out = [];
-  if (!/\busageIfSameUser\(/.test(body)) out.push("refreshUses writes the store without checking the answer is the same account (usageIfSameUser)");
-  if (!/\bsetUsage\(/.test(body)) out.push("refreshUses never writes the uses store (setUsage)");
   for (const [re, what] of [
     [/\bnoteDraftOwner\(/, "re-stamps the resume draft's owner"],
     [/localStorage\.(?:removeItem|setItem|clear)|ACCESS_CODE_KEY/, "touches the stored invite code"],
@@ -6600,6 +6693,72 @@ function refreshUsesProblems(body) {
     [/\bgetAuthMe\(/, "goes through getAuthMe and its side effects"],
   ])
     if (re.test(body)) out.push(`refreshUses ${what}; it may write the uses store and nothing else`);
+  return out;
+}
+
+/** The world refreshUses' imports are bound to: an axios whose GET answers
+ * `h.answer` (or throws it), the real usesStore with setUsage recorded, and a
+ * draft owner and caches whose every touch is recorded as a side effect. */
+function refreshUsesHarness(realUses) {
+  const h = { answer: null, urls: [], writes: [], sideEffects: [] };
+  h.reset = (answer) => Object.assign(h, { answer, urls: [], writes: [], sideEffects: [] });
+  const refuse = (verb) => async (url) => {
+    h.sideEffects.push(`sent ${verb} ${url}`);
+    throw new Error(`no ${verb} in this probe`);
+  };
+  h.api = {
+    get: async (url) => {
+      h.urls.push(url);
+      if (h.answer instanceof Error) throw h.answer;
+      return { data: h.answer, headers: {} };
+    },
+    post: refuse("POST"),
+    put: refuse("PUT"),
+    delete: refuse("DELETE"),
+    interceptors: { request: { use() {} }, response: { use() {} } },
+  };
+  h.stubs = {
+    axios: { create: () => h.api, isAxiosError: () => false },
+    "../lib/usesStore": { ...realUses, setUsage: (u) => void h.writes.push(u === undefined ? "<undefined>" : u) },
+    "../lib/draft": { noteDraftOwner: (id) => void h.sideEffects.push(`stamped the draft owner (${id})`) },
+    "../lib/dataCache": {
+      cachedFetch: (_k, fn) => fn(),
+      clearDataCache: () => void h.sideEffects.push("cleared the data cache"),
+      invalidateData: () => void h.sideEffects.push("invalidated the data cache"),
+    },
+    "../hooks/useMasterResume": { resetMasterCache: () => void h.sideEffects.push("reset the master resume cache") },
+  };
+  return h;
+}
+
+/** Drive `refreshUses` (the real one, or a synthetic twin bound to the same
+ * harness) through every answer /auth/me can give a tab it was opened for,
+ * account 7, and say what it did wrong. */
+async function refreshUsesBehaviour(refreshUses, h) {
+  const out = [];
+  const mine = { plan: "free", limit: 10, used: 4, remaining: 6, resets_on: "2026-10-01", by_feature: {}, passes: {} };
+  const theirs = { ...mine, used: 9, remaining: 1 };
+  const signedIn = (id, usage) => ({ authenticated: true, verified: true, method: "session", user: { id }, usage });
+  for (const [label, answer, want] of [
+    ["the same account", signedIn(7, mine), [mine]],
+    ["another account, signed in from another tab of the same browser", signedIn(9, theirs), []],
+    ["a session that ended while the tab was hidden", { authenticated: false, verified: false, method: null, user: null, usage: null }, []],
+    ["the same account on a plan with no usage block", signedIn(7, null), [null]],
+    ["a request that failed", new Error("Network Error"), []],
+  ]) {
+    h.reset(answer);
+    const wrong = [];
+    try {
+      await refreshUses(7);
+    } catch (e) {
+      wrong.push(`it rejected (${e.message}), so the listener's \`void\` leaves an unhandled rejection`);
+    }
+    if (JSON.stringify(h.urls) !== '["/auth/me"]') wrong.push(`it asked ${JSON.stringify(h.urls)}, not /auth/me once`);
+    if (JSON.stringify(h.writes) !== JSON.stringify(want))
+      wrong.push(`it wrote ${JSON.stringify(h.writes)} into the uses store, not ${JSON.stringify(want)}`);
+    if (h.sideEffects.length) wrong.push(`it also ${h.sideEffects.join(", ")}`);
+    if (wrong.length) out.push(`refreshUses(7), answered by ${label}: ${wrong.join("; ")}`);
+  }
   return out;
 }
 
@@ -6632,9 +6791,18 @@ try {
     if (JSON.stringify(got) !== JSON.stringify(want)) fail(`check 35(d): usageIfSameUser gives ${JSON.stringify(got)} for ${label}; it must give ${JSON.stringify(want)}`);
 
   for (const p of refreshUsesProblems(fnSource(decomment(read("api/client.ts")), "export async function refreshUses"))) fail(`api/client.ts: ${p}`);
+  // The REAL refreshUses, bundled out of api/client.ts with its imports bound to
+  // the harness, and EXECUTED against every answer.
+  const h = refreshUsesHarness(us);
+  const client = runProbeBundle("refresh-uses", `export { refreshUses } from "./api/client";\n`, h.stubs, {
+    "import.meta.env": "{}",
+  });
+  if (typeof client.refreshUses !== "function")
+    throw new Error("api/client.ts exports no refreshUses, so a tab shown again cannot re-read its uses");
+  for (const p of await refreshUsesBehaviour(client.refreshUses, h)) fail(`api/client.ts: ${p}`);
   for (const p of staleTabProblems(read("layouts/AppLayout.tsx"))) fail(p);
 
-  // Both directions on both detectors.
+  // Both directions on all three detectors.
   const GOOD_BODY = "{\n  const { data } = await api.get(\"/auth/me\");\n  const usage = usageIfSameUser(expectedId, data);\n  if (usage !== undefined) setUsage(usage);\n}";
   if (refreshUsesProblems(GOOD_BODY).length) fail("check 35(d)'s refreshUses detector fires on a correct body");
   for (const [label, plant] of [
@@ -6645,8 +6813,30 @@ try {
   ])
     if (!refreshUsesProblems(GOOD_BODY.replace("\n}", `\n  ${plant}\n}`)).length)
       fail(`check 35(d)'s refreshUses detector misses ${label}`);
-  if (!refreshUsesProblems(GOOD_BODY.replace("usageIfSameUser(expectedId, data)", "data.usage")).length)
-    fail("check 35(d)'s refreshUses detector misses a write with no same-account check");
+  // A twin is a body bound to the same harness the real one ran against.
+  const twin = (body) =>
+    new Function("api", "usageIfSameUser", "setUsage", "noteDraftOwner", `return async function refreshUses(expectedId) {\n${body}\n};`)(
+      h.api,
+      us.usageIfSameUser,
+      (u) => h.stubs["../lib/usesStore"].setUsage(u),
+      (id) => h.stubs["../lib/draft"].noteDraftOwner(id),
+    );
+  const GOOD_TWIN =
+    'try {\n  const { data } = await api.get("/auth/me");\n  const usage = usageIfSameUser(expectedId, data);\n' +
+    "  if (usage !== undefined) setUsage(usage);\n} catch {}";
+  const goodTwin = await refreshUsesBehaviour(twin(GOOD_TWIN), h);
+  if (goodTwin.length) fail(`check 35(d)'s refreshUses behaviour probe fires on a correct body: ${goodTwin.join("; ")}`);
+  for (const [label, body] of [
+    ["the guard read and then ignored (`void usage; setUsage(data.usage ?? null)`)", GOOD_TWIN.replace("if (usage !== undefined) setUsage(usage);", "void usage; setUsage(data.usage ?? null);")],
+    ["the guard folded into the write (`setUsage(usageIfSameUser(expectedId, data) ?? null)`)", GOOD_TWIN.replace(/const usage = [^\n]+\n\s*if \(usage !== undefined\) setUsage\(usage\);/, "setUsage(usageIfSameUser(expectedId, data) ?? null);")],
+    ["a write on any answer (`if (usage) … else setUsage(null)`)", GOOD_TWIN.replace("if (usage !== undefined) setUsage(usage);", "setUsage(usage ?? null);")],
+    ["no catch, so a failed request rejects", GOOD_TWIN.replace(/^try \{\n/, "").replace(/\n\} catch \{\}$/, "")],
+    ["a draft-owner stamp", GOOD_TWIN.replace("if (usage !== undefined)", "noteDraftOwner(data.user?.id ?? null);\n  if (usage !== undefined)")],
+  ]) {
+    if (body === GOOD_TWIN) throw new Error(`check 35(d)'s plant "${label}" did not apply, so it probes nothing`);
+    if (!(await refreshUsesBehaviour(twin(body), h)).length) fail(`check 35(d)'s refreshUses behaviour probe misses ${label}`);
+  }
+
   const LAYOUT = (effect, guard = "if (a.user) setMeId(a.user.id);", fallback = "if (live) setAuthed(true);") =>
     "const [meId, setMeId] = useState<number | null>(null);\n" +
     `getAuthMe().then((a) => { ${guard} setAuthed(true); }).catch(() => { ${fallback} });\n` +
@@ -6657,15 +6847,44 @@ try {
     "    last = Date.now();\n    void refreshUses(meId);\n  };\n" +
     '  document.addEventListener("visibilitychange", onVisible);\n' +
     '  return () => document.removeEventListener("visibilitychange", onVisible);\n}, [meId]);\n';
-  if (staleTabProblems(LAYOUT(EFFECT)).length) fail(`check 35(d)'s stale-tab detector fires on a correct layout: ${staleTabProblems(LAYOUT(EFFECT)).join("; ")}`);
+  // The same effect in AppLayout's own style: a `now` const, and `!document.hidden`.
+  const EFFECT_NOW = EFFECT.replace(
+    '    if (!shouldRefreshUses(Date.now(), last, document.visibilityState === "visible")) return;\n    last = Date.now();\n',
+    "    const now = Date.now();\n    if (!shouldRefreshUses(now, last, !document.hidden)) return;\n    last = now;\n",
+  );
+  if (EFFECT_NOW === EFFECT) throw new Error("check 35(d)'s second correct layout did not apply");
+  for (const [label, effect] of [
+    ["the inline form", EFFECT],
+    ["the `now` const and `!document.hidden` form", EFFECT_NOW],
+  ]) {
+    const p = staleTabProblems(LAYOUT(effect));
+    if (p.length) fail(`check 35(d)'s stale-tab detector fires on a correct layout (${label}): ${p.join("; ")}`);
+  }
+  const plant = (effect, from, to) => {
+    const out = effect.replace(from, to);
+    if (out === effect) throw new Error(`check 35(d)'s stale-tab plant ${from} did not apply, so it probes nothing`);
+    return out;
+  };
   for (const [label, layout] of [
-    ["a handler that calls getAuthMe (the draft-owner leak)", LAYOUT(EFFECT.replace("void refreshUses(meId);", "void getAuthMe().catch(() => {});"))],
-    ["a listener that is never removed", LAYOUT(EFFECT.replace(/\n  return \(\) => [^\n]+/, ""))],
-    ["a gate on `authed` alone", LAYOUT(EFFECT.replace("if (meId === null) return;", "if (!authed) return;").replace("[meId]", "[authed]"))],
-    ["a handler that redirects", LAYOUT(EFFECT.replace("void refreshUses(meId);", 'void refreshUses(meId); window.location.assign("/login");'))],
-    ["no throttle", LAYOUT(EFFECT.replace(/\n    if \(!shouldRefreshUses[^\n]+/, ""))],
+    ["a handler that calls getAuthMe (the draft-owner leak)", LAYOUT(plant(EFFECT, "void refreshUses(meId);", "void getAuthMe().catch(() => {});"))],
+    ["a listener that is never removed", LAYOUT(plant(EFFECT, /\n  return \(\) => [^\n]+/, ""))],
+    ["a gate on `authed` alone", LAYOUT(plant(EFFECT, "if (meId === null) return;", "if (!authed) return;").replace("[meId]", "[authed]"))],
+    ["a handler that redirects", LAYOUT(plant(EFFECT, "void refreshUses(meId);", 'void refreshUses(meId); window.location.assign("/login");'))],
+    ["no throttle", LAYOUT(plant(EFFECT, /\n    if \(!shouldRefreshUses[^\n]+/, ""))],
     ["an id set when the guard failed open", LAYOUT(EFFECT, undefined, "if (live) { setAuthed(true); setMeId(0); }")],
     ["no listener at all", LAYOUT("")],
+    // The throttle's shape: each of these passed the name-only pin.
+    ["the visibility test flipped (`!==`)", LAYOUT(plant(EFFECT, '=== "visible"', '!== "visible"'))],
+    ["the visibility test flipped (`document.hidden`)", LAYOUT(plant(EFFECT_NOW, "!document.hidden", "document.hidden"))],
+    ["the visibility test on another value (`=== \"hidden\"`)", LAYOUT(plant(EFFECT, '=== "visible"', '=== "hidden"'))],
+    ["the gate's `!` dropped", LAYOUT(plant(EFFECT, "if (!shouldRefreshUses", "if (shouldRefreshUses"))],
+    ["the gate not returning", LAYOUT(plant(EFFECT, /\)\) return;\n    last/, ")) {}\n    last"))],
+    ["the throttle stamp deleted", LAYOUT(plant(EFFECT, "\n    last = Date.now();", ""))],
+    ["the throttle stamp deleted (the `now` form)", LAYOUT(plant(EFFECT_NOW, "\n    last = now;", ""))],
+    ["the throttle stamped with 0", LAYOUT(plant(EFFECT_NOW, "last = now;", "last = 0;"))],
+    ["the throttle stamp compared, not assigned", LAYOUT(plant(EFFECT_NOW, "last = now;", "last == now;"))],
+    ["the last ask starting at 0", LAYOUT(plant(EFFECT, "let last = Date.now();", "let last = 0;"))],
+    ["refreshUses called before the gate", LAYOUT(plant(EFFECT, "  const onVisible = () => {\n", "  const onVisible = () => {\n    void refreshUses(meId);\n").replace("    last = Date.now();\n    void refreshUses(meId);\n", "    last = Date.now();\n"))],
   ])
     if (!staleTabProblems(layout).length) fail(`check 35(d)'s stale-tab detector misses ${label}`);
 } catch (e) {
