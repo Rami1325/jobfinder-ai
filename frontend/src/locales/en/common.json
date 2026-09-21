@@ -203,6 +203,11 @@
   "sizeLimit": {
     "resume": "That CV is too large to process ({{size}} KB; the limit is {{cap}} KB). It was NOT saved. Remove images or split it, then upload again.",
     "jd": "That job description is too long ({{size}} KB; the limit is {{cap}} KB). Paste just the role and requirements.",
+    "transcript": "This practice session is full ({{size}} KB; the limit is {{cap}} KB), so your last answer was not sent. End the session to get your scorecard.",
+    "session": "This practice session is too long to score ({{size}} KB; the limit is {{cap}} KB). Start over to practice again.",
+    "answer": "That answer is too long ({{size}} KB; the limit is {{cap}} KB). Shorten it and try again.",
+    "question": "That question is too long ({{size}} KB; the limit is {{cap}} KB). Paste just the question.",
+    "generic": "That is too large to process ({{size}} KB; the limit is {{cap}} KB). Nothing was changed.",
     "context": "Your CV is too long for the AI to read in one go. Trim the oldest roles and try again — nothing was changed.",
     "truncated": "The AI ran out of room before finishing. Try again, or shorten your CV a little first."
   }

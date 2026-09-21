@@ -3,7 +3,7 @@
 // jobSearchStore. The backend is stateless; this store owns the transcript
 // and sends it whole with every turn.
 import { interviewChat, interviewScorecard } from "../api/client";
-import { apiErrorMessage } from "../lib/apiError";
+import { apiErrorMessage, sizeLimitKind } from "../lib/apiError";
 import type { ChatTurn, InterviewScorecardResult, ResumeModel } from "../types";
 
 export type MockInterviewState = {
@@ -14,6 +14,12 @@ export type MockInterviewState = {
   done: boolean; // the interviewer closed its arc — nudge toward the scorecard
   scorecard: InterviewScorecardResult | null;
   error: string;
+  // An answer the server refused, handed back for the draft (P30-PASS-SIZE).
+  // The page moves it into its text box with takeReturnedAnswer().
+  returned: string;
+  // The server refused the transcript as too long (a 413 of kind "transcript"):
+  // no further answer can be sent, and End still scores what was accepted.
+  full: boolean;
 };
 
 const initial: MockInterviewState = {
@@ -24,6 +30,8 @@ const initial: MockInterviewState = {
   done: false,
   scorecard: null,
   error: "",
+  returned: "",
+  full: false,
 };
 
 let state: MockInterviewState = { ...initial };
@@ -59,7 +67,15 @@ export function resetMockInterview(): void {
   listeners.forEach((l) => l());
 }
 
-async function fetchNextTurn(id: number): Promise<void> {
+/** `answer` is the candidate turn this call appended, if any (the opener has none).
+ *
+ * On ANY failure that turn comes back OUT of the transcript and is handed to the
+ * draft (P30-PASS-SIZE). It used to stay in `turns`, so the interviewer never
+ * answered it while every later call re-sent it — a retry after a size refusal
+ * was refused again and spent another of the pass's calls each time. A 413 of
+ * kind "transcript" also marks the session full: the next answer would be
+ * refused the same way, so Send stops offering it and End scores the rest. */
+async function fetchNextTurn(id: number, answer?: ChatTurn): Promise<void> {
   if (!sessionResume) return;
   try {
     const r = await interviewChat(sessionResume, sessionJd, state.turns);
@@ -71,7 +87,14 @@ async function fetchNextTurn(id: number): Promise<void> {
     });
   } catch (e: unknown) {
     if (id !== seq) return;
-    set({ sending: false, error: apiErrorMessage(e, "Something went wrong.") });
+    const last = state.turns[state.turns.length - 1];
+    const handBack = answer !== undefined && last === answer;
+    set({
+      sending: false,
+      error: apiErrorMessage(e, "Something went wrong."),
+      ...(handBack ? { turns: state.turns.slice(0, -1), returned: answer.text } : {}),
+      ...(sizeLimitKind(e) === "transcript" ? { full: true } : {}),
+    });
   }
 }
 
@@ -86,14 +109,24 @@ export function startMockInterview(resume: ResumeModel, jdText: string): void {
 
 export function sendMockAnswer(text: string): void {
   const answer = text.trim();
-  if (!answer || state.sending || state.ending || !sessionResume) return;
+  if (!answer || state.sending || state.ending || state.full || !sessionResume) return;
   const id = seq;
+  const turn: ChatTurn = { role: "candidate", text: answer };
   set({
-    turns: [...state.turns, { role: "candidate", text: answer }],
+    turns: [...state.turns, turn],
     sending: true,
     error: "",
+    returned: "",
   });
-  void fetchNextTurn(id);
+  void fetchNextTurn(id, turn);
+}
+
+/** The answer the server refused, once: the page puts it back into its text
+ * box, and the store forgets it so a later render cannot restore it twice. */
+export function takeReturnedAnswer(): string {
+  const text = state.returned;
+  if (text) set({ returned: "" });
+  return text;
 }
 
 export function endMockInterview(): void {

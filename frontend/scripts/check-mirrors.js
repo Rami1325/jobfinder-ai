@@ -5991,6 +5991,354 @@ try {
   fail(`AGENTS.md / CLAUDE.md comparison could not run: ${e.message}`);
 }
 
+// ---- 34. every size-limit kind the backend raises has its own sentence (EXECUTED) //
+// P30-PASS-SIZE. A 413 `input_too_large` carries a `kind`, and `apiErrorMessage`
+// read it as `kind === "jd" ? "jd" : "resume"`: every other kind got the CV's
+// sentence — "That CV is too large to process… It was NOT saved… upload again" —
+// said to someone whose practice session or screening question was too long.
+// The pass inputs brought four new kinds (transcript, session, answer, question),
+// and tsc sees none of it: a kind is a string inside a JSON body.
+//
+// So the kinds are READ from the backend, never restated here: every literal
+// third argument of `require_within(…)` (or its `kind=`), every literal first
+// argument of `InputTooLarge(…)`, and every `_Rule("<kind>", …)` in prompts.py's
+// rule table, over every .py file under backend/app. A call whose kind is not a
+// literal is allowed only where the kind is a pass-through — `require_within`'s
+// own raise in limits.py and the rule-table wrapper in prompts.py — and red
+// anywhere else, because this check cannot see what it raises. For each kind:
+// `sizeLimit.<kind>` resolves in BOTH common.json files, and `apiErrorMessage`,
+// EXECUTED with a recording i18n stub (32(c)'s mechanism), asks for exactly that
+// key with the numbers. An unknown kind, and `constructor` (every object
+// inherits one, so a plain `TABLE[kind]` answers it with a function), ask for
+// `sizeLimit.generic`, never the CV's sentence.
+//
+// The client half, EXECUTED too: after a refused chat turn the mock-interview
+// store takes the answer back OUT of the transcript and hands it to the draft
+// (it used to stay in `turns`, so every retry re-sent it and spent another of
+// the pass's calls), and a 413 of kind `transcript` marks the session full, so
+// Send stops offering a call the server would refuse again.
+//
+// Degrades only when backend/ is absent (pySource); the frontend half then runs
+// against the six kinds this build knows.
+
+/** The arguments of the Python call whose `(` is at `open`, split at top-level
+ * commas; strings and nested brackets are respected. */
+function pyCallArgs(code, open) {
+  const args = [];
+  let depth = 0;
+  let quote = null;
+  let start = open + 1;
+  for (let i = open + 1; i < code.length; i++) {
+    const c = code[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) {
+      if (depth === 0) {
+        args.push(code.slice(start, i));
+        return args;
+      }
+      depth--;
+    } else if (c === "," && depth === 0) {
+      args.push(code.slice(start, i));
+      start = i + 1;
+    }
+  }
+  throw new Error(`a call opened at offset ${open} is never closed`);
+}
+
+/** Every size-limit kind one Python file names, and every call whose kind is not
+ * a literal (as `label(arg)` strings). Reads pyCode, so a docstring or a comment
+ * never counts. A `def` or `class` line is a declaration, not a raise. `_Rule(`
+ * is read only where `rules` says the rule table lives: pdf_renderer.py has a
+ * `_Rule` of its own (a drawn line), and reading it as a size rule is this
+ * check firing on legitimate input. */
+function sizeKinds(code, rules = true) {
+  const kinds = new Set();
+  const opaque = [];
+  for (const [re, index, label] of [
+    [/\brequire_within\(/g, 2, "require_within"],
+    [/\bInputTooLarge\(/g, 0, "InputTooLarge"],
+    ...(rules ? [[/\b_Rule\(/g, 0, "_Rule"]] : []),
+  ]) {
+    for (const m of code.matchAll(re)) {
+      if (/\b(?:def|class)\s+$/.test(code.slice(Math.max(0, m.index - 8), m.index))) continue;
+      const args = pyCallArgs(code, m.index + m[0].length - 1).map((a) => a.trim());
+      const byName = args.find((a) => /^kind\s*=/.test(a));
+      const arg = byName ? byName.replace(/^kind\s*=\s*/, "") : args[index] ?? "";
+      const lit = /^(["'])([a-z][a-z_]*)\1$/.exec(arg);
+      if (lit) kinds.add(lit[2]);
+      else opaque.push(`${label}(${arg || "no kind"})`);
+    }
+  }
+  return { kinds, opaque };
+}
+
+/** Every .py file under backend/app, as a path relative to backend/. */
+function backendPyFiles(rel = "app") {
+  const out = [];
+  for (const entry of fs.readdirSync(path.join(BACKEND_DIR, ...rel.split("/")), { withFileTypes: true })) {
+    if (entry.name === "__pycache__") continue;
+    const child = `${rel}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...backendPyFiles(child));
+    else if (entry.name.endsWith(".py")) out.push(child);
+  }
+  return out;
+}
+
+// The kinds this build knows, as the floor under the read (a reader that comes
+// up short is a red build, never a shorter list) and the degraded run's list.
+const SIZE_KINDS = ["resume", "jd", "transcript", "session", "answer", "question"];
+// The two pass-throughs, where a kind is a variable by design, and the one file
+// whose `_Rule(` lines are the prompt-input guard's rule table.
+const OPAQUE_OK = new Set(["app/llm/limits.py InputTooLarge(kind)", "app/llm/prompts.py require_within(rule.kind)"]);
+const RULES_PY = "app/llm/prompts.py";
+try {
+  // The reader, both directions, on a fixture shaped like the real files.
+  const PROBE = [
+    "def require_within(text: str, cap_kb: int, kind: str) -> None:",
+    '    """Raise InputTooLarge("from_a_docstring") unless it fits."""',
+    "    raise InputTooLarge(kind, size_kb=1, cap_kb=cap_kb)",
+    "class _Rule(NamedTuple):",
+    "    kind: str",
+    'RULES = {"a": _Rule("from_table", "max_x_kb", turn_cap="max_y_kb")}',
+    '# require_within(text, 1, "from_a_comment")',
+    "require_within(",
+    "    text,",
+    "    getattr(settings, rule.cap),  # a comment, with a comma",
+    '    "multi_line",',
+    ")",
+    'require_within(f(a, b), g("x, y"), kind="by_keyword")',
+    'raise InputTooLarge("from_a_raise", size_kb=1, cap_kb=2)',
+    "require_within(text, cap, rule.kind)",
+  ].join("\n");
+  const probe = sizeKinds(pyCode(PROBE));
+  const probeKinds = [...probe.kinds].sort().join();
+  if (probeKinds !== "by_keyword,from_a_raise,from_table,multi_line")
+    fail(
+      `check 34's reader reads [${probeKinds}] from its probe, not [by_keyword,from_a_raise,from_table,multi_line]: ` +
+        "it misses a multi-line call, a keyword kind, a raise or a rule, or reads a docstring or a comment.",
+    );
+  if (probe.opaque.join() !== "require_within(rule.kind),InputTooLarge(kind)")
+    fail(
+      `check 34's reader reports [${probe.opaque.join()}] as unreadable, not [require_within(rule.kind),InputTooLarge(kind)] — ` +
+        "a kind it cannot read would pass unseen, or a declaration reads as a call.",
+    );
+  // pdf_renderer.py's own `_Rule(` draws a line; outside the rule table it is not a size rule.
+  const drawn = sizeKinds(pyCode("story.append(_Rule(s.accent if spec.header_rule_accent else s.rule))"), false);
+  if (drawn.kinds.size || drawn.opaque.length)
+    fail("check 34 reads a `_Rule(` outside prompts.py (pdf_renderer's drawn line) as a size rule it cannot read");
+
+  // The backend's own kinds.
+  let kinds = SIZE_KINDS;
+  if (pySource("app/llm/limits.py", "check 34") !== null) {
+    const found = new Set();
+    const files = backendPyFiles();
+    if (!files.includes(RULES_PY) || files.length < 40)
+      throw new Error(`walked ${files.length} .py files under backend/app without ${RULES_PY} — the walk broke`);
+    for (const rel of files) {
+      const { kinds: here, opaque } = sizeKinds(pyCode(pySource(rel, "check 34")), rel === RULES_PY);
+      for (const k of here) found.add(k);
+      for (const o of opaque)
+        if (!OPAQUE_OK.has(`${rel} ${o}`))
+          fail(
+            `backend/${rel} raises a size limit as ${o}, a kind check 34 cannot read: pass the kind as a string ` +
+              "literal (or add a _Rule), so the build can require a sentence for it.",
+          );
+    }
+    const missing = SIZE_KINDS.filter((k) => !found.has(k));
+    if (missing.length)
+      throw new Error(
+        `read [${[...found].sort().join()}] out of backend/app, missing [${missing.join()}]: the reader broke, or a kind ` +
+          "was renamed — rename its sentence and this floor with it",
+      );
+    kinds = [...found].sort();
+  }
+
+  // Each kind renders its OWN sentence, EXECUTED.
+  const asked = [];
+  const i18nStub = {
+    __esModule: true,
+    language: "en",
+    t: (key, opts) => {
+      asked.push([key, opts || {}]);
+      return `T:${key}`;
+    },
+  };
+  i18nStub.default = i18nStub;
+  const ae = runProbeBundle("apierror-size", `export * from "./lib/apiError";\n`, { "../i18n": i18nStub });
+  const err = (status, detail) => ({ response: { status, data: { detail } } });
+  const render = (kind) => {
+    asked.length = 0;
+    const text = ae.apiErrorMessage(err(413, { code: "input_too_large", kind, size_kb: 300, cap_kb: 256 }), "FALLBACK");
+    return { text, opts: (asked[asked.length - 1] || [undefined, {}])[1] };
+  };
+  const locales = Object.fromEntries(["en", "he"].map((loc) => [loc, JSON.parse(read(`locales/${loc}/common.json`))]));
+  for (const kind of kinds) {
+    const got = render(kind);
+    if (got.text !== `T:sizeLimit.${kind}` || got.opts.ns !== "common")
+      fail(
+        `a 413 input_too_large of kind "${kind}" renders ${JSON.stringify(got.text)}, not common's "sizeLimit.${kind}": ` +
+          "lib/apiError.ts's SIZE_LIMIT_KEYS must name it, or the user is told the wrong thing is too big.",
+      );
+    else if (got.opts.size !== 300 || got.opts.cap !== 256)
+      fail(`the "${kind}" size sentence is handed size=${got.opts.size} cap=${got.opts.cap}, not the refusal's 300 and 256`);
+    for (const loc of ["en", "he"])
+      if (!resolvesIn(locales[loc], `sizeLimit.${kind}`))
+        fail(`locales/${loc}/common.json is missing "sizeLimit.${kind}", so a "${kind}" refusal shows the raw key.`);
+  }
+  // …and the false-positive half: a kind this build has never heard of, and one
+  // named after something every object inherits, get the generic sentence.
+  for (const kind of ["some_future_kind", "constructor"]) {
+    const got = render(kind).text;
+    if (got !== "T:sizeLimit.generic")
+      fail(
+        `a 413 of the unknown kind "${kind}" renders ${JSON.stringify(got)}, not "sizeLimit.generic" — ` +
+          (got === "T:sizeLimit.resume"
+            ? "the CV's sentence (\"It was NOT saved… upload again\"), false for anything but a CV."
+            : "the lookup must be by the table's OWN keys."),
+      );
+  }
+  for (const loc of ["en", "he"])
+    if (!resolvesIn(locales[loc], "sizeLimit.generic"))
+      fail(`locales/${loc}/common.json is missing "sizeLimit.generic", the sentence for a size kind this build does not know.`);
+
+  // The mock-interview store after a refused turn, EXECUTED.
+  const sent = [];
+  let reply = async () => ({ message: "", done: false });
+  const clientStub = {
+    __esModule: true,
+    interviewChat: (_resume, _jd, turns) => {
+      sent.push(turns.map((t) => t.text));
+      return reply();
+    },
+    interviewScorecard: async () => ({ overall: 80, summary: "", strengths: [], improvements: [], question_feedback: [] }),
+  };
+  const st = runProbeBundle("mock-interview-store", `export * from "./state/mockInterviewStore";\n`, {
+    "../api/client": clientStub,
+    "../i18n": i18nStub,
+  });
+  for (const name of ["startMockInterview", "sendMockAnswer", "getMockInterviewState", "resetMockInterview", "takeReturnedAnswer"])
+    if (typeof st[name] !== "function") throw new Error(`state/mockInterviewStore.ts no longer exports ${name}`);
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const texts = () => st.getMockInterviewState().turns.map((t) => t.text).join("|");
+  const refuse = (e) => async () => {
+    throw e;
+  };
+  reply = async () => ({ message: "Q1", done: false });
+  st.startMockInterview({}, "");
+  await settle();
+  reply = async () => ({ message: "Q2", done: false });
+  st.sendMockAnswer("A1");
+  await settle();
+  let s = st.getMockInterviewState();
+  if (texts() !== "Q1|A1|Q2" || s.returned !== "" || s.full !== false)
+    fail(
+      `a served answer leaves turns [${texts()}], returned ${JSON.stringify(s.returned)}, full ${s.full}; it must be ` +
+        '[Q1|A1|Q2], "" and false (the false-positive half: nothing is handed back when nothing was refused)',
+    );
+  for (const [label, e, full, key] of [
+    ["a 502", err(502, "LLM error"), false, null],
+    ["a 413 of kind answer", err(413, { code: "input_too_large", kind: "answer", size_kb: 17, cap_kb: 16 }), false, "T:sizeLimit.answer"],
+    ["a 413 of kind transcript", err(413, { code: "input_too_large", kind: "transcript", size_kb: 257, cap_kb: 256 }), true, "T:sizeLimit.transcript"],
+  ]) {
+    reply = refuse(e);
+    st.sendMockAnswer("A2");
+    await settle();
+    s = st.getMockInterviewState();
+    if (texts() !== "Q1|A1|Q2" || s.returned !== "A2")
+      fail(
+        `after ${label} the store holds turns [${texts()}] and returned ${JSON.stringify(s.returned)}: the refused answer ` +
+          "must leave the transcript (every retry re-sent it and spent a call) and come back for the draft.",
+      );
+    if (s.full !== full)
+      fail(`after ${label} the store's full is ${s.full}; only a 413 of kind transcript marks the session full`);
+    if (key && s.error !== key) fail(`after ${label} the store shows ${JSON.stringify(s.error)}, not ${key}`);
+    const taken = st.takeReturnedAnswer();
+    if (taken !== "A2" || st.getMockInterviewState().returned !== "")
+      fail(`takeReturnedAnswer() gave ${JSON.stringify(taken)} and left ${JSON.stringify(st.getMockInterviewState().returned)}; it must hand "A2" over once`);
+  }
+  const before = sent.length;
+  reply = async () => ({ message: "Q3", done: false });
+  st.sendMockAnswer("A3");
+  await settle();
+  if (sent.length !== before || texts() !== "Q1|A1|Q2")
+    fail("a FULL session still sends an answer: the server would refuse it again, and each refusal spends one of the pass's calls");
+  st.resetMockInterview();
+  s = st.getMockInterviewState();
+  if (s.full !== false || s.returned !== "") fail("resetMockInterview leaves the previous session's full or returned answer behind");
+
+  // The page reads both: the returned answer goes back into the draft, and Send
+  // stays off on a full session. A store field no component reads compiles green.
+  const page = fnSource(read("pages/interview/MockInterview.tsx"), "export default function MockInterview");
+  if (!/takeReturnedAnswer\(\)/.test(page))
+    fail("pages/interview/MockInterview.tsx never calls takeReturnedAnswer(), so a refused answer is lost instead of returned to the draft");
+  // …and takes it in a way that survives StrictMode (main.tsx). In dev, React
+  // runs a MOUNTING component's effects twice over the same render's values, so
+  // a page that mounts with an answer already waiting (the user left while the
+  // refusal landed, then came back) ran `if (returned) setDraft(take…())` twice:
+  // the first run restored the answer, the second still saw `returned` set, took
+  // "" and wiped the draft. The effect is EXECUTED here, twice over one closure.
+  const effects = [];
+  for (const m of page.matchAll(/\buseEffect\(/g)) {
+    const indent = page.slice(page.lastIndexOf("\n", m.index) + 1, m.index).match(/^[ \t]*/)[0];
+    const open = page.indexOf("{", m.index);
+    const close = new RegExp(`\\n${indent}\\}(?:, \\[[^\\]]*\\])?\\);`, "g");
+    close.lastIndex = open;
+    const end = close.exec(page);
+    if (open === -1 || !end) throw new Error(`could not slice the useEffect at offset ${m.index} of MockInterview.tsx`);
+    const body = page.slice(open + 1, end.index);
+    if (/takeReturnedAnswer\(/.test(body)) effects.push(body);
+  }
+  if (effects.length !== 1)
+    throw new Error(`found ${effects.length} useEffect bodies calling takeReturnedAnswer() in MockInterview.tsx, not 1`);
+  const effectMod = { exports: {} };
+  new Function(
+    "module",
+    createRequire(import.meta.url)("esbuild").transformSync(
+      `module.exports = function (returned, takeReturnedAnswer, setDraft) {${effects[0]}\n};`,
+      { loader: "ts" },
+    ).code,
+  )(effectMod);
+  const mount = (returned, typed, runs) => {
+    let waiting = returned;
+    let draft = typed;
+    const take = () => {
+      const text = waiting;
+      waiting = "";
+      return text;
+    };
+    const setDraft = (v) => {
+      draft = typeof v === "function" ? v(draft) : v;
+    };
+    for (let i = 0; i < runs; i++) effectMod.exports(returned, take, setDraft);
+    return draft;
+  };
+  for (const [label, returned, typed, runs, want] of [
+    ["once, as production runs it", "A2", "", 1, "A2"],
+    ["twice on mount, as StrictMode runs it", "A2", "", 2, "A2"],
+    // The false-positive half: with nothing returned, what the user typed stays.
+    ["twice with nothing returned", "", "typing", 2, "typing"],
+  ]) {
+    const got = mount(returned, typed, runs);
+    if (got !== want)
+      fail(
+        `MockInterview's takeReturnedAnswer effect, run ${label}, leaves the draft ${JSON.stringify(got)}, not ` +
+          `${JSON.stringify(want)}: write only the text actually taken, never what a second take returns ("").`,
+      );
+  }
+  const send =/<Button[^>]*?icon=\{<Send\b[\s\S]*?disabled=\{([^}]*)\}/.exec(page);
+  if (!send) throw new Error("could not find the Send button's disabled={…} in MockInterview.tsx");
+  if (!/\bfull\b/.test(send[1]))
+    fail(`MockInterview's Send is disabled on {${send[1]}}, which ignores a full session`);
+} catch (e) {
+  fail(`size-limit sentence check could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

@@ -52,10 +52,28 @@ const LIMIT_KEYS: Record<LimitAction, string> = {
 // can be translated, instead of shipping an English string from the server.
 interface SizeLimitDetail {
   code: "input_too_large";
-  kind: "resume" | "jd";
+  kind: string;
   size_kb: number;
   cap_kb: number;
 }
+
+// One sentence per kind the backend can raise, because each needs different
+// advice (P30-PASS-SIZE): trim a CV, paste less of a posting, end a practice
+// session that is full, restart one too long to score, shorten an answer, paste
+// just the question. It used to be `kind === "jd" ? jd : resume`, so a practice
+// session that was too long was told "That CV is too large… upload again".
+// check-mirrors 34 reads every kind out of the backend and fails a build where
+// one has no row here, or no sentence in either locale. Looked up by the table's
+// OWN keys, like GOOGLE_ERROR_KEYS: an unknown kind gets the generic sentence,
+// never the CV's, and `constructor` is not a kind.
+const SIZE_LIMIT_KEYS: Record<string, string> = {
+  resume: "sizeLimit.resume",
+  jd: "sizeLimit.jd",
+  transcript: "sizeLimit.transcript",
+  session: "sizeLimit.session",
+  answer: "sizeLimit.answer",
+  question: "sizeLimit.question",
+};
 
 function isSizeLimit(detail: unknown): detail is SizeLimitDetail {
   return (
@@ -191,6 +209,15 @@ export function isServerFailure(e: unknown): boolean {
   return typeof status === "number" && status >= 500;
 }
 
+/** The `kind` of a 413 `input_too_large` ("transcript", "answer"…), or null for
+ * any other failure. The mock interview reads it to stop offering Send once the
+ * session is full. */
+export function sizeLimitKind(e: unknown): string | null {
+  const detail = detailOf(e);
+  if (!isSizeLimit(detail)) return null;
+  return typeof detail.kind === "string" ? detail.kind : null;
+}
+
 /** The `retry_after` seconds a 429 `too_many_attempts` carries, or null. */
 export function retryAfterSeconds(e: unknown): number | null {
   const detail = detailOf(e) as { retry_after?: unknown } | undefined;
@@ -261,13 +288,10 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
   }
   if (codeOf(detail) === "monthly_limit") return monthlyLimitMessage(detail as Partial<MonthlyLimitDetail>);
   if (isSizeLimit(detail)) {
-    // Keyed per kind: a resume that is too big and a job ad that is too big
-    // need different advice (trim the CV vs paste less of the posting).
-    return i18n.t(`sizeLimit.${detail.kind === "jd" ? "jd" : "resume"}`, {
-      ns: "common",
-      cap: detail.cap_kb,
-      size: detail.size_kb,
-    });
+    const key = Object.prototype.hasOwnProperty.call(SIZE_LIMIT_KEYS, detail.kind)
+      ? SIZE_LIMIT_KEYS[detail.kind]
+      : "sizeLimit.generic";
+    return i18n.t(key, { ns: "common", cap: detail.cap_kb, size: detail.size_kb });
   }
   const code = codeOf(detail);
   if (code === "context_exceeded") return i18n.t("sizeLimit.context", { ns: "common" });

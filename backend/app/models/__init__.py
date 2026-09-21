@@ -1,7 +1,7 @@
 """Pydantic schemas shared across the app."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -323,7 +323,12 @@ class TailorRequest(BaseModel):
 class CoverLetterRequest(BaseModel):
     resume: ResumeModel
     jd: JDModel
-    tone: str = "professional"
+    # A closed set the UI builds, never typed by the user: four tones, each
+    # optionally followed by one of two fixed requests, the longest 48
+    # characters ("enthusiastic, make it more specific to this role"). So a
+    # longer one is a shape error, refused as a 422 before the cover-letter pass
+    # (P30-PASS-SIZE); it went into the prompt unmeasured before.
+    tone: str = Field(default="professional", max_length=200)
 
 
 class CoverLetterResponse(BaseModel):
@@ -1114,7 +1119,10 @@ class InterviewFeedbackResult(BaseModel):
 # Multi-turn mock interview (PLAN 11.3). Stateless backend: the client store
 # holds the session and sends the whole transcript with every turn.
 class ChatTurn(BaseModel):
-    role: str = "interviewer"  # "interviewer" | "candidate"
+    # The two-value union `types.ts` already declares, so an invented role is a
+    # shape 422 before the interview pass (P30-PASS-SIZE). It was a free string,
+    # formatted into every prompt line as `ROLE: text` with no limit.
+    role: Literal["interviewer", "candidate"] = "interviewer"
     text: str = ""
 
 

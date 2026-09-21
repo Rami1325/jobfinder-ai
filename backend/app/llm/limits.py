@@ -55,7 +55,13 @@ class InputTooLarge(Exception):
     `usage.check_and_count`'s daily-cap detail and `apiErrorMessage`)."""
 
     def __init__(self, kind: str, size_kb: int, cap_kb: int) -> None:
-        self.kind = kind  # "resume" | "jd"
+        # "resume" | "jd" | "transcript" | "session" | "answer" | "question".
+        # Each kind has its OWN sentence client-side (`apiErrorMessage`), because
+        # each needs different advice, and check-mirrors 34 reads every kind the
+        # backend can raise out of the source and fails a build that has no
+        # sentence for one. An unknown kind gets a generic sentence, never the
+        # resume's ("It was NOT saved... upload again").
+        self.kind = kind
         self.size_kb = size_kb
         self.cap_kb = cap_kb
         super().__init__(f"{kind} is {size_kb} KB; the limit is {cap_kb} KB")

@@ -13,6 +13,7 @@ import {
   sendMockAnswer,
   startMockInterview,
   subscribeMockInterview,
+  takeReturnedAnswer,
 } from "../../state/mockInterviewStore";
 import { Button, Card, CardTitle, ProgressRing } from "../../components/ui";
 import UsesNote from "../../components/UsesNote";
@@ -27,16 +28,27 @@ export default function MockInterview({
   jdText: string;
 }) {
   const { t } = useTranslation("interview");
-  const { started, turns, sending, ending, done, scorecard, error } = useSyncExternalStore(
+  const { started, turns, sending, ending, done, scorecard, error, returned, full } = useSyncExternalStore(
     subscribeMockInterview,
     getMockInterviewState,
   );
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement | null>(null);
   // A whole practice session is 1 use (Phase 30 / B5). Only Start can be out of
-  // uses: Send and End ride the session it opened and are never disabled, and a
-  // refusal on either lands in `error` below.
+  // uses: Send and End ride the session it opened and are never disabled for
+  // uses, and a refusal on either lands in `error` below. Send IS disabled once
+  // the session is full (P30-PASS-SIZE): the server refused the transcript as too
+  // long, so any further answer would be refused again.
   const uses = useUses("interview");
+
+  // An answer the server refused comes back into the text box, so it can be
+  // shortened and sent again instead of being lost (P30-PASS-SIZE). Write only
+  // what was taken: StrictMode runs a mounting page's effects twice with the same
+  // `returned`, and the second take is "" (check-mirrors 34).
+  useEffect(() => {
+    const text = takeReturnedAnswer();
+    if (text) setDraft(text);
+  }, [returned]);
 
   // Keep the newest message in view as the conversation grows.
   useEffect(() => {
@@ -46,7 +58,7 @@ export default function MockInterview({
   const answered = turns.some((x) => x.role === "candidate");
 
   function submit() {
-    if (!draft.trim() || sending || ending || scorecard) return;
+    if (!draft.trim() || sending || ending || full || scorecard) return;
     sendMockAnswer(draft);
     setDraft("");
   }
@@ -126,7 +138,7 @@ export default function MockInterview({
               <Button
                 size="sm"
                 icon={<Send size={14} />}
-                disabled={!draft.trim() || sending || ending}
+                disabled={!draft.trim() || sending || ending || full}
                 onClick={submit}
               >
                 {t("mock.send")}
