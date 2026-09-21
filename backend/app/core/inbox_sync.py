@@ -580,6 +580,11 @@ def _park(run: _Run, list_lo: int, win_hi: int, listed: list[str]) -> None:
 
     Parked = what Gmail's own Spam listing names, minus what the default listing
     just named (`listed`), minus every id that already has a row of any kind.
+    That last filter is load-bearing: a window stopped by its budget is listed
+    again, and an insert over an id that already has a row (still parked, or
+    imported and moved to Spam since) is refused by uq_mail_events_message, whose
+    rollback takes every NEW park beside it along — a reply filed in Spam since,
+    and rescued later, would then be lost for good.
     Nothing is read — no headers, no body — no model is called, and nothing is
     charged: mail that stays in Spam is never imported, exactly as before.
 
@@ -587,8 +592,16 @@ def _park(run: _Run, list_lo: int, win_hi: int, listed: list[str]) -> None:
     suite cannot confirm: if Google ignored `in:spam`, the default listing's ids
     are subtracted; if it ignored `includeSpamTrash`, nothing is listed; and if
     the listing fails outright, nothing is parked and the window goes on — a
-    listing Gmail refuses may never stall the import. A message moved INTO Spam
-    in the moment between the two listings is not parked (accepted)."""
+    listing Gmail refuses may never stall the import.
+
+    This listing runs AFTER the default one, because it needs the window the
+    halving settled on, and that order leaves one race (accepted): a message
+    RESCUED between the two listings is in neither — not in the inbox when the
+    inbox was listed, no longer in Spam when Spam is — so it is never parked,
+    and once the cursor passes its date it is missed. A message moved INTO Spam
+    between them was already named by the default listing and is handled as
+    inbox mail — read and classified although it now sits in Spam, exactly as
+    before this fix."""
     query = inbox_rules.build_query(list_lo // 1000 - 1, win_hi // 1000 + 1, run.exclude, spam=True)
     try:
         spam = _list_all(run, query)
@@ -647,10 +660,13 @@ def _release_parked(run: _Run, conn_id: int) -> bool:
     passed it. False when the run should stop here (its budget, the daily cap, or
     a failure it was charged for); `has_more` then says there is more to do.
 
-    One default-query listing over [the oldest parked row's bound, the cursor];
-    the ids in it that have a `parked` row are the rescued ones. Only those are
-    touched, so ordinary mail below the cursor is never read or classified again.
-    Each goes through the ordinary stages — metadata, rules, the charge, the
+    One default-query listing over [the oldest parked row's bound, the cursor],
+    made only while the run still has budget; the ids in it that have a `parked`
+    row are the rescued ones. Only those are touched, so ordinary mail below the
+    cursor is never read or classified again. The listing stops at
+    LIST_HARD_STOP ids and Gmail lists newest first, so past that many matching
+    messages the OLDEST parked rows are not reached (accepted).
+    Each rescued id goes through the ordinary stages — metadata, rules, the charge, the
     model — and `_apply` consumes its parked row in the same commit as the
     tracker write. The cursor is NEVER written here: a rewind would make the next
     run list a half-handled window again and re-charge its unstored mail.
