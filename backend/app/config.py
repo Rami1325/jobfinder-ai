@@ -345,8 +345,10 @@ class Settings(BaseSettings):
         accepted: the interviewer's reply to the last accepted transcript, and
         the answer the chat then refused, which an open tab of the pre-fix client
         still keeps in the transcript. So a session the chat has just refused can
-        always be scored. OFF (0) whenever the chat's cap is off: switching the
-        transcript cap off must never switch on a 32 KB one here."""
+        be scored whenever that reply and that answer each fit in max_answer_kb,
+        the ordinary case; an interviewer reply has no per-turn cap, and an old
+        tab can keep an answer over it. OFF (0) whenever the chat's cap is off:
+        switching the transcript cap off must never switch on a 32 KB one here."""
         if self.max_transcript_kb <= 0:
             return 0
         return self.max_transcript_kb + 2 * max(self.max_answer_kb, 0)

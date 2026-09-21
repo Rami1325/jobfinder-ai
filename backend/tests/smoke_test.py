@@ -4104,7 +4104,8 @@ check(
 )
 
 # The scorecard reads one reply and one refused answer more than the chat ever accepted, so a session the chat has
-# just refused can always be scored. It is refused with its OWN kind: the chat's sentence says "end the session to
+# just refused can be scored whenever that reply and that answer each fit in max_answer_kb (the ordinary case; an
+# interviewer reply has no per-turn cap). It is refused with its OWN kind: the chat's sentence says "end the session to
 # get your scorecard", which would send someone whose scorecard was refused round in a loop.
 _PS_SC = _PS_TR + 2 * _PS_ANS
 _ps_sc_over = _ps_fill(_PS_SC * 1024 + 1, _PS_CAND)
