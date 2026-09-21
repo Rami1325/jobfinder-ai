@@ -436,9 +436,10 @@ export function useSyncErrorText(): (code: string) => string {
       // The generic sentence ON PURPOSE. A failed read, a failed model call or
       // a dropped connection to Google is retried by the next run, which is
       // what the sentence says. `inactive` and `error` never reach a signed-in
-      // page (the gate refuses a deactivated account first, and nothing sets a
-      // connection's status to "error" today), so they get it for want of
-      // anything truer.
+      // page, so they get it for want of anything truer: the gate refuses a
+      // deactivated account first, and `error` is sync_user's fallback for a
+      // connection whose status is EMPTY (`conn.status or "error"`), which the
+      // column's "active" default and every write keep from happening.
       case "internal":
       case "gmail_error":
       case "classify_failed":

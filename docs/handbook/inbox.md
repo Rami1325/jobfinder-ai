@@ -62,12 +62,39 @@
 - **Every code in the backend's closed set has a `case` of its own, even one that returns the generic sentence.** Such an arm makes "the generic sentence is right for this code" a decision a reviewer can see, rather than a default nobody chose. The generic groups say why they are generic: retried by the next run, or never seen by a signed-in page.
 - **A `case` stacked on `default:` is not an arm of its own.** Each `default` is pinned to its generic sentence, never the code.
 - **Arms are literal `t("…")` calls**, so check 29 resolves every key in both locales.
-- **Google's OPEN set stays on `default` by design.** These are its own `error` strings and `http_<status>`, which reach `last_error` only through `_fail(…, e.code)` in `_open_mailbox`. A Google string mapped on purpose goes in `GOOGLE_PASSTHROUGH` in check-mirrors.js. `invalid_grant` and `admin_policy_enforced` are NOT in that open set, because `_REAUTH_CODES` names them.
+- **Google's OPEN set stays on `default` by design.** These are its own `error` strings and `http_<status>`, built by `google_oauth._error_code(…)` (the one open-set shape check 37 allows as a `GoogleAuthError` code), which reach `last_error` only through `_fail(…, e.code)` in `_open_mailbox`. A Google string mapped on purpose goes in `GOOGLE_PASSTHROUGH` in check-mirrors.js. `invalid_grant` and `admin_policy_enforced` are NOT in that open set, because `_REAUTH_CODES` names them.
 - **The other direction is checked too (37(e)).** Every case literal must be a code the backend sends. So must every code a component compares with `apiErrorCode(…)`, an `error_code` / `last_error_code` or a status `reason`, and every member of `ANSWERS`. A backend rename otherwise leaves the comparison false for ever: the review sheet's `left` would put an email that was already filed back in the queue.
 - **Every `InboxStatus.reason` is compared in BOTH `InboxBar` and `InboxSettingsCard`.** A new reason would otherwise hide the bar and the card with no sentence.
 - **Nothing under `components/inbox/` calls `apiErrorMessage` except `useInboxRefusalText`.** The hook falls back to it for everything it does not translate, so routing a toast through the hook costs nothing for a gate or network error.
 
-**Adding a code.** Write it as a literal, pass it to an existing emitter (`_fail`, `_note_error`), or return it as a literal from an `inbox_apply` refusal function. Then give it an arm on the page, and the build tells you which one. The reader is text, not an AST, so its grammar is CLOSED. A computed code, a refusal function that returns a helper's value, an f-string with two placeholders, or a callback reason held in a variable each THROWS in check 37, naming the line. Teach the reader the new shape (its header lists every shape it reads), or write the code in a known one. Never leave it unread. The reader covers `inbox_sync.py`, `inbox_routes.py`, `inbox_apply.py` and the `google_oauth` functions `_open_mailbox` calls. A module that starts writing `error_code` or `last_error` from anywhere else needs adding to it.
+**Adding a code.** Write it as a literal, pass it to an existing emitter (`_fail`, `_note_error`), or return it as a literal from an `inbox_apply` refusal function. Then give it an arm on the page, and the build tells you which one.
+
+The reader is text, not an AST, so its grammar is closed over the sites it knows. At one of those sites, a value it cannot read THROWS in check 37, naming the file's own line. These all throw:
+- a computed sync code;
+- a `GoogleAuthError` code that is neither a literal nor `_error_code(…)` (a ternary of literals is read, both branches);
+- a refusal function that returns a helper's value;
+- an f-string with two placeholders;
+- an `HTTPException` detail that is a variable or a `dict(…)`;
+- a `leave()` path built from anything but literals and one `quote(…)`;
+- a callback reason held in a variable, or `reason` forwarded from outside an emitter.
+
+Two nets catch a new way of sending a family, and they throw too: any `"code":` key in `inbox_routes.py` that is not an `HTTPException` detail, and any `?inbox=` there that no `leave()` carried. Teach the reader the new shape (its header lists every shape it reads), or write the code in a known one. Never leave it unread.
+
+**What check 37 knowingly does not read.** It reads `inbox_sync.py`, `inbox_routes.py`, `inbox_apply.py` and the `google_oauth` functions `_open_mailbox` calls. It cannot see:
+- a sync code written from any other module, or through a name the text cannot see (`setattr`, `InboxSyncResult(**…)`, `model_copy(update={"error_code": …})`);
+- a `GoogleAuthError` raised outside `google_oauth` (`gmail_api` raises its own, which no emitter hands on today), or in a `google_oauth` function reached other than by its plain name;
+- an inbox refusal raised outside `inbox_routes.py` (a dependency, the gate);
+- a callback redirect whose `inbox=` is not written literally (`urlencode`).
+
+Any of these needs the reader extended first.
+
+**The first draft claimed more than it read.** Its header said every unknown shape throws. The review found four that were silently unread:
+- a ternary as a `GoogleAuthError` code (its `else` branch had no arm);
+- a variable as a `GoogleAuthError` code, which was read as no code at all;
+- a positional `HTTPException(400, {"code": …})`;
+- a reason `leave()` sent directly.
+
+A black-formatted `error_code="…",` continuation line also went red as a false positive. Each one is now read or refused, with a probe twin beside it. The nets exist so that the next new shape fails loudly rather than quietly.
 
 **A connected account off the invite list is shown as paused, on both surfaces.** B15's early return writes no `last_error` and no `last_sync_at`, so to a page that reads only the connection it looked healthy:
 - a mint "Connected" badge in Settings;
