@@ -1,11 +1,19 @@
 """Drushim.co.il provider (unofficial JSON search API — the one their own
 frontend calls; no auth, no bot wall as of July 2026).
 
-`GET https://www.drushim.co.il/api/jobs/search?searchterm=<kw>&page=N` returns
+`GET https://webapi.drushim.co.il/api/jobs/search?searchterm=<kw>&page=N` returns
 clean JSON with the full description + requirements inline, so hits need no
 per-job detail fetch (a big politeness/speed win over scrape-style boards).
 Hebrew and English search terms both work. The public posting URL comes from
-`JobInfo.Link` ("/job/<JobCode>/<hash>/").
+`JobInfo.Link` ("/job/<JobCode>/<hash>/") and stays on www.
+
+THE API HOST MOVED. In July 2026 the same path answered on www.drushim.co.il
+(the fixture was captured there); www is now a Next.js site whose /api/jobs/search is that site's 404 page
+(seen 2026-09-21), so every search here raised "Couldn't reach Drushim's job
+search" and the board silently contributed nothing — the fan-out reports it
+as one failed source among five. The endpoint answers on webapi.drushim.co.il
+(the host the company logos were already served from) with the response shape
+unchanged, 10 results a page.
 
 Politeness: at most two pages per search, with a short pause between them.
 There is no obvious location query param, so location is filtered client-side
@@ -41,8 +49,8 @@ from app.core.lang import detect_language
 from app.core.providers.base import JobHit, NoResultsError
 from app.models import SearchContext
 
-_BASE_URL = "https://www.drushim.co.il"
-_SEARCH_URL = f"{_BASE_URL}/api/jobs/search"
+_BASE_URL = "https://www.drushim.co.il"  # public posting pages
+_SEARCH_URL = "https://webapi.drushim.co.il/api/jobs/search"  # the JSON API (see docstring)
 _MAX_PAGES = 2  # politeness cap — never hammer more than two pages per search
 _PAGE_DELAY_S = 0.5
 

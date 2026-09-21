@@ -3989,6 +3989,22 @@ check("drushim expired postings skipped", len(parse_drushim_results(_expired)) =
 _doubled = {"ResultList": _DRUSHIM_FIXTURE["ResultList"] * 2}
 check("drushim duplicate JobCodes deduped", len(parse_drushim_results(_doubled)) == 3)
 check("drushim empty response parses to empty list", parse_drushim_results({}) == [])
+# Drushim's JSON search moved hosts. www.drushim.co.il is now a Next.js site and
+# its /api/jobs/search answers that site's 404 page (seen 2026-09-21 for English
+# and Hebrew terms alike), so every Drushim query raised "Couldn't reach
+# Drushim's job search" and the board contributed nothing. The same endpoint on
+# webapi.drushim.co.il (the host the logos were already served from) answered
+# 200 with the unchanged response shape, and this parser read ten hits from it.
+# Posting links still live on www: the fixture's url check above pins that side.
+from app.core.providers.drushim import _build_search_url as _dr_search_url  # noqa: E402
+
+check(
+    "drushim searches the API host — webapi.drushim.co.il, since www's /api/jobs/search is a 404 page — while "
+    "posting links stay on www (the url check above)",
+    _dr_search_url("engineer", 1) == "https://webapi.drushim.co.il/api/jobs/search?searchterm=engineer&page=1"
+    and _dr[0].url.startswith("https://www.drushim.co.il/job/"),
+    _dr_search_url("engineer", 1),
+)
 
 # 14d. Hebrew pipeline support: deterministic language detection, language-aware
 # prompts (Task-tag routing intact), Hebrew keyword scoring that actually matches.
