@@ -3619,10 +3619,11 @@ check(
     f'day={_gh_is_day("2026-09-20")} T00:00={_gh_is_day("2026-09-20T00:00")}',
 )
 # THE CHIP PRINTS THE EARLIEST BOARD-STATED DATE WE HOLD. The reported case:
-# Pentera's role was on LinkedIn on 2026-09-07 (listing …4464364580, remembered
-# in `posting_sightings.first_posted_at`) and relisted as …4462220726 on
-# 2026-09-20; the email printed 2026-09-20. `earliest_board_date` is the minimum,
-# as INSTANTS, over the card, Greenhouse's `first_published` and the sighting's
+# Pentera's role carried a board date of 2026-09-07 on one LinkedIn listing
+# (…4464364580, remembered in `posting_sightings.first_posted_at`) and
+# 2026-09-20 on the one emailed (…4462220726) — a relist or a second opening,
+# which nothing can tell apart; the email printed 2026-09-20.
+# `earliest_board_date` is the minimum, as INSTANTS, over the card, Greenhouse's `first_published` and the sighting's
 # `first_posted_at` — and NEVER `first_seen_at`, our own lower bound, which a
 # first-seen-only twin pins below. The winner is returned VERBATIM (the card's
 # own string object when nothing is earlier), so the Jobs card can tell
@@ -9640,9 +9641,9 @@ finally:
 # posted date"). This morning's email, reproduced: max_age_days=1 at 06:43 UTC,
 # four LinkedIn-shaped cards, each one a way the chip can lie.
 #
-#   Pentera    — relisted: card 2026-09-20 (…4462220726), and the sighting run
-#                remembers the earlier listing (…4464364580) dated 2026-09-07.
-#                Must print 2026-09-07, never the relist's date.
+#   Pentera    — two listings of one role: card 2026-09-20 (…4462220726), and
+#                the sighting run remembers the other listing (…4464364580)
+#                dated 2026-09-07. Must print 2026-09-07, never the card's date.
 #   Similarweb — dated yesterday, nothing earlier known. CAUSE 1: must get NO
 #                chip, because yesterday is inside a 1-day window.
 #   OldCo      — genuinely three days old. The control: still "older", with

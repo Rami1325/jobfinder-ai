@@ -827,8 +827,8 @@ def open_fit_ride(db: Session, user: User, *, ref: str, event_id: int | None, no
     """After a successful fit check, cover one tailor of the same analysed JD for
     24 hours. Returns when the cover ends (aware UTC), or None for an exempt caller.
 
-    A reload FORFEITS the ride (P30-RELOAD-PASS, recorded, not fixed: whether a
-    reload should keep it is the owner's call). Its key is the analysed JD, which
+    A reload FORFEITS the ride (P30-RELOAD-PASS, recorded, not fixed: the owner
+    accepted the second use on 2026-09-21). Its key is the analysed JD, which
     the page holds only in memory; after a reload the page analyses the posting
     again through /jd/analyze, a different task at temperature, so the tailor
     carries another jd_ref and is charged. Check fit, reload, tailor costs 2 uses,
