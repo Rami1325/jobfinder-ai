@@ -5991,6 +5991,315 @@ try {
   fail(`AGENTS.md / CLAUDE.md comparison could not run: ${e.message}`);
 }
 
+// ---- 36. a remounted cover letter reads its posting's pass back ------------ //
+// P30-RELOAD-PASS. A cover-letter pass belongs to ONE posting, so neither
+// /auth/me nor the X-Uses-Pass header lists it, and CoverLetter kept it in
+// component state alone. A page that REMOUNTED the card — a reload of
+// /kits/:id, whose JD the server stores, or Tracker and back on /app — forgot
+// it, and at 0 uses left disabled Generate on a change the server would still
+// include: the one error usesStore's header forbids a local count to make.
+// Now the card asks POST /cover-letter/pass on mount, and that answer and the
+// letter's own response both arrive in RELATIVE seconds, which `inclusionFrom`
+// turns into a deadline on arrival, so a phone whose clock runs ahead cannot
+// end the pass early either (the absolute `included_until` could).
+//
+// (a) EXECUTES the helper on a driven clock, the catch beside every null twin.
+// (b) pins the component's wiring — it cannot be rendered in node — on the real
+//     file AND on fixtures, each of which must go red on its own rule: until
+//     the probe (or a letter) answers, the card KNOWS nothing, so it prints no
+//     note and disables nothing (unknown is never zero; the server decides), and
+//     a probe answer that lands after a letter started is dropped, because it
+//     describes the pass before that letter took its slot.
+// (c) pins the wire: the client posts exactly `{ jd }` (the route forbids any
+//     other field, so a `resume` beside it is a 422 and the card stays unknown
+//     for ever, silently) to the path routes.py mounts.
+try {
+  const us = runProbeBundle("reload-pass", `export * from "./lib/usesStore";\n`);
+  for (const name of ["inclusionFrom", "setUsage", "outFor", "getUsesState", "resetUses"])
+    if (typeof us[name] !== "function") throw new Error(`lib/usesStore.ts does not export ${name}`);
+  const realNow = Date.now;
+  let clock = Date.UTC(2026, 8, 15, 12, 0, 0);
+  Date.now = () => clock;
+  try {
+    const atZero = () => ({
+      plan: "free",
+      limit: 10,
+      used: 10,
+      remaining: 0,
+      resets_on: "2026-10-01",
+      by_feature: {},
+      passes: {},
+    });
+    // The catch: at 0 left, a pass the server reported with 3 changes and 600 s covers the next change for 600 s.
+    us.setUsage(atZero());
+    const stored = us.getUsesState();
+    const it = us.inclusionFrom({ calls_left: 3, expires_in_s: 600 });
+    if (!it || it.left !== 3 || typeof it.until !== "string")
+      fail(
+        `inclusionFrom({calls_left: 3, expires_in_s: 600}) returned ${JSON.stringify(it)}; it must be ` +
+          "{ until: <ISO deadline>, left: 3 }, the shape CoverLetter keeps and hands to useUses.",
+      );
+    else {
+      if (us.outFor("cover_letter", it.until))
+        fail(
+          "at 0 uses left, a cover-letter pass the server reported open (3 changes, 600 s) does not cover the next " +
+            "change — Generate is disabled on a call the server includes.",
+        );
+      clock += 599_000;
+      if (us.outFor("cover_letter", it.until)) fail("inclusionFrom's deadline ends before the 600 s the server said.");
+      clock += 2_000;
+      if (!us.outFor("cover_letter", it.until))
+        fail("inclusionFrom's deadline still covers after the 600 s the server said, so Generate stays on into a 429.");
+    }
+    if (us.getUsesState() !== stored)
+      fail("inclusionFrom wrote to the uses store; it is a reading for one card, and the store's header lists every writer.");
+    // The twins: nothing that is not an open pass with a change left and time left may read as one.
+    for (const [label, p] of [
+      ["{calls_left: 0, expires_in_s: 600}", { calls_left: 0, expires_in_s: 600 }],
+      ["{calls_left: 3, expires_in_s: 0}", { calls_left: 3, expires_in_s: 0 }],
+      ["{calls_left: 0, expires_in_s: 0}", { calls_left: 0, expires_in_s: 0 }],
+      ["{calls_left: -1, expires_in_s: 600}", { calls_left: -1, expires_in_s: 600 }],
+      ["{calls_left: 2.5, expires_in_s: 600}", { calls_left: 2.5, expires_in_s: 600 }],
+      ["{} (an older backend)", {}],
+      ["undefined", undefined],
+      ["null", null],
+    ])
+      if (us.inclusionFrom(p) !== null)
+        fail(`inclusionFrom(${label}) is ${JSON.stringify(us.inclusionFrom(p))}, not null — it covers a call no pass covers.`);
+    // The clock rule. A device 2 hours AHEAD of the server: the server's own "10 minutes from now", read as an
+    // absolute instant, has already ended there — the firing proof that the skew is real — while the same pass in
+    // relative seconds covers exactly 600 s from arrival.
+    clock = Date.UTC(2026, 8, 15, 14, 0, 0);
+    us.setUsage(atZero());
+    const serverSays = new Date(Date.UTC(2026, 8, 15, 12, 10, 0)).toISOString();
+    if (!us.outFor("cover_letter", serverSays))
+      throw new Error("an absolute instant 2 hours behind the device still covers, so the skewed-clock case proves nothing");
+    const fast = us.inclusionFrom({ calls_left: 3, expires_in_s: 600 });
+    if (!fast || us.outFor("cover_letter", fast.until))
+      fail(
+        "on a phone whose clock runs 2 hours ahead, inclusionFrom's deadline has already ended: it must be Date.now() " +
+          "on arrival plus the server's seconds, never the server's instant.",
+      );
+    clock += 601_000;
+    if (fast && !us.outFor("cover_letter", fast.until)) fail("on a fast clock inclusionFrom covers past its 600 s.");
+    // And a device years BEHIND gets exactly 600 s too, not the years to the server's instant.
+    clock = Date.UTC(2019, 0, 1, 0, 0, 0);
+    us.setUsage(atZero());
+    const slow = us.inclusionFrom({ calls_left: 3, expires_in_s: 600 });
+    clock += 601_000;
+    if (!slow || !us.outFor("cover_letter", slow.until))
+      fail("on a clock years behind, inclusionFrom's deadline outlives the 600 s the server said.");
+  } finally {
+    us.resetUses();
+    Date.now = realNow;
+  }
+} catch (e) {
+  fail(`cover-letter pass probe (check 36a) could not run: ${e.message}`);
+}
+
+/**
+ * What CoverLetter.tsx's wiring gets wrong, as rule ids; [] when nothing. THROWS
+ * when a landmark the rules read is missing, so a rewrite that moves one is a
+ * red build naming it rather than a rule that passes by reading nothing.
+ */
+function coverLetterWiring(text) {
+  // Trailing // comments too (decomment takes only whole-line ones), sparing a
+  // "https://" inside a string: a parenthesis in a comment would unbalance the
+  // effect reader below.
+  const s = decomment(text)
+    .replace(/\r\n/g, "\n")
+    .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const bad = new Set();
+  const effects = [];
+  for (let at = s.indexOf("useEffect("); at !== -1; at = s.indexOf("useEffect(", at + 1)) {
+    const open = at + "useEffect".length;
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < s.length; i++) {
+      if (s[i] === "(") depth++;
+      else if (s[i] === ")" && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    if (end === -1) throw new Error("a useEffect( in the cover letter never closes");
+    effects.push(s.slice(open + 1, end));
+  }
+  const probe = effects.find((e) => /\bcoverLetterPass\(/.test(e));
+  if (!probe) bad.add("probe-on-mount");
+  else {
+    const deps = /,\s*\[([^\]]*)\]\s*$/.exec(probe);
+    if (!deps || !deps[1].split(",").map((d) => d.trim()).includes("posting")) bad.add("probe-on-mount");
+    if (!/\binclusionFrom\(/.test(probe)) bad.add("probe-relative-seconds");
+    if (!/\bseq\.current\s*[!=]==|[!=]==\s*seq\.current\b/.test(probe)) bad.add("probe-sequence-guard");
+  }
+  const gen = fnSource(s, "async function generate");
+  const call = gen.indexOf("await coverLetter(");
+  const caught = gen.indexOf("catch");
+  if (call === -1 || caught === -1 || caught < call)
+    throw new Error("cannot find generate()'s `await coverLetter(` and the catch after it");
+  const bump = /\+\+\s*seq\.current|seq\.current\s*(?:\+\+|\+=\s*1)/.exec(gen);
+  if (!bump || bump.index > call) bad.add("generate-bumps-sequence");
+  const served = gen.slice(call, caught);
+  if (!/\binclusionFrom\(/.test(served) || /\bincluded_until\b/.test(gen)) bad.add("generate-relative-seconds");
+  if (!/\bsetKnown\(\s*true\s*\)/.test(served)) bad.add("generate-known");
+  const limit = /\bif\s*\(\s*isMonthlyLimit\(\s*e\s*\)\s*\)\s*(\{[^}]*\}|[^;]*;)/.exec(gen);
+  if (!limit) throw new Error("cannot find generate()'s `if (isMonthlyLimit(e))` branch");
+  if (!/\bsetKnown\(\s*true\s*\)/.test(limit[1])) bad.add("limit-known");
+  const click = s.indexOf("onClick={() => generate()}");
+  const button = click === -1 ? -1 : s.lastIndexOf("<Button", click);
+  if (button === -1) throw new Error("cannot find the Generate button (`<Button … onClick={() => generate()}`)");
+  const disabled = /\bdisabled=\{([^}]*)\}/.exec(s.slice(button, click));
+  if (!disabled || !/\bknown\b/.test(disabled[1]) || !/\buses\.out\b/.test(disabled[1])) bad.add("button-known");
+  const notes = (s.match(/<UsesNote\b/g) || []).length;
+  if (!notes) throw new Error("the cover letter renders no <UsesNote");
+  if ((s.match(/\{\s*known\s*&&\s*\(?\s*<UsesNote\b/g) || []).length !== notes) bad.add("note-known");
+  return [...bad];
+}
+const COVER_WIRING_HARM = {
+  "probe-on-mount":
+    "never asks POST /cover-letter/pass from an effect keyed on `posting` (coverLetterPass). A remounted card — a " +
+    "reload of /kits/:id, Tracker and back on /app — forgets its posting's pass, and at 0 uses left disables " +
+    "Generate on a change the server would still include",
+  "probe-relative-seconds":
+    "keeps the probe's answer without passing it through inclusionFrom, so the server's relative seconds never " +
+    "become a deadline taken on arrival",
+  "probe-sequence-guard":
+    "applies the probe's answer without checking that no letter started since it was sent (seq.current). A late " +
+    "answer describes the pass BEFORE that letter took its slot, and putting the slot back hides the next letter's cost",
+  "generate-bumps-sequence":
+    "does not bump seq.current before a letter's request goes out, so a probe still in flight is applied after it",
+  "generate-relative-seconds":
+    "sets the pass from `included_until`, an absolute instant read against the device clock, or not through " +
+    "inclusionFrom at all: on a phone whose clock runs ahead the pass ends early, and at 0 uses that disables a " +
+    "covered change",
+  "generate-known": "does not mark the pass known after a letter came back, although that response says what it is",
+  "limit-known":
+    "does not mark the pass known after a monthly-limit refusal, which proves no pass covers the call — so the " +
+    "card keeps Generate enabled into the same 429",
+  "button-known":
+    "disables Generate on `uses.out` without waiting for `known` (or not on uses.out at all): while the probe is " +
+    "pending, at 0 uses left, that disables a change the pass may still cover — unknown is never zero",
+  "note-known":
+    "renders <UsesNote> while the pass is unknown, so at 0 uses left it prints 'No uses left' under a change the " +
+    "pass may include",
+};
+try {
+  for (const rule of coverLetterWiring(read("components/CoverLetter.tsx")))
+    fail(`components/CoverLetter.tsx ${COVER_WIRING_HARM[rule] ?? rule}.`);
+
+  // Both directions on the reader: the shipped shape passes, and each fixture
+  // below goes red on ITS rule.
+  const GOOD = [
+    "export default function CoverLetter({ resume, jd }: Props) {",
+    "  const [known, setKnown] = useState(false);",
+    "  const seq = useRef(0);",
+    "  useEffect(() => {",
+    "    if (!limited) return;",
+    "    const at = ++seq.current;",
+    "    setKnown(false);",
+    "    coverLetterPass(jd).then((r) => {",
+    "      if (seq.current !== at) return; // a letter started (since then)",
+    "      const inc = inclusionFrom(r);",
+    "      setPass(inc ? { ...inc, posting } : null);",
+    "      setKnown(true);",
+    "    });",
+    "  }, [posting, limited]);",
+    "",
+    "  async function generate(extra?: string) {",
+    "    seq.current++;",
+    "    try {",
+    "      const res = await coverLetter(resume, jd, tone);",
+    "      const inc = inclusionFrom({ calls_left: res.changes_left, expires_in_s: res.expires_in_s });",
+    "      setPass(inc ? { ...inc, posting } : null);",
+    "      setKnown(true);",
+    "    } catch (e: any) {",
+    "      if (isMonthlyLimit(e)) {",
+    "        setPass(null);",
+    "        setKnown(true);",
+    "      } else if (isServerFailure(e)) setPass((p) => p);",
+    "    }",
+    "  }",
+    "",
+    "  return (",
+    "    <Card>",
+    "      <Button disabled={known && uses.out} onClick={() => generate()}>",
+    "      </Button>",
+    "      {known && (",
+    '        <UsesNote feature="cover_letter" />',
+    "      )}",
+    "    </Card>",
+    "  );",
+    "}",
+  ].join("\n");
+  const good = coverLetterWiring(GOOD);
+  if (good.length) fail(`check 36's wiring reader refuses the shape CoverLetter ships: ${good.join(", ")}`);
+  const mutate = (label, from, to) => {
+    const out = GOOD.replace(from, to);
+    if (out === GOOD) throw new Error(`check 36's fixture "${label}" did not apply, so it proves nothing`);
+    return out;
+  };
+  const FIXTURES = [
+    [
+      "the probe sent only inside generate()",
+      mutate(
+        "probe in generate",
+        /  useEffect\(\(\) => \{[\s\S]*?\}, \[posting, limited\]\);\n/,
+        "",
+      ).replace("    seq.current++;", "    seq.current++;\n    coverLetterPass(jd);"),
+      "probe-on-mount",
+    ],
+    ["an effect keyed without `posting`", mutate("deps", "[posting, limited]", "[limited]"), "probe-on-mount"],
+    ["the probe's answer kept raw", mutate("raw", "const inc = inclusionFrom(r);", "const inc = r;"), "probe-relative-seconds"],
+    ["no sequence check on the probe", mutate("no guard", "      if (seq.current !== at) return; // a letter started (since then)\n", ""), "probe-sequence-guard"],
+    ["no sequence bump in generate()", mutate("no bump", "    seq.current++;\n", ""), "generate-bumps-sequence"],
+    [
+      "generate() reading included_until",
+      mutate(
+        "absolute",
+        "const inc = inclusionFrom({ calls_left: res.changes_left, expires_in_s: res.expires_in_s });",
+        "const inc = res.included_until ? { until: res.included_until, left: res.changes_left } : null;",
+      ),
+      "generate-relative-seconds",
+    ],
+    ["a letter that leaves the pass unknown", mutate("served", "      setKnown(true);\n    } catch", "    } catch"), "generate-known"],
+    [
+      "a monthly-limit branch that leaves the pass unknown",
+      mutate("limit", "if (isMonthlyLimit(e)) {\n        setPass(null);\n        setKnown(true);\n      }", "if (isMonthlyLimit(e)) setPass(null);\n     "),
+      "limit-known",
+    ],
+    ["Generate disabled on uses.out alone", mutate("button", "disabled={known && uses.out}", "disabled={uses.out}"), "button-known"],
+    ["a note rendered while unknown", mutate("note", "{known && (", "{("), "note-known"],
+  ];
+  for (const [label, fixture, rule] of FIXTURES) {
+    const got = coverLetterWiring(fixture);
+    if (!got.includes(rule))
+      fail(`check 36's wiring reader accepts ${label} (it read ${JSON.stringify(got)}, not "${rule}"), so it would pass for ever`);
+  }
+} catch (e) {
+  fail(`cover-letter wiring check (check 36b) could not run: ${e.message}`);
+}
+try {
+  const client = decomment(read("api/client.ts"));
+  const POSTS_JD_ONLY = /\bapi\.post<[^>]*>\(\s*"\/cover-letter\/pass"\s*,\s*\{\s*jd\s*\}\s*\)/;
+  if (!POSTS_JD_ONLY.test(fnSource(client, "export async function coverLetterPass")))
+    fail(
+      'api/client.ts: coverLetterPass does not post exactly `{ jd }` to "/cover-letter/pass". The route forbids any ' +
+        "other field, so a resume beside the JD is a 422 and every card stays unknown, silently.",
+    );
+  if (POSTS_JD_ONLY.test('api.post<UsagePassOut>("/cover-letter/pass", { resume, jd })') ||
+      !POSTS_JD_ONLY.test('api.post<UsagePassOut>("/cover-letter/pass", { jd })'))
+    fail("check 36's client reader cannot tell `{ jd }` from `{ resume, jd }`");
+  const routes = pySource("app/api/routes.py", "check 36");
+  if (routes !== null && !/^@router\.post\(\s*"\/cover-letter\/pass"/m.test(routes))
+    fail(
+      'backend/app/api/routes.py mounts no POST "/cover-letter/pass", which api/client.ts calls: the probe would be ' +
+        "a 404 on every mount and the card would stay unknown, silently.",
+    );
+} catch (e) {
+  fail(`cover-letter probe route check (check 36c) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
