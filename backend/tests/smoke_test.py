@@ -23609,6 +23609,195 @@ try:
             f"{[r.status_code for r in _rf32]} {[tuple(r)[:4] for r in _rf_rows32]} {[_hdr32(r) for r in _rf32]}",
         )
 
+        # --- 32.20 (P30-RELOAD-PASS) A remounted page reads its posting's pass back, and the read takes nothing -------
+        # The cover-letter pass lived only in CoverLetter's component state, and neither /auth/me nor any header lists a
+        # per-posting pass. So a page that REMOUNTED the card — a reload of /kits/:id, whose JD is stored server-side, or
+        # Tracker and back on /app — forgot it, and at 0 uses left disabled Generate on a change the server would still
+        # include: usesStore's own rule is that a wrong count may cost a note, never a call the server would serve.
+        # POST /cover-letter/pass reads the row the NEXT call would ride (`_newest_open`, never `_take_pass`), keyed by
+        # the server's own jd_ref and answered in RELATIVE seconds, and the letter's response now carries the same
+        # relative reading beside its absolute `included_until`. Each catch sits beside its twin. The fit ride is
+        # deliberately NOT pinned here: `_stub_jd` ignores its input, so the stub would claim across a reload a ride
+        # the real model forfeits (a re-analysed JD hashes to another jd_ref).
+        def _probe_pass32(headers, body=None):  # noqa: ANN001
+            """POST /cover-letter/pass; `body` defaults to {"jd": <this section's JD>}."""
+            return _c32c.post("/cover-letter/pass", json={"jd": _JDJ32} if body is None else body, headers=headers)
+
+        def _probe_read32(resp):  # noqa: ANN001
+            """(status, calls_left, expires_in_s) of a probe; both numbers None off anything but a 200."""
+            body = _j28(resp) if resp.status_code == 200 else {}
+            return resp.status_code, body.get("calls_left"), body.get("expires_in_s")
+
+        def _posting_pass_raw32(uid, feature, ref, now=None):  # noqa: ANN001
+            d = SessionLocal()
+            try:
+                return _q32.posting_pass(d, d.get(_U32, uid), feature, ref=ref, now=now)
+            finally:
+                d.close()
+
+        def _posting_pass32(uid, ref, now=None):  # noqa: ANN001
+            """(calls_left, expires_in_s) of quota.posting_pass for a cover letter, or the exception it raised: a probe
+            that is missing or broken is one red check, never an aborted suite."""
+            try:
+                out = _posting_pass_raw32(uid, "cover_letter", ref, now)
+                return out.calls_left, out.expires_in_s
+            except Exception as exc:  # noqa: BLE001
+                return f"{type(exc).__name__}: {exc}"
+
+        def _near_day32(seconds):  # noqa: ANN001
+            return isinstance(seconds, int) and 86400 - 120 <= seconds <= 86400
+
+        _rp_uid32, _RP32_H = _mint32(_c32c, "Reload Pass")
+        _fill32(_rp_uid32, 9)  # one use left
+        _rp_first32 = _c32c.post("/cover-letter", json=dict(_CL_BODY32, tone="professional"), headers=_RP32_H)
+        _rp_me32 = _j28(_c32c.get("/auth/me", headers=_RP32_H)).get("usage") or {}
+        _rp_ev32, _rp_rows32 = _events32(_rp_uid32), _passes32(_rp_uid32)
+        _rp_probes32 = [_probe_pass32(_RP32_H), _probe_pass32(_RP32_H)]
+        _rp_reads32 = [_probe_read32(r) for r in _rp_probes32]
+        _rp_ev_after32, _rp_rows_after32 = _events32(_rp_uid32), _passes32(_rp_uid32)
+        check(
+            "32.20 (P30-RELOAD-PASS) catch: a letter that spent the LAST use leaves /auth/me saying remaining 0 with no "
+            "pass listed — all a remounted page learned — while POST /cover-letter/pass with the same JD answers 200 "
+            "calls_left 9 and expires_in_s about 24 hours, with no X-Uses-Remaining and no X-Uses-Pass",
+            _rp_first32.status_code == 200 and _j28(_rp_first32).get("changes_left") == 9 and _hdr32(_rp_first32) == "0"
+            and _rp_me32.get("remaining") == 0 and _rp_me32.get("passes") == {}
+            and _rp_reads32[0][:2] == (200, 9) and _near_day32(_rp_reads32[0][2])
+            and _hdr32(_rp_probes32[0]) is None and _phdr32(_rp_probes32[0]) is None,
+            f"{_rp_first32.status_code} {_hdr32(_rp_first32)} me={({k: _rp_me32.get(k) for k in ('remaining', 'passes')})} "
+            f"probe={_rp_reads32[0]} hdr={_hdr32(_rp_probes32[0])}/{_phdr32(_rp_probes32[0])}",
+        )
+        check(
+            "32.20 (P30-RELOAD-PASS) twin: the probe takes nothing — probed twice it reads 9 both times, the pass row "
+            "still says calls 1 of 10, and no ledger event or pass row was written (a probe that took a slot would "
+            "read 8 the second time)",
+            _rp_reads32[1][:2] == (200, 9)
+            and [(r.calls, r.max_calls) for r in _rp_rows_after32] == [(1, 10)]
+            and _rp_rows_after32 == _rp_rows32 and _rp_ev_after32 == _rp_ev32
+            and [e[1:3] for e in _rp_ev32].count(("cover_letter", 1)) == 1,
+            f"{_rp_reads32} {[tuple(r)[:5] for r in _rp_rows_after32]} {_shape32(_rp_ev_after32)}",
+        )
+        _rp_change32 = _c32c.post("/cover-letter", json=dict(_CL_BODY32, tone="warm"), headers=_RP32_H)
+        _rp_probe3_32 = _probe_read32(_probe_pass32(_RP32_H))
+        check(
+            "32.20 (P30-RELOAD-PASS) agreement: after the probe read 9, the change the remounted page used to DISABLE is "
+            "served at 0 uses left — a 200 with changes_left 8 (one below the probe), no new event, header 0 — and the "
+            "next probe reads 8",
+            _rp_change32.status_code == 200 and _j28(_rp_change32).get("changes_left") == 8
+            and _hdr32(_rp_change32) == "0" and _events32(_rp_uid32) == _rp_ev32
+            and _rp_probe3_32[:2] == (200, 8),
+            f"{_rp_change32.status_code} {_j28(_rp_change32).get('changes_left')} {_hdr32(_rp_change32)} "
+            f"{_shape32(_events32(_rp_uid32))} {_rp_probe3_32}",
+        )
+        if _rp_rows32:
+            _set_pass32(_rp_rows32[0].id, calls=_rp_rows32[0].max_calls)
+        _rp_spent32 = _probe_read32(_probe_pass32(_RP32_H))
+        _rp_refused32 = _c32c.post("/cover-letter", json=_CL_BODY32, headers=_RP32_H)
+        check(
+            "32.20 (P30-RELOAD-PASS) twin at zero: once that posting's pass is used up (10 of 10) the probe reads 0/0, "
+            "and with 0 uses left the next letter IS refused (429 monthly_limit) — the probe says 'not included' exactly "
+            "when the server would refuse, so the page may disable Generate on it",
+            _rp_spent32 == (200, 0, 0)
+            and _rp_refused32.status_code == 429 and _detail28(_rp_refused32).get("code") == "monthly_limit",
+            f"{_rp_spent32} {_rp_refused32.status_code} {_detail28(_rp_refused32)}",
+        )
+        _ra_uid32, _RA32_H = _mint32(_c32c, "Reload Pass Opens Anew")
+        _ra_first32 = _c32c.post("/cover-letter", json=_CL_BODY32, headers=_RA32_H)
+        _ra_rows32 = _passes32(_ra_uid32)
+        if _ra_rows32:
+            _set_pass32(_ra_rows32[0].id, calls=_ra_rows32[0].max_calls)
+        _ra_spent32 = _probe_read32(_probe_pass32(_RA32_H))
+        _ra_next32 = _c32c.post("/cover-letter", json=_CL_BODY32, headers=_RA32_H)
+        _ra_again32 = _probe_read32(_probe_pass32(_RA32_H))
+        check(
+            "32.20 (P30-RELOAD-PASS) twin with uses left: a used-up pass probes 0/0 and the next letter on that posting "
+            "OPENS a new pass for 1 more use (+1, changes_left 9, header 8) — which the probe then reads as 9",
+            _ra_first32.status_code == 200 and _ra_spent32 == (200, 0, 0)
+            and _ra_next32.status_code == 200 and _j28(_ra_next32).get("changes_left") == 9 and _hdr32(_ra_next32) == "8"
+            and [e[1:3] for e in _events32(_ra_uid32)] == [("cover_letter", 1)] * 2
+            and _ra_again32[:2] == (200, 9),
+            f"{_ra_spent32} {_ra_next32.status_code} {_j28(_ra_next32).get('changes_left')} {_hdr32(_ra_next32)} "
+            f"{_shape32(_events32(_ra_uid32))} {_ra_again32}",
+        )
+        _rx_uid32, _RX32_H = _mint32(_c32c, "Reload Pass Stranger")
+        _rx_key32 = _key32(_rx_uid32)
+        _rx_before32 = _rows32(_rx_uid32, _rx_key32)
+        _rx_other32 = _probe_read32(_probe_pass32(_RP32_H, {"jd": dict(_JDJ32, company="Gamma Works")}))
+        _rx_stranger32 = _probe_read32(_probe_pass32(_RX32_H))
+        _rx_after32 = _rows32(_rx_uid32, _rx_key32)
+        _rx_admin_before32 = _rows32(_admin_row_id, _fa_key32)
+        _rx_admin32 = _probe_pass32(_ADMIN_H)
+        check(
+            "32.20 (P30-RELOAD-PASS) negatives beside the catch: a posting the friend never lettered reads 0/0; the SAME "
+            "posting probed by a different friend reads 0/0 and writes no row at all, not even a month row (nobody "
+            "reads another person's pass); and the admin reads 0/0 with no row and no header",
+            _rx_other32 == (200, 0, 0)
+            and _rx_stranger32 == (200, 0, 0) and _rx_before32 == _rx_after32 == (0, 0, 0)
+            and _probe_read32(_rx_admin32) == (200, 0, 0) and _hdr32(_rx_admin32) is None
+            and _rows32(_admin_row_id, _fa_key32) == _rx_admin_before32,
+            f"other={_rx_other32} stranger={_rx_stranger32} rows={_rx_before32}->{_rx_after32} "
+            f"admin={_probe_read32(_rx_admin32)}",
+        )
+        _c32c.cookies.clear()  # every request here identifies by X-App-Key; "anonymous" must carry nothing at all
+        _rg32 = {
+            "anonymous": _c32c.post("/cover-letter/pass", json={"jd": _JDJ32}).status_code,
+            "jd and jd_text": _probe_pass32(_RP32_H, {"jd": _JDJ32, "jd_text": "we need python"}).status_code,
+            "jd_text alone": _probe_pass32(_RP32_H, {"jd_text": "we need python"}).status_code,
+            "resume and jd": _probe_pass32(_RP32_H, {"resume": _R32, "jd": _JDJ32}).status_code,
+        }
+        check(
+            "32.20 (P30-RELOAD-PASS) the probe's shape: it takes an analysed JD and nothing else — {jd, jd_text}, a lone "
+            "{jd_text} and {resume, jd} are each a 422 (extra='forbid': this route is uncapped and may never become a "
+            "job-text door onto the model), an anonymous caller is a 401, and beside them {jd} is the 200 above",
+            _rg32 == {"anonymous": 401, "jd and jd_text": 422, "jd_text alone": 422, "resume and jd": 422}
+            and _rp_reads32[0][0] == 200,
+            str(_rg32),
+        )
+        _rk_uid32, _ = _mint32(_c32c, "Reload Pass Clock")
+        _rk_open32 = _pass_call32(_rk_uid32, "cover_letter", _THIS32, ref=_cl_ref32)
+        _rk32 = [_posting_pass32(_rk_uid32, _cl_ref32, at)
+                 for at in (_THIS32, _THIS32 + _H24_32 - _SEC32, _THIS32 + _H24_32)]
+        check(
+            "32.20 (P30-RELOAD-PASS) on an injected clock the probe names the pass the next call would ride: 9 calls and "
+            "86400 s as it opens, 9 and 1 s one second before the 24 hours end, and 0/0 AT 24 hours — the window "
+            "32.20 pins for the ride itself — while the row still says calls 1",
+            _rk_open32[0] is not None and _rk_open32[1] is None and _rk_open32[0].opened
+            and _rk32 == [(9, 86400), (9, 1), (0, 0)]
+            and [(r.calls, r.max_calls) for r in _passes32(_rk_uid32)] == [(1, 10)],
+            f"{_rk32} {[tuple(r)[:5] for r in _passes32(_rk_uid32)]}",
+        )
+        _rv32 = {
+            "a naive now": _raises_value_error32(
+                lambda: _posting_pass_raw32(_rk_uid32, "cover_letter", _cl_ref32, _THIS32.replace(tzinfo=None))),
+            "an empty ref": _raises_value_error32(lambda: _posting_pass_raw32(_rk_uid32, "cover_letter", "")),
+            "the interview pass": _raises_value_error32(lambda: _posting_pass_raw32(_rk_uid32, "interview", "")),
+            "a listed pass given a ref": _raises_value_error32(
+                lambda: _posting_pass_raw32(_rk_uid32, "screening", _cl_ref32)),
+            "the fit ride": _raises_value_error32(lambda: _posting_pass_raw32(_rk_uid32, _q32.FIT_RIDE, _cl_ref32)),
+            "an unknown feature": _raises_value_error32(lambda: _posting_pass_raw32(_rk_uid32, "nope", _cl_ref32)),
+        }
+        check(
+            "32.20 (P30-RELOAD-PASS) posting_pass reads per-posting passes only, on an aware clock: a naive now, an empty "
+            "ref, the interview pass, a listed pass given a ref, the fit ride and an unknown feature each raise "
+            "ValueError — beside the cover-letter reads above, which did not — so it can never become a general reader "
+            "of fit rides or of the passes /auth/me already lists",
+            all(_rv32.values()) and all(isinstance(r, tuple) for r in _rk32),
+            str(_rv32),
+        )
+        _rt_first32 = _j28(_cl_first32).get("expires_in_s")
+        _rt_changes32 = [_j28(r).get("expires_in_s") for r in _cl_changes32]
+        _rt_until32 = _iso32(_cl_first_body32.get("included_until"))
+        check(
+            "32.20 (P30-RELOAD-PASS) the letter's own response carries the pass in RELATIVE seconds too: the first letter "
+            "says expires_in_s about 86400, agreeing with its included_until, each change says no more than that, and "
+            "the admin's (exempt) letter says 0 — a phone whose clock runs ahead can no longer end the pass early",
+            _near_day32(_rt_first32) and _rt_until32 is not None
+            and abs((_rt_until32 - _cl_first_at32).total_seconds() - _rt_first32) < 120
+            and all(isinstance(s, int) and 86400 - 600 <= s <= _rt_first32 for s in _rt_changes32)
+            and _near_day32(_j28(_rp_change32).get("expires_in_s"))
+            and _j28(_ca32).get("expires_in_s") == 0,
+            f"first={_rt_first32} changes={_rt_changes32} admin={_j28(_ca32).get('expires_in_s')}",
+        )
+
         # --- 32.12 (pass bullets) What a pass says, on the header and on /auth/me ------------------------------------
         _CHAT32 = {"resume": _R32, "jd_text": "", "transcript": []}
         _lu_uid32, _LU32_H = _mint32(_c32c, "Last Use Opens A Pass")
@@ -24329,6 +24518,8 @@ _ROUTE_COST = {
     ("POST", "/tools/coverage"): "free",
     ("POST", "/tools/ats-xray"): "free",
     ("POST", "/tools/page-count"): "free",
+    # free (P30-RELOAD-PASS): reads the caller's own cover-letter pass for one posting back, and takes nothing
+    ("POST", "/cover-letter/pass"): "free",
     # free: kit actions
     ("GET", "/kits"): "free",
     ("GET", "/kits/{kit_id}"): "free",
@@ -25052,6 +25243,9 @@ try:
                  lambda s: _as32("POST", "/tools/ats-xray", _SW32["h"], json={"resume": _R32}), statuses=(200,))
         _plain32(("POST", "/tools/page-count"),
                  lambda s: _as32("POST", "/tools/page-count", _SW32["h"], json={"resume": _R32}), statuses=(200,))
+        # P30-RELOAD-PASS: the cover-letter probe, as the friend whose pool reads plan free, limit 10
+        _plain32(("POST", "/cover-letter/pass"),
+                 lambda s: _as32("POST", "/cover-letter/pass", _SW32["h"], json={"jd": _JDJ32}), statuses=(200,))
         _plain32(("POST", "/resume/upload"), lambda s: _as32("POST", "/resume/upload", _SW32["h"], files={"file": (
             "cv.txt", b"Dana Levi\nPython engineer at Acme 2020-Present\n- Built APIs", "text/plain")}))
         _plain32(("POST", "/jd/analyze"), lambda s: _as32(

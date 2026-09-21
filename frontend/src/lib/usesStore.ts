@@ -274,6 +274,23 @@ export function usageIfSameUser(expectedId: number | null | undefined, answer: u
   return a.usage ?? null;
 }
 
+/** A per-posting inclusion from the server's RELATIVE reading of one pass (a
+ * cover letter's `changes_left` / `expires_in_s`, or the `UsagePassOut` that
+ * POST /cover-letter/pass answers), for the caller to hold and pass back as
+ * `includedUntil`: `until` is `Date.now()` on arrival plus the seconds left,
+ * which is `setUsage`'s clock rule, so a phone whose clock runs ahead cannot end
+ * the pass early. Null unless the pass has a change left AND time left. It
+ * writes nothing here; a per-posting pass is the caller's, never the store's
+ * (P30-RELOAD-PASS). */
+export function inclusionFrom(
+  p: { calls_left?: unknown; expires_in_s?: unknown } | null | undefined,
+): { until: string; left: number } | null {
+  const left = count(p?.calls_left);
+  const seconds = count(p?.expires_in_s);
+  if (!left || !seconds) return null;
+  return { until: new Date(Date.now() + seconds * 1000).toISOString(), left };
+}
+
 /** Forget everything. The app never needs it (a sign-out loads a new document);
  * the check-mirrors probe calls it to clear the pass timer before node exits. */
 export function resetUses(): void {
@@ -283,9 +300,9 @@ export function resetUses(): void {
 /** One feature's reading of a state, the current one by default.
  *
  * `includedUntil` is a per-posting inclusion the caller holds, which the store
- * cannot know: the fit check's `tailor_included_until` for Tailor, a cover
- * letter's `included_until` for its next change. While it is in the future it
- * covers the call. */
+ * cannot know: the fit check's `tailor_included_until` for Tailor, and for a
+ * cover letter's next change the deadline `inclusionFrom` took on arrival. While
+ * it is in the future it covers the call. */
 export function usesFor(feature: string, includedUntil?: string, from: UsesState | null = state): UsesView {
   const now = Date.now();
   const limited = !!from && from.limit !== null && from.remaining !== null && !monthOver(from.resetsOn, now);

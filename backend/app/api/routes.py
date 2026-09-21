@@ -132,6 +132,7 @@ from app.models import (
     ComeetCompanyOut,
     CompanyBriefRequest,
     CompanyBriefResult,
+    CoverLetterPassRequest,
     CoverLetterRequest,
     CoverLetterResponse,
     DeleteAccountResult,
@@ -204,6 +205,7 @@ from app.models import (
     UserList,
     UserOut,
     UserUpdate,
+    UsagePassOut,
 )
 from app.parsers.resume_parser import extract_text
 from app.parsers.structurer import build_facts_ledger, structure_resume
@@ -396,9 +398,10 @@ def cover_letter(
     The first letter for a posting uses 1 and opens a 24-hour pass keyed by that
     analysed JD (`quota.jd_ref`); changes to it, in any tone, ride the pass up to
     10 calls in all, and a letter for another posting opens its own. The pass is
-    reported on this response (`included_until`, `changes_left`), never on the
-    uses header, because it belongs to one posting. The pass sits OUTSIDE the
-    try/except -> 502, so a 429 stays a 429.
+    reported on this response (`changes_left`, and `expires_in_s` beside the
+    absolute `included_until`), never on the uses header, because it belongs to
+    one posting; a page that remounted reads it back from /cover-letter/pass. The
+    pass sits OUTSIDE the try/except -> 502, so a 429 stays a 429.
     """
     with quota.pass_charged(db, user, "cover_letter", ref=quota.jd_ref(body.jd)) as use:
         try:
@@ -407,7 +410,26 @@ def cover_letter(
             raise  # app-level 413/503, never an 'LLM error' 502
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"LLM error while writing cover letter: {e}")
-    return CoverLetterResponse(cover_letter=text, included_until=use.included_until, changes_left=use.calls_left)
+    return CoverLetterResponse(
+        cover_letter=text,
+        included_until=use.included_until,
+        changes_left=use.calls_left,
+        expires_in_s=use.seconds_left(),
+    )
+
+
+@router.post("/cover-letter/pass", response_model=UsagePassOut)
+def cover_letter_pass(
+    body: CoverLetterPassRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> UsagePassOut:
+    """This posting's cover-letter pass, as the next letter would ride it (P30-RELOAD-PASS).
+
+    A remounted card (a reload of /kits/:id, Tracker and back on /app) asks here,
+    because the pass is listed nowhere else. Read-only: it takes no slot, charges
+    nothing and reaches no model, so it is uncapped like /tools/coverage and takes
+    plain `current_user`; the JD is hashed here, with the letter's own `jd_ref`.
+    """
+    return quota.posting_pass(db, user, "cover_letter", ref=quota.jd_ref(body.jd))
 
 
 @router.post("/render")

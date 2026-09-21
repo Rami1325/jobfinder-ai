@@ -241,14 +241,19 @@ export interface TailorResult {
 /** POST /cover-letter: the letter, and the pass it rode (Phase 30 / B5). The
  * first letter for a posting uses 1 and opens a 24-hour pass for that analysed
  * job; changes to it ride the pass, up to 10 calls in all. The pass belongs to
- * one posting, so it travels here and never in /auth/me. Both pass fields are
- * absent on older backends. */
+ * one posting, so it travels here and never in /auth/me; a remounted card reads
+ * it back from POST /cover-letter/pass. The pass fields are absent on older
+ * backends. */
 export interface CoverLetterResponse {
   cover_letter: string;
-  /** ISO UTC end of this posting's pass; "" for an account with no monthly limit. */
+  /** ISO UTC end of this posting's pass; "" for an account with no monthly limit.
+   * Not read by CoverLetter: an absolute instant ends early on a fast device clock. */
   included_until?: string;
   /** Calls left on the pass after this one; 0 when exempt. */
   changes_left?: number;
+  /** Seconds until the pass ends, as the response was built; 0 when exempt.
+   * `inclusionFrom` turns it into a deadline on arrival (P30-RELOAD-PASS). */
+  expires_in_s?: number;
 }
 
 export interface ResumeUploadResponse {
@@ -963,9 +968,10 @@ export interface AuthMe {
   usage?: UsageOut | null;
 }
 
-/** One open session pass as /auth/me lists it: interview practice or screening
- * answers. Relative seconds, never a timestamp, so a phone whose clock is wrong
- * cannot end a pass early. Mirrors backend `UsagePassOut` (check-mirrors 32(j)). */
+/** One open session pass: as /auth/me lists it (interview practice or screening
+ * answers), and as POST /cover-letter/pass reads one posting's cover-letter pass
+ * back (0/0 for none). Relative seconds, never a timestamp, so a phone whose clock
+ * is wrong cannot end a pass early. Mirrors backend `UsagePassOut` (check-mirrors 32(j)). */
 export interface UsagePassOut {
   calls_left: number;
   expires_in_s: number;

@@ -5604,7 +5604,7 @@ try {
     ["AlertRunResult", "AlertRunResult", ["skipped_reason"]],
     ["UsageOut", "UsageOut", ["passes"]],
     ["FitCheckResult", "FitCheckResult", ["tailor_included_until"]],
-    ["CoverLetterResponse", "CoverLetterResponse", ["included_until", "changes_left"]],
+    ["CoverLetterResponse", "CoverLetterResponse", ["included_until", "changes_left", "expires_in_s"]],
   ];
   for (const [, ts, names] of NAMES) {
     let keys;
@@ -7302,6 +7302,761 @@ try {
     if (!staleTabProblems(layout).length) fail(`check 35(d)'s stale-tab detector misses ${label}`);
 } catch (e) {
   fail(`check 35(d), the stale tab, could not run: ${e.message}`);
+}
+
+// ---- 36. a remounted cover letter reads its posting's pass back ------------ //
+// P30-RELOAD-PASS. A cover-letter pass belongs to ONE posting, so neither
+// /auth/me nor the X-Uses-Pass header lists it, and CoverLetter kept it in
+// component state alone. A page that REMOUNTED the card — a reload of
+// /kits/:id, whose JD the server stores, or Tracker and back on /app — forgot
+// it, and at 0 uses left disabled Generate on a change the server would still
+// include: the one error usesStore's header forbids a local count to make.
+// Now the card asks POST /cover-letter/pass on mount, and that answer and the
+// letter's own response both arrive in RELATIVE seconds, which `inclusionFrom`
+// turns into a deadline on arrival, so a phone whose clock runs ahead cannot
+// end the pass early either (the absolute `included_until` could).
+//
+// (a) EXECUTES the helper on a driven clock, the catch beside every null twin.
+// (b) pins the component's wiring — it cannot be rendered in node — on the real
+//     file AND on fixtures, each of which must go red on its own rule, beside
+//     twins it must not refuse: until the probe (or a letter) answers, the card
+//     KNOWS nothing, so it prints no note and disables nothing (unknown is never
+//     zero; the server decides) — `known` starts false, and no code outside the
+//     probe's effect and generate() sets it true; the probe's answer and a
+//     served letter each set the pass from what came back; the probe's answer
+//     makes it known and a failed probe never does, whether the failure is a
+//     `.catch`, a `.finally` or `.then`'s second argument; a new posting starts
+//     unknown again; Generate's `disabled=` is exactly `known && uses.out` (`!known || uses.out` names the
+//     same words and disables for good after a failed probe); a letter that did
+//     not answer (a 5xx, a dropped request, a finally) leaves `known` as it was,
+//     and only the served letter and the monthly-limit refusal set it; and a
+//     probe answer that lands after a letter started is dropped, because it
+//     describes the pass before that letter took its slot. That last gate is
+//     pinned by its CONTROL FLOW, not by an operator's presence: a one-character
+//     inversion (`=== … return`, `alive ||`) passed an earlier draft green while
+//     dropping every normal answer.
+// (c) pins the wire: the client posts exactly `{ jd }` (the route forbids any
+//     other field, so a `resume` beside it is a 422 and the card stays unknown
+//     for ever, silently) to the path routes.py mounts.
+try {
+  const us = runProbeBundle("reload-pass", `export * from "./lib/usesStore";\n`);
+  for (const name of ["inclusionFrom", "setUsage", "outFor", "getUsesState", "resetUses"])
+    if (typeof us[name] !== "function") throw new Error(`lib/usesStore.ts does not export ${name}`);
+  const realNow = Date.now;
+  let clock = Date.UTC(2026, 8, 15, 12, 0, 0);
+  Date.now = () => clock;
+  try {
+    const atZero = () => ({
+      plan: "free",
+      limit: 10,
+      used: 10,
+      remaining: 0,
+      resets_on: "2026-10-01",
+      by_feature: {},
+      passes: {},
+    });
+    // The catch: at 0 left, a pass the server reported with 3 changes and 600 s covers the next change for 600 s.
+    us.setUsage(atZero());
+    const stored = us.getUsesState();
+    const it = us.inclusionFrom({ calls_left: 3, expires_in_s: 600 });
+    if (!it || it.left !== 3 || typeof it.until !== "string")
+      fail(
+        `inclusionFrom({calls_left: 3, expires_in_s: 600}) returned ${JSON.stringify(it)}; it must be ` +
+          "{ until: <ISO deadline>, left: 3 }, the shape CoverLetter keeps and hands to useUses.",
+      );
+    else {
+      if (us.outFor("cover_letter", it.until))
+        fail(
+          "at 0 uses left, a cover-letter pass the server reported open (3 changes, 600 s) does not cover the next " +
+            "change — Generate is disabled on a call the server includes.",
+        );
+      clock += 599_000;
+      if (us.outFor("cover_letter", it.until)) fail("inclusionFrom's deadline ends before the 600 s the server said.");
+      clock += 2_000;
+      if (!us.outFor("cover_letter", it.until))
+        fail("inclusionFrom's deadline still covers after the 600 s the server said, so Generate stays on into a 429.");
+    }
+    if (us.getUsesState() !== stored)
+      fail("inclusionFrom wrote to the uses store; it is a reading for one card, and the store's header lists every writer.");
+    // The twins: nothing that is not an open pass with a change left and time left may read as one.
+    for (const [label, p] of [
+      ["{calls_left: 0, expires_in_s: 600}", { calls_left: 0, expires_in_s: 600 }],
+      ["{calls_left: 3, expires_in_s: 0}", { calls_left: 3, expires_in_s: 0 }],
+      ["{calls_left: 0, expires_in_s: 0}", { calls_left: 0, expires_in_s: 0 }],
+      ["{calls_left: -1, expires_in_s: 600}", { calls_left: -1, expires_in_s: 600 }],
+      ["{calls_left: 2.5, expires_in_s: 600}", { calls_left: 2.5, expires_in_s: 600 }],
+      ["{} (an older backend)", {}],
+      ["undefined", undefined],
+      ["null", null],
+    ])
+      if (us.inclusionFrom(p) !== null)
+        fail(`inclusionFrom(${label}) is ${JSON.stringify(us.inclusionFrom(p))}, not null — it covers a call no pass covers.`);
+    // The clock rule. A device 2 hours AHEAD of the server: the server's own "10 minutes from now", read as an
+    // absolute instant, has already ended there — the firing proof that the skew is real — while the same pass in
+    // relative seconds covers exactly 600 s from arrival.
+    clock = Date.UTC(2026, 8, 15, 14, 0, 0);
+    us.setUsage(atZero());
+    const serverSays = new Date(Date.UTC(2026, 8, 15, 12, 10, 0)).toISOString();
+    if (!us.outFor("cover_letter", serverSays))
+      throw new Error("an absolute instant 2 hours behind the device still covers, so the skewed-clock case proves nothing");
+    const fast = us.inclusionFrom({ calls_left: 3, expires_in_s: 600 });
+    if (!fast || us.outFor("cover_letter", fast.until))
+      fail(
+        "on a phone whose clock runs 2 hours ahead, inclusionFrom's deadline has already ended: it must be Date.now() " +
+          "on arrival plus the server's seconds, never the server's instant.",
+      );
+    clock += 601_000;
+    if (fast && !us.outFor("cover_letter", fast.until)) fail("on a fast clock inclusionFrom covers past its 600 s.");
+    // And a device years BEHIND gets exactly 600 s too, not the years to the server's instant.
+    clock = Date.UTC(2019, 0, 1, 0, 0, 0);
+    us.setUsage(atZero());
+    const slow = us.inclusionFrom({ calls_left: 3, expires_in_s: 600 });
+    clock += 601_000;
+    if (!slow || !us.outFor("cover_letter", slow.until))
+      fail("on a clock years behind, inclusionFrom's deadline outlives the 600 s the server said.");
+  } finally {
+    us.resetUses();
+    Date.now = realNow;
+  }
+} catch (e) {
+  fail(`cover-letter pass probe (check 36a) could not run: ${e.message}`);
+}
+
+/** The index of the bracket closing the one at `open` — (, [ or { — skipping
+ * quoted strings; -1 when it never closes. */
+function closeOf(s, open) {
+  const PAIR = { "(": ")", "[": "]", "{": "}" };
+  if (!PAIR[s[open]]) throw new Error(`closeOf was pointed at ${JSON.stringify(s[open])}, which opens nothing`);
+  const want = [];
+  for (let i = open; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      for (i++; i < s.length && s[i] !== ch; i++) if (s[i] === "\\") i++;
+    } else if (PAIR[ch]) want.push(PAIR[ch]);
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      if (want.pop() !== ch) return -1;
+      if (!want.length) return i;
+    }
+  }
+  return -1;
+}
+
+/** `s` cut at every `sep` outside brackets and strings, each part trimmed. */
+function splitTopLevel(s, sep) {
+  const parts = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      for (i++; i < s.length && s[i] !== ch; i++) if (s[i] === "\\") i++;
+    } else if ("([{".includes(ch)) depth++;
+    else if (")]}".includes(ch)) depth--;
+    else if (depth === 0 && s.startsWith(sep, i)) {
+      parts.push(s.slice(from, i));
+      from = i + sep.length;
+      i = from - 1;
+    }
+  }
+  parts.push(s.slice(from));
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+/**
+ * The body of an inline callback, the text inside its braces: `(r) => { … }`,
+ * `r => { … }`, `async` either way, a typed `(r: T): void => { … }`, or
+ * `function (r) { … }`. null for anything else (a function passed by name, an
+ * expression body), which therefore holds no sequence gate of its own.
+ */
+function callbackBody(cb) {
+  let i = /^async\b\s*/.exec(cb)?.[0].length ?? 0;
+  const fn = /^function\b\s*(?:[A-Za-z_$][\w$]*\s*)?/.exec(cb.slice(i));
+  if (fn) i += fn[0].length;
+  if (cb[i] === "(") {
+    const shut = closeOf(cb, i);
+    if (shut === -1) return null;
+    i = shut + 1;
+  } else {
+    const id = fn ? null : /^[A-Za-z_$][\w$]*/.exec(cb.slice(i));
+    if (!id) return null;
+    i += id[0].length;
+  }
+  const head = /^\s*(?::\s*[\w$.<>[\]|, ]+?)?\s*(=>)?\s*\{/.exec(cb.slice(i));
+  // An arrow needs its `=>`, and a function expression has none.
+  if (!head || !head[1] === !fn) return null;
+  const open = i + head[0].length - 1;
+  const shut = closeOf(cb, open);
+  if (shut === -1 || cb.slice(shut + 1).trim()) return null;
+  return cb.slice(open + 1, shut);
+}
+
+/** Bracket depth at `idx` in `s`, counted from its start, skipping strings. */
+function depthAt(s, idx) {
+  let depth = 0;
+  for (let i = 0; i < idx; i++) {
+    const ch = s[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      for (i++; i < idx && s[i] !== ch; i++) if (s[i] === "\\") i++;
+    } else if ("([{".includes(ch)) depth++;
+    else if (")]}".includes(ch)) depth--;
+  }
+  return depth;
+}
+
+/** Where `s` leaves the block it starts in: the first bracket it closes without opening; s.length when none. */
+function blockEnd(s) {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      for (i++; i < s.length && s[i] !== ch; i++) if (s[i] === "\\") i++;
+    } else if ("([{".includes(ch)) depth++;
+    else if (")]}".includes(ch) && --depth < 0) return i;
+  }
+  return s.length;
+}
+
+/**
+ * The probe's answer callbacks and its failure handlers. Each answer is the first
+ * argument of one `.then` chained on `coverLetterPass(`, as `{ text, body }`,
+ * where `body` is what `callbackBody` reads (null when it reads none). They stay
+ * SEPARATE: an early return exits only its own callback, and every later
+ * `.then` still runs, so a check in one callback guards nothing in another. A
+ * failure handler is `.then`'s second argument, a `.catch`, or a `.finally`
+ * (which runs on a failure too). A `.then` after a `.catch` or a two-argument
+ * `.then` runs after a failure as well, so it counts as a failure handler. An
+ * awaited probe has no chain: its one answer runs from the request to the first
+ * `catch`, and everything after that is failure.
+ */
+function probeHandlers(probe, ask) {
+  const close = closeOf(probe, probe.indexOf("(", ask));
+  if (close === -1) throw new Error("the cover letter's coverLetterPass( never closes");
+  const answers = [];
+  const failures = [];
+  let at = close + 1;
+  let chained = false;
+  let recovered = false;
+  for (let m; (m = /^\s*\.\s*(then|catch|finally)\s*\(/.exec(probe.slice(at))); ) {
+    chained = true;
+    const open = at + m[0].length - 1;
+    const end = closeOf(probe, open);
+    if (end === -1) throw new Error(`the probe's .${m[1]}( never closes`);
+    const args = splitTopLevel(probe.slice(open + 1, end), ",");
+    if (m[1] === "then") {
+      const first = args[0] ?? "";
+      if (recovered) failures.push(first);
+      else answers.push({ text: first, body: callbackBody(first) });
+      failures.push(...args.slice(1));
+      if (args.length > 1) recovered = true;
+    } else {
+      failures.push(...args);
+      if (m[1] === "catch") recovered = true;
+    }
+    at = end + 1;
+  }
+  if (chained) return { answers, failures };
+  const failed = /\bcatch\b/.exec(probe.slice(ask));
+  const awaited = failed ? probe.slice(ask, ask + failed.index) : probe.slice(ask);
+  return { answers: [{ text: awaited, body: awaited }], failures: failed ? [probe.slice(ask + failed.index)] : [] };
+}
+
+/**
+ * How the probe's answer drops itself when a letter started since it was sent.
+ * Two shapes are accepted, and only these: an early return on `seq.current !==
+ * at` (optionally `|| !alive`) before anything is applied, or the apply inside
+ * `if (seq.current === at) { … }` (optionally `alive &&`). `at` is the number
+ * the probe took before it asked (null when it took none, which no shape
+ * accepts). The control flow is what is read, not an operator's presence:
+ * `=== … return` and `!== { apply }` name the same words as the two accepted
+ * shapes and drop every normal answer.
+ *
+ * The check must sit at the TOP LEVEL of one answer callback's body. Inside a
+ * nested arrow its `return` leaves only that arrow, and under another `if` it
+ * runs only when that condition holds; either way the code after it runs for a
+ * dropped answer too. `guarded` is the code of that callback that runs only
+ * past the check; `outside` is the rest of it, plus every OTHER answer callback
+ * whole, since a later `.then` runs whether an earlier one returned or not.
+ */
+function sequenceGuard(answers, at) {
+  const all = answers.map((a) => a.text).join("\n");
+  for (const [n, { body }] of answers.entries()) {
+    if (body === null) continue;
+    const others = answers
+      .filter((_, k) => k !== n)
+      .map((a) => a.text)
+      .join("\n");
+    const IF = /\bif\s*\(/g;
+    for (let m; (m = IF.exec(body)); ) {
+      const open = m.index + m[0].length - 1;
+      const close = closeOf(body, open);
+      if (close === -1) throw new Error("an if ( in the probe's answer never closes");
+      const cond = body.slice(open + 1, close);
+      if (!/\bseq\.current\b/.test(cond) || depthAt(body, m.index) !== 0) continue;
+      let j = close + 1;
+      while (/\s/.test(body[j] ?? "")) j++;
+      let block = null;
+      let end;
+      if (body[j] === "{") {
+        const shut = closeOf(body, j);
+        if (shut === -1) throw new Error("the block after the probe's sequence check never closes");
+        block = body.slice(j + 1, shut);
+        end = shut + 1;
+      } else {
+        const ret = /^return\s*;?/.exec(body.slice(j));
+        // A lone statement under the check is neither accepted shape.
+        if (!ret) return { ok: false, guarded: all, outside: "" };
+        end = j + ret[0].length;
+      }
+      const early = block === null || /^\s*return\s*;?\s*$/.test(block);
+      const norm = (t) => {
+        const x = t.replace(/\s+/g, "");
+        return /^\(.*\)$/.test(x) ? x.slice(1, -1) : x;
+      };
+      const terms = splitTopLevel(cond, early ? "||" : "&&").map(norm);
+      const seq = early ? [`seq.current!==${at}`, `${at}!==seq.current`] : [`seq.current===${at}`, `${at}===seq.current`];
+      const alive = early ? "!alive" : "alive";
+      const ok = at !== null && terms.some((t) => seq.includes(t)) && terms.every((t) => seq.includes(t) || t === alive);
+      const before = body.slice(0, m.index);
+      if (!early) return { ok, guarded: block, outside: `${before}${body.slice(end)}\n${others}` };
+      // An awaited answer is a slice of a larger function, not a callback: past
+      // the end of the block holding the check, the return may not have skipped
+      // anything (it leaves a nested function, not a block), so that is outside.
+      const rest = body.slice(end);
+      const stop = blockEnd(rest);
+      return { ok, guarded: rest.slice(0, stop), outside: `${before}${rest.slice(stop)}\n${others}` };
+    }
+  }
+  return { ok: false, guarded: all, outside: "" };
+}
+
+/**
+ * What CoverLetter.tsx's wiring gets wrong, as rule ids; [] when nothing. THROWS
+ * when a landmark the rules read is missing, so a rewrite that moves one is a
+ * red build naming it rather than a rule that passes by reading nothing.
+ */
+function coverLetterWiring(text) {
+  // Trailing // comments too (decomment takes only whole-line ones), sparing a
+  // "https://" inside a string: a parenthesis in a comment would unbalance the
+  // effect reader below.
+  const s = decomment(text)
+    .replace(/\r\n/g, "\n")
+    .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const bad = new Set();
+  // A pass actually set from the answer: a `setPass(` whose argument is not the literal null.
+  const APPLIES = /\bsetPass\(\s*(?!null\s*\))/;
+  const known = (t) => (t.match(/\bsetKnown\(\s*true\s*\)/g) || []).length;
+  if (!/\[\s*known\s*,\s*setKnown\s*\]\s*=\s*useState(?:<[^>]*>)?\(\s*false\s*\)/.test(s)) bad.add("known-starts-unknown");
+  const effects = [];
+  for (let at = s.indexOf("useEffect("); at !== -1; at = s.indexOf("useEffect(", at + 1)) {
+    const open = at + "useEffect".length;
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < s.length; i++) {
+      if (s[i] === "(") depth++;
+      else if (s[i] === ")" && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    if (end === -1) throw new Error("a useEffect( in the cover letter never closes");
+    effects.push(s.slice(open + 1, end));
+  }
+  const probe = effects.find((e) => /\bcoverLetterPass\(/.test(e));
+  if (!probe) bad.add("probe-on-mount");
+  else {
+    const deps = /,\s*\[([^\]]*)\]\s*$/.exec(probe);
+    const keys = deps ? deps[1].split(",").map((d) => d.trim()) : [];
+    if (!keys.includes("posting")) bad.add("probe-on-mount");
+    const ask = probe.indexOf("coverLetterPass(");
+    const skip = /\bif\s*\(\s*!\s*limited\s*\)\s*return\b/.exec(probe);
+    if (!skip || skip.index > ask || !keys.includes("limited")) bad.add("probe-keyed-on-limit");
+    if (!/\binclusionFrom\(/.test(probe)) bad.add("probe-relative-seconds");
+    const reset = /\bsetKnown\(\s*false\s*\)/.exec(probe);
+    if (!reset || reset.index > ask) bad.add("probe-resets-known");
+    // The number this probe takes before it asks, which its answer is compared with.
+    const took = /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*\+\+\s*seq\.current\b/.exec(probe);
+    const { answers, failures } = probeHandlers(probe, ask);
+    const guard = sequenceGuard(answers, took && took.index < ask ? took[1] : null);
+    if (!guard.ok || /\bsetPass\(/.test(guard.outside)) bad.add("probe-sequence-guard");
+    if (!APPLIES.test(guard.guarded)) bad.add("probe-applies");
+    const onFailure = failures.reduce((n, f) => n + known(f), 0);
+    if (onFailure) bad.add("probe-failure-unknown");
+    // Known past the sequence check, in the callback that holds it, and nowhere
+    // else in the effect: not before the request, not after a block the check
+    // guards, not in another `.then` (which runs whether the check returned or not).
+    if (!known(guard.guarded) || known(probe) > known(guard.guarded) + onFailure) bad.add("probe-known");
+  }
+  const gen = fnSource(s, "async function generate");
+  const call = gen.indexOf("await coverLetter(");
+  const caught = gen.indexOf("catch");
+  if (call === -1 || caught === -1 || caught < call)
+    throw new Error("cannot find generate()'s `await coverLetter(` and the catch after it");
+  const bump = /\+\+\s*seq\.current|seq\.current\s*(?:\+\+|\+=\s*1)/.exec(gen);
+  if (!bump || bump.index > call) bad.add("generate-bumps-sequence");
+  const served = gen.slice(call, caught);
+  // Anywhere in the card, not only in generate(): the absolute instant is the clock the pass must not read.
+  if (!/\binclusionFrom\(/.test(served) || /\bincluded_until\b/.test(s)) bad.add("generate-relative-seconds");
+  if (!/\bsetKnown\(\s*true\s*\)/.test(served)) bad.add("generate-known");
+  if (!APPLIES.test(served)) bad.add("generate-applies");
+  const limit = /\bif\s*\(\s*isMonthlyLimit\(\s*e\s*\)\s*\)\s*/.exec(gen.slice(caught));
+  if (!limit) throw new Error("cannot find the `if (isMonthlyLimit(e))` branch in generate()'s catch");
+  const branch = caught + limit.index + limit[0].length;
+  const shut = gen[branch] === "{" ? closeOf(gen, branch) + 1 : gen.indexOf(";", branch) + 1;
+  if (!shut) throw new Error("generate()'s `if (isMonthlyLimit(e))` branch never ends");
+  if (!/\bsetKnown\(\s*true\s*\)/.test(gen.slice(branch, shut))) bad.add("limit-known");
+  // Everywhere else in generate() no letter answered: before the request, the
+  // rest of the catch, a finally. `known` stays as it was there, either way.
+  if (/\bsetKnown\(/.test(gen.slice(0, call) + gen.slice(caught, branch) + gen.slice(shut)))
+    bad.add("generate-failure-known");
+  // Only the probe's effect and generate() may make the card known; the rules
+  // above say where inside each.
+  if (known(s) > known(probe ?? "") + known(gen)) bad.add("known-elsewhere");
+  const click = s.indexOf("onClick={() => generate()}");
+  const button = click === -1 ? -1 : s.lastIndexOf("<Button", click);
+  if (button === -1) throw new Error("cannot find the Generate button (`<Button … onClick={() => generate()}`)");
+  const disabled = /\bdisabled=\{([^}]*)\}/.exec(s.slice(button, click));
+  // The WHOLE expression is the conjunction, in either order. Naming both words
+  // is not enough: `!known || uses.out` names them and disables while the pass
+  // is unknown, and for good once the probe failed.
+  let expr = disabled ? disabled[1].replace(/\s+/g, "") : "";
+  if (/^\(.*\)$/.test(expr)) expr = expr.slice(1, -1);
+  if (expr !== "known&&uses.out" && expr !== "uses.out&&known") bad.add("button-known");
+  const notes = (s.match(/<UsesNote\b/g) || []).length;
+  if (!notes) throw new Error("the cover letter renders no <UsesNote");
+  if ((s.match(/\{\s*known\s*&&\s*\(?\s*<UsesNote\b/g) || []).length !== notes) bad.add("note-known");
+  return [...bad];
+}
+const COVER_WIRING_HARM = {
+  "probe-on-mount":
+    "never asks POST /cover-letter/pass from an effect keyed on `posting` (coverLetterPass). A remounted card — a " +
+    "reload of /kits/:id, Tracker and back on /app — forgets its posting's pass, and at 0 uses left disables " +
+    "Generate on a change the server would still include",
+  "probe-keyed-on-limit":
+    "does not ask the probe exactly while a monthly limit is known (`if (!limited) return` before coverLetterPass, " +
+    "AND `limited` in the effect's deps). Without the dep, a card that mounted before the count was known never " +
+    "asks once it is, and stays unknown for good; without the guard the admin pays the round trip for nothing",
+  "probe-relative-seconds":
+    "keeps the probe's answer without passing it through inclusionFrom, so the server's relative seconds never " +
+    "become a deadline taken on arrival",
+  "probe-applies":
+    "never sets the pass from the probe's answer past its sequence check (a setPass( other than setPass(null)). " +
+    "The card turns known with the pass it already had, which on a remount is none, so at 0 uses left it prints " +
+    "'No uses left' and disables a change the server still includes: the very defect the probe exists to fix",
+  "probe-resets-known":
+    "does not reset `known` before asking about a posting (setKnown(false) before coverLetterPass). After a posting " +
+    "change the old posting's `known` stands until the probe answers, so at 0 uses left Generate is disabled for a " +
+    "posting whose pass nobody has read yet",
+  "probe-known":
+    "does not mark the pass known exactly where the probe's answer has passed its sequence check (setKnown(true) " +
+    "past the seq.current check, in the same answer callback, and nowhere else in the effect). Missing there, the " +
+    "card stays unknown until a letter comes back: <UsesNote> never renders, so the first letter's cost is never " +
+    "stated before the tap, and at 0 uses with no pass Generate is never disabled. Anywhere else (before the " +
+    "request, after a block the check guards, or in a later `.then`, which runs whether the check's early return " +
+    "fired or not) it marks known a pass nobody read, which at 0 uses prints 'No uses left' and disables a change " +
+    "the server may still include",
+  "probe-failure-unknown":
+    "marks the pass known when the probe FAILED (in a .catch, a .finally, or .then's second argument). With no " +
+    "answer the pass reads as none, so at 0 uses left a 5xx or a dropped request prints 'No uses left' and disables " +
+    "a change the server may still include — unknown is never zero",
+  "probe-sequence-guard":
+    "does not drop a probe answer that lands after a letter started, in one of the two shapes this check accepts: " +
+    "the probe takes `const at = ++seq.current` before it asks, and its answer either returns early on " +
+    "`seq.current !== at` (optionally `|| !alive`) before it applies anything, or applies itself only inside " +
+    "`if (seq.current === at) { … }` (optionally `alive &&`), at the top level of the answer callback that applies. " +
+    "A late answer describes the pass BEFORE that letter took its slot, and putting the slot back hides the next " +
+    "letter's cost; a late 'no pass' wipes the pass the letter just opened. An inverted gate (`=== … return`, " +
+    "`!== { apply }`, or `alive` read the wrong way round) drops every normal answer instead, so the card never " +
+    "learns its pass before the first letter. A gate anywhere but the top level of the callback that applies is " +
+    "refused: an early return leaves only its own function, so a check in a nested arrow, under another `if`, or " +
+    "in an earlier `.then` (a later `.then` runs whether it returned or not) lets a dropped answer apply, and a " +
+    "positive block under another `if` adds a condition that leaves some answers never applied and never known",
+  "generate-bumps-sequence":
+    "does not bump seq.current before a letter's request goes out, so a probe still in flight is applied after it",
+  "generate-relative-seconds":
+    "reads `included_until`, an absolute instant compared against the device clock, or sets the pass from a " +
+    "letter's response without inclusionFrom: on a phone whose clock runs ahead the pass ends early, and at 0 uses " +
+    "that disables a covered change",
+  "generate-known": "does not mark the pass known after a letter came back, although that response says what it is",
+  "generate-applies":
+    "never sets the pass from a served letter (a setPass( other than setPass(null)). After the first letter opens " +
+    "the posting's pass the card still holds none, so at 0 uses left it prints 'No uses left' and disables the " +
+    "changes that pass includes",
+  "known-starts-unknown":
+    "does not start `known` as false (`useState(false)`). A card that mounts knowing reads the pass it has not " +
+    "asked about as none, so at 0 uses left it prints 'No uses left' and disables Generate before the probe answers",
+  "known-elsewhere":
+    "marks the pass known outside the probe's effect and generate(). No answer stands behind that, so at 0 uses " +
+    "left it reads the unread pass as none, prints 'No uses left' and disables a change the server may still include",
+  "generate-failure-known":
+    "sets `known` where no letter answered: before the request, in the catch outside its `isMonthlyLimit(e)` " +
+    "branch, or in a finally. A 5xx or a dropped letter must leave `known` as it was. If the Generate tap dropped " +
+    "the probe's answer, marking the card known on that failure reads the unread pass as none, and at 0 uses left " +
+    "prints 'No uses left' and disables a change the server may still include",
+  "limit-known":
+    "does not mark the pass known after a monthly-limit refusal, which proves no pass covers the call — so the " +
+    "card keeps Generate enabled into the same 429",
+  "button-known":
+    "disables Generate on something other than exactly `known && uses.out` (either order). `uses.out` alone disables " +
+    "at 0 uses left while the probe is pending, and `!known || uses.out` disables while the pass is unknown and for " +
+    "good once the probe failed, uses left or not: each disables a change the pass may still cover — unknown is " +
+    "never zero",
+  "note-known":
+    "renders <UsesNote> while the pass is unknown, so at 0 uses left it prints 'No uses left' under a change the " +
+    "pass may include",
+};
+try {
+  for (const rule of coverLetterWiring(read("components/CoverLetter.tsx")))
+    fail(`components/CoverLetter.tsx ${COVER_WIRING_HARM[rule] ?? rule}.`);
+
+  // Both directions on the reader: the shipped shape passes, and each fixture
+  // below goes red on ITS rule.
+  const GOOD = [
+    "export default function CoverLetter({ resume, jd }: Props) {",
+    "  const [known, setKnown] = useState(false);",
+    "  const seq = useRef(0);",
+    "  useEffect(() => {",
+    "    if (!limited) return;",
+    "    const at = ++seq.current;",
+    "    setKnown(false);",
+    "    coverLetterPass(jd).then((r) => {",
+    "      if (seq.current !== at) return; // a letter started (since then)",
+    "      const inc = inclusionFrom(r);",
+    "      setPass(inc ? { ...inc, posting } : null);",
+    "      setKnown(true);",
+    "    }).catch(() => {",
+    "      // left unknown: the server decides",
+    "    });",
+    "  }, [posting, limited]);",
+    "",
+    "  async function generate(extra?: string) {",
+    "    seq.current++;",
+    "    try {",
+    "      const res = await coverLetter(resume, jd, tone);",
+    "      const inc = inclusionFrom({ calls_left: res.changes_left, expires_in_s: res.expires_in_s });",
+    "      setPass(inc ? { ...inc, posting } : null);",
+    "      setKnown(true);",
+    "    } catch (e: any) {",
+    "      if (isMonthlyLimit(e)) {",
+    "        setPass(null);",
+    "        setKnown(true);",
+    "      } else if (isServerFailure(e)) setPass((p) => p);",
+    "    }",
+    "  }",
+    "",
+    "  return (",
+    "    <Card>",
+    "      <Button disabled={known && uses.out} onClick={() => generate()}>",
+    "      </Button>",
+    "      {known && (",
+    '        <UsesNote feature="cover_letter" />',
+    "      )}",
+    "    </Card>",
+    "  );",
+    "}",
+  ].join("\n");
+  const good = coverLetterWiring(GOOD);
+  if (good.length) fail(`check 36's wiring reader refuses the shape CoverLetter ships: ${good.join(", ")}`);
+  const mutate = (label, from, to) => {
+    const out = GOOD.replace(from, to);
+    if (out === GOOD) throw new Error(`check 36's fixture "${label}" did not apply, so it proves nothing`);
+    return out;
+  };
+  // The probe's early return and its apply, as GOOD writes them, and the same
+  // apply under a block: the sequence gate's fixtures and twins rewrite these.
+  const G_GUARD = "      if (seq.current !== at) return; // a letter started (since then)\n";
+  const G_SET = "      const inc = inclusionFrom(r);\n      setPass(inc ? { ...inc, posting } : null);\n";
+  const G_APPLY = G_SET + "      setKnown(true);\n";
+  const block = (cond, inner = G_APPLY) => `      if (${cond}) {\n${inner}      }\n`;
+  const G_CATCH = "    }).catch(() => {\n      // left unknown: the server decides\n    });";
+  const G_TAIL = "      } else if (isServerFailure(e)) setPass((p) => p);\n    }\n";
+  const FIXTURES = [
+    [
+      "the probe sent only inside generate()",
+      mutate(
+        "probe in generate",
+        /  useEffect\(\(\) => \{[\s\S]*?\}, \[posting, limited\]\);\n/,
+        "",
+      ).replace("    seq.current++;", "    seq.current++;\n    coverLetterPass(jd);"),
+      "probe-on-mount",
+    ],
+    ["an effect keyed without `posting`", mutate("deps", "[posting, limited]", "[limited]"), "probe-on-mount"],
+    ["the probe's answer kept raw", mutate("raw", "const inc = inclusionFrom(r);", "const inc = r;"), "probe-relative-seconds"],
+    ["no sequence check on the probe", mutate("no guard", "      if (seq.current !== at) return; // a letter started (since then)\n", ""), "probe-sequence-guard"],
+    ["no sequence bump in generate()", mutate("no bump", "    seq.current++;\n", ""), "generate-bumps-sequence"],
+    [
+      "generate() reading included_until",
+      mutate(
+        "absolute",
+        "const inc = inclusionFrom({ calls_left: res.changes_left, expires_in_s: res.expires_in_s });",
+        "const inc = res.included_until ? { until: res.included_until, left: res.changes_left } : null;",
+      ),
+      "generate-relative-seconds",
+    ],
+    ["a letter that leaves the pass unknown", mutate("served", "      setKnown(true);\n    } catch", "    } catch"), "generate-known"],
+    [
+      "a monthly-limit branch that leaves the pass unknown",
+      mutate("limit", "if (isMonthlyLimit(e)) {\n        setPass(null);\n        setKnown(true);\n      }", "if (isMonthlyLimit(e)) setPass(null);\n     "),
+      "limit-known",
+    ],
+    ["Generate disabled on uses.out alone", mutate("button", "disabled={known && uses.out}", "disabled={uses.out}"), "button-known"],
+    [
+      "Generate disabled while unknown (`!known || uses.out`)",
+      mutate("button or", "disabled={known && uses.out}", "disabled={!known || uses.out}"),
+      "button-known",
+    ],
+    ["Generate disabled on either word", mutate("button either", "disabled={known && uses.out}", "disabled={known || uses.out}"), "button-known"],
+    ["a note rendered while unknown", mutate("note", "{known && (", "{("), "note-known"],
+    ["a probe sent with no monthly limit known", mutate("no limit guard", "    if (!limited) return;\n", ""), "probe-keyed-on-limit"],
+    ["an effect keyed without `limited`", mutate("deps without limited", "[posting, limited]", "[posting]"), "probe-keyed-on-limit"],
+    ["a new posting that keeps the old `known`", mutate("no reset", "    setKnown(false);\n", ""), "probe-resets-known"],
+    [
+      "a probe answer that leaves the pass unknown",
+      mutate("probe answer", "      setKnown(true);\n    }).catch(", "    }).catch("),
+      "probe-known",
+    ],
+    [
+      "a probe marking the pass known before its sequence check",
+      mutate(
+        "known before guard",
+        "      if (seq.current !== at) return; // a letter started (since then)\n      const inc = inclusionFrom(r);\n" +
+          "      setPass(inc ? { ...inc, posting } : null);\n      setKnown(true);\n",
+        "      setKnown(true);\n      if (seq.current !== at) return; // a letter started (since then)\n" +
+          "      const inc = inclusionFrom(r);\n      setPass(inc ? { ...inc, posting } : null);\n",
+      ),
+      "probe-known",
+    ],
+    [
+      "a failed probe read as no pass",
+      mutate("probe failure", "      // left unknown: the server decides\n", "      setPass(null);\n      setKnown(true);\n"),
+      "probe-failure-unknown",
+    ],
+    // The sequence gate by its control flow: each inversion names the same words
+    // as an accepted shape and drops every normal answer, or applies a late one.
+    ["an early return on `seq.current === at`", mutate("eq return", "if (seq.current !== at) return;", "if (seq.current === at) return;"), "probe-sequence-guard"],
+    ["the answer applied inside `if (seq.current !== at) { … }`", mutate("neq block", G_GUARD + G_APPLY, block("seq.current !== at")), "probe-sequence-guard"],
+    ["`alive` un-negated in the early return", mutate("alive or", "if (seq.current !== at) return;", "if (alive || seq.current !== at) return;"), "probe-sequence-guard"],
+    ["`!alive` in the positive block's conjunction", mutate("not alive and", G_GUARD + G_APPLY, block("!alive && seq.current === at")), "probe-sequence-guard"],
+    ["a probe that takes no sequence number of its own", mutate("no take", "const at = ++seq.current;", "const at = seq.current;"), "probe-sequence-guard"],
+    ["the pass set before the sequence check", mutate("pass first", G_GUARD + G_SET, G_SET + G_GUARD), "probe-sequence-guard"],
+    ["the pass known after the positive block, for a dropped answer too", mutate("known after block", G_GUARD + G_APPLY, block("seq.current === at", G_SET) + "      setKnown(true);\n"), "probe-known"],
+    ["the pass known before the probe's request", mutate("known before ask", "    setKnown(false);\n", "    setKnown(false);\n    setKnown(true);\n"), "probe-known"],
+    ["a failed probe read as no pass in `.then`'s second argument", mutate("then fail", G_CATCH, "    }, () => {\n      setPass(null);\n      setKnown(true);\n    });"), "probe-failure-unknown"],
+    ["a `.finally` that marks the pass known", mutate("finally", G_CATCH, G_CATCH.replace(/;$/, ".finally(() => setKnown(true));")), "probe-failure-unknown"],
+    // The gate guards only the callback it sits in, and only from its top level:
+    // an early return leaves its own function, and every later `.then` still runs.
+    ["a later `.then` that marks the pass known past the early return", mutate("then known", G_GUARD + G_APPLY, G_GUARD + G_SET + "    }).then(() => {\n      setKnown(true);\n"), "probe-known"],
+    ["the gate filtering in its own `.then`, the apply in the next", mutate("filter then apply", G_GUARD + G_APPLY, G_GUARD + "      return r;\n    }).then((r) => {\n" + G_APPLY), "probe-sequence-guard"],
+    ["the pass set in an earlier `.then` than the gate", mutate("apply then gate", G_GUARD + G_APPLY, G_SET + "    }).then(() => {\n" + G_GUARD + "      setKnown(true);\n"), "probe-sequence-guard"],
+    ["the early return inside a nested arrow", mutate("nested arrow", G_GUARD, "      const stale = () => {\n        if (seq.current !== at) return;\n      };\n      stale();\n"), "probe-sequence-guard"],
+    ["the early return under another condition", mutate("nested return", G_GUARD, "      if (r.calls_left > 0) {\n        if (seq.current !== at) return;\n      }\n"), "probe-sequence-guard"],
+    ["the positive block under another condition", mutate("nested block", G_GUARD + G_APPLY, "      if (r.calls_left > 0) {\n" + block("seq.current === at") + "      }\n"), "probe-sequence-guard"],
+    [
+      "an awaited filter whose caller applies the answer it dropped",
+      mutate(
+        "awaited filter",
+        /    coverLetterPass\(jd\)\.then\(\(r\) => \{\n[\s\S]*?\n    \}\);\n/,
+        "    (async () => {\n      try {\n        const r = await (async () => {\n          const got = await coverLetterPass(jd);\n" +
+          "          if (seq.current !== at) return;\n          return got;\n        })();\n" + G_APPLY +
+          "      } catch {\n        // left unknown\n      }\n    })();\n",
+      ),
+      "probe-sequence-guard",
+    ],
+    // An answer read and then thrown away is the defect the probe exists to fix.
+    ["the probe's answer never applied", mutate("probe no apply", G_GUARD + G_APPLY, G_GUARD + "      const inc = inclusionFrom(r);\n      setKnown(true);\n"), "probe-applies"],
+    ["the probe applying `null`", mutate("probe null", G_GUARD + G_APPLY, G_GUARD + "      const inc = inclusionFrom(r);\n      setPass(null);\n      setKnown(true);\n"), "probe-applies"],
+    [
+      "a served letter that never sets the pass",
+      mutate("letter no apply", "      setPass(inc ? { ...inc, posting } : null);\n      setKnown(true);\n    } catch", "      setKnown(true);\n    } catch"),
+      "generate-applies",
+    ],
+    // A letter that did not answer leaves `known` as it was.
+    ["the pass known at the top of generate()'s catch", mutate("catch known", "    } catch (e: any) {\n", "    } catch (e: any) {\n      setKnown(true);\n"), "generate-failure-known"],
+    ["the pass known in the else after the 5xx decrement", mutate("else known", G_TAIL, G_TAIL.replace("p);\n", "p);\n      else setKnown(true);\n")), "generate-failure-known"],
+    ["the pass known in generate()'s finally", mutate("finally known", G_TAIL, G_TAIL + "    finally {\n      setKnown(true);\n    }\n"), "generate-failure-known"],
+    ["the pass known before the letter's request", mutate("known first", "    seq.current++;\n", "    seq.current++;\n    setKnown(true);\n"), "generate-failure-known"],
+    ["the pass made unknown by a failed letter", mutate("catch unknown", "    } catch (e: any) {\n", "    } catch (e: any) {\n      setKnown(false);\n"), "generate-failure-known"],
+    // Nothing but those answers may make the card known, from its first render on.
+    ["a card that mounts knowing", mutate("starts known", "useState(false);", "useState(true);"), "known-starts-unknown"],
+    [
+      "the pass known by another effect",
+      mutate("other effect", "  async function generate(", "  useEffect(() => {\n    setKnown(true);\n  }, [text]);\n\n  async function generate("),
+      "known-elsewhere",
+    ],
+    ["included_until read outside generate()", mutate("until elsewhere", "  const seq = useRef(0);\n", "  const seq = useRef(0);\n  const until = pass?.included_until;\n"), "generate-relative-seconds"],
+  ];
+  for (const [label, fixture, rule] of FIXTURES) {
+    const got = coverLetterWiring(fixture);
+    if (!got.includes(rule))
+      fail(`check 36's wiring reader accepts ${label} (it read ${JSON.stringify(got)}, not "${rule}"), so it would pass for ever`);
+  }
+  // The false-positive half: shapes the rules above must NOT refuse.
+  const TWINS = [
+    ["Generate's conjunction the other way round", mutate("twin order", "disabled={known && uses.out}", "disabled={uses.out && known}")],
+    ["Generate's conjunction in parentheses, spaced", mutate("twin parens", "disabled={known && uses.out}", "disabled={ (known  &&  uses.out) }")],
+    [
+      "the probe's answer applied under a positive sequence check",
+      mutate(
+        "twin positive guard",
+        "      if (seq.current !== at) return; // a letter started (since then)\n      const inc = inclusionFrom(r);\n" +
+          "      setPass(inc ? { ...inc, posting } : null);\n      setKnown(true);\n",
+        "      if (seq.current === at) {\n        const inc = inclusionFrom(r);\n" +
+          "        setPass(inc ? { ...inc, posting } : null);\n        setKnown(true);\n      }\n",
+      ),
+    ],
+    ["`!alive` beside the sequence check (the shape CoverLetter ships)", mutate("twin not alive", "if (seq.current !== at) return;", "if (!alive || seq.current !== at) return;")],
+    ["the sequence check's operands reversed", mutate("twin reversed", "if (seq.current !== at) return;", "if (at !== seq.current || !alive) return;")],
+    ["a braced early return", mutate("twin braced", "if (seq.current !== at) return;", "if (seq.current !== at) {\n        return;\n      }")],
+    ["`alive &&` in the positive block", mutate("twin alive and", G_GUARD + G_APPLY, block("alive && seq.current === at"))],
+    ["a failure in `.then`'s second argument that leaves the pass unknown", mutate("twin then fail", G_CATCH, "    }, () => {\n      // left unknown\n    });")],
+    [
+      "an awaited probe inside try/catch",
+      mutate(
+        "twin await",
+        /    coverLetterPass\(jd\)\.then\(\(r\) => \{\n[\s\S]*?\n    \}\);\n/,
+        "    (async () => {\n      try {\n        const r = await coverLetterPass(jd);\n" + G_GUARD + G_APPLY +
+          "      } catch {\n        // left unknown\n      }\n    })();\n",
+      ),
+    ],
+    ["a finally in generate() that only clears loading", mutate("twin finally", G_TAIL, G_TAIL + "    finally {\n      setLoading(false);\n    }\n")],
+    // A `.then` with no gate that neither applies nor marks known, and the other ways to write the one that does.
+    [
+      "an earlier `.then` that only converts the answer",
+      mutate(
+        "twin convert",
+        "    coverLetterPass(jd).then((r) => {\n" + G_GUARD + G_SET,
+        "    coverLetterPass(jd).then((r) => inclusionFrom(r)).then((inc) => {\n" + G_GUARD + "      setPass(inc ? { ...inc, posting } : null);\n",
+      ),
+    ],
+    ["a `function` expression as the answer", mutate("twin function", ".then((r) => {", ".then(function (r) {")],
+    ["an `async` arrow with a bare parameter", mutate("twin async", ".then((r) => {", ".then(async r => {")],
+    ["a typed parameter and return type", mutate("twin typed", ".then((r) => {", ".then((r: UsagePassOut): void => {")],
+  ];
+  for (const [label, fixture] of TWINS) {
+    const got = coverLetterWiring(fixture);
+    if (got.length) fail(`check 36's wiring reader refuses ${label}, a legitimate shape (it read ${JSON.stringify(got)})`);
+  }
+} catch (e) {
+  fail(`cover-letter wiring check (check 36b) could not run: ${e.message}`);
+}
+try {
+  const client = decomment(read("api/client.ts"));
+  const POSTS_JD_ONLY = /\bapi\.post<[^>]*>\(\s*"\/cover-letter\/pass"\s*,\s*\{\s*jd\s*\}\s*\)/;
+  if (!POSTS_JD_ONLY.test(fnSource(client, "export async function coverLetterPass")))
+    fail(
+      'api/client.ts: coverLetterPass does not post exactly `{ jd }` to "/cover-letter/pass". The route forbids any ' +
+        "other field, so a resume beside the JD is a 422 and every card stays unknown, silently.",
+    );
+  if (POSTS_JD_ONLY.test('api.post<UsagePassOut>("/cover-letter/pass", { resume, jd })') ||
+      !POSTS_JD_ONLY.test('api.post<UsagePassOut>("/cover-letter/pass", { jd })'))
+    fail("check 36's client reader cannot tell `{ jd }` from `{ resume, jd }`");
+  const routes = pySource("app/api/routes.py", "check 36");
+  if (routes !== null && !/^@router\.post\(\s*"\/cover-letter\/pass"/m.test(routes))
+    fail(
+      'backend/app/api/routes.py mounts no POST "/cover-letter/pass", which api/client.ts calls: the probe would be ' +
+        "a 404 on every mount and the card would stay unknown, silently.",
+    );
+} catch (e) {
+  fail(`cover-letter probe route check (check 36c) could not run: ${e.message}`);
 }
 
 // ---- 37. every code the inbox sends has a sentence of its own --------------- //

@@ -337,13 +337,32 @@ class CoverLetterResponse(BaseModel):
     The first letter for a posting uses 1 and opens a 24-hour pass keyed by that
     analysed JD; changes to it (any tone) ride the pass, up to 10 calls in all.
     The pass belongs to ONE posting, so it travels on this response and never on
-    /auth/me or the X-Uses-Pass header, which list the feature-keyed passes."""
+    /auth/me or the X-Uses-Pass header, which list the feature-keyed passes; a
+    page that remounted reads it back from POST /cover-letter/pass
+    (P30-RELOAD-PASS)."""
 
     cover_letter: str
-    # ISO UTC end of this posting's pass; "" for a caller with no monthly limit
+    # ISO UTC end of this posting's pass; "" for a caller with no monthly limit.
+    # Kept for a tab loaded before `expires_in_s` existed; the client reads that.
     included_until: str = ""
     # calls left on the pass after this one (max_calls - calls); 0 when exempt
     changes_left: int = 0
+    # Seconds until the pass ends, read as the response is built; 0 when exempt.
+    # Relative, never a timestamp: a phone whose clock runs ahead would read
+    # `included_until` as over and, at 0 uses left, disable a covered change.
+    expires_in_s: int = 0
+
+
+class CoverLetterPassRequest(BaseModel):
+    """Body of `POST /cover-letter/pass` (P30-RELOAD-PASS): the analysed JD whose
+    cover-letter pass a remounted page reads back. The server hashes it with the
+    same `quota.jd_ref` the letter was charged under, so there is one key and one
+    answer. `extra="forbid"`: the route is uncapped and reaches no model, so it
+    may never take job-ad text (the `/tools/ats-scan` cautionary tale)."""
+
+    model_config = {"extra": "forbid"}
+
+    jd: JDModel
 
 
 class RenderRequest(BaseModel):
@@ -725,7 +744,9 @@ class AuthUser(BaseModel):
 
 
 class UsagePassOut(BaseModel):
-    """One open session pass as /auth/me lists it (interview practice, screening answers)."""
+    """One open session pass: as /auth/me lists it (interview practice, screening
+    answers), and as POST /cover-letter/pass reads one posting's cover-letter pass
+    back (P30-RELOAD-PASS). 0/0 means no open pass."""
 
     calls_left: int = 0
     # Relative seconds, never a timestamp: a phone whose clock is wrong would
