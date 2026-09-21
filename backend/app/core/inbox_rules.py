@@ -470,7 +470,9 @@ def build_query(
 
     `spam=True` is the same search restricted to Spam (P29-SPAM-RESCUE): the
     sync lists it only to PARK job mail Gmail filed there, by id, so a reply the
-    user later rescues can still be imported. Nothing it lists is ever read.
+    user later rescues can still be imported. Nothing it lists is read unless
+    the window's default listing named it too (mail moved into Spam after that
+    listing, which the sync handles as inbox mail, as it did before the fix).
     """
     terms = [
         *_QUERY_TERMS,
