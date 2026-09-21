@@ -50,6 +50,7 @@ import json
 import logging
 import re
 import secrets
+import time
 import unicodedata
 from datetime import datetime, timedelta
 from email.utils import parseaddr
@@ -87,6 +88,12 @@ from app.db.users import ensure_admin, new_invite_code
 from app.models import AuthMe, AuthUser, UsageOut
 
 logger = logging.getLogger(__name__)
+
+# The clock and the wait behind /auth/forgot's minimum response time
+# (P29-FORGOT-TIMING). Module-level so the smoke test can patch them HERE, where
+# `forgot` looks them up, and pin the timing on a fake clock without sleeping.
+_monotonic = time.monotonic
+_sleep = time.sleep
 
 VERIFY = "verify_email"
 RESET = "reset_password"
@@ -728,8 +735,33 @@ def change_email(db: Session, request: Request, user: User, new_email: str) -> N
 
 def forgot(db: Session, request: Request, email: str) -> None:
     """Mail a reset link if — and only if — an active account has this address.
-    The route answers {ok} whatever happens here: throttled, unknown, over budget
-    or sent all look the same from outside, so it cannot say who has an account."""
+
+    The route answers {ok} whatever happens here. What that proves, since
+    P29-FORGOT-TIMING:
+
+    - The BODY is the same for every outcome.
+    - So is the TIME, for every outcome past the throttles, unless the flow
+      itself overruns `auth_forgot_floor_ms`. A known address used to run a
+      whole SMTP session before the answer and an unknown one a single SELECT,
+      so one timed request per address said who has an account. Every outcome
+      now waits until the floor. The send stays INLINE: nothing runs after the
+      response, because nobody has measured that such work completes on
+      Vercel's Python runtime, and a reset mail lost there would be invisible
+      behind {ok}. So a send slower than the floor is waited for, never cut
+      loose. That tail still shows, and logs a WARNING with the two numbers.
+    - The clock starts AFTER the throttles. Their writes cost the same for every
+      address and carry the request's first DB round trip, where a Neon wake-up
+      or a pre-ping reconnect lands; a clock started before them would let a
+      cold database eat the floor on the unknown path and not the known one.
+    - The transaction ends BEFORE the wait, so a padded request does not hold
+      one of the instance's pooled connections for the whole floor.
+    - A throttled call and an invalid address are answered at once: both are
+      decided before the lookup, so they look the same for every address, and a
+      flood of refused calls holds no thread.
+
+    It is not a promise that nobody can tell who has an account: signup and
+    change-email answer 409 email_taken for a taken address, by design.
+    """
     s = get_settings()
     now = utc_now()
     email = normalize_email(email)
@@ -739,6 +771,27 @@ def forgot(db: Session, request: Request, email: str) -> None:
     by_ip = throttle.hit(db, "forgot", throttle.ip_key(client_ip(request)), *throttle.FORGOT_PER_IP, now=now)
     if by_email.retry_after or by_ip.retry_after:
         return
+    floor_ms = max(0, s.auth_forgot_floor_ms)
+    start = _monotonic()
+    try:
+        _send_reset_if_known(db, request, email, s.reset_ttl_min, now)
+    except Exception as exc:  # noqa: BLE001 - {ok} whatever happened, but an ERROR, so Sentry still sees it
+        # The TYPE only: never exc_info, never the message. A SQLAlchemy error's
+        # text carries its bound parameters, which here are the address.
+        logger.error("forgot: the reset flow failed (%s)", type(exc).__name__)
+    finally:
+        _end_transaction(db)
+        took_ms = (_monotonic() - start) * 1000
+        if floor_ms and took_ms > floor_ms:
+            logger.warning("forgot: took %d ms, over the %d ms floor", round(took_ms), floor_ms)
+        elif took_ms < floor_ms:
+            _sleep((floor_ms - took_ms) / 1000)
+
+
+def _send_reset_if_known(db: Session, request: Request, email: str, ttl_min: int, now: datetime) -> None:
+    """The half of /auth/forgot that differs by address: look it up, and mail a
+    reset link if an active account has it. Every outcome is silent to the
+    caller, and `forgot` pads them all to one moment."""
     login = login_by_email(db, email)
     user = db.get(User, login.user_id) if login is not None else None
     if login is None or user is None or not user.is_active:
@@ -748,12 +801,23 @@ def forgot(db: Session, request: Request, email: str) -> None:
     if not auth_email.link_base(request) or not auth_email.mail_ready(db, email, purpose="reset"):
         return
     user_id, locale = user.id, user.locale
-    token, _ = _issue(db, user_id, RESET, email, s.reset_ttl_min, with_code=False, now=now)
+    token, _ = _issue(db, user_id, RESET, email, ttl_min, with_code=False, now=now)
     db.commit()
     try:
         auth_email.send_reset(db, request, email, token, locale=locale, user_id=user_id)
     except auth_email.EmailUnavailable:
         pass  # silent by contract
+
+
+def _end_transaction(db: Session) -> None:
+    """End whatever transaction the session holds, so its pooled connection goes
+    back BEFORE /auth/forgot waits. Every write in the reset flow has already
+    committed, so this only ends a read transaction or a failed one. It runs in
+    a `finally`, so it never raises."""
+    try:
+        db.rollback()
+    except Exception as exc:  # noqa: BLE001 - the pool invalidates a dead connection by itself
+        logger.warning("forgot: could not end the transaction (%s)", type(exc).__name__)
 
 
 def reset(db: Session, request: Request, *, token: str, password: str) -> tuple[User, str, bool]:
