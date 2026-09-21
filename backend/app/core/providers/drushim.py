@@ -14,12 +14,27 @@ against the posting's city names (Hebrew + English, tolerant substring match).
 `parse_drushim_results` is a pure function pinned by the offline smoke test
 against a trimmed real response (tests/fixtures/drushim_search.json) — if
 Drushim changes its response shape, fix it here and keep the fixture green.
+
+DATES ARE ISRAEL WALL TIME, and the parser says so. `JobInfo.Date` arrives as
+a naive "2026-06-28T09:11:08.12", and `ghost_signals.parse_board_date` — the
+one board-date parser — reads a naive value as UTC, so every Drushim posting
+used to read 3 hours (IDT) or 2 hours (IST) YOUNG: enough to carry it across
+the freshness cutoff or a ghost-age line on the wrong side of a day boundary.
+Measured 2026-09-21: a posting whose JumpDate was "2026-09-21T16:30:39.357"
+was labelled "לפני 8 שעות" by Drushim itself at 21:40:14 UTC — 8.16 h read as
+Israel time, 5.16 h read as UTC — and the jump windows of 20 of 20 postings
+agreed with the Israel reading, none with UTC; the one field that does carry
+an offset (`DisplayDate`) carries +03:00. The zone is stamped HERE, at the
+board that has the quirk, and `parse_board_date` converts it like any other
+offset — a Drushim rule inside the shared parser would be a second parser.
 """
 from __future__ import annotations
 
 import json
 import time
 import urllib.parse
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
@@ -37,6 +52,36 @@ _COUNTRY_TOKENS = {"israel", "ישראל"}
 
 # Kept as a local alias: shared deterministic detection lives in app.core.lang.
 _detect_language = detect_language
+
+# The zone of every naive timestamp Drushim sends (see the module docstring).
+# Resolved at import so a host with no tz database fails at boot rather than
+# silently stamping nothing: Windows has none and psycopg pulls `tzdata` only
+# there, so requirements.txt pins it for the Linux deploy.
+_BOARD_TZ = ZoneInfo("Asia/Jerusalem")
+
+
+def _israel_wall_time(value: object) -> str:
+    """A Drushim date as an ISO string that SAYS its offset, or "" for junk.
+
+    A naive value is Israel wall time, so it is stamped Asia/Jerusalem — DST
+    from the tz database, never a month rule — and emitted to the millisecond
+    with its offset ("2026-06-28T09:11:08.120+03:00"): 29 characters, inside
+    the String(32) `posted_at` columns, and exactly ECMAScript's date-time
+    format, so the Jobs card's `new Date()` reads it on every browser. A value
+    that already carries an offset (or "Z") is returned exactly as sent — the
+    board said which frame — and `parse_board_date` converts both. Anything
+    unparseable (a relative "לפני 8 שעות", null, a number) is "", which every
+    consumer reads as unknown; a guessed date would be worse than none."""
+    text = value.strip() if isinstance(value, str) else ""
+    if not text:
+        return ""
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return ""
+    if dt.tzinfo is not None:
+        return text
+    return dt.replace(tzinfo=_BOARD_TZ).isoformat(timespec="milliseconds")
 
 
 def _build_search_url(searchterm: str, page: int) -> str:
@@ -100,7 +145,7 @@ def parse_drushim_results(data: dict) -> list[JobHit]:
                 location=", ".join(cities),
                 description=full_text,  # inline — no detail fetch needed
                 url=url,
-                posted_at=str(info.get("Date") or "").strip(),
+                posted_at=_israel_wall_time(info.get("Date")),  # naive Israel time → stamped
                 logo_url=logo_url,
                 language=_detect_language(f"{title} {full_text}"),
                 raw=job,

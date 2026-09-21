@@ -3882,7 +3882,93 @@ check(
     _dr[0].url == "https://www.drushim.co.il/job/37542502/57157f6c/",
     _dr[0].url if _dr else "",
 )
-check("drushim posted_at is the ISO JobInfo.Date", _dr[0].posted_at.startswith("2026-06-28"))
+# Drushim's `JobInfo.Date` is Israel WALL time with no offset, and the shared
+# board-date parser reads a naive value as UTC — so every Drushim posting used to
+# read 3 hours (summer) or 2 hours (winter) YOUNG. Measured live 2026-09-21: one
+# posting's JumpDate was "2026-09-21T16:30:39.357" and Drushim's own relative
+# string said "לפני 8 שעות" at 21:40:14 UTC — 8.16 h read as Israel time, 5.16 h
+# read as UTC — and the jump windows of 20 of 20 postings on that host agreed with
+# the Israel reading, none with UTC; the one field that carries an offset
+# (DisplayDate) carries +03:00. So the Drushim PARSER stamps the zone, and
+# `parse_board_date` (THE one board-date parser, unchanged) converts it.
+# This check used to be `.startswith("2026-06-28")`, which passes on the naive
+# string and on its converted form alike — the one thing it could not see was
+# which frame the value was in. It is exact now, not weaker.
+check(
+    "drushim posted_at is JobInfo.Date stamped as Israel time (the fixture's June date is IDT, +03:00)",
+    _dr[0].posted_at == "2026-06-28T09:11:08.120+03:00",
+    _dr[0].posted_at,
+)
+import re as _dr_re  # noqa: E402
+from datetime import datetime as _drdt  # noqa: E402
+
+from app.core.ghost_signals import parse_board_date as _dr_parse  # noqa: E402
+
+
+def _dr_posted(value) -> str:  # noqa: ANN001
+    """posted_at of the fixture's first job with its JobInfo.Date replaced."""
+    doc = _json.loads(_json.dumps(_DRUSHIM_FIXTURE))
+    doc["ResultList"][0]["JobInfo"]["Date"] = value
+    return parse_drushim_results(doc)[0].posted_at
+
+
+_dr_summer = _dr_posted("2026-06-28T09:11:08.12")
+_dr_winter = _dr_posted("2026-01-15T09:11:08.12")
+check(
+    "drushim date: summer is IDT (+03:00) and winter is IST (+02:00), and parse_board_date converts both to "
+    "UTC — 09:11 Israel time is 06:11 UTC in June and 07:11 UTC in January",
+    _dr_summer == "2026-06-28T09:11:08.120+03:00"
+    and _dr_winter == "2026-01-15T09:11:08.120+02:00"
+    and _dr_parse(_dr_summer) == _drdt(2026, 6, 28, 6, 11, 8, 120000)
+    and _dr_parse(_dr_winter) == _drdt(2026, 1, 15, 7, 11, 8, 120000),
+    f"{_dr_summer} -> {_dr_parse(_dr_summer)} | {_dr_winter} -> {_dr_parse(_dr_winter)}",
+)
+_dr_dst = [
+    _dr_posted(v)[-6:]
+    for v in ("2026-03-26T12:00:00", "2026-03-27T12:00:00", "2026-10-24T12:00:00", "2026-10-25T12:00:00")
+]
+check(
+    "drushim date: the offset follows Israel's real DST switch days (clocks forward Fri 2026-03-27, back Sun "
+    "2026-10-25), not the month — a month rule would call 27 March winter and 24 October wrong on one side",
+    _dr_dst == ["+02:00", "+03:00", "+03:00", "+02:00"],
+    str(_dr_dst),
+)
+_dr_live = _dr_posted("2026-09-21T16:30:39.357")
+_dr_live_age = (_drdt(2026, 9, 21, 21, 40, 14) - _dr_parse(_dr_live)).total_seconds() / 3600
+check(
+    "drushim date: the live 2026-09-21 sample now ages the way Drushim itself said — 'לפני 8 שעות' at "
+    "21:40:14 UTC is 8.16 h from its stamp (it read 5.16 h as UTC)",
+    int(_dr_live_age) == 8,
+    f"{_dr_live} -> {_dr_parse(_dr_live)} age {_dr_live_age:.2f} h",
+)
+_dr_offset = [_dr_posted(v) for v in ("2026-06-02T03:17:15-04:00", "2026-06-29T13:57:40Z")]
+check(
+    "drushim date twin: a value that already carries an offset (or Z) is left EXACTLY as sent — the board said "
+    "which frame, and parse_board_date converts it",
+    _dr_offset == ["2026-06-02T03:17:15-04:00", "2026-06-29T13:57:40Z"],
+    str(_dr_offset),
+)
+_dr_junk = [_dr_posted(v) for v in ("not a date", "לפני 8 שעות", None, 12345, "", "   ")]
+check(
+    "drushim date twin: junk, a relative string, null, a number and blank are all '' — unknown, never a "
+    "guessed date — and the posting itself is still returned",
+    _dr_junk == ["", "", "", "", "", ""],
+    str(_dr_junk),
+)
+_dr_shape = [_dr_posted(v) for v in ("2026-06-28T09:11:08.12", "2026-09-21T12:37:28.4726277", "2026-06-28T09:11")]
+check(
+    "drushim date: the stamped value fits posted_at's String(32) columns and is ECMAScript's own date-time "
+    "format (milliseconds, ±HH:MM), which every browser's Date parses — a 7-digit fraction included",
+    all(len(v) <= 32 and _dr_re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d", v)
+        for v in _dr_shape),
+    str(_dr_shape),
+)
+check(
+    "drushim date twin: the SHARED parser is unchanged — a naive value from any other source is still read as "
+    "UTC — so the zone is Drushim's parser's knowledge, not a fork of parse_board_date",
+    _dr_parse("2026-06-28T09:11:08.12") == _drdt(2026, 6, 28, 9, 11, 8, 120000),
+    str(_dr_parse("2026-06-28T09:11:08.12")),
+)
 check(
     "drushim description inlines Description + Requirements (html stripped)",
     "Data Engineer" in _dr[0].description
