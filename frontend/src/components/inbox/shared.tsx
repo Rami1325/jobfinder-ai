@@ -6,7 +6,7 @@ import { Badge, useToast } from "../ui";
 import { apiErrorCode, apiErrorMessage } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
 import { dateOfRecord } from "../../hooks/useTrackerMetrics";
-import type { ApplicationOut, InboxEvent } from "../../types";
+import type { ApplicationOut, InboxEvent, InboxStatus } from "../../types";
 
 /**
  * What the inbox surfaces share: the email-kind badge, dates in the UI
@@ -351,6 +351,19 @@ export function useInboxRefusalText(): (e: unknown, fallback: string) => string 
         return apiErrorMessage(e, fallback);
     }
   };
+}
+
+/** A CONNECTED Gmail account that is no longer on the invite list (FIXB B15).
+ *
+ * The connection row stays, so it can still be disconnected, but every sync of
+ * it answers `invite_only` without reading anything, and it writes no
+ * `last_sync_at`, so to a page that only reads the connection it looked
+ * healthy: a mint "Connected", a Sync button, and a background sync fired on
+ * every visit because the last sync never got any newer. The status says so in
+ * `reason`, and both surfaces read it through here. The demo mailbox reads
+ * nobody's mail and is exempt, as it is in `inbox_sync.sync_user`. */
+export function isOffInviteList(s: InboxStatus): boolean {
+  return s.connected && s.provider !== "fake" && s.reason === "invite_only";
 }
 
 /** "Open in Gmail", as a 44px target. Only for an https address: the link is

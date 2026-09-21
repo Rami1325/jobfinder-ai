@@ -6492,8 +6492,9 @@ function armProblems({ arms, dflt, intoDefault }, backend, spec) {
     const known = code === "" ? spec.empty : (backend?.has(code) ?? true) || GOOGLE_PASSTHROUGH.has(code);
     if (!known)
       out.push(
-        `37(e) ${spec.who}: case "${code}" is not a ${spec.family} code the backend sends. A renamed code leaves ` +
-          "this arm dead and the new one on the default. Rename it with the backend, or add a Google string to GOOGLE_PASSTHROUGH.",
+        `${spec.who}: case "${code}" is not a ${spec.family} code the backend sends (37(e), the other direction). A ` +
+          "renamed code leaves this arm dead and the new one on the default. Rename it with the backend, or add a " +
+          "Google string to GOOGLE_PASSTHROUGH.",
       );
   }
   if (backend)
@@ -6942,6 +6943,31 @@ try {
               "so that state renders as if nothing were wrong there. Handle it in the bar AND the Settings card.",
           );
   }
+
+  // A CONNECTED account off the invite list (FIXB B15) is the one reason that
+  // reaches a connection, and it looked healthy on both surfaces: a mint
+  // "Connected" badge, a Sync button that can only be refused, and a background
+  // sync on every visit, because a refused sync moves no timestamp. The
+  // comparisons above are satisfied by the not-connected branches alone, so the
+  // helper both surfaces read is held to its own comparison and to its callers:
+  // the bar's render and its background-sync guard, and the Settings card.
+  const offSrc = decomment(fnSource(read(SHARED_TSX), "export function isOffInviteList"));
+  if (!/\.reason\s*===\s*"invite_only"/.test(offSrc) || !/\.provider\s*!==\s*"fake"/.test(offSrc))
+    fail(
+      "check 37(e): shared.tsx's isOffInviteList no longer reads `reason === \"invite_only\"` with the demo mailbox " +
+        "exempt, which is the backend's own rule (inbox_sync.sync_user).",
+    );
+  const bar = decomment(read("components/inbox/InboxBar.tsx"));
+  const guard = bar.split("\n").find((l) => /\bs\.status\s*===\s*"needs_reauth"/.test(l) && /\breturn;/.test(l)) ?? "";
+  if (!/isOffInviteList\(\s*s\s*\)/.test(guard))
+    fail(
+      "check 37(e): InboxBar's background-sync guard does not skip a connection that is off the invite list, so " +
+        "every visit fires a sync the server can only refuse.",
+    );
+  if ((bar.match(/\bisOffInviteList\(/g) ?? []).length < 2)
+    fail("check 37(e): InboxBar does not render the off-the-invite-list state (isOffInviteList is called once or never).");
+  if (!/\bisOffInviteList\(/.test(decomment(read(SETTINGS_CARD_TSX))))
+    fail("check 37(e): the Settings card shows a connection that is off the invite list as Connected.");
 
   // The comparison reader, both directions.
   const CMP = [

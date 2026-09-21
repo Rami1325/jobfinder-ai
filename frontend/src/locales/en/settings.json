@@ -76,7 +76,8 @@
     "state": {
       "active": "Connected",
       "needsReauth": "Needs reconnecting",
-      "error": "Last sync didn't finish"
+      "error": "Last sync didn't finish",
+      "paused": "Paused"
     },
     "lastSync": "Last synced {{when}}",
     "neverSynced": "Not synced yet",

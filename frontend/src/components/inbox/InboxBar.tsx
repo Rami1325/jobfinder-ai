@@ -8,7 +8,15 @@ import { cn } from "../../lib/cn";
 import { hideInboxHint, isInboxHintHidden, type InboxHint } from "../../lib/inboxHint";
 import type { ApplicationOut, InboxStatus, InboxSyncResult } from "../../types";
 import InboxReviewSheet from "./InboxReviewSheet";
-import { formatDay, useAgo, useInboxRefusalText, useLocaleTag, useMinuteTick, useSyncErrorText } from "./shared";
+import {
+  formatDay,
+  isOffInviteList,
+  useAgo,
+  useInboxRefusalText,
+  useLocaleTag,
+  useMinuteTick,
+  useSyncErrorText,
+} from "./shared";
 
 /** Opening the tracker syncs in the background only past this. The cron runs
  * twice a day, and a sync per visit would spend the daily classification cap
@@ -194,7 +202,9 @@ export default function InboxBar({ apps, onChanged }: { apps: ApplicationOut[]; 
         void sync("import", s.backfill_days);
         return;
       }
-      if (inflight || s.status === "needs_reauth" || !s.auto_sync) return;
+      // Off the invite list, every sync answers invite_only and moves no
+      // timestamp, so "stale" would be true on every visit, for ever.
+      if (inflight || s.status === "needs_reauth" || !s.auto_sync || isOffInviteList(s)) return;
       const lastSync = s.last_sync_at ? new Date(s.last_sync_at).getTime() : NaN;
       if (Number.isNaN(lastSync) || Date.now() - lastSync > STALE_MS) void sync("background");
     })();
@@ -257,22 +267,27 @@ export default function InboxBar({ apps, onChanged }: { apps: ApplicationOut[]; 
     );
   }
 
-  const reauth = status.status === "needs_reauth";
+  // Connected but off the invite list: no sync will run, and a reconnect would
+  // be refused the same way, so the bar says why and offers neither.
+  const offList = isOffInviteList(status);
+  const reauth = !offList && status.status === "needs_reauth";
   const code = status.last_error_code;
   const provider = status.provider === "fake" ? t("inbox.provider.fake") : t("inbox.provider.gmail");
   const when = ago(status.last_sync_at);
-  const due = reauth ? "" : formatDay(status.reauth_due_at, locale);
+  const due = reauth || offList ? "" : formatDay(status.reauth_due_at, locale);
   // The backend keeps a connection "active" through an ordinary failed run and
   // records the failure only in `last_error_code`, which the next good run
   // clears, so a code on an active connection IS "the last sync did not
   // finish". While it needs reconnecting, the first line already says so; a
   // second line is worth it only for the two reasons that add something: the
   // weekly testing expiry, and a grant that no longer includes Gmail.
-  const problem = reauth
-    ? code === "reauth_due" || code === "missing_scope"
-      ? errorText(code)
-      : ""
-    : errorText(code);
+  const problem = offList
+    ? t("inbox.bar.inviteOnly")
+    : reauth
+      ? code === "reauth_due" || code === "missing_scope"
+        ? errorText(code)
+        : ""
+      : errorText(code);
   const importDays = importing?.days ?? (status.backfilling ? status.backfill_days : 0);
 
   return (
@@ -325,7 +340,7 @@ export default function InboxBar({ apps, onChanged }: { apps: ApplicationOut[]; 
               ? t("inbox.bar.review", { count: status.review_count })
               : t("inbox.bar.updates")}
           </Button>
-          {reauth ? (
+          {offList ? null : reauth ? (
             <Button size="sm" loading={reconnecting} onClick={() => void reconnect()} className="min-h-11">
               {t("inbox.bar.reconnect")}
             </Button>
