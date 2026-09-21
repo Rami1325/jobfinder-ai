@@ -122,6 +122,7 @@
       "missingScope": "Gmail access was turned off on Google's side. Reconnect and allow reading your email.",
       "dailyLimit": "Today's email sorting limit is reached. The rest are read tomorrow.",
       "inProgress": "A sync is already running. The board updates when it finishes.",
+      "notConnected": "Gmail isn't connected any more. Connect it again to keep syncing.",
       "server": "Gmail sync isn't working on the server right now. Nothing is lost, and it picks up again once that's fixed.",
       "generic": "The last sync ran into a problem. It tries again on the next sync."
     },

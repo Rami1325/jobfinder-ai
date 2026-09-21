@@ -4,12 +4,11 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle, Inbox, ListChecks, RefreshCw, X } from "lucide-react";
 import { getInboxStatus, startInboxGoogle, syncInbox } from "../../api/client";
 import { Button, useToast } from "../ui";
-import { apiErrorMessage } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
 import { hideInboxHint, isInboxHintHidden, type InboxHint } from "../../lib/inboxHint";
 import type { ApplicationOut, InboxStatus, InboxSyncResult } from "../../types";
 import InboxReviewSheet from "./InboxReviewSheet";
-import { formatDay, useAgo, useLocaleTag, useMinuteTick, useSyncErrorText } from "./shared";
+import { formatDay, useAgo, useInboxRefusalText, useLocaleTag, useMinuteTick, useSyncErrorText } from "./shared";
 
 /** Opening the tracker syncs in the background only past this. The cron runs
  * twice a day, and a sync per visit would spend the daily classification cap
@@ -80,6 +79,7 @@ export default function InboxBar({ apps, onChanged }: { apps: ApplicationOut[]; 
   const locale = useLocaleTag();
   const ago = useAgo();
   const errorText = useSyncErrorText();
+  const refusal = useInboxRefusalText();
   useMinuteTick();
   const [status, setStatus] = useState<InboxStatus | null>(statusCache);
   const [syncing, setSyncing] = useState(false);
@@ -149,7 +149,7 @@ export default function InboxBar({ apps, onChanged }: { apps: ApplicationOut[]; 
       } catch (e) {
         importCache = null;
         if (alive.current) setImporting(null);
-        if (mode !== "background") toast("error", apiErrorMessage(e, t("inbox.toasts.syncError")));
+        if (mode !== "background") toast("error", refusal(e, t("inbox.toasts.syncError")));
       } finally {
         inflight = null;
         if (alive.current) setSyncing(false);
@@ -220,7 +220,9 @@ export default function InboxBar({ apps, onChanged }: { apps: ApplicationOut[]; 
       // so the button cannot fire twice while the page is leaving.
       window.location.assign(await startInboxGoogle());
     } catch (e) {
-      toast("error", apiErrorMessage(e, t("inbox.toasts.reconnectError")));
+      // Through the refusal hook, never apiErrorMessage directly: a 403
+      // invite_only here read "Couldn't start reconnecting" (check-mirrors 37).
+      toast("error", refusal(e, t("inbox.toasts.reconnectError")));
       setReconnecting(false);
     }
   }

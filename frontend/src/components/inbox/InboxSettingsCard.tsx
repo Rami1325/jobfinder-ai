@@ -10,7 +10,6 @@ import {
   updateInboxSettings,
 } from "../../api/client";
 import { Badge, Button, Card, CardTitle, useToast } from "../ui";
-import { apiErrorMessage } from "../../lib/apiError";
 import { GOOGLE_PERMISSIONS_URL, readGoogleRevoked } from "../../lib/authResults";
 import { cn } from "../../lib/cn";
 import type { InboxStatus } from "../../types";
@@ -83,6 +82,13 @@ export default function InboxSettingsCard() {
         return t("inbox.callback.noRefreshToken");
       case "not_configured":
         return t("inbox.callback.notConfigured");
+      // The generic sentence ON PURPOSE (check-mirrors 37): Google answered with
+      // an error of its own, the code would not exchange, or the mailbox address
+      // could not be read. Starting again is all there is to do, which it says.
+      case "google_error":
+      case "exchange_failed":
+      case "profile_failed":
+        return t("inbox.callback.generic");
       default:
         return t("inbox.callback.generic");
     }
@@ -188,7 +194,7 @@ export default function InboxSettingsCard() {
       setStatus(await updateInboxSettings({ auto_sync: next }));
     } catch (e) {
       setStatus((s) => (s ? { ...s, auto_sync: !next } : s));
-      toast("error", apiErrorMessage(e, t("inbox.saveError")));
+      toast("error", refusal(e, t("inbox.saveError")));
     }
   }
 
@@ -208,7 +214,7 @@ export default function InboxSettingsCard() {
       const fresh = await getInboxStatus().catch(() => null);
       setStatus((s) => fresh ?? (s ? { ...s, connected: false, provider: "", email: "", status: "" } : s));
     } catch (e) {
-      toast("error", apiErrorMessage(e, t("inbox.disconnectError")));
+      toast("error", refusal(e, t("inbox.disconnectError")));
     }
     setDisconnecting(false);
   }
