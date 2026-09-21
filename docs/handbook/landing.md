@@ -8,8 +8,8 @@
 >
 > **Read before touching** `pages/Landing.tsx`, `components/landing/**`, `lib/starfield.ts`,
 > `hooks/useLandingTheme.ts`, the `.jobfinder-landing` block in `styles.css` or `locales/*/marketing.json`. What
-> a public call to action must link to (a sign-up door) and why no landing copy names Google are in
-> `accounts-and-auth.md`; the two copy keys that carry the free-uses number are in `cost-and-quota.md`.
+> a public call to action must link to (a sign-up door) and why landing copy names Google only in the FAQ's
+> `a3` are in `accounts-and-auth.md`; the two copy keys that carry the free-uses number are in `cost-and-quota.md`.
 
 ### Phase 25 — the landing is its own route (2026-09-06)
 
