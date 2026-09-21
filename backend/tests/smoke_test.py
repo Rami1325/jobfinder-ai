@@ -13832,6 +13832,56 @@ def _session_row28(token):  # noqa: ANN001
         _d.close()
 
 
+# --- P29-SIXDIGIT-FLAKE: a superseded code is never redrawn as the live one ----
+# Three checks below replay a code a newer mail superseded and expect 'used'.
+# `_verify_code` compares the typed digits with the LIVE token first, so when the
+# new draw repeats the old six digits (1 in 10^6 per draw) the replay IS the live
+# code and verifies, and the check goes red reading as an A1 bypass that does not
+# exist. `accounts._draw_code` is the one named draw; it is rebound here at the
+# name `_issue` looks up at call time, the way `auth_email._resolve_sender` is.
+# The superseding request still draws from the REAL generator, only never the
+# spent code, and each check asserts `drawn == [the code just mailed]`, so a
+# seam that goes dead (an inlined draw, a renamed function) turns it red.
+_real_draw_code28 = getattr(_acc28, "_draw_code", None)
+_UNLIKE28_TRIES = 32
+
+
+def _with_draw28(draw, send):  # noqa: ANN001
+    """Run `send()` with `accounts._draw_code` bound to `draw`, then put back
+    whatever was bound before — or nothing, if nothing was — even when `send`
+    raises, so no steering leaks into a later section's codes."""
+    prior = getattr(_acc28, "_draw_code", None)
+    _acc28._draw_code = draw
+    try:
+        return send()
+    finally:
+        if prior is None:
+            vars(_acc28).pop("_draw_code", None)
+        else:
+            _acc28._draw_code = prior
+
+
+def _unlike28(spent, send):  # noqa: ANN001
+    """Run `send()` so that no code it mints equals `spent`; return
+    (response, every code handed out). Bounded, and it NEVER raises: a
+    constant generator gets its last draw handed back, so `spent not in drawn`
+    goes red — a raise here would abort the whole suite through 28f's
+    finally-only try, and an unbounded loop would hang CI."""
+    real = getattr(_acc28, "_draw_code", None)
+    drawn: list[str] = []
+
+    def _steered():
+        code = real()
+        tries = 1
+        while code == spent and tries < _UNLIKE28_TRIES:
+            code = real()
+            tries += 1
+        drawn.append(code)
+        return code
+
+    return _with_draw28(_steered, send), drawn
+
+
 _prev28_app_base = os.environ.get("APP_BASE_URL")
 _prev28_gate_code = os.environ.get("APP_ACCESS_CODE", "")
 os.environ["APP_BASE_URL"] = "https://app.jobfinder.test"
@@ -13930,7 +13980,8 @@ try:
             _rs28_early.text[:120],
         )
         _age_auth_events28("verify_mail", 2)
-        _rs28 = _ac.post("/auth/resend", headers=_XRW)
+        # P29-SIXDIGIT-FLAKE: the resend may not redraw the code it supersedes.
+        _rs28, _rs28_drawn = _unlike28(_maya28_code, lambda: _ac.post("/auth/resend", headers=_XRW))
         check(
             "resend: after the cooldown a fresh code goes out, and the answer says how long until the next one",
             _rs28.status_code == 200 and _j28(_rs28) == {"sent": True, "cooldown_s": 60}
@@ -13940,8 +13991,9 @@ try:
         _stale28 = _ac.post("/auth/verify", json={"code": _maya28_code}, headers=_XRW)
         check(
             "A1: a code superseded by a newer one is refused as 'used' — not 'wrong code', and certainly not a pass",
-            _stale28.status_code == 400 and _code28(_stale28) == "used",
-            _stale28.text[:120],
+            _stale28.status_code == 400 and _code28(_stale28) == "used"
+            and _rs28_drawn == [_last_mail28("maya@example.com", "code")] and _maya28_code not in _rs28_drawn,
+            f"{_stale28.text[:120]} | drawn {_rs28_drawn}",
         )
         _ok28 = _ac.post("/auth/verify", json={"code": _last_mail28("maya@example.com", "code")}, headers=_XRW)
         check(
@@ -14103,7 +14155,10 @@ try:
         _shira28_uid = _uid28(_sh28)
         _old28_code = _last_mail28("shira@exmaple.com", "code")
         _old28_link = _token_of28(_last_mail28("shira@exmaple.com", "link"))
-        _chg28 = _ac.post("/auth/change-email", json={"email": "shira@example.com"}, headers=_XRW)
+        # P29-SIXDIGIT-FLAKE: the new address's code may not repeat the old address's.
+        _chg28, _chg28_drawn = _unlike28(
+            _old28_code, lambda: _ac.post("/auth/change-email", json={"email": "shira@example.com"}, headers=_XRW)
+        )
         check(
             "change-email: an unverified account fixes its typo — the answer carries the corrected address, a new code "
             "goes to it, and nothing more goes to the unproven old one",
@@ -14117,8 +14172,9 @@ try:
             "A1: the code AND the link sent to the old address are 'used' after the change — neither may verify an "
             "address nobody proved",
             _old28_code_try.status_code == 400 and _code28(_old28_code_try) == "used"
-            and _old28_link_try.status_code == 400 and _code28(_old28_link_try) == "used",
-            f"{_old28_code_try.text} | {_old28_link_try.text}",
+            and _old28_link_try.status_code == 400 and _code28(_old28_link_try) == "used"
+            and _chg28_drawn == [_last_mail28("shira@example.com", "code")] and _old28_code not in _chg28_drawn,
+            f"{_old28_code_try.text} | {_old28_link_try.text} | drawn {_chg28_drawn}",
         )
         _sh28_ok = _ac.post("/auth/verify", json={"code": _last_mail28("shira@example.com", "code")}, headers=_XRW)
         check(
@@ -14145,7 +14201,10 @@ try:
         _eden28_first = _last_mail28("eden@example.com", "code")
         _age_auth_events28("verify_mail", 2)
         _ac.cookies.clear()
-        _again28 = _ac.post("/auth/signup", json=_eden28, headers=_XRW)
+        # P29-SIXDIGIT-FLAKE: the second signup's fresh code may not repeat the first.
+        _again28, _again28_drawn = _unlike28(
+            _eden28_first, lambda: _ac.post("/auth/signup", json=_eden28, headers=_XRW)
+        )
         check(
             "A3: signing up again on an UNVERIFIED address with the SAME password is a sign-in — a session and a fresh "
             "code, never a second account",
@@ -14154,9 +14213,12 @@ try:
             and _users_with_email28("eden@example.com") == 1,
             _again28.text[:160],
         )
+        _eden28_replay = _ac.post("/auth/verify", json={"code": _eden28_first}, headers=_XRW)
         check(
             "A3: …and that fresh code supersedes the first ('used')",
-            _code28(_ac.post("/auth/verify", json={"code": _eden28_first}, headers=_XRW)) == "used",
+            _code28(_eden28_replay) == "used"
+            and _again28_drawn == [_last_mail28("eden@example.com", "code")] and _eden28_first not in _again28_drawn,
+            f"{_eden28_replay.text[:120]} | drawn {_again28_drawn}",
         )
         _ac.cookies.clear()
         _hijack28 = _ac.post("/auth/signup", json={**_eden28, "password": "attacker passphrase"}, headers=_XRW)
@@ -14168,10 +14230,78 @@ try:
             and len(_mail_to28("eden@example.com")) == 2,
             _hijack28.text[:120],
         )
+        # P29-SIXDIGIT-FLAKE: Eden's false-positive half. It stays BELOW the hijack
+        # check: verifying Eden first would make that 409 come from the verified-
+        # address refusal instead of the password comparison it exists to pin. And
+        # it reads the before-state, because `_verify_code` answers an ALREADY
+        # verified account 200 without comparing anything.
+        _ac.cookies.clear()
+        _eden28_before = (_login_row28("eden@example.com") or {}).get("verified")
+        _eden28_ok = _ac.post(
+            "/auth/verify", json={"code": _last_mail28("eden@example.com", "code")},
+            headers=_ck28(_again28.cookies.get("jf_session") or "", _XRW),
+        )
+        _ac.cookies.clear()
+        check(
+            "A3: …while the fresh code the second signup mailed verifies — Eden unverified before, verified after "
+            "(the false-positive half of 'used')",
+            _eden28_before is False and _eden28_ok.status_code == 200
+            and _j28(_eden28_ok) == {"verified": True, "signed_in": True}
+            and (_login_row28("eden@example.com") or {}).get("verified") is True,
+            f"before {_eden28_before} | {_eden28_ok.text[:120]}",
+        )
         check(
             "signup: a VERIFIED address is 409 email_taken, whatever the password",
             _code28(_ac.post("/auth/signup", json={"name": "Maya 2", "email": "maya@example.com", "password": _maya28_pw},
                              headers=_XRW)) == "email_taken",
+        )
+
+        # --- P29-SIXDIGIT-FLAKE: the ordering twin -----------------------------
+        # The false-positive half of every 'used' refusal above. A resend is forced
+        # to repeat the first code, so a DEAD token and the LIVE one carry the same
+        # six digits. The newest mail's code must still verify: `_verify_code`
+        # matches the live token before it asks `_stale_code`. The tempting "fix"
+        # for the flake — test for a stale code first — would lock out the holder
+        # of the newest mail on a coincidence, and this is what turns it red.
+        _reset_auth_throttles28()
+        _ac.cookies.clear()
+        _gil28 = _ac.post(
+            "/auth/signup", json={"name": "Gil", "email": "gil@example.com", "password": "gil passphrase one"},
+            headers=_XRW,
+        )
+        _gil28_uid = _uid28(_gil28)
+        _gil28_first = _last_mail28("gil@example.com", "code")
+        _age_auth_events28("verify_mail", 2)
+        _gil28_forced: list[str] = []
+
+        def _gil28_forced_draw():
+            _gil28_forced.append(_gil28_first)
+            return _gil28_first
+
+        _gil28_rs = _with_draw28(_gil28_forced_draw, lambda: _ac.post("/auth/resend", headers=_XRW))
+        _gil28_restored = getattr(_acc28, "_draw_code", None) is _real_draw_code28
+        _gil28_codes = [m["code"] for m in _mail_to28("gil@example.com")]
+        _gildb28 = SessionLocal()
+        try:
+            _gil28_dead_twin = _gil28_uid is not None and _acc28._stale_code(
+                _gildb28, _gil28_uid, "gil@example.com", _gil28_first
+            )
+        finally:
+            _gildb28.close()
+        _gil28_before = (_login_row28("gil@example.com") or {}).get("verified")
+        _gil28_v = _ac.post("/auth/verify", json={"code": _gil28_first}, headers=_XRW)
+        _ac.cookies.clear()
+        check(
+            "A1's twin: when a DEAD token shares its six digits with the LIVE one, the code in the newest mail still "
+            "verifies — the live token is matched before any dead one, so 'used' never refuses the newest mail's code",
+            _gil28.status_code == 200 and _gil28_rs.status_code == 200
+            and _gil28_forced == [_gil28_first] and _gil28_restored
+            and _gil28_codes == [_gil28_first, _gil28_first] and _gil28_dead_twin is True
+            and _gil28_before is False and _gil28_v.status_code == 200
+            and _j28(_gil28_v) == {"verified": True, "signed_in": True}
+            and (_login_row28("gil@example.com") or {}).get("verified") is True,
+            f"forced {_gil28_forced} restored {_gil28_restored} mailed {_gil28_codes} dead-twin {_gil28_dead_twin} "
+            f"before {_gil28_before} | {_gil28_rs.status_code} {_gil28_v.text[:120]}",
         )
 
         # --- refusals: validation, closed signup, no mail, the mail budget -------

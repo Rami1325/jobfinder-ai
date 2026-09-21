@@ -257,6 +257,21 @@ def consume_tokens(db: Session, user_id: int, purposes: tuple[str, ...], now: da
     )
 
 
+def _draw_code() -> str:
+    """The six digits a verify mail carries. The ONE place a code is drawn.
+
+    A named function rather than an expression inside `_issue`, so the smoke
+    test can steer it: it rebinds `accounts._draw_code`, the name `_issue` looks
+    up at call time, the same way it rebinds `auth_email._resolve_sender`. A
+    fresh draw can repeat the code it supersedes (1 in 10^6), and the replayed
+    old code then IS the live one and verifies — correctly, see `_verify_code`
+    — so the checks that replay a superseded code and expect `used` draw
+    around the spent one. Never `from app.core.accounts import _draw_code`
+    anywhere: a second binding is one that rebinding cannot reach.
+    """
+    return f"{secrets.randbelow(10**6):06d}"
+
+
 def _issue(
     db: Session, user_id: int, purpose: str, email: str, ttl_min: int, *, with_code: bool, now: datetime
 ) -> tuple[str, str]:
@@ -270,7 +285,7 @@ def _issue(
     )
     raw = secrets.token_urlsafe(32)
     link_hash = token_hash(raw)
-    code = f"{secrets.randbelow(10**6):06d}" if with_code else ""
+    code = _draw_code() if with_code else ""
     db.add(
         AuthToken(
             user_id=user_id,
