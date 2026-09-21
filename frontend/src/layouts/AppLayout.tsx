@@ -40,11 +40,11 @@ import GoogleNotice from "../components/GoogleNotice";
 import LanguageSwitch from "../components/LanguageSwitch";
 import OnboardingModal from "../components/OnboardingModal";
 import ThemeToggle from "../components/ThemeToggle";
-import { getAuthMe } from "../api/client";
+import { getAuthMe, refreshUses } from "../api/client";
 import { isOnboarded } from "../lib/onboarding";
 import { authRedirectUrl } from "../lib/safeNext";
 import { signOut } from "../lib/session";
-import { usesFor, useUsesState } from "../lib/usesStore";
+import { shouldRefreshUses, usesFor, useUsesState } from "../lib/usesStore";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 import { getKitsState, loadKits, subscribeKits } from "../state/kitsStore";
 import type { Me } from "../types";
@@ -643,6 +643,9 @@ export default function AppLayout() {
   // "Signed in as" line. Null when the guard failed open, and then the avatar
   // is a generic User glyph and every other control in the header still works.
   const [me, setMe] = useState<Me | null>(null);
+  // The same answer's account id, for the uses refresh below. Null when the
+  // guard failed open: then no account is known and nothing is refreshed.
+  const [meId, setMeId] = useState<number | null>(null);
   useEffect(() => {
     let live = true;
     getAuthMe()
@@ -656,7 +659,10 @@ export default function AppLayout() {
           window.location.assign(authRedirectUrl("/verify"));
           return;
         }
-        if (a.user) setMe({ name: a.user.name, email: a.user.email, is_admin: a.user.is_admin });
+        if (a.user) {
+          setMe({ name: a.user.name, email: a.user.email, is_admin: a.user.is_admin });
+          setMeId(a.user.id);
+        }
         setAuthed(true);
       })
       .catch(() => {
@@ -666,6 +672,32 @@ export default function AppLayout() {
       live = false;
     };
   }, []);
+
+  // Uses spent where this tab cannot see them: the Chrome extension's
+  // autofill, another tab, another device. Their X-Uses headers land on other
+  // pages, so this tab's notes kept the old count, and kept saying "costs 1
+  // use" about a screening pass the extension had already opened, until a
+  // reload (P30-EXT-LIMIT). Showing the tab again re-reads /auth/me, at most
+  // once a minute, for the account the guard saw and no other.
+  //
+  // refreshUses, never getAuthMe: getAuthMe also re-stamps the resume draft's
+  // owner, and a mid-session answer (an expired session, another account
+  // signed in from another tab) must never claim this tab's draft. A store
+  // write only: nothing here redirects. A session that ended reaches
+  // AccessGate through the next protected call's 401.
+  useEffect(() => {
+    if (meId === null) return;
+    // The guard's own /auth/me, just answered, is the last ask.
+    let lastAsked = Date.now();
+    const onVisibility = () => {
+      const now = Date.now();
+      if (!shouldRefreshUses(now, lastAsked, document.visibilityState === "visible")) return;
+      lastAsked = now;
+      void refreshUses(meId);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [meId]);
 
   useEffect(() => {
     // Only once the guard has passed: a signed-out visit must not fire a

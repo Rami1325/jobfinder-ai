@@ -4,6 +4,11 @@
 // The writers, all in api/client.ts, and nothing else writes here:
 //   - every /auth/me answer (`getAuthMe` hands its `usage` to `setUsage`); the
 //     first is AppLayout's guard, which answers before the shell renders;
+//   - `refreshUses`, AppLayout's re-read of /auth/me when the tab is shown
+//     again (P30-EXT-LIMIT): the Chrome extension, another tab and another
+//     device spend uses whose headers never reach this page. It writes only
+//     when the answer is the account the guard saw (`usageIfSameUser`), and
+//     at most once a minute (`shouldRefreshUses`);
 //   - the X-Uses-Remaining and X-Uses-Pass headers on any API response, read by
 //     the axios interceptor and by the search stream's own fetch;
 //   - a 429 `monthly_limit`, from the shared `onRejected` both paths reach.
@@ -238,6 +243,35 @@ export function noteMonthlyLimit(detail: unknown): void {
     resetsOn: resetsOn || state.resetsOn,
     passes,
   });
+}
+
+/** How long a tab must have been left alone before showing it again re-reads
+ * /auth/me. Flipping between two tabs every few seconds is one read a minute,
+ * not one per flip. */
+export const USES_REFRESH_MS = 60_000;
+
+/** Whether a tab that just became visible (or hidden) should re-read its uses.
+ * Never while hidden. A clock that went BACKWARDS since the last ask (the
+ * device's time was changed) allows one, rather than waiting for the clock to
+ * catch up with an ask it now dates in the future. */
+export function shouldRefreshUses(now: number, lastAskedAt: number, visible: boolean): boolean {
+  if (!visible) return false;
+  if (!Number.isFinite(now) || !Number.isFinite(lastAskedAt)) return true;
+  return now < lastAskedAt || now - lastAskedAt >= USES_REFRESH_MS;
+}
+
+/** The `usage` of an /auth/me answer, but only when the answer is about the
+ * account `expectedId`: signed in, with that same id. `undefined` means "not
+ * this account's answer, change nothing". A tab can outlive its session, and
+ * another tab of the same browser can sign in as someone else, and neither
+ * answer may be read as this tab's count. `null` is a real answer, the same
+ * account with no usage block, and `setUsage(null)` then forgets the count
+ * rather than keep one the server no longer states. */
+export function usageIfSameUser(expectedId: number | null | undefined, answer: unknown): UsageOut | null | undefined {
+  if (typeof expectedId !== "number" || !answer || typeof answer !== "object") return undefined;
+  const a = answer as { authenticated?: unknown; user?: { id?: unknown } | null; usage?: UsageOut | null };
+  if (a.authenticated !== true || !a.user || a.user.id !== expectedId) return undefined;
+  return a.usage ?? null;
 }
 
 /** Forget everything. The app never needs it (a sign-out loads a new document);

@@ -3,7 +3,7 @@ import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT, UNVERIFIED_EVENT } from "../lib/ac
 import { cachedFetch, clearDataCache, invalidateData } from "../lib/dataCache";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { noteDraftOwner } from "../lib/draft";
-import { noteMonthlyLimit, noteUsesHeaders, setUsage } from "../lib/usesStore";
+import { noteMonthlyLimit, noteUsesHeaders, setUsage, usageIfSameUser } from "../lib/usesStore";
 import type {
   AlertRunResult,
   AlertSettings,
@@ -799,6 +799,32 @@ export async function getAuthMe(): Promise<AuthMe> {
   // AppLayout's guard is the first, and it answers before the shell renders.
   setUsage(data.usage ?? null);
   return data;
+}
+
+/** Re-read this month's uses for the account `expectedId`: what the Chrome
+ * extension, another tab or another device spent, whose X-Uses headers never
+ * reach this page (P30-EXT-LIMIT). AppLayout calls it when the tab is shown
+ * again, throttled.
+ *
+ * It writes the uses store and NOTHING else, which is why it is not getAuthMe.
+ * getAuthMe re-stamps the resume draft's owner from every answer (lib/draft.ts):
+ * on a tab whose session expired while it was hidden, that would stamp the
+ * user's unsaved edits with no owner, so they are never offered back after the
+ * next sign-in; with another account signed in from another tab, it would stamp
+ * this tab's resume with that account's id and offer it to them as their own.
+ * It also never forgets a stored code and never redirects: a session that ended
+ * is AccessGate's, through the next protected call's 401.
+ *
+ * The store is written only when the answer is this same account signed in
+ * (`usageIfSameUser`); otherwise, and on any error, it keeps what it has. */
+export async function refreshUses(expectedId: number): Promise<void> {
+  try {
+    const { data } = await api.get<AuthMe>("/auth/me");
+    const usage = usageIfSameUser(expectedId, data);
+    if (usage !== undefined) setUsage(usage);
+  } catch {
+    /* the count on screen stays what it was; the server still decides every call */
+  }
 }
 
 /** POST /auth/password, /auth/logout-others and /auth/reset: whether the
