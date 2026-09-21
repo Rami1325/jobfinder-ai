@@ -1295,6 +1295,13 @@ class JobMatch(BaseModel):
     url: str = ""  # set for scraped listings; empty for pasted ones
     location: str = ""
     posted_at: str = ""  # ISO date(-time) from the source; empty when unknown
+    # The earliest date a BOARD stated for this role: this card, an earlier
+    # listing of the same source + title|company in the current sighting run,
+    # or Greenhouse `first_published` (`ghost_signals.earliest_board_date`,
+    # returned verbatim). Equal to `posted_at` when nothing earlier is known;
+    # "" means unknown. Never `first_seen_at`, which is our own lower bound and
+    # not a date any board stated.
+    first_posted_at: str = ""
     source: str = "linkedin"  # which job board this came from (see PROVIDERS registry)
     logo_url: str = ""  # company logo from the board; empty when it has none
     also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards
@@ -1310,8 +1317,11 @@ class JobMatch(BaseModel):
     # no migration. Same as geo_restriction. None means "nothing fired", which
     # is NOT the same as "this vacancy is real".
     ghost: Optional[GhostReport] = None
-    # Posted before the search's max_age_days window but kept because the title
-    # matches the searched keywords (PLAN 15.6). The UI shows an "Older" badge.
+    # Older than the search's max_age_days window. Set by the tiering from the
+    # CARD date (selection: kept because the title matches the searched
+    # keywords, PLAN 15.6), and after selection from `first_posted_at` (label
+    # only: a relisted role is older even when its relist is fresh). The UI
+    # shows an "Older" badge and the alert email an "Older posting" chip.
     stale: bool = False
     # Tracker status when this posting is already in the user's tracker
     # ("saved" | "applied" | "interview" | "offer" | "rejected"), else "".
@@ -1342,7 +1352,8 @@ class SearchContext(BaseModel):
     sources: list[str] = Field(default_factory=list)
     # Only surface postings at most this many days old (0 = any age). LinkedIn
     # applies it server-side (f_TPR); every board is also filtered in the
-    # fan-out against JobHit.posted_at, keeping hits with no known date.
+    # fan-out against JobHit.posted_at, keeping hits with no known date. A
+    # date-only posted string counts its whole day (`job_search.posted_within`).
     max_age_days: int = 30
     # Worldwide-remote opt-in: when work_mode is "remote" or "any", ALSO search
     # remote roles in the US, the UK and the EU (see
