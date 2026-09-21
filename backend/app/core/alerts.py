@@ -59,6 +59,7 @@ from app.db.sightings import load_sightings, record_sightings
 from app.models import (
     AlertRunResult,
     GhostReport,
+    GhostSignal,
     JobMatch,
     JobSearchResult,
     ResumeModel,
@@ -216,6 +217,49 @@ def _bar_note(min_score: int) -> str:
 # swap a fact for a guess in the one line the reader sees.
 _GHOST_STRENGTH_RANK = {"certain": 0, "strong": 1, "weak": 2}
 
+# Every kind `_ghost_label` can name; the Python twin of cards.tsx GHOST_KINDS.
+_GHOST_KINDS = ("closed", "evergreen", "long_open", "reposted")
+
+
+def _ghost_shown(ghost: GhostReport | None) -> GhostSignal | None:
+    """The ONE signal both surfaces draw, or None: `closed or likely`, known
+    kinds only, strongest first (the first minimal wins, so ties keep the
+    classifier's order) — exactly `cards.tsx::strongestGhostSignal`.
+
+    Known kinds are filtered BEFORE the pick, as on the card. Picking first and
+    then finding an unknown kind would print nothing where the card, which
+    skips the unknown kind and shows the next known one, prints a line — and
+    `_older_chip_date` reads this pick to decide whether the age chip is
+    already drawn, so the two surfaces would also disagree about the date."""
+    if ghost is None or not (ghost.closed or ghost.likely):
+        return None
+    known = [s for s in ghost.signals if s.kind in _GHOST_KINDS]
+    if not known:
+        return None
+    return min(known, key=lambda s: _GHOST_STRENGTH_RANK.get(s.strength, len(_GHOST_STRENGTH_RANK)))
+
+
+def _older_chip_date(m: JobMatch) -> str:
+    """The date the "Older posting" chip prints, or "" for no chip. ONE
+    definition, read by both email bodies.
+
+    It prints `first_posted_at`, the earliest date a BOARD stated for the role
+    (`ghost_signals.earliest_board_date`), so a relisted role reads "older
+    posting — 2026-09-07" and not the relist's own date. `posted_at` is the
+    fallback for a match from an older backend or a caller that never set the
+    field. Never a `first_seen_at` date: that is our own lower bound.
+
+    NEVER TWO AGE CHIPS, exactly as on the Jobs card: when the ghost line shown
+    for this posting is `long_open`, it IS the age chip ("Seen for N days"), and
+    printing an "Older posting" date beside it would have one line of the email
+    argue with the next about how old the posting is."""
+    if not m.stale:
+        return ""
+    shown = _ghost_shown(m.ghost)
+    if shown is not None and shown.kind == "long_open":
+        return ""
+    return (m.first_posted_at or m.posted_at)[:10]
+
 
 def _ghost_label(ghost: GhostReport | None) -> str:
     """The STRONGEST ghost signal's short label, or "" when there is nothing
@@ -235,9 +279,12 @@ def _ghost_label(ghost: GhostReport | None) -> str:
     contract defines is safer than one with a hole — and a hole here returns "",
     which is indistinguishable from "no signal".
 
-    An unrecognised `kind` also returns "". Printing `sig.kind` would put a raw
+    An unrecognised `kind` is never printed. Printing `sig.kind` would put a raw
     internal token like `long_open` in someone's inbox, and `sig.raw` is the
-    BOARD's own sentence, which is evidence and not a label.
+    BOARD's own sentence, which is evidence and not a label. It is SKIPPED, and
+    the next-strongest known signal is labelled, the way the card does it
+    (`_ghost_shown`); until 2026-09-21 a strongest-but-unknown kind returned ""
+    here while the card showed the next known signal.
     """
     # `closed or likely` is the threshold, NEVER `signals` being non-empty, and
     # the two are genuinely different: `likely` is >= 1 strong or >= 2 weak, so a
@@ -255,17 +302,15 @@ def _ghost_label(ghost: GhostReport | None) -> str:
     # Note what makes this ONE rule rather than two agreeing ones: `likely` is
     # computed once, in `ghost_signals._report`, and both surfaces only READ it.
     # Neither re-derives the strong/weak arithmetic, so there is no second
-    # matcher here to drift.
-    if ghost is None or not (ghost.closed or ghost.likely):
-        return ""
-    if not ghost.signals:  # a report cannot be closed/likely with no signals
-        return ""
+    # matcher here to drift. The gate and the pick live in `_ghost_shown`,
+    # which `_older_chip_date` reads too, so the ghost chip and the age chip
+    # can never be decided off two different signals.
+    #
     # `min` returns the FIRST minimal element, so ties fall back to the
     # classifier's own signal order rather than to whatever sorts alphabetically.
-    sig = min(
-        ghost.signals,
-        key=lambda s: _GHOST_STRENGTH_RANK.get(s.strength, len(_GHOST_STRENGTH_RANK)),
-    )
+    sig = _ghost_shown(ghost)
+    if sig is None:
+        return ""
     if sig.kind == "closed":
         return "No longer accepting applications"
     if sig.kind == "evergreen":
@@ -310,8 +355,11 @@ def build_alert_email(
         if m.company:
             bits.append(f"at {m.company}")
         bits.append(f"— fit {round(m.overall)}%")
-        if m.stale and m.posted_at:
-            bits.append(f"(older posting — {m.posted_at[:10]})")
+        # The earliest date a board stated, and no chip when a `long_open`
+        # ghost line is already the age chip — the HTML twin reads the SAME
+        # function, so the two bodies cannot print different dates.
+        if older := _older_chip_date(m):
+            bits.append(f"(older posting — {older})")
         if m.geo_restriction is not None:
             bits.append("(states a location requirement)")
         # The plain-text twin of the HTML ghost chip, off the SAME label
@@ -389,14 +437,16 @@ def _job_card_html(m: JobMatch) -> str:
         if source
         else ""
     )
-    # Old-but-relevant backfill (PLAN 15.6): amber chip with the post date so
-    # an older posting is never mistaken for a fresh one.
-    if m.stale and m.posted_at:
+    # Older posting (PLAN 15.6): amber chip with the EARLIEST date a board
+    # stated for the role, so an older posting is never mistaken for a fresh
+    # one and a relist never passes off its own date as the role's
+    # (`_older_chip_date`, shared with the plain-text twin).
+    if older := _older_chip_date(m):
         chips += (
             f'{" " if chips else ""}<span style="display:inline-block;padding:3px 10px;'
             f'border-radius:999px;background:#3a2f18;border:1px solid #6b5527;'
             f'color:#ffc96b;font:600 11px {_EM_FONT};letter-spacing:.4px;">'
-            f"Older posting &#183; {esc(m.posted_at[:10])}</span>"
+            f"Older posting &#183; {esc(older)}</span>"
         )
     # Tier-2 geo note (PLAN geo): Tier-1 restrictions never reach an alert at
     # all — they are filtered before a JobMatch exists, so the cron cannot email

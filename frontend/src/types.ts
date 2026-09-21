@@ -459,6 +459,10 @@ export interface JobMatch {
   url: string; // set for scraped listings; empty for pasted ones
   location: string;
   posted_at: string; // ISO date from the LinkedIn search card; empty when unknown
+  // The earliest date a BOARD stated for the role (this card, an earlier listing
+  // of it, or Greenhouse first_published), returned verbatim, so a string that
+  // differs from `posted_at` IS an earlier date. Absent on older backends.
+  first_posted_at?: string;
   source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
   logo_url?: string; // company logo from the board; empty/absent when it has none
   also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
@@ -468,7 +472,9 @@ export interface JobMatch {
   // posting text + our own sightings, never stored — so re-tuning the rules
   // reclassifies every posting with no migration. Same as `geo_restriction`.
   ghost?: GhostReport | null;
-  stale?: boolean; // older than the search window, kept for keyword relevance (PLAN 15.6)
+  // Older than the search window: by the card date (kept for keyword relevance,
+  // PLAN 15.6), or by `first_posted_at` when the role was listed earlier.
+  stale?: boolean;
   // Tracker status when this posting is already in the tracker ("saved" |
   // "applied" | "interview" | "offer" | "rejected"); "" or absent when new.
   application_status?: string;

@@ -2557,6 +2557,75 @@ check(
     str([(h.url, h.also_on) for h in _dup_sel]),
 )
 
+# 14b-4-bis. A DAY IS NOT A MIDNIGHT (2026-09-21, the owner's report). The alert
+# ran at 06:43 UTC with "posted within 1 day"; LinkedIn itself returned both
+# postings as posted in the last 24 hours (f_TPR=r86400), and its card date is a
+# DAY, "2026-09-20". Read as 2026-09-20T00:00 against the cutoff 2026-09-20T06:43
+# it was stale, so the email called yesterday's posting "older posting —
+# 2026-09-20", and yesterday's LOOSELY-matched cards were silently dropped.
+# `posted_within` is THE window comparison now, read by the tiering,
+# `freshest_first` and the relabel alike. The timestamp pins beside the day pins
+# are what stop "make everything a day" from passing: a timestamp still compares
+# to the minute, and an explicit T00:00 is an instant.
+from app.core.job_search import posted_within as _posted_within  # noqa: E402
+
+_day_now = _dtc(2026, 9, 21, 6, 43)
+check(
+    "posted_within: a date-only card counts its WHOLE day — yesterday is inside a 1-day window at 06:43",
+    _posted_within("2026-09-20", 1, _day_now) is True
+    and _posted_within("2026-09-19", 1, _day_now) is False
+    and _posted_within("2026-09-18", 1, _day_now) is False
+    and _posted_within("2026-09-18", 3, _day_now) is True
+    and _posted_within("2026-09-17", 3, _day_now) is False,
+    f'yesterday={_posted_within("2026-09-20", 1, _day_now)} '
+    f'two_days={_posted_within("2026-09-19", 1, _day_now)}',
+)
+check(
+    "posted_within: a timestamp still compares to the minute, an explicit T00:00 is an instant, "
+    "and unknown is kept",
+    _posted_within("2026-09-20T06:44", 1, _day_now) is True
+    and _posted_within("2026-09-20T06:42", 1, _day_now) is False
+    and _posted_within("2026-09-20T00:00", 1, _day_now) is False
+    and _posted_within("", 1, _day_now) is True
+    and _posted_within("junk", 1, _day_now) is True
+    and _posted_within("2020-01-01", 0, _day_now) is True,
+)
+
+
+def _day_cards() -> dict:
+    # Fresh objects per call: `tiered_by_source` stamps `stale` on the hit.
+    return {
+        "boardD": [
+            JobHit(source="boardD", title="AI Engineer", company="RelY",
+                   url="https://d/rel-yday", posted_at="2026-09-20"),
+            JobHit(source="boardD", title="Office Manager", company="LooseY",
+                   url="https://d/loose-yday", posted_at="2026-09-20"),
+            JobHit(source="boardD", title="AI Engineer", company="RelOld",
+                   url="https://d/rel-old", posted_at="2026-09-18"),
+            JobHit(source="boardD", title="Office Manager", company="LooseOld",
+                   url="https://d/loose-old", posted_at="2026-09-18"),
+        ]
+    }
+
+
+_day_tiers = tiered_by_source(_day_cards(), ["AI Engineer"], 1, now=_day_now)
+_day_urls = [[h.url for h in _t.get("boardD", [])] for _t in _day_tiers]
+check(
+    "tiering: a card dated YESTERDAY is fresh in a 1-day window (relevant → tier 0, loose → tier 2, "
+    "was dropped), while three days ago stays stale (tier 1) or dropped",
+    _day_urls == [["https://d/rel-yday"], ["https://d/rel-old"], ["https://d/loose-yday"]]
+    and _day_tiers[0]["boardD"][0].stale is False
+    and _day_tiers[1]["boardD"][0].stale is True
+    and _day_tiers[2]["boardD"][0].stale is False,
+    str(_day_urls),
+)
+check(
+    "freshest_first reads the same window: yesterday's cards kept, three days ago dropped",
+    [h.url for h in freshest_first(_day_cards()["boardD"], 1, now=_day_now)]
+    == ["https://d/rel-yday", "https://d/loose-yday"],
+    str([h.url for h in freshest_first(_day_cards()["boardD"], 1, now=_day_now)]),
+)
+
 # 14b-3. Salary intelligence v1 (PLAN 15.2): deterministic extraction of
 # LITERAL salary mentions only — currency-adjacent figures, plausibility
 # floor, hourly wages allowed, everything else ignored.
@@ -2911,7 +2980,9 @@ from app.core.ghost_signals import (  # noqa: E402
     LONG_OPEN_STRONG_DAYS as _GH_STRONG_DAYS,
     LONG_OPEN_WEAK_DAYS as _GH_WEAK_DAYS,
     Sighting as _GhSighting,
+    board_date_is_day as _gh_is_day,
     detect_ghost_signals as _gh_detect,
+    earliest_board_date as _gh_earliest,
     parse_board_date as _gh_parse_date,
 )
 from app.models import GhostReport as _GhostReport, GhostSignal as _GhostSignal  # noqa: E402
@@ -3384,6 +3455,80 @@ check(
     # machine's offset the moment this function is asked to be clever.
     and _gh_parse_date("2026-06-02T03:17:15") == _gh_dt(2026, 6, 2, 3, 17, 15),
     f'-04:00 -> {_gh_parse_date("2026-06-02T03:17:15-04:00")}',
+)
+# A DAY IS NOT A MIDNIGHT (2026-09-21). LinkedIn's card date is "2026-09-20", a
+# whole day, and it was compared as that day's midnight against a to-the-minute
+# cutoff: at 06:43 a 1-day alert called every posting LinkedIn had just returned
+# for the last 24 hours "older posting — yesterday". `board_date_is_day` reads
+# the SAME parse as `parse_board_date`, and decides by GRAMMAR: an explicit
+# "T00:00" is a board's real midnight timestamp, an instant, and a value test
+# (`time() == 0`) would have turned it into a whole day. The ghost age is
+# untouched — the same string still parses to the same midnight.
+check(
+    "board dates: a date-only string names a whole DAY, by grammar — an explicit T00:00 stays an instant",
+    _gh_is_day("2026-09-20") is True and _gh_is_day("20260920") is True
+    and _gh_is_day("2026-09-20T00:00") is False
+    and _gh_is_day("2026-09-20T16:25:30Z") is False
+    and _gh_is_day("2026-09-20T16:25:30-04:00") is False
+    and _gh_is_day("") is False and _gh_is_day("junk") is False
+    and _gh_is_day(None) is False  # type: ignore[arg-type]
+    and _gh_parse_date("2026-09-20") == _gh_dt(2026, 9, 20),
+    f'day={_gh_is_day("2026-09-20")} T00:00={_gh_is_day("2026-09-20T00:00")}',
+)
+# THE CHIP PRINTS THE EARLIEST BOARD-STATED DATE WE HOLD. The reported case:
+# Pentera's role was on LinkedIn on 2026-09-07 (listing …4464364580, remembered
+# in `posting_sightings.first_posted_at`) and relisted as …4462220726 on
+# 2026-09-20; the email printed 2026-09-20. `earliest_board_date` is the minimum,
+# as INSTANTS, over the card, Greenhouse's `first_published` and the sighting's
+# `first_posted_at` — and NEVER `first_seen_at`, our own lower bound, which a
+# first-seen-only twin pins below. The winner is returned VERBATIM (the card's
+# own string object when nothing is earlier), so the Jobs card can tell
+# "earlier" by string identity and TypeScript never compares dates. The card
+# string is built at run time so `is` cannot pass on a shared literal constant.
+_ebd_card = "-".join(["2026", "09", "20"])
+_ebd_90 = _GH_NOW - _gh_td(days=90)
+check(
+    "earliest_board_date: a relist prints the role's EARLIEST board date, a lone card is itself, "
+    "and our own first sighting is never a date",
+    _gh_earliest("2026-09-20", {}, _GhSighting(
+        first_posted_at="2026-09-07", first_url="https://il.linkedin.com/jobs/view/4464364580",
+    )) == "2026-09-07"
+    # Similarweb: nothing earlier known, so the card's own string comes back
+    and _gh_earliest(_ebd_card, {}, None) is _ebd_card
+    # a first_seen-only sighting (90 days) never becomes a printed date...
+    and _gh_earliest("2026-09-20", {}, _GhSighting(first_seen_at=_ebd_90)) == "2026-09-20"
+    # ...and with no card date either, the answer is unknown — never zero
+    and _gh_earliest("", {}, _GhSighting(first_seen_at=_ebd_90)) == ""
+    and _gh_earliest("", None, None) == ""
+    # a card OLDER than the sighting wins
+    and _gh_earliest("2026-09-01", {}, _GhSighting(first_posted_at="2026-09-07")) == "2026-09-01",
+)
+check(
+    "earliest_board_date: instants, never strings — ties go to the card, verbatim; "
+    "Greenhouse first_published counts; junk is ignored",
+    # the same instant in two formats: the CARD's string, in both directions
+    _gh_earliest("2026-09-20", {}, _GhSighting(first_posted_at="2026-09-20T00:00:00")) == "2026-09-20"
+    and _gh_earliest("2026-09-20T00:00:00", {}, _GhSighting(first_posted_at="2026-09-20"))
+    == "2026-09-20T00:00:00"
+    # a mixed-offset pair a string `min` gets wrong: "…T04:30-05:00" is 09:30Z
+    # and sorts BEFORE "…T05:00-04:00", which is 09:00Z and the earlier instant
+    and _gh_earliest("2026-06-02T05:00:00-04:00", {},
+                     _GhSighting(first_posted_at="2026-06-02T04:30:00-05:00"))
+    == "2026-06-02T05:00:00-04:00"
+    # Greenhouse: posted_at is updated_at; first_published is the listing's own
+    and _gh_earliest("2026-09-02T10:00:00-04:00", {"first_published": "2026-01-01T09:00:00-05:00"}, None)
+    == "2026-01-01T09:00:00-05:00"
+    and _gh_earliest("2026-09-02", {"first_published": None}, None) == "2026-09-02"
+    and _gh_earliest("2026-09-20", {}, _GhSighting(first_posted_at="junk")) == "2026-09-20",
+)
+# The new field is a PRINTED date and never an age: `long_open` keeps the two
+# bases its unmeasured thresholds were tuned on. A 2020 first_posted_at on its
+# own produces nothing at all.
+_ebd_age = _gh(sighting=_GhSighting(first_posted_at="2020-01-01"))
+check(
+    "earliest_board_date: Sighting.first_posted_at never feeds long_open",
+    _ebd_age is None,
+    str(_ebd_age),
 )
 # ONE CLOCK, ONE FRAME. `record_sightings` writes `first_seen_at` as naive UTC
 # and `search_jobs` measured ages against naive LOCAL time, so every `long_open`
@@ -5111,6 +5256,73 @@ check(
     f"strong_html={'General application' in _gh_html_strong} "
     f"strong_text={'(general application)' in _gh_text_strong} "
     f"weak_html={'Relisted' in _gh_html_weak} two={'Seen for 35 days' in _gh_html_two}",
+)
+
+# THE "OLDER POSTING" DATE IS THE ROLE'S, NOT THE LISTING'S (2026-09-21). The
+# chip printed `posted_at[:10]`, which for a relisted role is the relist's own
+# date, so the owner read "older posting — <yesterday>" about a role LinkedIn
+# first listed two weeks earlier. It prints `first_posted_at` now, the earliest
+# date a BOARD stated (`ghost_signals.earliest_board_date`), with `posted_at` as
+# the fallback the own-date pins above still exercise.
+#
+# And NEVER TWO AGE CHIPS, the card's rule: when the ghost line shown is
+# `long_open`, it IS the age chip, so "Older posting" is suppressed beside it.
+# Shown means exactly what `cards.tsx::strongestGhostSignal` draws — `closed or
+# likely`, KNOWN kinds only, strongest first — and the unknown-kind pins below
+# hold `_ghost_label` and `_older_chip_date` to that one pick.
+def _od_match(stale: bool, ghost=None) -> JobMatch:  # noqa: ANN001
+    return JobMatch(
+        title="AI Engineer", company="Pentera", overall=80.0, url="https://alerts/od-1",
+        posted_at="2026-09-20", first_posted_at="2026-09-07", stale=stale, ghost=ghost,
+    )
+
+
+def _od_both(m: JobMatch) -> tuple[str, str]:
+    return build_alert_email([m], _AlertCtx(job_title="X"))[1], build_alert_email_html([m], _AlertCtx(job_title="X"))
+
+
+_od_rt, _od_rh = _od_both(_od_match(True))
+_od_ft, _od_fh = _od_both(_od_match(False))
+check(
+    "alert older chip prints the EARLIEST board date in both bodies, never the listing's own; "
+    "a fresh match gets no chip",
+    "Older posting &#183; 2026-09-07" in _od_rh and "(older posting — 2026-09-07)" in _od_rt
+    and "2026-09-20" not in _od_rh and "2026-09-20" not in _od_rt
+    and "Older posting" not in _od_fh and "older posting" not in _od_ft,
+    f"text={[ln for ln in _od_rt.splitlines() if 'Pentera' in ln]}",
+)
+_od_lt, _od_lh = _od_both(_od_match(True, _gh_two_weak))
+_od_et, _od_eh = _od_both(_od_match(True, _gh_strong))
+check(
+    "alert never draws two age chips: a shown long_open IS the age chip, while an evergreen "
+    "ghost rides beside the older chip — both bodies, exactly as the card draws them",
+    "Seen for 35 days" in _od_lh and "(seen for 35 days)" in _od_lt
+    and "Older posting" not in _od_lh and "older posting" not in _od_lt
+    # the twin: a ghost line that is NOT an age keeps the age chip beside it
+    and "General application" in _od_eh and "Older posting &#183; 2026-09-07" in _od_eh
+    and "(general application)" in _od_et and "(older posting — 2026-09-07)" in _od_et,
+    f"long_open text={[ln for ln in _od_lt.splitlines() if 'Pentera' in ln]}",
+)
+_od_mystery_ever = _GhostReport(likely=True, signals=[
+    _GhostSignal(kind="mystery", strength="strong"),
+    _GhostSignal(kind="evergreen", strength="weak"),
+])
+_od_mystery_long = _GhostReport(likely=True, signals=[
+    _GhostSignal(kind="mystery", strength="strong"),
+    _GhostSignal(kind="long_open", strength="weak", days=35, basis="first_seen"),
+])
+_od_ut, _od_uh = _od_both(_od_match(False, _od_mystery_ever))
+_od_vt, _od_vh = _od_both(_od_match(True, _od_mystery_long))
+check(
+    "alert skips an UNKNOWN ghost kind and labels the next known one, as the card does — "
+    "and the older chip reads that same pick",
+    "General application" in _od_uh and "(general application)" in _od_ut
+    and "Seen for 35 days" in _od_vh and "(seen for 35 days)" in _od_vt
+    and "Older posting" not in _od_vh and "older posting" not in _od_vt
+    # the raw internal token never reaches an inbox
+    and "mystery" not in _od_uh and "mystery" not in _od_vt,
+    f"unknown+evergreen={[ln for ln in _od_ut.splitlines() if 'Pentera' in ln]} "
+    f"unknown+long_open={[ln for ln in _od_vt.splitlines() if 'Pentera' in ln]}",
 )
 
 
@@ -9177,6 +9389,226 @@ try:
 finally:
     _PROV.pop("fake_stale", None)
 
+# 21a-bis. THE "OLDER POSTING" DATE, END TO END (2026-09-21, the owner's report:
+# "the tag says 'Older post (today's date)'; it needs to be the older posting's
+# posted date"). This morning's email, reproduced: max_age_days=1 at 06:43 UTC,
+# four LinkedIn-shaped cards, each one a way the chip can lie.
+#
+#   Pentera    — relisted: card 2026-09-20 (…4462220726), and the sighting run
+#                remembers the earlier listing (…4464364580) dated 2026-09-07.
+#                Must print 2026-09-07, never the relist's date.
+#   Similarweb — dated yesterday, nothing earlier known. CAUSE 1: must get NO
+#                chip, because yesterday is inside a 1-day window.
+#   OldCo      — genuinely three days old. The control: still "older", with
+#                its own date.
+#   SeenCo     — seen by our searches for 40 days, no board date earlier than
+#                its card. `first_seen_at` is our lower bound and must never be
+#                printed as a posted date. Its `first_url` is its OWN url, or
+#                `reposted` + `long_open` would make the report `likely` and the
+#                email would carry a first_seen-derived "seen for 40 days".
+#
+# `utc_now` is patched where it is BOUND (`app.core.job_search`), so no check
+# here can straddle a real UTC midnight, and restored in `finally`.
+from app.core.job_search import CachedScore as _OdCached  # noqa: E402
+from app.llm.client import get_llm_client as _od_get_llm  # noqa: E402
+
+_OD_NOW = _dtc(2026, 9, 21, 6, 43)
+_OD_PENT = "https://il.linkedin.com/jobs/view/4462220726"
+_OD_PENT_FIRST = "https://il.linkedin.com/jobs/view/4464364580"
+_OD_SIM = "https://il.linkedin.com/jobs/view/4370143368"
+_OD_OLD = "https://il.linkedin.com/jobs/view/1000000001"
+_OD_SEEN = "https://il.linkedin.com/jobs/view/1000000002"
+_OD_TEXT = "Python and SQL work on AI systems."
+_OD_FOUR = [
+    ("AI Engineer", "Pentera", "2026-09-20", _OD_PENT),
+    ("AI Engineer", "Similarweb", "2026-09-20", _OD_SIM),
+    ("AI Engineer", "OldCo", "2026-09-18", _OD_OLD),
+    ("AI Engineer", "SeenCo", "2026-09-20", _OD_SEEN),
+]
+
+
+class _OlderBoard:
+    """Cards as LinkedIn writes them. `desc=""` makes the fresh branch FETCH,
+    which (f) needs: with an inline description a cached run and a fresh run
+    both fetch nothing, and "zero fetches" would pass by never firing."""
+
+    name = "fake_older"
+
+    def __init__(self, cards: list, desc: str = _OD_TEXT) -> None:
+        self.cards = cards
+        self.desc = desc
+        self.fetches = 0
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source=self.name, title=t, company=c, url=u, posted_at=p, description=self.desc)
+            for t, c, p, u in self.cards
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        self.fetches += 1
+        return _OD_TEXT
+
+
+def _od_sightings(keys):  # noqa: ANN001
+    return {
+        ("fake_older", content_key("AI Engineer", "Pentera")): _GhSighting(
+            first_seen_at=_OD_NOW - _gh_td(days=13), first_url=_OD_PENT_FIRST, seen_count=2,
+            first_posted_at="2026-09-07",
+        ),
+        ("fake_older", content_key("AI Engineer", "SeenCo")): _GhSighting(
+            first_seen_at=_OD_NOW - _gh_td(days=40), first_url=_OD_SEEN, seen_count=30,
+            first_posted_at="",
+        ),
+    }
+
+
+_od_stub = _od_get_llm()
+_od_orig_cjson = _od_stub.complete_json
+_od_llm: list[str] = []
+
+
+def _od_counting_cjson(system, user):  # noqa: ANN001
+    _od_llm.append(system[:40].upper())
+    return _od_orig_cjson(system, user)
+
+
+def _od_search(cards: list, sightings_fn, *, limit: int = 10, cache=None, desc: str = _OD_TEXT):  # noqa: ANN001, ANN202
+    board = _OlderBoard(cards, desc)
+    _PROV["fake_older"] = board
+    try:
+        res = _fan_search(
+            resume,
+            _AlertCtx(job_title="AI Engineer", sources=["fake_older"], max_age_days=1, limit=limit),
+            cache=cache, sightings_fn=sightings_fn,
+        )
+    finally:
+        _PROV.pop("fake_older", None)
+    return res, board
+
+
+def _od_bodies(m) -> tuple[str, str]:  # noqa: ANN001
+    _ctx = _AlertCtx(job_title="AI Engineer")
+    return build_alert_email([m], _ctx)[1], build_alert_email_html([m], _ctx)
+
+
+_od_real_now = _gh_js_mod.utc_now
+_gh_js_mod.utc_now = lambda: _OD_NOW
+try:
+    _od_res, _ = _od_search(_OD_FOUR, _od_sightings)
+    _od_by = {m.url: m for m in _od_res.matches}
+    # Bound before the checks, never by a walrus inside them (see 14c).
+    _od_p, _od_s, _od_o, _od_n = (
+        _od_by.get(_OD_PENT) or JobMatch(), _od_by.get(_OD_SIM) or JobMatch(),
+        _od_by.get(_OD_OLD) or JobMatch(), _od_by.get(_OD_SEEN) or JobMatch(),
+    )
+    _od_pt, _od_ph = _od_bodies(_od_p)
+    _od_st, _od_sh = _od_bodies(_od_s)
+    _od_ot, _od_oh = _od_bodies(_od_o)
+    _od_nt, _od_nh = _od_bodies(_od_n)
+    check(
+        "older date (a): a relisted role prints its EARLIEST board date in both bodies — never the relist's",
+        len(_od_res.matches) == 4
+        and _od_p.stale is True and _od_p.first_posted_at == "2026-09-07"
+        and _od_p.posted_at == "2026-09-20"
+        and "(older posting — 2026-09-07)" in _od_pt
+        and "Older posting &#183; 2026-09-07" in _od_ph
+        and "2026-09-20" not in _od_pt and "2026-09-20" not in _od_ph
+        # one weak `reposted` (13 days is under 30) is not likely: no ghost chip
+        and "relisted" not in _od_pt.lower() and "relisted" not in _od_ph.lower(),
+        f"stale={_od_p.stale} first={_od_p.first_posted_at!r} text={_od_pt.splitlines()[2:3]}",
+    )
+    check(
+        "older date (b): a card dated YESTERDAY in a 1-day window is not older — no chip in either body",
+        _od_s.stale is False and _od_s.first_posted_at == "2026-09-20"
+        and "older posting" not in _od_st.lower() and "older posting" not in _od_sh.lower(),
+        f"stale={_od_s.stale} first={_od_s.first_posted_at!r}",
+    )
+    check(
+        "older date (c): a genuinely old posting is still older, with its own date (the control)",
+        _od_o.stale is True and _od_o.first_posted_at == "2026-09-18"
+        and "(older posting — 2026-09-18)" in _od_ot
+        and "Older posting &#183; 2026-09-18" in _od_oh,
+        f"stale={_od_o.stale} first={_od_o.first_posted_at!r}",
+    )
+    check(
+        "older date (d): a first_seen-only role gets no chip, no 'seen for' and no first_seen date",
+        _od_n.stale is False and _od_n.first_posted_at == "2026-09-20"
+        and "older posting" not in _od_nt.lower() and "older posting" not in _od_nh.lower()
+        and "seen for" not in _od_nt.lower() and "seen for" not in _od_nh.lower()
+        # 06:43 minus 40 days: the only date `first_seen_at` could have printed
+        and "2026-08-12" not in _od_nt and "2026-08-12" not in _od_nh,
+        f"stale={_od_n.stale} first={_od_n.first_posted_at!r}",
+    )
+
+    # (e) LABEL ONLY, NEVER SELECTION. `search_jobs` re-sorts matches by
+    # `overall`, so with a limit at or above the pool every card is "selected"
+    # whether or not the sighting touched selection, and the check would pass by
+    # never firing. Hence limit=1 with the sighted card competing for the ONE
+    # slot: a builder who read the sightings before selection and demoted a
+    # relisted role would hand the slot to Beta, in the sighted run only.
+    _od_two = [("AI Engineer", "Pentera", "2026-09-20", _OD_PENT), ("AI Engineer", "Beta", "2026-09-20", _OD_SIM)]
+    _od_e1, _ = _od_search(_od_two, _od_sightings, limit=1)
+    _od_e2, _ = _od_search(_od_two, lambda keys: {}, limit=1)
+    check(
+        "older date (e): the earlier board date only LABELS — the same posting takes the one slot with or without it",
+        [m.url for m in _od_e1.matches] == [_OD_PENT]
+        and [m.url for m in _od_e2.matches] == [_OD_PENT]
+        and _od_e1.matches[0].stale is True and _od_e2.matches[0].stale is False,
+        f"sighted={[(m.url, m.stale) for m in _od_e1.matches]} "
+        f"unsighted={[(m.url, m.stale) for m in _od_e2.matches]}",
+    )
+
+    # (f) BOTH `_build_match` branches. The cache branch skips the fetch and the
+    # model, so it is the one that gets forgotten; the fetch and the JD_FIT call
+    # are COUNTED so "the cached branch ran" is observed, not inferred.
+    _od_one = [("AI Engineer", "Pentera", "2026-09-20", _OD_PENT)]
+
+    def _od_cache(posted_at: str) -> dict:
+        return {_OD_PENT: _OdCached(
+            jd_text=_OD_TEXT, overall=80.0, keyword_coverage=70.0, fit_score=90.0,
+            top_matched=("Python",), top_gaps=(), title="AI Engineer", company="Pentera",
+            location="Tel Aviv", posted_at=posted_at, logo_url="", is_full_match=True,
+        )}
+
+    _od_stub.complete_json = _od_counting_cjson
+    try:
+        _od_llm.clear()
+        _od_fc, _od_bc = _od_search(_od_one, _od_sightings, cache=_od_cache("2026-09-20"), desc="")
+        _od_fc_jd = len([t for t in _od_llm if "JD_FIT" in t])
+        _od_llm.clear()
+        _od_ff, _od_bf = _od_search(_od_one, _od_sightings, desc="")
+        _od_ff_jd = len([t for t in _od_llm if "JD_FIT" in t])
+        # the card omits its date; the cached row's date is the card date then
+        _od_fv, _ = _od_search(
+            [("AI Engineer", "Pentera", "", _OD_PENT)], _od_sightings,
+            cache=_od_cache("2026-09-20"), desc="",
+        )
+    finally:
+        _od_stub.complete_json = _od_orig_cjson
+    _od_mc = _od_fc.matches[0] if _od_fc.matches else JobMatch()
+    _od_mf = _od_ff.matches[0] if _od_ff.matches else JobMatch()
+    _od_mv = _od_fv.matches[0] if _od_fv.matches else JobMatch()
+    check(
+        "older date (f): the CACHED branch relabels too (0 fetches, 0 JD_FIT), exactly as the fresh one does",
+        _od_bc.fetches == 0 and _od_fc_jd == 0
+        and _od_mc.stale is True and _od_mc.first_posted_at == "2026-09-07"
+        and _od_bf.fetches == 1 and _od_ff_jd == 1
+        and _od_mf.stale is True and _od_mf.first_posted_at == "2026-09-07",
+        f"cached fetches={_od_bc.fetches} jd={_od_fc_jd} stale={_od_mc.stale} "
+        f"first={_od_mc.first_posted_at!r} | fresh fetches={_od_bf.fetches} jd={_od_ff_jd} "
+        f"stale={_od_mf.stale} first={_od_mf.first_posted_at!r}",
+    )
+    check(
+        "older date (f): an undated card falls back to the cached row's date, and still relabels",
+        _od_mv.posted_at == "2026-09-20" and _od_mv.first_posted_at == "2026-09-07"
+        and _od_mv.stale is True,
+        f"posted={_od_mv.posted_at!r} first={_od_mv.first_posted_at!r} stale={_od_mv.stale}",
+    )
+finally:
+    _gh_js_mod.utc_now = _od_real_now
+    _PROV.pop("fake_older", None)
+
 # 21b. Two-tier score cache (PLAN 12.4): a fresh history row scored against
 # the SAME resume rebuilds the match with ZERO LLM calls and ZERO fetches
 # (tier 1); a fresh row for a DIFFERENT resume still spares the description
@@ -10313,8 +10745,10 @@ _GH_T0 = _gh_dt(2026, 6, 1, 9, 0, 0)
 _GH_KEY = ("linkedin", _gh_ckey("Backend Engineer", "SightCo"))
 
 
-def _gh_match(url: str, title: str = "Backend Engineer", company: str = "SightCo") -> JobMatch:
-    return JobMatch(title=title, company=company, url=url, source="linkedin")
+def _gh_match(
+    url: str, title: str = "Backend Engineer", company: str = "SightCo", posted_at: str = ""
+) -> JobMatch:
+    return JobMatch(title=title, company=company, url=url, source="linkedin", posted_at=posted_at)
 
 
 try:
@@ -10376,7 +10810,9 @@ try:
     # seen_count reset, and relist_count — which is real history and the point of
     # the table — goes UP rather than being cleared with them.
     _gh_late = _GH_T0 + _gh_td(days=1 + _GH_GAP + 2)
-    _gh_record_sightings(_gh_db, [_gh_match("https://sight.test/9")], _gh_late)
+    # Dated, so the stale-READ check below has a real `first_posted_at` to reset:
+    # an undated row would make "reads back as ''" pass by never firing.
+    _gh_record_sightings(_gh_db, [_gh_match("https://sight.test/9", posted_at="2026-06-20")], _gh_late)
     _gh_db.expire_all()
     _gh_row = _gh_db.execute(
         _gh_sel(_GhSightRow).where(_GhSightRow.content_key == _GH_KEY[1])
@@ -10399,11 +10835,83 @@ try:
     # relist_count; first_seen_at becomes None — unknown, never `now`, because the
     # row for this run has not been written yet.
     _gh_stale = _gh_load_sightings(_gh_db, [_GH_KEY], now=_gh_late + _gh_td(days=_GH_GAP + 1))[_GH_KEY]
+    # The live read of the same row is the twin: the date IS there to be reset.
+    _gh_live9 = _gh_load_sightings(_gh_db, [_GH_KEY], now=_gh_late)[_GH_KEY]
     check(
         "sightings: the reset is applied on READ, so a stale row reports unknown rather than zero",
         _gh_stale.first_seen_at is None and _gh_stale.first_url == ""
-        and _gh_stale.seen_count == 0 and _gh_stale.relist_count == 1,
-        str(_gh_stale),
+        and _gh_stale.seen_count == 0 and _gh_stale.relist_count == 1
+        # `first_posted_at` is a PRINTED date: the dead run's must never reach the email
+        and _gh_stale.first_posted_at == "" and _gh_live9.first_posted_at == "2026-06-20",
+        f"stale={_gh_stale} live={_gh_live9.first_posted_at!r}",
+    )
+
+    # `first_posted_at` IS A PRINTED DATE NOW (2026-09-21): the alert email's
+    # "older posting — D" for a relisted role. Within one run it keeps the
+    # EARLIEST board date, and `load_sightings` hands it to the search. Separate
+    # keys, so the continuity checks' row above is untouched.
+    _GH_PKEY = ("linkedin", _gh_ckey("Backend Engineer", "PostedCo"))
+
+    def _gh_pmatch(url: str, posted_at: str, company: str = "PostedCo") -> JobMatch:
+        return _gh_match(url, company=company, posted_at=posted_at)
+
+    _gh_record_sightings(_gh_db, [_gh_pmatch("https://posted.test/1", "2026-05-30")], _GH_T0)
+    _gh_record_sightings(
+        _gh_db, [_gh_pmatch("https://posted.test/2", "2026-05-31")], _GH_T0 + _gh_td(hours=1)
+    )
+    _gh_p_mid = _gh_load_sightings(_gh_db, [_GH_PKEY], now=_GH_T0 + _gh_td(hours=1))[_GH_PKEY]
+    _gh_record_sightings(
+        _gh_db, [_gh_pmatch("https://posted.test/3", "2026-05-29")], _GH_T0 + _gh_td(hours=2)
+    )
+    _gh_p_low = _gh_load_sightings(_gh_db, [_GH_PKEY], now=_GH_T0 + _gh_td(hours=2))[_GH_PKEY]
+    check(
+        "sightings: first_posted_at keeps the EARLIEST board date of the run, and load_sightings returns it",
+        _gh_p_mid.first_posted_at == "2026-05-30" and _gh_p_low.first_posted_at == "2026-05-29",
+        f"after a later date={_gh_p_mid.first_posted_at!r} after an earlier one={_gh_p_low.first_posted_at!r}",
+    )
+    # INSTANTS, NEVER STRINGS. Greenhouse's "2026-06-02T03:17:15-04:00" is 07:17
+    # UTC — later than the stored 05:00Z — yet it sorts BEFORE it as a string,
+    # which is what the old lexicographic min compared. Beside it, the two
+    # values that must never displace a date: an unreadable one, and none.
+    _gh_record_sightings(
+        _gh_db, [_gh_pmatch("https://posted.test/tz1", "2026-06-02T05:00:00Z", "PostedTzCo")], _GH_T0
+    )
+    _gh_record_sightings(
+        _gh_db, [_gh_pmatch("https://posted.test/tz2", "2026-06-02T03:17:15-04:00", "PostedTzCo")],
+        _GH_T0 + _gh_td(hours=1),
+    )
+    _gh_record_sightings(
+        _gh_db, [_gh_pmatch("https://posted.test/j1", "2026-06-01", "PostedJunkCo")], _GH_T0
+    )
+    _gh_record_sightings(
+        _gh_db, [_gh_pmatch("https://posted.test/j2", "junk", "PostedJunkCo")], _GH_T0 + _gh_td(hours=1)
+    )
+    _gh_record_sightings(
+        _gh_db, [_gh_pmatch("https://posted.test/n1", "2026-06-01", "PostedEmptyCo")], _GH_T0
+    )
+    _gh_record_sightings(
+        _gh_db, [_gh_pmatch("https://posted.test/n2", "", "PostedEmptyCo")], _GH_T0 + _gh_td(hours=1)
+    )
+    _gh_record_sightings(
+        _gh_db, [_gh_pmatch("https://posted.test/u1", "", "PostedNoneCo")], _GH_T0
+    )
+    _gh_db.expire_all()
+    _gh_posted_rows = {
+        r.content_key: r.first_posted_at
+        for r in _gh_db.execute(_gh_sel(_GhSightRow)).scalars().all()
+    }
+    _gh_none_read = _gh_load_sightings(
+        _gh_db, [("linkedin", _gh_ckey("Backend Engineer", "PostedNoneCo"))], now=_GH_T0
+    ).get(("linkedin", _gh_ckey("Backend Engineer", "PostedNoneCo")))
+    check(
+        "sightings: first_posted_at is min-merged as INSTANTS — a later instant that sorts lower as a "
+        "string, junk, and an empty date never displace it, and an undated posting stores ''",
+        _gh_posted_rows.get(_gh_ckey("Backend Engineer", "PostedTzCo")) == "2026-06-02T05:00:00Z"
+        and _gh_posted_rows.get(_gh_ckey("Backend Engineer", "PostedJunkCo")) == "2026-06-01"
+        and _gh_posted_rows.get(_gh_ckey("Backend Engineer", "PostedEmptyCo")) == "2026-06-01"
+        and _gh_posted_rows.get(_gh_ckey("Backend Engineer", "PostedNoneCo")) == ""
+        and _gh_none_read is not None and _gh_none_read.first_posted_at == "",
+        str({k: v for k, v in _gh_posted_rows.items() if k.endswith("co") and "posted" in k}),
     )
 
     # THE 180-DAY PRUNE keeps growth bounded without a second cron to forget

@@ -133,15 +133,36 @@ export function NewBadge({ postedAt }: { postedAt?: string }) {
   );
 }
 
-/** Old-but-relevant backfill (PLAN 15.6): the posting is outside the search's
- * "Posted within" window but its title matches the keywords — show it with its
- * post date so it's never mistaken for a fresh listing. */
-export function StaleBadge({ stale, postedAt }: { stale?: boolean; postedAt?: string }) {
+/** The posting is outside the search's "Posted within" window — by its own
+ * card date (old-but-relevant backfill, PLAN 15.6), or because the role was
+ * first listed earlier than this listing says — shown with the EARLIEST date a
+ * board stated for it, so it is never mistaken for a fresh listing.
+ *
+ * "First posted" when that date is earlier than this listing's own "Posted"
+ * line. Not "earlier listing": for Greenhouse the earlier date is the same
+ * listing's `first_published`, so that wording would be false there. */
+export function StaleBadge({
+  stale,
+  postedAt,
+  firstPostedAt,
+}: {
+  stale?: boolean;
+  postedAt?: string;
+  firstPostedAt?: string;
+}) {
   const { t } = useTranslation("jobs");
-  if (!stale || !postedAt) return null;
+  const shown = firstPostedAt || postedAt; // an old backend sends no field: today's behaviour
+  if (!stale || !shown) return null;
+  // The backend returns the card's own string verbatim unless it found an
+  // EARLIER board date (ghost_signals.earliest_board_date), so a different
+  // string IS an earlier date. No date comparison lives here: one matcher,
+  // one answer.
+  const earlier = !!firstPostedAt && firstPostedAt !== postedAt;
   return (
-    <Badge tone="partial" className="shrink-0" title={postedAt}>
-      {t("card.older", { when: postedAgo(postedAt, t) })}
+    <Badge tone="partial" className="shrink-0" title={shown}>
+      {earlier
+        ? t("card.olderFirstPosted", { when: postedAgo(shown, t) })
+        : t("card.older", { when: postedAgo(shown, t) })}
     </Badge>
   );
 }
@@ -551,21 +572,28 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
             <p className="min-w-0 max-w-full truncate font-semibold text-ink">
               {m.title || t("card.untitled")}
             </p>
-            <NewBadge postedAt={m.posted_at} />
-            {/* NEVER TWO AGE CHIPS. A `long_open` ghost line and the "Older ·
-                posted X" badge make the same claim — this posting is old — and
-                drawing both has the card arguing with itself about which number
-                to believe. The ghost line wins: it counts from the ORIGINAL
-                publish date, or from our own first sighting, while StaleBadge
-                counts from `posted_at`, which a board rewrites every time the
-                listing is refreshed. This is the kind of line a later edit
-                silently reinstates, so note the two wrong ways to write it: an
-                unconditional `<StaleBadge>` puts both back, and gating on
-                `m.ghost` instead deletes the age from every card carrying a
+            {/* "New" never sits beside "Older", and it reads the EARLIEST board
+                date: a role relisted yesterday, or a Greenhouse role touched
+                yesterday but first published last month, is not new at any
+                "Posted within" setting. */}
+            {!m.stale && <NewBadge postedAt={m.first_posted_at || m.posted_at} />}
+            {/* NEVER TWO AGE CHIPS. A `long_open` ghost line and the "Older"
+                badge make the same claim — this posting is old — and drawing
+                both has the card arguing with itself about which number to
+                believe. StaleBadge counts from the earliest BOARD-STATED date
+                (`first_posted_at`), not the listing's rewritable `posted_at`,
+                but the ghost line still wins because it also carries the
+                suspicion — even when its first_seen basis is LATER than
+                `first_posted_at` (a known gap: long_open does not read that
+                date yet). The alert email follows the same rule
+                (`alerts._older_chip_date`). This is the kind of line a later
+                edit silently reinstates, so note the two wrong ways to write
+                it: an unconditional `<StaleBadge>` puts both back, and gating
+                on `m.ghost` instead deletes the age from every card carrying a
                 signal we chose NOT to draw. The gate is `ghostShown`, the same
                 value `GhostNote` renders — derived, never restated. */}
             {ghostShown?.kind !== "long_open" && (
-              <StaleBadge stale={m.stale} postedAt={m.posted_at} />
+              <StaleBadge stale={m.stale} postedAt={m.posted_at} firstPostedAt={m.first_posted_at} />
             )}
             {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
             {m.salary?.raw && (

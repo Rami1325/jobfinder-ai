@@ -28,7 +28,13 @@ from app.core.providers.linkedin import (  # noqa: F401 - re-exports
     parse_search_results,
 )
 from app.core.geo_restriction import detect_geo_restriction
-from app.core.ghost_signals import Sighting, detect_ghost_signals, parse_board_date
+from app.core.ghost_signals import (
+    Sighting,
+    board_date_is_day,
+    detect_ghost_signals,
+    earliest_board_date,
+    parse_board_date,
+)
 # The module, not the function: `_low_pay` calls `pay_market.high_pay_market`
 # through it, so a spy on the module attribute sees the real call path.
 from app.core import pay_market
@@ -219,8 +225,10 @@ def utc_now() -> datetime:
 
 
 def _posted_datetime(posted_at: str) -> datetime | None:
-    """Lenient parse of a JobHit.posted_at ISO string ('' / junk → None).
-    Timezone info is dropped — freshness only needs day granularity.
+    """Lenient parse of a JobHit.posted_at ISO string ('' / junk → None),
+    delegated to `parse_board_date`, which converts an offset to UTC before
+    dropping it. A date-only string comes back as that day's midnight but
+    names a WHOLE day; its window test lives in `posted_within`, never here.
 
     MOVED to `app.core.ghost_signals.parse_board_date` (Phase 28); this name
     stays as a delegating alias because the tiering above, the smoke test and
@@ -238,19 +246,39 @@ def _posted_datetime(posted_at: str) -> datetime | None:
     return parse_board_date(posted_at)
 
 
+def posted_within(posted_at: str, max_age_days: int, now: datetime) -> bool:
+    """THE window comparison, read by the tiering, `freshest_first` and the
+    relabel in `_build_match` alike — one rule, so selection and the "Older"
+    label can never disagree about the same string.
+
+    A date-only board string ("2026-09-20", LinkedIn's card date) names a
+    whole DAY, so it is inside the window when any moment of that day is: its
+    day is on or after the cutoff's day. Compared as a midnight it was stale
+    at 06:43 the next morning, and a 1-day alert called every posting LinkedIn
+    had just returned for the last 24 hours "older posting — yesterday".
+    A timestamp still compares to the minute; an explicit `T00:00` is an
+    instant (detection is by grammar, `ghost_signals.board_date_is_day`).
+    Undated or unreadable is kept, never hidden, and 0 means any age."""
+    if max_age_days <= 0:
+        return True
+    dt = _posted_datetime(posted_at)
+    if dt is None:
+        return True  # unknown is kept, never hidden
+    cutoff = now - timedelta(days=max_age_days)
+    if board_date_is_day(posted_at):
+        return dt.date() >= cutoff.date()  # the day overlaps the window
+    return dt >= cutoff  # an instant: to the minute, as before
+
+
 def freshest_first(hits: list[JobHit], max_age_days: int, now: datetime | None = None) -> list[JobHit]:
     """Drop hits posted before the cutoff and order the rest newest-first, so
     the per-hit fetch/scoring budget is spent on fresh postings. Hits with no
     parseable date are kept (missing data shouldn't hide a job) but sort last.
+    The window test is `posted_within`, the same one the tiering reads.
     Pure given `now`; pinned by the smoke test."""
     if max_age_days > 0:
-        cutoff = (now or utc_now()) - timedelta(days=max_age_days)
-        kept = []
-        for hit in hits:
-            dt = _posted_datetime(hit.posted_at)
-            if dt is None or dt >= cutoff:
-                kept.append(hit)
-        hits = kept
+        now = now or utc_now()
+        hits = [h for h in hits if posted_within(h.posted_at, max_age_days, now)]
     # ISO strings order lexicographically; "" (unknown) is smallest, so with
     # reverse=True the undated hits land at the end, newest first before them.
     return sorted(hits, key=lambda h: h.posted_at, reverse=True)
@@ -353,16 +381,17 @@ def tiered_by_source(
     Stale + irrelevant hits are dropped, as the age filter always did; with
     max_age_days == 0 nothing is stale. Hits with no parseable date count as
     fresh (missing data shouldn't hide a job) but sort last within their tier.
+    Fresh is `posted_within`, so a date-only card counts its WHOLE day: a card
+    dated on the cutoff's day is fresh.
     Pure given `now`; pinned by the smoke test."""
     tiers: list[dict[str, list[JobHit]]] = [{}, {}, {}]
-    cutoff = (now or utc_now()) - timedelta(days=max_age_days) if max_age_days > 0 else None
+    now = now or utc_now()
     for name, hits in hits_by_source.items():
         # Same lexicographic newest-first trick as freshest_first: "" (unknown
         # date) is smallest, so reverse=True puts undated hits last.
         for hit in sorted(hits, key=lambda h: h.posted_at, reverse=True):
             relevant = title_relevance(hit.title, query_titles) >= RELEVANT_MIN
-            dt = _posted_datetime(hit.posted_at)
-            fresh = cutoff is None or dt is None or dt >= cutoff
+            fresh = posted_within(hit.posted_at, max_age_days, now)
             if fresh:
                 tier = 0 if relevant else 2
             elif relevant:
@@ -681,10 +710,17 @@ def search_jobs(
             "Check 'Customize search' and adjust the keywords, location, or 'Posted within'."
         )
 
+    # One instant for the whole run: the tiering, the "Older" relabel in
+    # `_build_match` and the ghost age all read it, so a posting cannot be fresh
+    # to selection and stale to its label, and hits scored a minute apart must
+    # not land on opposite sides of the 60-day threshold and disagree about the
+    # same market.
+    now = utc_now()
+
     # Relevance-first selection (PLAN 15.6): budget goes to title-relevant
     # postings first, then old-but-relevant backfill (marked stale), then
     # description-only matches. Old + irrelevant stays dropped.
-    tiers = tiered_by_source(hits_by_source, ctx.job_titles, ctx.max_age_days)
+    tiers = tiered_by_source(hits_by_source, ctx.job_titles, ctx.max_age_days, now=now)
     # The pay-market filter (Phase 30 J) runs HERE, BEFORE selection, and the
     # position is the design. LinkedIn's "European Union" location returns
     # postings in every member state, and `_low_pay` needs only the card's
@@ -763,9 +799,11 @@ def search_jobs(
     # sighting makes the classifier abstain, which is the safe direction; a
     # shared one makes it confidently wrong.
     #
-    # One instant for the whole run: hits scored a minute apart must not land on
-    # opposite sides of the 60-day threshold and disagree about the same market.
-    now = utc_now()
+    # LABEL ONLY, NEVER SELECTION: the sighting's `first_posted_at` can mark a
+    # selected posting "older" (see `_build_match`), but it is read here, after
+    # `select_hits`, so it can never move a posting between tiers. Its precision
+    # is unmeasured — two concurrent openings with one title at one company
+    # share a content_key — and a soft signal only badges, never demotes.
     sightings: dict[tuple[str, str], Sighting] = {}
     if sightings_fn is not None:
         keys = sorted({(h.source, ck) for h in hits if (ck := content_key(h.title, h.company))})
@@ -871,6 +909,25 @@ def search_jobs(
         match: JobMatch | None = None
         geo: GeoRestriction | None = None
         ghost: GhostReport | None = None
+        # THE "OLDER" LABEL, computed ONCE, above both branches, because the
+        # cache branch is the one that gets forgotten (it does no work, so
+        # nothing in it looks like it needs a date).
+        #
+        # `first_posted_at` is the earliest date a BOARD stated for this role:
+        # this card, Greenhouse's `first_published`, or an earlier listing of
+        # the same source + title|company in the current sighting run — never
+        # `first_seen_at`, our own lower bound. A relisted role keeps its
+        # original date, so the email says "older posting — 2026-09-07" rather
+        # than the relist's "2026-09-20".
+        #
+        # `hit.stale or …` is monotone: the relabel can only ADD the flag the
+        # tiering set, never clear it, and it runs after selection, so it moves
+        # nothing between tiers. With max_age_days=0 `posted_within` is always
+        # True, and an undated role (`""`) is never labelled older.
+        full_hit = cached is not None and cached.is_full_match
+        card_date = hit.posted_at or (cached.posted_at if full_hit else "")
+        first_posted_at = earliest_board_date(card_date, hit.raw, sighting)
+        stale = hit.stale or not posted_within(first_posted_at, ctx.max_age_days, now)
         if cached is not None and cached.is_full_match:
             # Tier 1 (PLAN 12.4): this exact posting was scored against this
             # exact resume within the TTL — rebuild the match from the history
@@ -914,14 +971,15 @@ def search_jobs(
                 jd_text=cached.jd_text,
                 url=hit.url,
                 location=hit.location or cached.location,
-                posted_at=hit.posted_at or cached.posted_at,
+                posted_at=card_date,
+                first_posted_at=first_posted_at,
                 source=hit.source,
                 logo_url=hit.logo_url or cached.logo_url,
                 also_on=[AlsoOn(**a) for a in hit.also_on],
                 salary=extract_salary(cached.jd_text),
                 geo_restriction=geo,
                 ghost=ghost,
-                stale=hit.stale,
+                stale=stale,
             )
         else:
             # Tier 2: a fresh row for a DIFFERENT resume still spares the
@@ -959,14 +1017,15 @@ def search_jobs(
                     jd_text=jd_text,
                     url=hit.url,
                     location=hit.location,
-                    posted_at=hit.posted_at,
+                    posted_at=card_date,
+                    first_posted_at=first_posted_at,
                     source=hit.source,
                     logo_url=hit.logo_url,
                     also_on=[AlsoOn(**a) for a in hit.also_on],
                     salary=extract_salary(jd_text),
                     geo_restriction=geo,
                     ghost=ghost,
-                    stale=hit.stale,
+                    stale=stale,
                 )
         return match, geo, ghost
 

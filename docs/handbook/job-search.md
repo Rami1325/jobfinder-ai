@@ -70,3 +70,49 @@
 - **Two prose traps, one after the other, both the "a grep cannot tell a promise from a call" shape** this repo already records for `resume_review` and `keyword_guard`. `ghost_signals`' own no-clock pin is a SUBSTRING check, so a new docstring that spelled out the forbidden call tripped it — the docstring now describes it as "an aware UTC clock" and says why. And the new pin on `job_search` had to become **AST**-based: that module's docstring says "never `datetime.now()` inside" in prose, so the substring version reported the promise as the violation.
 - **`jobmaster.parse_jobmaster_results` was the last mixed frame** and is fixed for consistency, not accuracy: a Hebrew relative date is coarse enough that three hours never moves "לפני 3 ימים" to another day, but the `posted_at` it mints is compared against `job_search`'s UTC cutoffs, and one module keeping its own frame is how this bug happened in the first place.
 - **`date.today()` in `dates.py` and `section_order.py` is CORRECT and must not be "fixed".** Resume dates are wall-clock calendar dates with no timezone at all; converting them to UTC would shift a start month for anyone east of Greenwich. The rule is one frame for *machine* timestamps, not one frame for everything.
+
+### A day is not a midnight — the "Older posting" date (2026-09-21)
+
+The owner's report: the alert email's older-posting tag printed "today's date" (in fact the listing's own, yesterday's) instead of the date the role was first posted. Two causes, both fixed; each is smoke-pinned in both directions (sections 14b-4-bis, 14c, 15c, 21a-bis, 21d).
+
+**LinkedIn's card date is a DAY ("2026-09-20"), and it was compared as a midnight against a to-the-minute cutoff.**
+- With "posted within 1 day" and the cron at about 06:43 UTC, every posting LinkedIn itself returned for the last 24 hours (`f_TPR=r86400`) but dated yesterday was marked stale.
+- The email then called it "older posting — <yesterday>", which the owner read as an old job stamped with the wrong date.
+- It was also a selection bug: yesterday's loosely-matched cards were DROPPED, and yesterday's relevant ones were tier-1 backfill. PLAN 15.6's note that LinkedIn's older postings "never reach the stale pool" was false for exactly this reason.
+- `job_search.posted_within` is now THE window comparison, read by the tiering, `freshest_first` and the relabel alike.
+- A date-only string (`ghost_signals.board_date_is_day`, which shares its one parse with `parse_board_date`) is fresh when its day is on or after the cutoff's day. Timestamps still compare to the minute, and an explicit `T00:00` is an instant: detection is by grammar, never by value.
+- It never drops an in-window posting when the board's day is UTC or east of it (Israel). A western-zone day can still be dropped by up to its offset, less than before. It errs lenient by at most about a day, the direction undated postings already take.
+- The selection change, stated for whoever reads an alert morning's numbers: a title-relevant card dated on the cutoff day moves from tier 1 to tier 0, and a loosely-matched one from dropped to tier 2. A morning that filled fewer than `limit` slots can now fill more, at up to that many extra JD_FIT calls, inside the per-search cap; the alert's monthly charge is per morning and unchanged. The "none posted in the last N days" raise gets rarer. JobMaster's day phrases ("אתמול") gain the same fix; timestamp boards (Comeet, Greenhouse, Drushim, JobMaster's hour phrases) are unchanged.
+- `search_jobs` takes ONE `now` before the tiering, so the tiering, the relabel and the ghost age share one instant.
+
+**The chip prints the earliest BOARD-STATED date we hold for the role, never the relist's and never our own sighting.**
+- `ghost_signals.earliest_board_date` takes the minimum, as instants, over three sources: the card, `posting_sightings.first_posted_at` (the earliest card date any listing of this source + title|company carried in the current run), and Greenhouse `first_published`.
+- It returns the winner verbatim (the card wins ties), so the card can tell "earlier" by string identity and TypeScript never compares dates.
+- It never reads `first_seen_at`, our lower bound, which stays "Seen for N days".
+- `first_posted_at` was write-only until this change. Its comment falsely claimed it fed the `first_published` basis, and it was min-merged as strings. It is now min-merged as instants through `parse_board_date` (`sightings._replaces`), because it is a printed date, and `load_sightings` resets it with the rest of a stale run.
+- `record_sightings` still writes it from the CARD date (`match.posted_at`), never from `match.first_posted_at`.
+- Measured 2026-09-21 on 11 logged-out LinkedIn pages: no JSON-LD, `datePosted`, `listedAt` or "repost" anywhere. A repost's original date exists only in our own sightings. Listing ids looking sequential is an inference and is never used.
+
+**Label only, never selection.**
+- Sightings are read after selection, so a role's earlier date sets `stale` and `first_posted_at` on the match but never moves a posting between tiers (pinned with `limit=1`, the sighted card competing for the one slot).
+- The relabel is computed once, above both `_build_match` branches, because the cache branch is the one that gets forgotten. `hit.stale or …` makes it monotone.
+- Its precision is unmeasured. Two concurrent openings with one title at one company share a content_key, and the newer one is labelled with the older one's date.
+- The reported case (Pentera) had both listings live at once, so a relist and two openings are indistinguishable, and a same-URL rule would have missed it.
+- `max_age_days=0` sets no stale. "New" does read the earliest date at any window, so a relisted role or an old Greenhouse role is never "New".
+
+**Never two age chips, on both surfaces.**
+- A shown `long_open` ghost is the age chip in the email exactly as on the card: `alerts._older_chip_date`, with `_ghost_shown` mirroring `strongestGhostSignal`, known kinds only.
+- That also changed one email behaviour to match the card: a report whose strongest signal is an unknown kind now labels the next known one instead of printing nothing.
+- "New" is hidden when the match is stale.
+- The card says "first posted" when the date is earlier than this listing's own "Posted" line. "Earlier listing" was rejected because it is false for Greenhouse, where `first_published` is the same listing's publish date.
+
+**Known gaps, deliberately not fixed here:**
+- A relisted role seen for 30 days or more fires `reposted` + `long_open` (first_seen). That report is `likely`, so both surfaces print "Seen for N days" and not the earlier board date. The fix is `long_open` adopting `first_posted_at` as a board basis, which changes the ghost age (PLAN 28.5, thresholds unmeasured).
+- The History tab stores no stale flag and no `first_posted_at`, so it still says "New · Posted yesterday" for a relisted role. The fix is a stored, min-merged `first_posted_at` column on `job_search_hits`, read by `HistoryRow`'s NewBadge. That touches `db/`, so read `data-and-privacy.md` first.
+- A same-board content twin folded into `also_on` in the same run never reaches `record_sightings`, and its date is not read by `earliest_board_date`. The first time both listings appear together, the relist is not labelled.
+- With "any age" (`max_age_days=0`) nothing is "older", by definition.
+- The Jobs page's date sort stays on `posted_at`, which is what the "Posted" line prints.
+
+**Separate defects found, not part of this fix:**
+- LinkedIn's guest search pages hold 10 cards, not 25. `_PAGE_SIZE = 25` with starts (0, 25) never sees rows 11-25; Pentera 4462220726 sat at row 11 of the app's exact r86400 query.
+- Drushim's `Date` is a naive timestamp that `parse_board_date` treats as UTC, and `new Date()` treats as LOCAL in the browser. If it is Israel-local, those postings read up to 3 h young. That direction only keeps postings, and it is unverified.

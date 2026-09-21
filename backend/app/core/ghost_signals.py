@@ -95,7 +95,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 # RAW_MAX is IMPORTED, never restated: `raw` renders inline on a 390px card and
 # the cap is layout-load-bearing, so one number, one place. `_sentence_around`
@@ -134,17 +134,47 @@ class Sighting:
     `first_seen_at` is a LOWER bound and the UI copy must say so: we first saw
     the posting when one of our searches first ran over it, which is not when
     the employer published it. That is the whole reason `basis` exists — see
-    `detect_ghost_signals`."""
+    `detect_ghost_signals`.
+
+    `first_posted_at` is the earliest CARD date any listing of this source +
+    title|company carried in the current run, as the board wrote it. Unlike
+    `first_seen_at` it is BOARD-stated, which is why it may be printed as a
+    date ("older posting — 2026-09-07", via `earliest_board_date`), and why it
+    never feeds `long_open`: the ghost age and its unmeasured thresholds stay
+    on the two bases they were tuned on. "" means unknown."""
 
     first_seen_at: datetime | None = None
     first_url: str = ""
     seen_count: int = 0
     relist_count: int = 0
+    first_posted_at: str = ""
 
 
 # --------------------------------------------------------------------------- #
 # Board dates — THE one parser
 # --------------------------------------------------------------------------- #
+def _read_board_date(value) -> tuple[datetime, bool] | None:  # noqa: ANN001
+    """(naive-UTC datetime, is_whole_day), or None. The ONE parse behind both
+    readers below, so `parse_board_date` and `board_date_is_day` can never
+    disagree about which strings are dates.
+
+    A whole day is detected by GRAMMAR, never by value: `date.fromisoformat`
+    accepts exactly the strings `datetime.fromisoformat` reads as a midnight
+    with no time part ("2026-09-20", "20260920", "2026-W38-7"), so an explicit
+    "2026-09-20T00:00" stays an instant. A value test (`dt.time() == 0`) would
+    turn a board's real midnight timestamp into a whole day."""
+    try:
+        text = value.strip()
+        dt = datetime.fromisoformat(text)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    try:
+        date.fromisoformat(text)  # succeeds ONLY for a date with no time part
+    except ValueError:
+        return _naive(dt), False  # an instant: converted to UTC, exactly as before
+    return dt, True  # a whole day (naive by construction)
+
+
 def parse_board_date(value: str) -> datetime | None:
     """Lenient ISO parse of a board-stated date, tz dropped ("" / junk → None).
 
@@ -166,12 +196,56 @@ def parse_board_date(value: str) -> datetime | None:
     `TypeError`/`AttributeError` are
     caught alongside `ValueError` because the value can come straight out of a
     provider's raw JSON payload, where `first_published` may be `null` or a
-    number — a per-job problem is a VALUE, never an exception."""
-    try:
-        dt = datetime.fromisoformat(value.strip())
-    except (ValueError, TypeError, AttributeError):
-        return None
-    return _naive(dt)
+    number — a per-job problem is a VALUE, never an exception.
+
+    A date-only string ("2026-09-20", LinkedIn's card date) comes back as that
+    day's midnight, which is what the ghost age has always measured from. It
+    NAMES A WHOLE DAY, though, and that is `board_date_is_day`'s business:
+    `job_search.posted_within` is the only place that acts on it."""
+    read = _read_board_date(value)
+    return read[0] if read else None
+
+
+def board_date_is_day(value: str) -> bool:
+    """True when a board date names a whole DAY rather than an instant.
+
+    "2026-09-20" is any moment of the 20th, so comparing its midnight against
+    a to-the-minute cutoff calls a posting from yesterday morning "older" at
+    06:43 today. Read off the same parse as `parse_board_date`; "" / junk /
+    an explicit time are all False."""
+    read = _read_board_date(value)
+    return read is not None and read[1]
+
+
+def earliest_board_date(posted_at: str, raw: dict | None, sighting: Sighting | None) -> str:
+    """The earliest date a BOARD stated for this role, returned VERBATIM, or "".
+
+    Three sources: this card (`posted_at`), Greenhouse's `raw["first_published"]`
+    (the same listing's original publish date, while its `posted_at` is
+    `updated_at`), and the sighting's `first_posted_at` (the earliest card date
+    an earlier listing of the same source + title|company carried in the
+    current run). NEVER `first_seen_at`: that is our own lower bound, not a
+    date any board stated, and printing it as one would attribute to the board
+    a claim it never made.
+
+    Compared as INSTANTS through the one parser, never as strings: a mixed-offset
+    pair orders wrongly lexicographically ("…T04:30-05:00" is 09:30Z and sorts
+    before "…T05:00-04:00", which is 09:00Z). An unparseable candidate is
+    ignored. Ties go to the card (strict `<`, card first), and the winner is
+    returned verbatim, so a caller can tell "the backend found an earlier board
+    date" by string identity with the card and never compares dates itself —
+    one matcher, one answer. Pure, like everything in this module."""
+    candidates = (
+        posted_at or "",
+        str((raw or {}).get("first_published") or ""),
+        sighting.first_posted_at if sighting is not None else "",
+    )
+    best_text, best_dt = "", None
+    for text in candidates:
+        dt = parse_board_date(text) if text else None
+        if dt is not None and (best_dt is None or dt < best_dt):
+            best_text, best_dt = text, dt
+    return best_text
 
 
 def _naive(dt: datetime) -> datetime:

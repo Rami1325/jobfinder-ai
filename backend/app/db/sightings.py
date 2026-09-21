@@ -67,7 +67,7 @@ from sqlalchemy.orm import Session
 # job_search at module level, so this direction is the established one and was
 # re-checked rather than assumed. `search_jobs` stays DB-free by taking a
 # `sightings_fn` callable, so nothing points back here.
-from app.core.ghost_signals import Sighting
+from app.core.ghost_signals import Sighting, parse_board_date
 from app.core.job_search import content_key
 from app.db.models import PostingSighting
 from app.models import JobMatch
@@ -148,7 +148,7 @@ def load_sightings(
     of labour as `history.load_score_cache`, which decides its own freshness TTL
     so that `core` never has to reason about one. A stale row keeps its
     `relist_count` (that history is real and is the point of the table) and
-    loses the three fields that would be FALSE about the run now starting:
+    loses the four fields that would be FALSE about the run now starting:
 
     * `first_seen_at` → None, not `now`. Unknown, never zero — the rule the
       nullable `last_above_min` and `voice_score` columns follow. The row for
@@ -157,6 +157,9 @@ def load_sightings(
       run that ended months ago.
     * `seen_count` → 0. We have not recorded this sighting yet; reporting the
       dead run's 47 would describe a document that does not exist.
+    * `first_posted_at` → "". It is a PRINTED date (the alert email's "older
+      posting — D" and the card's "first posted"), so the dead run's March
+      date would call a role relisted last week an older posting from March.
 
     `relist_count` is reported as STORED and not pre-incremented, for the same
     reason: `record_sightings` may never run (the request can fail after this
@@ -192,6 +195,7 @@ def load_sightings(
                 first_url="",
                 seen_count=0,
                 relist_count=row.relist_count or 0,
+                first_posted_at="",
             )
             continue
         out[(row.source, row.content_key)] = Sighting(
@@ -199,8 +203,30 @@ def load_sightings(
             first_url=row.first_url or "",
             seen_count=row.seen_count or 0,
             relist_count=row.relist_count or 0,
+            first_posted_at=row.first_posted_at or "",
         )
     return out
+
+
+def _replaces(new: str, stored: str) -> bool:
+    """True when `new` is an EARLIER board date than `stored`, compared as
+    instants through the one parser (`ghost_signals.parse_board_date`), never
+    as strings.
+
+    Strings were fine while this column was write-only. It is a printed date
+    now, and a mixed-offset pair orders wrongly lexicographically: Greenhouse's
+    "2026-06-02T03:17:15-04:00" (07:17 UTC) sorts before "2026-06-02T05:00:00Z"
+    although it is the later instant. A string we cannot read never displaces
+    one we can, and "" is never stored over a real date."""
+    if not new:
+        return False
+    if not stored:
+        return True
+    new_dt = parse_board_date(new)
+    if new_dt is None:
+        return False
+    stored_dt = parse_board_date(stored)
+    return stored_dt is None or new_dt < stored_dt
 
 
 def record_sightings(db: Session, matches: list[JobMatch], now: datetime) -> None:
@@ -270,12 +296,15 @@ def record_sightings(db: Session, matches: list[JobMatch], now: datetime) -> Non
         if last_seen is None or now - last_seen > gap:
             # The previous run is over — this is the same role listed again, not
             # the same listing still open. `first_posted_at` resets WITH the
-            # rest, and that is not an oversight in the spec it implements: it
-            # feeds the `first_published` basis, so carrying March's date into
-            # September's listing would report "posted 200 days ago" about a
-            # posting the board put up last week — the identical lie the reset
-            # of `first_seen_at` exists to prevent, arriving through the other
-            # basis.
+            # rest. It feeds `JobMatch.first_posted_at` — the PRINTED "older
+            # posting" date, via `ghost_signals.earliest_board_date` — and never
+            # the ghost age, so carrying March's date into September's listing
+            # would print "older posting — March" about a role the board put up
+            # last week: the identical lie the reset of `first_seen_at` exists
+            # to prevent, arriving through the email instead of the badge.
+            # Written from the CARD date (`match.posted_at`), never from
+            # `match.first_posted_at`, which may itself have been read from
+            # this row.
             row.first_seen_at = now
             row.first_url = match.url
             row.first_posted_at = posted_at
@@ -283,14 +312,12 @@ def record_sightings(db: Session, matches: list[JobMatch], now: datetime) -> Non
             row.relist_count = (row.relist_count or 0) + 1
         else:
             row.seen_count = (row.seen_count or 0) + 1
-            # Keep the EARLIEST board-stated date of this run. ISO strings order
-            # lexicographically (the property `freshest_first` already sorts on)
-            # and "" sorts before every real date, so the empties are handled
-            # explicitly rather than by `min`. An unparseable board string sorts
-            # after the digits and therefore loses to a real date, which is the
-            # benign direction: the classifier parses this leniently and
-            # abstains on junk.
-            if posted_at and (not row.first_posted_at or posted_at < row.first_posted_at):
+            # Keep the EARLIEST board-stated date of this run, compared as
+            # INSTANTS (`_replaces`). This used to be a string `<`, which held
+            # only while the column was write-only: it is printed now, and a
+            # mixed-offset pair orders wrongly as strings. Empty and unreadable
+            # values never displace a date we can read.
+            if _replaces(posted_at, row.first_posted_at or ""):
                 row.first_posted_at = posted_at
         row.last_seen_at = now
         row.last_url = match.url
