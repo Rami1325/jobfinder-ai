@@ -48,3 +48,34 @@
 **Cron.**
 - **`/api/inbox/cron` runs at 05:00 and 14:00 UTC as TWO `vercel.json` entries** — a Vercel Hobby cron entry fires at most once a day — beside the unchanged alerts (06:00) and nudges (07:00). That Vercel accepts two entries on one path is not yet confirmed on a deploy.
 - **It FAILS CLOSED** (A12): gate on and `CRON_SECRET` empty is 503 `cron_unconfigured`, because an open copy would refresh every user's Gmail grant and spend model calls for anyone who found the URL. It is in `_AUTH_OPTIONAL` and checks its own Bearer secret, runs on a wall-clock budget checked before each user (`INBOX_CRON_BUDGET_S` = 240; each user gets `min(2 × INBOX_SYNC_BUDGET_S, what is left)`), and prunes the security log.
+
+### The codes the inbox sends, and the sentences that say them (P29-INBOX-CODES, 2026-09-21)
+
+**The backend talks to the page in three families of codes, and each has a hand-written `switch` that turns a code into a sentence.**
+- **Sync codes**, `InboxSyncResult.error_code` and `InboxStatus.last_error_code`, come from `inbox_sync.py` (plus the connect routes, which reset `last_error`) and are read by `useSyncErrorText` in `components/inbox/shared.tsx`.
+- **Route refusals**, `HTTPException(detail={"code": …})` in `inbox_routes.py`, are read by `useInboxRefusalText`, in the same file.
+- **Callback reasons**, the `/settings?inbox=<reason>` the Gmail callback redirects with, are read by `callbackMessage` in `InboxSettingsCard.tsx`.
+
+**The drift that shipped.** Nothing compared the two sides, and they drifted where a user could read it. FIXB B15 (1836d30) made `sync_user` return `invite_only` for a connected account taken off the allowlist, three hours after the switch was written (5d7b63e), and touched no frontend file. The code fell to `default`, so someone who can never sync again was told "The last sync ran into a problem. It tries again on the next sync". The tracker's Reconnect showed the same 403 as "Couldn't start reconnecting", because it called `apiErrorMessage` directly instead of the refusal hook.
+
+**check-mirrors 37 now reads the codes from the backend and holds the switches to them.**
+- **Every code in the backend's closed set has a `case` of its own, even one that returns the generic sentence.** Such an arm makes "the generic sentence is right for this code" a decision a reviewer can see, rather than a default nobody chose. The generic groups say why they are generic: retried by the next run, or never seen by a signed-in page.
+- **A `case` stacked on `default:` is not an arm of its own.** Each `default` is pinned to its generic sentence, never the code.
+- **Arms are literal `t("…")` calls**, so check 29 resolves every key in both locales.
+- **Google's OPEN set stays on `default` by design.** These are its own `error` strings and `http_<status>`, which reach `last_error` only through `_fail(…, e.code)` in `_open_mailbox`. A Google string mapped on purpose goes in `GOOGLE_PASSTHROUGH` in check-mirrors.js. `invalid_grant` and `admin_policy_enforced` are NOT in that open set, because `_REAUTH_CODES` names them.
+- **The other direction is checked too (37(e)).** Every case literal must be a code the backend sends. So must every code a component compares with `apiErrorCode(…)`, an `error_code` / `last_error_code` or a status `reason`, and every member of `ANSWERS`. A backend rename otherwise leaves the comparison false for ever: the review sheet's `left` would put an email that was already filed back in the queue.
+- **Every `InboxStatus.reason` is compared in BOTH `InboxBar` and `InboxSettingsCard`.** A new reason would otherwise hide the bar and the card with no sentence.
+- **Nothing under `components/inbox/` calls `apiErrorMessage` except `useInboxRefusalText`.** The hook falls back to it for everything it does not translate, so routing a toast through the hook costs nothing for a gate or network error.
+
+**Adding a code.** Write it as a literal, pass it to an existing emitter (`_fail`, `_note_error`), or return it as a literal from an `inbox_apply` refusal function. Then give it an arm on the page, and the build tells you which one. The reader is text, not an AST, so its grammar is CLOSED. A computed code, a refusal function that returns a helper's value, an f-string with two placeholders, or a callback reason held in a variable each THROWS in check 37, naming the line. Teach the reader the new shape (its header lists every shape it reads), or write the code in a known one. Never leave it unread. The reader covers `inbox_sync.py`, `inbox_routes.py`, `inbox_apply.py` and the `google_oauth` functions `_open_mailbox` calls. A module that starts writing `error_code` or `last_error` from anywhere else needs adding to it.
+
+**A connected account off the invite list is shown as paused, on both surfaces.** B15's early return writes no `last_error` and no `last_sync_at`, so to a page that reads only the connection it looked healthy:
+- a mint "Connected" badge in Settings;
+- a Sync button on the bar that the server can only refuse;
+- a background sync fired on every tracker visit, because "stale" never stopped being true.
+
+`InboxStatus.reason` already said `invite_only`, and `shared.tsx`'s `isOffInviteList` applies the backend's own rule to it: connected, not the demo mailbox, reason `invite_only`. With it:
+- the bar shows the invite-only line, offers neither Sync nor Reconnect, and skips the background sync;
+- the Settings card shows a "Paused" badge and the invite-only line, with no Reconnect row. Disconnect stays, which is why the card renders for such an account at all.
+
+check-mirrors 37(e) pins the rule and all three callers. This was verified at 390 px in en and he, with Playwright against mocked `/api` responses, beside the healthy-connection twin, which still shows Sync and still background-syncs. **Known limit**: on a server that offers the demo mailbox, `ready` is true and `reason` is `""` for such an account, so there only the Sync toast says it. `fake_enabled` is false whenever the gate is on with the real model, so that is a local-dev state.

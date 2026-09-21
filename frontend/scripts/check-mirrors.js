@@ -6867,13 +6867,28 @@ try {
   const dir = path.join(SRC, "components", "inbox");
   const files = fs.readdirSync(dir).filter((f) => /\.tsx?$/.test(f));
   if (files.length < 5) throw new Error(`found only ${files.length} source files under components/inbox — the files moved`);
-  for (const f of files)
-    for (const [n, text] of directApiErrorCalls(`components/inbox/${f}`, read(`components/inbox/${f}`)))
+  // The import as well as the call: `import { apiErrorMessage as msg }` would
+  // call it under a name the call scan never looks for.
+  const IMPORTS_IT = /\bimport\s*\{[^}]*\bapiErrorMessage\b[^}]*\}\s*from\s*["'][^"']*\/lib\/apiError["']/;
+  for (const f of files) {
+    const src = read(`components/inbox/${f}`);
+    if (f !== "shared.tsx" && IMPORTS_IT.test(decomment(src)))
+      fail(
+        `check 37(d): components/inbox/${f} imports apiErrorMessage. Only shared.tsx's useInboxRefusalText may call ` +
+          "it; show a refusal through that hook's function instead.",
+      );
+    for (const [n, text] of directApiErrorCalls(`components/inbox/${f}`, src))
       fail(
         `check 37(d): components/inbox/${f}:${n} calls apiErrorMessage directly (\`${text}\`), so an inbox refusal ` +
           "shown there skips its sentence. Call `useInboxRefusalText()`'s function instead: it falls back to " +
           "apiErrorMessage for everything it does not translate.",
       );
+  }
+  if (
+    !IMPORTS_IT.test('import { apiErrorMessage as msg } from "../../lib/apiError";') ||
+    IMPORTS_IT.test('import { apiErrorCode } from "../../lib/apiError";')
+  )
+    fail("check 37(d)'s import detector cannot tell an import of apiErrorMessage from an import of something else");
   // Both directions: a component's own call fires, the hook's default does not.
   const HOOK = [
     "export function useInboxRefusalText(): (e: unknown, fallback: string) => string {",
