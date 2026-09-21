@@ -6150,17 +6150,75 @@ function splitTopLevel(s, sep) {
 }
 
 /**
- * The probe's answer and its failure handlers. The answer is the first argument
- * of each `.then` chained on `coverLetterPass(`; a failure handler is `.then`'s
- * second argument, a `.catch`, or a `.finally` (which runs on a failure too).
- * A `.then` after a `.catch` or a two-argument `.then` runs after a failure as
- * well, so it counts as a failure handler. An awaited probe has no chain: its
- * answer runs to the first `catch`, and everything after that is failure.
+ * The body of an inline callback, the text inside its braces: `(r) => { … }`,
+ * `r => { … }`, `async` either way, a typed `(r: T): void => { … }`, or
+ * `function (r) { … }`. null for anything else (a function passed by name, an
+ * expression body), which therefore holds no sequence gate of its own.
+ */
+function callbackBody(cb) {
+  let i = /^async\b\s*/.exec(cb)?.[0].length ?? 0;
+  const fn = /^function\b\s*(?:[A-Za-z_$][\w$]*\s*)?/.exec(cb.slice(i));
+  if (fn) i += fn[0].length;
+  if (cb[i] === "(") {
+    const shut = closeOf(cb, i);
+    if (shut === -1) return null;
+    i = shut + 1;
+  } else {
+    const id = fn ? null : /^[A-Za-z_$][\w$]*/.exec(cb.slice(i));
+    if (!id) return null;
+    i += id[0].length;
+  }
+  const head = /^\s*(?::\s*[\w$.<>[\]|, ]+?)?\s*(=>)?\s*\{/.exec(cb.slice(i));
+  // An arrow needs its `=>`, and a function expression has none.
+  if (!head || !head[1] === !fn) return null;
+  const open = i + head[0].length - 1;
+  const shut = closeOf(cb, open);
+  if (shut === -1 || cb.slice(shut + 1).trim()) return null;
+  return cb.slice(open + 1, shut);
+}
+
+/** Bracket depth at `idx` in `s`, counted from its start, skipping strings. */
+function depthAt(s, idx) {
+  let depth = 0;
+  for (let i = 0; i < idx; i++) {
+    const ch = s[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      for (i++; i < idx && s[i] !== ch; i++) if (s[i] === "\\") i++;
+    } else if ("([{".includes(ch)) depth++;
+    else if (")]}".includes(ch)) depth--;
+  }
+  return depth;
+}
+
+/** Where `s` leaves the block it starts in: the first bracket it closes without opening; s.length when none. */
+function blockEnd(s) {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      for (i++; i < s.length && s[i] !== ch; i++) if (s[i] === "\\") i++;
+    } else if ("([{".includes(ch)) depth++;
+    else if (")]}".includes(ch) && --depth < 0) return i;
+  }
+  return s.length;
+}
+
+/**
+ * The probe's answer callbacks and its failure handlers. Each answer is the first
+ * argument of one `.then` chained on `coverLetterPass(`, as `{ text, body }`,
+ * where `body` is what `callbackBody` reads (null when it reads none). They stay
+ * SEPARATE: an early return exits only its own callback, and every later
+ * `.then` still runs, so a check in one callback guards nothing in another. A
+ * failure handler is `.then`'s second argument, a `.catch`, or a `.finally`
+ * (which runs on a failure too). A `.then` after a `.catch` or a two-argument
+ * `.then` runs after a failure as well, so it counts as a failure handler. An
+ * awaited probe has no chain: its one answer runs from the request to the first
+ * `catch`, and everything after that is failure.
  */
 function probeHandlers(probe, ask) {
   const close = closeOf(probe, probe.indexOf("(", ask));
   if (close === -1) throw new Error("the cover letter's coverLetterPass( never closes");
-  const answer = [];
+  const answers = [];
   const failures = [];
   let at = close + 1;
   let chained = false;
@@ -6172,7 +6230,9 @@ function probeHandlers(probe, ask) {
     if (end === -1) throw new Error(`the probe's .${m[1]}( never closes`);
     const args = splitTopLevel(probe.slice(open + 1, end), ",");
     if (m[1] === "then") {
-      (recovered ? failures : answer).push(args[0] ?? "");
+      const first = args[0] ?? "";
+      if (recovered) failures.push(first);
+      else answers.push({ text: first, body: callbackBody(first) });
       failures.push(...args.slice(1));
       if (args.length > 1) recovered = true;
     } else {
@@ -6181,10 +6241,10 @@ function probeHandlers(probe, ask) {
     }
     at = end + 1;
   }
-  if (chained) return { answer: answer.join("\n"), failures };
+  if (chained) return { answers, failures };
   const failed = /\bcatch\b/.exec(probe.slice(ask));
-  if (!failed) return { answer: probe.slice(ask), failures: [] };
-  return { answer: probe.slice(ask, ask + failed.index), failures: [probe.slice(ask + failed.index)] };
+  const awaited = failed ? probe.slice(ask, ask + failed.index) : probe.slice(ask);
+  return { answers: [{ text: awaited, body: awaited }], failures: failed ? [probe.slice(ask + failed.index)] : [] };
 }
 
 /**
@@ -6193,48 +6253,67 @@ function probeHandlers(probe, ask) {
  * at` (optionally `|| !alive`) before anything is applied, or the apply inside
  * `if (seq.current === at) { … }` (optionally `alive &&`). `at` is the number
  * the probe took before it asked (null when it took none, which no shape
- * accepts). `guarded` is the code that runs only past the check, `outside` the
- * rest of the answer. The control flow is what is read, not an operator's
- * presence: `=== … return` and `!== { apply }` name the same words as the two
- * accepted shapes and drop every normal answer.
+ * accepts). The control flow is what is read, not an operator's presence:
+ * `=== … return` and `!== { apply }` name the same words as the two accepted
+ * shapes and drop every normal answer.
+ *
+ * The check must sit at the TOP LEVEL of one answer callback's body. Inside a
+ * nested arrow its `return` leaves only that arrow, and under another `if` it
+ * runs only when that condition holds; either way the code after it runs for a
+ * dropped answer too. `guarded` is the code of that callback that runs only
+ * past the check; `outside` is the rest of it, plus every OTHER answer callback
+ * whole, since a later `.then` runs whether an earlier one returned or not.
  */
-function sequenceGuard(answer, at) {
-  const IF = /\bif\s*\(/g;
-  for (let m; (m = IF.exec(answer)); ) {
-    const open = m.index + m[0].length - 1;
-    const close = closeOf(answer, open);
-    if (close === -1) throw new Error("an if ( in the probe's answer never closes");
-    const cond = answer.slice(open + 1, close);
-    if (!/\bseq\.current\b/.test(cond)) continue;
-    let j = close + 1;
-    while (/\s/.test(answer[j] ?? "")) j++;
-    let body = null;
-    let end;
-    if (answer[j] === "{") {
-      const shut = closeOf(answer, j);
-      if (shut === -1) throw new Error("the block after the probe's sequence check never closes");
-      body = answer.slice(j + 1, shut);
-      end = shut + 1;
-    } else {
-      const ret = /^return\s*;?/.exec(answer.slice(j));
-      // A lone statement under the check is neither accepted shape.
-      if (!ret) return { ok: false, guarded: answer, outside: "" };
-      end = j + ret[0].length;
+function sequenceGuard(answers, at) {
+  const all = answers.map((a) => a.text).join("\n");
+  for (const [n, { body }] of answers.entries()) {
+    if (body === null) continue;
+    const others = answers
+      .filter((_, k) => k !== n)
+      .map((a) => a.text)
+      .join("\n");
+    const IF = /\bif\s*\(/g;
+    for (let m; (m = IF.exec(body)); ) {
+      const open = m.index + m[0].length - 1;
+      const close = closeOf(body, open);
+      if (close === -1) throw new Error("an if ( in the probe's answer never closes");
+      const cond = body.slice(open + 1, close);
+      if (!/\bseq\.current\b/.test(cond) || depthAt(body, m.index) !== 0) continue;
+      let j = close + 1;
+      while (/\s/.test(body[j] ?? "")) j++;
+      let block = null;
+      let end;
+      if (body[j] === "{") {
+        const shut = closeOf(body, j);
+        if (shut === -1) throw new Error("the block after the probe's sequence check never closes");
+        block = body.slice(j + 1, shut);
+        end = shut + 1;
+      } else {
+        const ret = /^return\s*;?/.exec(body.slice(j));
+        // A lone statement under the check is neither accepted shape.
+        if (!ret) return { ok: false, guarded: all, outside: "" };
+        end = j + ret[0].length;
+      }
+      const early = block === null || /^\s*return\s*;?\s*$/.test(block);
+      const norm = (t) => {
+        const x = t.replace(/\s+/g, "");
+        return /^\(.*\)$/.test(x) ? x.slice(1, -1) : x;
+      };
+      const terms = splitTopLevel(cond, early ? "||" : "&&").map(norm);
+      const seq = early ? [`seq.current!==${at}`, `${at}!==seq.current`] : [`seq.current===${at}`, `${at}===seq.current`];
+      const alive = early ? "!alive" : "alive";
+      const ok = at !== null && terms.some((t) => seq.includes(t)) && terms.every((t) => seq.includes(t) || t === alive);
+      const before = body.slice(0, m.index);
+      if (!early) return { ok, guarded: block, outside: `${before}${body.slice(end)}\n${others}` };
+      // An awaited answer is a slice of a larger function, not a callback: past
+      // the end of the block holding the check, the return may not have skipped
+      // anything (it leaves a nested function, not a block), so that is outside.
+      const rest = body.slice(end);
+      const stop = blockEnd(rest);
+      return { ok, guarded: rest.slice(0, stop), outside: `${before}${rest.slice(stop)}\n${others}` };
     }
-    const early = body === null || /^\s*return\s*;?\s*$/.test(body);
-    const norm = (t) => {
-      const x = t.replace(/\s+/g, "");
-      return /^\(.*\)$/.test(x) ? x.slice(1, -1) : x;
-    };
-    const terms = splitTopLevel(cond, early ? "||" : "&&").map(norm);
-    const seq = early ? [`seq.current!==${at}`, `${at}!==seq.current`] : [`seq.current===${at}`, `${at}===seq.current`];
-    const alive = early ? "!alive" : "alive";
-    const ok = at !== null && terms.some((t) => seq.includes(t)) && terms.every((t) => seq.includes(t) || t === alive);
-    return early
-      ? { ok, guarded: answer.slice(end), outside: answer.slice(0, m.index) }
-      : { ok, guarded: body, outside: answer.slice(0, m.index) + answer.slice(end) };
   }
-  return { ok: false, guarded: answer, outside: "" };
+  return { ok: false, guarded: all, outside: "" };
 }
 
 /**
@@ -6283,14 +6362,15 @@ function coverLetterWiring(text) {
     if (!reset || reset.index > ask) bad.add("probe-resets-known");
     // The number this probe takes before it asks, which its answer is compared with.
     const took = /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*\+\+\s*seq\.current\b/.exec(probe);
-    const { answer, failures } = probeHandlers(probe, ask);
-    const guard = sequenceGuard(answer, took && took.index < ask ? took[1] : null);
+    const { answers, failures } = probeHandlers(probe, ask);
+    const guard = sequenceGuard(answers, took && took.index < ask ? took[1] : null);
     if (!guard.ok || /\bsetPass\(/.test(guard.outside)) bad.add("probe-sequence-guard");
     if (!APPLIES.test(guard.guarded)) bad.add("probe-applies");
     const onFailure = failures.reduce((n, f) => n + known(f), 0);
     if (onFailure) bad.add("probe-failure-unknown");
-    // Known past the sequence check, and nowhere else in the effect: not before
-    // the request, not after a block the check guards.
+    // Known past the sequence check, in the callback that holds it, and nowhere
+    // else in the effect: not before the request, not after a block the check
+    // guards, not in another `.then` (which runs whether the check returned or not).
     if (!known(guard.guarded) || known(probe) > known(guard.guarded) + onFailure) bad.add("probe-known");
   }
   const gen = fnSource(s, "async function generate");
@@ -6355,11 +6435,12 @@ const COVER_WIRING_HARM = {
     "posting whose pass nobody has read yet",
   "probe-known":
     "does not mark the pass known exactly where the probe's answer has passed its sequence check (setKnown(true) " +
-    "past the seq.current check, and nowhere else in the effect). Missing there, the card stays unknown until a " +
-    "letter comes back: <UsesNote> never renders, so the first letter's cost is never stated before the tap, and at " +
-    "0 uses with no pass Generate is never disabled. Anywhere else (before the request, or after a block the check " +
-    "guards) it marks known a pass nobody read, which at 0 uses prints 'No uses left' and disables a change the " +
-    "server may still include",
+    "past the seq.current check, in the same answer callback, and nowhere else in the effect). Missing there, the " +
+    "card stays unknown until a letter comes back: <UsesNote> never renders, so the first letter's cost is never " +
+    "stated before the tap, and at 0 uses with no pass Generate is never disabled. Anywhere else (before the " +
+    "request, after a block the check guards, or in a later `.then`, which runs whether the check's early return " +
+    "fired or not) it marks known a pass nobody read, which at 0 uses prints 'No uses left' and disables a change " +
+    "the server may still include",
   "probe-failure-unknown":
     "marks the pass known when the probe FAILED (in a .catch, a .finally, or .then's second argument). With no " +
     "answer the pass reads as none, so at 0 uses left a 5xx or a dropped request prints 'No uses left' and disables " +
@@ -6368,10 +6449,14 @@ const COVER_WIRING_HARM = {
     "does not drop a probe answer that lands after a letter started, in one of the two shapes this check accepts: " +
     "the probe takes `const at = ++seq.current` before it asks, and its answer either returns early on " +
     "`seq.current !== at` (optionally `|| !alive`) before it applies anything, or applies itself only inside " +
-    "`if (seq.current === at) { … }` (optionally `alive &&`). A late answer describes the pass BEFORE that letter " +
-    "took its slot, and putting the slot back hides the next letter's cost. An inverted gate (`=== … return`, " +
+    "`if (seq.current === at) { … }` (optionally `alive &&`), at the top level of the answer callback that applies. " +
+    "A late answer describes the pass BEFORE that letter took its slot, and putting the slot back hides the next " +
+    "letter's cost; a late 'no pass' wipes the pass the letter just opened. An inverted gate (`=== … return`, " +
     "`!== { apply }`, or `alive` read the wrong way round) drops every normal answer instead, so the card never " +
-    "learns its pass before the first letter",
+    "learns its pass before the first letter. A gate anywhere but the top level of the callback that applies is " +
+    "refused: an early return leaves only its own function, so a check in a nested arrow, under another `if`, or " +
+    "in an earlier `.then` (a later `.then` runs whether it returned or not) lets a dropped answer apply, and a " +
+    "positive block under another `if` adds a condition that leaves some answers never applied and never known",
   "generate-bumps-sequence":
     "does not bump seq.current before a letter's request goes out, so a probe still in flight is applied after it",
   "generate-relative-seconds":
@@ -6544,6 +6629,25 @@ try {
     ["the pass known before the probe's request", mutate("known before ask", "    setKnown(false);\n", "    setKnown(false);\n    setKnown(true);\n"), "probe-known"],
     ["a failed probe read as no pass in `.then`'s second argument", mutate("then fail", G_CATCH, "    }, () => {\n      setPass(null);\n      setKnown(true);\n    });"), "probe-failure-unknown"],
     ["a `.finally` that marks the pass known", mutate("finally", G_CATCH, G_CATCH.replace(/;$/, ".finally(() => setKnown(true));")), "probe-failure-unknown"],
+    // The gate guards only the callback it sits in, and only from its top level:
+    // an early return leaves its own function, and every later `.then` still runs.
+    ["a later `.then` that marks the pass known past the early return", mutate("then known", G_GUARD + G_APPLY, G_GUARD + G_SET + "    }).then(() => {\n      setKnown(true);\n"), "probe-known"],
+    ["the gate filtering in its own `.then`, the apply in the next", mutate("filter then apply", G_GUARD + G_APPLY, G_GUARD + "      return r;\n    }).then((r) => {\n" + G_APPLY), "probe-sequence-guard"],
+    ["the pass set in an earlier `.then` than the gate", mutate("apply then gate", G_GUARD + G_APPLY, G_SET + "    }).then(() => {\n" + G_GUARD + "      setKnown(true);\n"), "probe-sequence-guard"],
+    ["the early return inside a nested arrow", mutate("nested arrow", G_GUARD, "      const stale = () => {\n        if (seq.current !== at) return;\n      };\n      stale();\n"), "probe-sequence-guard"],
+    ["the early return under another condition", mutate("nested return", G_GUARD, "      if (r.calls_left > 0) {\n        if (seq.current !== at) return;\n      }\n"), "probe-sequence-guard"],
+    ["the positive block under another condition", mutate("nested block", G_GUARD + G_APPLY, "      if (r.calls_left > 0) {\n" + block("seq.current === at") + "      }\n"), "probe-sequence-guard"],
+    [
+      "an awaited filter whose caller applies the answer it dropped",
+      mutate(
+        "awaited filter",
+        /    coverLetterPass\(jd\)\.then\(\(r\) => \{\n[\s\S]*?\n    \}\);\n/,
+        "    (async () => {\n      try {\n        const r = await (async () => {\n          const got = await coverLetterPass(jd);\n" +
+          "          if (seq.current !== at) return;\n          return got;\n        })();\n" + G_APPLY +
+          "      } catch {\n        // left unknown\n      }\n    })();\n",
+      ),
+      "probe-sequence-guard",
+    ],
     // An answer read and then thrown away is the defect the probe exists to fix.
     ["the probe's answer never applied", mutate("probe no apply", G_GUARD + G_APPLY, G_GUARD + "      const inc = inclusionFrom(r);\n      setKnown(true);\n"), "probe-applies"],
     ["the probe applying `null`", mutate("probe null", G_GUARD + G_APPLY, G_GUARD + "      const inc = inclusionFrom(r);\n      setPass(null);\n      setKnown(true);\n"), "probe-applies"],
@@ -6601,6 +6705,18 @@ try {
       ),
     ],
     ["a finally in generate() that only clears loading", mutate("twin finally", G_TAIL, G_TAIL + "    finally {\n      setLoading(false);\n    }\n")],
+    // A `.then` with no gate that neither applies nor marks known, and the other ways to write the one that does.
+    [
+      "an earlier `.then` that only converts the answer",
+      mutate(
+        "twin convert",
+        "    coverLetterPass(jd).then((r) => {\n" + G_GUARD + G_SET,
+        "    coverLetterPass(jd).then((r) => inclusionFrom(r)).then((inc) => {\n" + G_GUARD + "      setPass(inc ? { ...inc, posting } : null);\n",
+      ),
+    ],
+    ["a `function` expression as the answer", mutate("twin function", ".then((r) => {", ".then(function (r) {")],
+    ["an `async` arrow with a bare parameter", mutate("twin async", ".then((r) => {", ".then(async r => {")],
+    ["a typed parameter and return type", mutate("twin typed", ".then((r) => {", ".then((r: UsagePassOut): void => {")],
   ];
   for (const [label, fixture] of TWINS) {
     const got = coverLetterWiring(fixture);
