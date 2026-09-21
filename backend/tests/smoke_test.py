@@ -2200,6 +2200,149 @@ check(
     "f_TPR" not in _build_search_url("X", "Y", "any", 0, max_age_days=0),
 )
 
+# 14-paging. LinkedIn's guest search serves TEN cards a page, not 25 (saved pages
+# 2026-09-21: data-row 1-10 at start=0, 11-20 at start=10, 26-35 at start=25; a
+# live pair on 2026-09-21 21:24 UTC showed the same 10 + 10, contiguous, with no
+# overlap). `_fetch_cards` used to ask for start=0 then start=25, so every query
+# needing more than ten cards jumped from row 10 to row 26 and rows 11-25 never
+# reached the app — a real Pentera posting (4462220726, row 11) was invisible.
+# The board is faked by patching `_http_get` WHERE IT IS BOUND: linkedin.py does
+# `from app.core.job_match import _http_get`, so patching job_match would be a
+# no-op that reads as a pass. The fake serves rows start+1..start+10 up to `total`,
+# each a card in the fixture's shape with a posting id derived from its row.
+import urllib.error as _lp_urlerror  # noqa: E402
+import urllib.parse as _lp_urlparse  # noqa: E402
+
+import app.core.providers.linkedin as _lp_mod  # noqa: E402
+from app.core.providers.base import NoResultsError as _LpNoResults  # noqa: E402
+from app.models import SearchContext as _LpCtx  # noqa: E402
+
+_LP_REAL_GET = _lp_mod._http_get
+
+
+def _lp_card(row: int) -> str:
+    return (
+        f'<li><a class="base-card__full-link" href="https://il.linkedin.com/jobs/view/'
+        f'role-{row}-at-acme-{4400000000 + row}?refId=r{row}">x</a>'
+        f'<h3 class="base-search-card__title">Role {row}</h3>'
+        f'<h4 class="base-search-card__subtitle"><a>Acme {row}</a></h4>'
+        f'<span class="job-search-card__location">Tel Aviv, Israel</span>'
+        f'<time class="job-search-card__listdate" datetime="2026-09-21">1 day ago</time></li>'
+    )
+
+
+def _lp_run(limit: int, total: int = 100, fail: dict | None = None, shift_at: int | None = None):
+    """(starts requested, rows returned, error or None) for one `_fetch_cards`.
+    `fail` maps a start to the exception that page raises; `shift_at` makes
+    every page from that start on begin one row EARLY — a posting arriving at
+    the top of a newest-first index between two requests pushes the previous
+    page's last card onto the next page."""
+    starts: list[int] = []
+
+    def _fake_get(url, timeout=15):  # noqa: ANN001
+        start = int(_lp_urlparse.parse_qs(_lp_urlparse.urlsplit(url).query)["start"][0])
+        starts.append(start)
+        if fail and start in fail:
+            raise fail[start]
+        first = start - (1 if shift_at is not None and start >= shift_at else 0)
+        rows = range(first + 1, min(first + 10, total) + 1)
+        return "<ul>" + "".join(_lp_card(r) for r in rows) + "</ul>"
+
+    _lp_mod._http_get = _fake_get
+    try:
+        cards = _lp_mod._fetch_cards(_LpCtx(job_title="AI Engineer", location="Israel", limit=limit))
+        err = None
+    except Exception as e:  # noqa: BLE001 - the error IS the observation
+        cards, err = [], e
+    finally:
+        _lp_mod._http_get = _LP_REAL_GET
+    rows_out = [int(c["url"].rsplit("-", 1)[1]) - 4400000000 for c in cards]
+    return starts, rows_out, err
+
+
+def _lp_http(code: int) -> Exception:
+    return _lp_urlerror.HTTPError("https://www.linkedin.com/x", code, "boom", {}, None)
+
+
+_lp_starts = {n: _lp_run(n)[0] for n in (1, 5, 10, 15, 25)}
+check(
+    "linkedin paging: pages are requested contiguously by the REAL page size, only as many as the limit "
+    "needs — limit 1/5/10 -> start 0; 15 -> 0,10; 25 -> 0,10,20 (the old loop asked for 0,25)",
+    _lp_starts == {1: [0], 5: [0], 10: [0], 15: [0, 10], 25: [0, 10, 20]},
+    str(_lp_starts),
+)
+_lp_s15, _lp_rows15, _ = _lp_run(15)
+_lp_s25, _lp_rows25, _ = _lp_run(25)
+check(
+    "linkedin paging: rows 11-20 reach the returned list, in board order, none skipped and none doubled",
+    _lp_rows15 == list(range(1, 21)) and _lp_rows25 == list(range(1, 31)),
+    f"limit15={_lp_rows15} limit25={_lp_rows25}",
+)
+_lp_short = _lp_run(25, total=14)
+check(
+    "linkedin paging: a SHORT page ends the loop (14 results: 0,10 and stop, all 14 returned) — while a "
+    "full page never does, so limit 25 over a deep index still reads a third page (above)",
+    _lp_short[0] == [0, 10] and _lp_short[1] == list(range(1, 15)) and _lp_short[2] is None,
+    str(_lp_short),
+)
+_lp_exact = _lp_run(25, total=10)
+_lp_empty = _lp_run(25, total=0)
+check(
+    "linkedin paging: an EMPTY page ends the loop — 10 results stop after the empty second page, and an "
+    "empty first page is the board's NoResultsError after one request",
+    _lp_exact[0] == [0, 10] and _lp_exact[1] == list(range(1, 11))
+    and _lp_empty[0] == [0] and isinstance(_lp_empty[2], _LpNoResults),
+    f"{_lp_exact} {_lp_empty[0]} {type(_lp_empty[2]).__name__}",
+)
+_lp_shift = _lp_run(25, shift_at=10)
+check(
+    "linkedin paging: a card repeated across pages (a new posting pushed page 1's last card onto page 2) is "
+    "returned ONCE, and the repeat does not make page 2 look short — page 3 is still read",
+    _lp_shift[1] == list(range(1, 30)) and _lp_shift[0] == [0, 10, 20],
+    str(_lp_shift),
+)
+_lp_429_p1 = _lp_run(25, fail={0: _lp_http(429)})
+_lp_429_p2 = _lp_run(25, fail={10: _lp_http(429)})
+_lp_429_p3 = _lp_run(25, fail={20: _lp_http(429)})
+check(
+    "linkedin paging: a 429 on ANY page raises the rate-limit ValueError (page 1, 2 and 3 alike), never a "
+    "silently short list",
+    all(
+        isinstance(r[2], ValueError) and "rate-limiting" in str(r[2])
+        for r in (_lp_429_p1, _lp_429_p2, _lp_429_p3)
+    ),
+    str([(r[0], type(r[2]).__name__, str(r[2])[:40]) for r in (_lp_429_p1, _lp_429_p2, _lp_429_p3)]),
+)
+_lp_503_p1 = _lp_run(25, fail={0: _lp_http(503)})
+_lp_net_p1 = _lp_run(25, fail={0: OSError("connection reset")})
+check(
+    "linkedin paging: a non-429 failure on the FIRST page still raises the board-level ValueError (HTTP and "
+    "network alike), so the fan-out reports LinkedIn as unreachable",
+    isinstance(_lp_503_p1[2], ValueError) and "Couldn't reach LinkedIn" in str(_lp_503_p1[2])
+    and isinstance(_lp_net_p1[2], ValueError) and "Couldn't reach LinkedIn" in str(_lp_net_p1[2]),
+    f"{_lp_503_p1[2]!r} {_lp_net_p1[2]!r}",
+)
+_lp_503_p2 = _lp_run(25, fail={10: _lp_http(503)})
+_lp_net_p3 = _lp_run(25, fail={20: OSError("connection reset")})
+check(
+    "linkedin paging: a non-429 failure on a LATER page keeps what was already fetched and stops — page 2 "
+    "failing returns page 1's ten cards, page 3 failing returns the first twenty",
+    _lp_503_p2[0] == [0, 10] and _lp_503_p2[1] == list(range(1, 11)) and _lp_503_p2[2] is None
+    and _lp_net_p3[0] == [0, 10, 20] and _lp_net_p3[1] == list(range(1, 21)) and _lp_net_p3[2] is None,
+    f"{_lp_503_p2} {_lp_net_p3}",
+)
+_lp_big = _lp_run(40)
+check(
+    "linkedin paging: an unclamped limit cannot fan out — three pages is the ceiling even at limit 40 "
+    "(job_search clamps to 25; the board throttles, so the cap is kept here too)",
+    _lp_big[0] == [0, 10, 20],
+    str(_lp_big[0]),
+)
+check(
+    "linkedin paging: the fake board was restored (the real _http_get is bound again)",
+    _lp_mod._http_get is _LP_REAL_GET,
+)
+
 _fb = _fallback_context(resume)  # stub resume: Engineer at Acme Corp
 check("fallback context uses most recent title", _fb.job_title == "Engineer", _fb.job_title)
 _ctx = derive_search_context(resume)  # routes through the SEARCH_CONTEXT stub branch

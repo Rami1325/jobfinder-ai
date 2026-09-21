@@ -3,7 +3,8 @@
 Listing pages come from the same unauthenticated 'jobs-guest' endpoint that
 `job_match._extract_linkedin` already uses for single postings, so the same
 caveats apply: markup can change and heavy use can get temporarily blocked —
-hence the fetch throttle in the search loop, the two-page cap here, and the
+hence the fetch throttle in the search loop, the page cap here (ten cards a
+page, only as many pages as the result count needs, three at most), and the
 login-wall detection. Search cards carry no description, so hits are returned
 with `description=""` and the posting text is fetched per-hit on demand.
 
@@ -51,7 +52,18 @@ _SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/s
 # whose throttling this module's docstring already warns about.
 _JOB_POSTING_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting"
 _WORK_MODE_PARAM = {"onsite": "1", "remote": "2", "hybrid": "3"}  # LinkedIn f_WT values
-_PAGE_SIZE = 25  # listings per guest search page
+# Cards per guest search page, MEASURED, and `start` is a row offset — so the
+# pages are start=0, 10, 20. This was 25 until 2026-09-22, and the loop asked
+# for start=0 then start=25: every query needing more than ten cards jumped from
+# row 10 to row 26, and rows 11-25 never reached the app (a real Pentera posting
+# at row 11 was invisible). Saved pages from 2026-09-21 showed data-row 1-10 at
+# start=0, 11-20 at start=10 and 26-35 at start=25, and a live pair the same day
+# returned 10 + 10, contiguous, with no overlap. Re-measure before changing it.
+_PAGE_SIZE = 10
+# The request ceiling per query, kept as a number of its own rather than left to
+# `ctx.limit`: `job_search` clamps the limit to 25 (three pages here), but this
+# is the board that throttles, so no caller can make one query cost more.
+_MAX_PAGES = 3
 
 
 def _build_search_url(
@@ -67,7 +79,7 @@ def _build_search_url(
         params["f_WT"] = f_wt
     if max_age_days > 0:
         # f_TPR = time-posted filter, "r<seconds>" — restricts server-side so
-        # both fetched pages hold only postings inside the freshness window.
+        # every fetched page holds only postings inside the freshness window.
         params["f_TPR"] = f"r{max_age_days * 86400}"
     return f"{_SEARCH_URL}?{urllib.parse.urlencode(params)}"
 
@@ -141,9 +153,28 @@ def parse_search_results(html: str) -> list[dict[str, str]]:
 
 
 def _fetch_cards(ctx: SearchContext) -> list[dict[str, str]]:
+    """The query's cards, board order, reading pages start=0, 10, 20… only as
+    far as `ctx.limit` needs (never past `_MAX_PAGES`), and stopping at the
+    first empty or short page — a page with fewer than `_PAGE_SIZE` cards is the
+    end of the index, so asking for the next one would be a wasted request.
+
+    Deduped ACROSS pages by posting id, the way `parse_search_results` dedupes
+    within one. Contiguous pages over a newest-first index can overlap: a
+    posting arriving between two requests pushes the previous page's last card
+    onto the next page. Not seen in either measured start=0/start=10 pair
+    (2026-09-21), but it is the mechanism contiguity creates, and the repeat
+    would otherwise count toward `limit`. The short-page test reads the page's own count,
+    before this dedupe, so a repeat never makes a full page look short.
+
+    Failure semantics are the fan-out's contract: a 429 on ANY page raises the
+    rate-limit ValueError; any other failure on the first page raises; any
+    other failure on a later page keeps what was already fetched."""
     cards: list[dict[str, str]] = []
+    seen: set[str] = set()
     last_html = ""
-    for page, start in enumerate((0, _PAGE_SIZE)):
+    pages = min(_MAX_PAGES, -(-max(1, ctx.limit) // _PAGE_SIZE))  # ceil, at least one
+    for page in range(pages):
+        start = page * _PAGE_SIZE
         try:
             last_html = _http_get(
                 _build_search_url(
@@ -162,17 +193,19 @@ def _fetch_cards(ctx: SearchContext) -> list[dict[str, str]]:
                     "Try again in a minute."
                 ) from e
             break
-        except Exception as e:  # noqa: BLE001 - network trouble; page 2 is optional
+        except Exception as e:  # noqa: BLE001 - network trouble; later pages are optional
             if page == 0:
                 raise ValueError(
                     "Couldn't reach LinkedIn's job search. Check your connection and try again."
                 ) from e
             break
         page_cards = parse_search_results(last_html)
-        if not page_cards:
-            break
-        cards.extend(page_cards)
-        if len(cards) >= ctx.limit:
+        for card in page_cards:
+            key = _linkedin_job_id(card["url"]) or card["url"]
+            if key not in seen:
+                seen.add(key)
+                cards.append(card)
+        if len(page_cards) < _PAGE_SIZE or len(cards) >= ctx.limit:
             break
     if not cards:
         if last_html and _looks_like_login_wall(last_html):

@@ -430,7 +430,8 @@ def _displaced_low_pay(
 ) -> list[JobHit]:
     """The low-pay hits an UNFILTERED selection would have given a slot, in that
     selection's order: what the filter actually took off the page, never the
-    whole pool it read (up to 5 titles × 4 locations × 50 cards per board).
+    whole pool it read (up to 5 titles × 4 locations × 30 cards on LinkedIn:
+    three pages of ten, `providers/linkedin._MAX_PAGES`).
 
     The unfiltered selection runs on COPIES. `_interleave_into` appends to
     `prior.also_on` when it meets a content twin, so on the real objects it
