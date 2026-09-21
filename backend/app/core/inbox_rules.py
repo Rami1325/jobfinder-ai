@@ -446,10 +446,18 @@ _QUERY_TERMS = (
 )
 
 
+# P29-SPAM-RESCUE. The one operator that makes a listing a SPAM listing. It is a
+# whole query token: `gmail_api` switches `includeSpamTrash` on only when a
+# query's whitespace-split tokens contain it exactly, so `-in:spam` never can.
+SPAM_OPERATOR = "in:spam"
+
+
 def build_query(
     after_epoch_s: int,
     before_epoch_s: int | None = None,
     exclude_senders: tuple[str, ...] | list[str] = (),
+    *,
+    spam: bool = False,
 ) -> str:
     """The Gmail search one sync window lists (amendment I1).
 
@@ -459,6 +467,10 @@ def build_query(
     sender; never sent mail, drafts or chats; never the alert-only senders.
     `inbox_sync` still runs every listed message through the stages above — the
     query narrows what is listed, it decides nothing.
+
+    `spam=True` is the same search restricted to Spam (P29-SPAM-RESCUE): the
+    sync lists it only to PARK job mail Gmail filed there, by id, so a reply the
+    user later rescues can still be imported. Nothing it lists is ever read.
     """
     terms = [
         *_QUERY_TERMS,
@@ -470,6 +482,8 @@ def build_query(
     if before_epoch_s is not None:
         parts.append(f"before:{int(before_epoch_s)}")
     parts.append("{" + " ".join(terms) + "}")
+    if spam:
+        parts.append(SPAM_OPERATOR)
     parts += ["-in:sent", "-in:drafts", "-in:chats"]
     seen: set[str] = set()
     for sender in (*ALERT_ONLY_ADDRESSES, *ALERT_ONLY_DOMAINS, *exclude_senders):

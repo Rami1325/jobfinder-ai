@@ -677,10 +677,19 @@ class MailEvent(Base):
     and a verbatim quote of at most 200 characters that justified the verdict.
     Mail the scanner decided is NOT about a job is never stored at all.
 
-    `action` is what the email did to the tracker, and every one is undoable
-    or resolvable from the app: created | updated | linked | review | dismissed
-    | undone. `prev_status` / `new_status` / `set_interviewed` are exactly what
-    an Undo needs to put a card back.
+    `action` is what the email did to the tracker, and every one of these is
+    undoable or resolvable from the app: created | updated | linked | review |
+    dismissed | undone. `prev_status` / `new_status` / `set_interviewed` are
+    exactly what an Undo needs to put a card back.
+
+    Three more actions are id-only markers the sync keeps for itself — the
+    provider id and a code in `evidence`, never a subject, snippet, sender or
+    company — and every reader and every action in the app ignores them, because
+    each one works off an allow-list of the actions above: `failed` (FIXB B3: a
+    message that failed once, charged; its retry is free), `skipped` (it failed
+    twice and the import moved past it), and `parked` (P29-SPAM-RESCUE: job mail
+    Gmail filed in Spam, never read; `evidence` is `spam` until a release of it
+    has been charged, `received_at` is the listing's lower bound).
     """
 
     __tablename__ = "mail_events"

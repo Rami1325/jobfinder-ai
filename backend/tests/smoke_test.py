@@ -17631,6 +17631,747 @@ finally:
     _ic29.get_inbox_llm_client = _real_inbox_client29
     _active29["client"] = _Counting29()
 
+# --- 30f. A reply rescued from Spam (P29-SPAM-RESCUE) ---------------------------------
+# P29-SPAM-RESCUE. A job reply Gmail filed in Spam was invisible when its window was listed —
+# `messages.list` leaves SPAM out by default — and the cursor walked past its date, so "Not spam", which
+# keeps the id AND the original internalDate, never brought it in. Now a second listing that names
+# `in:spam` PARKS such a message by its id alone (no read, no model, no charge), and Gmail's own default
+# listing RELEASES it: in date order while the cursor has not passed it, through the release pass once it
+# has. Every multi-run case passes ONE injected `now`, so a run that finds nothing new moves no cursor and
+# a rewind would stay visible. Every variable carries `_sr30`: `_u30s` already names a 30c user.
+from app.core.usage import check_and_count as _sr30_cac  # noqa: E402
+from fastapi import HTTPException as _sr30_HTTPExc  # noqa: E402
+
+_sr30_NOW = _NOW29
+_sr30_HORIZON = _NOW29_MS - _is29.SETTLE_MS
+_sr30_TOKEN = "in:spam"
+_sr30_GH = "no-reply@eu.greenhouse-mail.io"
+
+
+class _sr30_Box(_gm29.FakeMailbox):
+    """A FakeMailbox that records WHICH ids it read — "a message in Spam is never read" is then a fact about one
+    message, not a count — whose body reads can fail like `_FlakyBody30`'s, and whose Spam listing can fail. An id
+    in `gone` is listed but deleted before its metadata read (MessageGone); an id in `fail_ids` fails that read
+    like a network error."""
+
+    def __init__(self, messages, failing=(), fail_times=None, spam_raises=False, gone=()):  # noqa: ANN001
+        super().__init__(messages)
+        self.read_ids: list[tuple[str, str]] = []
+        self.failing = set(failing)
+        self.fail_times = fail_times
+        self.body_failures = 0
+        self.spam_raises = spam_raises
+        self.gone = set(gone)
+
+    def list_ids(self, q, page_token=None):  # noqa: ANN001
+        if self.spam_raises and _sr30_TOKEN in (q or "").split():
+            raise _go29.GoogleAuthError("network")
+        return super().list_ids(q, page_token)
+
+    def get_meta(self, msg_id):  # noqa: ANN001
+        with self._lock:
+            self.read_ids.append(("meta", msg_id))
+        if msg_id in self.gone:
+            self._count("meta")
+            raise _gm29.MessageGone(msg_id)
+        return super().get_meta(msg_id)
+
+    def get_body(self, msg_id):  # noqa: ANN001
+        with self._lock:
+            self.read_ids.append(("body", msg_id))
+            fail = msg_id in self.failing and (self.fail_times is None or self.body_failures < self.fail_times)
+            if fail:
+                self.body_failures += 1
+        if fail:
+            raise RuntimeError("probe: unreadable MIME part")
+        return super().get_body(msg_id)
+
+
+def _sr30_spam(*messages):  # noqa: ANN002
+    """Gmail filed these in Spam. Set as an attribute, so the committed FakeMailbox (no labels) reads them as
+    inbox mail and the pins below go red rather than aborting the suite."""
+    for m in messages:
+        m.labels = ("SPAM",)
+
+
+def _sr30_rescue(*messages):  # noqa: ANN002
+    """The user clicks "Not spam": the same id and the same internalDate, back in the default listing."""
+    for m in messages:
+        m.labels = ()
+
+
+def _sr30_sync(uid, box, **kw):  # noqa: ANN001, ANN003
+    return _is29.sync_user(_db29, uid, mailbox=box, budget_s=0, now=_sr30_NOW, **kw)
+
+
+def _sr30_used(uid):  # noqa: ANN001
+    return _used_today29(_db29, uid, "inbox")
+
+
+def _sr30_cursor(uid):  # noqa: ANN001
+    return int(_conn29(uid).cursor_ms or 0)
+
+
+def _sr30_calls(text):  # noqa: ANN001
+    return sum(1 for u in _active29["client"].calls if text in u)
+
+
+def _sr30_place(uid, cursor_ms, window_lo_ms=None):  # noqa: ANN001
+    """Put an import at an exact point: everything at or below `cursor_ms` handled, and the windows caught up
+    with the present unless `window_lo_ms` says otherwise."""
+    conn = _conn29(uid)
+    conn.cursor_ms = cursor_ms
+    conn.window_lo_ms = _sr30_HORIZON if window_lo_ms is None else window_lo_ms
+    _db29.commit()
+
+
+def _sr30_plant(uid, mid, window_lo_ms, parked_days_ago=0):  # noqa: ANN001
+    """A parked row the way a sync writes one: the id, `parked`, evidence `spam`, and the listing's lower bound."""
+    _db29.add(_ME29(user_id=uid, provider_message_id=mid, action="parked", evidence="spam",
+                    received_at=_dt29.fromtimestamp(window_lo_ms / 1000, _tz29.utc),
+                    created_at=_sr30_NOW - _td29(days=parked_days_ago)))
+    _db29.commit()
+
+
+def _sr30_rejection(mid, days_ago, company, title="Analyst", ms=None):  # noqa: ANN001
+    """A reply only the MODEL can read — no template claims it."""
+    return _fm29(mid, days_ago, f"Your application at {company}", f"noa@{mid}.example", "Noa",
+                 f"Hi Dana, unfortunately we have decided not to proceed with your application for the {title} "
+                 f"position at {company}.", ms=ms)
+
+
+def _sr30_confirmation(mid, days_ago, company, title):  # noqa: ANN001
+    """An ATS confirmation the RULES decide — no model call, no charge."""
+    return _fm29(mid, days_ago, f"Thank you for applying to {company}", _sr30_GH, company,
+                 f"Dana, thanks for applying. Your application for the {title} role has been received.")
+
+
+def _sr30_notjob(mid, days_ago, month, ms=None):  # noqa: ANN001
+    """Job vocabulary ("position") and nothing a job reply says: it reaches the model, which reads it as not about
+    a job, so it is never stored — the case where listing it again would classify and charge it again."""
+    return _fm29(mid, days_ago, f"Parking position for {month}", f"office@{mid}.example", "Tower Office",
+                 f"Your parking position for {month} is C7.", ms=ms)
+
+
+def _sr30_bounds(q):  # noqa: ANN001
+    found = {t.split(":", 1)[0]: t.split(":", 1)[1] for t in (q or "").split() if t.startswith(("after:", "before:"))}
+    return found.get("after"), found.get("before")
+
+
+def _sr30_email_card(uid, company, changed_days_ago):  # noqa: ANN001
+    """A card an EMAIL moved to Interview `changed_days_ago` days ago."""
+    _db29.add(_App29(user_id=uid, company=company, job_title="Analyst", status="interview", interviewed=True,
+                     status_source="email", source="email", created_at=_NOW29 - _td29(days=20),
+                     status_changed_at=_NOW29 - _td29(days=changed_days_ago)))
+    _db29.commit()
+
+
+# (1) The query and the wire.
+try:
+    _sr30_q = _ir29.build_query(1788000000, 1788600000, _ALERT29, spam=True)
+except TypeError as _sr30_e:
+    _sr30_q = f"raised {type(_sr30_e).__name__}"
+_sr30_qd = _ir29.build_query(1788000000, 1788600000, _ALERT29)
+check(
+    "P29-SPAM-RESCUE: the Spam listing's query is the default query plus ONE exact token, in:spam — the same window "
+    "and vocabulary — while the default query names no Spam at all, not even as -in:spam",
+    _sr30_q.split().count(_sr30_TOKEN) == 1
+    and [t for t in _sr30_q.split() if t != _sr30_TOKEN] == _sr30_qd.split()
+    and "in:spam" not in _sr30_qd,
+    _sr30_q[:40] + " … " + _sr30_q[-100:],
+)
+_sr30_wire: list[str] = []
+_sr30_prev_transport = _go29._transport
+_go29._transport = lambda method, url, headers, body, timeout: (_sr30_wire.append(url) or (200, b'{"messages": []}'))
+try:
+    _sr30_gbox = _gm29.GmailMailbox("access-token-sr30")
+    for _sr30_query in (_sr30_q, _sr30_qd, _sr30_qd + " -in:spam"):
+        _sr30_gbox.list_ids(_sr30_query)
+finally:
+    _go29._transport = _sr30_prev_transport
+_sr30_wire_q = [_pqs29(_us29(u).query) for u in _sr30_wire]
+check(
+    "P29-SPAM-RESCUE: GmailMailbox puts includeSpamTrash=true on the wire for a query naming the exact token in:spam",
+    len(_sr30_wire_q) == 3 and _sr30_wire_q[0].get("includeSpamTrash") == ["true"]
+    and _sr30_wire_q[0].get("q") == [_sr30_q],
+    str([sorted(q) for q in _sr30_wire_q]),
+)
+check(
+    "P29-SPAM-RESCUE: …and never for the default listing, nor for a query carrying -in:spam, which merely CONTAINS the "
+    "token — a substring test would switch Spam AND Trash on for it (the false-positive half)",
+    len(_sr30_wire_q) == 3 and "includeSpamTrash" not in _sr30_wire_q[1] and "includeSpamTrash" not in _sr30_wire_q[2],
+    str([sorted(q) for q in _sr30_wire_q]),
+)
+
+_ic29.get_inbox_llm_client = lambda: _active29["client"]
+_active29["client"] = _Counting29()
+try:
+    # (2) The defect, end to end: parked while in Spam, imported once rescued, the cursor never moved back.
+    _sr30_u1 = _mint29(_db29, "Spam Rescue").id
+    _connect29(_sr30_u1)
+    _sr30_m1 = _sr30_rejection("sp1", 10, "Harbor Robotics")
+    _sr30_m2 = _sr30_confirmation("sp2", 3, "Nimbus Analytics", "Customer Success Engineer")
+    _sr30_m3 = _sr30_rejection("sp3", 8, "Quartz Bio", "Lab Engineer")
+    _sr30_m4 = _fm29("sp4", 6, "Kestrel Security is hiring", _LI29, "LinkedIn", "Kestrel Security Senior Engineer and more")
+    _sr30_spam(_sr30_m1, _sr30_m3, _sr30_m4)
+    _sr30_box1 = _sr30_Box([_sr30_m1, _sr30_m2, _sr30_m3, _sr30_m4])
+    _sr30_r1 = _sr30_sync(_sr30_u1, _sr30_box1)
+    _sr30_rows1, _sr30_cur1, _sr30_used1 = _rows30(_sr30_u1), _sr30_cursor(_sr30_u1), _sr30_used(_sr30_u1)
+    _sr30_spam_reads1 = [r for r in _sr30_box1.read_ids if r[1] in ("sp1", "sp3", "sp4")]
+    check(
+        "P29-SPAM-RESCUE: a job reply filed in Spam is PARKED by its id alone — no subject, snippet, sender or company, "
+        "evidence 'spam' — never read, never sent to the model, never charged; the inbox mail beside it imports as "
+        "before and the cursor walks on past it",
+        all(_sr30_rows1.get(m, ("",))[0] == "parked" and _sr30_rows1[m][1:] == ("", "", "", "", "spam")
+            for m in ("sp1", "sp3", "sp4"))
+        and not _sr30_spam_reads1 and not _active29["client"].calls and _sr30_used1 == 0
+        and _sr30_rows1.get("sp2", ("",))[0] == "created" and _sr30_r1.error_code == ""
+        and _sr30_cur1 > _sr30_m1.internal_ms,
+        f"{_sr30_r1} {_sr30_rows1} spam reads {_sr30_spam_reads1} calls {len(_active29['client'].calls)} "
+        f"used {_sr30_used1}",
+    )
+    _sr30_rescue(_sr30_m1, _sr30_m4)
+    _sr30_r2 = _sr30_sync(_sr30_u1, _sr30_box1)
+    _sr30_rows2, _sr30_cur2, _sr30_used2 = _rows30(_sr30_u1), _sr30_cursor(_sr30_u1), _sr30_used(_sr30_u1)
+    _sr30_card1 = _cards29(_sr30_u1).get("Harbor Robotics")
+    check(
+        "P29-SPAM-RESCUE: rescued with 'Not spam' — the same id and its ORIGINAL date, long behind the cursor — the "
+        "reply is imported by the release pass: its subject kept, its card made, one model call, one charge, and the "
+        "cursor exactly where it was",
+        _sr30_rows2.get("sp1", ("",))[0] == "created" and _sr30_rows2["sp1"][1] == "Your application at Harbor Robotics"
+        and _sr30_card1 is not None and _sr30_card1.status == "rejected"
+        and _sr30_calls("Harbor Robotics") == 1 and _sr30_used2 == _sr30_used1 + 1
+        and _sr30_cur2 == _sr30_cur1 and _sr30_r2.error_code == "",
+        f"{_sr30_r2} {_sr30_rows2} calls {_sr30_calls('Harbor Robotics')} used {_sr30_used2} "
+        f"cursor {_sr30_cur1} -> {_sr30_cur2}",
+    )
+    check(
+        "P29-SPAM-RESCUE: …while a rescued alert digest is dropped as noise with no row left and no model call, and a "
+        "reply still in Spam stays parked, unread and uncharged (the false-positive halves)",
+        "sp4" not in _sr30_rows2 and _sr30_rows2.get("sp3", ("",))[0] == "parked"
+        and _sr30_calls("Quartz Bio") == 0 and _sr30_calls("is hiring") == 0
+        and not any(r[1] == "sp3" for r in _sr30_box1.read_ids),
+        f"{_sr30_rows2} reads {_sr30_box1.read_ids}",
+    )
+    _sr30_calls2 = len(_active29["client"].calls)
+    _sr30_r3 = _sr30_sync(_sr30_u1, _sr30_box1)
+    check(
+        "P29-SPAM-RESCUE: a third run changes nothing — no new row, no model call, no charge, no cursor move",
+        _rows30(_sr30_u1) == _sr30_rows2 and len(_active29["client"].calls) == _sr30_calls2
+        and _sr30_used(_sr30_u1) == _sr30_used2 and _sr30_cursor(_sr30_u1) == _sr30_cur2
+        and (_sr30_r3.scanned, _sr30_r3.llm_calls, _sr30_r3.error_code) == (0, 0, ""),
+        str(_sr30_r3),
+    )
+
+    # (3) The Spam listing fails safe, and lists exactly the window the ordinary listing settled on.
+    _sr30_u2 = _mint29(_db29, "Spam Listing Down").id
+    _connect29(_sr30_u2)
+    _sr30_m6 = _sr30_rejection("sx2", 5, "Lark Systems")
+    _sr30_spam(_sr30_m6)
+    _sr30_box2 = _sr30_Box([_sr30_confirmation("sx1", 4, "Kite Labs", "Platform Engineer"), _sr30_m6],
+                           spam_raises=True)
+    _sr30_r4 = _sr30_sync(_sr30_u2, _sr30_box2)
+    _sr30_rows4 = _rows30(_sr30_u2)
+    check(
+        "P29-SPAM-RESCUE: a Spam listing that fails parks nothing and stops nothing — the window is handled exactly as "
+        "before the fix: Spam never classified, and the import never stalled on a listing Gmail refused",
+        _sr30_r4.error_code == "" and not _sr30_r4.has_more and _sr30_rows4.get("sx1", ("",))[0] == "created"
+        and "sx2" not in _sr30_rows4,
+        f"{_sr30_r4} {_sr30_rows4}",
+    )
+    _sr30_ceiling = _is29.LIST_CEILING
+    _is29.LIST_CEILING = 50
+    try:
+        _sr30_u3 = _mint29(_db29, "Spam Listing Window").id
+        _connect29(_sr30_u3, days=59)
+        _sr30_box3 = _gm29.FakeMailbox(_bulk29, page_size=20)
+        _sr30_sync(_sr30_u3, _sr30_box3, max_messages=5)
+    finally:
+        _is29.LIST_CEILING = _sr30_ceiling
+    _sr30_qs = list(_sr30_box3.queries)
+    _sr30_first_spam = next((i for i, q in enumerate(_sr30_qs) if _sr30_TOKEN in q.split()), None)
+    _sr30_defaults = [q for q in _sr30_qs[:_sr30_first_spam or 0] if _sr30_TOKEN not in q.split()]
+    check(
+        "P29-SPAM-RESCUE: the Spam listing runs AFTER the ordinary listing has settled its window — a window halved past "
+        "the ceiling is listed for Spam over the HALVED bounds, never over the ones the halving abandoned",
+        _sr30_first_spam is not None and len(_sr30_defaults) >= 2
+        and _sr30_bounds(_sr30_qs[_sr30_first_spam]) == _sr30_bounds(_sr30_defaults[-1])
+        and _sr30_bounds(_sr30_defaults[-1])[0] == _sr30_bounds(_sr30_defaults[0])[0]
+        and _sr30_bounds(_sr30_defaults[-1])[1] != _sr30_bounds(_sr30_defaults[0])[1],
+        str([(_sr30_TOKEN in q.split(), *_sr30_bounds(q)) for q in _sr30_qs[:8]]),
+    )
+
+    # (4) In order: a message rescued BEFORE the cursor reached it belongs to the ordinary walk, and its parked row
+    # goes in the same commit as whatever the walk makes of it — whatever the stage, whatever the outcome.
+    _sr30_u4 = _mint29(_db29, "Spam Rescue In Order").id
+    _connect29(_sr30_u4)
+    _sr30_a = [_sr30_confirmation("pa1", 14, "Birch Analytics", "Data Analyst"),
+               _sr30_confirmation("pa2", 13.5, "Cypress Labs", "QA Engineer"),
+               _sr30_confirmation("pa3", 13, "Delta Freight", "Ops Analyst")]
+    _sr30_spam(_sr30_a[1])
+    _sr30_box4 = _sr30_Box(_sr30_a)
+    _sr30_r5 = _sr30_sync(_sr30_u4, _sr30_box4, max_messages=1)
+    _sr30_parked5, _sr30_cur5 = _rows30(_sr30_u4).get("pa2", ("",))[0], _sr30_cursor(_sr30_u4)
+    _sr30_rescue(_sr30_a[1])
+    _sr30_r6 = _sr30_sync(_sr30_u4, _sr30_box4)
+    _sr30_rows6 = _rows30(_sr30_u4)
+    check(
+        "P29-SPAM-RESCUE: a parked confirmation rescued BEFORE the cursor reached it is imported IN ORDER by the "
+        "ordinary walk — its card made, its parked row consumed in the same commit, no error (a second row for the "
+        "same id is an IntegrityError the sync would report as 'internal' on every run after)",
+        _sr30_parked5 == "parked" and _sr30_r5.has_more and _sr30_cur5 == _sr30_a[0].internal_ms
+        and _sr30_r6.error_code == "" and _sr30_rows6.get("pa2", ("",))[0] == "created"
+        and "Cypress Labs" in _cards29(_sr30_u4) and not any(v[0] == "parked" for v in _sr30_rows6.values()),
+        f"{_sr30_parked5} {_sr30_r5} cursor {_sr30_cur5} | {_sr30_r6} {_sr30_rows6}",
+    )
+    _sr30_u5 = _mint29(_db29, "Spam Rescue Not A Job").id
+    _connect29(_sr30_u5)
+    _sr30_b = [_sr30_confirmation("pb1", 14, "Elm Analytics", "Data Analyst"),
+               _sr30_notjob("pb2", 13.5, "September"),
+               _sr30_confirmation("pb3", 13, "Fir Freight", "Ops Analyst")]
+    _sr30_spam(_sr30_b[1])
+    _sr30_box5 = _sr30_Box(_sr30_b)
+    _active29["client"] = _Counting29()
+    _sr30_sync(_sr30_u5, _sr30_box5, max_messages=1)
+    _sr30_parked7 = _rows30(_sr30_u5).get("pb2", ("",))[0]
+    _sr30_rescue(_sr30_b[1])
+    _sr30_r8 = _sr30_sync(_sr30_u5, _sr30_box5)
+    _sr30_r9 = _sr30_sync(_sr30_u5, _sr30_box5)
+    check(
+        "P29-SPAM-RESCUE: a parked message the model reads as NOT a job, rescued before the cursor reached it, is "
+        "classified exactly once over the next two runs and leaves no row — a parked row outliving it would be "
+        "released, classified and charged again on every run",
+        _sr30_parked7 == "parked" and _sr30_calls("Parking position for September") == 1
+        and _sr30_used(_sr30_u5) == 1 and "pb2" not in _rows30(_sr30_u5)
+        and (_sr30_r8.error_code, _sr30_r9.error_code) == ("", ""),
+        f"{_sr30_parked7} calls {_sr30_calls('Parking position for September')} used {_sr30_used(_sr30_u5)} "
+        f"{_rows30(_sr30_u5)} {_sr30_r8} {_sr30_r9}",
+    )
+    _sr30_u6 = _mint29(_db29, "Spam Rescue In Order Failing").id
+    _connect29(_sr30_u6)
+    _sr30_c = [_sr30_confirmation("pc0", 16, "Gum Analytics", "Data Analyst"),
+               _sr30_rejection("pc1", 15.9, "Hazel Robotics"),
+               _sr30_rejection("pc2", 15.8, "Ivy Metrics")]
+    _sr30_spam(_sr30_c[1])
+    _sr30_box6 = _sr30_Box(_sr30_c, failing={"pc1", "pc2"})
+    _sr30_sync(_sr30_u6, _sr30_box6, max_messages=1)
+    _sr30_parked10 = _rows30(_sr30_u6).get("pc1", ("",))[0]
+    _sr30_rescue(_sr30_c[1])
+    _sr30_r11 = _sr30_sync(_sr30_u6, _sr30_box6)
+    _sr30_rows11, _sr30_used11, _sr30_cur11 = _rows30(_sr30_u6), _sr30_used(_sr30_u6), _sr30_cursor(_sr30_u6)
+    check(
+        "P29-SPAM-RESCUE / B3: a parked reply rescued before the cursor reached it whose body cannot be read stops the "
+        "run the FIRST time like any message — charged once, its parked row turned into the `failed` marker in place — "
+        "and the OTHER first failure in the same batch keeps its own marker (one conflicting insert rolled back every "
+        "marker in the batch)",
+        _sr30_parked10 == "parked" and _sr30_r11.error_code == "classify_failed"
+        and _sr30_rows11.get("pc1", ("",))[0] == "failed" and _sr30_rows11["pc1"][5] == "body_failed"
+        and _sr30_rows11.get("pc2", ("",))[0] == "failed" and _sr30_used11 == 2
+        and _sr30_cur11 == _sr30_c[0].internal_ms,
+        f"{_sr30_parked10} {_sr30_r11} {_sr30_rows11} used {_sr30_used11}",
+    )
+    _sr30_r12 = _sr30_sync(_sr30_u6, _sr30_box6)
+    _sr30_rows12 = _rows30(_sr30_u6)
+    check(
+        "P29-SPAM-RESCUE / B3: …and the second failure of each is recorded as skipped (id + error code only), NOT "
+        "charged again, with the cursor past both",
+        _sr30_r12.error_code == ""
+        and all(_sr30_rows12.get(m, ("",))[0] == "skipped" and _sr30_rows12[m][1:] == ("", "", "", "", "body_failed")
+                for m in ("pc1", "pc2"))
+        and _sr30_used(_sr30_u6) == 2 and _sr30_cursor(_sr30_u6) >= _sr30_c[2].internal_ms,
+        f"{_sr30_r12} {_sr30_rows12} used {_sr30_used(_sr30_u6)}",
+    )
+    _sr30_u7 = _mint29(_db29, "Spam Rescue In Order Transient").id
+    _connect29(_sr30_u7)
+    _sr30_d = [_sr30_confirmation("pd0", 16, "Jade Analytics", "Data Analyst"),
+               _sr30_rejection("pd1", 15.9, "Kelp Robotics"),
+               _sr30_confirmation("pd2", 15.8, "Lime Freight", "Ops Analyst")]
+    _sr30_spam(_sr30_d[1])
+    _sr30_box7 = _sr30_Box(_sr30_d, failing={"pd1"}, fail_times=1)
+    _sr30_sync(_sr30_u7, _sr30_box7, max_messages=1)
+    _sr30_parked13 = _rows30(_sr30_u7).get("pd1", ("",))[0]
+    _sr30_rescue(_sr30_d[1])
+    _sr30_r14 = _sr30_sync(_sr30_u7, _sr30_box7)
+    _sr30_r15 = _sr30_sync(_sr30_u7, _sr30_box7)
+    _sr30_rows15 = _rows30(_sr30_u7)
+    check(
+        "P29-SPAM-RESCUE / B3: …while one that fails ONCE is imported on the next run with its subject, charged once "
+        "in total (the false-positive half)",
+        _sr30_parked13 == "parked" and _sr30_r14.error_code == "classify_failed" and _sr30_r15.error_code == ""
+        and _sr30_rows15.get("pd1", ("",))[0] == "created" and _sr30_rows15["pd1"][1] == "Your application at Kelp Robotics"
+        and _sr30_used(_sr30_u7) == 1,
+        f"{_sr30_parked13} {_sr30_r14.error_code} {_sr30_r15.error_code} {_sr30_rows15} used {_sr30_used(_sr30_u7)}",
+    )
+
+    # (5) The boundary between the two paths: the release pass takes only what is AT OR BELOW the cursor.
+    _sr30_C = (_NOW29_MS - 5 * _DAY29) // 1000 * 1000  # a whole second: ±500 ms stays inside the listings' 1 s widening
+    _sr30_u8 = _mint29(_db29, "Spam Rescue Above Cursor").id
+    _connect29(_sr30_u8)
+    _sr30_place(_sr30_u8, _sr30_C, window_lo_ms=_sr30_C + 1)
+    _sr30_plant(_sr30_u8, "pq1", _sr30_C - 60_000)
+    _sr30_box8 = _sr30_Box([_sr30_notjob("pq1", 0, "October", ms=_sr30_C + 500)])
+    _active29["client"] = _Counting29()
+    _sr30_sync(_sr30_u8, _sr30_box8)
+    _sr30_sync(_sr30_u8, _sr30_box8)
+    check(
+        "P29-SPAM-RESCUE: a rescued parked message 500 ms ABOVE the cursor belongs to the ordinary walk — the release "
+        "listing reaches it (read by both paths) and leaves it, so across two runs it is classified once and charged once",
+        _sr30_box8.read_ids.count(("meta", "pq1")) == 2
+        and _sr30_calls("Parking position for October") == 1 and _sr30_used(_sr30_u8) == 1
+        and "pq1" not in _rows30(_sr30_u8),
+        f"reads {_sr30_box8.read_ids} calls {_sr30_calls('Parking position for October')} used {_sr30_used(_sr30_u8)} "
+        f"{_rows30(_sr30_u8)}",
+    )
+    _sr30_u9 = _mint29(_db29, "Spam Rescue Below Cursor").id
+    _connect29(_sr30_u9)
+    _sr30_place(_sr30_u9, _sr30_C, window_lo_ms=_sr30_C + 1)
+    _sr30_plant(_sr30_u9, "pr1", _sr30_C - 60_000)
+    _sr30_box9 = _sr30_Box([_sr30_notjob("pr1", 0, "November", ms=_sr30_C - 500)])
+    _sr30_sync(_sr30_u9, _sr30_box9)
+    _sr30_sync(_sr30_u9, _sr30_box9)
+    check(
+        "P29-SPAM-RESCUE: …while the same message 500 ms BELOW the cursor is the release pass's: released, classified "
+        "and charged exactly once (the false-positive half)",
+        _sr30_calls("Parking position for November") == 1 and _sr30_used(_sr30_u9) == 1
+        and "pr1" not in _rows30(_sr30_u9),
+        f"reads {_sr30_box9.read_ids} calls {_sr30_calls('Parking position for November')} "
+        f"used {_sr30_used(_sr30_u9)} {_rows30(_sr30_u9)}",
+    )
+
+    # (6) Out of date order: rule 5 now guards every card, whoever made its last change.
+    check(
+        "P29-SPAM-RESCUE / rule 5, widened: an email OLDER than a card's last change never moves an interview, offer or "
+        "rejection even when an EMAIL made that change — released mail is the first mail applied out of date order",
+        _plan29([_card29(status="interview", status_source="email")], _v29("rejection"), _OLDER29).action == "review",
+    )
+    _sr30_newer = _plan29([_card29(status="interview", status_source="email")], _v29("rejection"), _NEWER29)
+    check(
+        "P29-SPAM-RESCUE / rule 5: …while the same rejection NEWER than that change still closes the card (the "
+        "false-positive half)",
+        (_sr30_newer.action, _sr30_newer.status) == ("updated", "rejected"),
+        str(_sr30_newer),
+    )
+    _sr30_u10 = _mint29(_db29, "Spam Rescue Older Than Card").id
+    _sr30_email_card(_sr30_u10, "Harbor Robotics", 3)
+    _connect29(_sr30_u10)
+    _sr30_m10 = _sr30_rejection("po1", 10, "Harbor Robotics")
+    _sr30_place(_sr30_u10, _NOW29_MS - _DAY29)
+    _sr30_plant(_sr30_u10, "po1", _sr30_m10.internal_ms - 60_000)
+    _sr30_sync(_sr30_u10, _sr30_Box([_sr30_m10]))
+    _sr30_card10 = _cards29(_sr30_u10).get("Harbor Robotics")
+    check(
+        "P29-SPAM-RESCUE: end to end, a rejection from 10 days ago released today waits in Needs review against the "
+        "card an email moved to Interview 3 days ago — the card stays Interview and its status date does not move back",
+        _rows30(_sr30_u10).get("po1", ("",))[0] == "review" and _sr30_card10 is not None
+        and _sr30_card10.status == "interview" and _near29(_sr30_card10.status_changed_at, _NOW29 - _td29(days=3)),
+        f"{_rows30(_sr30_u10)} {_sr30_card10 and (_sr30_card10.status, _sr30_card10.status_changed_at)}",
+    )
+    _sr30_u11 = _mint29(_db29, "Spam Rescue Newer Than Card").id
+    _sr30_email_card(_sr30_u11, "Harbor Robotics", 12)
+    _connect29(_sr30_u11)
+    _sr30_m11 = _sr30_rejection("po2", 10, "Harbor Robotics")
+    _sr30_place(_sr30_u11, _NOW29_MS - _DAY29)
+    _sr30_plant(_sr30_u11, "po2", _sr30_m11.internal_ms - 60_000)
+    _sr30_sync(_sr30_u11, _sr30_Box([_sr30_m11]))
+    _sr30_card11 = _cards29(_sr30_u11).get("Harbor Robotics")
+    check(
+        "P29-SPAM-RESCUE: …while a released rejection NEWER than the card's last change closes it (the false-positive "
+        "half)",
+        _rows30(_sr30_u11).get("po2", ("",))[0] == "updated" and _sr30_card11 is not None
+        and _sr30_card11.status == "rejected",
+        f"{_rows30(_sr30_u11)} {_sr30_card11 and _sr30_card11.status}",
+    )
+    _sr30_u12 = _mint29(_db29, "Spam Rescue Switched Mailbox").id
+    _sr30_email_card(_sr30_u12, "Juniper Freight", 3)
+    _connect29(_sr30_u12)  # a fresh import from the backfill depth — what FIXB B8's switched reconnect starts
+    _sr30_sync(_sr30_u12, _gm29.FakeMailbox([_sr30_rejection("jf1", 10, "Juniper Freight")]))
+    _sr30_card12 = _cards29(_sr30_u12).get("Juniper Freight")
+    check(
+        "P29-SPAM-RESCUE / rule 5: the same rule now covers a switched-address reconnect (FIXB B8) re-walking old mail "
+        "in date order — an old rejection from the new mailbox waits in review instead of closing the Interview card "
+        "an email moved",
+        _rows30(_sr30_u12).get("jf1", ("",))[0] == "review" and _sr30_card12 is not None
+        and _sr30_card12.status == "interview",
+        f"{_rows30(_sr30_u12)} {_sr30_card12 and _sr30_card12.status}",
+    )
+
+    # (7) B3 parity on the release pass: the parked row itself carries the "charged, failed once" state.
+    _sr30_u13 = _mint29(_db29, "Spam Release Failing").id
+    _connect29(_sr30_u13)
+    _sr30_m13 = _sr30_rejection("pf1", 10, "Garnet Labs")
+    _sr30_place(_sr30_u13, _NOW29_MS - _DAY29)
+    _sr30_plant(_sr30_u13, "pf1", _sr30_m13.internal_ms - 60_000)
+    _sr30_box13 = _sr30_Box([_sr30_m13], failing={"pf1"})
+    _sr30_r16 = _sr30_sync(_sr30_u13, _sr30_box13)
+    _sr30_rows16, _sr30_used16 = _rows30(_sr30_u13), _sr30_used(_sr30_u13)
+    check(
+        "P29-SPAM-RESCUE / B3: a released reply whose body cannot be read is charged ONCE and stops the run; its row "
+        "stays parked and records the error — which is what makes its retry free — and the cursor does not move",
+        _sr30_r16.error_code == "classify_failed" and _sr30_r16.has_more
+        and _sr30_rows16.get("pf1") == ("parked", "", "", "", "", "body_failed") and _sr30_used16 == 1
+        and _sr30_cursor(_sr30_u13) == _NOW29_MS - _DAY29,
+        f"{_sr30_r16} {_sr30_rows16} used {_sr30_used16}",
+    )
+    _sr30_r17 = _sr30_sync(_sr30_u13, _sr30_box13)
+    check(
+        "P29-SPAM-RESCUE / B3: …and when it fails again it is recorded as skipped (id + error code only), not charged "
+        "again",
+        _sr30_r17.error_code == "" and _rows30(_sr30_u13).get("pf1") == ("skipped", "", "", "", "", "body_failed")
+        and _sr30_used(_sr30_u13) == 1,
+        f"{_sr30_r17} {_rows30(_sr30_u13)} used {_sr30_used(_sr30_u13)}",
+    )
+    _sr30_u14 = _mint29(_db29, "Spam Release Transient").id
+    _connect29(_sr30_u14)
+    _sr30_m14 = _sr30_rejection("pg1", 10, "Mica Labs")
+    _sr30_place(_sr30_u14, _NOW29_MS - _DAY29)
+    _sr30_plant(_sr30_u14, "pg1", _sr30_m14.internal_ms - 60_000)
+    _sr30_box14 = _sr30_Box([_sr30_m14], failing={"pg1"}, fail_times=1)
+    _sr30_r18 = _sr30_sync(_sr30_u14, _sr30_box14)
+    _sr30_r19 = _sr30_sync(_sr30_u14, _sr30_box14)
+    check(
+        "P29-SPAM-RESCUE / B3: …while a released reply that fails ONCE is imported on the next run, charged once in "
+        "total (the false-positive half)",
+        _sr30_r18.error_code == "classify_failed" and _sr30_r19.error_code == ""
+        and _rows30(_sr30_u14).get("pg1", ("",))[0] == "created" and _sr30_used(_sr30_u14) == 1,
+        f"{_sr30_r18.error_code} {_sr30_r19.error_code} {_rows30(_sr30_u14)} used {_sr30_used(_sr30_u14)}",
+    )
+
+    # (8) The daily cap, the 31-day prune, and when no release listing is made at all.
+    _sr30_prev_cap = _env29(DAILY_INBOX_CAP="1")
+    try:
+        _sr30_u15 = _mint29(_db29, "Spam Release Capped").id
+        _connect29(_sr30_u15)
+        _sr30_m15 = _sr30_rejection("pk1", 10, "Onyx Labs")
+        _sr30_place(_sr30_u15, _NOW29_MS - _DAY29)
+        _sr30_plant(_sr30_u15, "pk1", _sr30_m15.internal_ms - 60_000)
+        _sr30_cac(_db29, _db29.get(_U29, _sr30_u15), "inbox", 1, 1)  # today's one use is already spent
+        _sr30_box15 = _sr30_Box([_sr30_m15])
+        _active29["client"] = _Counting29()
+        _sr30_r20 = _sr30_sync(_sr30_u15, _sr30_box15)
+        _sr30_rows20, _sr30_used20, _sr30_calls20 = _rows30(_sr30_u15), _sr30_used(_sr30_u15), _sr30_calls("Onyx Labs")
+        os.environ["DAILY_INBOX_CAP"] = "2"  # tomorrow, as far as the cap can tell
+        get_settings.cache_clear()
+        _sr30_r21 = _sr30_sync(_sr30_u15, _sr30_box15)
+        _sr30_rows21, _sr30_used21 = _rows30(_sr30_u15), _sr30_used(_sr30_u15)
+    finally:
+        _restore29(_sr30_prev_cap)
+    check(
+        "P29-SPAM-RESCUE: with the inbox cap spent, a rescued reply stays parked with evidence 'spam' — never charged, "
+        "never classified — and the run says daily_limit",
+        _sr30_r20.error_code == "daily_limit" and _sr30_rows20.get("pk1") == ("parked", "", "", "", "", "spam")
+        and _sr30_used20 == 1 and _sr30_calls20 == 0,
+        f"{_sr30_r20} {_sr30_rows20} used {_sr30_used20} calls {_sr30_calls20}",
+    )
+    check(
+        "P29-SPAM-RESCUE: …and once the cap allows it, it is imported and charged exactly once",
+        _sr30_r21.error_code == "" and _sr30_rows21.get("pk1", ("",))[0] == "created" and _sr30_used21 == 2
+        and _sr30_calls("Onyx Labs") == 1,
+        f"{_sr30_r21} {_sr30_rows21} used {_sr30_used21}",
+    )
+    _sr30_u16 = _mint29(_db29, "Spam Parked Long Ago").id
+    _connect29(_sr30_u16)
+    _sr30_place(_sr30_u16, _NOW29_MS - _DAY29)
+    _sr30_plant(_sr30_u16, "pp1", _NOW29_MS - 40 * _DAY29, parked_days_ago=32)
+    _sr30_box16 = _sr30_Box([])
+    _sr30_sync(_sr30_u16, _sr30_box16)
+    check(
+        "P29-SPAM-RESCUE: a row parked 32 days ago — past Gmail's 30-day Spam purge — is pruned, and no release listing "
+        "is made for it",
+        "pp1" not in _rows30(_sr30_u16) and _sr30_box16.calls["list"] == 0,
+        f"{_rows30(_sr30_u16)} {_sr30_box16.calls}",
+    )
+    _sr30_u17 = _mint29(_db29, "Spam Parked Old Window").id
+    _connect29(_sr30_u17)
+    _sr30_place(_sr30_u17, _NOW29_MS - _DAY29)
+    _sr30_plant(_sr30_u17, "pp2", _NOW29_MS - 36 * _DAY29, parked_days_ago=29)
+    _sr30_box17 = _sr30_Box([])
+    _sr30_sync(_sr30_u17, _sr30_box17)
+    _sr30_after17 = _sr30_bounds(_sr30_box17.queries[0])[0] if _sr30_box17.queries else None
+    check(
+        "P29-SPAM-RESCUE: …while a row parked 29 days ago whose window began 36 days ago is KEPT and still looked for — "
+        "one release listing, reaching back to its window: the age is the time it was PARKED, not its window's date "
+        "(the false-positive half)",
+        _rows30(_sr30_u17).get("pp2", ("",))[0] == "parked" and _sr30_box17.calls["list"] == 1
+        and _sr30_after17 is not None and int(_sr30_after17) * 1000 <= _NOW29_MS - 36 * _DAY29,
+        f"{_rows30(_sr30_u17)} {_sr30_box17.calls} after {_sr30_after17}",
+    )
+    _sr30_u18 = _mint29(_db29, "Spam Nothing Parked").id
+    _connect29(_sr30_u18)
+    _sr30_place(_sr30_u18, _NOW29_MS - _DAY29)
+    _sr30_box18 = _sr30_Box([])
+    _sr30_sync(_sr30_u18, _sr30_box18)
+    _sr30_u19 = _mint29(_db29, "Spam Cursor Zero").id
+    _connect29(_sr30_u19)
+    _sr30_place(_sr30_u19, 0)
+    _sr30_plant(_sr30_u19, "pz1", _NOW29_MS - 10 * _DAY29)
+    _sr30_box19 = _sr30_Box([])
+    _sr30_sync(_sr30_u19, _sr30_box19)
+    check(
+        "P29-SPAM-RESCUE: with no parked row, or with a cursor of 0 (a fresh or switched reconnect), a run makes no "
+        "release listing at all — and the parked row waits",
+        _sr30_box18.calls["list"] == 0 and _sr30_box19.calls["list"] == 0
+        and _rows30(_sr30_u19).get("pz1", ("",))[0] == "parked",
+        f"{_sr30_box18.calls} {_sr30_box19.calls} {_rows30(_sr30_u19)}",
+    )
+
+    # (9) A parked row is invisible and inert: every reader and every action works off an allow-list.
+    _sr30_user1 = _db29.get(_U29, _sr30_u1)
+    _sr30_parked_ev = next((e for e in _events29(_sr30_u1) if e.action == "parked"), None)
+    _sr30_recent = [e.id for e in _iroutes29.inbox_events(view="recent", limit=200, db=_db29, user=_sr30_user1)]
+    _sr30_review = [e.id for e in _iroutes29.inbox_events(view="review", limit=200, db=_db29, user=_sr30_user1)]
+    _sr30_status = _iroutes29._status(_db29, _sr30_user1)
+    _sr30_timelines = [e.id for a in _cards29(_sr30_u1).values()
+                       for e in _ia29.events_for_application(_db29, _sr30_u1, a.id)]
+    _sr30_http: object = "no parked row"
+    _sr30_refusals: object = "no parked row"
+    if _sr30_parked_ev is not None:
+        _sr30_refusals = (_ia29.undo(_db29, _sr30_u1, _sr30_parked_ev), _ia29.dismiss(_sr30_u1, _sr30_parked_ev))
+        _db29.rollback()
+        try:
+            _iroutes29.inbox_event_undo(_sr30_parked_ev.id, db=_db29, user=_sr30_user1)
+            _sr30_http = "served"
+        except _sr30_HTTPExc as _sr30_e:
+            _sr30_http = (_sr30_e.status_code, _sr30_e.detail)
+    _sr30_created = [e.id for e in _events29(_sr30_u1) if e.action == "created"]
+    check(
+        "P29-SPAM-RESCUE: a parked row is invisible and inert — in neither Recent nor Needs review, not counted in "
+        "review_count, on no card's timeline — and Undo and Dismiss refuse it (not_undoable, not_review; 409 over the "
+        "route)",
+        _sr30_parked_ev is not None
+        and _sr30_parked_ev.id not in _sr30_recent + _sr30_review + _sr30_timelines
+        and _sr30_status.review_count == sum(1 for e in _events29(_sr30_u1) if e.action == "review")
+        and _sr30_refusals == ("not_undoable", "not_review")
+        and _sr30_http == (409, {"code": "inbox_not_undoable"}),
+        f"{_sr30_parked_ev and _sr30_parked_ev.id} recent {_sr30_recent} review {_sr30_review} "
+        f"count {_sr30_status.review_count} {_sr30_refusals} {_sr30_http}",
+    )
+    check(
+        "P29-SPAM-RESCUE: …while the created events beside it on the same account ARE listed in Recent (the "
+        "false-positive half)",
+        len(_sr30_created) >= 2 and all(i in _sr30_recent for i in _sr30_created),
+        f"created {_sr30_created} recent {_sr30_recent}",
+    )
+
+    # (10) `_park` parks only ids with NO row of any kind. A window stopped by its budget is listed again while an id
+    # it parked is still in Spam; an insert over that id is refused by uq_mail_events_message, and the rollback took
+    # the NEW park beside it with it — so job mail filed in Spam since, and rescued later, was lost for good.
+    _sr30_u20 = _mint29(_db29, "Spam Park Relisted").id
+    _connect29(_sr30_u20)
+    _sr30_pe = [_sr30_confirmation("pe1", 20, "Alder Co", "Data Analyst"),
+                _sr30_rejection("pe2", 19.5, "Scam One"),
+                _sr30_confirmation("pe3", 19, "Real Two", "Ops Analyst")]
+    _sr30_spam(_sr30_pe[1])
+    _sr30_box20 = _sr30_Box(_sr30_pe)
+    _active29["client"] = _Counting29()
+    _sr30_r22 = _sr30_sync(_sr30_u20, _sr30_box20, max_messages=1)
+    _sr30_rows22, _sr30_cur22 = _rows30(_sr30_u20), _sr30_cursor(_sr30_u20)
+    # Before the window is listed again the confirmation after the parked reply lands in Spam, and so does the one
+    # already imported: its id now has a `created` row AND sits inside the re-listing's one-second widening (the
+    # cursor stopped exactly on it), so the Spam listing names an id with a parked row AND one with a created row.
+    _sr30_spam(_sr30_pe[0], _sr30_pe[2])
+    _sr30_r23 = _sr30_sync(_sr30_u20, _sr30_box20)
+    _sr30_rows23, _sr30_cur23 = _rows30(_sr30_u20), _sr30_cursor(_sr30_u20)
+    _sr30_rescue(_sr30_pe[2])
+    _sr30_r24 = _sr30_sync(_sr30_u20, _sr30_box20)
+    _sr30_rows24 = _rows30(_sr30_u20)
+    check(
+        "P29-SPAM-RESCUE: a window stopped by its budget and listed again parks the job mail filed in Spam SINCE, beside "
+        "ids that already have a row — and once rescued, long behind the cursor, it is imported (an insert over an id "
+        "with a row is an IntegrityError whose rollback took the new park with it, and the rescued mail was lost)",
+        _sr30_r22.has_more and _sr30_cur22 == _sr30_pe[0].internal_ms
+        and _sr30_rows22.get("pe2", ("",))[0] == "parked" and "pe3" not in _sr30_rows22
+        and _sr30_rows23.get("pe3") == ("parked", "", "", "", "", "spam") and _sr30_r23.error_code == ""
+        and _sr30_cur23 > _sr30_pe[2].internal_ms
+        and _sr30_rows24.get("pe3", ("",))[0] == "created" and "Real Two" in _cards29(_sr30_u20)
+        and _sr30_r24.error_code == "",
+        f"{_sr30_r22} {_sr30_rows22} | {_sr30_r23} {_sr30_rows23} cursor {_sr30_cur23} | {_sr30_r24} {_sr30_rows24}",
+    )
+    check(
+        "P29-SPAM-RESCUE: …while an id that already had a row keeps it exactly as it was — the confirmation imported "
+        "before it was moved to Spam keeps its `created` event and subject, never re-filed as parked, and the reply "
+        "still in Spam keeps its one parked row: never read, never classified, never charged (the false-positive half)",
+        _sr30_rows24.get("pe1", ("",))[:2] == ("created", "Thank you for applying to Alder Co")
+        and "Alder Co" in _cards29(_sr30_u20)
+        and _sr30_rows24.get("pe2") == ("parked", "", "", "", "", "spam")
+        and not any(r[1] == "pe2" for r in _sr30_box20.read_ids) and _sr30_calls("Scam One") == 0
+        and _sr30_used(_sr30_u20) == 0,
+        f"{_sr30_rows24} reads {_sr30_box20.read_ids} calls {_sr30_calls('Scam One')} used {_sr30_used(_sr30_u20)}",
+    )
+
+    # (11) What the release pass reads: a message deleted between its listing and its metadata read takes its parked
+    # row with it; one whose read fails keeps its row, unread and uncharged, for the next run.
+    _sr30_u21 = _mint29(_db29, "Spam Release Gone").id
+    _connect29(_sr30_u21)
+    _sr30_m21a = _sr30_rejection("pv1", 10, "Nickel Labs")
+    _sr30_m21b = _sr30_rejection("pv2", 9, "Opal Labs")
+    _sr30_place(_sr30_u21, _NOW29_MS - _DAY29)
+    _sr30_plant(_sr30_u21, "pv1", _sr30_m21a.internal_ms - 60_000)
+    _sr30_plant(_sr30_u21, "pv2", _sr30_m21b.internal_ms - 60_000)
+    _sr30_box21 = _sr30_Box([_sr30_m21a, _sr30_m21b], gone={"pv1"})
+    _sr30_box21.fail_ids = {"pv2"}
+    _active29["client"] = _Counting29()
+    _sr30_r25 = _sr30_sync(_sr30_u21, _sr30_box21)
+    _sr30_rows25, _sr30_used25 = _rows30(_sr30_u21), _sr30_used(_sr30_u21)
+    _sr30_box21.fail_ids = set()
+    _sr30_r26 = _sr30_sync(_sr30_u21, _sr30_box21)
+    _sr30_rows26 = _rows30(_sr30_u21)
+    check(
+        "P29-SPAM-RESCUE: a rescued message Gmail no longer has when the release pass reads it (MessageGone) takes its "
+        "parked row with it, so no later run reads it again",
+        _sr30_box21.read_ids.count(("meta", "pv1")) == 1 and "pv1" not in _sr30_rows25 and "pv1" not in _sr30_rows26
+        and _sr30_calls("Nickel Labs") == 0,
+        f"{_sr30_r25} {_sr30_rows25} reads {_sr30_box21.read_ids}",
+    )
+    check(
+        "P29-SPAM-RESCUE: …while one whose metadata read FAILS keeps its parked row untouched — evidence 'spam', never "
+        "classified, never charged — and is imported on the next run, charged once (the false-positive half)",
+        _sr30_rows25.get("pv2") == ("parked", "", "", "", "", "spam") and _sr30_used25 == 0
+        and _sr30_r26.error_code == "" and _sr30_rows26.get("pv2", ("",))[0] == "created"
+        and _sr30_calls("Opal Labs") == 1 and _sr30_used(_sr30_u21) == 1,
+        f"{_sr30_rows25} used {_sr30_used25} | {_sr30_r26} {_sr30_rows26} calls {_sr30_calls('Opal Labs')}",
+    )
+
+    # (12) A run whose budget is already gone when the release pass starts spends no Gmail call on it.
+    _sr30_u22 = _mint29(_db29, "Spam Release No Budget").id
+    _connect29(_sr30_u22)
+    _sr30_m22 = _sr30_rejection("pw1", 10, "Pearl Labs")
+    _sr30_place(_sr30_u22, _NOW29_MS - _DAY29)
+    _sr30_plant(_sr30_u22, "pw1", _sr30_m22.internal_ms - 60_000)
+    _sr30_box22 = _sr30_Box([_sr30_m22])
+    _sr30_ticks = {"n": 0}
+
+    def _sr30_late_clock():  # noqa: ANN202
+        """The run's first reading is its start; every later one is far past a 5 s budget — as if opening the
+        mailbox had taken all of it."""
+        _sr30_ticks["n"] += 1
+        return 0.0 if _sr30_ticks["n"] == 1 else 1000.0
+
+    _active29["client"] = _Counting29()
+    _sr30_r27 = _is29.sync_user(_db29, _sr30_u22, mailbox=_sr30_box22, budget_s=5, clock=_sr30_late_clock,
+                                now=_sr30_NOW)
+    _sr30_gmail27, _sr30_rows27, _sr30_calls27 = dict(_sr30_box22.calls), _rows30(_sr30_u22), _sr30_calls("Pearl Labs")
+    _sr30_r28 = _sr30_sync(_sr30_u22, _sr30_box22)
+    _sr30_rows28 = _rows30(_sr30_u22)
+    check(
+        "P29-SPAM-RESCUE: a run whose budget is gone before the release pass makes no release listing and no read — "
+        "no Gmail call on work it cannot finish — and says has_more, the parked row waiting untouched and uncharged",
+        _sr30_r27.has_more and _sr30_r27.error_code == ""
+        and (_sr30_gmail27["list"], _sr30_gmail27["meta"], _sr30_gmail27["body"]) == (0, 0, 0)
+        and _sr30_rows27.get("pw1") == ("parked", "", "", "", "", "spam") and _sr30_calls27 == 0,
+        f"{_sr30_r27} gmail {_sr30_gmail27} {_sr30_rows27} calls {_sr30_calls27}",
+    )
+    check(
+        "P29-SPAM-RESCUE: …while the next run, its budget intact, lists once and imports it, charged once (the "
+        "false-positive half)",
+        _sr30_r28.error_code == "" and _sr30_rows28.get("pw1", ("",))[0] == "created"
+        and _sr30_box22.calls["list"] - _sr30_gmail27["list"] == 1
+        and _sr30_calls("Pearl Labs") == 1 and _sr30_used(_sr30_u22) == 1,
+        f"{_sr30_r28} {_sr30_rows28} gmail {_sr30_box22.calls} calls {_sr30_calls('Pearl Labs')}",
+    )
+finally:
+    _ic29.get_inbox_llm_client = _real_inbox_client29
+    _active29["client"] = _Counting29()
+
 # --- 30d. The Google routes and the cron, over HTTP ----------------------------------
 _prev30_http = _env29(**_google_env29, INBOX_FAKE_PROVIDER="false", CRON_SECRET="smoke-cron-30")
 _go29._transport = _google29
@@ -17688,9 +18429,20 @@ try:
         _mc30 = _mailbox30(_fr30["id"])
         _mc30.cursor_ms, _mc30.window_lo_ms = _caught30, _caught30 + 1
         _hdb30.commit()
+        # P29-SPAM-RESCUE: a parked Spam id belongs to the mailbox whose listing parked it.
+        _hdb30.add(_ME29(user_id=_fr30["id"], provider_message_id="sr30spam1", action="parked", evidence="spam",
+                         received_at=_dt29.now(_tz29.utc) - _td29(days=2)))
+        _hdb30.commit()
+
+        def _sr30_parked30d():
+            _hdb30.expire_all()
+            return sorted(_hdb30.execute(_sel29(_ME29.provider_message_id).where(
+                _ME29.user_id == _fr30["id"], _ME29.action == "parked")).scalars().all())
+
         _google_state29.update(refresh="1//alice-30b")
         _google_log29.clear()
         _loc30_same, _rev30_same = _connect_flow30(), _revoked30()
+        _sr30_parked_same = _sr30_parked30d()
         _mc30 = _mailbox30(_fr30["id"])
         check(
             "B8: reconnecting as the SAME Google address revokes nothing and keeps the import where it was (the "
@@ -17702,6 +18454,7 @@ try:
         _google_state29.update(refresh="1//bob-30", profile="bob30@gmail.com")
         _google_log29.clear()
         _loc30_bob, _rev30_bob = _connect_flow30(), _revoked30()
+        _sr30_parked_bob = _sr30_parked30d()
         _mc30 = _mailbox30(_fr30["id"])
         _now30_ms = int(_dt29.now(_tz29.utc).timestamp() * 1000)
         check(
@@ -17712,6 +18465,13 @@ try:
             and int(_mc30.cursor_ms or 0) == 0 and int(_mc30.backfill_days) == 30
             and abs(int(_mc30.window_lo_ms) - (_now30_ms - 30 * _DAY29)) < 120_000,
             f"{_loc30_bob} {_rev30_bob} {_mc30.email_address} cursor={_mc30.cursor_ms} lo={_mc30.window_lo_ms}",
+        )
+        check(
+            "P29-SPAM-RESCUE: reconnecting as a DIFFERENT Google address drops the old mailbox's parked Spam ids — no "
+            "listing of the new mailbox can ever release them — while a SAME-address reconnect keeps them (the "
+            "false-positive half)",
+            _sr30_parked_same == ["sr30spam1"] and _sr30_parked_bob == [],
+            f"same {_sr30_parked_same} switched {_sr30_parked_bob}",
         )
 
         # B17: never claim a revoke that did not happen.

@@ -8,11 +8,15 @@ I3-I7 folded in):
 - MONOTONIC. A status moves forward (saved -> applied -> interview -> offer) or
   to rejected. An email never moves a card backwards, and never changes a card
   that already reads offer or rejected — a different verdict waits in review.
-- THE OWNER'S NEWER WORD WINS (rule 5, I4). A card the inbox did not write is
-  never changed by an email OLDER than the card's own last change or creation.
-  That covers legacy rows (status_source "") and kit or extension rows too, not
-  just manual edits: a first 60-day import otherwise lands a two-month-old
-  rejection from a PREVIOUS application on the card the user made today.
+- THE NEWER WORD WINS (rule 5, I4, widened by P29-SPAM-RESCUE). An email OLDER
+  than a card's own last change or creation never moves it to interview, offer
+  or rejection, WHOEVER made that change — the user, a kit, the extension, a
+  legacy row (status_source "") or another email. A first 60-day import would
+  otherwise land a two-month-old rejection from a PREVIOUS application on the
+  card the user made today; and a reply released from Spam, the first mail ever
+  applied out of date order, would close a card a NEWER email moved to
+  Interview. For mail applied in date order the email clause changes nothing:
+  an email-made change is never newer than the next email.
 - WHEN UNSURE, ASK. Low confidence, several cards it could be, a title that
   names a different role, a blank or agency-hidden company, a conflict with a
   terminal card: the email waits in Needs review and no card is touched.
@@ -175,11 +179,15 @@ def _plan_matched(app: Any, kind: str, target: str, received_at: datetime) -> Pl
     # 4. A terminal card is never changed by an email.
     if status in TERMINAL:
         return Plan("linked" if target == status else "review", app, reason="terminal")
-    # 5. (I4) An email older than a card someone else owns. The marker is the
+    # 5. (I4) An email older than the card's last change. The marker is the
     # card's last status change, else its creation — kit and extension rows
     # carry no status_changed_at, and a NULL compared against a date is no rule.
+    # Every card, whoever changed it (P29-SPAM-RESCUE): a reply released from
+    # Spam is applied after mail NEWER than it, so "the inbox wrote this card"
+    # no longer means "nothing older than this email is still to come". It
+    # covers FIXB B8's switched-address re-walk and a purge-then-reconnect too.
     marker = utc(app.status_changed_at) or utc(app.created_at)
-    if (app.status_source or "") != "email" and marker is not None and received_at < marker:
+    if marker is not None and received_at < marker:
         if kind == "confirmation" and status == "saved":
             # Saving a job and applying later is the normal order; the
             # confirmation is still the truth about the application.
