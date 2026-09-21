@@ -14611,6 +14611,116 @@ try:
             and any(u.get("name") == "Invite Friend" and u.get("login_email") == "" and u.get("verified") is True
                     for u in _admin28_list),
         )
+
+        # --- P29-ADMIN-EMAIL: the admin's email edit never moves a sign-in address ---------------------------
+        # users.email mirrors user_logins.email for every account with a login (signup, Google signup and
+        # change-email all write both). PATCH /admin/users used to write users.email ALONE and answer 200, so
+        # the answer showed an address that sign-in, reset mail, token binding, the throttles and the monthly
+        # pool never followed. For an account with a login it is now a 400, unless the value IS the sign-in
+        # address (a no-op that stores it in its one spelling) or the label's current value (a round-trip of
+        # the admin's own list); an invite-code account has no login, and its label stays freely editable.
+        def _users_email28(uid):  # noqa: ANN001
+            _d = SessionLocal()
+            try:
+                user = _d.get(_U28, uid)
+                return None if user is None else user.email
+            finally:
+                _d.close()
+
+
+        def _admin_row28(uid):  # noqa: ANN001
+            return next((u for u in _j28(_ac.get("/admin/users", headers=_ADMIN_H)).get("users", [])
+                         if u.get("id") == uid), {})
+
+
+        _inv28_uid = _j28(_inv28).get("id")
+        _ae28_moved = _ac.patch(f"/admin/users/{_maya28_uid}", json={"email": "maya.moved@example.com"}, headers=_ADMIN_H)
+        _ae28_moved_row = _admin_row28(_maya28_uid)
+        check(
+            "P29-ADMIN-EMAIL: the admin cannot give an account with a CONFIRMED sign-in a new email (400) — the "
+            "login still belongs to Maya under her own address, nothing signs in as the typed one, users.email is "
+            "not set to it, and the admin list still shows ONE address for her, not two that disagree",
+            _ae28_moved.status_code == 400
+            and (_login_row28("maya@example.com") or {}).get("user_id") == _maya28_uid
+            and _login_row28("maya.moved@example.com") is None
+            and _users_with_email28("maya.moved@example.com") == 0
+            and _ae28_moved_row.get("email") == "maya@example.com" == _ae28_moved_row.get("login_email"),
+            f"{_ae28_moved.status_code} {_ae28_moved.text[:160]}",
+        )
+        _ae28_noam = _ac.patch(f"/admin/users/{_noam28_uid}", json={"email": "noam.moved@example.com"}, headers=_ADMIN_H)
+        _ae28_why_confirmed = str(_j28(_ae28_moved).get("detail", ""))
+        _ae28_why_unconfirmed = str(_j28(_ae28_noam).get("detail", ""))
+        check(
+            "P29-ADMIN-EMAIL: …and an UNCONFIRMED sign-in is refused too (400; the user's own change-email is the "
+            "door, with its code, uniqueness and token rules) — and only THAT refusal points at the verify page: "
+            "a confirmed address has no such door, so its sentence may not claim one",
+            _ae28_noam.status_code == 400
+            and (_login_row28("noam@example.com") or {}).get("user_id") == _noam28_uid
+            and _login_row28("noam.moved@example.com") is None
+            and "verify page" in _ae28_why_unconfirmed and "verify page" not in _ae28_why_confirmed
+            and _ae28_why_confirmed != "",
+            f"{_ae28_noam.status_code} | {_ae28_why_confirmed} | {_ae28_why_unconfirmed}",
+        )
+        _ae28_half = _ac.patch(
+            f"/admin/users/{_maya28_uid}",
+            json={"email": "x28@example.com", "name": "Renamed By A Bad Patch", "inbox_enabled": True},
+            headers=_ADMIN_H,
+        )
+        _ae28_half_row = _admin_row28(_maya28_uid)
+        check(
+            "P29-ADMIN-EMAIL: a refused email applies NOTHING sent beside it — the name and the Gmail allowlist are "
+            "exactly as they were (checked before anything is applied, like the B7 plan check)",
+            _ae28_half.status_code == 400 and _ae28_half_row.get("name") == "Maya"
+            and _ae28_half_row.get("inbox_enabled") is False and _users_with_email28("x28@example.com") == 0,
+            f"{_ae28_half.status_code} {_ae28_half_row.get('name')} {_ae28_half_row.get('inbox_enabled')}",
+        )
+        _ae28_label = _ac.patch(
+            f"/admin/users/{_inv28_uid}", json={"email": "  invite.friend.new@example.com "}, headers=_ADMIN_H
+        )
+        _ae28_label_me = _j28(_ac.get("/auth/me", headers=_INV28_H))
+        check(
+            "P29-ADMIN-EMAIL twin: an invite-code account has NO sign-in, so its users.email is only a contact label "
+            "and the admin still edits it — 200, stored trimmed, an empty login_email beside it, and /auth/me (whose "
+            "no-login fallback reads the label) reports the new one",
+            _ae28_label.status_code == 200 and _j28(_ae28_label).get("email") == "invite.friend.new@example.com"
+            and _j28(_ae28_label).get("login_email") == ""
+            and (_ae28_label_me.get("user") or {}).get("email") == "invite.friend.new@example.com",
+            f"{_ae28_label.status_code} {_ae28_label.text[:160]}",
+        )
+        _ae28_same = _ac.patch(f"/admin/users/{_maya28_uid}", json={"email": "  Maya@Example.com "}, headers=_ADMIN_H)
+        check(
+            "P29-ADMIN-EMAIL twin: re-sending the sign-in address itself — another case, stray spaces — is never "
+            "refused (200), and it is stored in the login's ONE spelling, not the one typed",
+            _ae28_same.status_code == 200 and _j28(_ae28_same).get("email") == "maya@example.com"
+            and _users_with_email28("maya@example.com") == 1 and _users_with_email28("Maya@Example.com") == 0,
+            f"{_ae28_same.status_code} {_ae28_same.text[:160]}",
+        )
+        # The drifted row: production's admin was created with no users.email and later had a Google login row
+        # moved onto it by hand, so its list entry reads email "" beside a login_email. A client that sends the
+        # entry back must not be refused, or it blocks the change sent WITH it.
+        _dr28 = SessionLocal()
+        try:
+            _dr28.get(_U28, _maya28_uid).email = ""
+            _dr28.commit()
+        finally:
+            _dr28.close()
+        _ae28_trip = _ac.patch(
+            f"/admin/users/{_maya28_uid}", json={"email": "", "name": "Maya Round Trip"}, headers=_ADMIN_H
+        )
+        _ae28_trip_email = _users_email28(_maya28_uid)
+        _ae28_heal = _ac.patch(
+            f"/admin/users/{_maya28_uid}", json={"email": "maya@example.com", "name": "Maya"}, headers=_ADMIN_H
+        )
+        check(
+            "P29-ADMIN-EMAIL twin: on a drifted row (users.email '' beside a login) sending the list's own value back "
+            "is not an edit — 200, the name sent beside it applies, the label is left as it was — and sending the "
+            "sign-in address heals it",
+            _ae28_trip.status_code == 200 and _j28(_ae28_trip).get("name") == "Maya Round Trip"
+            and _ae28_trip_email == ""
+            and _ae28_heal.status_code == 200 and _users_email28(_maya28_uid) == "maya@example.com"
+            and _j28(_ae28_heal).get("name") == "Maya",
+            f"{_ae28_trip.status_code} {_ae28_trip.text[:120]} | {_ae28_trip_email!r} | {_ae28_heal.status_code}",
+        )
         _ac.cookies.clear()
         _wipe28 = _ac.request("DELETE", "/profile/data", headers=_ck28(_m28_1, _XRW))
         _ac.cookies.clear()
@@ -18632,6 +18742,35 @@ try:
             and _pl_list32.get(_g2_32, {}).get("uses_this_month") == 1
             and _pl_list32.get(_plan_uid32, {}).get("uses_this_month") == 0,
             str({k: _pl_list32.get(k, {}).get("uses_this_month") for k in (_me_uid32, _g1_32, _g2_32, _plan_uid32)}),
+        )
+        # --- P29-ADMIN-EMAIL: an admin email edit never re-keys or resets a pool -------------------------------
+        # The pool is keyed on the canonical SIGN-IN address at reserve time, so an admin edit that moved
+        # user_logins.email would start this person's month from 0 (or join someone else's never-wiped pool).
+        # Placed BEFORE the 'gold' hand-set below, which reserves a use on _plan_uid32.
+        _ae32_moved = _c32.patch(f"/admin/users/{_g1_32}", json={"email": "fresh.pool32@gmail.com"}, headers=_ADMIN_H)
+        _ae32_moved_uses = _listed32().get(_g1_32, {}).get("uses_this_month")
+        check(
+            "P29-ADMIN-EMAIL 32.14: an admin email edit on an account WITH a sign-in is a 400 and cannot move its "
+            "pool — the key is still the one the gmail alias shares, this month's 1 use is still spent, and the "
+            "admin list still says 1",
+            _ae32_moved.status_code == 400 and _key32(_g1_32) == _gkeys32[0]
+            and _snap32(_g1_32, _THIS32).used == 1 and _ae32_moved_uses == 1,
+            f"{_ae32_moved.status_code} {_ae32_moved.text[:120]} used={_snap32(_g1_32, _THIS32).used} "
+            f"listed={_ae32_moved_uses}",
+        )
+        _ae32_key_before = _key32(_plan_uid32)
+        _ae32_uses_before = _listed32().get(_plan_uid32, {}).get("uses_this_month")
+        _ae32_label = _c32.patch(
+            f"/admin/users/{_plan_uid32}", json={"email": "label.pool32@example.com"}, headers=_ADMIN_H
+        )
+        check(
+            "P29-ADMIN-EMAIL 32.14 twin: a minted friend has NO sign-in, so the same edit is a label (200) — and a "
+            "label never keys a pool: u:<id> before and after, this month's count unchanged",
+            _ae32_label.status_code == 200 and _j28(_ae32_label).get("email") == "label.pool32@example.com"
+            and _ae32_key_before == f"u:{_plan_uid32}" == _key32(_plan_uid32)
+            and _ae32_uses_before is not None
+            and _listed32().get(_plan_uid32, {}).get("uses_this_month") == _ae32_uses_before,
+            f"{_ae32_label.status_code} {_ae32_key_before} {_key32(_plan_uid32)} {_ae32_uses_before}",
         )
         _gd32 = SessionLocal()
         try:
@@ -23570,6 +23709,25 @@ try:
             _where33(_le33["resp"]) == ("/login", {"google": ["linked_elsewhere"]}) and _le33["session"] == ""
             and (_login33(_lk33_email) or {}).get("google_sub") == "g-link-33",
             _loc29(_le33["resp"]),
+        )
+
+        # --- P29-ADMIN-EMAIL: a Google account's address is a sign-in address too ----------------------------------
+        _ae33_uid = (_login33(sub="g-new-33") or {}).get("user_id")
+        _ae33_moved = _c33.patch(f"/admin/users/{_ae33_uid or 0}", json={"email": "moved.google33@gmail.com"},
+                                 headers=_ADMIN_H)
+        _ae33_same = _c33.patch(f"/admin/users/{_ae33_uid or 0}", json={"email": "New.Google33@gmail.com"},
+                                headers=_ADMIN_H)
+        _c33.cookies.clear()
+        check(
+            "P29-ADMIN-EMAIL 33: a Google account (no password, a sub) is refused a new email by the admin as well — "
+            "400, the login keeps its address and its sub, nothing answers to the typed one — while re-sending its "
+            "own address in another case is a 200 that stores the login's spelling",
+            _ae33_uid is not None and _ae33_moved.status_code == 400
+            and (_login33("new.google33@gmail.com") or {}).get("google_sub") == "g-new-33"
+            and _login33("moved.google33@gmail.com") is None
+            and _users_with_email28("moved.google33@gmail.com") == 0
+            and _ae33_same.status_code == 200 and _j28(_ae33_same).get("email") == "new.google33@gmail.com",
+            f"{_ae33_moved.status_code} {_ae33_moved.text[:120]} | {_ae33_same.status_code} {_ae33_same.text[:120]}",
         )
 
         _cu33_uid, _CU33_H = _mint32(_c33, "Code Friend 33", "code.user33@gmail.com")

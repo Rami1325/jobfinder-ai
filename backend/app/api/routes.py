@@ -2313,7 +2313,21 @@ def admin_update_user(
     _admin: User = Depends(admin_user),
 ) -> UserOut:
     """Deactivate (revoke) / reactivate / rename a user, allow Gmail, or set the
-    plan. Admin accounts can't be deactivated — that would lock the owner out."""
+    plan. Admin accounts can't be deactivated — that would lock the owner out.
+
+    `email` is a free contact label ONLY for an account with no sign-in row (an
+    invite code, or the admin before any login was attached). For an account
+    that signs in with an address, `users.email` mirrors `user_logins.email` —
+    signup, Google signup and change-email all write both — so the only values
+    accepted are that address (in any case or spacing: it is stored in the
+    login's one spelling, which also heals a drifted label) or the label's
+    current value (a client sending the list's own row back). Anything else is a
+    400 (P29-ADMIN-EMAIL). Moving the sign-in address here would re-key the
+    monthly pool at the next reserve, keep a "verified" mark on an address
+    nobody proved, and hand /auth/forgot a mailbox the admin merely typed; a
+    confirmed address has no move flow at all, and an unconfirmed one is fixed
+    by its owner through /auth/change-email.
+    """
     u = db.get(User, user_id)
     if not u:
         raise HTTPException(404, "User not found.")
@@ -2321,6 +2335,24 @@ def admin_update_user(
     # half-applies the other fields sent beside it.
     if body.plan is not None and body.plan not in quota.PLANS:
         raise HTTPException(400, 'The plan must be "free" or "unlimited".')
+    # P29-ADMIN-EMAIL: the email is judged here too, before anything is applied.
+    # Compared through normalize_email — the spelling the unique index stores —
+    # never quota.canonical_email, which would call a different Gmail spelling
+    # "the same" although it is a different sign-in string.
+    login = accounts_core.login_for(db, u.id) if body.email is not None else None
+    heal_email: str | None = None
+    if login is not None:
+        sent = body.email.strip()
+        if accounts_core.normalize_email(sent) == login.email:
+            heal_email = login.email
+        elif sent != (u.email or "").strip():
+            raise HTTPException(
+                400,
+                "This account signs in with a confirmed email address, which can't be changed."
+                if login.email_verified_at is not None
+                else "This account signs in with an email address the admin can't change. Until it's "
+                "confirmed, the user can fix it on the verify page.",
+            )
     if body.is_active is not None:
         if u.is_admin and not body.is_active:
             raise HTTPException(400, "Can't deactivate an admin account.")
@@ -2332,7 +2364,12 @@ def admin_update_user(
     if body.name is not None:
         u.name = body.name.strip()
     if body.email is not None:
-        u.email = body.email.strip()
+        if login is None:
+            # No sign-in: users.email is only a label, and the pool is u:<id> whatever it says.
+            u.email = body.email.strip()
+        elif heal_email is not None:
+            u.email = heal_email
+        # Otherwise the value sent is the label's own, unchanged: nothing to write.
     if body.inbox_enabled is not None:
         # Phase 29 / B2 (O2): the Gmail allowlist. Enabling here is half of it —
         # while the Google app is in Testing, the account must also be one of its
