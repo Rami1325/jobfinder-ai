@@ -8,6 +8,7 @@ frontend/dist
 *.db
 render.yaml
 CLAUDE.md
+docs/handbook
 
 # Competitor UI reference captures. .vercelignore SUPERSEDES .gitignore for CLI
 # uploads, so the .gitignore rule does not cover this path here -- without this
