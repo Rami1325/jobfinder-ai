@@ -14,3 +14,8 @@ sentry-sdk[fastapi]==2.20.0
 # Encrypts stored Gmail refresh tokens (app/core/token_crypto.py). Already
 # installed as a pdfminer.six dependency; pinned because the app now imports it.
 cryptography==49.0.0
+# The IANA tz database for zoneinfo: Drushim's dates are Israel wall time
+# (app/core/providers/drushim.py stamps them Asia/Jerusalem). Windows has no
+# system tz database, and psycopg pulls tzdata only on win32, so without this
+# pin a Linux host with no /usr/share/zoneinfo would fail at import.
+tzdata==2026.2
