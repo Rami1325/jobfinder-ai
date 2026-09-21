@@ -6277,7 +6277,61 @@ try {
   const page = fnSource(read("pages/interview/MockInterview.tsx"), "export default function MockInterview");
   if (!/takeReturnedAnswer\(\)/.test(page))
     fail("pages/interview/MockInterview.tsx never calls takeReturnedAnswer(), so a refused answer is lost instead of returned to the draft");
-  const send = /<Button[^>]*?icon=\{<Send\b[\s\S]*?disabled=\{([^}]*)\}/.exec(page);
+  // …and takes it in a way that survives StrictMode (main.tsx). In dev, React
+  // runs a MOUNTING component's effects twice over the same render's values, so
+  // a page that mounts with an answer already waiting (the user left while the
+  // refusal landed, then came back) ran `if (returned) setDraft(take…())` twice:
+  // the first run restored the answer, the second still saw `returned` set, took
+  // "" and wiped the draft. The effect is EXECUTED here, twice over one closure.
+  const effects = [];
+  for (const m of page.matchAll(/\buseEffect\(/g)) {
+    const indent = page.slice(page.lastIndexOf("\n", m.index) + 1, m.index).match(/^[ \t]*/)[0];
+    const open = page.indexOf("{", m.index);
+    const close = new RegExp(`\\n${indent}\\}(?:, \\[[^\\]]*\\])?\\);`, "g");
+    close.lastIndex = open;
+    const end = close.exec(page);
+    if (open === -1 || !end) throw new Error(`could not slice the useEffect at offset ${m.index} of MockInterview.tsx`);
+    const body = page.slice(open + 1, end.index);
+    if (/takeReturnedAnswer\(/.test(body)) effects.push(body);
+  }
+  if (effects.length !== 1)
+    throw new Error(`found ${effects.length} useEffect bodies calling takeReturnedAnswer() in MockInterview.tsx, not 1`);
+  const effectMod = { exports: {} };
+  new Function(
+    "module",
+    createRequire(import.meta.url)("esbuild").transformSync(
+      `module.exports = function (returned, takeReturnedAnswer, setDraft) {${effects[0]}\n};`,
+      { loader: "ts" },
+    ).code,
+  )(effectMod);
+  const mount = (returned, typed, runs) => {
+    let waiting = returned;
+    let draft = typed;
+    const take = () => {
+      const text = waiting;
+      waiting = "";
+      return text;
+    };
+    const setDraft = (v) => {
+      draft = typeof v === "function" ? v(draft) : v;
+    };
+    for (let i = 0; i < runs; i++) effectMod.exports(returned, take, setDraft);
+    return draft;
+  };
+  for (const [label, returned, typed, runs, want] of [
+    ["once, as production runs it", "A2", "", 1, "A2"],
+    ["twice on mount, as StrictMode runs it", "A2", "", 2, "A2"],
+    // The false-positive half: with nothing returned, what the user typed stays.
+    ["twice with nothing returned", "", "typing", 2, "typing"],
+  ]) {
+    const got = mount(returned, typed, runs);
+    if (got !== want)
+      fail(
+        `MockInterview's takeReturnedAnswer effect, run ${label}, leaves the draft ${JSON.stringify(got)}, not ` +
+          `${JSON.stringify(want)}: write only the text actually taken, never what a second take returns ("").`,
+      );
+  }
+  const send =/<Button[^>]*?icon=\{<Send\b[\s\S]*?disabled=\{([^}]*)\}/.exec(page);
   if (!send) throw new Error("could not find the Send button's disabled={…} in MockInterview.tsx");
   if (!/\bfull\b/.test(send[1]))
     fail(`MockInterview's Send is disabled on {${send[1]}}, which ignores a full session`);

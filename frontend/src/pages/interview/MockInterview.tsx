@@ -42,9 +42,12 @@ export default function MockInterview({
   const uses = useUses("interview");
 
   // An answer the server refused comes back into the text box, so it can be
-  // shortened and sent again instead of being lost (P30-PASS-SIZE).
+  // shortened and sent again instead of being lost (P30-PASS-SIZE). Write only
+  // what was taken: StrictMode runs a mounting page's effects twice with the same
+  // `returned`, and the second take is "" (check-mirrors 34).
   useEffect(() => {
-    if (returned) setDraft(takeReturnedAnswer());
+    const text = takeReturnedAnswer();
+    if (text) setDraft(text);
   }, [returned]);
 
   // Keep the newest message in view as the conversation grows.
