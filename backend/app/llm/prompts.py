@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import functools
 import inspect
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.llm.limits import clip_utf8, require_within
 
 # THE INPUT BOUNDARY IS HERE, and that is a measured choice. Every one of the 22
 # `complete_json`/`complete_text` calls in app/core and app/parsers builds its
 # user message with one of the `*_user(...)` builders below — no exceptions — so
-# this file is the single place unbounded text becomes prompt text.
+# this file is the single place client text becomes prompt text, and every
+# builder parameter is either MEASURED below or NAMED in `_UNMEASURED` with the
+# reason it needs no measuring (smoke 14b-6 walks every `*_user` builder,
+# decorated or not, and fails an unaccounted parameter).
 #
 # It is NOT enough to guard the stored master resume: 25 request models take a
 # `resume: ResumeModel` straight from the client body (tailor, cover letter,
@@ -23,35 +26,145 @@ from app.llm.limits import clip_utf8, require_within
 # at the one boundary the fabrication guard cannot see.
 #
 # Argument NAME is the discriminator, which is why these names must stay
-# consistent across builders — a new builder calling its parameter something
-# else is silently unguarded.
-_RESUME_ARGS = frozenset({"resume_json", "raw_text"})
-_JD_ARGS = frozenset({"jd_text"})
+# consistent across builders. A new builder whose parameter is called something
+# else is not silently unguarded any more: the smoke pin fails it until the
+# parameter is measured here or named in `_UNMEASURED`.
+
+
+class _Rule(NamedTuple):
+    """How one builder parameter is measured.
+
+    `kind` is the InputTooLarge kind its 413 carries — each kind has its own
+    sentence client-side, and check-mirrors 34 reads the kinds off the `_Rule(`
+    lines below, so keep the kind a string LITERAL. `cap` names the Settings
+    field (or derived property) holding the cap in UTF-8 KB, read at call time;
+    `<= 0` switches it off. `turn_cap`, for a transcript only, caps each
+    CANDIDATE turn on its own and refuses it as kind "answer"."""
+
+    kind: str
+    cap: str
+    turn_cap: str = ""
+
+
+# Measured by parameter NAME, in every builder that takes one.
+_MEASURED: dict[str, _Rule] = {
+    "resume_json": _Rule("resume", "max_resume_kb"),
+    "raw_text": _Rule("resume", "max_resume_kb"),
+    "jd_text": _Rule("jd", "max_jd_kb"),
+    # The client sends the ANALYSED JD back (cover letter, interview, tailor).
+    "jd_json": _Rule("jd", "max_jd_json_kb"),
+    # A refused question gets its own sentence: "shorten your answer" would be
+    # false when it was the question that was too long.
+    "question": _Rule("question", "max_answer_kb"),
+    "answer": _Rule("answer", "max_answer_kb"),
+    # Each candidate turn is the user's own answer, capped and named like one
+    # (the client hands a refused answer back to the draft). An interviewer turn
+    # is model text: it counts toward the total only, because "shorten your
+    # answer" said about it would be false.
+    "transcript": _Rule("transcript", "max_transcript_kb", turn_cap="max_answer_kb"),
+}
+# A parameter one builder measures differently, by (builder, parameter).
+_MEASURED_IN: dict[tuple[str, str], _Rule] = {
+    # The scorecard reads one reply and one refused answer more than the chat
+    # ever accepted (config.py, `max_scorecard_transcript_kb`), with its OWN kind:
+    # the chat's sentence says "end the session to get your scorecard", which
+    # would send someone whose scorecard was refused round in a loop. No per-turn
+    # cap: nothing on a scorecard can be edited, so one could only strand a
+    # session an old tab kept a long answer in.
+    ("interview_scorecard_user", "transcript"): _Rule("session", "max_scorecard_transcript_kb"),
+}
+# Every builder parameter the guard does NOT measure, by (builder, parameter) —
+# never by bare name, or allowing `company` here would quietly cover the next
+# builder that takes a user-typed `company`. Each reason starts with its
+# category: "server" (this backend wrote it), "schema" (refused at the request
+# model), "clipped" (text the user never wrote, clipped where it is read),
+# "third-party" (someone else's text, which rule 1 lets us clip) or "known open"
+# (client text that nothing bounds yet — listed in docs/handbook/llm-boundary.md).
+_UNMEASURED: dict[tuple[str, str], str] = {
+    ("humanize_user", "issues_text"): "server: voice_audit's findings on the tailored resume, never request text",
+    ("humanize_user", "keep_keywords"): "server: derived from the analysed JD, which is measured as jd_json",
+    ("tailor_user", "plan_json"): "server: PLAN_CV's own output for this request",
+    ("tailor_user", "avoid_phrases"): (
+        "server: read from the user row, capped where it is written "
+        "(writing_prefs keeps 50 phrases of at most 160 characters)"
+    ),
+    ("tailor_user", "max_pages"): "server: the page budget from settings (an int)",
+    ("tailor_user", "source_pages"): "server: the master's rendered page count (an int)",
+    ("tailor_user", "source_projects"): "server: the master's project count (an int)",
+    ("tailor_user", "omit_arabic"): "server: the Arabic preference, decided by tailor.py (a bool)",
+    ("cover_letter_user", "tone"): (
+        "schema: CoverLetterRequest.tone has max_length 200; the UI builds a closed set whose longest is 48"
+    ),
+    ("company_brief_user", "page_text"): (
+        "known open: user-pasted page text is CLIPPED to company_brief._PAGE_TEXT_CAP characters, which rule 1 "
+        "forbids for text the user supplied — it should be refused in bytes instead"
+    ),
+    ("company_brief_user", "company"): "known open: a user-typed field with no length bound anywhere",
+    ("company_brief_user", "job_title"): "known open: a user-typed field with no length bound anywhere",
+    ("outreach_user", "company"): "known open: a user-typed field with no length bound anywhere",
+    ("outreach_user", "job_title"): "known open: a user-typed field with no length bound anywhere",
+    ("outreach_user", "contact_name"): "known open: a user-typed field with no length bound anywhere",
+    ("outreach_user", "contact_role"): "known open: a client-sent field with no length bound anywhere",
+    ("follow_up_user", "company"): "known open: a user-typed field with no length bound anywhere",
+    ("follow_up_user", "role"): "known open: a user-typed field with no length bound anywhere",
+    ("follow_up_user", "stage"): "known open: a client-sent field with no length bound anywhere",
+    ("follow_up_user", "extra"): "known open: user-typed context (FollowUpRequest.context) with no bound anywhere",
+    ("inbox_classify_user", "body"): "clipped: an employer's email body, clipped to INBOX_BODY_KB in the builder",
+    ("inbox_classify_user", "sender"): "third-party: a Gmail header value, collapsed to one line",
+    ("inbox_classify_user", "subject"): "third-party: a Gmail header value, collapsed to one line",
+    ("inbox_classify_user", "date"): "third-party: the message's own timestamp, formatted by inbox_classifier",
+    ("inbox_classify_user", "snippet"): "third-party: Gmail's own short snippet of the message",
+}
+# Every `*_user` builder that is NOT `@_bounded`, and why.
+_UNDECORATED: dict[str, str] = {
+    "inbox_classify_user": "no parameter is the user's own text: third-party mail is clipped, never refused",
+    "follow_up_user": "measures nothing yet: its four fields are known open (see _UNMEASURED)",
+}
+
+
+def _measured_text(name: str, value: Any, rule: _Rule, settings: Settings) -> str:
+    """The text a measured parameter becomes in the prompt. A value the guard
+    cannot measure is a TypeError, never a skip: skipping every non-string is how
+    the transcript, a list, went unmeasured."""
+    if isinstance(value, str):
+        return value
+    if name == "transcript":
+        if rule.turn_cap:
+            for role, text in value:
+                if role == "candidate":
+                    require_within(text, getattr(settings, rule.turn_cap), "answer")
+        return _format_transcript(value)
+    raise TypeError(f"the prompt-input guard cannot measure {name!r}, a {type(value).__name__}")
 
 
 def _bounded(fn: Callable[..., str]) -> Callable[..., str]:
-    """Refuse an oversize document before it becomes prompt text.
+    """Refuse an oversize input before it becomes prompt text.
 
-    Refuse, never truncate: these are the user's own documents (see
+    Refuse, never truncate: these are the user's own documents and words (see
     app/llm/limits.py rule 1). Machine-scraped text is clipped at its source
     instead, so by the time it arrives here it is already under cap and this
     guard never fires on it.
+
+    The wrapper carries `__bounded__ = True`, which the smoke pin reads off the
+    function (never the source text) to require it on every builder that
+    measures a parameter.
     """
     signature = inspect.signature(fn)
+    builder = fn.__name__
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> str:
         bound = signature.bind(*args, **kwargs)
         settings = get_settings()  # at call time, so tests can env-override
         for name, value in bound.arguments.items():
-            if not isinstance(value, str):
+            rule = _MEASURED_IN.get((builder, name)) or _MEASURED.get(name)
+            if rule is None:
                 continue
-            if name in _RESUME_ARGS:
-                require_within(value, settings.max_resume_kb, "resume")
-            elif name in _JD_ARGS:
-                require_within(value, settings.max_jd_kb, "jd")
+            text = _measured_text(name, value, rule, settings)
+            require_within(text, getattr(settings, rule.cap), rule.kind)
         return fn(*args, **kwargs)
 
+    wrapper.__bounded__ = True  # type: ignore[attr-defined]
     return wrapper
 
 
@@ -823,7 +936,10 @@ def interview_feedback_user(resume_json: str, question: str, answer: str) -> str
 
 
 def _format_transcript(transcript: list[tuple[str, str]]) -> str:
-    """('interviewer'|'candidate', text) pairs → readable transcript lines."""
+    """('interviewer'|'candidate', text) pairs → readable transcript lines.
+
+    `_bounded` measures a transcript as THIS text, role prefixes included, so
+    the cap is on what the model reads."""
     if not transcript:
         return "(not started yet — open the interview)"
     return "\n".join(f"{role.upper()}: {text}" for role, text in transcript)
@@ -905,8 +1021,8 @@ def review_rewrite_user(resume_json: str) -> str:
 
     The payload is a strict SUBSET of the candidate's own resume, so it is bound
     by the resume cap and the argument is named `resume_json` to say so — a
-    builder naming it anything outside `_RESUME_ARGS` would be silently
-    unguarded, which is the trap the smoke test pins this decorator against.
+    builder naming it anything `_MEASURED` does not read would be unguarded,
+    which is the trap the smoke test pins this decorator against.
     """
     return (
         f"BULLETS TO REWRITE (JSON):\n{resume_json}\n\n"

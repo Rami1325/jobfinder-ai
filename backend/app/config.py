@@ -157,6 +157,26 @@ class Settings(BaseSettings):
     # instead, which can say something actionable.
     max_resume_kb: int = 256
     max_jd_kb: int = 32
+    # The session passes' own inputs (P30-PASS-SIZE), guard rails on the same
+    # terms. Until these existed the prompt-input guard read three parameter names
+    # and skipped every value that was not a string, so the mock-interview
+    # transcript (a list, re-sent whole every turn), a question, a practice answer
+    # and the client-sent analysed JD reached the model unmeasured.
+    #
+    # One answer, one question, and each CANDIDATE turn of a transcript. 16 KB is
+    # ~16k English or ~8.7k Hebrew characters, ~2,700 English words: a spoken
+    # answer runs 150-400. The Chrome extension clips a screening question at 500
+    # characters (extension/popup.js), so this cannot fire on anything it sends.
+    max_answer_kb: int = 16
+    # The whole transcript a chat turn sends, measured as the text the model reads
+    # (`ROLE: text` lines). Sized against the PASS it bounds, not the prompt's
+    # 6-8 question arc: one use is 60 calls, an opener and 59 answers, and 59
+    # ordinary Hebrew exchanges (a 900-character answer, a 500-character
+    # interviewer turn) measure ~146 KB — smoke 14b-6 drives exactly that session.
+    # 128 KB, the first number, fired on it. What this bounds is how much client
+    # text one call can send; it is NOT a cost bound on a pass, whose width is its
+    # 60 calls (an open owner question, recorded in docs/handbook/cost-and-quota.md).
+    max_transcript_kb: int = 256
     # Runaway-generation stop, NOT a budget — and it may only ship alongside the
     # finish_reason check in llm/client.py, or a truncated completion becomes a
     # JSONDecodeError blamed on us. Arithmetic: the largest legitimate output is
@@ -294,6 +314,33 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    # Two DERIVED caps (P30-PASS-SIZE). Derived rather than new settings, so each
+    # moves with the knob it depends on and switches off with it.
+    @property
+    def max_jd_json_kb(self) -> int:
+        """The cap on an ANALYSED job ad sent back by the client (`jd_json`: the
+        cover letter, the interview routes, and the tailor's fit, plan and tailor
+        builders). An analysed JD is model output read from at most `max_jd_kb`
+        of text, and even a model that copied the whole ad into three lists stays
+        near 3x (smoke 14b-6 builds that JD: 97 KB), so 4x cannot fire on a real
+        one. Derived from the analyser's INPUT cap, which is always in force, and
+        NOT from `llm_max_output_tokens`: that can be 0 (off), and the client's
+        capability probe drops the parameter for a model that rejects it. So
+        MAX_JD_KB <= 0 switches both job-ad checks off together."""
+        return 4 * self.max_jd_kb
+
+    @property
+    def max_scorecard_transcript_kb(self) -> int:
+        """The scorecard reads one reply and one answer more than the chat ever
+        accepted: the interviewer's reply to the last accepted transcript, and
+        the answer the chat then refused, which an open tab of the pre-fix client
+        still keeps in the transcript. So a session the chat has just refused can
+        always be scored. OFF (0) whenever the chat's cap is off: switching the
+        transcript cap off must never switch on a 32 KB one here."""
+        if self.max_transcript_kb <= 0:
+            return 0
+        return self.max_transcript_kb + 2 * max(self.max_answer_kb, 0)
 
 
 @lru_cache
