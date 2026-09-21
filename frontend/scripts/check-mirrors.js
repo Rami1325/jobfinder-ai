@@ -5991,6 +5991,687 @@ try {
   fail(`AGENTS.md / CLAUDE.md comparison could not run: ${e.message}`);
 }
 
+// ---- 35. the extension says why an answer was refused (EXECUTED) ----------- //
+// P30-EXT-LIMIT. The Chrome extension's assisted apply drafts an answer to each
+// free-text question on an application form through POST
+// /tools/screening-answer, one request per question. Through v0.3 it read no
+// refusal at all: `if (!aRes.ok) continue;` dropped a 429 monthly_limit and
+// fired the NEXT question's request, each one spending a daily `llm` unit the
+// server never refunds (the daily cap is counted before the monthly one); it
+// counted only successes toward its four-per-click cap; and it ended on a GREEN
+// "Filled 2 fields · resume attached" over empty question boxes. Reproduced by
+// loading the real popup.js into a node vm, which is what (b) and (c) still do.
+//
+//   (a) the extension's own messages: en and he carry the same keys, each
+//       message the same placeholder name -> content mapping (a Hebrew sentence
+//       whose MONTH and DATE point at swapped $1/$2 loads fine and prints the
+//       date where the month belongs), every $NAME$ declared and every
+//       declaration printed, and every key the code reaches resolves in BOTH:
+//       t() / showStatus / showMsg / getMessage literals including both arms of
+//       a ternary, the keys screeningRefusal returns as DATA, data-i18n in the
+//       two pages, and manifest.json's __MSG_*__. Check 8 walks
+//       frontend/src/locales only, so none of this had any guard.
+//   (b) screeningRefusal, EXECUTED in both languages: which refusals stop the
+//       autofill, and that the sentence names the month that ran out and the
+//       day the uses come back, in the language of the loaded messages.
+//   (c) onAutofill, EXECUTED with fetch and executeScript stubbed: one refused
+//       request and no more, ATTEMPTS capped at four, what was drafted still
+//       written, and a `warn` line that says why. The all-200 run stays `ok`.
+//   (d) the stale tab: uses the extension spent reach an open web tab when it is
+//       shown again, through a throttled /auth/me re-read that writes the uses
+//       store for the account the guard saw and nothing else. `getAuthMe` also
+//       re-stamps the resume draft's owner (lib/draft.ts, check 30's F4), so
+//       calling it on every return to the tab would stamp one account's draft
+//       with another account's id, or with none.
+//
+// The extension is installed software a deploy cannot update, so a defect here
+// stays in the field until its owner replaces the folder and reloads it.
+//
+// DEGRADES LOUDLY only when extension/ is not in this build at all, check 33's
+// shape: `.vercelignore` must drop extension/ whole or not at all. Present but
+// missing any file read below is red, since a moved file must move the check.
+const EXT_DIR = path.join(ROOT_DIR, "extension");
+const EXT_FILES = [
+  "popup.js",
+  "options.js",
+  "popup.html",
+  "options.html",
+  "manifest.json",
+  "_locales/en/messages.json",
+  "_locales/he/messages.json",
+];
+let extensionSkip = null;
+
+/** Chrome's own chrome.i18n.getMessage: `$name$` in any case -> that
+ * placeholder's content, `$1`..`$9` inside the content -> the substitutions,
+ * `$$` -> `$`, and "" for a message that does not exist. */
+function chromeMessage(messages, key, subs) {
+  const m = messages[key];
+  if (!m || typeof m.message !== "string") return "";
+  const list = subs === undefined || subs === null ? [] : Array.isArray(subs) ? subs.map(String) : [String(subs)];
+  const ph = {};
+  for (const [n, p] of Object.entries(m.placeholders || {})) ph[n.toLowerCase()] = String(p?.content ?? "");
+  const inner = (s) => s.replace(/\$\$|\$([1-9])/g, (w, d) => (w === "$$" ? "$" : list[Number(d) - 1] ?? ""));
+  return m.message.replace(/\$\$|\$([A-Za-z0-9_@]+)\$/g, (w, name) =>
+    w === "$$" ? "$" : name.toLowerCase() in ph ? inner(ph[name.toLowerCase()]) : w,
+  );
+}
+
+/** Index of the quote that closes the string opening at `i`. */
+function skipQuoted(src, i) {
+  const q = src[i];
+  for (let j = i + 1; j < src.length; j++) {
+    if (src[j] === "\\") j++;
+    else if (src[j] === q) return j;
+  }
+  throw new Error(`unterminated string at offset ${i}`);
+}
+
+/** The top-level arguments of the call whose `(` is at `open`, and the index of
+ * its closing `)`. Strings are skipped whole, so a quoted paren cannot unbalance it. */
+function callParts(src, open) {
+  const args = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === "`") {
+      i = skipQuoted(src, i);
+      continue;
+    }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") {
+      depth--;
+      if (depth === 0) {
+        args.push(src.slice(start, i));
+        return { args, end: i };
+      }
+    } else if (c === "," && depth === 1) {
+      args.push(src.slice(start, i));
+      start = i + 1;
+    }
+  }
+  throw new Error(`unbalanced call at offset ${open}`);
+}
+
+/** The string literals at the TOP level of one argument: both arms of a ternary
+ * count, a literal inside a nested call (`el.getAttribute("data-i18n")`) does
+ * not. A template literal there cannot be resolved, so it throws. */
+function topLiterals(arg) {
+  const out = [];
+  let depth = 0;
+  for (let i = 0; i < arg.length; i++) {
+    const c = arg[i];
+    if (c === '"' || c === "'" || c === "`") {
+      const end = skipQuoted(arg, i);
+      if (depth === 0 && c === "`") throw new Error(`a template-literal message key cannot be checked: ${arg.trim()}`);
+      if (depth === 0) out.push(arg.slice(i + 1, end));
+      i = end;
+      continue;
+    }
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+  }
+  return out;
+}
+
+/** [where, key] for every message key the extension's files reach by name.
+ * `dataKeys` are the keys a function hands back as DATA (`key: "..."`), which
+ * no call-site scrape can see. */
+function extensionKeyRefs(files, dataKeys = []) {
+  const refs = [];
+  for (const [file, raw] of Object.entries(files)) {
+    if (file.endsWith(".js")) {
+      const src = decomment(raw);
+      for (const [fn, idx, method] of [
+        ["t", 0, false],
+        ["showStatus", 1, false],
+        ["showMsg", 1, false],
+        ["getMessage", 0, true],
+      ]) {
+        const re = new RegExp(method ? `\\.${fn}\\s*\\(` : `(?<![\\w$.])${fn}\\s*\\(`, "g");
+        for (let m; (m = re.exec(src)); ) {
+          if (!method && /function\s*$/.test(src.slice(Math.max(0, m.index - 12), m.index))) continue;
+          const { args } = callParts(src, m.index + m[0].length - 1);
+          if (args.length > idx) for (const key of topLiterals(args[idx])) refs.push([`extension/${file} ${fn}()`, key]);
+        }
+      }
+    } else if (file.endsWith(".html")) {
+      for (const m of raw.matchAll(/data-i18n(?:-title)?="([^"]*)"/g)) refs.push([`extension/${file} data-i18n`, m[1]]);
+    } else if (file.endsWith(".json")) {
+      for (const m of raw.matchAll(/__MSG_([A-Za-z0-9_@]+)__/g)) refs.push([`extension/${file} __MSG_`, m[1]]);
+    }
+  }
+  for (const [where, key] of dataKeys) refs.push([where, key]);
+  return refs;
+}
+
+/** What is wrong between the two locales and the keys the code reaches, as
+ * sentences; [] when nothing is. Chrome matches placeholder names in any case. */
+function extensionMessageProblems(en, he, refs) {
+  const out = [];
+  const tokens = (msg) =>
+    new Set([...String(msg).replace(/\$\$/g, "").matchAll(/\$([A-Za-z0-9_@]+)\$/g)].map((m) => m[1].toLowerCase()));
+  const phMap = (m) =>
+    Object.fromEntries(Object.entries(m?.placeholders || {}).map(([n, p]) => [n.toLowerCase(), String(p?.content ?? "")]));
+  for (const [loc, mine, other, otherLoc] of [
+    ["en", en, he, "he"],
+    ["he", he, en, "en"],
+  ])
+    for (const key of Object.keys(mine))
+      if (!(key in other)) out.push(`extension message "${key}" is in ${loc} and not in ${otherLoc}`);
+  for (const [loc, bundle] of [
+    ["en", en],
+    ["he", he],
+  ])
+    for (const [key, m] of Object.entries(bundle)) {
+      if (!m || typeof m.message !== "string") {
+        out.push(`extension message "${key}" (${loc}) has no message string`);
+        continue;
+      }
+      const used = tokens(m.message);
+      const declared = phMap(m);
+      for (const n of used)
+        if (!(n in declared))
+          out.push(`extension message "${key}" (${loc}) prints $${n.toUpperCase()}$ but declares no such placeholder, so Chrome shows it raw`);
+      for (const n of Object.keys(declared))
+        if (!used.has(n))
+          out.push(`extension message "${key}" (${loc}) declares the placeholder "${n}" and never prints it, so that value is silently dropped`);
+    }
+  for (const key of Object.keys(en)) {
+    if (!(key in he)) continue;
+    const a = phMap(en[key]);
+    const b = phMap(he[key]);
+    for (const n of new Set([...Object.keys(a), ...Object.keys(b)]))
+      if (a[n] !== b[n])
+        out.push(
+          `extension message "${key}": the placeholder "${n}" is ${JSON.stringify(a[n] ?? null)} in en and ` +
+            `${JSON.stringify(b[n] ?? null)} in he, so one language prints the wrong value in its place`,
+        );
+  }
+  for (const [where, key] of refs) {
+    if (key.startsWith("@@")) continue; // Chrome's predefined messages
+    for (const [loc, bundle] of [
+      ["en", en],
+      ["he", he],
+    ])
+      if (!(key in bundle)) out.push(`${where} reaches the message "${key}", which ${loc} does not have, so the popup prints the raw key`);
+  }
+  return [...new Set(out)];
+}
+
+/** Load the REAL popup.js into a fresh vm context, in one UI language. Chrome,
+ * the DOM and fetch are stubs; `env` swaps in the fetch and executeScript a
+ * probe drives. The page's elements are plain objects in `els`. */
+function loadPopup(popupSrc, locale, messages, env = {}) {
+  const vm = createRequire(import.meta.url)("node:vm");
+  const els = {};
+  const el = (id) =>
+    els[id] ||
+    (els[id] = {
+      id,
+      hidden: true,
+      disabled: false,
+      textContent: "",
+      className: "",
+      value: "",
+      title: "",
+      href: "",
+      innerHTML: "",
+      addEventListener() {},
+      appendChild() {},
+    });
+  el("kitSelect").value = "7";
+  const ctx = vm.createContext({
+    console,
+    URL,
+    setTimeout,
+    btoa: (s) => Buffer.from(s, "binary").toString("base64"),
+    document: {
+      documentElement: {},
+      addEventListener() {},
+      getElementById: el,
+      querySelector: (sel) => (sel.includes('name="fmt"') ? { value: "pdf" } : null),
+      querySelectorAll: () => [],
+      createElement: () => el(`created-${Object.keys(els).length}`),
+    },
+    chrome: {
+      i18n: {
+        getMessage: (key, subs) =>
+          key === "@@ui_locale"
+            ? locale
+            : key === "@@bidi_dir"
+              ? locale === "he"
+                ? "rtl"
+                : "ltr"
+              : chromeMessage(messages, key, subs),
+      },
+      storage: {
+        sync: { get: async (defaults) => ({ ...defaults, appUrl: "http://app.test", apiUrl: "http://api.test", accessCode: "K" }) },
+      },
+      scripting: {
+        executeScript:
+          env.executeScript ||
+          (async () => {
+            throw new Error("no page in this probe");
+          }),
+      },
+      tabs: { query: async () => [], create() {} },
+      runtime: { openOptionsPage() {} },
+    },
+    fetch:
+      env.fetch ||
+      (async (url) => {
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+  });
+  vm.runInContext(popupSrc, ctx, { filename: "extension/popup.js" });
+  for (const name of ["t", "onAutofill"])
+    if (typeof ctx[name] !== "function")
+      throw new Error(`extension/popup.js no longer declares a top-level ${name}, so the autofill cannot be driven`);
+  return { ctx, els };
+}
+
+try {
+  const present = EXT_FILES.filter((f) => fs.existsSync(path.join(EXT_DIR, f)));
+  if (!fs.existsSync(EXT_DIR)) {
+    extensionSkip = `${EXT_DIR} is not in this build`;
+    console.warn(
+      `\n  ! check 35 DEGRADED: ${extensionSkip}, so the extension's messages and autofill were NOT checked.\n` +
+        `    This is expected only where the frontend is built without the repo around it;\n` +
+        `    CI (.github/workflows/ci.yml) checks the whole repo out, so it runs there.\n`,
+    );
+  } else if (present.length !== EXT_FILES.length) {
+    fail(
+      `extension/ is in this build without ${EXT_FILES.filter((f) => !present.includes(f)).join(", ")}: a file moved or ` +
+        "was deleted, so check 35 has nothing to check. Point the check at the new home; do not delete the assertion.",
+    );
+  } else {
+    const extRead = (f) => fs.readFileSync(path.join(EXT_DIR, f), "utf8");
+    const popupSrc = extRead("popup.js");
+    const msgs = {
+      en: JSON.parse(extRead("_locales/en/messages.json")),
+      he: JSON.parse(extRead("_locales/he/messages.json")),
+    };
+    // A missing message becomes a marker no status line can contain, so the
+    // scenario still runs and reports what it did beside the missing sentence.
+    const say = (loc, key, subs) => chromeMessage(msgs[loc], key, subs) || `[no "${key}" message in ${loc}]`;
+
+    // (a) Parity, and every key the code reaches. The keys screeningRefusal and
+    // its caller hand back as data are read from their own bodies.
+    try {
+      const dataKeys = [];
+      const popupPlain = decomment(popupSrc);
+      for (const fn of ["function screeningRefusal", "async function draftScreeningAnswer"]) {
+        let body = "";
+        try {
+          body = fnSource(popupPlain, fn);
+        } catch {
+          fail(`extension/popup.js has no \`${fn}\`, so a refused screening answer is not read (check 35(a))`);
+          continue;
+        }
+        for (const m of body.matchAll(/\bkey\s*:\s*(["'])([^"']+)\1/g)) dataKeys.push([`extension/popup.js ${fn.split(" ").pop()}`, m[2]]);
+      }
+      const files = Object.fromEntries(["popup.js", "options.js", "popup.html", "options.html", "manifest.json"].map((f) => [f, extRead(f)]));
+      const refs = extensionKeyRefs(files, dataKeys);
+      if (refs.length < 40) throw new Error(`only ${refs.length} message references were found in the extension; the scrape is broken`);
+      for (const p of extensionMessageProblems(msgs.en, msgs.he, refs)) fail(p);
+      // uiLang is how the popup knows which language Chrome loaded, so the
+      // month it prints matches the sentence around it (a French Chrome gets the
+      // English messages and must get an English month).
+      if (msgs.en.uiLang?.message !== "en" || msgs.he.uiLang?.message !== "he")
+        fail(
+          `the extension's uiLang message is ${JSON.stringify(msgs.en.uiLang?.message)} in en and ` +
+            `${JSON.stringify(msgs.he.uiLang?.message)} in he; it must be "en" and "he", or the dates come out in the wrong language`,
+        );
+
+      // Both directions on the detector, on a synthetic pair.
+      const EN = {
+        a: { message: "Hi $NAME$, on $DAY$", placeholders: { name: { content: "$1" }, day: { content: "$2" } } },
+        b: { message: "B" },
+      };
+      const clone = (o) => JSON.parse(JSON.stringify(o));
+      const withHe = (edit) => {
+        const he = clone(EN);
+        edit(he);
+        return he;
+      };
+      const ternary = extensionKeyRefs({ "x.js": 'function t(key) {}\nt(ok ? "a" : "gone");\nt(el.getAttribute("data-i18n"));' });
+      const verdicts = [
+        ["an identical pair that also reaches @@bidi_dir and @@ui_locale", extensionMessageProblems(EN, clone(EN), [["x", "@@bidi_dir"], ["x", "@@ui_locale"], ["x", "a"]]).length === 0],
+        ["a key deleted from he only", extensionMessageProblems(EN, withHe((he) => delete he.b), []).length > 0],
+        ["$1 and $2 swapped in he", extensionMessageProblems(EN, withHe((he) => { he.a.placeholders = { name: { content: "$2" }, day: { content: "$1" } }; }), []).length > 0],
+        ["a lower-case $name$ in both", extensionMessageProblems(withHe((x) => { x.a.message = "Hi $name$, on $day$"; }), withHe((x) => { x.a.message = "Hi $name$, on $day$"; }), []).length === 0],
+        ["a $TOKEN$ with no placeholder", extensionMessageProblems(EN, withHe((he) => { he.a.message = "Hi $NAME$ $WHO$, on $DAY$"; }), []).length > 0],
+        ["a placeholder the he sentence never prints", extensionMessageProblems(EN, withHe((he) => { he.a.message = "Hi $NAME$"; }), []).length > 0],
+        ["both arms of a ternary scraped, and no nested literal", JSON.stringify(ternary.map((r) => r[1]).sort()) === '["a","gone"]'],
+        ["a ternary arm deleted from BOTH locales", extensionMessageProblems(EN, clone(EN), ternary).length > 0],
+      ];
+      for (const [label, ok] of verdicts) if (!ok) fail(`check 35(a)'s detector misjudges ${label}, so it cannot be trusted on the real messages`);
+    } catch (e) {
+      fail(`check 35(a), the extension's messages, could not run: ${e.message}`);
+    }
+
+    // (b) screeningRefusal, EXECUTED in both languages.
+    try {
+      const MONTHS = {
+        en: { oct: ["September", "October 1"], jan: ["December", "January 1"] },
+        he: { oct: ["ספטמבר", "1 באוקטובר"], jan: ["דצמבר", "1 בינואר"] },
+      };
+      for (const loc of ["en", "he"]) {
+        const { ctx } = loadPopup(popupSrc, loc, msgs[loc]);
+        if (typeof ctx.screeningRefusal !== "function")
+          throw new Error(
+            "extension/popup.js declares no top-level screeningRefusal(status, detail), so a refused screening answer " +
+              "is dropped: the autofill keeps asking and ends on a green line over empty question boxes",
+          );
+        const read = (status, detail) => {
+          const r = ctx.screeningRefusal(status, detail);
+          return r === null ? null : { stop: r.stop, text: ctx.t(r.key, r.subs) };
+        };
+        const monthly = (resets_on) => ({ code: "monthly_limit", feature: "screening", plan: "free", limit: 10, used: 10, remaining: 0, resets_on });
+        const expect = (label, got, stop, text) => {
+          if (!got || got.stop !== stop || got.text !== text)
+            fail(
+              `check 35(b) [${loc}] ${label}: screeningRefusal gives ${JSON.stringify(got)}, expected ` +
+                `${JSON.stringify({ stop, text })}`,
+            );
+          if (got && /Invalid Date|undefined|NaN|null/.test(got.text))
+            fail(`check 35(b) [${loc}] ${label}: the sentence reads ${JSON.stringify(got.text)}`);
+        };
+        expect("429 monthly_limit, resets 2026-10-01", read(429, monthly("2026-10-01")), true, say(loc, "autofillOutOfUses", MONTHS[loc].oct));
+        expect("429 monthly_limit, resets 2027-01-01 (the month before is December)", read(429, monthly("2027-01-01")), true, say(loc, "autofillOutOfUses", MONTHS[loc].jan));
+        for (const bad of ["", "garbage", "2026-13-01", "2026-02-30", undefined])
+          expect(`429 monthly_limit, resets_on ${JSON.stringify(bad)}`, read(429, monthly(bad)), true, say(loc, "autofillOutOfUsesBare"));
+        expect("429 daily_limit llm 150", read(429, { code: "daily_limit", action: "llm", cap: 150 }), true, say(loc, "autofillDailyLimit", ["150"]));
+        expect("429 daily_limit with no cap", read(429, { code: "daily_limit", action: "llm" }), true, say(loc, "autofillAnswersFailed", ["429"]));
+        expect("401", read(401, "Access code required."), true, say(loc, "errUnauthorized"));
+        // Every other client error repeats: each question carries the same resume
+        // and job text, and a 429 that is not ours is not a monthly limit.
+        for (const [status, detail] of [
+          [413, { code: "input_too_large" }],
+          [403, { code: "csrf" }],
+          [404, "Not Found"],
+          [405, "Method Not Allowed"],
+          [422, [{ loc: ["body", "resume"], msg: "field required" }]],
+          [429, { code: "too_many_attempts" }],
+          [429, undefined],
+          [429, "Too many requests"],
+        ])
+          expect(`${status} ${JSON.stringify(detail)}`, read(status, detail), true, say(loc, "autofillAnswersFailed", [String(status)]));
+        // The false-positive half: this question only, and a success is no refusal.
+        for (const status of [400, 500, 502, 503])
+          expect(`${status} (this question only)`, read(status, { code: "x" }), false, say(loc, "autofillAnswersFailed", [String(status)]));
+        for (const status of [200, 201])
+          if (ctx.screeningRefusal(status, { answer: "Yes." }) !== null) fail(`check 35(b) [${loc}]: screeningRefusal reads a ${status} as a refusal`);
+      }
+    } catch (e) {
+      fail(`check 35(b), what a refused screening answer says, could not run: ${e.message}`);
+    }
+
+    // (c) onAutofill, EXECUTED: the loop around the refusal.
+    try {
+      const M429 = [429, { detail: { code: "monthly_limit", feature: "screening", plan: "free", limit: 10, used: 10, remaining: 0, resets_on: "2026-10-01" } }];
+      const D429 = [429, { detail: { code: "daily_limit", action: "llm", cap: 150 } }];
+      const OK = (answer) => [200, { answer }];
+      const runAutofill = async (loc, frames, script) => {
+        const asked = [];
+        const fills = [];
+        const env = {
+          fetch: async (url, init) => {
+            if (url.endsWith("/tools/screening-answer")) {
+              const i = asked.length;
+              asked.push(JSON.parse(init.body).question);
+              const step = script[i] ?? OK(`Answer ${i + 1}`);
+              if (step === "throw") throw new TypeError("Failed to fetch");
+              const [status, body] = step;
+              return { ok: status >= 200 && status < 300, status, json: async () => body };
+            }
+            if (url.includes("/applications/"))
+              return { ok: true, status: 200, json: async () => ({ tailored_resume: { contact: { name: "A B" } }, cover_letter: "", jd_text: "Python role at Acme." }) };
+            if (url.endsWith("/render")) return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(4) };
+            throw new Error(`unexpected fetch ${url}`);
+          },
+          executeScript: async ({ target, func, args }) => {
+            if (func.name === "fillApplicationForm") return [{ result: { fields: 2, file: true, cover: false } }];
+            if (func.name === "collectScreeningQuestions")
+              return frames.map((n, f) => ({
+                frameId: f * 5,
+                result: Array.from({ length: n }, (_, q) => ({ n: q + 1, question: `Frame ${f}, question ${q + 1}: why this role?` })),
+              }));
+            if (func.name === "fillScreeningAnswers") {
+              fills.push({ frameIds: target.frameIds ? [...target.frameIds] : null, texts: args[0].map((a) => a.text) });
+              return [{ result: args[0].length }];
+            }
+            throw new Error(`unexpected injection ${func.name}`);
+          },
+        };
+        const { ctx, els } = loadPopup(popupSrc, loc, msgs[loc], env);
+        ctx.approvedKits = [{ id: 7, application_id: 3, company: "Acme" }];
+        ctx.activeTab = { id: 1 };
+        await ctx.onAutofill();
+        return {
+          requests: asked.length,
+          fills,
+          kind: (els.applyStatus?.className ?? "").split(/\s+/),
+          text: els.applyStatusText?.textContent ?? "",
+        };
+      };
+      const scenario = async (label, loc, frames, script, want) => {
+        const got = await runAutofill(loc, frames, script);
+        const wrong = [];
+        if (got.requests !== want.requests) wrong.push(`${got.requests} screening requests, not ${want.requests}`);
+        if (JSON.stringify(got.fills) !== JSON.stringify(want.fills)) wrong.push(`wrote ${JSON.stringify(got.fills)}, not ${JSON.stringify(want.fills)}`);
+        if (!got.kind.includes(want.kind)) wrong.push(`the status is "${got.kind.join(" ")}", not ${want.kind}`);
+        for (const s of want.says || []) if (!got.text.includes(s)) wrong.push(`the status line does not say ${JSON.stringify(s)}`);
+        for (const s of want.never || []) if (got.text.includes(s)) wrong.push(`the status line says ${JSON.stringify(s)}`);
+        if (wrong.length) fail(`check 35(c) [${loc}] ${label}: ${wrong.join("; ")}. The line read ${JSON.stringify(got.text)}`);
+      };
+      const four = (k = 0) => Array.from({ length: 4 - k }, (_, i) => `Answer ${i + 1 + k}`);
+      const blankSentences = (loc) => [
+        say(loc, "autofillOutOfUses", loc === "en" ? ["September", "October 1"] : ["ספטמבר", "1 באוקטובר"]),
+        say(loc, "autofillAnswersBlank"),
+        say(loc, "autofillAnswersFailed", ["502"]),
+      ];
+      await scenario("the first answer is refused 429 monthly_limit", "en", [4, 4], [M429], {
+        requests: 1,
+        fills: [],
+        kind: "warn",
+        says: [say("en", "autofillOutOfUses", ["September", "October 1"]), say("en", "autofillReviewNote")],
+      });
+      await scenario("the first answer is refused 429 monthly_limit", "he", [4, 4], [M429], {
+        requests: 1,
+        fills: [],
+        kind: "warn",
+        says: [say("he", "autofillOutOfUses", ["ספטמבר", "1 באוקטובר"])],
+      });
+      await scenario("one answer rides the pass, then the month runs out", "en", [4, 4], [OK("First answer."), M429], {
+        requests: 2,
+        fills: [{ frameIds: [0], texts: ["First answer."] }],
+        kind: "warn",
+        says: [say("en", "autofillOutOfUses", ["September", "October 1"])],
+      });
+      await scenario("a 502, then answers", "en", [4, 4], [[502, { detail: "LLM error while drafting the answer" }]], {
+        requests: 4,
+        fills: [{ frameIds: [0], texts: four(1) }],
+        kind: "warn",
+        says: [say("en", "autofillAnswersFailed", ["502"])],
+      });
+      await scenario("the second request never reaches the server", "en", [4, 4], [OK("First answer."), "throw"], {
+        requests: 2,
+        fills: [{ frameIds: [0], texts: ["First answer."] }],
+        kind: "warn",
+        says: [say("en", "errNetwork")],
+      });
+      await scenario("a 200 with an empty answer", "en", [4, 4], [OK("  ")], {
+        requests: 4,
+        fills: [{ frameIds: [0], texts: four(1) }],
+        kind: "warn",
+        says: [say("en", "autofillAnswersBlank")],
+      });
+      await scenario("the daily limit, in the second frame", "en", [2, 3], [OK("A."), OK("B."), D429], {
+        requests: 3,
+        fills: [{ frameIds: [0], texts: ["A.", "B."] }],
+        kind: "warn",
+        says: [say("en", "autofillDailyLimit", ["150"])],
+      });
+      // The false-positive half: every answer comes back, the line stays green
+      // and names no refusal, and the cap still holds at four REQUESTS.
+      await scenario("every answer comes back", "en", [4, 4], [], {
+        requests: 4,
+        fills: [{ frameIds: [0], texts: four() }],
+        kind: "ok",
+        says: [say("en", "autofillAnswered", ["4"])],
+        never: blankSentences("en"),
+      });
+      await scenario("every answer comes back, over two frames", "he", [2, 3], [], {
+        requests: 4,
+        fills: [
+          { frameIds: [0], texts: ["Answer 1", "Answer 2"] },
+          { frameIds: [5], texts: ["Answer 3", "Answer 4"] },
+        ],
+        kind: "ok",
+        never: blankSentences("he"),
+      });
+    } catch (e) {
+      fail(`check 35(c), the autofill loop, could not run: ${e.message}`);
+    }
+  }
+} catch (e) {
+  fail(`check 35, the extension, could not run: ${e.message}`);
+}
+
+// (d) The stale tab, in the web app itself: it runs whether or not extension/
+// is in the build.
+/** What is wrong with AppLayout's return-to-the-tab refresh, as sentences. */
+function staleTabProblems(layoutSrc) {
+  const s = decomment(layoutSrc);
+  const out = [];
+  const at = s.indexOf('addEventListener("visibilitychange"');
+  if (at === -1)
+    return [
+      'layouts/AppLayout.tsx registers no "visibilitychange" listener, so uses the extension or another tab spent never ' +
+        "reach this tab's notes until a reload",
+    ];
+  const eff = s.lastIndexOf("useEffect(", at);
+  if (eff === -1) throw new Error("AppLayout's visibilitychange listener is not inside a useEffect, so its gate and cleanup cannot be read");
+  const { args, end } = callParts(s, eff + "useEffect".length);
+  if (end < at) throw new Error("AppLayout's visibilitychange listener is not inside the nearest useEffect");
+  const body = args[0] ?? "";
+  const deps = (args[1] ?? "").trim();
+  if (!/removeEventListener\(\s*"visibilitychange"/.test(body)) out.push("AppLayout's visibilitychange listener is never removed");
+  if (/\bgetAuthMe\(/.test(body))
+    out.push(
+      "AppLayout's visibilitychange handler calls getAuthMe, which re-stamps the resume draft's owner (lib/draft.ts) from a " +
+        "mid-session answer: an expired session or another account in another tab would claim this tab's draft",
+    );
+  if (/location\.(?:assign|replace|href)|\bnavigate\(/.test(body))
+    out.push("AppLayout's visibilitychange handler redirects; AccessGate owns a session that ended, the refresh only writes the uses store");
+  if (!/\bshouldRefreshUses\(/.test(body)) out.push("AppLayout's visibilitychange handler is not throttled by shouldRefreshUses (lib/usesStore.ts)");
+  const call = /\brefreshUses\(\s*([A-Za-z_$][\w$]*)\s*\)/.exec(body);
+  if (!call) {
+    out.push("AppLayout's visibilitychange handler does not call refreshUses(<the guard's user id>)");
+    return out;
+  }
+  const id = call[1];
+  if (!new RegExp(`\\b${id}\\b`).test(deps))
+    out.push(`AppLayout's visibilitychange effect does not depend on ${id}, the id it refreshes for (deps: ${deps || "none"})`);
+  if (!new RegExp(`if\\s*\\(\\s*(?:${id}\\s*===?\\s*null|typeof\\s+${id}\\s*!==\\s*["']number["'])\\s*\\)\\s*return`).test(body))
+    out.push(`AppLayout registers the visibilitychange listener without first returning when ${id} is null (the guard failed open)`);
+  const state = new RegExp(`const\\s*\\[\\s*${id}\\s*,\\s*([A-Za-z_$][\\w$]*)\\s*\\]\\s*=\\s*useState`).exec(s);
+  if (!state) out.push(`${id} is not the guard's own state (\`const [${id}, set…] = useState\`), so nothing ties it to /auth/me's answer`);
+  else {
+    const sets = [...s.matchAll(new RegExp(`\\b${state[1]}\\(([^)]*)\\)`, "g"))].map((m) => m[1].trim());
+    if (!sets.length || sets.some((a) => !/^a\.user[?!]?\.id$/.test(a)))
+      out.push(`${state[1]} is called with ${JSON.stringify(sets)}; it may only ever take the guard's answer, a.user.id`);
+  }
+  return out;
+}
+
+/** What is wrong with client.ts's refreshUses, as sentences. */
+function refreshUsesProblems(body) {
+  const out = [];
+  if (!/\busageIfSameUser\(/.test(body)) out.push("refreshUses writes the store without checking the answer is the same account (usageIfSameUser)");
+  if (!/\bsetUsage\(/.test(body)) out.push("refreshUses never writes the uses store (setUsage)");
+  for (const [re, what] of [
+    [/\bnoteDraftOwner\(/, "re-stamps the resume draft's owner"],
+    [/localStorage\.(?:removeItem|setItem|clear)|ACCESS_CODE_KEY/, "touches the stored invite code"],
+    [/location\.(?:assign|replace|href)|dispatchEvent\(/, "redirects, or raises a session event"],
+    [/\bgetAuthMe\(/, "goes through getAuthMe and its side effects"],
+  ])
+    if (re.test(body)) out.push(`refreshUses ${what}; it may write the uses store and nothing else`);
+  return out;
+}
+
+try {
+  const us = runProbeBundle("uses-refresh", `export * from "./lib/usesStore";\n`);
+  if (typeof us.shouldRefreshUses !== "function" || typeof us.usageIfSameUser !== "function")
+    throw new Error(
+      "lib/usesStore.ts exports no shouldRefreshUses / usageIfSameUser, so a tab left open never re-reads the uses " +
+        "the extension or another tab spent",
+    );
+  const T0 = Date.UTC(2026, 8, 21, 12, 0, 0);
+  for (const [label, got, want] of [
+    ["visible 61 s after the last ask", us.shouldRefreshUses(T0 + 61_000, T0, true), true],
+    ["visible exactly 60 s after", us.shouldRefreshUses(T0 + 60_000, T0, true), true],
+    ["visible 30 s after (a tab flipped back and forth)", us.shouldRefreshUses(T0 + 30_000, T0, true), false],
+    ["hidden, an hour after", us.shouldRefreshUses(T0 + 3_600_000, T0, false), false],
+    ["visible, the device clock set back an hour", us.shouldRefreshUses(T0 - 3_600_000, T0, true), true],
+  ])
+    if (got !== want) fail(`check 35(d): shouldRefreshUses is ${got} when ${label}; it must be ${want}`);
+  const usage = { plan: "free", limit: 10, used: 4, remaining: 6, resets_on: "2026-10-01", by_feature: {}, passes: {} };
+  const me = (over) => ({ authenticated: true, verified: true, method: "session", user: { id: 7 }, usage, ...over });
+  for (const [label, got, want] of [
+    ["the same account", us.usageIfSameUser(7, me()), usage],
+    ["another account signed in (another tab, the same browser)", us.usageIfSameUser(7, me({ user: { id: 9 } })), undefined],
+    ["the session ended", us.usageIfSameUser(7, me({ authenticated: false, user: null, usage: null })), undefined],
+    ["the guard failed open (no id)", us.usageIfSameUser(null, me()), undefined],
+    ["the same account, no usage block (an exempt plan)", us.usageIfSameUser(7, me({ usage: null })), null],
+    ["no answer at all", us.usageIfSameUser(7, null), undefined],
+  ])
+    if (JSON.stringify(got) !== JSON.stringify(want)) fail(`check 35(d): usageIfSameUser gives ${JSON.stringify(got)} for ${label}; it must give ${JSON.stringify(want)}`);
+
+  for (const p of refreshUsesProblems(fnSource(decomment(read("api/client.ts")), "export async function refreshUses"))) fail(`api/client.ts: ${p}`);
+  for (const p of staleTabProblems(read("layouts/AppLayout.tsx"))) fail(p);
+
+  // Both directions on both detectors.
+  const GOOD_BODY = "{\n  const { data } = await api.get(\"/auth/me\");\n  const usage = usageIfSameUser(expectedId, data);\n  if (usage !== undefined) setUsage(usage);\n}";
+  if (refreshUsesProblems(GOOD_BODY).length) fail("check 35(d)'s refreshUses detector fires on a correct body");
+  for (const [label, plant] of [
+    ["a draft-owner stamp", "noteDraftOwner(data.user?.id ?? null);"],
+    ["a stored-code removal", "localStorage.removeItem(ACCESS_CODE_KEY);"],
+    ["a redirect", 'window.location.assign("/login");'],
+    ["a getAuthMe call", "await getAuthMe();"],
+  ])
+    if (!refreshUsesProblems(GOOD_BODY.replace("\n}", `\n  ${plant}\n}`)).length)
+      fail(`check 35(d)'s refreshUses detector misses ${label}`);
+  if (!refreshUsesProblems(GOOD_BODY.replace("usageIfSameUser(expectedId, data)", "data.usage")).length)
+    fail("check 35(d)'s refreshUses detector misses a write with no same-account check");
+  const LAYOUT = (effect, guard = "if (a.user) setMeId(a.user.id);", fallback = "if (live) setAuthed(true);") =>
+    "const [meId, setMeId] = useState<number | null>(null);\n" +
+    `getAuthMe().then((a) => { ${guard} setAuthed(true); }).catch(() => { ${fallback} });\n` +
+    effect;
+  const EFFECT =
+    "useEffect(() => {\n  if (meId === null) return;\n  let last = Date.now();\n  const onVisible = () => {\n" +
+    '    if (!shouldRefreshUses(Date.now(), last, document.visibilityState === "visible")) return;\n' +
+    "    last = Date.now();\n    void refreshUses(meId);\n  };\n" +
+    '  document.addEventListener("visibilitychange", onVisible);\n' +
+    '  return () => document.removeEventListener("visibilitychange", onVisible);\n}, [meId]);\n';
+  if (staleTabProblems(LAYOUT(EFFECT)).length) fail(`check 35(d)'s stale-tab detector fires on a correct layout: ${staleTabProblems(LAYOUT(EFFECT)).join("; ")}`);
+  for (const [label, layout] of [
+    ["a handler that calls getAuthMe (the draft-owner leak)", LAYOUT(EFFECT.replace("void refreshUses(meId);", "void getAuthMe().catch(() => {});"))],
+    ["a listener that is never removed", LAYOUT(EFFECT.replace(/\n  return \(\) => [^\n]+/, ""))],
+    ["a gate on `authed` alone", LAYOUT(EFFECT.replace("if (meId === null) return;", "if (!authed) return;").replace("[meId]", "[authed]"))],
+    ["a handler that redirects", LAYOUT(EFFECT.replace("void refreshUses(meId);", 'void refreshUses(meId); window.location.assign("/login");'))],
+    ["no throttle", LAYOUT(EFFECT.replace(/\n    if \(!shouldRefreshUses[^\n]+/, ""))],
+    ["an id set when the guard failed open", LAYOUT(EFFECT, undefined, "if (live) { setAuthed(true); setMeId(0); }")],
+    ["no listener at all", LAYOUT("")],
+  ])
+    if (!staleTabProblems(layout).length) fail(`check 35(d)'s stale-tab detector misses ${label}`);
+} catch (e) {
+  fail(`check 35(d), the stale tab, could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
@@ -6001,5 +6682,6 @@ console.log(
   `mirrors ok — ${sectionKeys.length} edit sections, en/he parity across all namespaces` +
     (templateSkip ? ` — but the template specs were NOT compared (${templateSkip})` : "") +
     (pySkips.size ? ` — and ${[...pySkips].join(", ")} read NO Python (backend/ is not in this build)` : "") +
-    (agentsSkip ? ` — and AGENTS.md was NOT compared with CLAUDE.md (${agentsSkip})` : ""),
+    (agentsSkip ? ` — and AGENTS.md was NOT compared with CLAUDE.md (${agentsSkip})` : "") +
+    (extensionSkip ? ` — and the extension was NOT checked (${extensionSkip})` : ""),
 );
