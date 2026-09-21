@@ -583,6 +583,12 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     name: Optional[str] = None
+    # P29-ADMIN-EMAIL: a free label only for an account with no sign-in row. For
+    # one that signs in with an address, the route accepts only that address
+    # (stored in the login's spelling) or the label's current value, and answers
+    # anything else 400 — the admin API never moves a sign-in address. The field
+    # stays, so a label edit on an invite-code account keeps working; no
+    # TypeScript mirror exists for this model and none is needed.
     email: Optional[str] = None
     # Phase 29 / B2: may this account connect Gmail while INBOX_ACCESS=allowlist.
     inbox_enabled: Optional[bool] = None
