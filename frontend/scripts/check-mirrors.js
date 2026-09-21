@@ -6016,10 +6016,15 @@ try {
 //       frontend/src/locales only, so none of this had any guard.
 //   (b) screeningRefusal, EXECUTED in both languages: which refusals stop the
 //       autofill, and that the sentence names the month that ran out and the
-//       day the uses come back, in the language of the loaded messages.
-//   (c) onAutofill, EXECUTED with fetch and executeScript stubbed: one refused
-//       request and no more, ATTEMPTS capped at four, what was drafted still
-//       written, and a `warn` line that says why. The all-200 run stays `ok`.
+//       day the uses come back, in the language of the loaded messages. Run in
+//       a zone on each side of UTC (the host's zone cannot see a formatter
+//       that forgot timeZone: "UTC"), and with Chrome's own language apart
+//       from the bundle it loaded (a French Chrome gets the en messages, and
+//       must get an English month).
+//   (c) onAutofill, EXECUTED with fetch and executeScript stubbed, west of
+//       UTC: one refused request and no more, ATTEMPTS capped at four, what
+//       was drafted still written, and a `warn` line that says why. The
+//       all-200 run stays `ok`.
 //   (d) the stale tab: uses the extension spent reach an open web tab when it is
 //       shown again, through a throttled /auth/me re-read that writes the uses
 //       store for the account the guard saw and nothing else. `getAuthMe` also
@@ -6203,11 +6208,19 @@ function extensionMessageProblems(en, he, refs) {
   return [...new Set(out)];
 }
 
-/** Load the REAL popup.js into a fresh vm context, in one UI language. Chrome,
- * the DOM and fetch are stubs; `env` swaps in the fetch and executeScript a
- * probe drives. The page's elements are plain objects in `els`. */
+/** Load the REAL popup.js into a fresh vm context, with `messages` loaded as
+ * the `locale` bundle. Chrome, the DOM and fetch are stubs; `env` swaps in the
+ * fetch and executeScript a probe drives, and `env.uiLocale` the language
+ * Chrome itself runs in. The two differ in real Chrome: a French, Russian or
+ * Arabic Chrome has no bundle of its own and loads the en messages, while
+ * `@@ui_locale` and `navigator.language` still say fr, ru or ar. A harness
+ * that always makes them equal cannot tell a popup that reads the messages'
+ * language from one that reads the UI's. The page's elements are plain objects
+ * in `els`. */
 function loadPopup(popupSrc, locale, messages, env = {}) {
   const vm = createRequire(import.meta.url)("node:vm");
+  const uiLocale = env.uiLocale || locale;
+  const uiTag = uiLocale.replace("_", "-");
   const els = {};
   const el = (id) =>
     els[id] ||
@@ -6230,6 +6243,7 @@ function loadPopup(popupSrc, locale, messages, env = {}) {
     URL,
     setTimeout,
     btoa: (s) => Buffer.from(s, "binary").toString("base64"),
+    navigator: { language: uiTag, languages: [uiTag] },
     document: {
       documentElement: {},
       addEventListener() {},
@@ -6242,9 +6256,9 @@ function loadPopup(popupSrc, locale, messages, env = {}) {
       i18n: {
         getMessage: (key, subs) =>
           key === "@@ui_locale"
-            ? locale
+            ? uiLocale
             : key === "@@bidi_dir"
-              ? locale === "he"
+              ? /^(he|iw|ar|fa|ur)(?![a-z])/i.test(uiLocale)
                 ? "rtl"
                 : "ltr"
               : chromeMessage(messages, key, subs),
@@ -6274,6 +6288,36 @@ function loadPopup(popupSrc, locale, messages, env = {}) {
       throw new Error(`extension/popup.js no longer declares a top-level ${name}, so the autofill cannot be driven`);
   return { ctx, els };
 }
+
+/** Run `fn` with the whole process in time zone `zone` (a vm context shares
+ * it), then put the zone back. The popup's month and date must come from
+ * `resets_on` in UTC, and a harness that runs in the host's zone cannot see a
+ * formatter that forgot `timeZone: "UTC"`: on the owner's Asia/Jerusalem and
+ * on CI's UTC, midnight UTC on the 1st is still the 1st. Only a zone WEST of
+ * UTC turns it into the last day of the month before ("August", "September
+ * 30"), and only a zone EAST of it catches the mirror-image mistake, a date
+ * built in local time and then formatted in UTC. Deleting TZ does not reset
+ * ICU (node 24), so an unset TZ is restored by setting back the zone that was
+ * in effect and THEN deleting the variable. */
+async function inTimeZone(zone, fn) {
+  const prevEnv = process.env.TZ;
+  const prevZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  process.env.TZ = zone;
+  try {
+    const offset = new Date(Date.UTC(2026, 9, 1)).getTimezoneOffset();
+    if (Intl.DateTimeFormat().resolvedOptions().timeZone !== zone || offset === 0)
+      throw new Error(
+        `process.env.TZ = "${zone}" did not take effect (${Intl.DateTimeFormat().resolvedOptions().timeZone}, offset ${offset}), ` +
+          "so a month read in local time instead of UTC would pass unseen",
+      );
+    return await fn();
+  } finally {
+    process.env.TZ = prevEnv ?? prevZone;
+    if (prevEnv === undefined) delete process.env.TZ;
+  }
+}
+/** West of UTC by 7 to 8 hours, and east of it by 14: the widest pair there is. */
+const EXT_ZONES = ["America/Los_Angeles", "Pacific/Kiritimati"];
 
 try {
   const present = EXT_FILES.filter((f) => fs.existsSync(path.join(EXT_DIR, f)));
@@ -6355,59 +6399,79 @@ try {
       fail(`check 35(a), the extension's messages, could not run: ${e.message}`);
     }
 
-    // (b) screeningRefusal, EXECUTED in both languages.
+    // (b) screeningRefusal, EXECUTED in both languages, in a zone on each side
+    // of UTC, and in Chromes whose own language has no bundle (they load en).
     try {
       const MONTHS = {
         en: { oct: ["September", "October 1"], jan: ["December", "January 1"] },
         he: { oct: ["ספטמבר", "1 באוקטובר"], jan: ["דצמבר", "1 בינואר"] },
       };
-      for (const loc of ["en", "he"]) {
-        const { ctx } = loadPopup(popupSrc, loc, msgs[loc]);
-        if (typeof ctx.screeningRefusal !== "function")
-          throw new Error(
-            "extension/popup.js declares no top-level screeningRefusal(status, detail), so a refused screening answer " +
-              "is dropped: the autofill keeps asking and ends on a green line over empty question boxes",
-          );
-        const read = (status, detail) => {
-          const r = ctx.screeningRefusal(status, detail);
-          return r === null ? null : { stop: r.stop, text: ctx.t(r.key, r.subs) };
-        };
-        const monthly = (resets_on) => ({ code: "monthly_limit", feature: "screening", plan: "free", limit: 10, used: 10, remaining: 0, resets_on });
-        const expect = (label, got, stop, text) => {
-          if (!got || got.stop !== stop || got.text !== text)
-            fail(
-              `check 35(b) [${loc}] ${label}: screeningRefusal gives ${JSON.stringify(got)}, expected ` +
-                `${JSON.stringify({ stop, text })}`,
-            );
-          if (got && /Invalid Date|undefined|NaN|null/.test(got.text))
-            fail(`check 35(b) [${loc}] ${label}: the sentence reads ${JSON.stringify(got.text)}`);
-        };
-        expect("429 monthly_limit, resets 2026-10-01", read(429, monthly("2026-10-01")), true, say(loc, "autofillOutOfUses", MONTHS[loc].oct));
-        expect("429 monthly_limit, resets 2027-01-01 (the month before is December)", read(429, monthly("2027-01-01")), true, say(loc, "autofillOutOfUses", MONTHS[loc].jan));
-        for (const bad of ["", "garbage", "2026-13-01", "2026-02-30", undefined])
-          expect(`429 monthly_limit, resets_on ${JSON.stringify(bad)}`, read(429, monthly(bad)), true, say(loc, "autofillOutOfUsesBare"));
-        expect("429 daily_limit llm 150", read(429, { code: "daily_limit", action: "llm", cap: 150 }), true, say(loc, "autofillDailyLimit", ["150"]));
-        expect("429 daily_limit with no cap", read(429, { code: "daily_limit", action: "llm" }), true, say(loc, "autofillAnswersFailed", ["429"]));
-        expect("401", read(401, "Access code required."), true, say(loc, "errUnauthorized"));
-        // Every other client error repeats: each question carries the same resume
-        // and job text, and a 429 that is not ours is not a monthly limit.
-        for (const [status, detail] of [
-          [413, { code: "input_too_large" }],
-          [403, { code: "csrf" }],
-          [404, "Not Found"],
-          [405, "Method Not Allowed"],
-          [422, [{ loc: ["body", "resume"], msg: "field required" }]],
-          [429, { code: "too_many_attempts" }],
-          [429, undefined],
-          [429, "Too many requests"],
-        ])
-          expect(`${status} ${JSON.stringify(detail)}`, read(status, detail), true, say(loc, "autofillAnswersFailed", [String(status)]));
-        // The false-positive half: this question only, and a success is no refusal.
-        for (const status of [400, 500, 502, 503])
-          expect(`${status} (this question only)`, read(status, { code: "x" }), false, say(loc, "autofillAnswersFailed", [String(status)]));
-        for (const status of [200, 201])
-          if (ctx.screeningRefusal(status, { answer: "Yes." }) !== null) fail(`check 35(b) [${loc}]: screeningRefusal reads a ${status} as a refusal`);
-      }
+      const RUNS = [
+        { loc: "en", ui: "en_US" },
+        { loc: "he", ui: "he" },
+        // No fr, ru or ar bundle, so Chrome loads default_locale's (en): the
+        // month must be English too, never the UI's own (the uiLang rule).
+        { loc: "en", ui: "fr" },
+        { loc: "en", ui: "ru" },
+        { loc: "en", ui: "ar" },
+        // The rule is "the language of the bundle Chrome loaded", whatever the
+        // UI says, and only the bundle knows which one that was. With
+        // default_locale "he" (one manifest line away), a French Chrome loads
+        // these, and a popup that guessed from the UI would print an English
+        // month inside the Hebrew sentence.
+        { loc: "he", ui: "fr" },
+      ];
+      for (const zone of EXT_ZONES)
+        await inTimeZone(zone, async () => {
+          for (const { loc, ui } of RUNS) {
+            const where = `${loc} messages, a ${ui} Chrome, ${zone}`;
+            const { ctx } = loadPopup(popupSrc, loc, msgs[loc], { uiLocale: ui });
+            if (typeof ctx.screeningRefusal !== "function")
+              throw new Error(
+                "extension/popup.js declares no top-level screeningRefusal(status, detail), so a refused screening answer " +
+                  "is dropped: the autofill keeps asking and ends on a green line over empty question boxes",
+              );
+            const read = (status, detail) => {
+              const r = ctx.screeningRefusal(status, detail);
+              return r === null ? null : { stop: r.stop, text: ctx.t(r.key, r.subs) };
+            };
+            const monthly = (resets_on) => ({ code: "monthly_limit", feature: "screening", plan: "free", limit: 10, used: 10, remaining: 0, resets_on });
+            const expect = (label, got, stop, text) => {
+              if (!got || got.stop !== stop || got.text !== text)
+                fail(
+                  `check 35(b) [${where}] ${label}: screeningRefusal gives ${JSON.stringify(got)}, expected ` +
+                    `${JSON.stringify({ stop, text })}`,
+                );
+              if (got && /Invalid Date|undefined|NaN|null/.test(got.text))
+                fail(`check 35(b) [${where}] ${label}: the sentence reads ${JSON.stringify(got.text)}`);
+            };
+            expect("429 monthly_limit, resets 2026-10-01", read(429, monthly("2026-10-01")), true, say(loc, "autofillOutOfUses", MONTHS[loc].oct));
+            expect("429 monthly_limit, resets 2027-01-01 (the month before is December)", read(429, monthly("2027-01-01")), true, say(loc, "autofillOutOfUses", MONTHS[loc].jan));
+            for (const bad of ["", "garbage", "2026-13-01", "2026-02-30", undefined])
+              expect(`429 monthly_limit, resets_on ${JSON.stringify(bad)}`, read(429, monthly(bad)), true, say(loc, "autofillOutOfUsesBare"));
+            expect("429 daily_limit llm 150", read(429, { code: "daily_limit", action: "llm", cap: 150 }), true, say(loc, "autofillDailyLimit", ["150"]));
+            expect("429 daily_limit with no cap", read(429, { code: "daily_limit", action: "llm" }), true, say(loc, "autofillAnswersFailed", ["429"]));
+            expect("401", read(401, "Access code required."), true, say(loc, "errUnauthorized"));
+            // Every other client error repeats: each question carries the same resume
+            // and job text, and a 429 that is not ours is not a monthly limit.
+            for (const [status, detail] of [
+              [413, { code: "input_too_large" }],
+              [403, { code: "csrf" }],
+              [404, "Not Found"],
+              [405, "Method Not Allowed"],
+              [422, [{ loc: ["body", "resume"], msg: "field required" }]],
+              [429, { code: "too_many_attempts" }],
+              [429, undefined],
+              [429, "Too many requests"],
+            ])
+              expect(`${status} ${JSON.stringify(detail)}`, read(status, detail), true, say(loc, "autofillAnswersFailed", [String(status)]));
+            // The false-positive half: this question only, and a success is no refusal.
+            for (const status of [400, 500, 502, 503])
+              expect(`${status} (this question only)`, read(status, { code: "x" }), false, say(loc, "autofillAnswersFailed", [String(status)]));
+            for (const status of [200, 201])
+              if (ctx.screeningRefusal(status, { answer: "Yes." }) !== null) fail(`check 35(b) [${where}]: screeningRefusal reads a ${status} as a refusal`);
+          }
+        });
     } catch (e) {
       fail(`check 35(b), what a refused screening answer says, could not run: ${e.message}`);
     }
@@ -6457,7 +6521,8 @@ try {
         const { ctx, els } = loadPopup(popupSrc, loc, msgs[loc], env);
         ctx.approvedKits = [{ id: 7, application_id: 3, company: "Acme" }];
         ctx.activeTab = { id: 1 };
-        await ctx.onAutofill();
+        // West of UTC, where a month read in local time comes out one early.
+        await inTimeZone(EXT_ZONES[0], () => ctx.onAutofill());
         return {
           requests: asked.length,
           fills,
