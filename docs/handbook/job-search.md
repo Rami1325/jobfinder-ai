@@ -116,6 +116,6 @@ The owner's report: the alert email's older-posting tag printed "today's date" (
 - With "any age" (`max_age_days=0`) nothing is "older", by definition.
 - The Jobs page's date sort stays on `posted_at`, which is what the "Posted" line prints.
 
-**Separate defects found, not part of this fix:**
-- LinkedIn's guest search pages hold 10 cards, not 25. `_PAGE_SIZE = 25` with starts (0, 25) never sees rows 11-25; Pentera 4462220726 sat at row 11 of the app's exact r86400 query.
-- Drushim's `Date` is a naive timestamp that `parse_board_date` treats as UTC, and `new Date()` treats as LOCAL in the browser. If it is Israel-local, those postings read up to 3 h young. That direction only keeps postings, and it is unverified.
+**Separate defects found here, fixed since by `debt/board-fixes`:**
+- LinkedIn's guest search pages hold 10 cards, not 25, so starts (0, 25) never saw rows 11-25; Pentera 4462220726 sat at row 11 of the app's exact r86400 query. Fixed: `_PAGE_SIZE = 10`, starts 0, 10, 20 (the "LinkedIn's guest search pages by TEN" bullet under *The search itself, and the Jobs card*).
+- Drushim's `Date` is a naive timestamp that `parse_board_date` read as UTC. It was measured to be Israel wall time, so those postings read 2-3 h young. Fixed: `drushim._israel_wall_time` stamps Asia/Jerusalem (the "Drushim's dates are Israel WALL time" bullet in *One clock, one frame* above).
