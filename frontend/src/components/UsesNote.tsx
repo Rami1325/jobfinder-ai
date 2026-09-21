@@ -7,8 +7,10 @@ interface Props {
   /** The feature this control spends, as the backend's `quota.FEATURES` names it. */
   feature: string;
   /** A per-posting inclusion the caller holds (ISO UTC): the fit check's
-   * `tailor_included_until` for Tailor, a cover letter's `included_until` for
-   * its next change. While it is in the future the call uses nothing. */
+   * `tailor_included_until` for Tailor, and for a cover letter's next change the
+   * deadline `usesStore.inclusionFrom` took on arrival from the server's relative
+   * seconds (never the letter's `included_until`). While it is in the future the
+   * call uses nothing. */
   includedUntil?: string;
   /** The sentence while the control has uses left and nothing covers it. Default:
    * the feature's own sentence, or "This uses 1 of the N you have left this month." */

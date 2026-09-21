@@ -63,10 +63,13 @@ the `MAX_NEXT` / `GOOGLE_FAIL_PER_IP` knobs — is in `accounts-and-auth.md`.)*
   - `usesStore.inclusionFrom` turns either answer into a deadline on arrival (`setUsage`'s clock rule). A phone whose clock runs ahead read the absolute instant as over, and at 0 uses left that disabled a covered change.
   - `CoverLetter` never reads `included_until`, and check-mirrors 36 pins that.
 - **Until the card knows, it states no cost and disables nothing.**
-  - The card asks on mount, keyed on the posting. It asks only when a monthly limit is known, so the admin never pays the round trip.
+  - The card asks on mount, keyed on the posting AND on `limited`. It asks only when a monthly limit is known, so the admin never pays the round trip. Without `limited` in the deps, a card that mounted before the count was known would never ask once it was, and would stay unknown for good.
+  - Each probe starts by setting `known` to false, so a new posting never borrows the last posting's answer.
   - While the probe is pending or has failed, `known` is false. There is no `UsesNote`, which would print "No uses left" at zero, and Generate stays enabled. The server decides, and a 429 renders inline.
-  - A letter's success and a `monthly_limit` refusal each make the card known. A 5xx or a dropped request leaves it as it was, and the 5xx-gated decrement (check-mirrors 30 P4) is unchanged.
+  - The probe's answer, a letter's success and a `monthly_limit` refusal each make the card known. A failed probe never does: reading a failure as "no pass" disables a change at zero that the server may include. A 5xx or a dropped letter leaves `known` as it was, and the 5xx-gated decrement (check-mirrors 30 P4) is unchanged.
+  - Generate's `disabled=` is exactly `known && uses.out`. `!known || uses.out` names the same two words but disables while the card is unknown, and for good once a probe failed, uses left or not.
   - A sequence ref drops a probe answer that lands after a letter started. That answer describes the pass before the letter took its slot, and applying it would hide the next letter's cost.
+  - Check-mirrors 36 pins each rule in this bullet on the real file and on a fixture that must go red, beside twins it must accept: the reversed conjunction, and a positive sequence check.
 - **The fit ride is NOT read back, and a reload forfeits it.** This is recorded, not fixed: whether a reload should keep the ride is the owner's decision.
   - The ride's key is the analysed JD, which only `tailorStore` holds, and that store dies on reload.
   - After a reload, `startTailor` analyses the posting again through `/jd/analyze`. That is ANALYZE_JD at temperature, not JD_FIT, so the tailor carries another `jd_ref` and `claim_fit_ride` misses.

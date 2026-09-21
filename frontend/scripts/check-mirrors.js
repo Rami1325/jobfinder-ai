@@ -6005,11 +6005,15 @@ try {
 //
 // (a) EXECUTES the helper on a driven clock, the catch beside every null twin.
 // (b) pins the component's wiring — it cannot be rendered in node — on the real
-//     file AND on fixtures, each of which must go red on its own rule: until
-//     the probe (or a letter) answers, the card KNOWS nothing, so it prints no
-//     note and disables nothing (unknown is never zero; the server decides), and
-//     a probe answer that lands after a letter started is dropped, because it
-//     describes the pass before that letter took its slot.
+//     file AND on fixtures, each of which must go red on its own rule, beside
+//     twins it must not refuse: until the probe (or a letter) answers, the card
+//     KNOWS nothing, so it prints no note and disables nothing (unknown is never
+//     zero; the server decides); the probe's answer makes it known and a failed
+//     probe never does; a new posting starts unknown again; Generate's
+//     `disabled=` is exactly `known && uses.out` (`!known || uses.out` names the
+//     same words and disables for good after a failed probe); and a probe answer
+//     that lands after a letter started is dropped, because it describes the
+//     pass before that letter took its slot.
 // (c) pins the wire: the client posts exactly `{ jd }` (the route forbids any
 //     other field, so a `resume` beside it is a 422 and the card stays unknown
 //     for ever, silently) to the path routes.py mounts.
@@ -6129,9 +6133,25 @@ function coverLetterWiring(text) {
   if (!probe) bad.add("probe-on-mount");
   else {
     const deps = /,\s*\[([^\]]*)\]\s*$/.exec(probe);
-    if (!deps || !deps[1].split(",").map((d) => d.trim()).includes("posting")) bad.add("probe-on-mount");
+    const keys = deps ? deps[1].split(",").map((d) => d.trim()) : [];
+    if (!keys.includes("posting")) bad.add("probe-on-mount");
+    const ask = probe.indexOf("coverLetterPass(");
+    const skip = /\bif\s*\(\s*!\s*limited\s*\)\s*return\b/.exec(probe);
+    if (!skip || skip.index > ask || !keys.includes("limited")) bad.add("probe-keyed-on-limit");
     if (!/\binclusionFrom\(/.test(probe)) bad.add("probe-relative-seconds");
-    if (!/\bseq\.current\s*[!=]==|[!=]==\s*seq\.current\b/.test(probe)) bad.add("probe-sequence-guard");
+    const reset = /\bsetKnown\(\s*false\s*\)/.exec(probe);
+    if (!reset || reset.index > ask) bad.add("probe-resets-known");
+    const guard = /\bseq\.current\s*[!=]==|[!=]==\s*seq\.current\b/.exec(probe);
+    if (!guard) bad.add("probe-sequence-guard");
+    // The answer runs from the sequence check (from the request, when there is
+    // none, which the rule above already reports) to the first `catch`; the
+    // failure is everything after it. `\bcatch\b` finds both `.catch(` and a
+    // try/catch rewrite.
+    const from = guard ? guard.index : ask;
+    const failed = /\bcatch\b/.exec(probe.slice(from));
+    const answer = failed ? probe.slice(from, from + failed.index) : probe.slice(from);
+    if (!/\bsetKnown\(\s*true\s*\)/.test(answer)) bad.add("probe-known");
+    if (failed && /\bsetKnown\(\s*true\s*\)/.test(probe.slice(from + failed.index))) bad.add("probe-failure-unknown");
   }
   const gen = fnSource(s, "async function generate");
   const call = gen.indexOf("await coverLetter(");
@@ -6150,7 +6170,12 @@ function coverLetterWiring(text) {
   const button = click === -1 ? -1 : s.lastIndexOf("<Button", click);
   if (button === -1) throw new Error("cannot find the Generate button (`<Button … onClick={() => generate()}`)");
   const disabled = /\bdisabled=\{([^}]*)\}/.exec(s.slice(button, click));
-  if (!disabled || !/\bknown\b/.test(disabled[1]) || !/\buses\.out\b/.test(disabled[1])) bad.add("button-known");
+  // The WHOLE expression is the conjunction, in either order. Naming both words
+  // is not enough: `!known || uses.out` names them and disables while the pass
+  // is unknown, and for good once the probe failed.
+  let expr = disabled ? disabled[1].replace(/\s+/g, "") : "";
+  if (/^\(.*\)$/.test(expr)) expr = expr.slice(1, -1);
+  if (expr !== "known&&uses.out" && expr !== "uses.out&&known") bad.add("button-known");
   const notes = (s.match(/<UsesNote\b/g) || []).length;
   if (!notes) throw new Error("the cover letter renders no <UsesNote");
   if ((s.match(/\{\s*known\s*&&\s*\(?\s*<UsesNote\b/g) || []).length !== notes) bad.add("note-known");
@@ -6161,9 +6186,25 @@ const COVER_WIRING_HARM = {
     "never asks POST /cover-letter/pass from an effect keyed on `posting` (coverLetterPass). A remounted card — a " +
     "reload of /kits/:id, Tracker and back on /app — forgets its posting's pass, and at 0 uses left disables " +
     "Generate on a change the server would still include",
+  "probe-keyed-on-limit":
+    "does not ask the probe exactly while a monthly limit is known (`if (!limited) return` before coverLetterPass, " +
+    "AND `limited` in the effect's deps). Without the dep, a card that mounted before the count was known never " +
+    "asks once it is, and stays unknown for good; without the guard the admin pays the round trip for nothing",
   "probe-relative-seconds":
     "keeps the probe's answer without passing it through inclusionFrom, so the server's relative seconds never " +
     "become a deadline taken on arrival",
+  "probe-resets-known":
+    "does not reset `known` before asking about a posting (setKnown(false) before coverLetterPass). After a posting " +
+    "change the old posting's `known` stands until the probe answers, so at 0 uses left Generate is disabled for a " +
+    "posting whose pass nobody has read yet",
+  "probe-known":
+    "does not mark the pass known when the probe's answer arrives (setKnown(true) after the seq.current check, " +
+    "before any catch). The card stays unknown until a letter comes back: <UsesNote> never renders, so the first " +
+    "letter's cost is never stated before the tap, and at 0 uses with no pass Generate is never disabled",
+  "probe-failure-unknown":
+    "marks the pass known when the probe FAILED. With no answer the pass reads as none, so at 0 uses left a 5xx or " +
+    "a dropped request prints 'No uses left' and disables a change the server may still include — unknown is " +
+    "never zero",
   "probe-sequence-guard":
     "applies the probe's answer without checking that no letter started since it was sent (seq.current). A late " +
     "answer describes the pass BEFORE that letter took its slot, and putting the slot back hides the next letter's cost",
@@ -6178,8 +6219,10 @@ const COVER_WIRING_HARM = {
     "does not mark the pass known after a monthly-limit refusal, which proves no pass covers the call — so the " +
     "card keeps Generate enabled into the same 429",
   "button-known":
-    "disables Generate on `uses.out` without waiting for `known` (or not on uses.out at all): while the probe is " +
-    "pending, at 0 uses left, that disables a change the pass may still cover — unknown is never zero",
+    "disables Generate on something other than exactly `known && uses.out` (either order). `uses.out` alone disables " +
+    "at 0 uses left while the probe is pending, and `!known || uses.out` disables while the pass is unknown and for " +
+    "good once the probe failed, uses left or not: each disables a change the pass may still cover — unknown is " +
+    "never zero",
   "note-known":
     "renders <UsesNote> while the pass is unknown, so at 0 uses left it prints 'No uses left' under a change the " +
     "pass may include",
@@ -6203,6 +6246,8 @@ try {
     "      const inc = inclusionFrom(r);",
     "      setPass(inc ? { ...inc, posting } : null);",
     "      setKnown(true);",
+    "    }).catch(() => {",
+    "      // left unknown: the server decides",
     "    });",
     "  }, [posting, limited]);",
     "",
@@ -6269,12 +6314,61 @@ try {
       "limit-known",
     ],
     ["Generate disabled on uses.out alone", mutate("button", "disabled={known && uses.out}", "disabled={uses.out}"), "button-known"],
+    [
+      "Generate disabled while unknown (`!known || uses.out`)",
+      mutate("button or", "disabled={known && uses.out}", "disabled={!known || uses.out}"),
+      "button-known",
+    ],
+    ["Generate disabled on either word", mutate("button either", "disabled={known && uses.out}", "disabled={known || uses.out}"), "button-known"],
     ["a note rendered while unknown", mutate("note", "{known && (", "{("), "note-known"],
+    ["a probe sent with no monthly limit known", mutate("no limit guard", "    if (!limited) return;\n", ""), "probe-keyed-on-limit"],
+    ["an effect keyed without `limited`", mutate("deps without limited", "[posting, limited]", "[posting]"), "probe-keyed-on-limit"],
+    ["a new posting that keeps the old `known`", mutate("no reset", "    setKnown(false);\n", ""), "probe-resets-known"],
+    [
+      "a probe answer that leaves the pass unknown",
+      mutate("probe answer", "      setKnown(true);\n    }).catch(", "    }).catch("),
+      "probe-known",
+    ],
+    [
+      "a probe marking the pass known before its sequence check",
+      mutate(
+        "known before guard",
+        "      if (seq.current !== at) return; // a letter started (since then)\n      const inc = inclusionFrom(r);\n" +
+          "      setPass(inc ? { ...inc, posting } : null);\n      setKnown(true);\n",
+        "      setKnown(true);\n      if (seq.current !== at) return; // a letter started (since then)\n" +
+          "      const inc = inclusionFrom(r);\n      setPass(inc ? { ...inc, posting } : null);\n",
+      ),
+      "probe-known",
+    ],
+    [
+      "a failed probe read as no pass",
+      mutate("probe failure", "      // left unknown: the server decides\n", "      setPass(null);\n      setKnown(true);\n"),
+      "probe-failure-unknown",
+    ],
   ];
   for (const [label, fixture, rule] of FIXTURES) {
     const got = coverLetterWiring(fixture);
     if (!got.includes(rule))
       fail(`check 36's wiring reader accepts ${label} (it read ${JSON.stringify(got)}, not "${rule}"), so it would pass for ever`);
+  }
+  // The false-positive half: shapes the rules above must NOT refuse.
+  const TWINS = [
+    ["Generate's conjunction the other way round", mutate("twin order", "disabled={known && uses.out}", "disabled={uses.out && known}")],
+    ["Generate's conjunction in parentheses, spaced", mutate("twin parens", "disabled={known && uses.out}", "disabled={ (known  &&  uses.out) }")],
+    [
+      "the probe's answer applied under a positive sequence check",
+      mutate(
+        "twin positive guard",
+        "      if (seq.current !== at) return; // a letter started (since then)\n      const inc = inclusionFrom(r);\n" +
+          "      setPass(inc ? { ...inc, posting } : null);\n      setKnown(true);\n",
+        "      if (seq.current === at) {\n        const inc = inclusionFrom(r);\n" +
+          "        setPass(inc ? { ...inc, posting } : null);\n        setKnown(true);\n      }\n",
+      ),
+    ],
+  ];
+  for (const [label, fixture] of TWINS) {
+    const got = coverLetterWiring(fixture);
+    if (got.length) fail(`check 36's wiring reader refuses ${label}, a legitimate shape (it read ${JSON.stringify(got)})`);
   }
 } catch (e) {
   fail(`cover-letter wiring check (check 36b) could not run: ${e.message}`);

@@ -59,6 +59,7 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
     if (!limited) return;
     let alive = true;
     const at = ++seq.current;
+    // A new posting starts unknown: the last posting's answer says nothing here.
     setKnown(false);
     coverLetterPass(jd)
       .then((r) => {
@@ -74,6 +75,7 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
       alive = false;
     };
     // `posting` is `jd` serialised: a new object for the same posting asks nothing.
+    // `limited` re-asks once a count arrives, so a card that mounted first still learns.
   }, [posting, limited]);
 
   async function generate(extra?: string) {
