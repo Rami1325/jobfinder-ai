@@ -288,7 +288,10 @@ export default function InboxBar({ apps, onChanged }: { apps: ApplicationOut[]; 
         ? errorText(code)
         : ""
       : errorText(code);
-  const importDays = importing?.days ?? (status.backfilling ? status.backfill_days : 0);
+  // Off the invite list, no import can continue: the refused sync never moves
+  // the import window, so `backfilling` stays true for ever and would keep
+  // promising an import that is not running (check-mirrors 37(e)).
+  const importDays = offList ? 0 : importing?.days ?? (status.backfilling ? status.backfill_days : 0);
 
   return (
     <section
