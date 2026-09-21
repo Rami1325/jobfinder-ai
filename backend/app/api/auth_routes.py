@@ -161,7 +161,8 @@ def auth_change_email(
 
 @router.post("/auth/forgot", response_model=OkOut)
 def auth_forgot(body: ForgotIn, request: Request, db: Session = Depends(get_db)) -> OkOut:
-    """Always {ok}: whether a mail went out is not something this route says."""
+    """Always {ok}: whether a mail went out is not something this route says.
+    Nor, up to AUTH_FORGOT_FLOOR_MS, does how long it took (`accounts.forgot`)."""
     accounts.forgot(db, request, body.email)
     return OkOut()
 

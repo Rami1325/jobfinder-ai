@@ -218,6 +218,15 @@ class Settings(BaseSettings):
     # Minutes a verification code/link and a password-reset link stay valid.
     verify_ttl_min: int = 60
     reset_ttl_min: int = 60
+    # The minimum time POST /auth/forgot takes once the throttles have passed
+    # (P29-FORGOT-TIMING). A known address used to run a whole SMTP session
+    # inline and an unknown one a single SELECT, so the response time said who
+    # has an account. Every outcome now waits until this many ms, after the send
+    # has finished; a send that takes longer is waited for, never abandoned, and
+    # logs a WARNING with the two numbers. 3000 is a PLACEHOLDER, not measured
+    # against production's real SMTP: set it to about 1.5x the slowest real
+    # reset once someone has timed a few. 0 turns the floor off.
+    auth_forgot_floor_ms: int = 3000
     # "smtp" sends auth mail through the ALERT_SMTP_* account above, and an
     # unconfigured SMTP is a 503 email_unavailable — never a signup that
     # "succeeds" and then waits for a code nobody sent. "console" prints each

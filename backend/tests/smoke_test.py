@@ -80,6 +80,12 @@ os.environ["GOOGLE_OAUTH_TESTING"] = "true"
 # production 2**17 would add ~0.3 s to each of the section's signups and logins.
 os.environ["AUTH_EMAIL_MODE"] = "smtp"
 os.environ["AUTH_SCRYPT_N"] = "4096"
+# P29-FORGOT-TIMING: /auth/forgot waits out a minimum response time, 3000 ms by
+# default. Off for the suite, or every forgot call in sections 28, 30 and 32
+# would really sleep it; the block that pins the floor sets its own on a fake
+# clock. "0", never "": pydantic-settings refuses "" for an int, and a blank
+# would crash Settings(), i.e. every check.
+os.environ["AUTH_FORGOT_FLOOR_MS"] = "0"
 
 from app.config import get_settings  # noqa: E402
 
@@ -14428,7 +14434,8 @@ try:
         _mail28_count = len(_mail28)
         _fg28_ghost = _ac.post("/auth/forgot", json={"email": "ghost@example.com"}, headers=_XRW)
         check(
-            "forgot: always 200 {ok}, and an address with no account gets no mail — the answer cannot enumerate accounts",
+            "forgot: always 200 {ok}, and an address with no account gets no mail — the BODY is the same either way "
+            "(the timing is pinned by the P29-FORGOT-TIMING block at the end of 28f)",
             _fg28_ghost.status_code == 200 and _j28(_fg28_ghost) == {"ok": True} and len(_mail28) == _mail28_count,
         )
         _ac.post("/auth/forgot", json={"email": "Dana.Reset@example.com"}, headers=_XRW)
@@ -14943,6 +14950,400 @@ try:
             "no auth route writes usage_log: signing up, verifying, resetting and signing in charge no daily cap",
             len(_p29_uids) >= 8 and _usage28 == [],
             f"{len(_p29_uids)} accounts, rows {[tuple(r) for r in _usage28]}",
+        )
+
+        # --- 28f, P29-FORGOT-TIMING: /auth/forgot answers at one pace ----------------
+        # The body was always {ok}, but the TIME was not: a known address ran a
+        # whole SMTP session inline before the answer and an unknown one ran one
+        # SELECT, so ONE timed request per address said who has an account. The
+        # fix is a minimum response time. The clock starts AFTER the throttles
+        # (they cost the same for every address, and they hold the request's
+        # first DB round trip, where a Neon wake-up lands); the DB connection goes
+        # back to the pool BEFORE the wait; the send stays inline, so nothing runs
+        # after the response, and a send slower than the floor is waited for.
+        # Pinned on a FAKE clock: `accounts._monotonic` and `accounts._sleep` are
+        # patched where they are BOUND, and every sender below moves that clock
+        # instead of sleeping. Each silent branch sits beside the branch that
+        # sends, because a pad that sends nothing passes "ends at the floor" alone.
+        import ast as _ast_ft  # noqa: E402
+        import logging as _logging_ft  # noqa: E402
+
+        from app.config import Settings as _Settings_ft  # noqa: E402
+
+        _FT_KNOWN = "pace.known@example.com"
+        _FT_IDLE = "pace.idle@example.com"
+        _FT_GHOST = "pace.ghost@example.com"
+        _ft_clock = [0.0]
+        _ft_reads = [0]
+        _ft_sleeps: list[tuple[float, int]] = []
+        _ft_missing = object()
+        _ft_saved_seams = {n: getattr(_acc28, n, _ft_missing) for n in ("_monotonic", "_sleep")}
+        _ft_saved_send_reset = _acc28.auth_email.send_reset
+        _ft_saved_hit = _thr28.hit
+        _ft_saved_resolve = _ae28._resolve_sender
+        _ft_saved_env = {k: os.environ.get(k) for k in ("AUTH_FORGOT_FLOOR_MS", "APP_BASE_URL")}
+
+        class _FtLogs(_logging_ft.Handler):
+            def __init__(self):  # noqa: ANN204
+                super().__init__(level=_logging_ft.DEBUG)
+                self.records: list[_logging_ft.LogRecord] = []
+
+            def emit(self, record):  # noqa: ANN001, ANN202
+                self.records.append(record)
+
+        _ft_log = _FtLogs()
+
+        def _ft_monotonic():  # noqa: ANN202
+            _ft_reads[0] += 1
+            return _ft_clock[0]
+
+        def _ft_sleep(seconds):  # noqa: ANN001, ANN202
+            # What the pool holds WHILE the request waits is the point of check 9.
+            _ft_sleeps.append((seconds, _dbm28.engine.pool.checkedout()))
+            _ft_clock[0] += max(0.0, seconds)
+
+        def _ft_sender(advance):  # noqa: ANN001, ANN202
+            def _send(to, subject, text, html, *, code="", link=""):  # noqa: ANN001, ANN202
+                _ft_clock[0] += advance
+                _capture_auth_mail28(to, subject, text, html, code=code, link=link)
+            return _send
+
+        def _ft_raising_sender(to, subject, text, html, *, code="", link=""):  # noqa: ANN001, ANN202
+            _ft_clock[0] += 0.3
+            raise ConnectionError(f"the SMTP server refused {to}")
+
+        def _ft_call(email, headers=None):  # noqa: ANN001, ANN202
+            """One /auth/forgot on a fresh fake clock. A raise becomes a value: an
+            exception here must FAIL a check, never abort the suite."""
+            _ac.cookies.clear()
+            _ft_clock[0] = 0.0
+            _ft_reads[0] = 0
+            _ft_sleeps.clear()
+            mail_before = len(_mail28)
+            pool_before = _dbm28.engine.pool.checkedout()
+            try:
+                resp = _ac.post("/auth/forgot", json={"email": email}, headers={**_XRW, **(headers or {})})
+                status, body = resp.status_code, resp.content
+            except Exception as e:  # noqa: BLE001
+                status, body = f"raised {type(e).__name__}", b""
+            return {"status": status, "body": body, "end": _ft_clock[0], "reads": _ft_reads[0],
+                    "sleeps": list(_ft_sleeps), "mail": _mail28[mail_before:], "pool_before": pool_before}
+
+        def _ft_at(r, t):  # noqa: ANN001, ANN202
+            return abs(r["end"] - t) < 1e-6  # never ==: 0.8 + 1.7 is 2.5 by luck, most sums are not
+
+        def _ft_resets(r):  # noqa: ANN001, ANN202
+            return [m for m in r["mail"] if "/reset?token=" in m["link"]]
+
+        def _ft_desc(r):  # noqa: ANN001, ANN202
+            return (f"status={r['status']} end={r['end']:.3f} reads={r['reads']} mails={len(r['mail'])} "
+                    f"sleeps={[(round(s, 3), p) for s, p in r['sleeps']]} pool_before={r['pool_before']}")
+
+        def _ft_seed_mail(n, key=None):  # noqa: ANN001, ANN202
+            _d = SessionLocal()
+            try:
+                _d.add_all([_AEv28(kind="mail", key=key or f"em:ftseed{i}", created_at=_dt28.now(_tz28.utc))
+                            for i in range(n)])
+                _d.commit()
+            finally:
+                _d.close()
+
+        def _ft_events():  # noqa: ANN202
+            _d = SessionLocal()
+            try:
+                return int(_d.execute(_select28(_func28.count()).select_from(_AEv28)).scalar() or 0)
+            finally:
+                _d.close()
+
+        def _ft_log_leaks(source):  # noqa: ANN001, ANN202
+            """How each `except` inside `forgot` logs: a list of problems, [] when
+            clean. None when there is no `forgot`, or no ERROR log in any of its
+            handlers — the fail-loud path, so a handler that moves away cannot
+            pass by vanishing."""
+            try:
+                tree = _ast_ft.parse(source)
+            except SyntaxError:
+                return None
+            fn = next((n for n in _ast_ft.walk(tree) if isinstance(n, _ast_ft.FunctionDef) and n.name == "forgot"), None)
+            if fn is None:
+                return None
+            problems, errors = [], 0
+            for h in (n for n in _ast_ft.walk(fn) if isinstance(n, _ast_ft.ExceptHandler)):
+                allowed = {
+                    id(n.value.args[0]) for n in _ast_ft.walk(h)
+                    if isinstance(n, _ast_ft.Attribute) and n.attr == "__name__" and isinstance(n.value, _ast_ft.Call)
+                    and isinstance(n.value.func, _ast_ft.Name) and n.value.func.id == "type" and len(n.value.args) == 1
+                }
+                for call in (n for n in _ast_ft.walk(h) if isinstance(n, _ast_ft.Call)
+                             and isinstance(n.func, _ast_ft.Attribute) and isinstance(n.func.value, _ast_ft.Name)
+                             and n.func.value.id == "logger"):
+                    level = call.func.attr
+                    errors += level == "error"
+                    if level != "error":
+                        problems.append(f"logger.{level}: a swallowed failure logs at ERROR, or Sentry never sees it")
+                    if any(k.arg in (None, "exc_info", "stack_info") for k in call.keywords):
+                        problems.append("exc_info/stack_info/**kwargs on the log call: a traceback carries the address")
+                    if any(isinstance(n, _ast_ft.Name) and h.name and n.id == h.name and id(n) not in allowed
+                           for n in _ast_ft.walk(call)):
+                        problems.append(f"formats `{h.name}` itself, not type({h.name}).__name__")
+            return problems if errors else None
+
+        try:
+            os.environ["AUTH_FORGOT_FLOOR_MS"] = "2500"
+            get_settings.cache_clear()
+            _acc28._monotonic = _ft_monotonic
+            _acc28._sleep = _ft_sleep
+            _ae28._resolve_sender = lambda: _ft_sender(0.8)
+            _acc28.logger.addHandler(_ft_log)
+            _reset_auth_throttles28()
+            _ac.cookies.clear()
+            _uid28(_ac.post("/auth/signup", json={"name": "Pace", "email": _FT_KNOWN, "password": "pace known passphrase"},
+                            headers=_XRW))
+            _ac.cookies.clear()
+            _ft_idle_uid = _uid28(_ac.post("/auth/signup", json={"name": "Idle", "email": _FT_IDLE,
+                                                                 "password": "pace idle passphrase"}, headers=_XRW))
+            _ac.cookies.clear()
+            _ft_deact = _ac.patch(f"/admin/users/{_ft_idle_uid}", json={"is_active": False}, headers=_ADMIN_H)
+            _reset_auth_throttles28()  # the signup mail must not spend the reset scenarios' budgets
+
+            # 1, 2. The catch and its twin: no account, and an account whose link goes out.
+            _ft_log.records.clear()
+            _ft_ghost = _ft_call(_FT_GHOST)
+            _ft_known = _ft_call(_FT_KNOWN)
+            _ft_quiet_logs = list(_ft_log.records)
+            check(
+                "P29-FORGOT-TIMING: an address with NO account answers at the floor — 2.5 s on the fake clock — and "
+                "nothing is mailed",
+                _ft_ghost["status"] == 200 and _ft_at(_ft_ghost, 2.5) and not _ft_ghost["mail"],
+                _ft_desc(_ft_ghost),
+            )
+            check(
+                "P29-FORGOT-TIMING: …and a KNOWN address answers at the same moment, with its /reset?token= link sent "
+                "INSIDE that time — a pad that sends nothing passes the check above on its own",
+                _ft_known["status"] == 200 and _ft_at(_ft_known, 2.5) and len(_ft_resets(_ft_known)) == 1
+                and _ft_resets(_ft_known)[0]["to"] == _FT_KNOWN,
+                _ft_desc(_ft_known),
+            )
+            check(
+                "P29-FORGOT-TIMING: over HTTP the two answer byte-identical 200 bodies — the body half, beside the "
+                "time half above",
+                _ft_ghost["status"] == _ft_known["status"] == 200 and _ft_ghost["body"] == _ft_known["body"] == b'{"ok":true}',
+                f"{_ft_ghost['body']!r} {_ft_known['body']!r}",
+            )
+            check(
+                "P29-FORGOT-TIMING: the DB connection is back in the pool BEFORE the wait, for both — a padded request "
+                "holding a pooled connection for the whole floor would let ~15 anonymous calls stall every other route "
+                "on an instance",
+                all(r["sleeps"] and all(p == r["pool_before"] for _s, p in r["sleeps"]) for r in (_ft_ghost, _ft_known)),
+                f"{_ft_desc(_ft_ghost)} | {_ft_desc(_ft_known)}",
+            )
+            check(
+                "P29-FORGOT-TIMING: each padded call read the patched clock at least twice (start and end) — a clock "
+                "that bypassed the seam would time real seconds and every check here would measure nothing",
+                _ft_ghost["reads"] >= 2 and _ft_known["reads"] >= 2,
+                f"{_ft_ghost['reads']} {_ft_known['reads']}",
+            )
+
+            # 3. Every silent branch of a KNOWN address: the same moment, no mail.
+            _ft_silent: dict[str, dict] = {}
+            _reset_auth_throttles28()
+            _ft_silent["inactive account"] = _ft_call(_FT_IDLE)
+            _reset_auth_throttles28()
+            _ft_prior = _ft_call(_FT_KNOWN)
+            _ft_prior_link = _token_of28((_ft_resets(_ft_prior) or [{"link": ""}])[0]["link"])
+            _ft_seed_mail(_thr28.MAIL_RESET_PER_RECIPIENT_PER_HOUR - 1, _thr28.mail_key(_FT_KNOWN, "reset"))
+            _ft_silent["reset budget spent"] = _ft_call(_FT_KNOWN)
+            _ac.cookies.clear()
+            _ft_prior_use = _ac.post("/auth/reset", json={"token": _ft_prior_link, "password": "pace second passphrase"},
+                                     headers=_XRW)
+            _ac.cookies.clear()
+            _reset_auth_throttles28()
+            _ft_seed_mail(_thr28.MAIL_GLOBAL_PER_HOUR)
+            _ft_silent["global budget spent"] = _ft_call(_FT_KNOWN)
+            _reset_auth_throttles28()
+            _ae28._resolve_sender = lambda: None
+            _ft_silent["no sender"] = _ft_call(_FT_KNOWN)
+            _ae28._resolve_sender = lambda: _ft_raising_sender
+            _ft_silent["the send raises"] = _ft_call(_FT_KNOWN)
+            _ae28._resolve_sender = lambda: _ft_sender(0.8)
+            os.environ["APP_BASE_URL"] = ""
+            get_settings.cache_clear()
+            try:
+                _ft_silent["no link base (no APP_BASE_URL, no Origin)"] = _ft_call(_FT_KNOWN)
+            finally:
+                if _ft_saved_env["APP_BASE_URL"] is None:
+                    os.environ.pop("APP_BASE_URL", None)
+                else:
+                    os.environ["APP_BASE_URL"] = _ft_saved_env["APP_BASE_URL"]
+                get_settings.cache_clear()
+            check(
+                "P29-FORGOT-TIMING: every SILENT branch of a known address answers 200 at the same 2.5 s and mails "
+                "nothing — an inactive account, its reset budget spent, the global budget spent, no sender, a send "
+                "that raises, no link base — so none of them is a second oracle",
+                _ft_deact.status_code == 200 and len(_ft_silent) == 6
+                and all(r["status"] == 200 and _ft_at(r, 2.5) and not r["mail"] for r in _ft_silent.values()),
+                "; ".join(f"{k}: {_ft_desc(r)}" for k, r in _ft_silent.items()),
+            )
+            check(
+                "P29-FORGOT-TIMING: …and the budget-spent branch still consumes nothing — the reset link mailed just "
+                "before it still resets the password (the pinned false-positive half: padding may not re-order the "
+                "flow so the old link dies for a mail that never goes out)",
+                bool(_ft_prior_link) and _ft_prior_use.status_code == 200,
+                f"{bool(_ft_prior_link)} {_ft_prior_use.status_code} {_ft_prior_use.text[:100]}",
+            )
+
+            # 4. A failure inside the flow is silent to the caller, loud to Sentry.
+            _reset_auth_throttles28()
+
+            def _ft_boom(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+                raise RuntimeError(f"INSERT INTO auth_events failed for {_FT_KNOWN}")
+
+            _acc28.auth_email.send_reset = _ft_boom
+            _ft_log.records.clear()
+            try:
+                _ft_crash = _ft_call(_FT_KNOWN)
+            finally:
+                _acc28.auth_email.send_reset = _ft_saved_send_reset
+            _ft_crash_logs = [r for r in _ft_log.records if r.levelno >= _logging_ft.ERROR]
+            check(
+                "P29-FORGOT-TIMING: a failure inside the reset flow (send_reset raising, as a DB error there would) is "
+                "still 200 {ok} at the floor — it used to be a 500 that only a KNOWN address could reach",
+                _ft_crash["status"] == 200 and _ft_crash["body"] == b'{"ok":true}' and _ft_at(_ft_crash, 2.5),
+                _ft_desc(_ft_crash),
+            )
+            check(
+                "P29-FORGOT-TIMING: …and it is not swallowed in silence: exactly one ERROR record, naming the exception "
+                "TYPE, with no traceback and no address (a SQLAlchemy message carries the bound address)",
+                len(_ft_crash_logs) == 1 and "RuntimeError" in _ft_crash_logs[0].getMessage()
+                and _FT_KNOWN not in _ft_crash_logs[0].getMessage() and _ft_crash_logs[0].exc_info is None
+                and not _ft_crash_logs[0].exc_text and not _ft_crash_logs[0].stack_info,
+                str([(r.levelname, r.getMessage(), bool(r.exc_info)) for r in _ft_crash_logs]),
+            )
+
+            # 5. The reliability twin: a send slower than the floor is waited for.
+            _reset_auth_throttles28()
+            _ae28._resolve_sender = lambda: _ft_sender(4.0)
+            _ft_log.records.clear()
+            try:
+                _ft_slow = _ft_call(_FT_KNOWN)
+            finally:
+                _ae28._resolve_sender = lambda: _ft_sender(0.8)
+            _ft_slow_logs = [r for r in _ft_log.records if r.levelno == _logging_ft.WARNING]
+            check(
+                "P29-FORGOT-TIMING: a send SLOWER than the floor is waited for, never cut loose — the link is mailed, "
+                "the answer comes at 4.0 s, and no wait is added on top. This is the known residue: nothing here runs "
+                "after the response, so a send that overruns the floor still shows",
+                len(_ft_resets(_ft_slow)) == 1 and _ft_at(_ft_slow, 4.0) and not any(s > 0 for s, _p in _ft_slow["sleeps"]),
+                _ft_desc(_ft_slow),
+            )
+            check(
+                "P29-FORGOT-TIMING: …and the overrun is logged at WARNING as two numbers, the ms it took and the floor, "
+                "with no address, so the residue shows in the runtime logs — while a call inside the floor logs nothing",
+                len(_ft_slow_logs) == 1 and "4000" in _ft_slow_logs[0].getMessage()
+                and "2500" in _ft_slow_logs[0].getMessage() and _FT_KNOWN not in _ft_slow_logs[0].getMessage()
+                and _ft_quiet_logs == [],
+                str([r.getMessage() for r in _ft_slow_logs]) + f" quiet={[r.getMessage() for r in _ft_quiet_logs]}",
+            )
+
+            # 6. The throttle twin: a refused call is answered at once, known or not.
+            _reset_auth_throttles28()
+            for _ in range(_thr28.FORGOT_PER_EMAIL[0]):
+                _ft_call(_FT_KNOWN)
+            _ft_thr_known = _ft_call(_FT_KNOWN)
+            for _ in range(_thr28.FORGOT_PER_EMAIL[0]):
+                _ft_call(_FT_GHOST)
+            _ft_thr_ghost = _ft_call(_FT_GHOST)
+            check(
+                "P29-FORGOT-TIMING: a THROTTLED call is answered at once and makes no wait at all, known or unknown — "
+                "the two are indistinguishable, and a flood of refused calls holds no thread",
+                _ft_thr_known["sleeps"] == [] and _ft_thr_ghost["sleeps"] == [] and not _ft_thr_known["mail"]
+                and _ft_thr_known["status"] == _ft_thr_ghost["status"] == 200
+                and _ft_thr_known["body"] == _ft_thr_ghost["body"] and _ft_thr_known["end"] == _ft_thr_ghost["end"],
+                f"{_ft_desc(_ft_thr_known)} | {_ft_desc(_ft_thr_ghost)}",
+            )
+
+            # 7. An invalid address never reaches the throttles, the clock or the database.
+            _ft_ev_before = _ft_events()
+            _ft_bad = _ft_call("not-an-address")
+            check(
+                "P29-FORGOT-TIMING: an invalid address is answered at once — no wait and no auth_events row — "
+                "because it cannot be anyone's account",
+                _ft_bad["status"] == 200 and _ft_bad["sleeps"] == [] and _ft_events() == _ft_ev_before,
+                f"{_ft_desc(_ft_bad)} events {_ft_ev_before}->{_ft_events()}",
+            )
+
+            # 8. The clock starts AFTER the throttles.
+            _reset_auth_throttles28()
+
+            def _ft_cold_hit(*a, **k):  # noqa: ANN002, ANN003, ANN202
+                _ft_clock[0] += 5.0  # a Neon wake-up / pre-ping reconnect lands in the first round trip
+                return _ft_saved_hit(*a, **k)
+
+            _thr28.hit = _ft_cold_hit
+            try:
+                _ft_cold_ghost = _ft_call(_FT_GHOST)
+                _ft_cold_known = _ft_call(_FT_KNOWN)
+            finally:
+                _thr28.hit = _ft_saved_hit
+            check(
+                "P29-FORGOT-TIMING: the clock starts AFTER the throttles — with 5 s in each throttle write, both "
+                "addresses still wait the full floor after them and end together at 12.5 s. Started before them, a "
+                "cold database would eat the floor: the unknown address would end at 10.0 and the known at 10.8",
+                _ft_at(_ft_cold_ghost, 12.5) and _ft_at(_ft_cold_known, 12.5)
+                and any(abs(s - 2.5) < 1e-6 for s, _p in _ft_cold_ghost["sleeps"]),
+                f"{_ft_desc(_ft_cold_ghost)} | {_ft_desc(_ft_cold_known)}",
+            )
+        finally:
+            for _ft_name, _ft_value in _ft_saved_seams.items():
+                if _ft_value is _ft_missing:
+                    if hasattr(_acc28, _ft_name):
+                        delattr(_acc28, _ft_name)
+                else:
+                    setattr(_acc28, _ft_name, _ft_value)
+            _acc28.auth_email.send_reset = _ft_saved_send_reset
+            _thr28.hit = _ft_saved_hit
+            _ae28._resolve_sender = _ft_saved_resolve
+            _acc28.logger.removeHandler(_ft_log)
+            for _ft_key, _ft_prev in _ft_saved_env.items():
+                if _ft_prev is None:
+                    os.environ.pop(_ft_key, None)
+                else:
+                    os.environ[_ft_key] = _ft_prev
+            get_settings.cache_clear()
+            _reset_auth_throttles28()
+            _ac.cookies.clear()
+
+        # 11, 12. The default, and how a swallowed failure may be logged.
+        _ft_default = getattr(_Settings_ft.model_fields.get("auth_forgot_floor_ms"), "default", None)
+        check(
+            "P29-FORGOT-TIMING: the SHIPPED default floor is at least 1000 ms — the twin of this suite's header, which "
+            "sets 0 — so production is never un-padded by default",
+            isinstance(_ft_default, int) and _ft_default >= 1000
+            and getattr(get_settings(), "auth_forgot_floor_ms", None) == 0,
+            f"default={_ft_default}",
+        )
+        _ft_src_real = open(_acc28.__file__, encoding="utf-8").read()
+        _ft_src_good = ("def forgot():\n    try:\n        pass\n    except Exception as exc:\n"
+                        "        logger.error('failed (%s)', type(exc).__name__)\n")
+        _ft_src_bad = {
+            name: _ft_src_good.replace("logger.error('failed (%s)', type(exc).__name__)", line)
+            for name, line in {
+                "the exception itself": "logger.error('failed (%s)', exc)",
+                "str(exc)": "logger.error('failed (%s)', str(exc))",
+                "an f-string": "logger.error(f'failed {exc}')",
+                "exc_info": "logger.error('failed (%s)', type(exc).__name__, exc_info=True)",
+                "logger.exception": "logger.exception('failed')",
+                "only a warning": "logger.warning('failed (%s)', type(exc).__name__)",
+            }.items()
+        }
+        _ft_verdicts = {name: _ft_log_leaks(src) for name, src in _ft_src_bad.items()}
+        check(
+            "P29-FORGOT-TIMING: forgot's swallowed failure is logged at ERROR by exception TYPE only — no exc_info, no "
+            "str(exc), no f-string — read off the AST of accounts.py, with the detector probed both ways on six "
+            "leaky variants and one clean one",
+            _ft_log_leaks(_ft_src_real) == [] and _ft_log_leaks(_ft_src_good) == []
+            and all(v != [] for v in _ft_verdicts.values()) and _ft_src_good not in _ft_src_bad.values(),
+            f"real={_ft_log_leaks(_ft_src_real)} good={_ft_log_leaks(_ft_src_good)} bad={_ft_verdicts}",
         )
 
     # --- 28g. Throwaway clients: Secure, the /api mount, the gate switched off ----
