@@ -58,6 +58,7 @@ import type {
   StaleApplication,
   TailorResult,
   ATSXrayResult,
+  UsagePassOut,
 } from "../types";
 
 // In dev, requests go through the Vite proxy at /api -> http://localhost:8000.
@@ -184,7 +185,8 @@ export async function recordRejectedPhrases(rejected: string[]): Promise<void> {
 
 /** The letter, and the 24-hour pass it rode (Phase 30 / B5): the first letter for
  * a posting uses 1, and changes to it within the pass are included. The pass is
- * per posting, so it comes back on this response, never in /auth/me. */
+ * per posting, so it comes back on this response, never in /auth/me; a card that
+ * remounted reads it back with `coverLetterPass`. */
 export async function coverLetter(
   resume: ResumeModel,
   jd: JDModel,
@@ -195,6 +197,15 @@ export async function coverLetter(
     jd,
     tone,
   });
+  return data;
+}
+
+/** This posting's cover-letter pass as the next letter would ride it, read and
+ * never taken (P30-RELOAD-PASS): 0/0 when none is open. The server hashes the JD
+ * with the key the letter was charged under, so the body is the JD and nothing
+ * else — the route forbids any other field (check-mirrors 36). */
+export async function coverLetterPass(jd: JDModel): Promise<UsagePassOut> {
+  const { data } = await api.post<UsagePassOut>("/cover-letter/pass", { jd });
   return data;
 }
 

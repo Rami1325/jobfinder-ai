@@ -85,7 +85,8 @@ FREE = "free"
 UNLIMITED = "unlimited"
 PLANS = (FREE, UNLIMITED)
 # The passes /auth/me lists. A cover-letter pass belongs to ONE posting, so it
-# travels on its own response (`included_until`, `changes_left`) instead.
+# travels on its own response (`changes_left`, `expires_in_s`) instead, and a page
+# that remounted reads it back through `posting_pass` (POST /cover-letter/pass).
 LISTED_PASSES = ("interview", "screening")
 _GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
 
@@ -602,6 +603,14 @@ class PassUse:
         """`max_calls - calls` after this call; 0 for an exempt caller."""
         return max(0, self.max_calls - self.calls) if self.pass_id is not None else 0
 
+    def seconds_left(self, now: datetime | None = None) -> int:
+        """Seconds until the pass ends, read NOW rather than when the call took its
+        slot, so a response sent after a slow model call does not overstate them;
+        0 for an exempt caller. Relative, like every pass /auth/me lists: a phone
+        whose clock runs ahead reads an absolute `included_until` as already over
+        (P30-RELOAD-PASS)."""
+        return _seconds_left(self.expires_at, _clock(now)) if self.pass_id is not None else 0
+
 
 def _open_pass(
     db: Session,
@@ -777,10 +786,54 @@ def pass_charged(
             logger.warning("recording a served %s ride did not complete", feature, exc_info=True)
 
 
+def posting_pass(db: Session, user: User, feature: str, *, ref: str, now: datetime | None = None) -> UsagePassOut:
+    """The per-posting pass the NEXT call on `ref` would ride, read and never taken
+    (P30-RELOAD-PASS): calls left and seconds left, 0/0 when none is open.
+
+    A cover-letter pass belongs to one posting, so /auth/me cannot list it, and a
+    page that remounted its card (a reload of /kits/:id, Tracker and back on /app)
+    had nothing to read it from: at 0 uses left it disabled a change the server
+    would still include. This names exactly the row `_take_pass` would take,
+    through the same `_newest_open`, and writes nothing: no commit, no prune, no
+    header. Relative seconds, like every pass /auth/me lists.
+
+    Per-posting passes only, and ValueError otherwise: a listed pass is on
+    /auth/me already, and the fit ride is not a pass a page may probe. An
+    exempt caller reads 0/0 without a query, the same as it never writes a row.
+    """
+    moment = _clock(now)
+    if feature not in PASS_RULES or feature in LISTED_PASSES:
+        raise ValueError(f"{feature!r} has no per-posting pass to read")
+    if not ref:
+        raise ValueError("a per-posting pass is read by its posting's ref")
+    user_id, _plan, limit = _who(user)
+    if limit is None:
+        return UsagePassOut()
+    row = db.execute(
+        select(_PASSES.c.calls, _PASSES.c.max_calls, _PASSES.c.expires_at)
+        .where(_PASSES.c.id == _newest_open(user_id, feature, ref, moment).scalar_subquery())
+    ).first()
+    if row is None:
+        return UsagePassOut()
+    calls, max_calls, expires_at = row
+    return UsagePassOut(
+        calls_left=max(0, int(max_calls) - int(calls)),
+        expires_in_s=_seconds_left(_stored(expires_at), moment),
+    )
+
+
 # --- check fit, then tailor: one use (B4.4) ------------------------------------------------------
 def open_fit_ride(db: Session, user: User, *, ref: str, event_id: int | None, now: datetime) -> datetime | None:
     """After a successful fit check, cover one tailor of the same analysed JD for
-    24 hours. Returns when the cover ends (aware UTC), or None for an exempt caller."""
+    24 hours. Returns when the cover ends (aware UTC), or None for an exempt caller.
+
+    A reload FORFEITS the ride (P30-RELOAD-PASS, recorded, not fixed: whether a
+    reload should keep it is the owner's call). Its key is the analysed JD, which
+    the page holds only in memory; after a reload the page analyses the posting
+    again through /jd/analyze, a different task at temperature, so the tailor
+    carries another jd_ref and is charged. Check fit, reload, tailor costs 2 uses,
+    and the note saying so is true. The stub's `_stub_jd` ignores its input and
+    would claim the ride offline: never pin the reload case through the stub."""
     moment = _clock(now)
     user_id, _plan, limit = _who(user)
     if limit is None or event_id is None:

@@ -5601,7 +5601,7 @@ try {
     ["AlertRunResult", "AlertRunResult", ["skipped_reason"]],
     ["UsageOut", "UsageOut", ["passes"]],
     ["FitCheckResult", "FitCheckResult", ["tailor_included_until"]],
-    ["CoverLetterResponse", "CoverLetterResponse", ["included_until", "changes_left"]],
+    ["CoverLetterResponse", "CoverLetterResponse", ["included_until", "changes_left", "expires_in_s"]],
   ];
   for (const [, ts, names] of NAMES) {
     let keys;

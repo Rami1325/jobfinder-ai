@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiErrorMessage, isMonthlyLimit, isServerFailure } from "../lib/apiError";
 import { Copy, RefreshCw, Wand2, Scissors } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { coverLetter } from "../api/client";
-import { formatUsesTime, useUses } from "../lib/usesStore";
+import { coverLetter, coverLetterPass } from "../api/client";
+import { formatUsesTime, inclusionFrom, useUses } from "../lib/usesStore";
 import type { JDModel, ResumeModel } from "../types";
 import UsesNote from "./UsesNote";
 import { Button, Card, CardTitle, useToast } from "./ui";
@@ -19,10 +19,13 @@ interface Props {
 // Tone ids are sent to the API as-is (English); labels are translated.
 const TONES = ["professional", "enthusiastic", "concise", "warm"];
 
-/** This posting's cover-letter pass as the last response described it (Phase 30
- * / B5, OD-2 b): the first letter uses 1, and changes within 24 hours ride it,
- * up to 10 calls in all. Kept here and nowhere else, so a reload forgets it and
- * the note says the next letter uses 1, which errs toward stating a cost. */
+/** This posting's cover-letter pass (Phase 30 / B5, OD-2 b): the first letter
+ * uses 1, and changes within 24 hours ride it, up to 10 calls in all. The server
+ * lists it nowhere a remount could read (it belongs to one posting), so the card
+ * asks POST /cover-letter/pass when it mounts and keeps what the latest answer
+ * said (P30-RELOAD-PASS). `until` is a deadline taken on ARRIVAL from the
+ * server's relative seconds, never its absolute instant, so a phone whose clock
+ * runs ahead cannot end the pass early. */
 type LetterPass = { until: string; left: number; posting: string };
 
 export default function CoverLetter({ resume, jd, onGenerated, initialText }: Props) {
@@ -34,20 +37,56 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pass, setPass] = useState<LetterPass | null>(null);
+  // Whether this card knows what the posting's pass covers. Until the probe or a
+  // letter answers it does not, and then it states no cost and disables nothing:
+  // unknown is never zero, and the server decides the call.
+  const [known, setKnown] = useState(false);
+  // Bumped by every probe and every letter. A probe answer that lands after a
+  // letter started describes the pass BEFORE that letter took its slot, and
+  // applying it would put the slot back and hide the next letter's cost.
+  const seq = useRef(0);
   const toast = useToast();
   // The server keys the pass by the analysed JD, so "the posting is unchanged"
   // means the same JD. A tone is not part of it: any tone rides the pass.
   const posting = useMemo(() => JSON.stringify(jd), [jd]);
   const live = pass !== null && pass.posting === posting && pass.left > 0 ? pass : null;
   const uses = useUses("cover_letter", live?.until);
+  const limited = uses.limited;
+
+  useEffect(() => {
+    // With no monthly limit known (the admin, plan unlimited, an unknown count)
+    // nothing here is noted or disabled, so there is nothing to ask.
+    if (!limited) return;
+    let alive = true;
+    const at = ++seq.current;
+    setKnown(false);
+    coverLetterPass(jd)
+      .then((r) => {
+        if (!alive || seq.current !== at) return;
+        const inc = inclusionFrom(r);
+        setPass(inc ? { ...inc, posting } : null);
+        setKnown(true);
+      })
+      .catch(() => {
+        // Left unknown: no note, Generate enabled, and the server decides.
+      });
+    return () => {
+      alive = false;
+    };
+    // `posting` is `jd` serialised: a new object for the same posting asks nothing.
+  }, [posting, limited]);
 
   async function generate(extra?: string) {
     setError("");
     setLoading(true);
+    seq.current++;
     try {
       const res = await coverLetter(resume, jd, extra ? `${tone}, ${extra}` : tone);
       setText(res.cover_letter);
-      setPass(res.included_until ? { until: res.included_until, left: res.changes_left ?? 0, posting } : null);
+      // The relative seconds, never `included_until`: see LetterPass.
+      const inc = inclusionFrom({ calls_left: res.changes_left, expires_in_s: res.expires_in_s });
+      setPass(inc ? { ...inc, posting } : null);
+      setKnown(true);
       onGenerated?.(res.cover_letter);
     } catch (e: any) {
       // A monthly-limit refusal proves no pass covered this call. A 5xx is the
@@ -58,8 +97,10 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
       // a slot for those turns `left` to 0 early, and at 0 uses left that
       // DISABLES Generate on a call the server would still have included,
       // which is the one error a local count may not make.
-      if (isMonthlyLimit(e)) setPass(null);
-      else if (isServerFailure(e)) setPass((p) => (p ? { ...p, left: Math.max(0, p.left - 1) } : p));
+      if (isMonthlyLimit(e)) {
+        setPass(null);
+        setKnown(true);
+      } else if (isServerFailure(e)) setPass((p) => (p ? { ...p, left: Math.max(0, p.left - 1) } : p));
       setError(apiErrorMessage(e, t("cover.error")));
     } finally {
       setLoading(false);
@@ -81,13 +122,14 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
             </option>
           ))}
         </select>
-        {/* The one control here that may be disabled for want of a use, and
-            never while this posting's pass still covers a change. */}
+        {/* The one control here that may be disabled for want of a use: never
+            while this posting's pass still covers a change, and never before
+            the card knows whether it does. */}
         <Button
           variant="secondary"
           size="sm"
           loading={loading}
-          disabled={uses.out}
+          disabled={known && uses.out}
           icon={<Wand2 size={15} />}
           onClick={() => generate()}
         >
@@ -116,18 +158,22 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
           </>
         )}
       </div>
-      <UsesNote
-        feature="cover_letter"
-        includedUntil={live?.until}
-        covered={
-          live
-            ? tCommon("uses.coverIncluded", { count: live.left, time: formatUsesTime(live.until, i18n.language) })
-            : undefined
-        }
-        className="mt-2"
-      >
-        {tCommon("uses.coverLetter", { count: uses.remaining ?? 0 })}
-      </UsesNote>
+      {/* Only once the card knows: an unknown pass read as none would print "No
+          uses left" at 0 under a change the pass may include. */}
+      {known && (
+        <UsesNote
+          feature="cover_letter"
+          includedUntil={live?.until}
+          covered={
+            live
+              ? tCommon("uses.coverIncluded", { count: live.left, time: formatUsesTime(live.until, i18n.language) })
+              : undefined
+          }
+          className="mt-2"
+        >
+          {tCommon("uses.coverLetter", { count: uses.remaining ?? 0 })}
+        </UsesNote>
+      )}
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       {text && (
         <div className="mt-3 whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink">
