@@ -9,6 +9,9 @@ frontend/dist
 render.yaml
 CLAUDE.md
 docs/handbook
+# With its twin, never alone: check-mirrors 33 compares the two and treats one
+# present without the other as a moved file, so it would fail the Vercel build.
+AGENTS.md
 
 # Competitor UI reference captures. .vercelignore SUPERSEDES .gitignore for CLI
 # uploads, so the .gitignore rule does not cover this path here -- without this
