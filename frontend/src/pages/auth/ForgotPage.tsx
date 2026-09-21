@@ -21,10 +21,14 @@ import {
  * /forgot.
  *
  * The confirmation reads the same for every address, known or not, and is
- * phrased as "if an account exists". The server behaves the same way, so this
- * page cannot be used to find out whether someone has an account. A real error
- * (no network, mail down) is still shown as one: "we sent a link" over a
- * request that never arrived is a promise nobody will keep.
+ * phrased as "if an account exists". The server answers the same body, and at
+ * the same moment unless the reset mail itself takes longer than its minimum
+ * response time (`accounts.forgot`, P29-FORGOT-TIMING). That is all this page
+ * proves: signup still says when an address is taken. A request that never
+ * arrived (no network, the server unreachable) is still shown as an error: "we
+ * sent a link" over it is a promise nobody will keep. A failed send is not an
+ * error here; the server answers {ok} for it by contract. The wait can be a
+ * few seconds, which the button's loading state already covers.
  */
 export default function ForgotPage() {
   const { t } = useTranslation("auth");
