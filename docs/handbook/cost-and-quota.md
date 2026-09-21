@@ -48,6 +48,31 @@ the `MAX_NEXT` / `GOOGLE_FAIL_PER_IP` knobs — is in `accounts-and-auth.md`.)*
 - **Check fit, then Tailor the same posting, costs 1 use.** The fit check opens a 24-hour, one-call ride keyed by the analysed JD it returned — keyed by the JD because `TailorRequest` carries no job text to key on. A tailor that raises RELEASES the ride rather than settling it, so the retry is still covered; a success writes `fit_check −1` and `tailor +1` in the fit's own month, leaving `used` unchanged while the breakdown counts a tailored job.
 - **`/jobs/match` refuses more than 10 listings with a 400 before any call.** One use covered a serial loop of two model calls per listing and the list had no maximum, so one use bought any number of fit readings.
 
+**A remounted page reads its posting's pass back (P30-RELOAD-PASS, 2026-09-21).**
+- **A per-posting pass is listed nowhere a remount can read it.** `/auth/me` lists only `LISTED_PASSES`, and `_note_pass` sends no header for a pass with a ref. So the cover-letter pass lived in `CoverLetter`'s component state and nowhere else. Remounting the card forgot it: a reload of `/kits/:id` (whose JD the server stores, so the pass stays redeemable) or Tracker and back on `/app`. At 0 uses left, `disabled={uses.out}` then refused a change the server would still include. Reproduced in the browser at 390 px before the fix. After it, the reloaded kit read "Changes included · 9 left" with Generate enabled, in both locales, and another posting at zero still read "No uses left" with Generate disabled. "Errs toward stating a cost" was true only above zero. At zero the error was refusing the call, which is the one error `usesStore`'s header forbids.
+- **`POST /cover-letter/pass` reads it back, and takes nothing.**
+  - `quota.posting_pass` selects the row `_newest_open` names, which is the row `_take_pass` would take. It writes nothing: no commit, no prune, no header.
+  - It takes `{jd}` only (`extra="forbid"`). `jd_text`, or a `resume` beside the JD, is a 422.
+  - The JD is hashed with the letter's own `jd_ref`, so there is one key and one answer.
+  - It reads the caller's own rows only. It runs on plain `current_user`, is uncapped and uncharged, is classed `free` in 32.13 and is driven in its sweep.
+  - It raises `ValueError` for anything but a per-posting pass, for an empty ref and for a naive clock. So it can never become a reader of fit rides, or of the passes `/auth/me` already lists.
+  - It answers the same `UsagePassOut` that `/auth/me` uses, which 32(j) compares whole.
+  - Smoke 32.20 pins it: the catch beside a no-take twin, agreement with the next ride, and a used-up pass (a 429 at zero, a new +1 pass with uses left). Also a stranger, another posting and the admin, each reading 0/0, and the window on an injected clock.
+- **Both answers carry relative seconds.**
+  - The letter's response now has `expires_in_s` beside `included_until`. It is read as the response is built, after the model call, not when the slot was taken, so the model call's latency is not added to the time left. `included_until` stays for a tab loaded before `expires_in_s` existed.
+  - `usesStore.inclusionFrom` turns either answer into a deadline on arrival (`setUsage`'s clock rule). A phone whose clock runs ahead read the absolute instant as over, and at 0 uses left that disabled a covered change.
+  - `CoverLetter` never reads `included_until`, and check-mirrors 36 pins that.
+- **Until the card knows, it states no cost and disables nothing.**
+  - The card asks on mount, keyed on the posting. It asks only when a monthly limit is known, so the admin never pays the round trip.
+  - While the probe is pending or has failed, `known` is false. There is no `UsesNote`, which would print "No uses left" at zero, and Generate stays enabled. The server decides, and a 429 renders inline.
+  - A letter's success and a `monthly_limit` refusal each make the card known. A 5xx or a dropped request leaves it as it was, and the 5xx-gated decrement (check-mirrors 30 P4) is unchanged.
+  - A sequence ref drops a probe answer that lands after a letter started. That answer describes the pass before the letter took its slot, and applying it would hide the next letter's cost.
+- **The fit ride is NOT read back, and a reload forfeits it.** This is recorded, not fixed: whether a reload should keep the ride is the owner's decision.
+  - The ride's key is the analysed JD, which only `tailorStore` holds, and that store dies on reload.
+  - After a reload, `startTailor` analyses the posting again through `/jd/analyze`. That is ANALYZE_JD at temperature, not JD_FIT, so the tailor carries another `jd_ref` and `claim_fit_ride` misses.
+  - So "check fit, reload, tailor" costs 2 uses, and the "uses 1" note after the reload is TRUE.
+  - **Offline it looks otherwise.** `StubClient` answers both tasks with `_stub_jd`, which ignores its input, so the stub claims a ride the real model forfeits. Never pin the reload case through the stub (the `open_fit_ride` docstring says so). The same artifact makes two stub kits one posting: their analysed JDs are identical, so one cover-letter pass covers both.
+
 **The alert morning is refunded unless it emailed.**
 - A scheduled morning reserves one `job_alert` use, and keeps it only when jobs were actually emailed. Nothing above the bar, zero matches, an all-filtered morning, a blank email, no SMTP, a failed send and a raise all give the use back — the owner's rule, and the honest one: a morning that mailed nothing did nothing for the user.
 - **At an exhausted pool the morning does not run at all**: `last_skip = "monthly_limit"`, `last_run_at` untouched, no search. The card says so through `paused_reason` / `resumes_on`, which are computed from the pool on READ rather than from `last_skip`, so another feature spending the last use pauses the card immediately and a new month un-pauses it with no write.
