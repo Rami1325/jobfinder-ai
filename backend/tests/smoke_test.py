@@ -20477,12 +20477,16 @@ try:
             "remaining 0, resets_on the 1st of next UTC month} — the body 0.4 turns into 'you've used all your uses for "
             "<month>. More on <date>.' — with no X-Uses-Remaining and no X-Uses-Pass, no pass row and the pool still "
             "(10, 10); and the refused call HAS spent a daily llm unit (0 -> 1), so asking again for the next question "
-            "only spends more",
+            "only spends more. resets_on is also pinned to the bare YYYY-MM-01 shape, independently of quota.resets_on: "
+            "popup.js's usesResetParts reads only that shape, and a datetime there would compare equal to the server's "
+            "own function while every extension sentence silently fell back to the bare 'this month' form",
             _xl32.status_code == 429
             and _detail28(_xl32) == {
                 "code": "monthly_limit", "feature": "screening", "plan": "free", "limit": 10, "used": 10,
                 "remaining": 0, "resets_on": _q32.resets_on(_xl_now32).isoformat(),
             }
+            and isinstance((_detail28(_xl32) or {}).get("resets_on"), str)
+            and _re28.fullmatch(r"\d{4}-\d{2}-01", (_detail28(_xl32) or {}).get("resets_on") or "") is not None
             and _hdr32(_xl32) is None and _phdr32(_xl32) is None
             and _passes32(_xl_uid32) == [] and _xl_pool32 == (10, 10)
             and _xl_llm32 == 1,
