@@ -21,7 +21,19 @@ Clips the job posting on the current page into your JobFinder **application trac
    - **Cover letter** pasted into a textarea explicitly labeled as one.
 3. **It never clicks submit.** You review the form and send it yourself — ToS-safe everywhere, including LinkedIn.
 
-**Since Phase 30 the AI answers cost monthly uses.** One use covers up to 6 screening answers for about 3 hours, so a normal autofill spends 1. If the account has no uses left this month the API refuses each answer with `429 monthly_limit`, and **this version fills nothing and says nothing** — check the uses line in the web app's account menu. Clipping a job to the tracker, and attaching a resume rendered from an already-approved kit, cost no uses.
+**Since Phase 30 the AI answers cost monthly uses.** One use covers up to 6 screening answers for about 3 hours, so a normal autofill spends 1. Clipping a job to the tracker, and attaching a resume rendered from an already-approved kit, cost no uses.
+
+**Since v0.4 the autofill says why a question was left blank.** When the API refuses an answer or sends back an empty one, or the form's frame goes away before the answers are written into it, the summary line turns amber (`warn`) and names the reason in the web app's own words, in English or Hebrew:
+- no uses left this month (`429 monthly_limit`): "Questions left blank: you've used all your uses for September. More on October 1.";
+- today's AI requests used up (`429 daily_limit`): "…you've used all 150 AI requests for today. Try again tomorrow.";
+- a wrong or replaced extension key (`401`), a server it cannot reach, or any other error, with its status code;
+- answers that came back but could not be written, because the form's frame went away (it navigated or was closed) before they were written in.
+
+What it does NOT flag: a box you had already typed into is left alone on purpose, and that is not a failure. Nor, in this version, is a form that redraws itself in place while the answers are on their way (a multi-step form moving to its next step): those answers find no box to go into, are not written, and the line stays green without mentioning them. So check every question box yourself before you submit, green line or not.
+
+A refusal that would repeat (the month or the day is used up, the key is dead, or the request itself is refused) **stops the autofill after that one request** instead of asking for every question, because each refused request still counts against the server's daily AI limit. A 400 or a 5xx skips only that question. The autofill asks at most 4 times per click, refused requests included. Answers it already drafted are still written in, and the refusal text itself is never put into the employer's form; it appears only in the popup. It never decides from a count before asking: an open screening pass (shared with the web app's Screening tool) still answers at 0 uses left.
+
+**Installed copies do not update themselves.** The extension is loaded unpacked, so **an install older than 0.4.0 stays silent**: at `monthly_limit` it fills no answers, says nothing, and keeps asking for every question. To update, replace the `extension/` folder with the new one and press **Reload** on its card in `chrome://extensions`; the card's version then reads 0.4.0. (0.3 shipped the screening answers without changing the version, so 0.2.0 on the card means 0.3 or older.)
 
 Safety rails built into the filler: it only touches fields inside an open dialog or a form that has a file upload (so page search boxes are never filled), skips invisible fields (honeypots), never overwrites anything you already typed, and fills each field kind at most once. If the popup finds a **processed-but-unreviewed** kit for the current job, it links you to its review page instead.
 
@@ -32,7 +44,7 @@ Safety rails built into the filler: it only touches fields inside an open dialog
 3. Click **Load unpacked** and select this `extension/` folder.
 4. Pin the extension for one-click clipping.
 
-There is no build step — plain HTML/CSS/JS, no dependencies, no icons in v1.
+There is no build step — plain HTML/CSS/JS, no dependencies, no icons in v1. To update an installed copy, replace the folder and press **Reload** on the extension's card: nothing updates it for you.
 
 ## Configure (required for the public deployment)
 
@@ -90,5 +102,6 @@ Live-verified 2026-07-05 against a real logged-in LinkedIn posting (new shell: t
 - ~~JSON-LD `JobPosting` parsing~~ — done 2026-07-05 (generic path + gap-filler on all boards).
 - ~~Optional **autofill** of application forms~~ — done 2026-07-06 (v0.2 assisted apply, PLAN 8.3).
 - ~~**Screening-question autofill**~~ — done 2026-07-21 (v0.3, PLAN 11.5): after the contact fill, free-text application questions (label with "?"/why/describe/מדוע/ספרו… — cover letter excluded) are collected per frame, answered honestly via `POST /tools/screening-answer` grounded in the kit's resume + JD (capped at 4 per page), and written back React-safely. Answers land in the form for the user to REVIEW — the extension still never clicks submit.
+- ~~**Say why an answer was refused**~~ — done 2026-09-21 (v0.4): see "Since v0.4" above. `frontend/scripts/check-mirrors.js` check 35 loads this folder's `popup.js` into a node vm and drives the autofill against stubbed responses in both languages, and checks both `messages.json` files against each other and against every key the code uses. A change here fails the web app's build until that check agrees.
 - **Firefox port** (MV3 with `browser.*` polyfill; storage.sync + scripting APIs are compatible).
 - Per-board **apply-form selector refresh cadence**. ~~Duplicate-clip detection~~ — done 2026-07-06 (URL-matched warning + tracker link).

@@ -90,6 +90,50 @@
   "autofillNoForm": {
     "message": "לא נמצא טופס מועמדות בעמוד. קודם פתחו את טופס ההגשה (לחצו על כפתור ההגשה במשרה) ונסו שוב."
   },
+  "autofillOutOfUses": {
+    "message": "שאלות פתוחות נשארו ריקות: ניצלתם את כל השימושים של $MONTH$. הם יתחדשו ב-$DATE$.",
+    "placeholders": {
+      "month": {
+        "content": "$1",
+        "example": "ספטמבר"
+      },
+      "date": {
+        "content": "$2",
+        "example": "1 באוקטובר"
+      }
+    }
+  },
+  "autofillOutOfUsesBare": {
+    "message": "שאלות פתוחות נשארו ריקות: ניצלתם את כל השימושים של החודש."
+  },
+  "autofillDailyLimit": {
+    "message": "שאלות פתוחות נשארו ריקות: ניצלתם את כל $CAP$ בקשות ה-AI להיום. נסו שוב מחר.",
+    "placeholders": {
+      "cap": {
+        "content": "$1",
+        "example": "150"
+      }
+    }
+  },
+  "autofillAnswersFailed": {
+    "message": "שאלות פתוחות נשארו ריקות (שגיאה $STATUS$).",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "502"
+      }
+    }
+  },
+  "autofillAnswersBlank": {
+    "message": "שאלות פתוחות נשארו ריקות: לא התקבלה תשובה."
+  },
+  "autofillAnswersUnwritten": {
+    "message": "שאלות פתוחות נשארו ריקות: העמוד השתנה לפני שהתשובות נכתבו בו."
+  },
+  "uiLang": {
+    "message": "he",
+    "description": "The language of THIS file, en or he. The popup formats month names in it, so a date matches the sentence around it."
+  },
   "errKitFetch": {
     "message": "לא הצלחנו לטעון את הערכה (שגיאה $STATUS$).",
     "placeholders": {

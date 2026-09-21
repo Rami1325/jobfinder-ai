@@ -90,6 +90,50 @@
   "autofillNoForm": {
     "message": "No application form found on this page. Open the apply form (click the job's Apply button) first, then try again."
   },
+  "autofillOutOfUses": {
+    "message": "Questions left blank: you've used all your uses for $MONTH$. More on $DATE$.",
+    "placeholders": {
+      "month": {
+        "content": "$1",
+        "example": "September"
+      },
+      "date": {
+        "content": "$2",
+        "example": "October 1"
+      }
+    }
+  },
+  "autofillOutOfUsesBare": {
+    "message": "Questions left blank: you've used all your uses for this month."
+  },
+  "autofillDailyLimit": {
+    "message": "Questions left blank: you've used all $CAP$ AI requests for today. Try again tomorrow.",
+    "placeholders": {
+      "cap": {
+        "content": "$1",
+        "example": "150"
+      }
+    }
+  },
+  "autofillAnswersFailed": {
+    "message": "Questions left blank (error $STATUS$).",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "502"
+      }
+    }
+  },
+  "autofillAnswersBlank": {
+    "message": "Questions left blank: no answer came back."
+  },
+  "autofillAnswersUnwritten": {
+    "message": "Questions left blank: the page changed before the answers could be written in."
+  },
+  "uiLang": {
+    "message": "en",
+    "description": "The language of THIS file, en or he. The popup formats month names in it, so a date matches the sentence around it."
+  },
   "errKitFetch": {
     "message": "Couldn't load the kit (error $STATUS$).",
     "placeholders": {

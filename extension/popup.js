@@ -660,6 +660,100 @@ function resumeFileBase(candidateName, company) {
   return parts.join(" - ") || "resume";
 }
 
+/* ------------------------------------------------------------------ */
+/* Screening answers: reading a refusal (v0.4, P30-EXT-LIMIT)          */
+/* ------------------------------------------------------------------ */
+
+// The most answers one autofill click ASKS for, across all frames. Counted in
+// requests, not in answers: the server counts a refused request against the
+// daily AI cap all the same (the daily cap is checked before the monthly one,
+// and a daily count is never given back), so a cap that counted only
+// successes let a refusing server take one request per question per frame.
+var MAX_SCREENING_ATTEMPTS = 4;
+
+// ["September", "October 1"] (or the Hebrew) from the server's `resets_on`,
+// "YYYY-MM-DD", the 1st of the next UTC month: the month whose uses ran out is
+// the one BEFORE it, the web app's usedUpMonth rule. The language is the one
+// the messages were loaded in (the uiLang message), never navigator.language:
+// a French Chrome gets the English messages and must get an English month.
+// null when the date cannot be read, and the caller then leaves it out.
+function usesResetParts(resetsOn) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof resetsOn === "string" ? resetsOn : "");
+  if (!m) return null;
+  var y = Number(m[1]);
+  var mo = Number(m[2]);
+  var d = Number(m[3]);
+  var reset = new Date(Date.UTC(y, mo - 1, d));
+  if (isNaN(reset.getTime()) || reset.getUTCMonth() !== mo - 1 || reset.getUTCDate() !== d) return null;
+  var lang = t("uiLang") === "he" ? "he" : "en";
+  try {
+    return [
+      new Intl.DateTimeFormat(lang, { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(y, mo - 2, 1))),
+      new Intl.DateTimeFormat(lang, { month: "long", day: "numeric", timeZone: "UTC" }).format(reset),
+    ];
+  } catch (e) {
+    return null;
+  }
+}
+
+// What a POST /tools/screening-answer response means for the rest of the
+// autofill: null for a 2xx, otherwise { stop, key, subs } for the status line.
+//
+// `stop` is true when the next question would be refused the same way: the
+// month's uses are gone (429 monthly_limit), today's AI requests are gone (429
+// daily_limit), the key is dead (401), or the request itself is refused, which
+// repeats because every question carries the same resume and job text (413,
+// 422, 403, 404, and any other 429). It is false only for a 400 (this question)
+// and a 5xx (this attempt).
+//
+// The sentence belongs in the popup's status line and NEVER in the page: the
+// answer box is part of an employer's form. And nothing here decides on a
+// count before asking. An open screening pass, shared with the web tool,
+// still serves answers at 0 uses left, so the server's refusal is the only
+// signal the popup acts on.
+function screeningRefusal(status, detail) {
+  if (status >= 200 && status < 300) return null;
+  var d = detail && typeof detail === "object" && !Array.isArray(detail) ? detail : {};
+  if (status === 429 && d.code === "monthly_limit") {
+    var parts = usesResetParts(d.resets_on);
+    return parts
+      ? { stop: true, key: "autofillOutOfUses", subs: parts }
+      : { stop: true, key: "autofillOutOfUsesBare", subs: [] };
+  }
+  if (status === 429 && d.code === "daily_limit" && Number.isSafeInteger(d.cap) && d.cap > 0) {
+    return { stop: true, key: "autofillDailyLimit", subs: [String(d.cap)] };
+  }
+  if (status === 401) return { stop: true, key: "errUnauthorized", subs: [] };
+  var thisQuestionOnly = status === 400 || status >= 500;
+  return { stop: !thisQuestionOnly, key: "autofillAnswersFailed", subs: [String(status)] };
+}
+
+// One question: { text, refusal }. `text` is "" whenever no usable answer came
+// back. `refusal` is screeningRefusal's reading, or a stop with errNetwork when
+// the request never reached the server.
+async function draftScreeningAnswer(settings, resume, jdText, question) {
+  var res;
+  try {
+    res = await fetch(settings.apiUrl + "/tools/screening-answer", {
+      method: "POST",
+      headers: apiHeaders(settings, true),
+      body: JSON.stringify({ resume: resume, jd_text: jdText, question: question }),
+    });
+  } catch (e) {
+    return { text: "", refusal: { stop: true, key: "errNetwork", subs: [] } };
+  }
+  var body = null;
+  try {
+    body = await res.json();
+  } catch (e) {
+    body = null; // not JSON: a proxy's error page, or no body at all
+  }
+  var refusal = screeningRefusal(res.status, body && typeof body === "object" ? body.detail : null);
+  if (refusal) return { text: "", refusal: refusal };
+  var answer = body && typeof body.answer === "string" ? body.answer : "";
+  return { text: answer.trim() ? answer : "", refusal: null };
+}
+
 async function onAutofill() {
   var kit = null;
   var kitId = Number($("kitSelect").value);
@@ -748,64 +842,88 @@ async function onAutofill() {
 
     // 4. Free-text application questions (PLAN 11.5): collect them from every
     //    frame, draft honest answers via the screening answerer, write them
-    //    back. Best-effort — a failure here never undoes the contact fill.
-    var answered = 0;
-    if (resume) try {
+    //    back. Best-effort: a failure here never undoes the contact fill. It is
+    //    never silent either (v0.4): a question left blank turns the summary
+    //    into a warning that says why, and a refusal that would repeat stops
+    //    the asking instead of spending a request per question.
+    var answered = 0; // written into the page
+    var attempts = 0; // requests sent, refused ones included
+    var drafted = 0; // answers that came back
+    var refusal = null; // the last refusal, which the summary names
+    var unwritten = false; // a frame went away before its drafted answers were written
+    if (resume) {
       showApplyStatus("", t("autofillAnswering"));
-      var qResults;
+      var qResults = null;
       try {
-        qResults = await chrome.scripting.executeScript({
-          target: { tabId: activeTab.id, allFrames: true },
-          func: collectScreeningQuestions,
-        });
+        try {
+          qResults = await chrome.scripting.executeScript({
+            target: { tabId: activeTab.id, allFrames: true },
+            func: collectScreeningQuestions,
+          });
+        } catch (e) {
+          qResults = await chrome.scripting.executeScript({
+            target: { tabId: activeTab.id },
+            func: collectScreeningQuestions,
+          });
+        }
       } catch (e) {
-        qResults = await chrome.scripting.executeScript({
-          target: { tabId: activeTab.id },
-          func: collectScreeningQuestions,
-        });
+        qResults = null; // no frame could be read: no questions to answer
       }
-      var remaining = 4; // cap the LLM cost per autofill, across all frames
-      for (var qi = 0; qi < (qResults || []).length; qi++) {
+      var stopped = false;
+      for (var qi = 0; qi < (qResults || []).length && !stopped; qi++) {
         var frame = qResults[qi];
         var questions = (frame && frame.result) || [];
         var answers = [];
-        for (var qj = 0; qj < questions.length && remaining > 0; qj++) {
+        for (var qj = 0; qj < questions.length && attempts < MAX_SCREENING_ATTEMPTS; qj++) {
           var q = questions[qj];
-          var aRes = await fetch(settings.apiUrl + "/tools/screening-answer", {
-            method: "POST",
-            headers: apiHeaders(settings, true),
-            body: JSON.stringify({
-              resume: resume,
-              jd_text: detail.jd_text || "",
-              question: q.question,
-            }),
-          });
-          if (!aRes.ok) continue;
-          var aData = await aRes.json();
-          if (aData && aData.answer) {
-            answers.push({ n: q.n, text: aData.answer });
-            remaining--;
+          attempts++;
+          var got = await draftScreeningAnswer(settings, resume, detail.jd_text || "", q.question);
+          if (got.text) {
+            answers.push({ n: q.n, text: got.text });
+            drafted++;
+          }
+          if (got.refusal) refusal = got.refusal;
+          if (got.refusal && got.refusal.stop) {
+            // What this frame already drafted is still written, just below.
+            stopped = true;
+            break;
           }
         }
         if (!answers.length) continue;
         var target = { tabId: activeTab.id };
         if (frame.frameId != null) target.frameIds = [frame.frameId];
-        var fillRes = await chrome.scripting.executeScript({
-          target: target,
-          func: fillScreeningAnswers,
-          args: [answers],
-        });
-        (fillRes || []).forEach(function (r) {
-          answered += (r && r.result) || 0;
-        });
+        try {
+          var fillRes = await chrome.scripting.executeScript({
+            target: target,
+            func: fillScreeningAnswers,
+            args: [answers],
+          });
+          (fillRes || []).forEach(function (r) {
+            answered += (r && r.result) || 0;
+          });
+        } catch (e) {
+          // The frame went away (navigated, closed, or no longer ours) with
+          // this frame's answers drafted and none of them written.
+          unwritten = true;
+        }
       }
-    } catch (e) { /* best-effort — the summary below still reports the rest */ }
+    }
 
     var parts = [t("autofillFilled", [String(total.fields)])];
     if (total.file) parts.push(t("autofillFileAttached"));
     if (total.cover) parts.push(t("autofillCoverAdded"));
     if (answered) parts.push(t("autofillAnswered", [String(answered)]));
-    showApplyStatus("ok", parts.join(" · ") + " " + t("autofillReviewNote"));
+    var line = parts.join(" · ");
+    // Green only when every question it asked about came back answered AND
+    // reached the page. Writing fewer than were drafted is not a failure by
+    // itself: fillScreeningAnswers leaves a box the user typed into alone, on
+    // purpose. A frame that could not be written to at all is.
+    var notes = [];
+    if (refusal) notes.push(t(refusal.key, refusal.subs));
+    else if (drafted < attempts) notes.push(t("autofillAnswersBlank"));
+    if (unwritten) notes.push(t("autofillAnswersUnwritten"));
+    if (notes.length) line += " " + notes.join(" ");
+    showApplyStatus(notes.length ? "warn" : "ok", line + " " + t("autofillReviewNote"));
   } catch (err) {
     showApplyStatus("error", t("errNetwork"));
   } finally {
