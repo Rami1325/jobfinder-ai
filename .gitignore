@@ -59,3 +59,7 @@ backend/tests/fixtures/inbox_eval/results/
 # a scratch SQLite. Local only, beside ab/. The harness also writes a `*`
 # .gitignore into the folder itself, for checkouts that predate this line.
 backend/tests/fixtures/ghost_eval/
+
+# Chrome Web Store build output (extension/pack_store.py) and the listing's
+# screenshots and promo tile. Rebuilt from the tracked extension/ at will.
+extension-dist/

@@ -42,7 +42,7 @@
     "message": "Assisted apply"
   },
   "applyHint": {
-    "message": "Fills this page's application form from your approved kit — contact details, tailored resume file, cover letter. You review everything and click Send yourself."
+    "message": "Fills this page's application form from your approved kit — contact details, tailored resume file, cover letter. Open questions on the form are sent to JobFinder's AI (OpenAI), which drafts answers from your kit. You review everything and click Send yourself."
   },
   "applyKitLabel": {
     "message": "Application kit"

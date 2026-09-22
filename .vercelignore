@@ -17,3 +17,8 @@ AGENTS.md
 # uploads, so the .gitignore rule does not cover this path here -- without this
 # line a `vercel deploy` ships 65 screenshots of the owner`s resume to the build.
 reference-screenshots
+
+# The Chrome Web Store zip and listing images (extension/pack_store.py), for the
+# same reason. This is a sibling of extension/, never a path inside it: check
+# 35 needs extension/ in the upload whole or not at all.
+extension-dist

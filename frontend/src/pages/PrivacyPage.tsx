@@ -37,6 +37,12 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
  * The Continue with Google sentence (Phase 30 F5) is conditional on purpose: it
  * says what a Google sign-in sends us, and never that the button is there. A
  * static page cannot know whether this server has sign-in configured.
+ *
+ * The Chrome extension section is the privacy policy the Chrome Web Store
+ * listing links to, so it is held to extension/popup.js and options.js: what
+ * they read, send, store and write into a page. A change to what the extension
+ * collects is a change to this section in both locales, and the Store also
+ * requires it to be disclosed in the extension's own popup.
  */
 export default function PrivacyPage() {
   const { t } = useTranslation("auth");
@@ -77,6 +83,17 @@ export default function PrivacyPage() {
         <Block title={t("privacy.ai.title")}>
           <p>{t("privacy.ai.tools")}</p>
           <p>{t("privacy.ai.mail")}</p>
+        </Block>
+
+        <Block title={t("privacy.extension.title")}>
+          <p>{t("privacy.extension.reads")}</p>
+          <p>{t("privacy.extension.sends")}</p>
+          <p>{t("privacy.extension.fill")}</p>
+          <p>{t("privacy.extension.ai")}</p>
+          <p>{t("privacy.extension.stores")}</p>
+          <p>{t("privacy.extension.none")}</p>
+          <p>{t("privacy.extension.remove")}</p>
+          <p>{t("privacy.extension.limitedUse")}</p>
         </Block>
 
         <Block title={t("privacy.remove.title")}>

@@ -33,7 +33,9 @@ What it does NOT flag: a box you had already typed into is left alone on purpose
 
 A refusal that would repeat (the month or the day is used up, the key is dead, or the request itself is refused) **stops the autofill after that one request** instead of asking for every question, because each refused request still counts against the server's daily AI limit. A 400 or a 5xx skips only that question. The autofill asks at most 4 times per click, refused requests included. Answers it already drafted are still written in, and the refusal text itself is never put into the employer's form; it appears only in the popup. It never decides from a count before asking: an open screening pass (shared with the web app's Screening tool) still answers at 0 uses left.
 
-**Installed copies do not update themselves.** The extension is loaded unpacked, so **an install older than 0.4.0 stays silent**: at `monthly_limit` it fills no answers, says nothing, and keeps asking for every question. To update, replace the `extension/` folder with the new one and press **Reload** on its card in `chrome://extensions`; the card's version then reads 0.4.0. (0.3 shipped the screening answers without changing the version, so 0.2.0 on the card means 0.3 or older.)
+**A copy loaded unpacked does not update itself**, so **an install older than 0.4.0 stays silent**: at `monthly_limit` it fills no answers, says nothing, and keeps asking for every question. To update, replace the `extension/` folder with the new one and press **Reload** on its card in `chrome://extensions`; the card's version then reads 0.4.0 or later. (0.3 shipped the screening answers without changing the version, so 0.2.0 on the card means 0.3 or older.) A copy installed from the Chrome Web Store is updated by Chrome when a new version is published there.
+
+**0.4.1 (2026-09-22) is icons and Web Store packaging, with no behaviour change.** It adds the 16/32/48/128 px icons, bumps the version, and adds `pack_store.py` (below). Two edits ride along, neither of which changes what the extension does: the Assisted apply hint now says that the form's open questions go to JobFinder's AI (OpenAI), because the Store requires every data collection to be disclosed in the extension's own UI; and the JSON-LD description is turned into text with `DOMParser` instead of `innerHTML` on an element of the page, which gives the same text for ordinary input but loads no image and runs no handler that the posting's HTML carries.
 
 Safety rails built into the filler: it only touches fields inside an open dialog or a form that has a file upload (so page search boxes are never filled), skips invisible fields (honeypots), never overwrites anything you already typed, and fills each field kind at most once. If the popup finds a **processed-but-unreviewed** kit for the current job, it links you to its review page instead.
 
@@ -44,7 +46,17 @@ Safety rails built into the filler: it only touches fields inside an open dialog
 3. Click **Load unpacked** and select this `extension/` folder.
 4. Pin the extension for one-click clipping.
 
-There is no build step — plain HTML/CSS/JS, no dependencies, no icons in v1. To update an installed copy, replace the folder and press **Reload** on the extension's card: nothing updates it for you.
+There is no build step — plain HTML/CSS/JS, no dependencies. The icons in `icons/` were cut from the web app's `frontend/public/icon-512.png` (the tile on a transparent ground; the 128 px one is 96 px of artwork inside 16 px of padding, the Store's guideline). To update an installed copy, replace the folder and press **Reload** on the extension's card: nothing updates it for you.
+
+## Chrome Web Store package
+
+```
+<any python 3.9+> extension/pack_store.py
+```
+
+writes `extension-dist/jobfinder-job-clipper-<version>.zip` at the repo root (git-ignored and Vercel-ignored), the file to upload in the developer dashboard. It changes one thing against this folder: the zip's `manifest.json` asks for `https://jobfinder-hazel-pi.vercel.app/*` alone, because the `localhost` / `127.0.0.1` hosts below are for development and every host permission is shown at install. It leaves out `README.md`, any `.md`, any `.py` (itself included) and dotfiles, and packs everything else. It then checks the zip and exits non-zero if a file the manifest or a page loads is missing, a page loads anything remote, or a development host is left in. The same commit builds the same bytes.
+
+Bump `version` in `manifest.json` before each upload: the Store refuses a version it already has. The listing text, the permission justifications and the reviewer's test instructions are in `docs/chrome-web-store.md`.
 
 ## Configure (required for the public deployment)
 
@@ -61,7 +73,7 @@ Settings are stored in `chrome.storage.sync`, so they roam with your Chrome prof
 
 ## Custom domain note
 
-The extension calls the API directly from the popup, which bypasses CORS **only for hosts listed in `host_permissions`** in `manifest.json`. Out of the box that is the Vercel deployment plus `localhost:8000` / `127.0.0.1:8000`. If you point it at any other domain, add that origin (e.g. `"https://jobs.example.com/*"`) to `host_permissions` in `manifest.json` and reload the extension — otherwise saves will fail as network errors.
+The extension calls the API directly from the popup, which bypasses CORS **only for hosts listed in `host_permissions`** in `manifest.json`. Out of the box that is the Vercel deployment plus `localhost:8000` / `127.0.0.1:8000`; the Web Store build lists the Vercel deployment only, so a Store install cannot reach a local backend. If you point it at any other domain, add that origin (e.g. `"https://jobs.example.com/*"`) to `host_permissions` in `manifest.json` and reload the extension — otherwise saves will fail as network errors.
 
 ## Supported sites (extraction quality)
 

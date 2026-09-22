@@ -76,10 +76,14 @@ function extractJob() {
         .slice(0, MAX_LEN);
     };
 
+    // The HTML is the page's own JSON-LD, so it is parsed into an inert
+    // document: DOMParser runs no script, loads no image or other resource and
+    // fires no handler. innerHTML on an element of the live page loads an
+    // <img src> at once and runs its onerror. Neither document is rendered, so
+    // innerText reads the same text as textContent, as the detached div did.
     var stripHtml = function (html) {
-      var div = document.createElement("div");
-      div.innerHTML = html;
-      return div.innerText || div.textContent || "";
+      var body = new DOMParser().parseFromString(html, "text/html").body;
+      return (body && (body.innerText || body.textContent)) || "";
     };
 
     // JSON-LD JobPosting — most reliable source when a board embeds one,
