@@ -10264,6 +10264,34 @@ try {
   fail(`fit-check deadline check (check 43) could not run: ${e.message}`);
 }
 
+// ---- 44. the phone tool row shows the review's count, at a 32 px floor ------ //
+// Found in the 2026-09-21 390 px pass, fixed 2026-09-22. The /app tool row shows
+// ~366 px of ~940 and scrolls itself; in the shared order the review is 5th,
+// behind three view pills and Template, so the only number on the row was off-
+// screen on first paint, and every labelled pill measured 30 px. The phone row
+// now leads with the review (the desktop rail keeps the shared order) and a
+// labelled pill carries `min-h-8`. Re-measured at 390 px in en and he: the review
+// pill first and visible with its count, every pill 32 px.
+try {
+  const panel = decomment(read("components/DocumentPanel.tsx"));
+  const row = /<div\b[^>]*role="group"[^>]*lg:hidden[^>]*>\s*\{\s*(\w+)\.map\(/.exec(panel);
+  if (!row) throw new Error("could not find the phone tool row (role=\"group\", lg:hidden) and the list it maps");
+  const list = row[1];
+  if (list === "tools")
+    fail("components/DocumentPanel.tsx: the phone tool row maps `tools` in the shared order, so the review pill (the only one with a count) is off-screen on first paint at 390 px");
+  else {
+    const def = new RegExp(`const\\s+${list}\\s*=\\s*\\[([^\\n]*)\\]`).exec(panel);
+    if (!def || !/^\s*\.\.\.tools\.filter\(\s*\(?(\w+)\)?\s*=>\s*\1\.key\s*===\s*"review"\s*\)/.test(def[1]))
+      fail(`components/DocumentPanel.tsx: ${list} must START with the review tool (…tools.filter((x) => x.key === "review"), then the rest)`);
+  }
+  const pill = /labelled\s*\?\s*"([^"]*)"\s*:\s*"h-10 w-10"/.exec(panel);
+  if (!pill) throw new Error("could not find ToolButton's labelled class string");
+  if (!/\bmin-h-(?:8|9|10|11|12)\b/.test(pill[1]))
+    fail(`components/DocumentPanel.tsx: a labelled tool pill ("${pill[1]}") has no min-h-8 — it measured 30 px at 390, under the 32 px floor`);
+} catch (e) {
+  fail(`phone tool row check (check 44) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

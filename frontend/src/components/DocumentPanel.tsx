@@ -89,7 +89,9 @@ function ToolButton({ tool, labelled }: { tool: Tool; labelled?: boolean }) {
       className={cn(
         "relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border text-xs font-medium transition",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
-        labelled ? "snap-start px-3 py-1.5" : "h-10 w-10",
+        // min-h-8: 32 px, the floor every other tap target here keeps. The pill
+        // measured 30 px at 390 (the 2026-09-21 pass).
+        labelled ? "min-h-8 snap-start px-3 py-1.5" : "h-10 w-10",
         tool.active
           ? "border-accent bg-accent text-white"
           : "border-line bg-panel text-ink-muted hover:border-accent/40 hover:text-ink",
@@ -384,6 +386,13 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
       : []),
   ];
 
+  // THE PHONE ROW LEADS WITH THE REVIEW. The row shows ~366 px of ~940, and in
+  // the shared order the review is 5th, behind three view pills and Template,
+  // so the only number on the row was off-screen on first paint (measured at
+  // 390 px, 2026-09-21). Only this row moves: the desktop rail keeps the order
+  // the list documents, where everything is in view.
+  const phoneTools = [...tools.filter((x) => x.key === "review"), ...tools.filter((x) => x.key !== "review")];
+
   return (
     // Flex + logical properties, never absolute positioning: the rail has to
     // land on the far side of the paper in RTL as well, and `gap` + source
@@ -399,7 +408,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           aria-label={t("doc.toolsLabel")}
           className="-mx-1 flex snap-x gap-1.5 overflow-x-auto px-1 pb-1 lg:hidden"
         >
-          {tools.map((tool) => (
+          {phoneTools.map((tool) => (
             <ToolButton key={tool.key} tool={tool} labelled />
           ))}
         </div>
