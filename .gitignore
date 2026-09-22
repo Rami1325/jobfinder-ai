@@ -53,3 +53,9 @@ backend/tests/fixtures/ab/
 # Inbox classifier A/B run outputs (backend/tests/inbox_eval.py --out). The
 # fixtures themselves are synthetic and tracked; the measured runs are not.
 backend/tests/fixtures/inbox_eval/results/
+
+# Ghost-posting precision runs (backend/tests/ghost_eval.py, PLAN 28.5): every
+# real run's corpus (posting text), its labelling worksheet, the spend ledger and
+# a scratch SQLite. Local only, beside ab/. The harness also writes a `*`
+# .gitignore into the folder itself, for checkouts that predate this line.
+backend/tests/fixtures/ghost_eval/

@@ -9,7 +9,8 @@
 > **Read before touching** `backend/tests/**` or `frontend/scripts/check-mirrors.js`, and before any change a mirror
 > check pins (a locale key, a nav entry, a route, a `ResumeModel` field, a block kind, a template). The smoke-test
 > command, its rules and the two habits are in `CLAUDE.md`'s Testing section. The tailor pipeline the A/B harness
-> measures is in `tailoring.md` and `skills.md`; the classifier the inbox harness measures is in `inbox.md`.
+> measures is in `tailoring.md` and `skills.md`; the classifier the inbox harness measures is in `inbox.md`; the
+> ghost signals the ghost harness measures are in `job-search.md`, and its decision rule is PLAN.md 28.5.
 
 ## The real-key A/B harness for the tailor
 
@@ -39,6 +40,56 @@ cd backend
 .\.venv\Scripts\python.exe -m tests.inbox_eval --models gpt-4.1-nano,gpt-5.4-nano,gpt-4o-mini --reps 2
 ```
 Same rules as `ab_tailor`: **it spends real money, is never run by CI, and `--stub` is the only mode an unattended run may use** (the stub's misses are canned answers, not a result). It grades the pipeline that ships — `inbox_sync._stage` decides noise and templates exactly as a sync does and only what it passes reaches `inbox_classifier.classify`, the real prompt and post-validation — and compares companies with the app's own `normalize_company`. Fixtures: 49 synthetic emails modelled on a real job-seeker inbox (22 English replies, 7 Hebrew, 10 alert digests, 6 non-job traps, 4 edge cases); the rules settled 14 per rep and 30 reached the model. **The decision rule was written before the run**: the cheapest model within 3 points of the best kind accuracy that reads NO rejection as an interview (that error moves a closed application into the Interview column). Measured, 2 reps: gpt-4.1-nano 98.5% kind / 100% company / 100% title, 0 rejections read as interviews, p50 1.07 s, $0.0059 per 60 calls; gpt-5.4-nano 100% / 93.5% / 100% (it keeps sender suffixes, "Brightline HR"); gpt-4o-mini 100% / 100% / 100% at $0.0090. **Shipped `gpt-4.1-nano`** (`inbox_classifier.DEFAULT_MODEL`, ~$0.0001 per classified email); its one miss — a Hebrew agency outreach read as "interview" — carried a BLANK company, which the apply rules send to Needs review, never onto the board. `INBOX_MODEL_ID=gpt-4o-mini` is the one-variable upgrade. 0 noise leaks and 0 job mails skipped by the rules on every arm.
+
+## The ghost-precision harness
+
+**Ghost-posting precision has its own real-key harness** (`backend/tests/ghost_eval.py`, PLAN 28.5, 2026-09-22):
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m tests.ghost_eval --stub                                  # offline plumbing check, free
+.\.venv\Scripts\python.exe -m tests.ghost_eval --run R1 --price gpt-5.4-mini=IN,OUT    # REAL: live boards + real model
+.\.venv\Scripts\python.exe -m tests.ghost_eval --report                                # the decision rule over labelled worksheets
+.\.venv\Scripts\python.exe -m tests.ghost_eval --stub --replay <run.json>              # re-classify a recorded run offline
+```
+Same rules as the other two: **it spends real money, is never run by CI, and `--stub` is the only mode an unattended run may use.** Here `--stub` means FULLY OFFLINE: synthetic postings, canned LinkedIn pages, the stub model, and a socket tripwire that fails the run on any network attempt. A real run also scrapes five live boards from the owner's IP. That is why it is attended-only, although the verdicts it reads cost nothing. The presets are R1 (local, all five boards), R2 (remote plus worldwide) and R3 (a Hebrew title on Drushim and JobMaster), each with custom titles so no SEARCH_CONTEXT call is made. The decision rule, the labels and what decides each label are in PLAN.md 28.5, written before any run.
+
+Each of these is a way the measurement could lie:
+- **The verdicts are the app's own.** It runs the real `search_jobs` with `cache=None` and `sightings_fn=None`. It listens at three seams, each patched where it is BOUND and restored in `finally`:
+  - `job_search._ghost_for`: every verdict, including those on postings whose scoring later failed, because the classifier runs before the model;
+  - each provider's `fetch_description`, on the instance: what came back, and what `hit.closed` became;
+  - `providers.linkedin._http_get`: the status per job id. This is the only seam where a 404/410 differs from a 429, a 999, a timeout or a login wall, because `fetch_description` swallows the status.
+  - Even the evergreen "title rule" is read by calling `detect_ghost_signals` on the title alone. It is never a second matcher.
+- **A LinkedIn 404/410 never reaches `_ghost_for`.** `_build_match` classifies only inside `if jd_text:`, so `search_jobs` counts the posting in `skipped` (a defect against PLAN 28.2, recorded there). The harness records it from the fetch seam as a would-be `closed` firing, so the owner's logged-in check can decide it. The same holds for a banner over an empty body.
+- **Unknown is never zero.**
+  - `init_db()` runs on the scratch DB. Without it, Greenhouse and Comeet cannot read their registries: both drop into `source_errors`, and `long_open` by `first_published` (Greenhouse-only) would read as "no firings".
+  - Every run writes a `measurable` map. A kind whose only source board errored, or whose LinkedIn detail pages all failed, reads "unmeasured".
+  - Geo-blocked and low-pay postings are recorded as out of population, never as postings with no signal.
+- **No production seed.** Production stores `www.linkedin.com` URLs, while a run from Israel gets `il.linkedin.com`, so a seeded DB would fire `reposted` on every shared posting, a signal the harness itself created. `reposted` and `first_seen` are judged from production rows only.
+- **The LAST `select_hits` call is the kept selection.** `_displaced_low_pay` runs `select_hits` over copies first. A synthetic Sofia posting makes that happen in `--stub`, and keeping the first call is a planted defect that goes red.
+- **The budget guard wraps `OpenAIClient._metered`,** the one method that sends a request.
+  - A call is admitted only within 75 billed calls in total.
+  - The money cap is strict: spent, plus the WORST case of every call in flight and of this one, must fit in what is left of the $1. The worst case counts every prompt byte as a token, plus the full `LLM_MAX_OUTPUT_TOKENS`.
+  - Each run gets a soft share: what is left, divided by the paid runs left.
+  - A call that does not fit waits for the calls in flight. With none in flight, the run's budget closes, and the refused postings keep their verdicts.
+  - A 4xx is not billed. A timeout or a 5xx is counted at its estimate. A 401/403 stops the run.
+  - The ledger (`ledger.json`) is rewritten on every admit and every settle, with in-flight calls at their worst case, so a crashed run still counts.
+  - A fourth paid run, a run within 10 minutes of the last, a `MODEL_ID` other than `--expect-model` (default `gpt-5.4-mini`), a client that is not `OpenAIClient`, and a missing `--price` are each refused before any board is reached. The price is required because the guard cannot bound money with a price it guessed.
+  - The metering tally crossing the scoring pool is checked against the guard's own sum. In `--stub`, a scoring pool that drops `copy_context` goes red.
+- **The key.**
+  - It is read from `--env-file` (default: this checkout's `backend/.env`, else the main checkout's, found through git's common dir), and only `OPENAI_API_KEY` and `MODEL_ID` are read.
+  - It is never printed or stored.
+  - Every file a run writes is scanned for it, and error text is scrubbed of anything key-shaped: an OpenAI 401 quotes a masked key.
+- **Outputs.**
+  - Each run writes to the MAIN checkout's `backend/tests/fixtures/ghost_eval/<run_id>/`: `run.json` (the corpus, posting text included), `worksheet.csv` (one row per posting that fired, to label) and `scratch.db`.
+  - `ledger.json` sits beside the runs. One out dir per repository means a worktree cannot start a second ledger and split the budget.
+  - The folder is git-ignored, and the harness writes a `*` `.gitignore` into it, for checkouts that predate the ignore line.
+  - The resume is a PROXY (`tests/fixtures/ab/master.json`), and `run.json` says so.
+
+**How it was probed.** `--stub` runs 137 checks, and 17 planted defects each turn it red. In the harness: dropping the 404 row, the call cap, the money cap, the kept selection, the owner's rows, the secret scan, the hide bar's zero-wrong clause, the email bar at 70%, UNCLEAR folded into n, BUG counted as correct, the tripwire's record, the socket tripwire, the restore, the geo population and the replay comparison. In the app: a 429 read as closure, and a scoring pool without `copy_context`. Two first-draft checks passed a planted defect green:
+- The replay check was `not diffs`, so a comparison that could never report a difference passed for ever. It now also has to report a planted verdict change, and only that one.
+- The tripwire mutation still recorded the attempt, so it showed nothing. The check now reads whether the tripwire is installed and records, and it never calls the real resolver to find out.
+
+**Measured results: none yet.** The three real runs are next, then the owner's logged-in checks, then `--report`.
 
 ## The frontend's only test suite: `check-mirrors.js`
 
