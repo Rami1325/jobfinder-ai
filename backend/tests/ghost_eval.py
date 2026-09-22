@@ -46,8 +46,25 @@ MODES (from `backend/`):
 
     python -m tests.ghost_eval --stub                     # offline plumbing check, free
     python -m tests.ghost_eval --stub --replay RUN.json   # re-classify a recorded run offline
+    python -m tests.ghost_eval --run R1 --live-stub [--resume PATH]   # live boards, STUB model, $0
     python -m tests.ghost_eval --run R1 --price gpt-5.4-mini=IN,OUT [--env-file PATH] [--resume PATH]
     python -m tests.ghost_eval --report [RUN_DIR_OR_WORKSHEET ...]
+
+A LIVE-STUB RUN (`--run R1|R2|R3 --live-stub`, the owner's choice on
+2026-09-22, PLAN 28.5's dated note) searches the same live boards with the same
+presets and the same seams, and scores with `StubClient`. No bar in the
+decision rule reads the fit score and no ghost verdict depends on the model, so
+its verdicts are the paid mode's verdicts at $0; its fit numbers are canned, so
+`run.json` and `worksheet.csv` mark the fit `stub` and never print a number.
+It reads no key and no env file (`--price` and `--env-file` are refused):
+`_boot` blanks OPENAI_API_KEY and forces USE_STUB_LLM before the app is
+imported, and `OpenAIClient` is tripwired for the whole run, the client
+selection included, so building or calling one ends the run. It still scrapes
+five live boards from this machine, so it is attended-only like a paid run,
+and the ledger still counts it: a run within 10 minutes of the last one, and a
+FOURTH live run (paid and live-stub runs together: bar 1's "3 real searches"),
+are refused before any board is reached. It writes no money and no billed
+calls to the ledger.
 
 A REAL RUN (`--run R1|R2|R3`) refuses to start unless every one of these holds,
 all checked before any board or model is reached:
@@ -89,7 +106,8 @@ GHOST / LIVE / UNCLEAR / BUG, `bug` names a signal whose stated fact is false).
 `<out>` defaults to the MAIN checkout's `backend/tests/fixtures/ghost_eval/`,
 so every checkout shares one ledger; it is git-ignored, and the harness also
 drops a `.gitignore` of `*` into it. `--stub` writes to this checkout's
-`tests/fixtures/ghost_eval/stub/` and never touches the ledger.
+`tests/fixtures/ghost_eval/stub/` and never touches the ledger (its
+`--live-stub` probe keeps a throwaway ledger of its own under `stub/`).
 """
 from __future__ import annotations
 
@@ -100,6 +118,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -127,6 +146,10 @@ if str(BACKEND) not in sys.path:
 BUDGET_USD = 1.00
 MAX_CALLS = 75
 MAX_PAID_RUNS = 3
+# Bar 1's "3 real searches": every run that reached the live boards, paid or
+# live-stub, counts. With no live-stub run in the ledger this is the paid cap.
+MAX_LIVE_RUNS = 3
+LIVE_STUB = "live-stub"  # the ledger's and run.json's `mode` for a live-stub run
 MIN_GAP_MINUTES = 10
 EXPECT_MODEL = "gpt-5.4-mini"  # production's model per SENIOR_REVIEW.md; its env var is Sensitive
 FIRST_SEEN_FROM = "2026-10-05"  # posting_sightings starts 2026-09-05; the weak line is 30 days
@@ -331,8 +354,13 @@ class Ledger:
         usd = sum(float(r.get("usd", 0) or 0) for r in self.runs)
         calls = sum(int(r.get("calls", 0) or 0) for r in self.runs)
         paid = sum(1 for r in self.runs if int(r.get("calls", 0) or 0) > 0)
+        live_stub = sum(1 for r in self.runs if r.get("mode") == LIVE_STUB)
+        # Every run that reached the live boards, each counted once: a paid run
+        # by its billed calls, a live-stub run by its mode (it bills nothing).
+        live = sum(1 for r in self.runs if int(r.get("calls", 0) or 0) > 0 or r.get("mode") == LIVE_STUB)
         ends = [r.get("ended_at") or r.get("started_at") for r in self.runs]
-        return SimpleNamespace(usd=usd, calls=calls, paid=paid, last_end=max((e for e in ends if e), default=""))
+        return SimpleNamespace(usd=usd, calls=calls, paid=paid, live_stub=live_stub, live=live,
+                               last_end=max((e for e in ends if e), default=""))
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -481,12 +509,45 @@ class Recorder:
         self.selections: list[list[Any]] = []
         self.now: datetime | None = None
         self.net_attempts: list[str] = []
+        self.openai_attempts: list[str] = []
 
 
 def _patch(undo: list, obj: Any, name: str, value: Any) -> None:
     had = name in getattr(obj, "__dict__", {})
     undo.append((obj, name, had, getattr(obj, name, None) if had else None))
     setattr(obj, name, value)
+
+
+def _restore(undo: list) -> None:
+    for obj, name, had, old in reversed(undo):
+        if had:
+            setattr(obj, name, old)
+        else:
+            delattr(obj, name)
+
+
+@contextmanager
+def forbid_openai(A: SimpleNamespace, rec: Recorder) -> Iterator[None]:
+    """--live-stub's model contract: `OpenAIClient` may be neither BUILT nor
+    CALLED while it holds, and it holds from before the client is selected to
+    after the search. Either attempt is recorded, then raises, so a run that
+    would have reached the real model ends instead."""
+    undo: list = []
+
+    def tripwire(what: str) -> Callable[..., Any]:
+        def trip(*args: Any, **kwargs: Any) -> Any:
+            with rec.lock:
+                rec.openai_attempts.append(what)
+            raise RuntimeError(f"ghost_eval --live-stub scores with the stub model: {what} was called")
+
+        return trip
+
+    try:
+        _patch(undo, A.OpenAIClient, "__init__", tripwire("OpenAIClient.__init__"))
+        _patch(undo, A.OpenAIClient, "_metered", tripwire("OpenAIClient._metered"))
+        yield
+    finally:
+        _restore(undo)
 
 
 @contextmanager
@@ -496,10 +557,17 @@ def instrument(
     guard: BudgetGuard,
     *,
     stub: bool,
+    offline: bool | None = None,
     boards: dict[str, Any] | None = None,
     linkedin_transport: Callable[..., str] | None = None,
     fixed_now: datetime | None = None,
 ) -> Iterator[None]:
+    """`stub` picks the model the guard wraps; `offline` (default: `stub`)
+    installs the socket tripwires. --live-stub is the one caller that splits
+    them: the stub model, over the live boards."""
+    offline = stub if offline is None else offline
+    if offline and not stub:
+        raise ValueError("ghost_eval: an offline run cannot use the real model")
     undo: list = []
     swapped: dict[str, Any] = {}
     try:
@@ -578,10 +646,10 @@ def instrument(
             _patch(undo, prov, "fetch_description", fetch_description)
 
         # 5. LinkedIn's status per job id: the only seam where a 404 differs
-        # from a 429, a 999, a timeout or a login wall. Under --stub with no
-        # canned transport the inner call is a tripwire, never the network.
+        # from a 429, a 999, a timeout or a login wall. Offline with no canned
+        # transport the inner call is a tripwire, never the network.
         inner = linkedin_transport or (
-            _tripwire(rec, "linkedin._http_get") if stub else A.linkedin_mod._http_get
+            _tripwire(rec, "linkedin._http_get") if offline else A.linkedin_mod._http_get
         )
 
         def http_get(url, *args, **kwargs):  # noqa: ANN001
@@ -627,12 +695,6 @@ def instrument(
                 return out
 
             _patch(undo, A.StubClient, "complete_json", complete_json)
-            # The offline contract, enforced: nothing below may reach a socket.
-            for mod in A.http_modules:
-                _patch(undo, mod, "_http_get", _tripwire(rec, f"{mod.__name__}._http_get"))
-            _patch(undo, socket, "getaddrinfo", _tripwire(rec, "socket.getaddrinfo"))
-            _patch(undo, socket, "create_connection", _tripwire(rec, "socket.create_connection"))
-            _patch(undo, socket.socket, "connect", _tripwire(rec, "socket.socket.connect"))
         else:
             orig_metered = A.OpenAIClient._metered
 
@@ -656,13 +718,16 @@ def instrument(
                 return resp
 
             _patch(undo, A.OpenAIClient, "_metered", _metered)
+        if offline:
+            # The offline contract, enforced: nothing below may reach a socket.
+            for mod in A.http_modules:
+                _patch(undo, mod, "_http_get", _tripwire(rec, f"{mod.__name__}._http_get"))
+            _patch(undo, socket, "getaddrinfo", _tripwire(rec, "socket.getaddrinfo"))
+            _patch(undo, socket, "create_connection", _tripwire(rec, "socket.create_connection"))
+            _patch(undo, socket.socket, "connect", _tripwire(rec, "socket.socket.connect"))
         yield
     finally:
-        for obj, name, had, old in reversed(undo):
-            if had:
-                setattr(obj, name, old)
-            else:
-                delattr(obj, name)
+        _restore(undo)
         for name, prov in swapped.items():
             if prov is None:
                 A.PROVIDERS.pop(name, None)
@@ -714,8 +779,12 @@ def _outcome(hit: Any, fetch: dict | None, http: dict | None) -> str:
 
 
 def build_corpus(
-    A: SimpleNamespace, rec: Recorder, guard: BudgetGuard, result: Any, error: str, ctx: Any
+    A: SimpleNamespace, rec: Recorder, guard: BudgetGuard, result: Any, error: str, ctx: Any,
+    *, stub_fit: bool = False,
 ) -> dict[str, Any]:
+    """`stub_fit` (--live-stub): the stub's fit numbers are canned, the JD
+    analysis behind the keyword coverage included, so a ranked posting's fit is
+    recorded as `{"scored_by": "stub"}` and never as a number anyone could read."""
     now = rec.now
     selected = rec.selections[-1] if rec.selections else []
     matches = {_k(m.url): m for m in (result.matches if result else [])}
@@ -788,7 +857,8 @@ def build_corpus(
             "long_open_basis": lo["basis"] if lo else "",
             "age_bucket": _bucket(lo["days"]) if lo else "",
             "in_app": in_app,
-            "fit": {"overall": m.overall, "keyword_coverage": m.keyword_coverage, "fit_score": m.fit_score} if m else None,
+            "fit": (None if not m else {"scored_by": "stub"} if stub_fit else
+                    {"overall": m.overall, "keyword_coverage": m.keyword_coverage, "fit_score": m.fit_score}),
             "llm": guard.per_posting.get(u, {"calls": 0, "refused": 0, "errors": []}),
         })
     out_of_population = [
@@ -887,11 +957,19 @@ def worksheet_rows(run_id: str, corpus: dict[str, Any]) -> list[dict[str, str]]:
             "age_bucket": p["age_bucket"],
             "closed_evidence": closed["raw"] if closed else "",
             "quote": quote,
-            "fit_overall": "" if not p["fit"] else str(p["fit"]["overall"]),
+            "fit_overall": _fit_cell(p["fit"]),
             "owner_check": OWNER_LINKEDIN if closed and p["source"] == "linkedin" else "",
             "label": "", "bug": "", "evidence": "", "checked_on": "",
         })
     return rows
+
+
+def _fit_cell(fit: dict[str, Any] | None) -> str:
+    if not fit:
+        return ""
+    if fit.get("scored_by") == "stub":
+        return "stub"  # --live-stub: not measured, and never shown as a number
+    return str(fit["overall"])
 
 
 def write_worksheet(path: Path, rows: list[dict[str, str]]) -> None:
@@ -1063,8 +1141,12 @@ def print_report(worksheets: list[Path]) -> int:
         run_json = ws.parent / "run.json"
         if run_json.exists():
             meta = json.loads(run_json.read_text(encoding="utf-8"))
-            print(f"\n  {ws.parent.name}: {meta.get('preset', '')} · model {meta.get('model', '')} · "
-                  f"{meta.get('llm', {}).get('billed_calls', 0)} calls · ${meta.get('llm', {}).get('usd', 0):.4f}")
+            if meta.get("mode") == LIVE_STUB:
+                print(f"\n  {ws.parent.name}: {meta.get('preset', '')} · live boards, STUB model: $0, "
+                      "fit not measured")
+            else:
+                print(f"\n  {ws.parent.name}: {meta.get('preset', '')} · model {meta.get('model', '')} · "
+                      f"{meta.get('llm', {}).get('billed_calls', 0)} calls · ${meta.get('llm', {}).get('usd', 0):.4f}")
             for kind, state in (meta.get("measurable") or {}).items():
                 print(f"      {kind:<28} {state}")
     head = (f"\n{'cell':<44}{'fired':>6}{'GHOST':>6}{'LIVE':>6}{'BUG':>5}{'UNCL':>6}{'todo':>6}"
@@ -1257,8 +1339,10 @@ def _stub_ctx(A: SimpleNamespace) -> Any:
                            include_worldwide=True, max_age_days=30, limit=25, sources=list(ALL_BOARDS))
 
 
-def _stub_pass(A, resume, postings, guard, run_dir: Path, run_id: str) -> tuple[dict, Recorder, Any]:
-    rec = Recorder()
+def _synthetic_wiring(A: SimpleNamespace, ctx: Any, postings: list[dict]) -> dict[str, Any]:
+    """The synthetic boards, the canned LinkedIn transport and the fixed
+    instant, as `instrument` keywords: --stub's passes and the --live-stub
+    probe both run on these."""
     by_url = {_k(p["url"]): p for p in postings}
     real_li = A.LinkedInProvider()
 
@@ -1267,10 +1351,14 @@ def _stub_pass(A, resume, postings, guard, run_dir: Path, run_id: str) -> tuple[
             return real_li.fetch_description  # the REAL seam, over the canned transport
         return lambda hit: by_url[_k(hit.url)].get("fetch_text", "")
 
+    return {"boards": _boards_for(A, ctx.sources, postings, ctx.location, fetch_for),
+            "linkedin_transport": _linkedin_transport(postings), "fixed_now": _SYN_NOW}
+
+
+def _stub_pass(A, resume, postings, guard, run_dir: Path, run_id: str) -> tuple[dict, Recorder, Any]:
+    rec = Recorder()
     ctx = _stub_ctx(A)
-    boards = _boards_for(A, ctx.sources, postings, ctx.location, fetch_for)
-    with instrument(A, rec, guard, stub=True, boards=boards,
-                    linkedin_transport=_linkedin_transport(postings), fixed_now=_SYN_NOW):
+    with instrument(A, rec, guard, stub=True, **_synthetic_wiring(A, ctx, postings)):
         result, error, tally = run_search(A, resume, ctx)
     corpus = build_corpus(A, rec, guard, result, error, ctx)
     corpus.update(run_id=run_id, preset="stub", model="stub", context=ctx.model_dump(),
@@ -1336,6 +1424,93 @@ def replay(A: SimpleNamespace, run_json: Path, run_dir: Path) -> tuple[dict, dic
     run_dir.mkdir(parents=True, exist_ok=True)
     _write_json(run_dir / "replay.json", {"source": str(run_json), "diffs": diffs, "corpus": corpus})
     return corpus, diffs
+
+
+def _probe_live_stub(A: SimpleNamespace, check: Checks, stub_root: Path) -> None:
+    """--live-stub's wiring, run in a CHILD process: `_boot` runs once per
+    process, and the boot is part of what is under test. `--offline-probe`
+    swaps the five boards for this file's synthetic ones and keeps every
+    tripwire, so the child is as offline as --stub. Its environment is hostile
+    on purpose: a key, USE_STUB_LLM=false, MODEL_ID and a Sentry DSN, the way a
+    shell or an .env could carry them. The mode has to end on StubClient
+    without reading any of them."""
+    root = stub_root / "live-probe"
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True)
+    resume = root / "resume.json"
+    resume.write_text(A.ResumeModel(headline="Backend Engineer", skills=["Python", "SQL"]).model_dump_json(),
+                      encoding="utf-8")
+    sentinel = "sk-test-LIVESTUB-SENTINEL-000"
+    env = {**os.environ, "OPENAI_API_KEY": sentinel, "USE_STUB_LLM": "false", "MODEL_ID": EXPECT_MODEL,
+           "SENTRY_DSN": "https://planted@ghost-eval.invalid/1"}
+
+    def child() -> subprocess.CompletedProcess:
+        cmd = [sys.executable, "-m", "tests.ghost_eval", "--run", "R1", "--live-stub", "--offline-probe",
+               "--out-dir", str(root), "--resume", str(resume)]
+        return subprocess.run(cmd, cwd=BACKEND, env=env, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=300)
+
+    def said(out: subprocess.CompletedProcess) -> str:
+        return f"exit {out.returncode}: " + (out.stdout + out.stderr).strip()[-700:]
+
+    def run_dirs() -> list[Path]:
+        return sorted(d for d in root.iterdir() if d.is_dir())
+
+    def read_ledger() -> dict[str, Any]:
+        path = root / "ledger.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"runs": []}
+
+    first = child()
+    check("--live-stub probe: the run finished", first.returncode == 0, said(first))
+    dirs = run_dirs()
+    check("--live-stub probe: one run folder", len(dirs) == 1, str([d.name for d in dirs]))
+    run_json = (dirs[0] if dirs else root / "none") / "run.json"
+    run = json.loads(run_json.read_text(encoding="utf-8")) if run_json.exists() else {}
+    check("--live-stub selects the stub client, over a key and USE_STUB_LLM=false in its environment",
+          (run.get("client"), run.get("use_stub_llm"), run.get("model"), run.get("mode"))
+          == ("StubClient", True, "stub", LIVE_STUB), str({k: run.get(k) for k in ("client", "use_stub_llm", "mode")}))
+    check("--live-stub never builds or calls OpenAIClient", run.get("openai_attempts") == [],
+          str(run.get("openai_attempts")))
+    check("--live-stub blanks SENTRY_DSN", run.get("sentry_dsn_blank") is True)
+    check("--live-stub probe stayed offline", run.get("offline_probe") is True and run.get("net_attempts") == [],
+          str(run.get("net_attempts")))
+    llm = run.get("llm") or {}
+    check("--live-stub scores with the stub, at $0",
+          llm.get("billed_calls", 0) > 0 and llm.get("usd") == 0 and llm.get("scored_by") == "stub", str(llm))
+    postings = run.get("postings") or []
+    check("--live-stub's run.json marks the fit stub, never a number",
+          any(p["fit"] for p in postings) and all(p["fit"] in (None, {"scored_by": "stub"}) for p in postings))
+    ws_path = (dirs[0] if dirs else root / "none") / "worksheet.csv"
+    header = ws_path.read_text(encoding="utf-8-sig").splitlines()[0].split(",") if ws_path.exists() else []
+    check("--live-stub writes the paid mode's worksheet columns", header == WS_FIELDS, str(header))
+    fits = {r["fit_overall"] for r in (read_worksheet(ws_path) if ws_path.exists() else [])}
+    check("--live-stub's worksheet marks the fit stub, never a number", "stub" in fits and fits <= {"stub", ""},
+          str(fits))
+    check("--live-stub prints the OWNER CHECK listing of LinkedIn closures",
+          "OWNER CHECK (3)" in first.stdout and first.stdout.count("linkedin.com/jobs/view/") >= 3, said(first))
+    entries = read_ledger()["runs"]
+    e0 = entries[0] if entries else {}
+    check("--live-stub records its run in the ledger: its mode, finished, no billed call, no money",
+          len(entries) == 1 and (e0.get("mode"), e0.get("status"), e0.get("calls"), e0.get("usd"))
+          == (LIVE_STUB, "finished", 0, 0.0), str(entries))
+    outputs = [p for p in root.rglob("*") if p.is_file()]
+    check("--live-stub: the planted key reaches no output and is never printed",
+          not find_secret(outputs, sentinel) and sentinel not in first.stdout + first.stderr)
+
+    second = child()
+    check("--live-stub: a run within 10 minutes of the last is refused, before anything is searched",
+          second.returncode == 2 and "minutes" in second.stdout and len(run_dirs()) == 1, said(second))
+
+    # Three live runs, each ended long ago, so the gap cannot be the reason.
+    ledger = read_ledger()
+    old = "2026-01-01T00:00:00"
+    planted = {"mode": LIVE_STUB, "status": "finished", "calls": 0, "usd": 0.0, "ended_at": old}
+    ledger["runs"] = [dict(e0, ended_at=old), dict(planted, run_id="planted-2"), dict(planted, run_id="planted-3")]
+    _write_json(root / "ledger.json", ledger)
+    fourth = child()
+    check("--live-stub: a fourth live run is refused, before anything is searched",
+          fourth.returncode == 2 and "3 live runs" in fourth.stdout and len(run_dirs()) == 1
+          and len(read_ledger()["runs"]) == 3, said(fourth))
 
 
 def stub_mode(args: argparse.Namespace) -> int:
@@ -1480,6 +1655,32 @@ def stub_mode(args: argparse.Namespace) -> int:
     check("fair share: what is left, over the runs left", abs(_run_share(ghost_ledger) - 0.4) < 1e-9,
           str(_run_share(ghost_ledger)))
 
+    # --- live runs: bar 1's 3 searches, paid and live-stub counted together ---
+    old = "2026-01-01T00:00:00"
+    ls = {"mode": LIVE_STUB, "calls": 0, "usd": 0.0, "ended_at": old}
+    ghost_ledger.runs[:] = [dict(ls), dict(ls)]
+    check("live-stub: a third live run is allowed", _ledger_refusal(ghost_ledger, now=_now_utc(), mode=LIVE_STUB) == "",
+          _ledger_refusal(ghost_ledger, now=_now_utc(), mode=LIVE_STUB))
+    ghost_ledger.runs[:] = [dict(ls), dict(ls), dict(ls)]
+    refusal = _ledger_refusal(ghost_ledger, now=_now_utc(), mode=LIVE_STUB)
+    check("live-stub: a fourth live run is refused", refusal.startswith("3 live runs"), refusal)
+    refusal = _ledger_refusal(ghost_ledger, now=_now_utc())
+    check("paid: a fourth live run is refused after three live-stub runs", "3 live runs" in refusal, refusal)
+    ghost_ledger.runs[:] = [{"calls": 25, "usd": 0.2, "ended_at": old}, {"calls": 25, "usd": 0.3, "ended_at": old},
+                            dict(ls)]
+    refusal = _ledger_refusal(ghost_ledger, now=_now_utc(), mode=LIVE_STUB)
+    check("live-stub: two paid runs and one live-stub run are three live runs", refusal.startswith("3 live runs"),
+          refusal)
+    check("live-stub: a live-stub run is never a paid run, and bills nothing",
+          ghost_ledger.totals().paid == 2 and ghost_ledger.totals().calls == 50)
+    ghost_ledger.runs[:] = [dict(ls, ended_at=_now_utc().isoformat())]
+    check("live-stub: a run within 10 minutes of a live-stub run is refused, in both modes",
+          "minutes" in _ledger_refusal(ghost_ledger, now=_now_utc(), mode=LIVE_STUB)
+          and "minutes" in _ledger_refusal(ghost_ledger, now=_now_utc()))
+
+    # --- --live-stub, end to end, in a child process -------------------------
+    _probe_live_stub(A, check, stub_root)
+
     # --- replay: the recorded corpus re-classifies identically ---------------
     _, diffs = replay(A, stub_root / "pass1" / "run.json", stub_root / "replay")
     check("replay of pass 1 reproduces every verdict", not diffs, json.dumps(diffs, ensure_ascii=False)[:300])
@@ -1572,14 +1773,26 @@ def stub_mode(args: argparse.Namespace) -> int:
     return 0 if not check.failed else 1
 
 
-def _ledger_refusal(ledger: Ledger, *, now: datetime) -> str:
+def _ledger_refusal(ledger: Ledger, *, now: datetime, mode: str = "paid") -> str:
+    """Why the next run may not start, or "". A live-stub run spends nothing,
+    so only the live-run cap and the gap apply to it; a paid run keeps every
+    check it had, and the live-run cap reaches it only once live-stub runs are
+    recorded (with none, `live` is exactly `paid`)."""
     t = ledger.totals()
-    if t.paid >= MAX_PAID_RUNS:
-        return f"{t.paid} paid runs are already recorded (the owner approved {MAX_PAID_RUNS})"
-    if t.calls >= MAX_CALLS:
-        return f"{t.calls} of {MAX_CALLS} model calls are already spent"
-    if t.usd >= BUDGET_USD:
-        return f"${t.usd:.4f} of ${BUDGET_USD:.2f} is already spent"
+    live_full = (f"{t.live} live runs are already recorded ({t.paid} paid, {t.live_stub} live-stub; "
+                 f"the owner approved {MAX_LIVE_RUNS} real searches)")
+    if mode == LIVE_STUB:
+        if t.live >= MAX_LIVE_RUNS:
+            return live_full
+    else:
+        if t.paid >= MAX_PAID_RUNS:
+            return f"{t.paid} paid runs are already recorded (the owner approved {MAX_PAID_RUNS})"
+        if t.live >= MAX_LIVE_RUNS:
+            return live_full
+        if t.calls >= MAX_CALLS:
+            return f"{t.calls} of {MAX_CALLS} model calls are already spent"
+        if t.usd >= BUDGET_USD:
+            return f"${t.usd:.4f} of ${BUDGET_USD:.2f} is already spent"
     if t.last_end:
         last = datetime.fromisoformat(t.last_end)
         wait = MIN_GAP_MINUTES - (now - last).total_seconds() / 60
@@ -1602,16 +1815,27 @@ def _parse_price(items: list[str]) -> dict[str, tuple[float, float]]:
     return prices
 
 
-def real_mode(args: argparse.Namespace) -> int:
-    def refuse(why: str) -> int:
-        print(f"REFUSED: {why}\nNothing was searched and no model was called.")
-        return 2
-
+def _preset_for(args: argparse.Namespace) -> dict[str, Any]:
     preset = dict(PRESETS[args.run])
     if args.titles:
         preset["job_titles"] = [t.strip() for t in args.titles.split("|") if t.strip()]
     if args.location is not None:
         preset["location"] = args.location
+    return preset
+
+
+def _ctx_for(A: SimpleNamespace, preset: dict[str, Any], limit: int) -> Any:
+    return A.SearchContext(job_titles=preset["job_titles"], location=preset["location"],
+                           work_mode=preset["work_mode"], include_worldwide=preset["include_worldwide"],
+                           max_age_days=preset["max_age_days"], limit=limit, sources=preset["sources"])
+
+
+def real_mode(args: argparse.Namespace) -> int:
+    def refuse(why: str) -> int:
+        print(f"REFUSED: {why}\nNothing was searched and no model was called.")
+        return 2
+
+    preset = _preset_for(args)
     if not preset["job_titles"]:
         return refuse("a run needs custom titles, or it would spend a SEARCH_CONTEXT call")
     out_root = Path(args.out_dir) if args.out_dir else _default_out_dir()
@@ -1655,9 +1879,7 @@ def real_mode(args: argparse.Namespace) -> int:
     if A.settings.model_id != args.expect_model:
         return refuse_after_boot(f"the app resolved MODEL_ID {A.settings.model_id!r}")
     resume = A.ResumeModel.model_validate_json(resume_path.read_text(encoding="utf-8"))
-    ctx = A.SearchContext(job_titles=preset["job_titles"], location=preset["location"],
-                          work_mode=preset["work_mode"], include_worldwide=preset["include_worldwide"],
-                          max_age_days=preset["max_age_days"], limit=args.limit, sources=preset["sources"])
+    ctx = _ctx_for(A, preset, args.limit)
     usd_left = BUDGET_USD - totals.usd
     share = _run_share(ledger)
     calls_left = MAX_CALLS - totals.calls
@@ -1713,7 +1935,104 @@ def real_mode(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_run_summary(corpus, rows, guard, tally, run_dir: Path, ledger: Ledger) -> None:  # noqa: ANN001
+def live_stub_mode(args: argparse.Namespace) -> int:
+    """The live boards, scored by the STUB model: the owner's choice for PLAN
+    28.5 on 2026-09-22. The module docstring lists what it keeps and drops."""
+    def refuse(why: str) -> int:
+        print(f"REFUSED: {why}\nNothing was searched and no model was called.")
+        return 2
+
+    if args.price or args.env_file:
+        return refuse("--live-stub reads no key and spends nothing: drop --price and --env-file")
+    preset = _preset_for(args)
+    if not preset["job_titles"]:
+        return refuse("a run needs custom titles, or the stub would derive canned ones")
+    out_root = Path(args.out_dir) if args.out_dir else _default_out_dir()
+    probe_home = (HERE / "fixtures" / "ghost_eval" / "stub").resolve()
+    if args.offline_probe and not out_root.resolve().is_relative_to(probe_home):
+        return refuse(f"--offline-probe writes only under {probe_home}, never beside a real ledger")
+    resume_path = Path(args.resume) if args.resume else _default_file("tests/fixtures/ab/master.json")
+    if not resume_path.exists():
+        return refuse(f"no resume at {resume_path} (pass --resume)")
+    _ensure_out(out_root)
+    ledger = Ledger(out_root / "ledger.json")
+    started = _now_utc()
+    why = _ledger_refusal(ledger, now=started, mode=LIVE_STUB)
+    if why:
+        return refuse(why)
+    run_id = started.strftime("%Y-%m-%dT%H%MZ") + f"-{args.run}-{LIVE_STUB}"
+    run_dir = out_root / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    # stub=True writes USE_STUB_LLM=true and OPENAI_API_KEY="" into the
+    # environment BEFORE the first app import: a key in the shell, or in an
+    # .env the app's settings would read, is overwritten without being read.
+    A = _boot(db_path=run_dir / "scratch.db", stub=True)
+    rec = Recorder()
+
+    def refuse_after_boot(why: str) -> int:
+        A.database.engine.dispose()
+        shutil.rmtree(run_dir)
+        return refuse(why)
+
+    with forbid_openai(A, rec):
+        try:
+            client = A.get_llm_client()
+        except RuntimeError as e:  # forbid_openai: the selection tried to build OpenAIClient
+            return refuse_after_boot(str(e))
+        if type(client) is not A.StubClient:
+            return refuse_after_boot(f"get_llm_client() is {type(client).__name__}, not StubClient")
+        if A.settings.sentry_dsn:
+            return refuse_after_boot("SENTRY_DSN reached the app's settings")
+        resume = A.ResumeModel.model_validate_json(resume_path.read_text(encoding="utf-8"))
+        ctx = _ctx_for(A, preset, args.limit)
+        t = ledger.totals()
+        entry: dict[str, Any] = {"run_id": run_id, "preset": args.run, "mode": LIVE_STUB, "model": "stub",
+                                 "started_at": started.isoformat(), "status": "started", "calls": 0, "usd": 0.0}
+        ledger.runs.append(entry)
+        ledger.save()
+        # A counter, not a budget: price 0 and no cap that can close. It gets
+        # NO run_entry, so the ledger never records a billed call or a cent for
+        # this run: a live-stub entry with calls > 0 would read as a paid run.
+        guard = BudgetGuard(price=(0.0, 0.0), calls_left=10**9, usd_left=1e9, run_share_usd=1e9, worst_completion=1)
+        wiring = _synthetic_wiring(A, ctx, synthetic_postings()) if args.offline_probe else {}
+        print(f"LIVE-STUB RUN {run_id}: live boards + the STUB model. $0, no key read, the fit is not measured.")
+        if args.offline_probe:
+            print("  OFFLINE PROBE (--stub's check): synthetic boards, every network tripwire in place")
+        print(f"  resume: {resume_path} (only has to exist: the stub's fit is canned)")
+        print(f"  ledger before this run: {t.live} of {MAX_LIVE_RUNS} live runs ({t.paid} paid, {t.live_stub} live-stub)")
+        print(f"  context: {ctx.job_titles} · {ctx.location} · {ctx.work_mode} · worldwide={ctx.include_worldwide} · "
+              f"{ctx.max_age_days}d · limit {ctx.limit} · {ctx.sources}\n")
+        try:
+            with instrument(A, rec, guard, stub=True, offline=bool(args.offline_probe), **wiring):
+                result, error, tally = run_search(A, resume, ctx)
+            corpus = build_corpus(A, rec, guard, result, error, ctx, stub_fit=True)
+        except BaseException:
+            entry.update(status="crashed", ended_at=_now_utc().isoformat())
+            ledger.save()
+            raise
+    corpus.update(run_id=run_id, preset=args.run, preset_label=preset["label"], mode=LIVE_STUB, model="stub",
+                  price=None, client=type(client).__name__, use_stub_llm=bool(A.settings.use_stub_llm),
+                  sentry_dsn_blank=not A.settings.sentry_dsn, offline_probe=bool(args.offline_probe),
+                  net_attempts=list(rec.net_attempts), openai_attempts=list(rec.openai_attempts),
+                  context=(result.context if result else ctx).model_dump(), git_head=_git("rev-parse", "HEAD"),
+                  resume={"path": str(resume_path), "sha256": hashlib.sha256(resume_path.read_bytes()).hexdigest(),
+                          "note": "scored by the STUB model: no fit score is measured"},
+                  llm={**_llm_summary(guard, tally), "scored_by": "stub"})
+    entry.update(status="finished", ended_at=_now_utc().isoformat(), stub_calls=guard.billed)
+    ledger.save()
+    _write_json(run_dir / "run.json", corpus)
+    rows = worksheet_rows(run_id, corpus)
+    write_worksheet(run_dir / "worksheet.csv", rows)
+    _print_run_summary(corpus, rows, guard, tally, run_dir, ledger, live_stub=True)
+    if rec.openai_attempts:
+        print(f"\nFAILED: the run reached OpenAIClient ({', '.join(rec.openai_attempts)}); every such call was "
+              "refused, and the postings it touched are in `skipped`.")
+        return 4
+    return 0
+
+
+def _print_run_summary(corpus, rows, guard, tally, run_dir: Path, ledger: Ledger,  # noqa: ANN001
+                       *, live_stub: bool = False) -> None:
     if corpus["error"]:
         print(f"search error: {corpus['error']}")
     for name, b in corpus["boards"].items():
@@ -1729,12 +2048,17 @@ def _print_run_summary(corpus, rows, guard, tally, run_dir: Path, ledger: Ledger
     print(f"  firings: {fired or 'none'} · out of population: {len(corpus['out_of_population'])} market rows, "
           f"{sum(1 for p in corpus['postings'] if p['population'] == 'geo_blocked')} geo-blocked")
     llm = corpus["llm"]
-    print(f"  model: {llm['billed_calls']} calls, {llm['prompt_tokens']} + {llm['completion_tokens']} tokens, "
-          f"${llm['usd']:.4f}; refused {llm['refused']}{' (' + llm['budget_stop'] + ')' if llm['budget_stop'] else ''}")
-    if (tally.prompt, tally.completion) != (guard.prompt, guard.completion):
-        print(f"  WARNING: metering tally {tally.prompt}+{tally.completion} != guard {guard.prompt}+{guard.completion}")
     t = ledger.totals()
-    print(f"  ledger: ${t.usd:.4f} of ${BUDGET_USD:.2f}, {t.calls} of {MAX_CALLS} calls, {t.paid} of {MAX_PAID_RUNS} paid runs")
+    if live_stub:
+        print(f"  model: STUB, {llm['billed_calls']} canned scoring calls, $0; the fit column is not measured")
+        print(f"  ledger: {t.live} of {MAX_LIVE_RUNS} live runs ({t.paid} paid, {t.live_stub} live-stub), "
+              f"${t.usd:.4f} of ${BUDGET_USD:.2f} spent")
+    else:
+        print(f"  model: {llm['billed_calls']} calls, {llm['prompt_tokens']} + {llm['completion_tokens']} tokens, "
+              f"${llm['usd']:.4f}; refused {llm['refused']}{' (' + llm['budget_stop'] + ')' if llm['budget_stop'] else ''}")
+        if (tally.prompt, tally.completion) != (guard.prompt, guard.completion):
+            print(f"  WARNING: metering tally {tally.prompt}+{tally.completion} != guard {guard.prompt}+{guard.completion}")
+        print(f"  ledger: ${t.usd:.4f} of ${BUDGET_USD:.2f}, {t.calls} of {MAX_CALLS} calls, {t.paid} of {MAX_PAID_RUNS} paid runs")
     owner = [r for r in rows if r["owner_check"]]
     if owner:
         print(f"\n  OWNER CHECK ({len(owner)}): open each while logged in to LinkedIn; never click Apply.")
@@ -1765,8 +2089,14 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Ghost-posting precision harness (PLAN 28.5)")
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--stub", action="store_true", help="offline plumbing check: no network, no money")
-    mode.add_argument("--run", choices=sorted(PRESETS), help="REAL: live boards + real OpenAI (spends money)")
+    mode.add_argument("--run", choices=sorted(PRESETS),
+                      help="REAL: live boards + real OpenAI (spends money); with --live-stub, the stub model ($0)")
     mode.add_argument("--report", nargs="*", help="apply the decision rule to labelled worksheets")
+    ap.add_argument("--live-stub", action="store_true",
+                    help="with --run: the live boards, scored by the STUB model; reads no key, spends nothing")
+    # --stub's own probe of --live-stub: synthetic boards and every tripwire,
+    # refused anywhere but under tests/fixtures/ghost_eval/stub/.
+    ap.add_argument("--offline-probe", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--replay", default="", help="with --stub: re-classify a recorded run.json offline")
     ap.add_argument("--env-file", default="", help="where OPENAI_API_KEY and MODEL_ID are read from")
     ap.add_argument("--resume", default="", help="resume JSON (default: tests/fixtures/ab/master.json)")
@@ -1778,10 +2108,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--limit", type=int, default=25, help="postings to select (1-25)")
     ap.add_argument("--out-dir", default="", help="default: the main checkout's tests/fixtures/ghost_eval")
     args = ap.parse_args(argv)
+    if args.live_stub and not args.run:
+        ap.error("--live-stub needs --run R1|R2|R3")
+    if args.offline_probe and not args.live_stub:
+        ap.error("--offline-probe is --live-stub's")
     if args.stub:
         return stub_mode(args)
     if args.run:
-        return real_mode(args)
+        return live_stub_mode(args) if args.live_stub else real_mode(args)
     return report_mode(args)
 
 

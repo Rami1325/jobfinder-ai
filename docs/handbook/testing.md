@@ -47,11 +47,20 @@ Same rules as `ab_tailor`: **it spends real money, is never run by CI, and `--st
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m tests.ghost_eval --stub                                  # offline plumbing check, free
+.\.venv\Scripts\python.exe -m tests.ghost_eval --run R1 --live-stub                    # LIVE boards + the STUB model: $0, fit not measured
 .\.venv\Scripts\python.exe -m tests.ghost_eval --run R1 --price gpt-5.4-mini=IN,OUT    # REAL: live boards + real model
 .\.venv\Scripts\python.exe -m tests.ghost_eval --report                                # the decision rule over labelled worksheets
 .\.venv\Scripts\python.exe -m tests.ghost_eval --stub --replay <run.json>              # re-classify a recorded run offline
 ```
 Same rules as the other two: **it spends real money, is never run by CI, and `--stub` is the only mode an unattended run may use.** Here `--stub` means FULLY OFFLINE: synthetic postings, canned LinkedIn pages, the stub model, and a socket tripwire that fails the run on any network attempt. A real run also scrapes five live boards from the owner's IP. That is why it is attended-only, although the verdicts it reads cost nothing. The presets are R1 (local, all five boards), R2 (remote plus worldwide) and R3 (a Hebrew title on Drushim and JobMaster), each with custom titles so no SEARCH_CONTEXT call is made. The decision rule, the labels and what decides each label are in PLAN.md 28.5, written before any run.
+
+**`--live-stub` is the mode the owner chose on 2026-09-22** (PLAN.md 28.5's dated note). No bar in the rule reads the fit score, and every ghost verdict is taken before the model is called, so it runs the same presets over the same live boards through the same seams and scores with `StubClient`. Run R1, R2 and R3 with it, 10 minutes apart.
+- **It is still attended-only.** It spends nothing, but it scrapes five live boards from the owner's IP.
+- **It reads no key.** `--price` and `--env-file` are refused. `_boot(stub=True)` writes `USE_STUB_LLM=true` and a blank `OPENAI_API_KEY` into the environment before the first app import, so a key in the shell, or in an `.env` the app's settings would read, is overwritten without being read.
+- **`OpenAIClient` is tripwired for the whole run** (`forbid_openai`), the client selection included. Building one or calling `_metered` ends the run. `get_llm_client()` must return `StubClient`, and `SENTRY_DSN` must reach the settings blank.
+- **Everything else is the paid mode's.** A scratch SQLite in the run folder, `cache=None`, `sightings_fn=None`, no `record_sightings` or `record_search_hits`, the same `run.json` and `worksheet.csv` in the same folder, and the OWNER CHECK listing at the end.
+- **The fit is marked, never shown.** The stub's numbers are canned, the JD analysis behind the keyword coverage included. So a ranked posting's fit is `{"scored_by": "stub"}` in `run.json`, and `stub` in the worksheet's `fit_overall` column. `run.json` carries `"mode": "live-stub"`, and `--report` prints the run as "live boards, STUB model: $0, fit not measured".
+- **The ledger counts it without money.** The entry records `"mode": "live-stub"`, 0 calls and $0 (its stub calls go in `stub_calls`). The guard is a counter that is given no ledger entry, so the run can never read as a paid run. A run within 10 minutes of the last one is refused in both modes. A fourth LIVE run is refused in both modes too: paid and live-stub runs count together as bar 1's "3 real searches" (`MAX_LIVE_RUNS`). With no live-stub run in the ledger, that count is exactly the paid count, so the paid mode's refusals are unchanged.
 
 Each of these is a way the measurement could lie:
 - **The verdicts are the app's own.** It runs the real `search_jobs` with `cache=None` and `sightings_fn=None`. It listens at three seams, each patched where it is BOUND and restored in `finally`:
@@ -86,11 +95,26 @@ Each of these is a way the measurement could lie:
   - The folder is git-ignored, and the harness writes a `*` `.gitignore` into it, for checkouts that predate the ignore line.
   - The resume is a PROXY (`tests/fixtures/ab/master.json`), and `run.json` says so.
 
-**How it was probed.** `--stub` runs 137 checks, and 17 planted defects each turn it red. In the harness: dropping the 404 row, the call cap, the money cap, the kept selection, the owner's rows, the secret scan, the hide bar's zero-wrong clause, the email bar at 70%, UNCLEAR folded into n, BUG counted as correct, the tripwire's record, the socket tripwire, the restore, the geo population and the replay comparison. In the app: a 429 read as closure, and a scoring pool without `copy_context`. Two first-draft checks passed a planted defect green:
+**How `--live-stub` is probed.** `--stub` runs the mode itself in a CHILD process, because `_boot` runs once per process and the boot is part of what is under test. A hidden `--offline-probe` flag swaps the five boards for the synthetic ones and keeps every tripwire. It is refused anywhere but under `tests/fixtures/ghost_eval/stub/`, so it can never write beside the real ledger. The child's environment is hostile on purpose: a planted key, `USE_STUB_LLM=false`, `MODEL_ID` and a Sentry DSN. Three children run in turn:
+- The first must finish. It must select `StubClient`, never touch `OpenAIClient`, stay offline and blank the DSN. It must also mark the fit `stub` in both files, write the paid mode's worksheet columns, print the OWNER CHECK listing, record one `live-stub` ledger entry with 0 calls and $0, and write the planted key nowhere.
+- The second, started at once, must be refused for the 10-minute gap.
+- The third, over a ledger holding three live runs that all ended long ago, must be refused before any folder is made.
+
+The in-process checks beside it pin the arithmetic in both directions: a third live run is allowed, a fourth is refused, two paid runs plus one live-stub run are three, and the paid mode refuses a fourth live run too. Eight planted defects each turn `--stub` red:
+- booting the real model with the environment's key, which `forbid_openai` catches at the build;
+- that plus no tripwire, which the `StubClient` type check catches alone;
+- the live-stub cap deleted;
+- the ledger's live count reading paid runs only;
+- the run never recorded in the ledger;
+- the stub's calls billed into the ledger entry;
+- the fit written as a number;
+- `offline` no longer defaulting to `stub`, which the existing tripwire check catches.
+
+**How it was probed.** `--stub` ran 137 checks before `--live-stub`, and runs 158 with it. 17 planted defects each turned the first 137 red. In the harness: dropping the 404 row, the call cap, the money cap, the kept selection, the owner's rows, the secret scan, the hide bar's zero-wrong clause, the email bar at 70%, UNCLEAR folded into n, BUG counted as correct, the tripwire's record, the socket tripwire, the restore, the geo population and the replay comparison. In the app: a 429 read as closure, and a scoring pool without `copy_context`. Two first-draft checks passed a planted defect green:
 - The replay check was `not diffs`, so a comparison that could never report a difference passed for ever. It now also has to report a planted verdict change, and only that one.
 - The tripwire mutation still recorded the attempt, so it showed nothing. The check now reads whether the tripwire is installed and records, and it never calls the real resolver to find out.
 
-**Measured results: none yet (2026-09-22).** No real run has been made. `--report` prints `no worksheets under …\backend\tests\fixtures\ghost_eval` and exits 1. That folder does not exist in the main checkout, so there is no corpus, no worksheet and no ledger: $0.00 spent, 0 of 75 calls, 0 of 3 paid runs. `--stub` was re-run the same day and printed `ghost_eval --stub: 137 checks passed, 0 failed`. PLAN.md 28.5 (*The result, 2026-09-22*) has the per-cell table, what the rule concludes from it, and a question the owner answers before R1: no bar reads the fit score the model calls produce. Next come the three real runs at the owner's machine, then the owner's logged-in checks, then `--report`.
+**Measured results: none yet (2026-09-22).** No real run has been made. `--report` prints `no worksheets under …\backend\tests\fixtures\ghost_eval` and exits 1. That folder does not exist in the main checkout, so there is no corpus, no worksheet and no ledger: $0.00 spent, 0 of 75 calls, 0 of 3 paid runs. `--stub` was re-run the same day and printed `ghost_eval --stub: 137 checks passed, 0 failed`. PLAN.md 28.5 (*The result, 2026-09-22*) has the per-cell table, what the rule concludes from it, and a question the owner answers before R1: no bar reads the fit score the model calls produce. The owner answered it the same day by choosing `--live-stub` (the dated note under the rule), so the $1 stays unspent and no fit score will be measured. Next come the three live-stub runs at the owner's machine, then the owner's logged-in checks, then `--report`. Nothing above is a measurement: no live run had been made when this was written.
 
 ## The frontend's only test suite: `check-mirrors.js`
 
