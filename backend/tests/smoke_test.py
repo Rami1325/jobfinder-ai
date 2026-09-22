@@ -4334,6 +4334,39 @@ check(
     _ps_real == [],
     "; ".join(_ps_real) or f"{sum(1 for n in vars(_lim_prompts) if n.endswith('_user'))} builders accounted for",
 )
+# A "schema:" reason is a CLAIM that a request model bounds the field; read it back off the model, so an entry cannot
+# say a max_length exists that does not (2026-09-22, when nine "known open" fields moved to "schema").
+import app.models as _ps_models  # noqa: E402
+import re as _ps_re  # noqa: E402
+
+
+def _ps_schema_claims(unmeasured):  # noqa: ANN001, ANN202
+    """(builder, param, claim, problem) for every schema reason; problem '' when the model backs it."""
+    out = []
+    for (builder, param), reason in unmeasured.items():
+        if not reason.startswith("schema:"):
+            continue
+        m = _ps_re.search(r"(\w+)\.(\w+) has max_length", reason)
+        if not m:
+            out.append((builder, param, reason, "names no <Model>.<field> has max_length"))
+            continue
+        model = getattr(_ps_models, m.group(1), None)
+        field = getattr(model, "model_fields", {}).get(m.group(2)) if model is not None else None
+        bound = next((getattr(x, "max_length", None) for x in (field.metadata if field else [])
+                      if getattr(x, "max_length", None) is not None), None)
+        out.append((builder, param, reason, "" if isinstance(bound, int) and bound > 0 else "the model sets no max_length"))
+    return out
+
+
+_ps_claims = _ps_schema_claims(_lim_prompts._UNMEASURED)
+_ps_claim_probe = _ps_schema_claims({("x_user", "y"): "schema: FollowUpRequest.context has max_length 99 (a false claim)"})
+check(
+    "builder bounds: every 'schema:' reason on _UNMEASURED names a request field that really has a max_length (ten "
+    "today: the tone and the nine short tool fields), and a reason naming an unbounded field is caught",
+    len(_ps_claims) >= 10 and all(problem == "" for *_x, problem in _ps_claims)
+    and _ps_claim_probe and _ps_claim_probe[0][3] == "the model sets no max_length",
+    str([(b, p, problem) for b, p, _r, problem in _ps_claims if problem] or f"{len(_ps_claims)} claims backed"),
+)
 check(
     "P30-PASS-SIZE the pin probed both ways: an undecorated builder taking `transcript` is red, a decorated builder "
     "with an unclassified parameter is red, and both removed it is green again",
@@ -14949,6 +14982,80 @@ with TestClient(_fastapi_app) as _tc:
     check(
         "admin stays exempt from the llm cap",
         all(_tc.post("/tools/follow-up", json=_fu_body, headers=_ADMIN_H).status_code == 200 for _ in range(4)),
+    )
+
+    # The eleven builder parameters that reached the model with no bound (2026-09-22). The short fields are refused
+    # at the SCHEMA (422) at 300 characters, or 100 for a closed set; the follow-up note and a PASTED company page
+    # are measured by the prompt guard and refused as 413 kinds "note" and "page", each with its own sentence; and
+    # a FETCHED page is still clipped at its source (machine text), never refused. Driven as the admin: no caps.
+    from app.llm import prompts as _bd_prompts  # noqa: E402
+    import app.core.company_brief as _bd_brief  # noqa: E402
+
+    _bd_s = get_settings()
+
+    def _bd_post(path: str, body: dict):  # noqa: ANN202
+        return _tc.post(path, json=body, headers=_ADMIN_H)
+
+    def _bd_kind(r) -> str:  # noqa: ANN001
+        d = r.json().get("detail") if r.status_code == 413 else None
+        return d.get("kind", "") if isinstance(d, dict) else ""
+
+    _bd_fu = {
+        "company_300": _bd_post("/tools/follow-up", {**_fu_body, "company": "C" * 300}).status_code,
+        "company_301": _bd_post("/tools/follow-up", {**_fu_body, "company": "C" * 301}).status_code,
+        "role_301": _bd_post("/tools/follow-up", {**_fu_body, "role": "R" * 301}).status_code,
+        "stage_101": _bd_post("/tools/follow-up", {**_fu_body, "stage": "s" * 101}).status_code,
+    }
+    _bd_note_big = _bd_post("/tools/follow-up", {**_fu_body, "context": "x" * ((_bd_s.max_answer_kb + 1) * 1024)})
+    _bd_note_ok = _bd_post("/tools/follow-up", {**_fu_body, "context": "Loved the platform talk. " * 20})
+    _bd_out_body = {"resume": _resume_json, "company": "Acme", "job_title": "Engineer", "contact_name": "Dana"}
+    _bd_out = {
+        "name_300": _bd_post("/outreach", {**_bd_out_body, "contact_name": "D" * 300}).status_code,
+        "name_301": _bd_post("/outreach", {**_bd_out_body, "contact_name": "D" * 301}).status_code,
+        "title_301": _bd_post("/outreach", {**_bd_out_body, "job_title": "T" * 301}).status_code,
+        "role_101": _bd_post("/outreach", {**_bd_out_body, "contact_role": "r" * 101}).status_code,
+        "role_hiring_manager": _bd_post("/outreach", {**_bd_out_body, "contact_role": "hiring manager"}).status_code,
+    }
+    check(
+        "builder bounds: follow-up and outreach refuse a short field over 300 characters (a closed-set field over "
+        "100) with a 422 before the handler, while 300 exactly and 'hiring manager' are served (the false-positive "
+        "half); the follow-up note over max_answer_kb is a 413 of kind 'note' and an ordinary note is served",
+        _bd_fu == {"company_300": 200, "company_301": 422, "role_301": 422, "stage_101": 422}
+        and _bd_out == {"name_300": 200, "name_301": 422, "title_301": 422, "role_101": 422, "role_hiring_manager": 200}
+        and _bd_note_big.status_code == 413 and _bd_kind(_bd_note_big) == "note"
+        and _bd_note_ok.status_code == 200,
+        f"{_bd_fu} {_bd_out} note={_bd_note_big.status_code}/{_bd_kind(_bd_note_big)} ok={_bd_note_ok.status_code}",
+    )
+
+    _bd_seen: list[int] = []
+    _bd_real_builder = _bd_prompts.company_brief_user
+    _bd_real_fetch = _bd_brief.fetch_job_text
+
+    def _bd_spy(resume_json, company, page_text, jd_text, job_title):  # noqa: ANN001, ANN202
+        built = _bd_real_builder(resume_json, company, page_text, jd_text, job_title)  # the guard runs here
+        _bd_seen.append(len(page_text))  # only a prompt that was actually built
+        return built
+
+    _bd_prompts.company_brief_user = _bd_spy  # patched where company_brief reads it: `prompts.company_brief_user`
+    _bd_brief.fetch_job_text = lambda url: "Acme builds data tools. " * 3000  # 72,000 characters of fetched page
+    try:
+        _bd_cb = {"resume": _resume_json, "company": "Acme"}
+        _bd_paste_long = _bd_post("/tools/company-brief", {**_bd_cb, "page_text": "About Acme." + " About Acme." * 1199})
+        _bd_paste_big = _bd_post("/tools/company-brief", {**_bd_cb, "page_text": "y" * ((_bd_s.max_jd_kb + 1) * 1024)})
+        _bd_fetched = _bd_post("/tools/company-brief", {**_bd_cb, "url": "https://acme.test/about"})
+        _bd_company_301 = _bd_post("/tools/company-brief", {**_bd_cb, "company": "C" * 301, "page_text": "About."})
+    finally:
+        _bd_prompts.company_brief_user = _bd_real_builder
+        _bd_brief.fetch_job_text = _bd_real_fetch
+    check(
+        "builder bounds: a PASTED company page is sent whole (14,399 characters, over the old 12,000 clip) and one "
+        "over max_jd_kb is a 413 of kind 'page', never clipped; a FETCHED page of 72,000 characters is clipped to "
+        "12,000 at its source and served; a company over 300 characters is a 422",
+        _bd_paste_long.status_code == 200 and _bd_paste_big.status_code == 413 and _bd_kind(_bd_paste_big) == "page"
+        and _bd_fetched.status_code == 200 and _bd_seen == [len("About Acme." + " About Acme." * 1199), 12_000]
+        and _bd_company_301.status_code == 422,
+        f"{_bd_paste_long.status_code} {_bd_paste_big.status_code}/{_bd_kind(_bd_paste_big)} {_bd_fetched.status_code} "
+        f"seen={_bd_seen} company={_bd_company_301.status_code}",
     )
     # This pin used to send `jd_text: ""` — the ONE value that never enters the
     # coverage branch — under a label asserting the route calls no model, while

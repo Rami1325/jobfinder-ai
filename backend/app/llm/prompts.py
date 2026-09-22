@@ -72,6 +72,13 @@ _MEASURED_IN: dict[tuple[str, str], _Rule] = {
     # cap: nothing on a scorecard can be edited, so one could only strand a
     # session an old tab kept a long answer in.
     ("interview_scorecard_user", "transcript"): _Rule("session", "max_scorecard_transcript_kb"),
+    # The follow-up writer's "point of fit" note (FollowUpRequest.context), free
+    # text the user types, capped like an answer and named for what it is.
+    ("follow_up_user", "extra"): _Rule("note", "max_answer_kb"),
+    # Company page text the user PASTED is refused, never clipped (rule 1); a
+    # fetched page is machine text and is clipped at its source in company_brief.
+    # The job ad's cap: both are a page of prose about the same job.
+    ("company_brief_user", "page_text"): _Rule("page", "max_jd_kb"),
 }
 # Every builder parameter the guard does NOT measure, by (builder, parameter) —
 # never by bare name, or allowing `company` here would quietly cover the next
@@ -95,20 +102,15 @@ _UNMEASURED: dict[tuple[str, str], str] = {
     ("cover_letter_user", "tone"): (
         "schema: CoverLetterRequest.tone has max_length 200; the UI builds a closed set whose longest is 48"
     ),
-    ("company_brief_user", "page_text"): (
-        "known open: user-pasted page text is CLIPPED to company_brief._PAGE_TEXT_CAP characters, which rule 1 "
-        "forbids for text the user supplied — it should be refused in bytes instead"
-    ),
-    ("company_brief_user", "company"): "known open: a user-typed field with no length bound anywhere",
-    ("company_brief_user", "job_title"): "known open: a user-typed field with no length bound anywhere",
-    ("outreach_user", "company"): "known open: a user-typed field with no length bound anywhere",
-    ("outreach_user", "job_title"): "known open: a user-typed field with no length bound anywhere",
-    ("outreach_user", "contact_name"): "known open: a user-typed field with no length bound anywhere",
-    ("outreach_user", "contact_role"): "known open: a client-sent field with no length bound anywhere",
-    ("follow_up_user", "company"): "known open: a user-typed field with no length bound anywhere",
-    ("follow_up_user", "role"): "known open: a user-typed field with no length bound anywhere",
-    ("follow_up_user", "stage"): "known open: a client-sent field with no length bound anywhere",
-    ("follow_up_user", "extra"): "known open: user-typed context (FollowUpRequest.context) with no bound anywhere",
+    ("company_brief_user", "company"): "schema: CompanyBriefRequest.company has max_length SHORT_FIELD_MAX (300)",
+    ("company_brief_user", "job_title"): "schema: CompanyBriefRequest.job_title has max_length SHORT_FIELD_MAX (300)",
+    ("outreach_user", "company"): "schema: OutreachRequest.company has max_length SHORT_FIELD_MAX (300)",
+    ("outreach_user", "job_title"): "schema: OutreachRequest.job_title has max_length SHORT_FIELD_MAX (300)",
+    ("outreach_user", "contact_name"): "schema: OutreachRequest.contact_name has max_length SHORT_FIELD_MAX (300)",
+    ("outreach_user", "contact_role"): "schema: OutreachRequest.contact_role has max_length CHOICE_FIELD_MAX (100)",
+    ("follow_up_user", "company"): "schema: FollowUpRequest.company has max_length SHORT_FIELD_MAX (300)",
+    ("follow_up_user", "role"): "schema: FollowUpRequest.role has max_length SHORT_FIELD_MAX (300)",
+    ("follow_up_user", "stage"): "schema: FollowUpRequest.stage has max_length CHOICE_FIELD_MAX (100)",
     ("inbox_classify_user", "body"): "clipped: an employer's email body, clipped to INBOX_BODY_KB in the builder",
     ("inbox_classify_user", "sender"): "third-party: a Gmail header value, collapsed to one line",
     ("inbox_classify_user", "subject"): "third-party: a Gmail header value, collapsed to one line",
@@ -118,7 +120,6 @@ _UNMEASURED: dict[tuple[str, str], str] = {
 # Every `*_user` builder that is NOT `@_bounded`, and why.
 _UNDECORATED: dict[str, str] = {
     "inbox_classify_user": "no parameter is the user's own text: third-party mail is clipped, never refused",
-    "follow_up_user": "measures nothing yet: its four fields are known open (see _UNMEASURED)",
 }
 
 
@@ -975,6 +976,7 @@ def search_context_user(resume_json: str) -> str:
     return f"CANDIDATE RESUME (JSON):\n{resume_json}\n\nDerive the search query."
 
 
+@_bounded
 def follow_up_user(company: str, role: str, stage: str, extra: str) -> str:
     return (
         f"Company: {company}\nRole: {role}\nStage: {stage}\n"

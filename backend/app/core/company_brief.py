@@ -28,7 +28,10 @@ from app.llm.client import get_llm_client
 from app.llm import prompts
 from app.models import BriefPerson, BriefTarget, CompanyBriefResult, ResumeModel
 
-# Keep prompt size sane on long careers pages.
+# Keep prompt size sane on long careers pages. FETCHED text only: that is machine
+# text the user neither wrote nor saw, so clipping it is allowed (limits.py rule
+# 1). Text the user PASTED is theirs and is refused by the prompt guard instead
+# (kind "page"): clipping it silently cut the part of the page they pasted last.
 _PAGE_TEXT_CAP = 12_000
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -187,7 +190,7 @@ def build_company_brief(
     if not text and url.strip():
         # fetch_job_text raises a friendly ValueError on login walls / blocked
         # fetches; the route surfaces it as a 400 so the user can paste instead.
-        text = fetch_job_text(url)
+        text = fetch_job_text(url)[:_PAGE_TEXT_CAP]
     if not text and not jd_text.strip():
         raise ValueError(
             "Provide a company page URL, pasted page text, or a job description to ground the brief."
@@ -197,7 +200,7 @@ def build_company_brief(
     data = client.complete_json(
         prompts.with_resume_language(prompts.COMPANY_BRIEF_SYSTEM, resume_language(resume)),
         prompts.company_brief_user(
-            resume.model_dump_json(), company, text[:_PAGE_TEXT_CAP], jd_text, job_title
+            resume.model_dump_json(), company, text, jd_text, job_title
         ),
     )
 

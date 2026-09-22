@@ -6099,7 +6099,7 @@ function backendPyFiles(rel = "app") {
 
 // The kinds this build knows, as the floor under the read (a reader that comes
 // up short is a red build, never a shorter list) and the degraded run's list.
-const SIZE_KINDS = ["resume", "jd", "transcript", "session", "answer", "question"];
+const SIZE_KINDS = ["resume", "jd", "transcript", "session", "answer", "question", "note", "page"];
 // The two pass-throughs, where a kind is a variable by design, and the one file
 // whose `_Rule(` lines are the prompt-input guard's rule table.
 const OPAQUE_OK = new Set(["app/llm/limits.py InputTooLarge(kind)", "app/llm/prompts.py require_within(rule.kind)"]);

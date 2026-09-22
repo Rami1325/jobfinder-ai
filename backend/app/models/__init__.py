@@ -1750,10 +1750,23 @@ class LinkedInResult(BaseModel):
     skills: list[str] = Field(default_factory=list)
 
 
+# The short fields a tool request carries into a prompt: a company, a role, a
+# person's name, one of a closed set of stages or recipient types. Bounded at the
+# SCHEMA (a 422 before the handler), not in bytes by the prompt guard: each is one
+# line a person types or a value the UI picks, and the longest the app itself
+# stores for one is the tracker's String(255) job title and company, which the
+# follow-up writer is handed from a card. So 300 characters refuses nothing real,
+# and 100 for a closed set whose longest member is "hiring manager".
+SHORT_FIELD_MAX = 300
+CHOICE_FIELD_MAX = 100
+
+
 class FollowUpRequest(BaseModel):
-    company: str = ""
-    role: str = ""
-    stage: str = "after applying"
+    company: str = Field(default="", max_length=SHORT_FIELD_MAX)
+    role: str = Field(default="", max_length=SHORT_FIELD_MAX)
+    stage: str = Field(default="after applying", max_length=CHOICE_FIELD_MAX)
+    # Free text the user types: measured in bytes by the prompt guard instead
+    # (kind "note"), so a refusal has a sentence rather than a bare 422.
     context: str = ""
 
 
@@ -1770,10 +1783,10 @@ class FollowUpResult(BaseModel):
 class OutreachRequest(BaseModel):
     resume: ResumeModel
     jd_text: str = ""
-    company: str = ""
-    job_title: str = ""
-    contact_name: str = ""
-    contact_role: str = "recruiter"  # recruiter | hiring manager | connection
+    company: str = Field(default="", max_length=SHORT_FIELD_MAX)
+    job_title: str = Field(default="", max_length=SHORT_FIELD_MAX)
+    contact_name: str = Field(default="", max_length=SHORT_FIELD_MAX)
+    contact_role: str = Field(default="recruiter", max_length=CHOICE_FIELD_MAX)  # recruiter | hiring manager | connection
 
 
 class OutreachResult(BaseModel):
@@ -1806,11 +1819,13 @@ class ScreeningAnswerResult(BaseModel):
 # --------------------------------------------------------------------------- #
 class CompanyBriefRequest(BaseModel):
     resume: ResumeModel
-    company: str = ""
+    company: str = Field(default="", max_length=SHORT_FIELD_MAX)
     url: str = ""  # company about/careers/team page to fetch (optional)
-    page_text: str = ""  # pasted page text (alternative to url)
+    # Pasted page text (alternative to url): the user's own paste, so it is
+    # REFUSED in bytes by the prompt guard (kind "page"), never clipped.
+    page_text: str = ""
     jd_text: str = ""  # optional target JD for context
-    job_title: str = ""  # optional target role for the reach-out message
+    job_title: str = Field(default="", max_length=SHORT_FIELD_MAX)  # optional target role for the reach-out message
 
 
 class BriefPerson(BaseModel):

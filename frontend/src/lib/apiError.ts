@@ -73,6 +73,10 @@ const SIZE_LIMIT_KEYS: Record<string, string> = {
   session: "sizeLimit.session",
   answer: "sizeLimit.answer",
   question: "sizeLimit.question",
+  // The follow-up writer's note and a pasted company page (2026-09-22): both
+  // reached the model unmeasured, and the page was clipped instead of refused.
+  note: "sizeLimit.note",
+  page: "sizeLimit.page",
 };
 
 // A context overflow that is not the CV's alone. The model refused the prompt,
