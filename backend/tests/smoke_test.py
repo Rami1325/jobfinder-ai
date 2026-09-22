@@ -12079,6 +12079,36 @@ with TestClient(_fastapi_app) as _tc:
         "approving someone else's kit 404s",
         _tc.post(f"/kits/{_kit2['id']}/approve", json={}, headers=_ADMIN_H).status_code == 404,
     )
+    # The review page's letter is stored on the kit (it lived in page state
+    # alone, so a reload of /kits/:id lost a letter the user paid a use for).
+    _kcl = _tc.put(f"/kits/{_kit2['id']}/cover-letter", json={"cover_letter": "Draft for KitCo"}, headers=_KIM_H)
+    check(
+        "kit cover letter: PUT stores the review page's letter and GET /kits/{id} hands it back",
+        _kcl.status_code == 200
+        and _kcl.json() == {"saved": True}
+        and _tc.get(f"/kits/{_kit2['id']}", headers=_KIM_H).json()["cover_letter"] == "Draft for KitCo",
+        _kcl.text[:150],
+    )
+    _kcl_other = _tc.put(f"/kits/{_kit2['id']}/cover-letter", json={"cover_letter": "Not yours"}, headers=_ADMIN_H)
+    _kcl_long = _tc.put(
+        f"/kits/{_kit2['id']}/cover-letter", json={"cover_letter": "x" * 20_001}, headers=_KIM_H
+    )
+    _kcl_extra = _tc.put(
+        f"/kits/{_kit2['id']}/cover-letter", json={"cover_letter": "ok", "resume": {}}, headers=_KIM_H
+    )
+    _kcl_fits = _tc.put(
+        f"/kits/{_kit2['id']}/cover-letter", json={"cover_letter": "y" * 20_000}, headers=_KIM_H
+    )
+    check(
+        "kit cover letter: another user's kit is a 404, a body over 20,000 characters or with another field a 422, "
+        "and each refusal leaves the stored letter alone; a letter of exactly 20,000 characters is stored",
+        _kcl_other.status_code == 404
+        and _kcl_long.status_code == 422
+        and _kcl_extra.status_code == 422
+        and _kcl_fits.status_code == 200
+        and _tc.get(f"/kits/{_kit2['id']}", headers=_KIM_H).json()["cover_letter"] == "y" * 20_000,
+        f"{_kcl_other.status_code}/{_kcl_long.status_code}/{_kcl_extra.status_code}/{_kcl_fits.status_code}",
+    )
     _effective = resume.model_dump()
     _effective["summary"] = "Reviewed effective summary"
     _apr = _tc.post(
@@ -12102,6 +12132,10 @@ with TestClient(_fastapi_app) as _tc:
         and _kit_app["tailored_resume"]["summary"] == "Reviewed effective summary"
         and _kit_app["job_url"] == _kit2["url"],
         str(_kit_app)[:200],
+    )
+    check(
+        "kit cover letter: the letter sent with the approval is the one the kit keeps",
+        _tc.get(f"/kits/{_kit2['id']}", headers=_KIM_H).json()["cover_letter"] == "Dear KitCo",
     )
     check(
         "approved kit can't be re-approved or rejected (400)",
@@ -12149,6 +12183,19 @@ with TestClient(_fastapi_app) as _tc:
         _tc.post(f"/kits/{_admin_kit['id']}/approve", json={}, headers=_ADMIN_H).status_code == 400,
     )
 
+    # An approval that sends no letter (a tab loaded before kits stored one)
+    # still carries the letter the page saved onto the tracker row.
+    _tc.post("/kits/batch", json={"jobs": [_kit_job(21)]}, headers=_ADMIN_H)
+    _cl_kit = _tc.post("/kits/process-next", headers=_ADMIN_H).json()["kit"]
+    _tc.put(f"/kits/{_cl_kit['id']}/cover-letter", json={"cover_letter": "Saved before approval"}, headers=_ADMIN_H)
+    _cl_apr = _tc.post(f"/kits/{_cl_kit['id']}/approve", json={}, headers=_ADMIN_H)
+    _cl_app = _tc.get(f"/applications/{_cl_apr.json().get('application_id')}", headers=_ADMIN_H).json()
+    check(
+        "kit cover letter: an approval with no letter in its body carries the saved one to the tracker",
+        _cl_apr.status_code == 200 and _cl_app.get("cover_letter") == "Saved before approval",
+        str(_cl_app)[:200],
+    )
+
     # No master resume → the kit fails with a clear error, the loop keeps 200ing.
     _noam = _tc.post("/admin/users", json={"name": "Noam"}, headers=_ADMIN_H).json()
     _NOAM_H = {"X-App-Key": _noam["invite_code"]}
@@ -12162,8 +12209,27 @@ with TestClient(_fastapi_app) as _tc:
         and _np["remaining"] == 0,
         str(_np)[:200],
     )
+    # A letter is refused on a kit with no tailored result, and a requeue drops
+    # one written some other way: it belonged to the failed run's posting.
+    _cl_db = SessionLocal()
+    try:
+        _cl_row = _cl_db.get(_TKit, _np["kit"]["id"])
+        _cl_row.cover_letter = "Left over from the failed run"
+        _cl_db.commit()
+    finally:
+        _cl_db.close()
+    check(
+        "kit cover letter: refused (400) on a kit with no tailored result",
+        _tc.put(
+            f"/kits/{_np['kit']['id']}/cover-letter", json={"cover_letter": "x"}, headers=_NOAM_H
+        ).status_code == 400,
+    )
     # Re-batching a failed kit requeues it (still 1 kit, back to queued).
     _rb = _tc.post("/kits/batch", json={"jobs": [_kit_job(9)]}, headers=_NOAM_H)
+    check(
+        "kit cover letter: requeueing a failed kit clears any letter it held",
+        _tc.get(f"/kits/{_np['kit']['id']}", headers=_NOAM_H).json()["cover_letter"] == "",
+    )
     check(
         "re-batching a failed kit requeues it instead of skipping",
         _rb.status_code == 200 and len(_rb.json()["queued"]) == 1
@@ -25128,6 +25194,8 @@ _ROUTE_COST = {
     # free: kit actions
     ("GET", "/kits"): "free",
     ("GET", "/kits/{kit_id}"): "free",
+    # free: stores the letter the review page already generated (and paid for), and reaches no model
+    ("PUT", "/kits/{kit_id}/cover-letter"): "free",
     ("POST", "/kits/{kit_id}/approve"): "free",
     ("POST", "/kits/{kit_id}/reject"): "free",
     ("POST", "/kits/{kit_id}/submit"): "free",
@@ -25828,6 +25896,9 @@ try:
 
         _plain32(("GET", "/kits/{kit_id}"), lambda s: _as32("GET", f"/kits/{_SW32.get('kit_a', 0)}", _SW32["h"]),
                  setup=_review_kits32, statuses=(200,))
+        _plain32(("PUT", "/kits/{kit_id}/cover-letter"),
+                 lambda s: _as32("PUT", f"/kits/{_SW32.get('kit_a', 0)}/cover-letter", _SW32["h"],
+                                 json={"cover_letter": "Sweep letter"}), statuses=(200,))
         _plain32(("POST", "/kits/{kit_id}/approve"),
                  lambda s: _as32("POST", f"/kits/{_SW32.get('kit_a', 0)}/approve", _SW32["h"], json={}),
                  statuses=(200,))

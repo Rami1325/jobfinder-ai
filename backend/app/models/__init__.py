@@ -564,6 +564,22 @@ class KitDetail(KitOut):
     jd: Optional[JDModel] = None
     base_resume: Optional[ResumeModel] = None
     result: Optional[TailorResult] = None
+    # The letter last generated on the review page (PUT /kits/{id}/cover-letter),
+    # or the one approved with the kit. "" when none was generated.
+    cover_letter: str = ""
+
+
+# A cover letter runs to a few KB. The cap only bounds what one request can store.
+KIT_COVER_LETTER_MAX_CHARS = 20_000
+
+
+class KitCoverLetterIn(BaseModel):
+    """Body of PUT /kits/{id}/cover-letter: the letter the review page just
+    generated, stored on the kit so a reload shows it again. A longer body is a 422."""
+
+    model_config = {"extra": "forbid"}
+
+    cover_letter: str = Field(default="", max_length=KIT_COVER_LETTER_MAX_CHARS)
 
 
 class KitList(BaseModel):

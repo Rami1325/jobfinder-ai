@@ -123,6 +123,7 @@ def kit_detail(row: TailorKit) -> KitDetail:
         jd=_parse(JDModel, row.jd_json),
         base_resume=_parse(ResumeModel, row.base_resume_json),
         result=_parse(TailorResult, row.result_json),
+        cover_letter=row.cover_letter or "",
     )
 
 
@@ -253,6 +254,7 @@ def enqueue_kits(
         row.error = ""
         row.reject_reason = ""
         row.application_id = None
+        row.cover_letter = ""  # a letter for the failed run is not this run's
         row.started_at = None
         row.processed_at = None
         row.attempts = 0  # a new run gets the whole retry budget back
@@ -572,6 +574,9 @@ def approve_kit(
     # score nobody measured). `template` stays "" — kit review has no template
     # picker, and guessing the default would record a choice nobody made.
     voice_score, flag_count = _sent_signals(row.result_json)
+    # A tab that sends no letter (one loaded before kits stored theirs) still
+    # approves the letter the page last generated and saved.
+    cover_letter = cover_letter or row.cover_letter or ""
     app = Application(
         user_id=user.id,
         job_title=row.job_title,
@@ -590,6 +595,21 @@ def approve_kit(
     row.status = "approved"
     row.application_id = app.id
     row.reject_reason = ""
+    row.cover_letter = cover_letter
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def save_cover_letter(db: Session, row: TailorKit, cover_letter: str) -> TailorKit:
+    """Store the letter the review page just generated on the kit, so a reload of
+    /kits/:id shows it again instead of losing a letter the user paid a use for.
+    Only a kit with a tailored result can have one: the page generates it from
+    that result and the kit's JD. Raises ValueError otherwise, which the route
+    maps to a 400."""
+    if not row.result_json:
+        raise ValueError("This kit has no tailored resume yet.")
+    row.cover_letter = cover_letter
     db.commit()
     db.refresh(row)
     return row

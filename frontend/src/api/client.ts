@@ -538,6 +538,12 @@ export async function approveKit(
   return data;
 }
 
+/** Store the letter the review page just generated on the kit, so a reload of
+ * /kits/:id shows it again. It reaches no model and costs nothing. */
+export async function saveKitCoverLetter(id: number, coverLetter: string): Promise<void> {
+  await api.put(`/kits/${id}/cover-letter`, { cover_letter: coverLetter });
+}
+
 export async function rejectKit(id: number, reason: string): Promise<KitOut> {
   const { data } = await api.post<KitOut>(`/kits/${id}/reject`, { reason });
   return data;

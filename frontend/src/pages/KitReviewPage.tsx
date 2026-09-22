@@ -17,6 +17,7 @@ import {
   getKit,
   rejectKit,
   resumeFilename,
+  saveKitCoverLetter,
 } from "../api/client";
 import ChangeLog from "../components/ChangeLog";
 import CoverLetter from "../components/CoverLetter";
@@ -65,7 +66,11 @@ export default function KitReviewPage() {
     setLoadError("");
     getKit(Number(id))
       .then((k) => {
-        if (alive) setKit(k);
+        if (!alive) return;
+        setKit(k);
+        // The letter this kit's page generated before, which the card below
+        // mounts with. It lived in page state alone, so a reload lost it.
+        setCover(k.cover_letter ?? "");
       })
       .catch((e: unknown) => {
         if (alive) setLoadError(apiErrorMessage(e, t("kitReview.loadError")));
@@ -100,6 +105,15 @@ export default function KitReviewPage() {
       return !(carriers.length > 0 && carriers.every((c) => rejectedSet.has(c.id)));
     }).length;
   }, [kit, edits, rejectedSet]);
+
+  /** A new letter from the card: shown at once, and stored on the kit so a
+   * reload shows it again. A failed save says so, because the letter is then
+   * on this page and nowhere else. */
+  function onCoverGenerated(text: string) {
+    setCover(text);
+    if (!kit) return;
+    saveKitCoverLetter(kit.id, text).catch(() => toast("error", t("kitReview.coverSaveError")));
+  }
 
   function mergeReview(updated: KitOut) {
     setKit((k) => (k ? { ...k, ...updated } : k));
@@ -388,7 +402,7 @@ export default function KitReviewPage() {
             <MatchReport gaps={kit.result.score_after.gaps} jdText={kit.jd_text} />
           )}
           {effectiveResume && kit.jd && (
-            <CoverLetter resume={effectiveResume} jd={kit.jd} onGenerated={setCover} initialText={cover} />
+            <CoverLetter resume={effectiveResume} jd={kit.jd} onGenerated={onCoverGenerated} initialText={cover} />
           )}
         </>
       )}

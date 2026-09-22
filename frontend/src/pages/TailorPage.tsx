@@ -1619,9 +1619,13 @@ export default function TailorPage() {
                 </button>
               </Card>
 
+              {/* `initialText`: the card remounts whenever this page does
+                  (Tracker and back), and the letter the user paid for lives
+                  in the store, not in the card. */}
               <CoverLetter
                 resume={effectiveResume}
                 jd={jd}
+                initialText={coverLetterText}
                 onGenerated={(letter) => setTailorState({ coverLetterText: letter, saved: false })}
               />
             </motion.div>

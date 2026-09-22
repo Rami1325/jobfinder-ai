@@ -129,7 +129,8 @@
     "stampFlags": "Needs review",
     "approveError": "Could not approve this kit.",
     "rejectError": "Could not reject this kit.",
-    "downloadError": "Could not download the file."
+    "downloadError": "Could not download the file.",
+    "coverSaveError": "The letter is below, but it wasn't saved with this kit. Copy it before you leave this page."
   },
   "search": {
     "cardTitle": "Find jobs that fit you",

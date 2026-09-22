@@ -168,6 +168,7 @@ from app.models import (
     KitApproveRequest,
     KitBatchRequest,
     KitBatchResult,
+    KitCoverLetterIn,
     KitDetail,
     KitList,
     KitOut,
@@ -1233,6 +1234,24 @@ def kits_get(
     kit_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> KitDetail:
     return kits_core.kit_detail(_owned_kit(db, kit_id, user))
+
+
+@router.put("/kits/{kit_id}/cover-letter")
+def kits_save_cover_letter(
+    kit_id: int,
+    body: KitCoverLetterIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict[str, bool]:
+    """Store the letter the review page just generated on the kit, so a reload of
+    /kits/:id shows it again (it lived in page state alone). It stores text the
+    user already has and reaches no model, so it is uncapped and uncharged."""
+    row = _owned_kit(db, kit_id, user)
+    try:
+        kits_core.save_cover_letter(db, row, body.cover_letter)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"saved": True}
 
 
 @router.post("/kits/{kit_id}/approve", response_model=KitOut)

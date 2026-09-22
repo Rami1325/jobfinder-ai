@@ -716,6 +716,9 @@ export interface KitDetail extends KitOut {
   jd: JDModel | null;
   base_resume: ResumeModel | null; // the master the tailor ran on (diff baseline)
   result: TailorResult | null;
+  // The letter last generated on the review page, or the one approved with the
+  // kit; "" when none was. A reload restores it (PUT /kits/{id}/cover-letter).
+  cover_letter: string;
 }
 export interface KitBatchResult {
   queued: KitOut[];

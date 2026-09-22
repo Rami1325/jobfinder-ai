@@ -9797,6 +9797,131 @@ try {
   fail(`check 37(e) (inbox codes, the other direction) could not run: ${e.message}`);
 }
 
+// ---- 38. a remounted cover letter shows the letter it had ------------------ //
+// Found beside P30-RELOAD-PASS and fixed on 2026-09-22. CoverLetter keeps its
+// text in component state, seeded ONCE from `initialText`, so every page that
+// can remount the card has to hand the letter back. TailorPage mounted it with
+// no `initialText`, so Tracker and back on /app hid a letter the user had paid a
+// use for while tailorStore still held it. KitReviewPage kept its letter in page
+// state alone, so a reload of /kits/:id lost it. tsc sees neither: the prop is
+// optional, and a letter kept nowhere compiles.
+//
+// (a) every `<CoverLetter` element under src/ passes `initialText={…}` with a
+//     real expression (not "", undefined or null), and the card seeds its text
+//     from that prop.
+// (b) KitReviewPage restores the kit's stored letter when the kit loads, and
+//     stores a new one through saveKitCoverLetter, which PUTs `{ cover_letter }`
+//     to the path routes.py mounts.
+try {
+  /** The text of each `<CoverLetter …>` element: from the tag to the `/>` or
+   * `>` that closes it at brace depth 0, so an arrow's `=>` inside a prop is not
+   * read as the end. */
+  const coverElements = (src) => {
+    const out = [];
+    const tag = /<CoverLetter(?=[\s/>])/g;
+    let m;
+    while ((m = tag.exec(src))) {
+      let depth = 0;
+      let end = -1;
+      for (let i = m.index + m[0].length; i < src.length; i++) {
+        const c = src[i];
+        if (c === "{") depth++;
+        else if (c === "}") depth--;
+        else if (depth === 0 && c === ">") {
+          end = i;
+          break;
+        }
+      }
+      if (end === -1) throw new Error(`an unclosed <CoverLetter element at offset ${m.index}`);
+      out.push(src.slice(m.index, end + 1));
+    }
+    return out;
+  };
+  /** '' when the element hands the card its letter back, else what is wrong. */
+  const initialTextProblem = (el) => {
+    const m = /\binitialText=\{([^}]*)\}/.exec(el);
+    if (!m) return "passes no initialText";
+    const expr = m[1].trim();
+    if (["", '""', "''", "``", "undefined", "null"].includes(expr)) return `passes initialText={${expr}}`;
+    return "";
+  };
+
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith(".tsx")) files.push(full);
+    }
+  })(SRC);
+  let mounts = 0;
+  for (const f of files) {
+    const rel = path.relative(SRC, f).split(path.sep).join("/");
+    if (rel === "components/CoverLetter.tsx") continue;
+    for (const el of coverElements(decomment(fs.readFileSync(f, "utf8")))) {
+      mounts++;
+      const problem = initialTextProblem(el);
+      if (problem)
+        fail(
+          `${rel}: <CoverLetter> ${problem}. The card keeps its letter in its own state, so when this page ` +
+            "remounts it (a reload, or Tracker and back) the letter the user paid a use for is hidden. " +
+            "Pass the letter this page keeps as initialText.",
+        );
+    }
+  }
+  if (mounts < 2) throw new Error(`found ${mounts} <CoverLetter> elements under src/, expected TailorPage's and KitReviewPage's`);
+  if (!/\buseState\(\s*initialText\b/.test(decomment(read("components/CoverLetter.tsx"))))
+    fail("components/CoverLetter.tsx no longer seeds its text from initialText, so no page can hand a letter back");
+
+  // Both directions on the element reader and the rule.
+  const probes = [
+    ['<CoverLetter resume={r} jd={jd} onGenerated={(l) => set(l)} />', "passes no initialText"],
+    ['<CoverLetter resume={r} jd={jd} initialText={""} />', 'passes initialText={""}'],
+    ["<CoverLetter\n  resume={r}\n  initialText={undefined}\n/>", "passes initialText={undefined}"],
+    ['<CoverLetter resume={r} onGenerated={(l) => set(l)} initialText={coverLetterText} />', ""],
+    ["<CoverLetter resume={r} initialText={cover} onGenerated={onCoverGenerated} />", ""],
+  ];
+  for (const [el, want] of probes) {
+    const got = coverElements(el);
+    if (got.length !== 1 || got[0] !== el) fail(`check 38's element reader misreads ${JSON.stringify(el)}`);
+    else if (initialTextProblem(got[0]) !== want)
+      fail(`check 38 reads ${JSON.stringify(el)} as ${JSON.stringify(initialTextProblem(got[0]))}, not ${JSON.stringify(want)}`);
+  }
+  if (coverElements("<CoverLetterCard x={1} /> <CoverLetters />").length !== 0)
+    fail("check 38 reads a longer component name as <CoverLetter>");
+
+  // (b) the kit page restores the stored letter and stores a new one.
+  const kitPage = decomment(read("pages/KitReviewPage.tsx"));
+  if (!/\bsetCover\(\s*\w+\.cover_letter\b/.test(kitPage))
+    fail(
+      "pages/KitReviewPage.tsx does not set its letter from the loaded kit's cover_letter, so a reload of /kits/:id " +
+        "shows an empty card over a letter the kit stored",
+    );
+  const [kitCard] = coverElements(kitPage);
+  const handler = /\bonGenerated=\{\s*([A-Za-z_$][\w$]*)\s*\}/.exec(kitCard ?? "");
+  const handlerBody = handler ? fnSource(kitPage, `function ${handler[1]}`) : (kitCard ?? "");
+  if (!/\bsaveKitCoverLetter\(/.test(handlerBody))
+    fail(
+      "pages/KitReviewPage.tsx: the cover letter card's onGenerated does not call saveKitCoverLetter, so a new letter " +
+        "lives in page state alone and a reload of /kits/:id loses it",
+    );
+  const client = decomment(read("api/client.ts"));
+  const PUTS_LETTER = /\bapi\.put\(\s*`\/kits\/\$\{id\}\/cover-letter`\s*,\s*\{\s*cover_letter:\s*\w+\s*\}\s*\)/;
+  if (!PUTS_LETTER.test(fnSource(client, "export async function saveKitCoverLetter")))
+    fail("api/client.ts: saveKitCoverLetter does not PUT `{ cover_letter }` to `/kits/${id}/cover-letter`");
+  if (PUTS_LETTER.test("api.put(`/kits/${id}/cover-letter`, { coverLetter })") ||
+      !PUTS_LETTER.test("api.put(`/kits/${id}/cover-letter`, { cover_letter: coverLetter })"))
+    fail("check 38's client reader cannot tell `{ cover_letter }` from `{ coverLetter }`");
+  const routes = pySource("app/api/routes.py", "check 38");
+  if (routes !== null && !/^@router\.put\(\s*"\/kits\/\{kit_id\}\/cover-letter"/m.test(routes))
+    fail(
+      'backend/app/api/routes.py mounts no PUT "/kits/{kit_id}/cover-letter", which api/client.ts calls: every save ' +
+        "would be a 404, and the kit page would lose its letter on reload as before.",
+    );
+} catch (e) {
+  fail(`remounted cover letter check (check 38) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

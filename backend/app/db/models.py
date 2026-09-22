@@ -337,6 +337,11 @@ class TailorKit(Base):
     # Auto-submit outcome (PLAN 8.4). Nullable/default-empty for the shim.
     submit_note: Mapped[str] = mapped_column(Text, default="")
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # The cover letter last generated on the kit's review page. It lived in that
+    # page's state alone, so a reload of /kits/:id lost a letter the user had paid
+    # a use for. Written by PUT /kits/{id}/cover-letter and by approve, cleared by
+    # a requeue with the rest of the run. "" for the ADD-COLUMN shim.
+    cover_letter: Mapped[str] = mapped_column(Text, default="")
     # Phase 30 / B4.1: the batch charge that paid for this kit, and whether its
     # use already came back. NULL for a kit queued before Phase 30 and for an
     # exempt caller's kit, and a kit with no event is never refunded: it never paid.
