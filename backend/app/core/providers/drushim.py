@@ -15,7 +15,8 @@ contributed nothing — the fan-out reports it as one failed source among five. 
 (the host the company logos were already served from) with the response shape
 unchanged, 10 results a page.
 
-Politeness: at most two pages per search, with a short pause between them.
+Politeness: at most three pages per search (a limit of 25 at ten a page), read
+only as far as the limit needs, with a short pause between them.
 There is no obvious location query param, so location is filtered client-side
 against the posting's city names (Hebrew + English, tolerant substring match).
 
@@ -51,7 +52,11 @@ from app.models import SearchContext
 
 _BASE_URL = "https://www.drushim.co.il"  # public posting pages
 _SEARCH_URL = "https://webapi.drushim.co.il/api/jobs/search"  # the JSON API (see docstring)
-_MAX_PAGES = 2  # politeness cap — never hammer more than two pages per search
+# The request ceiling per search. Pages are 10 results since the host move, and
+# `job_search` clamps a search's limit to 25, so it takes three pages to fill one.
+# At 2 it returned at most 20 hits against a limit of 25. Pages are still read
+# only as far as the limit needs.
+_MAX_PAGES = 3
 _PAGE_DELAY_S = 0.5
 
 # Country-level tokens carry no signal on an Israel-only board: every posting
@@ -210,9 +215,10 @@ class DrushimProvider:
                         "Couldn't reach Drushim's job search. Try again in a minute."
                     ) from e
                 break
-            page_hits = parse_drushim_results(data if isinstance(data, dict) else {})
+            page_all = parse_drushim_results(data if isinstance(data, dict) else {})
+            page_hits = page_all
             if ctx.location.strip():
-                page_hits = [h for h in page_hits if _location_matches(h, ctx.location)]
+                page_hits = [h for h in page_all if _location_matches(h, ctx.location)]
             for hit in page_hits:
                 key = hit.external_id or hit.url
                 if key in seen:
@@ -221,10 +227,13 @@ class DrushimProvider:
                 hits.append(hit)
             if len(hits) >= ctx.limit:
                 break
-            # Only go to page 2 when the API says there is one and page 1 was
+            # Only go on when the API says there is a next page and this one was
             # non-empty (an empty page means the term simply has no results).
+            # Empty BEFORE the location filter: a page whose postings are all in
+            # other cities says nothing about the next page, and stopping there
+            # hid the wanted city's jobs one page further on.
             next_page = data.get("NextPageNumber") if isinstance(data, dict) else None
-            if not page_hits or not isinstance(next_page, int) or next_page <= page:
+            if not page_all or not isinstance(next_page, int) or next_page <= page:
                 break
             page = next_page
         if not hits:

@@ -4499,6 +4499,93 @@ check(
     _dr_search_url("engineer", 1),
 )
 
+# Drushim's pages are 10 results on webapi, and a search limit runs to 25, so a
+# two-page cap returned at most 20 Drushim hits. The provider now reads up to
+# three pages, only as far as the limit needs, and pages past a page whose
+# postings are all in other cities (it stopped there, hiding the wanted city one
+# page on). A fake board, patched where `_http_get` is BOUND, counts requests.
+import copy as _dr_copy  # noqa: E402
+from urllib.parse import parse_qs as _dr_qs, urlparse as _dr_up  # noqa: E402
+
+import app.core.providers.drushim as _dr_mod  # noqa: E402
+
+
+def _dr_page(page: int, total_pages: int, city: str = "תל אביב", size: int = 10) -> dict:
+    """One API page of `size` unique postings in `city`, NextPageNumber as the API sends it."""
+    base = _DRUSHIM_FIXTURE["ResultList"][0]
+    rows = []
+    for i in range(size):
+        row = _dr_copy.deepcopy(base)
+        code = f"{page:02d}{i:02d}77"
+        row["Code"] = int(code)
+        row["JobInfo"]["JobCode"] = int(code)
+        row["JobInfo"]["Link"] = f"/job/{code}/abc/"
+        row["JobInfo"]["IsExpired"] = False
+        row["JobContent"]["Addresses"] = [{"City": city, "CityEnglish": ""}]
+        rows.append(row)
+    return {"ResultList": rows, "NextPageNumber": page + 1 if page < total_pages else 0}
+
+
+def _dr_run(limit: int, pages: dict, location: str = "", fail_page: int = 0):  # noqa: ANN202
+    asked: list[int] = []
+
+    def fake_get(url: str) -> str:
+        page = int(_dr_qs(_dr_up(url).query)["page"][0])
+        asked.append(page)
+        if page == fail_page:
+            raise OSError("board down")
+        return _json.dumps(pages.get(page, {"ResultList": [], "NextPageNumber": 0}), ensure_ascii=False)
+
+    saved = (_dr_mod._http_get, _dr_mod._PAGE_DELAY_S)
+    _dr_mod._http_get, _dr_mod._PAGE_DELAY_S = fake_get, 0
+    try:
+        got = _dr_mod.DrushimProvider().search(SearchContext(job_title="מפתח", location=location, limit=limit))
+        return got, asked
+    except Exception as e:  # noqa: BLE001 - the error is what some rows assert on
+        return e, asked
+    finally:
+        _dr_mod._http_get, _dr_mod._PAGE_DELAY_S = saved
+
+
+_dr_four = {p: _dr_page(p, 4) for p in range(1, 5)}
+_dr_25, _dr_25_asked = _dr_run(25, _dr_four)
+_dr_10, _dr_10_asked = _dr_run(10, _dr_four)
+_dr_12, _dr_12_asked = _dr_run(12, _dr_four)
+check(
+    "drushim pages: a limit of 25 reads pages 1-3 and returns 25 hits (at two pages it returned 20), a limit of 10 "
+    "reads one page and 12 reads two — never a page the limit does not need — and no search reads a fourth",
+    isinstance(_dr_25, list) and len(_dr_25) == 25 and _dr_25_asked == [1, 2, 3]
+    and len({h.external_id for h in _dr_25}) == 25
+    and isinstance(_dr_10, list) and len(_dr_10) == 10 and _dr_10_asked == [1]
+    and isinstance(_dr_12, list) and len(_dr_12) == 12 and _dr_12_asked == [1, 2]
+    and _dr_mod._MAX_PAGES == 3,
+    f"25 -> {len(_dr_25) if isinstance(_dr_25, list) else _dr_25} {_dr_25_asked} | 10 -> {_dr_10_asked} | "
+    f"12 -> {_dr_12_asked}",
+)
+_dr_short, _dr_short_asked = _dr_run(25, {1: _dr_page(1, 2), 2: _dr_page(2, 2)})
+_dr_down, _dr_down_asked = _dr_run(25, _dr_four, fail_page=2)
+check(
+    "drushim pages twin: a board with two pages stops when the API names no next page (20 hits, pages 1-2), and a "
+    "failure on page 2 keeps page 1's hits instead of failing the board",
+    isinstance(_dr_short, list) and len(_dr_short) == 20 and _dr_short_asked == [1, 2]
+    and isinstance(_dr_down, list) and len(_dr_down) == 10 and _dr_down_asked == [1, 2],
+    f"{_dr_short_asked} {_dr_down_asked}",
+)
+_dr_city, _dr_city_asked = _dr_run(
+    5, {1: _dr_page(1, 3, city="חיפה"), 2: _dr_page(2, 3, city="תל אביב"), 3: _dr_page(3, 3)}, location="תל אביב"
+)
+_dr_nowhere, _dr_nowhere_asked = _dr_run(
+    5, {p: _dr_page(p, 3, city="חיפה") for p in range(1, 4)}, location="תל אביב"
+)
+check(
+    "drushim pages: a first page whose postings are all in other cities no longer ends the search — the wanted city "
+    "one page on is returned — while a city found on no page still reads three pages at most and says no results",
+    isinstance(_dr_city, list) and len(_dr_city) == 5 and _dr_city_asked == [1, 2]
+    and all("תל אביב" in h.location for h in _dr_city)
+    and isinstance(_dr_nowhere, _LpNoResults) and _dr_nowhere_asked == [1, 2, 3],
+    f"{_dr_city_asked} {type(_dr_nowhere).__name__} {_dr_nowhere_asked}",
+)
+
 # 14d. Hebrew pipeline support: deterministic language detection, language-aware
 # prompts (Task-tag routing intact), Hebrew keyword scoring that actually matches.
 from app.core.lang import detect_language, resume_language  # noqa: E402
