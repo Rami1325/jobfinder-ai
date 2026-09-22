@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import html as _html
 import re
+import time
 import urllib.error
 import urllib.parse
 
@@ -71,6 +72,12 @@ _PAGE_SIZE = 10
 # `ctx.limit`: `job_search` clamps the limit to 25 (three pages here), but this
 # is the board that throttles, so no caller can make one query cost more.
 _MAX_PAGES = 3
+# A pause before each LATER page of one query, the politeness Drushim already
+# keeps. The pages used to go back to back, and since pages are ten a query can
+# make three requests in a row to the board that rate-limits (R2's live run took
+# three 429s on 2026-09-22). `_pause` is the seam the smoke test records through.
+_PAGE_DELAY_S = 0.5
+_pause = time.sleep
 
 
 def _build_search_url(
@@ -183,6 +190,8 @@ def _fetch_cards(ctx: SearchContext) -> list[dict[str, str]]:
     pages = min(_MAX_PAGES, -(-max(1, ctx.limit) // _PAGE_SIZE))  # ceil, at least one
     for page in range(pages):
         start = page * _PAGE_SIZE
+        if page > 0:
+            _pause(_PAGE_DELAY_S)
         try:
             last_html = _http_get(
                 _build_search_url(

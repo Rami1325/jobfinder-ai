@@ -2224,6 +2224,8 @@ from app.core.providers.base import NoResultsError as _LpNoResults  # noqa: E402
 from app.models import SearchContext as _LpCtx  # noqa: E402
 
 _LP_REAL_GET = _lp_mod._http_get
+_LP_REAL_PAUSE = _lp_mod._pause
+_lp_pauses: list[float] = []  # every pause the last _lp_run asked for, in order
 
 
 def _lp_card(row: int) -> str:
@@ -2254,7 +2256,9 @@ def _lp_run(limit: int, total: int = 100, fail: dict | None = None, shift_at: in
         rows = range(first + 1, min(first + 10, total) + 1)
         return "<ul>" + "".join(_lp_card(r) for r in rows) + "</ul>"
 
+    _lp_pauses.clear()
     _lp_mod._http_get = _fake_get
+    _lp_mod._pause = _lp_pauses.append  # recorded, never slept: the suite stays fast
     try:
         cards = _lp_mod._fetch_cards(_LpCtx(job_title="AI Engineer", location="Israel", limit=limit))
         err = None
@@ -2262,6 +2266,7 @@ def _lp_run(limit: int, total: int = 100, fail: dict | None = None, shift_at: in
         cards, err = [], e
     finally:
         _lp_mod._http_get = _LP_REAL_GET
+        _lp_mod._pause = _LP_REAL_PAUSE
     rows_out = [int(c["url"].rsplit("-", 1)[1]) - 4400000000 for c in cards]
     return starts, rows_out, err
 
@@ -2344,9 +2349,22 @@ check(
     _lp_big[0] == [0, 10, 20],
     str(_lp_big[0]),
 )
+_lp_run(25)
+_lp_pause25 = list(_lp_pauses)
+_lp_run(10)
+_lp_pause10 = list(_lp_pauses)
+_lp_run(25, total=14)
+_lp_pause_short = list(_lp_pauses)
 check(
-    "linkedin paging: the fake board was restored (the real _http_get is bound again)",
-    _lp_mod._http_get is _LP_REAL_GET,
+    "linkedin paging: a pause of _PAGE_DELAY_S comes before each LATER page of a query (two for three pages), "
+    "none before the first or for a one-page query, and none after the page that ends the loop",
+    _lp_pause25 == [_lp_mod._PAGE_DELAY_S] * 2 and _lp_mod._PAGE_DELAY_S > 0
+    and _lp_pause10 == [] and _lp_pause_short == [_lp_mod._PAGE_DELAY_S],
+    f"{_lp_pause25} {_lp_pause10} {_lp_pause_short}",
+)
+check(
+    "linkedin paging: the fake board was restored (the real _http_get and pause are bound again)",
+    _lp_mod._http_get is _LP_REAL_GET and _lp_mod._pause is _LP_REAL_PAUSE,
 )
 
 _fb = _fallback_context(resume)  # stub resume: Engineer at Acme Corp
