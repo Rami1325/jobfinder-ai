@@ -53,3 +53,7 @@ backend/tests/fixtures/ab/
 # Inbox classifier A/B run outputs (backend/tests/inbox_eval.py --out). The
 # fixtures themselves are synthetic and tracked; the measured runs are not.
 backend/tests/fixtures/inbox_eval/results/
+
+# Chrome Web Store build output (extension/pack_store.py) and the listing's
+# screenshots and promo tile. Rebuilt from the tracked extension/ at will.
+extension-dist/
