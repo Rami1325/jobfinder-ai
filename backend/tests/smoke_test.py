@@ -2604,6 +2604,29 @@ check(
     {h.url for h in _dup} == {"https://li/a", "https://li/b", "https://dr/b"},
     str([h.url for h in _dup]),
 )
+# A same-board twin (a relist listed beside its original) keeps its card date on the hit it is folded into; a
+# twin from ANOTHER board does not (that is another board's date). Before 2026-09-22 the date was dropped with the
+# twin, so the first search that saw both listings could not label the relist "older".
+_tw = _interleave_and_dedupe(
+    {
+        "linkedin": [
+            JobHit(source="linkedin", title="AI Engineer", company="Pentera", url="https://li/relist", posted_at="2026-09-20"),
+            JobHit(source="linkedin", title="AI Engineer", company="Pentera", url="https://li/original", posted_at="2026-09-07"),
+            JobHit(source="linkedin", title="AI Engineer", company="Pentera", url="https://li/undated"),
+        ],
+        "comeet": [
+            JobHit(source="comeet", title="AI Engineer", company="Pentera", url="https://cm/p", posted_at="2026-08-01"),
+        ],
+    },
+    limit=10,
+)
+check(
+    "same-board twin: the dedupe keeps a folded same-board listing's card date on the kept hit (an undated twin "
+    "adds nothing), while a cross-board twin's date is not kept — its link still is",
+    len(_tw) == 1 and _tw[0].url == "https://li/relist" and _tw[0].twin_posted == ["2026-09-07"]
+    and [a["url"] for a in _tw[0].also_on] == ["https://cm/p", "https://li/original", "https://li/undated"],
+    str([(h.url, h.twin_posted, h.also_on) for h in _tw]),
+)
 
 # 14b-4. Relevance-first selection (PLAN 15.6): title_relevance is a pure
 # Hebrew-aware query↔title match; the fan-out fills the limit fresh+relevant
@@ -3664,6 +3687,16 @@ check(
     == "2026-01-01T09:00:00-05:00"
     and _gh_earliest("2026-09-02", {"first_published": None}, None) == "2026-09-02"
     and _gh_earliest("2026-09-20", {}, _GhSighting(first_posted_at="junk")) == "2026-09-20",
+)
+check(
+    "earliest_board_date: a same-board twin's date counts — an earlier twin wins, verbatim; a tie still goes to "
+    "the card; junk in twins is ignored — and JobMatch.twin_posted_at never reaches a dump (the response, a stream "
+    "frame or the history)",
+    _gh_earliest("2026-09-20", {}, None, twins=("2026-09-07",)) == "2026-09-07"
+    and _gh_earliest(_ebd_card, {}, None, twins=("2026-09-20T00:00:00",)) is _ebd_card
+    and _gh_earliest("2026-09-20", {}, None, twins=("junk", "")) == "2026-09-20"
+    and "twin_posted_at" not in JobMatch(title="x", twin_posted_at=["2026-09-07"]).model_dump()
+    and "twin_posted_at" not in JobMatch(title="x", twin_posted_at=["2026-09-07"]).model_dump_json(),
 )
 # The new field is a PRINTED date and never an age: `long_open` keeps the two
 # bases its unmeasured thresholds were tuned on. A 2020 first_posted_at on its
@@ -10025,6 +10058,22 @@ try:
         f"sighted={[(m.url, m.stale) for m in _od_e1.matches]} "
         f"unsighted={[(m.url, m.stale) for m in _od_e2.matches]}",
     )
+    # (e-bis) THE FIRST RUN THAT SEES BOTH LISTINGS (2026-09-22). No sightings at all: the two Pentera listings arrive
+    # on the same board in one search, the relist ranked first. The dedupe folds the original into the relist's
+    # also_on, and its date used to go with it, so this run printed no "older" chip. Now the relist is labelled with
+    # the original's date, and the twin rides no response.
+    _od_both = [("AI Engineer", "Pentera", "2026-09-20", _OD_PENT), ("AI Engineer", "Pentera", "2026-09-07", _OD_PENT_FIRST)]
+    _od_eb, _ = _od_search(_od_both, lambda keys: {})
+    _od_ebm = _od_eb.matches[0] if _od_eb.matches else JobMatch()
+    check(
+        "older date (e-bis): the first search that sees a relist AND its original on one board labels the relist with "
+        "the original's date — with no sighting to remember it — and folds the original into also_on",
+        len(_od_eb.matches) == 1 and _od_ebm.url == _OD_PENT
+        and _od_ebm.stale is True and _od_ebm.first_posted_at == "2026-09-07" and _od_ebm.posted_at == "2026-09-20"
+        and [a.url for a in _od_ebm.also_on] == [_OD_PENT_FIRST]
+        and "twin_posted_at" not in _od_eb.model_dump_json(),
+        f"{[(m.url, m.stale, m.first_posted_at) for m in _od_eb.matches]}",
+    )
 
     # (f) BOTH `_build_match` branches. The cache branch skips the fetch and the
     # model, so it is the one that gets forgotten; the fetch and the JD_FIT call
@@ -11731,6 +11780,26 @@ try:
                        sighting=_gh_after[_GH_KEY], url="https://sight.test/1",
                        now=_GH_T0) is None,
         str(_gh_after.get(_GH_KEY)),
+    )
+
+    # A same-board twin's card date reaches the sighting: the row keeps the EARLIEST card date any listing of the role
+    # carried in this run, the twin's included, so a later run that sees only the relist still prints the original's
+    # date. Own content key, so the rows the checks around it drive are untouched.
+    _gh_twin_key = ("linkedin", _gh_ckey("AI Engineer", "TwinCo"))
+    _gh_twin_match = JobMatch(title="AI Engineer", company="TwinCo", url="https://sight.test/relist", source="linkedin",
+                              posted_at="2026-06-20", twin_posted_at=["2026-06-02", "junk"])
+    _gh_record_sightings(_gh_db, [_gh_twin_match], _GH_T0)
+    _gh_twin_row = _gh_load_sightings(_gh_db, [_gh_twin_key], now=_GH_T0).get(_gh_twin_key)
+    _gh_plain_key = ("linkedin", _gh_ckey("AI Engineer", "PlainCo"))
+    _gh_record_sightings(_gh_db, [JobMatch(title="AI Engineer", company="PlainCo", url="https://sight.test/plain",
+                                           source="linkedin", posted_at="2026-06-20")], _GH_T0)
+    _gh_plain_row = _gh_load_sightings(_gh_db, [_gh_plain_key], now=_GH_T0).get(_gh_plain_key)
+    check(
+        "sightings: a same-board twin's earlier card date is the row's first_posted_at (junk ignored), and a match with "
+        "no twin still records its own card date",
+        _gh_twin_row is not None and _gh_twin_row.first_posted_at == "2026-06-02"
+        and _gh_plain_row is not None and _gh_plain_row.first_posted_at == "2026-06-20",
+        f"{_gh_twin_row} {_gh_plain_row}",
     )
 
     # A URL CHANGE INSIDE ONE RUN is exactly what `reposted` reads: same board,

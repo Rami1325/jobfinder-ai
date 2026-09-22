@@ -274,7 +274,13 @@ def record_sightings(db: Session, matches: list[JobMatch], now: datetime) -> Non
 
     gap = timedelta(days=SIGHTING_GAP_DAYS)
     for (source, key), match in batch.items():
+        # The earliest CARD date any listing of this role carried in this run:
+        # this one, or a same-board twin the search folded into it. Never
+        # `match.first_posted_at` (below), which may have been read from this row.
         posted_at = match.posted_at or ""
+        for twin in match.twin_posted_at:
+            if _replaces(twin, posted_at):
+                posted_at = twin
         row = existing.get((source, key))
         if row is None:
             db.add(

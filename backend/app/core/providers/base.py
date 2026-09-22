@@ -55,6 +55,12 @@ class JobHit:
     # found on other boards, as {"source": ..., "url": ...}. Filled by the
     # fan-out's dedupe, never by providers.
     also_on: list = field(default_factory=list)
+    # The card dates of OTHER listings of this role on this hit's OWN board that
+    # the dedupe folded into it (a relist shown beside its original). Filled by
+    # the fan-out's dedupe, never by providers. Their dates used to be dropped
+    # with them, so the first run that saw both listings could not label the
+    # relist "older", and the sighting kept only the kept listing's date.
+    twin_posted: list = field(default_factory=list)
     # Older than the search's max_age_days but kept because its title matches
     # the searched keywords (PLAN 15.6 backfill). Set by the fan-out's tiering,
     # never by providers; the UI marks these with the post date.

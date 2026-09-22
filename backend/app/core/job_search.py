@@ -349,6 +349,11 @@ def _interleave_into(
         if prior is not None:
             if hit.url and all(a.get("url") != hit.url for a in prior.also_on):
                 prior.also_on.append({"source": hit.source, "url": hit.url})
+            # A twin on the SAME board is another listing of this role there (a
+            # relist beside its original): keep its card date, which is a date
+            # that board stated for the role. Another board's date is not.
+            if hit.source == prior.source and hit.posted_at:
+                prior.twin_posted.append(hit.posted_at)
             continue
         if ck:
             by_content[ck] = hit
@@ -1028,7 +1033,7 @@ def search_jobs(
         # True, and an undated role (`""`) is never labelled older.
         full_hit = cached is not None and cached.is_full_match
         card_date = hit.posted_at or (cached.posted_at if full_hit else "")
-        first_posted_at = earliest_board_date(card_date, hit.raw, sighting)
+        first_posted_at = earliest_board_date(card_date, hit.raw, sighting, twins=tuple(hit.twin_posted))
         stale = hit.stale or not posted_within(first_posted_at, ctx.max_age_days, now)
         if cached is not None and cached.is_full_match:
             # Tier 1 (PLAN 12.4): this exact posting was scored against this
@@ -1081,6 +1086,7 @@ def search_jobs(
                 location=hit.location or cached.location,
                 posted_at=card_date,
                 first_posted_at=first_posted_at,
+                twin_posted_at=list(hit.twin_posted),
                 source=hit.source,
                 logo_url=hit.logo_url or cached.logo_url,
                 also_on=[AlsoOn(**a) for a in hit.also_on],
@@ -1132,6 +1138,7 @@ def search_jobs(
                     location=hit.location,
                     posted_at=card_date,
                     first_posted_at=first_posted_at,
+                    twin_posted_at=list(hit.twin_posted),
                     source=hit.source,
                     logo_url=hit.logo_url,
                     also_on=[AlsoOn(**a) for a in hit.also_on],

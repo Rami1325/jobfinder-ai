@@ -1365,6 +1365,11 @@ class JobMatch(BaseModel):
     # "" means unknown. Never `first_seen_at`, which is our own lower bound and
     # not a date any board stated.
     first_posted_at: str = ""
+    # The card dates of other listings of this role on the same board that the
+    # search folded into this one (`JobHit.twin_posted`), so `record_sightings`
+    # keeps the earliest of them. Internal: EXCLUDED from every dump, so it
+    # never reaches a response, a stream frame or the history.
+    twin_posted_at: list[str] = Field(default_factory=list, exclude=True)
     source: str = "linkedin"  # which job board this came from (see PROVIDERS registry)
     logo_url: str = ""  # company logo from the board; empty when it has none
     also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards

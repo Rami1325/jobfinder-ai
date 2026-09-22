@@ -217,14 +217,17 @@ def board_date_is_day(value: str) -> bool:
     return read is not None and read[1]
 
 
-def earliest_board_date(posted_at: str, raw: dict | None, sighting: Sighting | None) -> str:
+def earliest_board_date(
+    posted_at: str, raw: dict | None, sighting: Sighting | None, twins: tuple[str, ...] = ()
+) -> str:
     """The earliest date a BOARD stated for this role, returned VERBATIM, or "".
 
-    Three sources: this card (`posted_at`), Greenhouse's `raw["first_published"]`
+    Four sources: this card (`posted_at`), Greenhouse's `raw["first_published"]`
     (the same listing's original publish date, while its `posted_at` is
-    `updated_at`), and the sighting's `first_posted_at` (the earliest card date
+    `updated_at`), the sighting's `first_posted_at` (the earliest card date
     an earlier listing of the same source + title|company carried in the
-    current run). NEVER `first_seen_at`: that is our own lower bound, not a
+    current run), and `twins`, the card dates of other listings of the role on
+    the same board that this search folded into this one (`JobHit.twin_posted`). NEVER `first_seen_at`: that is our own lower bound, not a
     date any board stated, and printing it as one would attribute to the board
     a claim it never made.
 
@@ -239,6 +242,7 @@ def earliest_board_date(posted_at: str, raw: dict | None, sighting: Sighting | N
         posted_at or "",
         str((raw or {}).get("first_published") or ""),
         sighting.first_posted_at if sighting is not None else "",
+        *twins,
     )
     best_text, best_dt = "", None
     for text in candidates:
