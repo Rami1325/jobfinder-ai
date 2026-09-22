@@ -188,8 +188,24 @@ export default function TailorPage() {
   // against. Offered, never applied — see DraftRestoreBar.
   const [draft, setDraft] = useState<ResumeDraft | null>(null);
 
-  useEffect(() => {
-    if (getTailorState().resume) return; // already loaded (or uploaded) this session
+  // What the fetch below has found, because an empty store means two different
+  // things. Until it answers, the store is empty for a person who HAS a resume,
+  // and the page painted the upload card — "No resume yet? Build one from
+  // scratch" — to them for the length of the request: seconds, on the document
+  // load a sign-in redirect makes (seen on production, 2026-09-22). A FAILED
+  // fetch is the same unknown, not a zero: `GET /profile/resume` answers a
+  // person with no resume with a 200 and `null`, so a throw means we could not
+  // look, and the card would invite a first upload over a saved resume.
+  const [masterLoad, setMasterLoad] = useState<"loading" | "done" | "failed">(() =>
+    getTailorState().resume ? "done" : "loading",
+  );
+
+  function loadMaster() {
+    if (getTailorState().resume) {
+      setMasterLoad("done"); // already loaded (or uploaded) this session
+      return;
+    }
+    setMasterLoad("loading");
     (async () => {
       try {
         // /auth/me alongside the master, because the draft is offered only to
@@ -208,11 +224,16 @@ export default function TailorPage() {
           const d = readDraft();
           if (offerDraft(d, m.resume)) setDraft(d);
         }
+        setMasterLoad("done");
       } catch {
-        /* no saved resume yet */
+        setMasterLoad("failed");
       }
     })();
-  }, []);
+  }
+
+  useEffect(() => {
+    loadMaster();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Restore as a normal unsaved edit: the master goes on the undo stack, so
    * ResumeEditBar immediately offers the same Undo and Save as any other edit
@@ -1410,6 +1431,23 @@ export default function TailorPage() {
             // path.
             onReplace={isMaster ? onParsed : undefined}
           />
+        ) : masterLoad === "loading" ? (
+          // Where the paper will be, the height DocumentPanel's file view gives
+          // its own loading state. Never the upload card: see `masterLoad`.
+          <div role="status" aria-label={t("upload.loading")}>
+            <Skeleton className="h-[70vh] w-full" />
+          </div>
+        ) : masterLoad === "failed" ? (
+          // Not the upload card either: we could not look, so we cannot say
+          // there is nothing there.
+          <Card>
+            <p role="alert" className="text-sm text-danger">
+              {t("upload.loadFailed")}
+            </p>
+            <Button variant="secondary" className="mt-3" onClick={loadMaster}>
+              {t("common:actions.retry")}
+            </Button>
+          </Card>
         ) : (
           <Card>
             <CardTitle>{t("upload.title")}</CardTitle>

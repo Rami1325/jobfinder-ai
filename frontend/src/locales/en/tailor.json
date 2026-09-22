@@ -18,7 +18,9 @@
   },
   "upload": {
     "title": "1 · Your resume",
-    "buildLink": "No resume yet? Build one from scratch →"
+    "buildLink": "No resume yet? Build one from scratch →",
+    "loading": "Loading your resume…",
+    "loadFailed": "Couldn't load your saved resume."
   },
   "jd": {
     "title": "2 · Target job description",
