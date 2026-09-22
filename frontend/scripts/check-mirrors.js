@@ -10174,6 +10174,24 @@ try {
     if (!new RegExp(`\\bref=\\{\\s*${call[2]}\\s*\\}`).test(aside) || !/tabIndex=\{\s*-1\s*\}/.test(aside))
       fail(`components/DocumentPanel.tsx: the drawer's <aside> must carry ref={${call[2]}} and tabIndex={-1}, or focus has nowhere to land`);
   }
+  // BlockEditSheet: modal whenever it shows a block; its first field autofocuses,
+  // which is why the hook reads the opener in render rather than in its effect.
+  const sheet = decomment(read("components/BlockEditSheet.tsx"));
+  const scall = /\buseDialogFocus\(\s*open\s*&&\s*!!draft\s*,\s*(\w+)\s*\)/.exec(sheet);
+  if (!scall) fail("components/BlockEditSheet.tsx does not call useDialogFocus(open && !!draft, <ref>)");
+  else {
+    const sdialog = /<motion\.div\b(?=[^>]*role="dialog")[\s\S]*?>/.exec(sheet)?.[0] ?? "";
+    if (!new RegExp(`\\bref=\\{\\s*${scall[1]}\\s*\\}`).test(sdialog) || !/tabIndex=\{\s*-1\s*\}/.test(sdialog))
+      fail(`components/BlockEditSheet.tsx: the role="dialog" element must carry ref={${scall[1]}} and tabIndex={-1}`);
+  }
+  const hook = decomment(read("hooks/useDialogFocus.ts"));
+  const effectAt = hook.indexOf("useEffect(");
+  const readAt = hook.indexOf("document.activeElement instanceof HTMLElement ? document.activeElement");
+  if (effectAt === -1 || readAt === -1 || readAt > effectAt)
+    fail(
+      "hooks/useDialogFocus.ts must read the opener BEFORE its effect, in the render that opens the overlay: an " +
+        "autoFocus field inside takes focus during the commit, so an effect records that field as the opener",
+    );
   const modal = decomment(read("components/ui/Modal.tsx"));
   const mcall = /\buseDialogFocus\(\s*open\s*,\s*(\w+)\s*\)/.exec(modal);
   if (!mcall) fail("components/ui/Modal.tsx does not call useDialogFocus(open, <ref>)");

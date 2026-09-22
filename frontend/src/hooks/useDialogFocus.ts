@@ -1,4 +1,4 @@
-import { type RefObject, useEffect } from "react";
+import { type RefObject, useEffect, useRef } from "react";
 
 /** What Tab can reach inside an overlay, in document order. */
 const FOCUSABLE =
@@ -38,9 +38,21 @@ const stack: RefObject<HTMLElement | null>[] = [];
  * `lg`, yet after it opened `document.activeElement` stayed on the "Check my
  * CV" pill OUTSIDE it, and `Modal` had neither a trap nor a way back. */
 export function useDialogFocus(active: boolean, ref: RefObject<HTMLElement | null>): void {
+  // The opener is read in the RENDER that opens the overlay, before anything
+  // inside it mounts: an `autoFocus` field (BlockEditSheet's first input) takes
+  // focus during the commit, before any effect runs, so an effect reading
+  // `document.activeElement` records that field and has nothing to hand focus
+  // back to. Reading the DOM in render is safe here: it writes nothing, and a
+  // StrictMode re-render reads the same element, because focus has not moved yet.
+  const opener = useRef<HTMLElement | null>(null);
+  const wasActive = useRef(false);
+  if (active && !wasActive.current && typeof document !== "undefined")
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  wasActive.current = active;
+
   useEffect(() => {
     if (!active) return;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const back = opener.current;
     const node = ref.current;
     if (node && !node.contains(document.activeElement)) node.focus({ preventScroll: true });
     stack.push(ref);
@@ -67,7 +79,7 @@ export function useDialogFocus(active: boolean, ref: RefObject<HTMLElement | nul
       // somewhere else on purpose stays where they put it.
       const now = document.activeElement;
       const lost = !now || now === document.body || (!!node && node.contains(now));
-      if (lost && opener?.isConnected) opener.focus({ preventScroll: true });
+      if (lost && back?.isConnected && !node?.contains(back)) back.focus({ preventScroll: true });
     };
     // `ref` is stable for the overlay's life; re-running on it would move focus again.
     // eslint-disable-next-line react-hooks/exhaustive-deps

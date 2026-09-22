@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
@@ -6,6 +6,7 @@ import { Trash2, X } from "lucide-react";
 import { isEntryKind, readBlock, removeBlock, writeBlock, type Values } from "../lib/resumeBlocks";
 import { Button } from "./ui";
 import { cn } from "../lib/cn";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 import type { ResumeModel } from "../types";
 
 interface Props {
@@ -78,6 +79,9 @@ export default function BlockEditSheet({
   const { t } = useTranslation("tailor");
   const titleId = useId();
   const open = path !== null;
+  // Tab stays in the sheet and focus returns to the paper when it closes; the
+  // first field's `autoFocus` still takes focus on open (the hook leaves it).
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   const draft = useMemo(() => (path ? readBlock(resume, path) : null), [resume, path]);
   const [values, setValues] = useState<Values>({});
@@ -87,6 +91,8 @@ export default function BlockEditSheet({
     if (!draft) return;
     setValues(Object.fromEntries(draft.fields.map((f) => [f.key, f.value])));
   }, [draft?.path]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useDialogFocus(open && !!draft, sheetRef);
 
   // An index can shift out from under an open sheet (a bullet above it was
   // removed). Say so rather than silently editing the wrong thing.
@@ -196,6 +202,8 @@ export default function BlockEditSheet({
             exit={{ opacity: 0 }}
           />
           <motion.div
+            ref={sheetRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
@@ -204,7 +212,7 @@ export default function BlockEditSheet({
             exit={hidden}
             transition={{ type: "tween", duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             className={cn(
-              "fixed z-50 flex flex-col border-line bg-panel shadow-panel",
+              "fixed z-50 flex flex-col border-line bg-panel shadow-panel outline-none",
               // dvh, not vh: on a phone the visual viewport shrinks when the
               // keyboard opens, and vh does not notice.
               "inset-x-0 bottom-0 max-h-[85dvh] rounded-t-xl2 border-t",
