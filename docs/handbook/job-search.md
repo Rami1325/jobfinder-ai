@@ -119,3 +119,15 @@ The owner's report: the alert email's older-posting tag printed "today's date" (
 **Separate defects found here, fixed since by `debt/board-fixes`:**
 - LinkedIn's guest search pages hold 10 cards, not 25, so starts (0, 25) never saw rows 11-25; Pentera 4462220726 sat at row 11 of the app's exact r86400 query. Fixed: `_PAGE_SIZE = 10`, starts 0, 10, 20 (the "LinkedIn's guest search pages by TEN" bullet under *The search itself, and the Jobs card*).
 - Drushim's `Date` is a naive timestamp that `parse_board_date` read as UTC. It was measured to be Israel wall time, so those postings read 2-3 h young. Fixed: `drushim._israel_wall_time` stamps Asia/Jerusalem (the "Drushim's dates are Israel WALL time" bullet in *One clock, one frame* above).
+
+### Ghost postings — measured
+
+**Nothing is measured yet (2026-09-22).** The precision of each ghost signal lands here, per kind, with n and the Wilson 95% lower bound, the way the geo section records "precision is high, recall roughly a third to a half". Until then it is unmeasured: never "high", never 100%, and never "no firings".
+- **The decision rule and the instrument exist; the data does not.** PLAN.md 28.5 holds the rule, committed before any data. `backend/tests/ghost_eval.py` is the instrument (`testing.md`). No real run has been made: `ghost_eval --report` prints "no worksheets", and the main checkout has no `backend/tests/fixtures/ghost_eval/` folder. So there is no corpus, no worksheet and no spend ledger.
+- **What the rule concludes at n = 0: badges only, exactly as shipped.**
+  - Nothing is hidden on `evergreen`, `long_open` or `reposted`.
+  - `likely` postings stay in the daily email with their chip.
+  - `LONG_OPEN_WEAK_DAYS = 30`, `LONG_OPEN_STRONG_DAYS = 60` and each rule's strength stay TUNED, NOT MEASURED. The rule does not let this round's data move them.
+  - `closed` is filtered as shipped. A LIVE posting behind a LinkedIn banner would be a P0, and nobody has looked for one yet.
+- **Two halves no local run can measure.** `long_open` by `first_seen` cannot reach its 30-day line before about 2026-10-05, because `posting_sightings` began on 2026-09-05. `reposted` needs our own sightings too. Both are judged from production rows only, read-only, and neither has been read yet.
+- **`--stub` output is never a result.** Its postings are synthetic ("Linked Co 2", LinkedIn ids 4000000002 to 4000000004). Labelling them would present test data as a measurement.

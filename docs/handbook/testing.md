@@ -75,6 +75,7 @@ Each of these is a way the measurement could lie:
   - The ledger (`ledger.json`) is rewritten on every admit and every settle, with in-flight calls at their worst case, so a crashed run still counts.
   - A fourth paid run, a run within 10 minutes of the last, a `MODEL_ID` other than `--expect-model` (default `gpt-5.4-mini`), a client that is not `OpenAIClient`, and a missing `--price` are each refused before any board is reached. The price is required because the guard cannot bound money with a price it guessed.
   - The metering tally crossing the scoring pool is checked against the guard's own sum. In `--stub`, a scoring pool that drops `copy_context` goes red.
+  - One residual it cannot see: the OpenAI SDK's own retries. `OpenAIClient` builds its client with `max_retries=2` (`llm/client.py`), so a call the guard admitted once and that timed out can be billed up to three times. Set a hard spend limit on the OpenAI project before a real run.
 - **The key.**
   - It is read from `--env-file` (default: this checkout's `backend/.env`, else the main checkout's, found through git's common dir), and only `OPENAI_API_KEY` and `MODEL_ID` are read.
   - It is never printed or stored.
@@ -89,7 +90,7 @@ Each of these is a way the measurement could lie:
 - The replay check was `not diffs`, so a comparison that could never report a difference passed for ever. It now also has to report a planted verdict change, and only that one.
 - The tripwire mutation still recorded the attempt, so it showed nothing. The check now reads whether the tripwire is installed and records, and it never calls the real resolver to find out.
 
-**Measured results: none yet.** The three real runs are next, then the owner's logged-in checks, then `--report`.
+**Measured results: none yet (2026-09-22).** No real run has been made. `--report` prints `no worksheets under …\backend\tests\fixtures\ghost_eval` and exits 1. That folder does not exist in the main checkout, so there is no corpus, no worksheet and no ledger: $0.00 spent, 0 of 75 calls, 0 of 3 paid runs. `--stub` was re-run the same day and printed `ghost_eval --stub: 137 checks passed, 0 failed`. PLAN.md 28.5 (*The result, 2026-09-22*) has the per-cell table, what the rule concludes from it, and a question the owner answers before R1: no bar reads the fit score the model calls produce. Next come the three real runs at the owner's machine, then the owner's logged-in checks, then `--report`.
 
 ## The frontend's only test suite: `check-mirrors.js`
 
