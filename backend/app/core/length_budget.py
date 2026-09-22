@@ -234,13 +234,109 @@ def _compress_descriptions(resume: ResumeModel, sentences: int) -> ResumeModel |
     return out if changed else None
 
 
-def _trim_project_bullets(resume: ResumeModel, keep: int) -> ResumeModel | None:
+# A testing role, read off the posting's own title and required tools. Bare
+# "automation" is deliberately NOT here: this app's primary market is full of
+# business-automation roles (n8n, lead pipelines) that are not test automation.
+_TESTING_TITLE_RE = re.compile(r"\b(?:qa|sdet|quality assurance|tester|test|testing)\b", re.I)
+_TEST_FRAMEWORKS = ("playwright", "selenium", "cypress", "pytest", "vitest", "jest", "appium",
+                    "testng", "junit", "robot framework", "mocha", "webdriverio")
+# What a bullet has to say to count as testing evidence. Written for how engineers
+# DESCRIBE test work, not for a posting's keywords: the owner's strongest testing
+# bullet ("an offline smoke suite of over 700 checks … pinned to a defect that
+# actually shipped") never says "test", so the JD's terms alone scored it at zero
+# and the budget cut it from a QA application (2026-09-22, the Unframe CV).
+_TESTING_EVIDENCE_RE = re.compile(
+    r"\b(?:tests?|tested|testing|unit-tested|test-driven|suites?|assert(?:s|ed|ing|ions?)?|qa|regressions?"
+    r"|smoke|e2e|end-to-end|flaky|flakiness|coverage|ci checks|pytest|vitest|jest|playwright|cypress"
+    r"|selenium|appium|mocha|junit|testng)\b",
+    re.I,
+)
+# Worth two required skills, so on a testing role a bullet that proves testing
+# outranks one that merely repeats a stack term the stack line already carries.
+TESTING_BULLET_BONUS = 6.0
+
+
+def is_testing_role(jd: JDModel) -> bool:
+    """Is this posting for a testing job? Its title says QA / test / SDET, or its
+    REQUIRED tools name a test framework. Deterministic, and deliberately narrow:
+    it only changes which bullets a trim keeps, never what the CV says."""
+    if _TESTING_TITLE_RE.search(jd.job_title or ""):
+        return True
+    required = " ".join([*jd.hard_skills, *jd.keywords]).lower()
+    return any(re.search(rf"\b{re.escape(fw)}\b", required) for fw in _TEST_FRAMEWORKS)
+
+
+def bullet_relevance(bullet: str, jd: JDModel, testing_role: bool | None = None) -> float:
+    """How much one bullet earns its line for THIS job: the posting's terms it
+    carries, weighted like `_relevance_parts` (required 3, keywords 2, preferred 1,
+    half for a partial hit), read with the SCORER's matcher so the budget and the
+    keyword report never disagree about what a line carries. On a testing role a
+    bullet that shows testing work adds `TESTING_BULLET_BONUS`."""
+    text = (bullet or "").lower()
+    if not text.strip():
+        return -1e6
+    tokens = _tokens(bullet)
+    score = 0.0
+    seen: set[str] = set()
+    for weight, group in ((3.0, jd.hard_skills), (2.0, jd.keywords), (1.0, jd.preferred_skills)):
+        for kw in group:
+            k = (kw or "").strip().lower()
+            if not k or k in seen:
+                continue
+            seen.add(k)
+            hit = _keyword_present(k, text, tokens)
+            if hit == "covered":
+                score += weight
+            elif hit == "partial":
+                score += weight * 0.5
+    if testing_role is None:
+        testing_role = is_testing_role(jd)
+    if testing_role and _TESTING_EVIDENCE_RE.search(bullet):
+        score += TESTING_BULLET_BONUS
+    return score
+
+
+def _trim_project_bullets(resume: ResumeModel, keep: int, jd: JDModel | None = None) -> ResumeModel | None:
+    """Keep the `keep` bullets per project that carry the most for THIS job, in
+    their original order.
+
+    It used to keep `bullets[:keep]`, the FIRST ones, whatever the job. A project's
+    first entry is usually its tech-stack line, so every project shipped as its
+    stack line plus its first prose bullet, and a QA application lost every
+    testing bullet the owner had (the smoke suite, the fourteen defects turned into
+    CI checks, the Playwright suites behind 30 endpoints), all of which sat later in
+    their lists. Now each bullet is scored by `bullet_relevance`, ties go to the
+    earlier bullet (so a job that names none of them keeps exactly what it used
+    to), and the kept ones stay in the candidate's own order: this module still
+    only REMOVES, never reorders or rewrites."""
+    testing_role = is_testing_role(jd) if jd is not None else False
     out = resume.model_copy(deep=True)
     changed = False
     for p in out.projects:
-        if len(p.bullets) > keep:
-            p.bullets, changed = p.bullets[:keep], True
+        if len(p.bullets) <= keep:
+            continue
+        if jd is None:
+            kept = set(range(max(0, keep)))
+        else:
+            # The tech-stack line stays whenever two or more bullets do: it is the
+            # entry's densest keyword line, and on the Unframe posting letting it
+            # compete cost 2.1 points of coverage at one bullet per project.
+            pinned = [i for i in range(len(p.bullets)) if _is_stack_line(p.bullets[i])][:1] if keep >= 2 else []
+            rest = sorted(
+                (i for i in range(len(p.bullets)) if i not in pinned),
+                key=lambda i: (-bullet_relevance(p.bullets[i], jd, testing_role), i),
+            )
+            kept = set(pinned + rest[:max(0, keep - len(pinned))])
+        p.bullets = [b for i, b in enumerate(p.bullets) if i in kept]
+        changed = True
     return out if changed else None
+
+
+def _is_stack_line(bullet: str) -> bool:
+    """A project's tech-stack line ("Python / FastAPI / SQLite / Playwright ·
+    27,158 lines"): tools separated by " / ". Spaced slashes only, so a sentence
+    that says "CI/CD" is not one."""
+    return (bullet or "").count(" / ") >= 2
 
 
 def _trim_experience_bullets(resume: ResumeModel, recent_floor: int, older_floor: int) -> ResumeModel | None:
@@ -423,12 +519,12 @@ def fit_to_pages(
     soft_steps = (
         lambda: (_compress_descriptions(current, SOFT_DESC_SENTENCES),
                  f"shortened project descriptions to {SOFT_DESC_SENTENCES} sentences"),
-        lambda: (_trim_project_bullets(current, SOFT_MAX_PROJECT_BULLETS),
-                 f"kept the top {SOFT_MAX_PROJECT_BULLETS} bullets per project"),
+        lambda: (_trim_project_bullets(current, SOFT_MAX_PROJECT_BULLETS, jd),
+                 f"kept the {SOFT_MAX_PROJECT_BULLETS} bullets per project that fit this job best"),
         lambda: (_compress_descriptions(current, HARD_DESC_SENTENCES),
                  "cut project descriptions to one sentence"),
-        lambda: (_trim_project_bullets(current, 1),
-                 "kept one bullet per project"),
+        lambda: (_trim_project_bullets(current, 1, jd),
+                 "kept the one bullet per project that fits this job best"),
     )
     # Never below one sentence AND one bullet: the tailor puts the substance in
     # whichever of the two it prefers, so zeroing either can leave a project

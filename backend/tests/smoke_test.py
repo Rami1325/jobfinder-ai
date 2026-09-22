@@ -13008,6 +13008,124 @@ check("tailored resume is within the hard page limit",
       page_count(_e2e.tailored_resume) <= 3, f"{page_count(_e2e.tailored_resume)} pages")
 
 # ---------------------------------------------------------------------------
+# 18-ter. The page budget keeps the bullets that fit THIS job (2026-09-22).
+# `_trim_project_bullets` kept `bullets[:keep]`, the FIRST ones, whatever the job.
+# A project's first entry is its tech-stack line, so every project shipped as its
+# stack line plus its first prose bullet, and the owner's QA application (Unframe,
+# "AI-First QA Automation Engineer") lost every testing bullet he had: the smoke
+# suite, the fourteen defects turned into CI checks, the Playwright suites behind
+# 30 endpoints, all later in their lists. Now the stack line stays whenever two or
+# more bullets do, the rest are chosen by `bullet_relevance` (the scorer's matcher,
+# plus a testing bonus on a testing role), and the kept ones keep their order.
+# Measured on the owner's real master over seven analysed postings before it
+# shipped: coverage lower on none, pages higher on none, and on Unframe testing
+# bullets 4 -> 7 and coverage 64.6 -> 68.8 (docs/handbook/tailoring.md).
+# ---------------------------------------------------------------------------
+import app.core.length_budget as _tb  # noqa: E402
+from app.models import JDModel as _TbJD, Project as _TbProject  # noqa: E402
+
+_TB_QA = _TbJD(job_title="AI-First QA Automation Engineer",
+               hard_skills=["Playwright", "Python", "TypeScript"], keywords=["CI/CD", "test automation"])
+_TB_SWE = _TbJD(job_title="Software Engineer", hard_skills=["Go", "Kubernetes"])
+_TB_ROLES = {
+    "AI-First QA Automation Engineer": True,
+    "SDET II": True,
+    "Senior Test Engineer": True,
+    "Software Engineer": False,
+    "AI & Automation Specialist (Contract)": False,  # bare "automation" is business automation here
+    "Senior Quality Engineer- Quality Systems & Hardware Process": False,
+}
+_tb_role_wrong = {t: w for t, w in _TB_ROLES.items() if _tb.is_testing_role(_TbJD(job_title=t)) is not w}
+check(
+    "bullet trim: a testing role is read off the posting's title (QA, SDET, test) or a test framework it "
+    "REQUIRES, and bare 'automation' or a hardware quality role is not one",
+    _tb_role_wrong == {}
+    and _tb.is_testing_role(_TbJD(job_title="Backend Engineer", hard_skills=["Python", "Playwright"]))
+    and not _tb.is_testing_role(_TbJD(job_title="Backend Engineer", hard_skills=["Python"])),
+    str(_tb_role_wrong),
+)
+
+_TB_STACK = "Python / FastAPI / PostgreSQL · 5,000 lines"
+_TB_SOLO = "Built and shipped the application solo across a backend and a frontend."
+_TB_PIPE = "Designed the pipeline as a fixed sequence of parse, structure and score."
+# The owner's real bullet, and the reason for the bonus: it never says "test".
+_TB_SMOKE = ("Wrote an offline smoke suite of over 700 checks where every check is pinned to a defect "
+             "that actually shipped.")
+check(
+    "bullet trim: on a testing role a bullet that shows testing work outranks prose that shows none, though it "
+    "never says 'test'; on a non-testing role it earns no bonus",
+    _tb.bullet_relevance(_TB_SMOKE, _TB_QA) >= _tb.TESTING_BULLET_BONUS
+    and _tb.bullet_relevance(_TB_SMOKE, _TB_QA) > _tb.bullet_relevance(_TB_SOLO, _TB_QA)
+    and _tb.bullet_relevance(_TB_SMOKE, _TB_SWE) == 0.0,
+    f"{_tb.bullet_relevance(_TB_SMOKE, _TB_QA)} vs {_tb.bullet_relevance(_TB_SOLO, _TB_QA)}",
+)
+check(
+    "bullet trim: 'end to end' in prose and 'CI/CD' are not testing evidence or a stack line, while "
+    "'asserting the query plan' is evidence and 'A / B / C' is a stack line",
+    not _tb._TESTING_EVIDENCE_RE.search("Built the platform end to end: a customer app and a courier app.")
+    and _tb._TESTING_EVIDENCE_RE.search("Proved the query index-assisted by asserting the query plan.")
+    and _tb._is_stack_line(_TB_STACK)
+    and not _tb._is_stack_line("Ran CI/CD and Python/Go builds nightly."),
+)
+
+
+def _tb_trim(bullets: list, keep: int, jd) -> list:  # noqa: ANN001
+    r = _master_resume(n_projects=1)
+    r.projects = [_TbProject(name="P", description="d", bullets=list(bullets))]
+    out = _tb._trim_project_bullets(r, keep, jd)
+    return out.projects[0].bullets if out else list(bullets)
+
+
+_TB_BULLETS = [_TB_STACK, _TB_SOLO, _TB_PIPE, _TB_SMOKE]
+check(
+    "bullet trim: on a QA job two kept bullets are the stack line and the testing bullet, in the candidate's own "
+    "order — the first-two rule kept the stack line and 'built and shipped'",
+    _tb_trim(_TB_BULLETS, 2, _TB_QA) == [_TB_STACK, _TB_SMOKE]
+    and _tb_trim(_TB_BULLETS, 2, None) == [_TB_STACK, _TB_SOLO],
+    str(_tb_trim(_TB_BULLETS, 2, _TB_QA)),
+)
+check(
+    "bullet trim: a job that names none of the bullets keeps exactly what the old rule kept (ties go to the "
+    "earlier bullet), so a posting with nothing to say about them changes nothing",
+    _tb_trim(_TB_BULLETS, 2, _TB_SWE) == [_TB_STACK, _TB_SOLO]
+    and _tb_trim(_TB_BULLETS, 3, _TB_SWE) == [_TB_STACK, _TB_SOLO, _TB_PIPE],
+    str(_tb_trim(_TB_BULLETS, 2, _TB_SWE)),
+)
+# The pin, where it matters: two prose bullets both outrank a stack line that names
+# nothing the job asked for, and the stack line still stays (it is the entry's
+# keyword line; letting it compete cost 2.1 coverage points on the Unframe posting).
+_TB_PW = "Built Playwright suites that run in CI on every merge."
+check(
+    "bullet trim: with two or more kept, the stack line stays even when two prose bullets outrank it, and the "
+    "stronger prose bullet takes the other slot",
+    _tb_trim(["Go / Rust / Zig", _TB_SMOKE, _TB_PW], 2, _TB_QA) == ["Go / Rust / Zig", _TB_PW],
+    str(_tb_trim(["Go / Rust / Zig", _TB_SMOKE, _TB_PW], 2, _TB_QA)),
+)
+check(
+    "bullet trim: the kept bullets are never reordered — a later, stronger bullet stays after an earlier one",
+    _tb_trim([_TB_SMOKE, _TB_SOLO, _TB_STACK], 2, _TB_QA) == [_TB_SMOKE, _TB_STACK],
+    str(_tb_trim([_TB_SMOKE, _TB_SOLO, _TB_STACK], 2, _TB_QA)),
+)
+
+# End to end through the real budget: however deep it has to cut, no project keeps
+# a filler bullet while its testing bullet goes.
+_tb_big = _master_resume(n_projects=14)
+_tb_big.projects = [
+    _TbProject(name=f"Beta {i} app", description=_BLURB,
+               bullets=[_TB_STACK, _TB_SOLO + f" ({i})", _TB_PIPE + f" ({i})", _TB_SMOKE])
+    for i in range(14)
+]
+_tb_fit, _tb_rep = fit_to_pages(_tb_big, _TB_QA, plan=None, max_pages=2, hard_max_pages=3)
+_tb_bad = [p.name for p in _tb_fit.projects if _TB_SMOKE not in p.bullets and len(p.bullets) >= 1]
+check(
+    "bullet trim, end to end: on a QA posting the real budget keeps every surviving project's testing bullet, "
+    "and says it chose by fit",
+    _tb_rep.trimmed and _tb_bad == [] and len(_tb_fit.projects) >= 1
+    and any("fit this job best" in n for n in _tb_rep.notes),
+    f"missing testing bullet in {_tb_bad}; notes={_tb_rep.notes}",
+)
+
+# ---------------------------------------------------------------------------
 # 18b. KEYWORD PRESERVATION. "Tailoring sometimes deletes keywords the job asks
 # for" was the report, and it is not one bug: the TAILOR prompt orders curation
 # with no rule against dropping a term the JD names, the page budget removes the
