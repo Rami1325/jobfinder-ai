@@ -529,6 +529,10 @@ def interview_chat(
     with quota.pass_charged(db, user, "interview"):
         try:
             return chat_turn(body.resume, body.jd_text, body.transcript)
+        except ContextWindowExceeded as e:
+            # The transcript can be the larger part of this prompt, so the
+            # overflow names the session and the CV together, never the CV alone.
+            raise ContextWindowExceeded(str(e), kind="transcript") from e
         except _SIZE_ERRORS:
             raise  # app-level 413/503, never an 'LLM error' 502
         except Exception as e:  # noqa: BLE001
@@ -545,6 +549,8 @@ def interview_scorecard(
     with quota.pass_charged(db, user, "interview"):
         try:
             return session_scorecard(body.resume, body.jd_text, body.transcript)
+        except ContextWindowExceeded as e:
+            raise ContextWindowExceeded(str(e), kind="session") from e  # see interview_chat
         except _SIZE_ERRORS:
             raise  # app-level 413/503, never an 'LLM error' 502
         except Exception as e:  # noqa: BLE001

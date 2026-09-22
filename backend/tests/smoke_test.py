@@ -9340,6 +9340,51 @@ with TestClient(_fastapi_app) as _tc:
         _sc_400.text[:80],
     )
 
+    # A context overflow on the two transcript routes names the session and the
+    # CV together (kind transcript / session): there the transcript can be the
+    # larger part, and "your CV is too long" was false. Patched where BOUND, in
+    # app.api.routes. The false-positive half: a route whose prompt is the resume
+    # and one question keeps the kind-less detail, which the CV sentence reads.
+    import app.api.routes as _ctx_routes  # noqa: E402
+
+    def _ctx_overflow(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        raise ContextWindowExceeded("maximum context length is 128000 tokens")
+
+    _ctx_saved = (_ctx_routes.chat_turn, _ctx_routes.session_scorecard, _ctx_routes.model_answer)
+    _ctx_routes.chat_turn = _ctx_routes.session_scorecard = _ctx_routes.model_answer = _ctx_overflow
+    try:
+        _ctx_turns = [{"role": "interviewer", "text": "Tell me about you."}, {"role": "candidate", "text": "I build APIs."}]
+        _ctx_chat = _tc.post(
+            "/interview/chat",
+            json={"resume": resume.model_dump(), "jd_text": "", "transcript": _ctx_turns},
+            headers=_ADMIN_H,
+        )
+        _ctx_score = _tc.post(
+            "/interview/scorecard",
+            json={"resume": resume.model_dump(), "jd_text": "", "transcript": _ctx_turns},
+            headers=_ADMIN_H,
+        )
+        _ctx_answer = _tc.post(
+            "/interview/answer",
+            json={"resume": resume.model_dump(), "jd": jd.model_dump(mode="json"), "question": "Why this role?"},
+            headers=_ADMIN_H,
+        )
+    finally:
+        _ctx_routes.chat_turn, _ctx_routes.session_scorecard, _ctx_routes.model_answer = _ctx_saved
+    check(
+        "context overflow: /interview/chat answers 413 context_exceeded of kind transcript and /interview/scorecard "
+        "of kind session, while /interview/answer (the resume and one question) keeps the kind-less detail the CV "
+        "sentence reads",
+        _ctx_chat.status_code == 413
+        and _ctx_chat.json() == {"detail": {"code": "context_exceeded", "kind": "transcript"}}
+        and _ctx_score.status_code == 413
+        and _ctx_score.json() == {"detail": {"code": "context_exceeded", "kind": "session"}}
+        and _ctx_answer.status_code == 413
+        and _ctx_answer.json() == {"detail": {"code": "context_exceeded"}},
+        f"{_ctx_chat.status_code} {_ctx_chat.text[:90]} | {_ctx_score.status_code} {_ctx_score.text[:90]} | "
+        f"{_ctx_answer.status_code} {_ctx_answer.text[:90]}",
+    )
+
 # 20. SSE search stream (PLAN 9.2): progress events then one terminal result/
 # error frame, Hebrew-safe payloads, history recorded with top_matched (9.1).
 # The search itself is monkeypatched — providers are network; the endpoint's

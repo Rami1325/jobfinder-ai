@@ -75,7 +75,18 @@ class ContextWindowExceeded(Exception):
     ONLY for `BadRequestError` carrying `code == "context_length_exceeded"` —
     keying on the exception type alone would report every malformed-parameter
     bug to the user as "your resume is too long", a guard firing on legitimate
-    input."""
+    input.
+
+    `kind` says what else was in the prompt, for a route where the resume is not
+    the only large part. Empty means the resume (and the job ad) alone, which is
+    every route but the mock interview's two: there the transcript can be the
+    larger part, and "your CV is too long" was false. A kind is set only by a
+    route re-raising, never here, and each has its own sentence in both
+    locales (check-mirrors 39)."""
+
+    def __init__(self, message: str = "", kind: str = "") -> None:
+        self.kind = kind
+        super().__init__(message)
 
 
 class OutputTruncated(Exception):

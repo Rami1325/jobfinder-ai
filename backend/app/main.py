@@ -71,10 +71,12 @@ async def _input_too_large(request: Request, exc: InputTooLarge) -> JSONResponse
 @app.exception_handler(ContextWindowExceeded)
 async def _context_exceeded(request: Request, exc: ContextWindowExceeded) -> JSONResponse:
     # Survived our caps and the model still refused it — the honest "your CV is
-    # legitimately enormous" case.
-    return JSONResponse(
-        status_code=413, content={"detail": {"code": "context_exceeded"}}
-    )
+    # legitimately enormous" case. A mock-interview route adds a kind, because
+    # there the transcript can be the larger part and the CV sentence is false.
+    detail = {"code": "context_exceeded"}
+    if exc.kind:
+        detail["kind"] = exc.kind
+    return JSONResponse(status_code=413, content={"detail": detail})
 
 
 @app.exception_handler(OutputTruncated)

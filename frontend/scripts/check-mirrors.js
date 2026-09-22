@@ -9922,6 +9922,123 @@ try {
   fail(`remounted cover letter check (check 38) could not run: ${e.message}`);
 }
 
+// ---- 39. every context-overflow kind has its own sentence (EXECUTED) -------- //
+// Found by P30-PASS-SIZE's review, fixed on 2026-09-22. A prompt that passes our
+// caps and still does not fit the model's window is a 413 `context_exceeded`,
+// and `apiErrorMessage` answered every one with "Your CV is too long for the AI
+// to read in one go. Trim the oldest roles". On the mock interview's two routes
+// the transcript can be the larger part of the prompt (a chat turn sends up to
+// ~544 KB), so the sentence blamed the CV for a session that had grown. Those
+// routes now re-raise with a `kind` (transcript, session), and each kind names
+// the session and the CV together, because the model's refusal does not say
+// which part was too big.
+//
+// Check 34 cannot see these: it reads the kinds of InputTooLarge, not of this
+// exception. So the kinds are READ from every .py file under backend/app (a
+// literal `kind=` or second argument of `ContextWindowExceeded(…)`; one it cannot
+// read is red), and `apiErrorMessage`, EXECUTED with a recording i18n stub, must
+// ask for `sizeLimit.context<Kind>` for each, resolving in both common.json
+// files. The false-positive half: no kind, an unknown kind and `constructor` all
+// ask for the CV's `sizeLimit.context`, which every other route means.
+try {
+  const CONTEXT_KINDS = ["session", "transcript"];
+  /** The kinds one Python file raises ContextWindowExceeded with, and the calls
+   * whose kind is not a literal. A call with no kind raises the CV's case. */
+  const contextKinds = (code) => {
+    const kinds = new Set();
+    const opaque = [];
+    for (const m of code.matchAll(/\bContextWindowExceeded\(/g)) {
+      if (/\b(?:def|class)\s+$/.test(code.slice(Math.max(0, m.index - 8), m.index))) continue;
+      const args = pyCallArgs(code, m.index + m[0].length - 1).map((a) => a.trim());
+      const byName = args.find((a) => /^kind\s*=/.test(a));
+      const arg = byName ? byName.replace(/^kind\s*=\s*/, "") : args[1] ?? "";
+      if (!arg) continue;
+      const lit = /^(["'])([a-z][a-z_]*)\1$/.exec(arg);
+      if (lit) kinds.add(lit[2]);
+      else opaque.push(arg);
+    }
+    return { kinds, opaque };
+  };
+  const probe = contextKinds(
+    pyCode(
+      [
+        "class ContextWindowExceeded(Exception):",
+        '    """ContextWindowExceeded("from_a_docstring", kind="nope")"""',
+        "raise ContextWindowExceeded(str(e)) from e",
+        'raise ContextWindowExceeded(str(e), kind="by_keyword") from e',
+        'raise ContextWindowExceeded(f"{a}, {b}", "positional")',
+        "# raise ContextWindowExceeded(x, kind=\"from_a_comment\")",
+        "raise ContextWindowExceeded(str(e), kind=chosen)",
+      ].join("\n"),
+    ),
+  );
+  if ([...probe.kinds].sort().join() !== "by_keyword,positional" || probe.opaque.join() !== "chosen")
+    fail(
+      `check 39's reader reads [${[...probe.kinds].sort()}] and opaque [${probe.opaque}] from its probe, not ` +
+        "[by_keyword,positional] and [chosen]: it misses a keyword or positional kind, or reads a docstring or a comment.",
+    );
+
+  let kinds = CONTEXT_KINDS;
+  if (pySource("app/llm/limits.py", "check 39") !== null) {
+    const found = new Set();
+    for (const rel of backendPyFiles()) {
+      const { kinds: here, opaque } = contextKinds(pyCode(pySource(rel, "check 39")));
+      for (const k of here) found.add(k);
+      for (const o of opaque)
+        fail(
+          `backend/${rel} raises ContextWindowExceeded with kind ${o}, which check 39 cannot read: pass it as a ` +
+            "string literal, so the build can require a sentence for it.",
+        );
+    }
+    const missing = CONTEXT_KINDS.filter((k) => !found.has(k));
+    if (missing.length)
+      throw new Error(
+        `read [${[...found].sort()}] out of backend/app, missing [${missing}]: the reader broke, or a kind was renamed — ` +
+          "rename its sentence and this floor with it",
+      );
+    kinds = [...found].sort();
+  }
+
+  const asked = [];
+  const i18nStub = {
+    __esModule: true,
+    language: "en",
+    t: (key, opts) => {
+      asked.push([key, opts || {}]);
+      return `T:${key}`;
+    },
+  };
+  i18nStub.default = i18nStub;
+  const ae = runProbeBundle("apierror-context", `export * from "./lib/apiError";\n`, { "../i18n": i18nStub });
+  const render = (detail) => {
+    asked.length = 0;
+    const text = ae.apiErrorMessage({ response: { status: 413, data: { detail } } }, "FALLBACK");
+    return { text, ns: (asked[asked.length - 1] || [undefined, {}])[1].ns };
+  };
+  const locales = Object.fromEntries(["en", "he"].map((loc) => [loc, JSON.parse(read(`locales/${loc}/common.json`))]));
+  for (const kind of kinds) {
+    const key = `sizeLimit.context${kind[0].toUpperCase()}${kind.slice(1)}`;
+    const got = render({ code: "context_exceeded", kind });
+    if (got.text !== `T:${key}` || got.ns !== "common")
+      fail(
+        `a 413 context_exceeded of kind "${kind}" renders ${JSON.stringify(got.text)}, not common's "${key}": ` +
+          "lib/apiError.ts's CONTEXT_LIMIT_KEYS must name it, or the user is told their CV is too long when the " +
+          "practice session is the larger part.",
+      );
+    for (const loc of ["en", "he"])
+      if (!resolvesIn(locales[loc], key))
+        fail(`locales/${loc}/common.json is missing "${key}", so a "${kind}" context overflow shows the raw key.`);
+  }
+  for (const detail of [{ code: "context_exceeded" }, { code: "context_exceeded", kind: "some_future_kind" },
+    { code: "context_exceeded", kind: "constructor" }]) {
+    const got = render(detail).text;
+    if (got !== "T:sizeLimit.context")
+      fail(`a context overflow ${JSON.stringify(detail)} renders ${JSON.stringify(got)}, not the CV's "sizeLimit.context"`);
+  }
+} catch (e) {
+  fail(`context-overflow kind check (check 39) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

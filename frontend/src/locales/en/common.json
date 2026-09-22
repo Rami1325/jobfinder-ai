@@ -209,6 +209,8 @@
     "question": "That question is too long ({{size}} KB; the limit is {{cap}} KB). Paste just the question.",
     "generic": "That is too large to process ({{size}} KB; the limit is {{cap}} KB). Nothing was changed.",
     "context": "Your CV is too long for the AI to read in one go. Trim the oldest roles and try again — nothing was changed.",
+    "contextTranscript": "Your CV and this practice session are too long together for the AI to read in one go, so your last answer was not sent. End the session for your scorecard, or trim the oldest roles in your CV and start again.",
+    "contextSession": "Your CV and this practice session are too long together for the AI to score in one go. Trim the oldest roles in your CV, then start a new session.",
     "truncated": "The AI ran out of room before finishing. Try again, or shorten your CV a little first."
   }
 }

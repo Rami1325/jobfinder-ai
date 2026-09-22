@@ -75,6 +75,16 @@ const SIZE_LIMIT_KEYS: Record<string, string> = {
   question: "sizeLimit.question",
 };
 
+// A context overflow that is not the CV's alone. The model refused the prompt,
+// so no size is known; on the mock interview's two routes the transcript can be
+// the larger part, and "Your CV is too long" was false there. A missing or
+// unknown kind reads the CV's sentence, which is what every other route means.
+// check-mirrors 39 holds these keys to the kinds routes.py raises.
+const CONTEXT_LIMIT_KEYS: Record<string, string> = {
+  transcript: "sizeLimit.contextTranscript",
+  session: "sizeLimit.contextSession",
+};
+
 function isSizeLimit(detail: unknown): detail is SizeLimitDetail {
   return (
     typeof detail === "object" &&
@@ -294,7 +304,14 @@ export function apiErrorMessage(e: unknown, fallback: string): string {
     return i18n.t(key, { ns: "common", cap: detail.cap_kb, size: detail.size_kb });
   }
   const code = codeOf(detail);
-  if (code === "context_exceeded") return i18n.t("sizeLimit.context", { ns: "common" });
+  if (code === "context_exceeded") {
+    const kind = (detail as { kind?: unknown }).kind;
+    const key =
+      typeof kind === "string" && Object.prototype.hasOwnProperty.call(CONTEXT_LIMIT_KEYS, kind)
+        ? CONTEXT_LIMIT_KEYS[kind]
+        : "sizeLimit.context";
+    return i18n.t(key, { ns: "common" });
+  }
   if (code === "output_truncated") return i18n.t("sizeLimit.truncated", { ns: "common" });
   if (code) {
     const auth = authMessage(e, code);
