@@ -66,6 +66,39 @@
 - **`/api/inbox/cron` runs at 05:00 and 14:00 UTC as TWO `vercel.json` entries** — a Vercel Hobby cron entry fires at most once a day — beside the unchanged alerts (06:00) and nudges (07:00). That Vercel accepts two entries on one path is not yet confirmed on a deploy.
 - **It FAILS CLOSED** (A12): gate on and `CRON_SECRET` empty is 503 `cron_unconfigured`, because an open copy would refresh every user's Gmail grant and spend model calls for anyone who found the URL. It is in `_AUTH_OPTIONAL` and checks its own Bearer secret, runs on a wall-clock budget checked before each user (`INBOX_CRON_BUDGET_S` = 240; each user gets `min(2 × INBOX_SYNC_BUDGET_S, what is left)`), and prunes the security log.
 
+### The first real connect (2026-09-22)
+
+The Gmail client existed only as a fake transport until this day: `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` were the
+last two production variables missing (`INBOX_TOKEN_KEY`, `INBOX_ACCESS=allowlist` and `GOOGLE_OAUTH_TESTING` had been
+set earlier). The owner created the Gmail Cloud project (separate from the sign-in one, Testing, `openid` + `email` +
+`gmail.readonly`, redirect `/api/inbox/google/callback`), the two variables went into production, and a redeploy picked
+them up. An anonymous `GET /api/inbox/google/callback` is the probe that says whether the backend is configured at all:
+`?inbox=not_configured` before, `?inbox=state_invalid` after.
+
+**What one real inbox produced**, read back from production read-only: 169 messages scanned, 70 `mail_events`. 45
+confirmations created a card, 3 rejections created one, 7 confirmations and 4 interviews and 1 "viewed" linked to a card
+that existed, 5 rejections and 1 interview UPDATED a card's status, and 4 went to Needs review (2 recruiter, 1
+confirmation, 1 interview). The tracker went from a handful of cards to 63 (48 applied, 8 rejected, 7 saved, 1
+interviewed). **106 messages were parked from Spam** — id-only rows, nothing read, nothing classified, nothing charged,
+which is the P29-SPAM-RESCUE design working on a real mailbox. The model ran on 61 messages for about 125,000 tokens of
+`gpt-4.1-nano`, roughly **1.3 cents** for a 30-day backfill of one real inbox.
+
+**Two of the three unconfirmed Google behaviours are now confirmed**, and the third is still open:
+- **PKCE with a client secret on the Gmail client works** — the connect completed and stored a refresh token.
+- **A `format=metadata` read returns the snippet**: every imported event carries one.
+- **Spam parking was observed** (106 rows), but the two behaviours the RESCUE relies on — that "Not spam" keeps a
+  message's id and `internalDate` and puts it back in the default listing, and that Spam is purged after 30 days — need
+  a message actually rescued, which has not happened yet.
+
+**A read that fails twice stops the backfill, and the first real run hit it.** `_read_metas` retries a failed read once,
+immediately, and a window whose read still fails ends the sync with `gmail_error` and `has_more`. On the first run that
+happened around 14 days in: the cursor stopped at 2026-09-06, the card showed the error, and **the next Sync resumed
+from exactly there** and finished the remaining 16 days with no error (169 scanned in total). The likely cause is
+Google's per-user rate limit during a burst — a `POOL`-wide read of one window beside 61 model calls — against a retry
+with no backoff, which retries straight into the same limit. It is self-healing because the window is resumable, so it
+costs a sync, not data. **Open, with the data now behind it**: a short backoff before the single retry, so a
+rate-limited burst reads as "more to do" rather than as an error.
+
 ### The codes the inbox sends, and the sentences that say them (P29-INBOX-CODES, 2026-09-21)
 
 **The backend talks to the page in three families of codes, and each has a hand-written `switch` that turns a code into a sentence.**
