@@ -23531,6 +23531,30 @@ def _ref_of32(jd_json):  # noqa: ANN001
         return None
 
 
+# jd_ref must survive a JDModel field being ADDED: it hashed every field,
+# defaults included, so a deploy adding one changed every JD's hash and orphaned
+# every live cover-letter pass and fit ride at once. A subclass with one more
+# defaulted field stands in for that deploy.
+class _JDPlus32(_JD32):
+    seniority_band_added_later: str = ""
+
+
+_jr_jd32 = _JD32.model_validate(_JDJ32)
+_jr_plus32 = _JDPlus32.model_validate(_JDJ32)
+_jr_set32 = _JDPlus32.model_validate({**_JDJ32, "seniority_band_added_later": "senior"})
+_jr_other32 = _JD32.model_validate({**_JDJ32, "job_title": (_JDJ32.get("job_title") or "") + " (Platform)"})
+check(
+    "32 jd_ref: a JDModel field added later with a default leaves every existing JD's key unchanged — a new field "
+    "that is SET, and a different job title, still give another key (the false-positive half) — and the key is a "
+    "sha256 hex",
+    _q32.jd_ref(_jr_plus32) == _q32.jd_ref(_jr_jd32)
+    and _q32.jd_ref(_jr_set32) != _q32.jd_ref(_jr_jd32)
+    and _q32.jd_ref(_jr_other32) != _q32.jd_ref(_jr_jd32)
+    and len(_q32.jd_ref(_jr_jd32)) == 64,
+    f"{_q32.jd_ref(_jr_jd32)[:12]} {_q32.jd_ref(_jr_plus32)[:12]} {_q32.jd_ref(_jr_set32)[:12]}",
+)
+
+
 _prev32c_env = _env29(DAILY_LLM_CAP="0", DAILY_TAILOR_CAP="0", DAILY_SEARCH_CAP="0")
 try:
     with TestClient(_fastapi_app) as _c32c:
@@ -24247,6 +24271,14 @@ try:
             f"{_j28(_fx_fit32).get('tailor_included_until')!r} {_shape32(_events32(_fx_uid32))} "
             f"{_shape32(_events32(_fy_uid32))}",
         )
+        check(
+            "32.16 the fit check also sends the ride's RELATIVE seconds, read as the response is built: exactly 86400 "
+            "on the frozen clock, and within two minutes under 86400 on the real one (the model call ran inside the "
+            "window) — a phone whose clock runs ahead read the absolute tailor_included_until as over early",
+            _j28(_fx_fit32).get("tailor_expires_in_s") == 86400
+            and 86400 - 120 <= int(_j28(_ft_fit32).get("tailor_expires_in_s") or -1) <= 86400,
+            f"{_j28(_fx_fit32).get('tailor_expires_in_s')!r} {_j28(_ft_fit32).get('tailor_expires_in_s')!r}",
+        )
         _sb_uid32, _ = _mint32(_c32c, "Settle Across The Boundary")
         _SB_FIT32 = _MSTART32 - _td32(hours=1)        # 23:00Z on the last day of LAST month
         _SB_TAILOR32 = _MSTART32 + _td32(minutes=30)  # 00:30Z on the 1st, inside the ride's 24 hours
@@ -24330,6 +24362,7 @@ try:
             "it a 200 with no header, and neither writes a month row, an event or a pass — beside the friends above, "
             "whose identical fit checks each opened a ride",
             _fa_fit32.status_code == 200 and _j28(_fa_fit32).get("tailor_included_until") == ""
+            and _j28(_fa_fit32).get("tailor_expires_in_s") == 0
             and _hdr32(_fa_fit32) is None
             and _fa_tailor32.status_code == 200 and _hdr32(_fa_tailor32) is None
             and _rows32(_admin_row_id, _fa_key32) == _fa_before32 and _fa_before32[2] == 0,

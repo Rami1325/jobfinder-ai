@@ -1657,8 +1657,14 @@ class FitCheckResult(BaseModel):
     partial: int = 0
     missing: int = 0
     total: int = 0
-    # ISO UTC end of the tailor ride this fit check opened; "" when exempt (B4.4)
+    # ISO UTC end of the tailor ride this fit check opened; "" when exempt (B4.4).
+    # Kept for a tab loaded before `tailor_expires_in_s` existed; the client reads that.
     tailor_included_until: str = ""
+    # Seconds the ride has left as this response is built; 0 when exempt. Relative
+    # on purpose, like CoverLetterResponse.expires_in_s: the absolute instant,
+    # compared with a phone clock that runs ahead, ended the included tailor early,
+    # and at 0 uses left that disabled a Tailor the server would still cover.
+    tailor_expires_in_s: int = 0
 
 
 class PageCountRequest(BaseModel):

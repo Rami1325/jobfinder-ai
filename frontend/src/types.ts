@@ -212,10 +212,16 @@ export interface FitCheckResult {
   partial: number;
   missing: number;
   total: number;
-  /** When the tailor this fit check paid for stops being included (ISO UTC); ""
-   * for an account with no monthly limit. Check fit, then Tailor the same
-   * analysed job, is 1 use (Phase 30 / B4.4). Absent on older backends. */
+  /** When the tailor this fit check paid for stops being included; "" for an
+   * account with no monthly limit. Check fit, then Tailor the same analysed job,
+   * is 1 use (Phase 30 / B4.4). The server sends an ISO UTC instant, and
+   * `checkFit` REPLACES it with a deadline on this device's clock taken on
+   * arrival from `tailor_expires_in_s`, so every reader compares it with
+   * Date.now() safely. Absent on older backends. */
   tailor_included_until?: string;
+  /** Seconds the included tailor had left when the server answered; 0 when
+   * exempt. Read once, by `checkFit`. Absent on older backends. */
+  tailor_expires_in_s?: number;
 }
 
 /** A live page measurement for the document the user is about to download. */

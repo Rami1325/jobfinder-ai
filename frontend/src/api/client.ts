@@ -3,7 +3,7 @@ import { ACCESS_CODE_KEY, UNAUTHORIZED_EVENT, UNVERIFIED_EVENT } from "../lib/ac
 import { cachedFetch, clearDataCache, invalidateData } from "../lib/dataCache";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { noteDraftOwner } from "../lib/draft";
-import { noteMonthlyLimit, noteUsesHeaders, setUsage, usageIfSameUser } from "../lib/usesStore";
+import { inclusionFrom, noteMonthlyLimit, noteUsesHeaders, setUsage, usageIfSameUser } from "../lib/usesStore";
 import type {
   AlertRunResult,
   AlertSettings,
@@ -743,7 +743,16 @@ export async function reviewRewrites(
  * JD comes back so the tailor does not pay to read the same posting again. */
 export async function checkFit(resume: ResumeModel, jdText: string): Promise<FitCheckResult> {
   const { data } = await api.post<FitCheckResult>("/jobs/fit", { resume, jd_text: jdText });
-  return data;
+  // The included tailor's end becomes a deadline on THIS device's clock, taken
+  // on arrival from the server's relative seconds (`inclusionFrom`, the cover
+  // letter's rule), so everything downstream that compares it with Date.now()
+  // is comparing like with like. The server's absolute instant, read against a
+  // phone clock running ahead, ended the tailor early, and at 0 uses left that
+  // disabled a Tailor the ride still covered. A backend that predates the field
+  // keeps its instant.
+  if (typeof data.tailor_expires_in_s !== "number") return data;
+  const ride = inclusionFrom({ calls_left: 1, expires_in_s: data.tailor_expires_in_s });
+  return { ...data, tailor_included_until: ride ? ride.until : "" };
 }
 
 export async function linkedinOptimize(resume: ResumeModel): Promise<LinkedInResult> {

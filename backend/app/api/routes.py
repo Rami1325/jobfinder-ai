@@ -638,6 +638,10 @@ def jobs_fit(
         # Last inside the block: a ride that cannot be opened gives the fit's use back.
         included_until = quota.open_fit_ride(db, user, ref=quota.jd_ref(jd), event_id=charge.event_id, now=now)
     result.tailor_included_until = included_until.isoformat() if included_until is not None else ""
+    # Read as the response is built, after the model call: the ride's window
+    # started at `now`, before it. The client reads these relative seconds, never
+    # the instant, which a phone whose clock runs ahead reads as already over.
+    result.tailor_expires_in_s = quota.seconds_until(included_until)
     return result
 
 

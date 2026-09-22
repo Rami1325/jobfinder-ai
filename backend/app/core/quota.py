@@ -143,6 +143,13 @@ def _seconds_left(expires_at: datetime | None, now: datetime) -> int:
     return 0 if expires_at is None else max(0, int((expires_at - now).total_seconds()))
 
 
+def seconds_until(expires_at: datetime | None, now: datetime | None = None) -> int:
+    """Seconds from `now` (read at call time by default) to an aware end, 0 for
+    None or the past. What a response sends beside an absolute instant, because
+    a phone whose clock runs ahead reads the instant as already over."""
+    return _seconds_left(None if expires_at is None else _aware(expires_at), _clock(now))
+
+
 # --- who is limited ----------------------------------------------------------------------
 def plan_of(user: User) -> str:
     """The user's plan. An unknown stored value reads as "free", failing toward the
@@ -220,8 +227,17 @@ def quota_key(db: Session, user: User) -> str:
 
 def jd_ref(jd: JDModel) -> str:
     """sha256 hex of the canonical analysed JD: the key a fit ride and a
-    cover-letter pass are held under."""
-    canonical = json.dumps(jd.model_dump(mode="json"), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    cover-letter pass are held under.
+
+    Fields still at their DEFAULT are left out (`exclude_defaults`), nested ones
+    too. With every field hashed, a deploy that added a field to JDModel changed
+    the hash of every JD, so every live pass and fit ride was orphaned at once
+    and the next call on each was charged again. A new field with a default now
+    leaves every existing key alone, and one that is SET still separates two
+    postings. (This change itself re-keyed every pass once, at its deploy.)"""
+    canonical = json.dumps(
+        jd.model_dump(mode="json", exclude_defaults=True), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

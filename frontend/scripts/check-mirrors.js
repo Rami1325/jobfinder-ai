@@ -5607,7 +5607,7 @@ try {
     ["AlertSettingsOut", "AlertSettings", ["paused_reason", "resumes_on"]],
     ["AlertRunResult", "AlertRunResult", ["skipped_reason"]],
     ["UsageOut", "UsageOut", ["passes"]],
-    ["FitCheckResult", "FitCheckResult", ["tailor_included_until"]],
+    ["FitCheckResult", "FitCheckResult", ["tailor_included_until", "tailor_expires_in_s"]],
     ["CoverLetterResponse", "CoverLetterResponse", ["included_until", "changes_left", "expires_in_s"]],
   ];
   for (const [, ts, names] of NAMES) {
@@ -10184,6 +10184,66 @@ try {
   }
 } catch (e) {
   fail(`overlay focus check (check 42) could not run: ${e.message}`);
+}
+
+// ---- 43. the fit check's included tailor ends on the device's clock (EXECUTED) //
+// Found beside P30-RELOAD-PASS, fixed 2026-09-22: the same defect that fix
+// closed for the cover letter. `FitCheckResult.tailor_included_until` is the
+// server's absolute instant, and `usesFor` compares it with Date.now(), so on a
+// phone whose clock runs ahead the included tailor read as over early, and at 0
+// uses left `out` disabled a Tailor the server still covered. The server now
+// sends `tailor_expires_in_s` beside it, and `checkFit` replaces the instant with
+// a deadline taken on arrival (`inclusionFrom`). The REAL `checkFit` is bundled
+// out of api/client.ts and run against scripted answers on a device clock 2
+// hours ahead of the server.
+try {
+  const realUses = runProbeBundle("fit-uses", `export * from "./lib/usesStore";\n`);
+  let answer = null;
+  const api = {
+    post: async () => ({ data: answer, headers: {} }),
+    get: async () => ({ data: null, headers: {} }),
+    interceptors: { request: { use() {} }, response: { use() {} } },
+  };
+  const stubs = {
+    axios: { create: () => api, isAxiosError: () => false },
+    "../lib/usesStore": realUses,
+    "../lib/draft": { noteDraftOwner() {} },
+    "../lib/dataCache": { cachedFetch: (_k, fn) => fn(), clearDataCache() {}, invalidateData() {} },
+    "../hooks/useMasterResume": { resetMasterCache() {} },
+  };
+  const client = runProbeBundle("check-fit", `export { checkFit } from "./api/client";\n`, stubs, { "import.meta.env": "{}" });
+  if (typeof client.checkFit !== "function") throw new Error("api/client.ts exports no checkFit");
+  const realNow = Date.now;
+  const server = Date.UTC(2026, 8, 30, 23, 0, 0);
+  const device = server + 2 * 3600_000; // a phone two hours fast
+  Date.now = () => device;
+  try {
+    const base = { jd: {}, keyword_coverage: 0, fit_score: 0, rationale: "", gaps: [], covered: 0, partial: 0, missing: 0, total: 0 };
+    const serverEnd = new Date(server + 86_400_000).toISOString();
+    const run = async (extra) => {
+      answer = { ...base, ...extra };
+      return client.checkFit({}, "a posting");
+    };
+    const fresh = await run({ tailor_included_until: serverEnd, tailor_expires_in_s: 86_390 });
+    const until = Date.parse(fresh.tailor_included_until);
+    if (until !== device + 86_390_000)
+      fail(
+        `check 43: checkFit hands back tailor_included_until ${JSON.stringify(fresh.tailor_included_until)}, not the ` +
+          "device's own now plus tailor_expires_in_s: on a phone 2 hours fast the included tailor ends 2 hours early.",
+      );
+    else if (realUses.usesFor("tailor", fresh.tailor_included_until, null).covered !== true)
+      fail("check 43: usesFor does not read the converted deadline as covering the tailor");
+    const exempt = await run({ tailor_included_until: "", tailor_expires_in_s: 0 });
+    if (exempt.tailor_included_until !== "")
+      fail(`check 43: an exempt answer (0 seconds) becomes ${JSON.stringify(exempt.tailor_included_until)}, not ""`);
+    const old = await run({ tailor_included_until: serverEnd });
+    if (old.tailor_included_until !== serverEnd)
+      fail("check 43: an answer from a backend with no tailor_expires_in_s must keep its instant, not lose the ride");
+  } finally {
+    Date.now = realNow;
+  }
+} catch (e) {
+  fail(`fit-check deadline check (check 43) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //
