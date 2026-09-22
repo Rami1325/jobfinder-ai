@@ -177,8 +177,14 @@ export default function CoverLetter({ resume, jd, onGenerated, initialText }: Pr
         </UsesNote>
       )}
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+      {/* `dir="auto"`: the letter is in the resume's language, not the UI's. An
+          English letter under the Hebrew UI inherited RTL, so its punctuation
+          sat at the wrong end of every line (",Dear Hiring Manager"). */}
       {text && (
-        <div className="mt-3 whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink">
+        <div
+          dir="auto"
+          className="mt-3 whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink"
+        >
           {text}
         </div>
       )}

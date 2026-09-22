@@ -798,7 +798,11 @@ export default function TrackerPage() {
                 <h3 className="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
                   {t("modal.coverLetter")}
                 </h3>
-                <div className="whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink">
+                {/* The letter's own direction, not the UI's (see CoverLetter). */}
+                <div
+                  dir="auto"
+                  className="whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink"
+                >
                   {detail.cover_letter}
                 </div>
               </>
