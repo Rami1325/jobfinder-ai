@@ -99,6 +99,9 @@ with no backoff, which retries straight into the same limit. It is self-healing 
 costs a sync, not data. **Open, with the data now behind it**: a short backoff before the single retry, so a
 rate-limited burst reads as "more to do" rather than as an error.
 
+**Published In production the same day, so the grant no longer expires weekly.** Google issues a 7-day refresh token only while the Cloud project's publishing status is **Testing**, which is what `GOOGLE_OAUTH_TESTING` models: `reauth_due_at` returns `connected_at + 7 days` while it is true, and the connect screen says so. The owner pressed **Publish app** on the Gmail project's Audience page (status **In production**, still UNVERIFIED), so the flag is `false` in production now and no reconnect date is predicted; a grant that does die is found the ordinary way, by a refresh that fails, which turns the connection `needs_reauth`. A token issued BEFORE publishing keeps its 7-day fate, so the first connect after publishing has to be redone once.
+**Unverified is the deliberate state, and verification is not reachable here.** Google's branding check refuses `jobfinder-hazel-pi.vercel.app` ("not registered to you"), because the domain is Vercel's; no Search Console proof can fix that, so the branding re-verification prompt is left alone. The cost of staying unverified is the "Google hasn't verified this app → Advanced" screen and a ~100-user cap. Full verification would need a domain the owner owns AND the annual CASA assessment `gmail.readonly` requires, so a domain alone would not finish it.
+
 ### The codes the inbox sends, and the sentences that say them (P29-INBOX-CODES, 2026-09-21)
 
 **The backend talks to the page in three families of codes, and each has a hand-written `switch` that turns a code into a sentence.**
