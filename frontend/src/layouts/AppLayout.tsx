@@ -44,6 +44,7 @@ import { getAuthMe, refreshUses } from "../api/client";
 import { isOnboarded } from "../lib/onboarding";
 import { authRedirectUrl } from "../lib/safeNext";
 import { signOut } from "../lib/session";
+import { announceAccount, watchAccount } from "../lib/accountWatch";
 import { shouldRefreshUses, usesFor, useUsesState } from "../lib/usesStore";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 import { getKitsState, loadKits, subscribeKits } from "../state/kitsStore";
@@ -662,6 +663,8 @@ export default function AppLayout() {
         if (a.user) {
           setMe({ name: a.user.name, email: a.user.email, is_admin: a.user.is_admin });
           setMeId(a.user.id);
+          // Tell this browser's other tabs who holds the cookie now (lib/accountWatch).
+          announceAccount(a.user.id);
         }
         setAuthed(true);
       })
@@ -672,6 +675,16 @@ export default function AppLayout() {
       live = false;
     };
   }, []);
+
+  // ANOTHER ACCOUNT IN ANOTHER TAB. Every tab shares the session cookie, so once
+  // B signs in elsewhere this tab's next request runs as B while its stores
+  // still show A's resume, search and kits. A tab that hears another account
+  // announced, or a sign-out, reloads: the guard then runs as whoever holds the
+  // cookie. A document load, for AccessGate's reason, never a route change.
+  useEffect(() => {
+    if (meId === null) return;
+    return watchAccount(meId, () => window.location.reload());
+  }, [meId]);
 
   // Uses spent where this tab cannot see them: the Chrome extension's
   // autofill, another tab, another device. Their X-Uses headers land on other

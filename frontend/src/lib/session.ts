@@ -5,6 +5,7 @@ import { clearDataCache } from "./dataCache";
 import { clearDraft } from "./draft";
 import { clearInboxHints } from "./inboxHint";
 import { clearOnboarding } from "./onboarding";
+import { announceAccount } from "./accountWatch";
 
 /**
  * The one sign-out.
@@ -51,5 +52,9 @@ export async function signOut(destination: string): Promise<void> {
   clearInboxHints();
   clearDataCache();
   resetMasterCache();
+  // The cookie is shared by every tab, so they are all signed out now; tell
+  // them, and each reloads into its guard (lib/accountWatch). This tab does not
+  // hear its own message, so its document load below is the one that happens.
+  announceAccount(null);
   window.location.assign(destination);
 }

@@ -4,6 +4,7 @@ import { cachedFetch, clearDataCache, invalidateData } from "../lib/dataCache";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { noteDraftOwner } from "../lib/draft";
 import { inclusionFrom, noteMonthlyLimit, noteUsesHeaders, setUsage, usageIfSameUser } from "../lib/usesStore";
+import { tabAccount } from "../lib/accountWatch";
 import type {
   AlertRunResult,
   AlertSettings,
@@ -451,8 +452,13 @@ export async function searchJobsStream(
   if (out.error) {
     // The server refunds a failed search on its worker, outside this request,
     // where no header can carry the count back, so /auth/me is asked again
-    // (Phase 30 / C3). It writes the uses store itself; a failure changes nothing.
-    void getAuthMe().catch(() => {});
+    // (Phase 30 / C3). Through refreshUses for this tab's own account, never
+    // getAuthMe: that re-stamps the resume draft's owner from whatever the
+    // answer says, and an answer for an expired session or another account
+    // signed in from another tab would claim this tab's unsaved edits. No
+    // account known (the guard failed open) means nothing is refreshed.
+    const account = tabAccount();
+    if (account !== null) void refreshUses(account);
     throw { response: { status: out.error.status ?? 502, data: { detail: out.error.detail } } };
   }
   if (!out.result) {
@@ -851,6 +857,19 @@ export async function refreshUses(expectedId: number): Promise<void> {
   } catch {
     /* the count on screen stays what it was; the server still decides every call */
   }
+}
+
+/** The /auth/me answer for a page that needs all of it mid-session (Settings'
+ * identity lines and account controls), with refreshUses' discipline: the uses
+ * store is written only when the answer is `expectedId` signed in, and the
+ * resume draft's owner is NEVER re-stamped. getAuthMe is for the guard and the
+ * sign-in pages, which decide who this tab is; a page reached mid-session only
+ * reads. Rejects on a failed request; the caller treats that as "not known". */
+export async function readAuthMe(expectedId: number | null): Promise<AuthMe> {
+  const { data } = await api.get<AuthMe>("/auth/me");
+  const usage = typeof expectedId === "number" ? usageIfSameUser(expectedId, data) : undefined;
+  if (usage !== undefined) setUsage(usage);
+  return data;
 }
 
 /** POST /auth/password, /auth/logout-others and /auth/reset: whether the

@@ -23,13 +23,14 @@ import {
   changePassword,
   deleteAccount,
   deleteMyData,
-  getAuthMe,
   getExtensionKey,
   getResumePrefs,
   logoutOtherDevices,
+  readAuthMe,
   rotateExtensionKey,
   updateResumePrefs,
 } from "../api/client";
+import { tabAccount } from "../lib/accountWatch";
 import { ACCESS_CODE_KEY } from "../lib/accessCode";
 import { apiErrorMessage } from "../lib/apiError";
 import { clearKeyRotated, keyRotatedNotice, markKeyRotated, readKeyRotation } from "../lib/authResults";
@@ -758,9 +759,15 @@ export default function SettingsPage() {
   // Best-effort: the identity lines and the account controls are niceties, so
   // a failure hides them and leaves every other section — including Sign out —
   // fully usable. Nothing on this page waits on it.
+  //
+  // readAuthMe, never getAuthMe: this page mounts on every in-app visit, and
+  // getAuthMe re-stamps the resume draft's owner from whatever the answer says,
+  // so an expired session or another account signed in from another tab would
+  // claim this tab's unsaved edits. readAuthMe writes the uses count only for
+  // this tab's own account and never touches the draft.
   useEffect(() => {
     let live = true;
-    getAuthMe()
+    readAuthMe(tabAccount())
       .then((a) => {
         if (live) setAuth(a);
       })

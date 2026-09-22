@@ -5194,10 +5194,15 @@ try {
     ["function onRejected", /\bnoteMonthlyLimit\(\s*detail\s*\)/, "a 429 monthly_limit never reaches the uses store, so the page keeps offering a control the server refuses"],
     ["export async function getAuthMe", /\bsetUsage\(/, "the /auth/me answer never reaches the uses store, so no page knows the count"],
     ["export async function searchJobsStream", /\bnoteUsesHeaders\(\s*resp\.headers\s*\)/, "the search stream's X-Uses-Remaining is never read"],
-    ["export async function searchJobsStream", /\bgetAuthMe\(/, "an error frame does not re-read /auth/me, so a search the server refunded still shows its use spent"],
+    ["export async function searchJobsStream", /\brefreshUses\(\s*\w+\s*\)/, "an error frame does not re-read /auth/me through refreshUses, so a search the server refunded still shows its use spent"],
   ])
     if (!re.test(fnSource(client, marker)))
       fail(`api/client.ts: ${marker.replace(/^export (?:async )?/, "")} — ${harm}.`);
+  // …and never through getAuthMe, which re-stamps the resume draft's owner from
+  // whatever the answer says: mid-search, an expired session or another account
+  // signed in from another tab would claim this tab's unsaved edits (2026-09-22).
+  if (/\bgetAuthMe\(/.test(fnSource(client, "export async function searchJobsStream")))
+    fail("api/client.ts: searchJobsStream calls getAuthMe, which re-stamps the resume draft's owner mid-session; use refreshUses(tabAccount())");
   const interceptor = /api\.interceptors\.response\.use\(([\s\S]*?)\n\);/.exec(client);
   if (!interceptor) throw new Error("could not find `api.interceptors.response.use(…\\n);` in api/client.ts");
   const READS_ON_SUCCESS = /^\s*\(\s*response\s*\)\s*=>\s*\{\s*noteUsesHeaders\(\s*response\.headers\s*\)/;
@@ -10290,6 +10295,126 @@ try {
     fail(`components/DocumentPanel.tsx: a labelled tool pill ("${pill[1]}") has no min-h-8 — it measured 30 px at 390, under the 32 px floor`);
 } catch (e) {
   fail(`phone tool row check (check 44) could not run: ${e.message}`);
+}
+
+// ---- 45. another account in another tab: heard, and the draft left alone (EXECUTED) //
+// Known open since P30-EXT-LIMIT, fixed 2026-09-22. Every tab shares the session
+// cookie, so after account B signed in from another tab this tab's requests ran
+// as B while its stores still showed A; nothing noticed. And two mid-session
+// readers of /auth/me (the search stream's error frame, Settings' mount) went
+// through getAuthMe, which re-stamps the resume draft's owner from whatever the
+// answer says, so such an answer claimed this tab's unsaved edits for B.
+//
+// (a) EXECUTES lib/accountWatch.ts as TWO tabs (the module bundled twice, one
+//     instance each) over a fake BroadcastChannel: tab 1 hears tab 2 announce
+//     another account and a sign-out, never its own account, and never its own
+//     messages. (b) EXECUTES readAuthMe: the uses store only for the same
+//     account, the draft owner never. (c) pins the wiring by source: the guard
+//     announces a.user.id, an effect watches meId and reloads the document,
+//     sign-out announces null before its own document load, and Settings reads
+//     /auth/me through readAuthMe.
+try {
+  const realBC = globalThis.BroadcastChannel;
+  const rooms = new Map();
+  class FakeBC {
+    constructor(name) {
+      this.name = name;
+      this.listeners = new Set();
+      if (!rooms.has(name)) rooms.set(name, new Set());
+      rooms.get(name).add(this);
+    }
+    postMessage(data) {
+      for (const other of rooms.get(this.name)) if (other !== this) for (const l of other.listeners) l({ data });
+    }
+    addEventListener(type, l) {
+      if (type === "message") this.listeners.add(l);
+    }
+    removeEventListener(type, l) {
+      if (type === "message") this.listeners.delete(l);
+    }
+    close() {
+      rooms.get(this.name).delete(this);
+    }
+  }
+  globalThis.BroadcastChannel = FakeBC;
+  try {
+    const tab1 = runProbeBundle("account-watch-1", `export * from "./lib/accountWatch";\n`);
+    const tab2 = runProbeBundle("account-watch-2", `export * from "./lib/accountWatch";\n`);
+    for (const name of ["announceAccount", "watchAccount", "isOtherAccount", "tabAccount"])
+      if (typeof tab1[name] !== "function") throw new Error(`lib/accountWatch.ts does not export ${name}`);
+    const heard = [];
+    tab1.announceAccount(7);
+    const stop = tab1.watchAccount(7, () => heard.push("reload"));
+    const steps = [];
+    const hear = (label, act) => {
+      const before = heard.length;
+      act();
+      steps.push([label, heard.length - before]);
+    };
+    hear("tab 2 announces the same account", () => tab2.announceAccount(7));
+    hear("tab 2 announces another account", () => tab2.announceAccount(9));
+    hear("tab 2 signs out", () => tab2.announceAccount(null));
+    hear("tab 1 announces itself", () => tab1.announceAccount(7));
+    hear("tab 1 signs out itself", () => tab1.announceAccount(null));
+    stop();
+    hear("after unsubscribing, tab 2 announces another account", () => tab2.announceAccount(9));
+    const want = [
+      ["tab 2 announces the same account", 0],
+      ["tab 2 announces another account", 1],
+      ["tab 2 signs out", 1],
+      ["tab 1 announces itself", 0],
+      ["tab 1 signs out itself", 0],
+      ["after unsubscribing, tab 2 announces another account", 0],
+    ];
+    if (JSON.stringify(steps) !== JSON.stringify(want))
+      fail(`check 45: lib/accountWatch.ts reloads ${JSON.stringify(steps)}, not ${JSON.stringify(want)}`);
+    if (tab1.tabAccount() !== 7 || tab2.tabAccount() !== 9)
+      fail(`check 45: tabAccount reads ${tab1.tabAccount()} / ${tab2.tabAccount()}, not each tab's own last announced account (7 / 9)`);
+    for (const [msg, want2] of [[{ account: 9 }, true], [{ account: null }, true], [{ account: 7 }, false], [null, false], ["9", false], [{}, false], [{ account: "9" }, false]])
+      if (tab1.isOtherAccount(7, msg) !== want2)
+        fail(`check 45: isOtherAccount(7, ${JSON.stringify(msg)}) is ${!want2}, not ${want2}`);
+  } finally {
+    globalThis.BroadcastChannel = realBC;
+  }
+
+  // (b) readAuthMe, bundled out of api/client.ts against refreshUses' harness.
+  const us = runProbeBundle("read-auth-me-uses", `export * from "./lib/usesStore";\n`);
+  const h = refreshUsesHarness(us);
+  const client = runProbeBundle("read-auth-me", `export { readAuthMe } from "./api/client";\n`, h.stubs, { "import.meta.env": "{}" });
+  if (typeof client.readAuthMe !== "function") throw new Error("api/client.ts exports no readAuthMe");
+  const mine = { plan: "free", limit: 10, used: 2, remaining: 8, resets_on: "2026-10-01", by_feature: {}, passes: {} };
+  const signedIn = (id) => ({ authenticated: true, verified: true, method: "session", user: { id }, usage: mine });
+  for (const [label, answer, expected, want] of [
+    ["the same account", signedIn(7), 7, [mine]],
+    ["another account", signedIn(9), 7, []],
+    ["a signed-out answer", { authenticated: false, verified: false, method: null, user: null, usage: null }, 7, []],
+    ["no account known to this tab", signedIn(7), null, []],
+  ]) {
+    h.reset(answer);
+    const got = await client.readAuthMe(expected);
+    if (got !== answer) fail(`check 45: readAuthMe(${expected}) answered by ${label} does not hand the answer back`);
+    if (JSON.stringify(h.writes) !== JSON.stringify(want))
+      fail(`check 45: readAuthMe(${expected}), answered by ${label}, wrote ${JSON.stringify(h.writes)} into the uses store, not ${JSON.stringify(want)}`);
+    if (h.sideEffects.length) fail(`check 45: readAuthMe, answered by ${label}, also ${h.sideEffects.join(", ")}`);
+  }
+
+  // (c) the wiring.
+  const layout = decomment(read("layouts/AppLayout.tsx"));
+  if (!/\bsetMeId\(a\.user\.id\);\s*(?:\/\/[^\n]*\n\s*)*announceAccount\(a\.user\.id\);/.test(layout))
+    fail("layouts/AppLayout.tsx: the guard does not announceAccount(a.user.id) beside setMeId, so no other tab learns who holds the cookie");
+  const watch = /useEffect\(\(\)\s*=>\s*\{\s*if\s*\(\s*meId\s*===\s*null\s*\)\s*return;\s*return\s+watchAccount\(\s*meId\s*,\s*\(\)\s*=>\s*window\.location\.reload\(\)\s*\);\s*\},\s*\[\s*meId\s*\]\s*\)/;
+  if (!watch.test(layout))
+    fail("layouts/AppLayout.tsx has no `useEffect(() => { if (meId === null) return; return watchAccount(meId, () => window.location.reload()); }, [meId])`, so a tab keeps showing account A after B signs in elsewhere");
+  const out = fnSource(decomment(read("lib/session.ts")), "export async function signOut");
+  const said = out.indexOf("announceAccount(null)");
+  const left = out.indexOf("window.location.assign(destination)");
+  if (said === -1 || left === -1 || said > left)
+    fail("lib/session.ts: signOut must announceAccount(null) BEFORE its document load, or the other tabs keep showing a signed-out account");
+  const settings = decomment(read("pages/SettingsPage.tsx"));
+  if (/\bgetAuthMe\(/.test(settings) || !/\breadAuthMe\(\s*tabAccount\(\)\s*\)/.test(settings))
+    fail("pages/SettingsPage.tsx must read /auth/me through readAuthMe(tabAccount()), never getAuthMe, which re-stamps the resume draft's owner on every visit");
+} catch (e) {
+  fail(`account switch check (check 45) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //
