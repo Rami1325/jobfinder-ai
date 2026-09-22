@@ -567,6 +567,16 @@ def _split_work_mode(
     return kept_tiers
 
 
+def _stated_modes(hit: JobHit, text: str) -> list[str]:
+    """The modes a KEPT posting states, in WORK_MODES order, for its card; [] when
+    it says nothing, which the card leaves blank (unknown, never "on-site"). The
+    same reader the gate uses, on the same text, so the card never says a mode the
+    filter did not read. A kept job used to show none, so a "Remote" search that
+    kept a posting saying nothing looked like a filter that missed."""
+    reading = read_work_mode(title=hit.title, location=hit.location, text=text, board_value=hit.work_mode)
+    return [m for m in WORK_MODES if m in reading.modes]
+
+
 def _stated(mode: tuple[str, WorkModeReading] | None) -> list[str]:
     """The modes a removed posting states, in WORK_MODES order, for its row."""
     if mode is None:
@@ -1087,6 +1097,7 @@ def search_jobs(
                 posted_at=card_date,
                 first_posted_at=first_posted_at,
                 twin_posted_at=list(hit.twin_posted),
+                work_modes=_stated_modes(hit, cached.jd_text),
                 source=hit.source,
                 logo_url=hit.logo_url or cached.logo_url,
                 also_on=[AlsoOn(**a) for a in hit.also_on],
@@ -1139,6 +1150,7 @@ def search_jobs(
                     posted_at=card_date,
                     first_posted_at=first_posted_at,
                     twin_posted_at=list(hit.twin_posted),
+                    work_modes=_stated_modes(hit, jd_text),
                     source=hit.source,
                     logo_url=hit.logo_url,
                     also_on=[AlsoOn(**a) for a in hit.also_on],

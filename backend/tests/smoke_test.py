@@ -11663,6 +11663,27 @@ check(
     _wm_e2 or _wm_e3 or f"any={_wm_slugs(_wm_r2.matches)} r+o={_wm_slugs(_wm_r3.matches)}",
 )
 
+# A KEPT posting carries the modes it states, for its card (2026-09-22): a "Remote" search that kept a posting
+# saying nothing looked like a filter that missed, because no card said what any posting said. The same reader as
+# the gate, so the card never names a mode the filter did not read — and nothing for a posting that says nothing.
+_wm_modes2 = {m.url.rsplit("/", 1)[-1]: m.work_modes for m in (_wm_r2.matches if _wm_r2 else [])}
+_wm_b7 = _WmBoard(_WM_LOCAL_BOARD, _WM_LOCAL, _WM_LOCAL_TEXTS)
+_wm_r7, _wm_e7, _ = _wm_search(_wm_b7, _wm_ctx(), cache={"https://mode.test/says_remote": _wm_js.CachedScore(
+    jd_text="This role is fully remote.", overall=80.0, keyword_coverage=70.0, fit_score=90.0,
+    top_matched=("Python",), top_gaps=(), title="Cached", company="ModeCo", location="Tel Aviv",
+    posted_at="", logo_url="", is_full_match=True,
+)})
+_wm_modes7 = {m.url.rsplit("/", 1)[-1]: m.work_modes for m in (_wm_r7.matches if _wm_r7 else [])}
+check(
+    "work mode search: every kept posting carries the modes it STATES for its card — hybrid by title or by an "
+    "inline Hebrew field, on-site and remote by fetched text, [] for the two that say nothing — and a CACHED kept "
+    "posting reads its stored text, unfetched",
+    _wm_modes2 == {"card_hybrid": [_H], "inline_hybrid": [_H], "text_onsite": [_O], "says_remote": ["remote"],
+                   "silent": [], "refill": []}
+    and _wm_e7 == "" and _wm_modes7.get("says_remote") == ["remote"] and "says_remote" not in _wm_b7.fetched,
+    f"{_wm_modes2} {_wm_modes7} fetched={_wm_b7.fetched} {_wm_e7}",
+)
+
 # The cache branch skips the fetch and the model, so it is the one that gets
 # forgotten: a posting scored last week says "on-site" this week too.
 _wm_b4 = _WmBoard(_WM_LOCAL_BOARD, _WM_LOCAL, _WM_LOCAL_TEXTS)

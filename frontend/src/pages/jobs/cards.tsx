@@ -646,9 +646,16 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
             <AlsoOnLinks links={m.also_on} />
             {status && <AppStatusBadge status={status} />}
           </div>
+          {/* The work modes the POSTING states, as words on this line rather
+              than one more badge in a row already full at 390 px. Nothing when
+              it says nothing: unknown is not "on-site", and a "Remote" search
+              keeps such a posting on purpose (the hint under the control). */}
           <p className="text-sm text-ink-muted">
             {m.company || "—"}
             {m.location ? ` · ${m.location}` : ""}
+            {m.work_modes && m.work_modes.length > 0
+              ? ` · ${m.work_modes.map((mode) => t(`workModes.${mode}`)).join(" / ")}`
+              : ""}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
             <span>

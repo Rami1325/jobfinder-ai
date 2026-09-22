@@ -1370,6 +1370,10 @@ class JobMatch(BaseModel):
     # keeps the earliest of them. Internal: EXCLUDED from every dump, so it
     # never reaches a response, a stream frame or the history.
     twin_posted_at: list[str] = Field(default_factory=list, exclude=True)
+    # The work modes the posting itself STATES, in WORK_MODES order, read by
+    # `app.core.work_mode` from its own words (and Comeet's field); [] when it
+    # says nothing, which is unknown, never "on-site". Never the search's picks.
+    work_modes: list[str] = Field(default_factory=list)
     source: str = "linkedin"  # which job board this came from (see PROVIDERS registry)
     logo_url: str = ""  # company logo from the board; empty when it has none
     also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards

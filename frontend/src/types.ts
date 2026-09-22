@@ -470,6 +470,9 @@ export interface JobMatch {
   url: string; // set for scraped listings; empty for pasted ones
   location: string;
   posted_at: string; // ISO date from the LinkedIn search card; empty when unknown
+  // The work modes the posting itself states ("remote" | "hybrid" | "onsite", in
+  // that order); [] or absent when it says nothing, which is unknown.
+  work_modes?: string[];
   // The earliest date a BOARD stated for the role (this card, an earlier listing
   // of it, or Greenhouse first_published), returned verbatim, so a string that
   // differs from `posted_at` IS an earlier date. Absent on older backends.
