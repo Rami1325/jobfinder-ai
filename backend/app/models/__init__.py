@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # --------------------------------------------------------------------------- #
@@ -1312,10 +1312,22 @@ class FilteredJob(BaseModel):
     # evidence is `location` itself, and `geo_restriction` and `ghost` stay None:
     # it was hidden before selection, so it was never fetched and neither of
     # those classifiers ran.
-    reason: str = "restriction"  # restriction | closed | market
+    #
+    # "work_mode" (2026-09-22): the posting states only work modes the user did not
+    # pick. "not_remote": a WORLDWIDE-origin posting that does not say it is
+    # remote, which is the whole promise of the worldwide pass. Both are read from
+    # the posting's own words after it was fetched (`app.core.work_mode`), so the
+    # evidence is `work_modes` and `work_mode_evidence`, and the posting cost no
+    # model call.
+    reason: str = "restriction"  # restriction | closed | market | work_mode | not_remote
     # The evidence behind reason == "closed" — the board's own words, or the
     # status it answered with. None when the removal was a restriction.
     ghost: Optional[GhostReport] = None
+    # The evidence behind "work_mode" and "not_remote": the modes the posting
+    # states, in WORK_MODES order (empty when it says nothing, which only
+    # "not_remote" can be), and the words that said so.
+    work_modes: list[str] = Field(default_factory=list)
+    work_mode_evidence: str = ""
 
 
 class JobMatch(BaseModel):
@@ -1369,6 +1381,23 @@ class JobMatchResult(BaseModel):
     matches: list[JobMatch] = Field(default_factory=list)
 
 
+# The work modes a search can ask for, in the ONE order a stored `work_mode` is
+# written in: "remote,hybrid", never "hybrid,remote", so two ways of picking the
+# same modes are one value (the Jobs page's dirty check and every saved alert
+# compare it as a string). `app.core.work_mode` answers in the same three words.
+WORK_MODES: tuple[str, ...] = ("remote", "onsite", "hybrid")
+
+
+def work_modes(value: object) -> tuple[str, ...]:
+    """The modes a `work_mode` value selects, in WORK_MODES order. () means ANY:
+    "any", "", junk, or every mode at once (all three is no filter at all).
+    Unknown words are dropped, so "remote,foo" is "remote" and a value this build
+    has never heard of degrades to no filter, never to an error."""
+    picked = {part.strip() for part in value.split(",")} if isinstance(value, str) else set()
+    modes = tuple(m for m in WORK_MODES if m in picked)
+    return () if len(modes) == len(WORK_MODES) else modes
+
+
 class SearchContext(BaseModel):
     """What/where to search. Blank fields mean 'derive from resume'."""
 
@@ -1378,7 +1407,13 @@ class SearchContext(BaseModel):
     # job_title mirrors the first entry so old clients keep working.
     job_titles: list[str] = Field(default_factory=list)
     location: str = ""
-    work_mode: str = "any"  # any | onsite | remote | hybrid (LinkedIn-only filter)
+    # "any", or a comma list of WORK_MODES in that order ("remote,hybrid"). One
+    # string rather than a list, ON PURPOSE: this model is serialised into
+    # `job_alerts.context_json` and every saved alert holds a single word here,
+    # which `_canonical_work_mode` reads back as itself. It filters by what each
+    # posting SAYS (`app.core.work_mode`): LinkedIn's own `f_WT` is still sent and
+    # is ignored by its logged-out search (measured 2026-09-22).
+    work_mode: str = "any"
     limit: int = 10  # jobs to fetch + score (1-25), shared across all sources
     # Which job boards to search. Validated against the provider registry in
     # job_search._resolve_context: unknown names are ignored, and an empty /
@@ -1390,17 +1425,27 @@ class SearchContext(BaseModel):
     # fan-out against JobHit.posted_at, keeping hits with no known date. A
     # date-only posted string counts its whole day (`job_search.posted_within`).
     max_age_days: int = 30
-    # Worldwide-remote opt-in: when work_mode is "remote" or "any", ALSO search
-    # remote roles in the US, the UK and the EU (see
+    # Worldwide-remote opt-in: when the work modes include "remote" (or are
+    # "any"), ALSO search the US, the UK and the EU (see
     # job_search.WORLDWIDE_REMOTE_LOCATIONS) on the boards with global reach
-    # (LinkedIn). Worldwide queries are always remote-only (with "any" the local
-    # location keeps "any"). Local Israeli boards are never queried with those
-    # locations, and the flag is inert for "onsite"/"hybrid". The EU query
+    # (LinkedIn). A posting from those queries is kept only when it SAYS it is
+    # remote (reason "not_remote" otherwise): LinkedIn's remote filter is ignored
+    # by its logged-out search, so the query alone returns on-site jobs abroad.
+    # Local Israeli boards are never queried with those locations, and the flag
+    # is inert when "remote" is not among the modes. The EU query
     # returns every member state, so a worldwide posting whose location names a
     # country where pay is well below Israel's is hidden before selection
     # (`app.core.pay_market`) and returned in `JobSearchResult.filtered` with
     # reason "market".
     include_worldwide: bool = False
+
+    @field_validator("work_mode", mode="before")
+    @classmethod
+    def _canonical_work_mode(cls, value: object) -> str:
+        """Every door writes the same value: a search, the saved picks, an alert's
+        stored JSON. A legacy single word reads back as itself, so no saved alert
+        changes on deploy."""
+        return ",".join(work_modes(value)) or "any"
 
 
 class SearchPrefs(BaseModel):
@@ -1426,10 +1471,12 @@ class JobSearchResult(BaseModel):
     skipped: int = 0  # listings found but not fetchable/scorable
     # Postings found but deliberately NOT scored, returned rather than silently
     # discarded so the user can see the count, read the sentence we fired on,
-    # and reveal them. Three reasons, and `FilteredJob.reason` says which: a
+    # and reveal them. Five reasons, and `FilteredJob.reason` says which: a
     # Tier-1 hiring restriction stated abroad, a board that says the posting is
-    # no longer accepting applications, or a worldwide posting whose location
-    # names a country where pay is well below Israel's. NOT part of `skipped`,
+    # no longer accepting applications, a worldwide posting whose location
+    # names a country where pay is well below Israel's, a posting that states
+    # only work modes the user did not pick, or a worldwide posting that does
+    # not say it is remote. NOT part of `skipped`,
     # whose user-facing string means "not fetchable/scorable" — a filtered
     # posting was fetchable, and folding any reason into it is exactly what
     # this list exists to prevent. ONE list, never a second one per reason: two

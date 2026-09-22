@@ -4155,7 +4155,9 @@ try {
   );
   if (typeof filteredSummary !== "function") throw new Error("pages/jobs/shared.ts exports no filteredSummary");
 
-  const SHAPES = [undefined, "restriction", "closed", "market", "some_future_reason"];
+  // "work_mode" and "not_remote" (2026-09-22) are two more reasons the build
+  // names, each with its own counted sentence over the list.
+  const SHAPES = [undefined, "restriction", "closed", "market", "work_mode", "not_remote", "some_future_reason"];
   const mixes = SHAPES.flatMap((a) => [[a], ...SHAPES.map((b) => [a, b])]);
   const wrong = [];
   for (const matches of [0, 1])
@@ -4171,6 +4173,8 @@ try {
           restricted,
           closed: reasons.filter((r) => r === "closed").length,
           market: reasons.filter((r) => r === "market").length,
+          workMode: reasons.filter((r) => r === "work_mode").length,
+          notRemote: reasons.filter((r) => r === "not_remote").length,
           // The sentence's own claim: nothing ranked, nothing skipped, and every
           // row under it states a restriction.
           everyRestricted: matches === 0 && skipped === 0 && restricted === reasons.length,

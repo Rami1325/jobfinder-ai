@@ -41,7 +41,7 @@ from app.core.job_match import (
     _looks_like_login_wall,
 )
 from app.core.providers.base import JobHit, NoResultsError
-from app.models import SearchContext
+from app.models import SearchContext, work_modes
 
 _SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 # The same unauthenticated detail endpoint `job_match._extract_linkedin` uses.
@@ -51,7 +51,14 @@ _SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/s
 # page ourselves for the status would double every detail request to the board
 # whose throttling this module's docstring already warns about.
 _JOB_POSTING_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting"
-_WORK_MODE_PARAM = {"onsite": "1", "remote": "2", "hybrid": "3"}  # LinkedIn f_WT values
+# LinkedIn f_WT values; several go comma-separated ("2,3"), the form LinkedIn's own
+# search page writes. IGNORED by the logged-out search this module uses, measured
+# 2026-09-22: "1", "2", "3", "2,3" and no filter returned the same ten postings
+# on a US query and a Tel Aviv one, through this API, the public page and a
+# geoId search. Still sent, because it costs nothing and would narrow the cards
+# if LinkedIn ever honours it; the filter that works is `app.core.work_mode`,
+# over the posting's own words, in `job_search`.
+_WORK_MODE_PARAM = {"onsite": "1", "remote": "2", "hybrid": "3"}
 # Cards per guest search page, MEASURED, and `start` is a row offset — so the
 # pages are start=0, 10, 20. This was 25 until 2026-09-22, and the loop asked
 # for start=0 then start=25: every query needing more than ten cards jumped from
@@ -74,7 +81,7 @@ def _build_search_url(
     # spending the fetch budget on the freshest postings is strictly better.
     params = {"keywords": job_title, "location": location, "start": start, "sortBy": "DD"}
     params = {k: v for k, v in params.items() if v or k == "start"}
-    f_wt = _WORK_MODE_PARAM.get(work_mode)
+    f_wt = ",".join(_WORK_MODE_PARAM[m] for m in work_modes(work_mode))
     if f_wt:
         params["f_WT"] = f_wt
     if max_age_days > 0:

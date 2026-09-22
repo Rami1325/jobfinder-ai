@@ -10,7 +10,33 @@ export const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 export const inputCls =
   "rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50";
 
-export const WORK_MODES = ["any", "remote", "onsite", "hybrid"] as const;
+// The work modes a search can pick, in the ONE order the backend writes a stored
+// value in (`app.models.WORK_MODES`): "remote,hybrid", never "hybrid,remote".
+// `work_mode` stays ONE string — "any" or a comma list — because every saved
+// alert holds a single word there. No pick, or all three, is "any".
+export const WORK_MODES = ["remote", "onsite", "hybrid"] as const;
+export type WorkMode = (typeof WORK_MODES)[number];
+
+/** The modes a `work_mode` value picks, in WORK_MODES order; [] is ANY. The
+ * TypeScript twin of `app.models.work_modes`: unknown words are dropped, and all
+ * three at once is no filter at all. */
+export function parseWorkModes(value: string | null | undefined): WorkMode[] {
+  const picked = new Set((value ?? "").split(",").map((part) => part.trim()));
+  const modes = WORK_MODES.filter((m) => picked.has(m));
+  return modes.length === WORK_MODES.length ? [] : modes;
+}
+
+/** The value to store for a set of picks: "any", or the picks in WORK_MODES order. */
+export function joinWorkModes(modes: readonly string[]): string {
+  return parseWorkModes(modes.join(",")).join(",") || "any";
+}
+
+/** Can this search include remote jobs? The gate on the worldwide opt-in, the
+ * twin of `job_search._remote_ok`. */
+export function allowsRemote(value: string | null | undefined): boolean {
+  const modes = parseWorkModes(value);
+  return modes.length === 0 || modes.includes("remote");
+}
 
 // "Posted within" choices in days; 0 = any age. Backend default is 30, so a
 // ctx without max_age_days (older saved contexts) behaves like "Month".
@@ -181,7 +207,9 @@ export function contextKey(c: SearchContext | null): string {
   return JSON.stringify([
     titles,
     c.location,
-    c.work_mode,
+    // Canonical, so "hybrid,remote" typed by an older tab and the backend's
+    // "remote,hybrid" are one pick, not an unsaved change.
+    joinWorkModes(parseWorkModes(c.work_mode)),
     c.limit,
     c.sources?.length ? [...c.sources].sort() : [...SOURCE_IDS].sort(),
     c.max_age_days ?? 30,
@@ -206,12 +234,18 @@ export function filteredSummary(result: Pick<JobSearchResult, "matches" | "skipp
   restricted: number;
   closed: number;
   market: number;
+  workMode: number;
+  notRemote: number;
   everyRestricted: boolean;
 } {
   const filtered = result.filtered ?? [];
   const restricted = filtered.filter((j) => !j.reason || j.reason === "restriction").length;
   const closed = filtered.filter((j) => j.reason === "closed").length;
   const market = filtered.filter((j) => j.reason === "market").length;
+  // 2026-09-22: a posting that states only work modes the user did not pick, and a
+  // worldwide one that does not say it is remote. Each BY NAME, like the rest.
+  const workMode = filtered.filter((j) => j.reason === "work_mode").length;
+  const notRemote = filtered.filter((j) => j.reason === "not_remote").length;
   // "Every job we found states a hiring restriction abroad" is a claim about
   // EVERY row, so it is tested as one: `restricted === filtered.length`. Listing
   // the other reasons instead (`closed === 0 && market === 0`) went false for a
@@ -222,5 +256,5 @@ export function filteredSummary(result: Pick<JobSearchResult, "matches" | "skipp
     restricted === filtered.length &&
     result.matches.length === 0 &&
     result.skipped === 0;
-  return { restricted, closed, market, everyRestricted };
+  return { restricted, closed, market, workMode, notRemote, everyRestricted };
 }

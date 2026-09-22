@@ -6,8 +6,10 @@ import {
   BadgeCheck,
   Banknote,
   Briefcase,
+  Building2,
   Ghost,
   Globe,
+  Laptop,
   Link2,
   Loader2,
   Plus,
@@ -67,7 +69,16 @@ import { BatchTailorCard, KitRow } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
 import { VersionHistoryModal } from "./jobs/VersionHistory";
 import { SearchScanPanel } from "./jobs/ScanPanel";
-import { EASE, filteredSummary, inputCls, normalizeJobUrl, SOURCE_IDS, sourceLabel } from "./jobs/shared";
+import {
+  allowsRemote,
+  EASE,
+  filteredSummary,
+  inputCls,
+  normalizeJobUrl,
+  parseWorkModes,
+  SOURCE_IDS,
+  sourceLabel,
+} from "./jobs/shared";
 
 // The most listings one ranking takes: the backend's job_match.MAX_MATCH_LISTINGS,
 // which answers more with a 400 (Phase 30 / B4.3).
@@ -709,8 +720,11 @@ export default function JobsPage() {
                           <span key="3" className="font-semibold text-ink" />,
                         ]}
                       />
-                      {searched.work_mode !== "any" && ` · ${t(`workModes.${searched.work_mode}`)}`}
-                      {(searched.work_mode === "remote" || searched.work_mode === "any") &&
+                      {parseWorkModes(searched.work_mode).length > 0 &&
+                        ` · ${parseWorkModes(searched.work_mode)
+                          .map((w) => t(`workModes.${w}`))
+                          .join(", ")}`}
+                      {allowsRemote(searched.work_mode) &&
                         searched.include_worldwide &&
                         ` · ${t("search.worldwideTag")}`}
                       {" — "}
@@ -752,7 +766,7 @@ export default function JobsPage() {
                     // (jobs/shared.ts), which check-mirrors 31 executes over
                     // every mix of reasons: the sentences below are claims
                     // about the rows under them.
-                    const { restricted, closed, market, everyRestricted } =
+                    const { restricted, closed, market, workMode, notRemote, everyRestricted } =
                       filteredSummary(searchResult);
                     return (
                       <p className="flex flex-wrap items-center gap-2 text-xs text-warn">
@@ -787,7 +801,19 @@ export default function JobsPage() {
                             {t("search.filteredMarket", { count: market })}
                           </span>
                         )}
-                        {/* ONE toggle for all three sentences: `showRestricted`
+                        {workMode > 0 && (
+                          <span className="flex min-w-0 items-start gap-1.5">
+                            <Building2 size={13} className="mt-0.5 shrink-0" />
+                            {t("search.filteredWorkMode", { count: workMode })}
+                          </span>
+                        )}
+                        {notRemote > 0 && (
+                          <span className="flex min-w-0 items-start gap-1.5">
+                            <Laptop size={13} className="mt-0.5 shrink-0" />
+                            {t("search.filteredNotRemote", { count: notRemote })}
+                          </span>
+                        )}
+                        {/* ONE toggle for every sentence: `showRestricted`
                             reveals the whole `filtered` list, so a control per
                             reason would promise a filter this reveal does not
                             implement. */}

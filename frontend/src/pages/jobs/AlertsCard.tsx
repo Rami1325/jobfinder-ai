@@ -1,6 +1,6 @@
 // Email-alert settings card + the shared Customize-search fields
 // (split out of JobsPage.tsx — PLAN 12.5d).
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useId, useState, type Dispatch, type SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 import { Bell, X } from "lucide-react";
 import { getJobAlert, runJobAlert, searchContext, updateJobAlert } from "../../api/client";
@@ -11,14 +11,18 @@ import { onboardingRole } from "../../lib/onboarding";
 import { formatUsesDate, useUses } from "../../lib/usesStore";
 import type { AlertSettings, ResumeModel, SearchContext } from "../../types";
 import {
+  allowsRemote,
   contextKey,
   inputCls,
+  joinWorkModes,
   LOCATION_PRESETS,
   MAX_AGE_OPTIONS,
   MIN_SCORE_OPTIONS,
+  parseWorkModes,
   SOURCE_IDS,
   sourceLabel,
   WORK_MODES,
+  type WorkMode,
 } from "./shared";
 
 /** The customized-search fields — keywords, location, work mode, posted-within,
@@ -43,6 +47,18 @@ export function CustomizeFields({
   const keywords: string[] = ctx?.job_titles?.length ? ctx.job_titles : [ctx?.job_title ?? ""];
   function setKeywords(next: string[]) {
     setCtx((p) => ({ ...(p as SearchContext), job_titles: next, job_title: next[0] ?? "" }));
+  }
+
+  // Work modes live on ctx.work_mode as ONE string ("any" or "remote,hybrid").
+  const workModeLabelId = useId();
+  const pickedModes = parseWorkModes(ctx?.work_mode);
+  function toggleWorkMode(mode: "any" | WorkMode) {
+    setCtx((p) => {
+      const cur = parseWorkModes(p?.work_mode);
+      const next =
+        mode === "any" ? [] : cur.includes(mode) ? cur.filter((m) => m !== mode) : [...cur, mode];
+      return { ...(p as SearchContext), work_mode: joinWorkModes(next) };
+    });
   }
 
   // Sources selection lives on ctx.sources; empty/absent means "all boards".
@@ -113,23 +129,38 @@ export function CustomizeFields({
             className={inputCls}
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
-          {t("search.workMode")}
-          <select
-            value={ctx?.work_mode ?? "any"}
-            disabled={prefilling}
-            onChange={(e) =>
-              setCtx((p) => ({ ...(p as SearchContext), work_mode: e.target.value }))
-            }
-            className={inputCls}
-          >
-            {WORK_MODES.map((w) => (
-              <option key={w} value={w}>
-                {t(`workModes.${w}`)}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/* Several modes at once. "Any" is no pick at all; picking all three
+            folds back into it (`joinWorkModes`), because the stored value has one
+            spelling per meaning. The note under it says what the filter can
+            honestly do: it reads what each posting SAYS, and a posting that says
+            nothing stays in the results. */}
+        <div
+          role="group"
+          aria-labelledby={workModeLabelId}
+          className="flex flex-col gap-1 text-xs font-semibold text-ink-muted"
+        >
+          <span id={workModeLabelId}>{t("search.workMode")}</span>
+          <div className="flex flex-wrap gap-1.5">
+            {(["any", ...WORK_MODES] as const).map((w) => {
+              const on = w === "any" ? pickedModes.length === 0 : pickedModes.includes(w);
+              return (
+                <button
+                  key={w}
+                  type="button"
+                  aria-pressed={on}
+                  disabled={prefilling}
+                  onClick={() => toggleWorkMode(w)}
+                  className={`min-h-[36px] rounded-full border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+                    on ? "border-accent/60 bg-accent/10 text-ink" : "border-line text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  {t(`workModes.${w}`)}
+                </button>
+              );
+            })}
+          </div>
+          <span className="text-[11px] font-normal leading-snug text-ink-faint">{t("search.workModeHint")}</span>
+        </div>
         <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
           {t("search.postedWithin")}
           <select
@@ -174,13 +205,14 @@ export function CustomizeFields({
       </div>
 
       {/* Worldwide-remote opt-in: only meaningful (and only shown) for searches
-          that can include remote roles ("remote" or "any"). Rides SearchContext,
+          that can include remote roles ("remote" among the picks, or "any").
+          Abroad, a posting is kept only when it SAYS it is remote. Rides SearchContext,
           so saving an alert with it customizes the daily alert email the same way.
           The pass runs on LinkedIn (the only board with worldwide inventory), and
           the board checkboxes are authoritative (PLAN 15.9) — with LinkedIn
           unchecked the toggle is inert, so grey it out and say why. */}
       {/* Opacity/transform only — never height:auto on a reveal (see Disclosure). */}
-      {(ctx?.work_mode === "remote" || ctx?.work_mode === "any") && (
+      {allowsRemote(ctx?.work_mode) && (
           <label
             className={`animate-fade-up mt-3 flex w-fit items-start gap-2 text-sm text-ink ${
               selectedSources.includes("linkedin") ? "cursor-pointer" : "opacity-50"

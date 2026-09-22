@@ -559,9 +559,14 @@ export interface FilteredJob {
   // "restriction"`. The old reading, "anything not literally closed is a
   // restriction", became false when `market` arrived: it would label a posting
   // hidden for its country's pay with a hiring restriction it never stated. A
-  // reason this build has never heard of is none of the three.
-  reason?: string; // restriction | closed | market
+  // reason this build has never heard of is none of these.
+  reason?: string; // restriction | closed | market | work_mode | not_remote
   ghost?: GhostReport | null; // the evidence behind reason === "closed"; null for "market"
+  // The evidence behind "work_mode" and "not_remote": the modes the posting states
+  // (in WORK_MODES order, empty when it says nothing, which only "not_remote" can
+  // be) and the words that said so. Absent on an older backend.
+  work_modes?: string[];
+  work_mode_evidence?: string;
 }
 /** Multi-turn mock interview (PLAN 11.3) — stateless backend, the client
  * sends the whole transcript with every turn. */
@@ -591,7 +596,9 @@ export interface SearchContext {
   job_title: string;
   job_titles?: string[]; // multi-keyword search: each searched separately; job_title mirrors the first
   location: string;
-  work_mode: string; // any | onsite | remote | hybrid
+  // "any", or a comma list in WORK_MODES order ("remote,hybrid"); read it through
+  // parseWorkModes (pages/jobs/shared.ts), never with ===.
+  work_mode: string;
   limit: number;
   sources?: string[]; // provider ids to search ("linkedin", "drushim", …); absent on older backends
   max_age_days?: number; // only postings at most this old, 0 = any age; backend defaults to 30

@@ -41,6 +41,7 @@ from app.core import pay_market
 from app.core.relevance import RELEVANT_MIN, title_relevance
 from app.core.salary import extract_salary
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
+from app.core.work_mode import REMOTE, WorkModeReading, read_work_mode
 from app.llm import prompts
 from app.llm.client import get_llm_client
 from app.models import (
@@ -51,7 +52,9 @@ from app.models import (
     JobMatch,
     JobSearchResult,
     ResumeModel,
+    WORK_MODES,
     SearchContext,
+    work_modes,
 )
 
 # Progress events emitted during a search (consumed by the SSE endpoint, PLAN 9.2 + 12.2).
@@ -71,10 +74,11 @@ MAX_AGE_DAYS_CAP = 365
 FETCH_DELAY_S = 0.5  # pause between per-job network fetches to stay under the radar
 SCORE_WORKERS = 5  # concurrent scoring workers; same-board detail fetches stay serialized
 
-# Worldwide-remote opt-in (SearchContext.include_worldwide + work_mode "remote" or "any"):
-# extra locations queried on the board(s) with global reach, targeting remote
-# roles. These queries are always remote-only regardless of the context's work
-# mode (see _board_queries). "European Union" is a real LinkedIn location, and it
+# Worldwide-remote opt-in (SearchContext.include_worldwide + "remote" among the work
+# modes, or "any"): extra locations queried on the board(s) with global reach,
+# targeting remote roles. A posting they return is kept only when it SAYS it is
+# remote (`_work_mode_gate`), because LinkedIn's remote filter is ignored by its
+# logged-out search and the query alone returns on-site jobs abroad. "European Union" is a real LinkedIn location, and it
 # returns postings in EVERY member state, Bulgaria and Romania included, not only
 # the high-paying ones: `pay_market` hides a posting whose location names a
 # low-pay country before selection (see `_low_pay`). It stays one query rather
@@ -187,8 +191,9 @@ def _resolve_context(resume: ResumeModel, customize: SearchContext | None) -> Se
             ctx.job_title = customize.job_title.strip()
         if customize.location.strip():
             ctx.location = customize.location.strip()
-        if customize.work_mode in ("any", "onsite", "remote", "hybrid"):
-            ctx.work_mode = customize.work_mode
+        # Already canonical: SearchContext's validator reads every value, junk
+        # included, as "any" or a comma list in WORK_MODES order.
+        ctx.work_mode = customize.work_mode
         ctx.limit = customize.limit
         ctx.sources = customize.sources
         ctx.max_age_days = customize.max_age_days
@@ -492,18 +497,92 @@ def _displaced_low_pay(
     ]
 
 
+def _remote_ok(ctx: SearchContext) -> bool:
+    """Can this search include remote jobs? True for "any" and for any pick with
+    "remote" in it: the gate on the worldwide pass, which exists for remote jobs."""
+    modes = work_modes(ctx.work_mode)
+    return not modes or REMOTE in modes
+
+
+def _work_mode_gate(hit: JobHit, text: str, work_mode: str) -> tuple[str, WorkModeReading] | None:
+    """Does this posting go, for its work mode? (reason, reading) when it does,
+    None when it stays. Pure; the ONE rule, read before selection on what the card
+    carries and again after the fetch on the full text.
+
+    A WORLDWIDE-origin posting stays only when it SAYS it is remote ("not_remote"
+    otherwise). That is the whole promise of the worldwide pass, and nothing else
+    keeps it: LinkedIn ignores the remote filter the query sends (measured
+    2026-09-22), and five abroad postings in the ghost-run corpus included an
+    in-person Seattle job and a "100% onsite" one in Ohio.
+
+    A LOCAL posting goes only when it states work modes and none of them is one
+    the user picked ("work_mode"). One that says nothing stays: unknown is never a
+    mode, and most Israeli postings do not say (18 of the corpus's 28).
+
+    The origin stamp is `pay_market`'s and `_geo_for`'s gate, so with the
+    worldwide pass off a posting is never asked to say remote, and a posting the
+    user's own location query also returned has had its stamp cleared."""
+    reading = read_work_mode(
+        title=hit.title, location=hit.location, text=text, board_value=hit.work_mode
+    )
+    if hit.origin_market:
+        return None if REMOTE in reading.modes else ("not_remote", reading)
+    picked = set(work_modes(work_mode))
+    if picked and reading.modes and not (reading.modes & picked):
+        return "work_mode", reading
+    return None
+
+
+def _split_work_mode(
+    tiers: list[dict[str, list[JobHit]]], work_mode: str
+) -> list[dict[str, list[JobHit]]]:
+    """Every tier with the postings whose CARD already states only other modes
+    taken out, board order and within-board order unchanged, so the freed slots
+    refill from the kept pool in the same single round (`pay_market`'s position).
+
+    What the card carries is the board's own field (Comeet), the title, the
+    location, and the description on the boards that send it inline (Drushim,
+    Comeet). A card that says nothing is never taken out here, worldwide or not:
+    its text is read after the fetch, where "not_remote" can fire.
+
+    SILENT, on purpose, where the rows after the fetch are reported: this is the
+    board-side filter the user asked for and LinkedIn would have applied, and a
+    posting it removes never took a slot. The ones removed after the fetch did
+    take one, so the page has to say where they went."""
+    kept_tiers: list[dict[str, list[JobHit]]] = []
+    for tier in tiers:
+        kept: dict[str, list[JobHit]] = {}
+        for name, tier_hits in tier.items():
+            for hit in tier_hits:
+                verdict = _work_mode_gate(hit, hit.description, work_mode)
+                # Before the fetch, "says nothing yet" is not "not_remote".
+                if verdict is None or (verdict[0] == "not_remote" and not verdict[1].modes):
+                    kept.setdefault(name, []).append(hit)
+        kept_tiers.append(kept)
+    return kept_tiers
+
+
+def _stated(mode: tuple[str, WorkModeReading] | None) -> list[str]:
+    """The modes a removed posting states, in WORK_MODES order, for its row."""
+    if mode is None:
+        return []
+    return [m for m in WORK_MODES if m in mode[1].modes]
+
+
 def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str, str]]:
     """(job_title, location, work_mode, origin_market) tuples one board will be
     queried with — normally every keyword against the context's own location
     and work mode.
-    The worldwide-remote opt-in (work_mode "remote"/"any" + include_worldwide)
-    adds each location in WORLDWIDE_REMOTE_LOCATIONS, but ONLY on the board
+    The worldwide-remote opt-in ("remote" among the work modes, or "any", plus
+    include_worldwide) adds each location in WORLDWIDE_REMOTE_LOCATIONS, but ONLY on the board
     with global inventory — the local Israeli boards never see those
     locations. Those locations say where we LOOK, not what a posting pays: the
     "European Union" query returns every member state, and `_low_pay` hides the
-    postings in low-pay countries before selection. Worldwide queries are
-    always remote-only, even when the context's work mode is "any": abroad, only
-    remote roles are workable, while the local location keeps the user's mode.
+    postings in low-pay countries before selection. Worldwide queries ask for
+    remote only, even when the context's work mode is "any": abroad, only remote
+    roles are workable, while the local location keeps the user's modes. LinkedIn
+    ignores that ask, so `_work_mode_gate` keeps a worldwide posting only when it
+    says it is remote.
     A board the user unchecked in `sources` is never queried AT ALL — not even
     by the worldwide pass (PLAN 15.9: the checkboxes are authoritative; the pass
     riding an unchecked LinkedIn read as a bug to the actual user). Pure; pinned
@@ -519,7 +598,7 @@ def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str, s
     if name not in ctx.sources:
         return []
     locations = [(ctx.location, ctx.work_mode, "")]
-    if name == WORLDWIDE_BOARD and ctx.work_mode in ("remote", "any") and ctx.include_worldwide:
+    if name == WORLDWIDE_BOARD and _remote_ok(ctx) and ctx.include_worldwide:
         locations = locations + [(loc, "remote", loc) for loc in WORLDWIDE_REMOTE_LOCATIONS]
     return [
         (t, loc, mode, origin)
@@ -722,6 +801,11 @@ def search_jobs(
     # postings first, then old-but-relevant backfill (marked stale), then
     # description-only matches. Old + irrelevant stays dropped.
     tiers = tiered_by_source(hits_by_source, ctx.job_titles, ctx.max_age_days, now=now)
+    # The work-mode filter on what each CARD says, first: the pay-market rows
+    # below describe only postings the user's own filter would have shown.
+    tiered_count = sum(len(v) for tier in tiers for v in tier.values())
+    tiers = _split_work_mode(tiers, ctx.work_mode)
+    mode_removed = tiered_count - sum(len(v) for tier in tiers for v in tier.values())
     # The pay-market filter (Phase 30 J) runs HERE, BEFORE selection, and the
     # position is the design. LinkedIn's "European Union" location returns
     # postings in every member state, and `_low_pay` needs only the card's
@@ -770,6 +854,13 @@ def search_jobs(
             filtered=market_rows,
             source_errors=source_errors,
             source_empty=source_empty,
+        )
+    if not hits and mode_removed:
+        # Every posting left after the date and keyword tiers states a work mode the
+        # user did not pick. "None posted in the last N days" would be false.
+        raise NoResultsError(
+            "Found jobs, but every one of them says it's a work mode you didn't pick. "
+            "Add work modes under 'Customize search' and try again."
         )
     if not hits:  # boards answered, but only with old postings that don't match the keywords
         raise NoResultsError(
@@ -833,6 +924,9 @@ def search_jobs(
     # this reader work it" vs "is it a live vacancy at all"), a posting can
     # carry either, both or neither, and `filtered` has to be able to say which.
     ghost_by_hit: list[GhostReport | None] = [None] * len(hits)
+    # Same shape, same reason: (reason, reading) for a posting the work-mode gate
+    # removed after its text arrived, None for every other.
+    mode_by_hit: list[tuple[str, WorkModeReading] | None] = [None] * len(hits)
     fetch_locks: dict[str, threading.Lock] = {h.source: threading.Lock() for h in hits}
     last_fetch: dict[str, float] = {}
     scored_done = 0
@@ -863,14 +957,16 @@ def search_jobs(
         nonlocal scored_done
         geo: GeoRestriction | None = None
         ghost: GhostReport | None = None
+        mode: tuple[str, WorkModeReading] | None = None
         try:
-            match, geo, ghost = _build_match(hit)
+            match, geo, ghost, mode = _build_match(hit)
         except Exception as e:  # noqa: BLE001 - one bad posting must not sink the search
             match = None
             with progress_lock:
                 score_errors.append(f"{hit.title or hit.url}: {e}")
         geo_by_hit[hit_i] = geo
         ghost_by_hit[hit_i] = ghost
+        mode_by_hit[hit_i] = mode
         if match is not None:
             matches_by_hit[hit_i] = match
         with progress_lock:
@@ -897,9 +993,13 @@ def search_jobs(
 
     def _build_match(
         hit: JobHit,
-    ) -> tuple[JobMatch | None, GeoRestriction | None, GhostReport | None]:
-        """(match, geo_restriction, ghost). A blocking restriction returns
-        (None, geo, …) and a CLOSED posting returns (None, …, ghost) — a VALUE,
+    ) -> tuple[
+        JobMatch | None, GeoRestriction | None, GhostReport | None, tuple[str, WorkModeReading] | None
+    ]:
+        """(match, geo_restriction, ghost, work_mode). A blocking restriction
+        returns (None, geo, …), a CLOSED posting (None, …, ghost, None), and a
+        posting whose words fail the work-mode gate (None, …, (reason, reading)) —
+        a VALUE,
         never an exception: `_score_hit`'s contract turns a raise into
         `score_errors`, which surfaces as "couldn't score any of them" and would
         blame the boards for a posting we deliberately dropped. Both reports are
@@ -910,6 +1010,7 @@ def search_jobs(
         match: JobMatch | None = None
         geo: GeoRestriction | None = None
         ghost: GhostReport | None = None
+        mode: tuple[str, WorkModeReading] | None = None
         # THE "OLDER" LABEL, computed ONCE, above both branches, because the
         # cache branch is the one that gets forgotten (it does no work, so
         # nothing in it looks like it needs a date).
@@ -943,7 +1044,7 @@ def search_jobs(
             # through unclassified.
             geo = _geo_for(hit, cached.jd_text, hit.location or cached.location)
             if geo is not None and geo.blocking:
-                return None, geo, ghost
+                return None, geo, ghost, mode
             # The ghost classifier is here for the identical reason, and it is
             # the branch that gets forgotten precisely because it does no work.
             # The wording rules and the sighting-based age read fine off cached
@@ -961,6 +1062,12 @@ def search_jobs(
             # minority of postings that closed inside the TTL. The cache TTL is
             # the bound on how stale this can be.
             ghost = _ghost_for(hit, cached.jd_text, sighting, now)
+            # The work-mode gate is here for the same reason as both classifiers
+            # above: a posting scored last week says "hybrid" this week too, and
+            # a cached hit must not launder past the user's own filter.
+            mode = _work_mode_gate(hit, cached.jd_text, ctx.work_mode)
+            if mode is not None:
+                return None, geo, ghost, mode
             match = JobMatch(
                 title=hit.title or cached.title,
                 company=hit.company or cached.company,
@@ -993,7 +1100,7 @@ def search_jobs(
                 # has been made, so a blocking posting costs zero tokens.
                 geo = _geo_for(hit, jd_text, hit.location)
                 if geo is not None and geo.blocking:
-                    return None, geo, ghost
+                    return None, geo, ghost, mode
                 # Ghost second, and the closure gate BEFORE analyze_and_score
                 # for the same reason the geo gate sits above it: this is the
                 # only seam where every code path holds the text and no model
@@ -1002,7 +1109,12 @@ def search_jobs(
                 # a few lines up — this is the one branch that can observe it.
                 ghost = _ghost_for(hit, jd_text, sighting, now)
                 if ghost is not None and ghost.closed:
-                    return None, geo, ghost
+                    return None, geo, ghost, mode
+                # Third, and still before the model: the posting's own words about
+                # where the work happens, read in full now that the text is here.
+                mode = _work_mode_gate(hit, jd_text, ctx.work_mode)
+                if mode is not None:
+                    return None, geo, ghost, mode
                 jd, score = analyze_and_score(resume, jd_text)
                 top_matched, top_gaps = top_matched_and_gaps(score.gaps)
                 match = JobMatch(
@@ -1028,7 +1140,7 @@ def search_jobs(
                     ghost=ghost,
                     stale=stale,
                 )
-        return match, geo, ghost
+        return match, geo, ghost, mode
 
     with ThreadPoolExecutor(max_workers=SCORE_WORKERS) as pool:
         # copy_context() per submit, not a bare submit: a pool worker starts
@@ -1073,13 +1185,21 @@ def search_jobs(
     # in `_build_match` (geo returns before ghost is even classified) makes the
     # overlap unreachable — the rule is written down anyway so a future
     # reordering cannot resurrect that double count silently.
+    #
+    # The work-mode reasons come LAST: "this posting says it will not hire you
+    # where you are" and "this posting is dead" are both stronger facts than "it
+    # says hybrid". `_build_match` never reaches the gate after either, so the
+    # overlap is unreachable today; the order is written down for the same reason
+    # as geo's.
     filter_reasons = [
         "restriction"
         if geo is not None and geo.blocking
         else "closed"
         if ghost is not None and ghost.closed
+        else mode[0]
+        if mode is not None
         else ""
-        for geo, ghost in zip(geo_by_hit, ghost_by_hit)
+        for geo, ghost, mode in zip(geo_by_hit, ghost_by_hit, mode_by_hit)
     ]
     filtered = [
         FilteredJob(
@@ -1093,6 +1213,8 @@ def search_jobs(
             geo_restriction=geo_by_hit[i],
             ghost=ghost_by_hit[i],
             reason=reason,
+            work_modes=_stated(mode_by_hit[i]),
+            work_mode_evidence=mode_by_hit[i][1].evidence if mode_by_hit[i] else "",
         )
         for i, reason in enumerate(filter_reasons)
         if reason

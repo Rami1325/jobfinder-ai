@@ -128,6 +128,9 @@ def parse_comeet_positions(positions: list, company_name: str = "") -> list[JobH
                 logo_url=str(pos.get("picture_url") or "").strip(),
                 language=detect_language(f"{title} {description}"),
                 raw=pos,
+                # "Hybrid" / "Remote" / "On-site". NOT `location.is_remote`, which
+                # the fixture's hybrid Bnei Brak office carries as true.
+                work_mode=str(pos.get("workplace_type") or "").strip(),
             )
         )
     return hits

@@ -10010,8 +10010,11 @@ from app.core.job_search import (  # noqa: E402
 )
 
 _GEO_BLOCK_TXT = "Python and SQL. Applicants must be legally authorized to work in the United States."
-_GEO_REGION_TXT = "Python and SQL. We are hiring across APAC."
-_GEO_CLEAN_TXT = "Python and SQL work on a distributed backend."
+# The two postings the worldwide pass KEEPS say they are remote, because since
+# 2026-09-22 a worldwide posting that does not is removed as "not_remote" (section
+# 21c-ter): the query's remote filter is ignored by LinkedIn, so the words decide.
+_GEO_REGION_TXT = "Python and SQL. This role is fully remote. We are hiring across APAC."
+_GEO_CLEAN_TXT = "Python and SQL work on a distributed backend. This role is fully remote."
 
 
 def _geo_hit(slug: str, text: str) -> "_FanHit":
@@ -10493,7 +10496,9 @@ check(
 )
 
 # --- end to end, through the real fan-out -------------------------------------------
-_PM_JD = "Python and SQL work on a distributed backend."
+# Says remote, like every worldwide posting the pass keeps (21c-ter): without it
+# each one would leave as "not_remote" and this section would test that instead.
+_PM_JD = "Python and SQL work on a distributed backend. This role is fully remote."
 
 
 def _pm_hit(slug: str, location: str, posted_at: str, title: str = "", company: str = "") -> "_pm_Hit":
@@ -10968,6 +10973,486 @@ finally:
         _pm_PROV[_pm_js.WORLDWIDE_BOARD] = _pm_real_board
     else:
         _pm_PROV.pop(_pm_js.WORLDWIDE_BOARD, None)
+
+# 21c-ter. The work-mode filter reads what each posting SAYS (2026-09-22).
+# LinkedIn's logged-out search ignores `f_WT`: "Remote", "Hybrid", "On-site" and no
+# filter returned the same ten postings on a US query and a Tel Aviv one, and the
+# other four boards were never sent the filter. So the Work mode control filtered
+# nothing, and the worldwide pass, which asks LinkedIn for REMOTE jobs abroad through
+# the same parameter, returned on-site jobs in Seattle and Ohio. `app.core.work_mode`
+# reads the board's own field (Comeet), the title, the location and the description;
+# `job_search` removes a local posting that states only modes the user did not pick
+# ("work_mode") and a worldwide one that does not say remote ("not_remote").
+#
+# Every catch sits beside the trap it must not fall into, and the traps are REAL
+# sentences from the 2026-09-22 ghost-run corpus: a guard that hides a job the user
+# asked for is the worst failure this filter can have.
+#
+# Self-contained: everything below is imported under its own `_wm` names and reads
+# only `check` and `resume` from above.
+import ast as _wm_ast  # noqa: E402
+import inspect as _wm_inspect  # noqa: E402
+import json as _wm_json  # noqa: E402
+from pathlib import Path as _wm_Path  # noqa: E402
+
+import app.core.work_mode as _wm  # noqa: E402
+from app.core import job_search as _wm_js  # noqa: E402
+from app.core.providers import PROVIDERS as _wm_PROV  # noqa: E402
+from app.core.providers.base import JobHit as _wm_Hit  # noqa: E402
+from app.core.providers.comeet import parse_comeet_positions as _wm_parse_comeet  # noqa: E402
+from app.core.providers.linkedin import _build_search_url as _wm_url  # noqa: E402
+from app.llm.client import get_llm_client as _wm_get_llm  # noqa: E402
+from app.models import (  # noqa: E402
+    WORK_MODES as _WM_ORDER,
+    SearchContext as _WmCtx,
+    work_modes as _wm_modes,
+)
+
+_R, _H, _O = "remote", "hybrid", "onsite"
+
+
+def _wm_read(**kw) -> set:  # noqa: ANN003
+    return set(_wm.read_work_mode(**kw).modes)
+
+
+# --- the words: (text, the modes it states). Real corpus sentences first. ----------
+_WM_TEXT = [
+    ("Work Model: On-site", {_O}),
+    ("Our Israel office is located in the Bursa area of Ramat Gan.This role is on-site.", {_O}),
+    ("Hybrid working including flexible working arrangements, and up to 20 days per year", {_H}),
+    ("Flexibility: We offer a hybrid work schedule with 3 days in-office.", {_H}),
+    ("Great team.\n#LI-Hybrid", {_H}),
+    ("Location: This role is based in the Dayton, OH area , and is 100% onsite.", {_O}),
+    ("Flexibles Arbeiten: Remote mit Dienstreisen, attraktive Vergütung", {_R}),
+    ("אזור השרון | היברידי", {_H}),
+    # Crafted, one per rule family.
+    ("#LI-Remote", {_R}),
+    ("Location: Remote", {_R}),
+    ("This position is fully remote.", {_R}),
+    ("We are a remote-first company.", {_R}),
+    ("Two days a week from home, the rest at our Tel Aviv office.", {_H}),
+    ("Five days a week in the office.", {_O}),
+    ("You can work from anywhere in Europe.", {_R}),
+    ("עבודה מרחוק באופן מלא", {_R}),
+    ("משרה היברידית, 3 ימים מהמשרד", {_H}),
+    ("עבודה מהמשרד בפתח תקווה", {_O}),
+    # Two readings, so BOTH: it can hide the job only from someone who wants on-site.
+    ("Option to work from home.", {_R, _H}),
+    ("אפשרות לעבודה מהבית", {_R, _H}),
+    # A negated remote is not remote: it states the office, all week or some of it.
+    ("This is not a remote position.", {_O, _H}),
+    ("Remote work is not possible for this role.", {_O, _H}),
+]
+_wm_text_wrong = {t: sorted(_wm_read(text=t)) for t, want in _WM_TEXT if _wm_read(text=t) != want}
+check(
+    "work mode: every stated mode is read, in English, Hebrew and a German line, the corpus's own sentences "
+    "included, and 'work from home' reads as both remote and hybrid",
+    _wm_text_wrong == {},
+    str(_wm_text_wrong),
+)
+
+# The traps, beside the catches above. Each says NOTHING about where the job is done.
+_WM_TRAPS = [
+    "Multi-Cloud: Familiarity with hybrid or multi-cloud architectures.",  # a real Comeet posting
+    "Experience with MLOps platforms, distributed training, or hybrid cloud environments (AWS, Azure, GCP)",
+    "experience developing hybrid systems that combine calibrated sensor models",  # real, Ohio
+    "At Similarweb, collaborating with our colleagues in-office creates a more connected, unified culture.",
+    "spanning business development, alpha capture, execution services, risk management, middle office, legal",
+    # The Drushim fixture, verbatim: a hybrid LAB for satellite systems, with "the role" earlier on.
+    "התפקיד כולל פיתוח והתאמה של תוכנה בסביבת Linux ו-LinuxRT עבור מעבדה היברידית ומערכות לוויין.",
+    "Standard in office hours, within office policy.",
+    "Build hybrid models that combine CNNs and transformers.",
+    "Experience with remote sensing and remote access tooling.",
+    "You will provide on-site support to customers during installations.",
+    "Skills: remote debugging, profiling.",
+    "Experience managing remote teams across time zones.",
+]
+_wm_trap_fired = {t: sorted(_wm_read(text=t)) for t in _WM_TRAPS if _wm_read(text=t)}
+check(
+    "work mode: none of the traps reads as a work mode — hybrid cloud, hybrid systems and hybrid models, "
+    "remote sensing, access, debugging and teams, on-site support, 'middle office', and Hebrew satellite systems",
+    _wm_trap_fired == {},
+    str(_wm_trap_fired),
+)
+
+# A title and a location are the posting's own summary: a bare word there counts,
+# behind the same guard.
+_WM_SHORT = [
+    (dict(title="Backend Engineer (Remote)"), {_R}),
+    (dict(location="Remote - US"), {_R}),
+    (dict(location="Anywhere"), {_R}),
+    (dict(location="Tel Aviv, Israel (Hybrid)"), {_H}),
+    (dict(title="מפתח/ת Backend - היברידי"), {_H}),
+    (dict(title="Remote Sensing Engineer"), set()),
+    (dict(title="Hybrid Cloud Architect"), set()),
+    (dict(title="Customer Success Manager", location="Tel Aviv-Yafo, Tel Aviv District, Israel"), set()),
+]
+_wm_short_wrong = {str(kw): sorted(_wm_read(**kw)) for kw, want in _WM_SHORT if _wm_read(**kw) != want}
+check(
+    "work mode: a title or location states a mode by itself ('(Remote)', 'Remote - US', 'Anywhere', Hebrew "
+    "היברידי), and 'Remote Sensing Engineer' and 'Hybrid Cloud Architect' state none",
+    _wm_short_wrong == {},
+    str(_wm_short_wrong),
+)
+
+# The board's own field WINS over the words, and Comeet's `location.is_remote` is
+# never read: the fixture's hybrid Bnei Brak office carries it as true.
+_wm_board = _wm.read_work_mode(board_value="Hybrid", text="This role is fully remote.")
+_wm_comeet_fx = _wm_json.loads(
+    (_wm_Path(__file__).parent / "fixtures" / "comeet_positions.json").read_text(encoding="utf-8")
+)
+_wm_comeet = _wm_parse_comeet(_wm_comeet_fx, "Kaltura")
+check(
+    "work mode: a board's own value wins over the words, and the Comeet parser hands over `workplace_type` "
+    "('Hybrid') while the fixture's location.is_remote is true",
+    set(_wm_board.modes) == {_H}
+    and _wm_board.evidence == "Hybrid"
+    and set(_wm.read_work_mode(board_value="On-site").modes) == {_O}
+    and set(_wm.read_work_mode(board_value="Sometimes", text="This role is fully remote.").modes) == {_R}
+    and len(_wm_comeet) == 3
+    and all(h.work_mode == "Hybrid" for h in _wm_comeet)
+    and all((p.get("location") or {}).get("is_remote") is True for p in _wm_comeet_fx),
+    f"{_wm_board} {[h.work_mode for h in _wm_comeet]}",
+)
+check(
+    "work mode: the evidence is the words that said it, so the page can quote them",
+    _wm.read_work_mode(text="Great place.\nWork Model: On-site\nApply now.").evidence == "Work Model: On-site"
+    and _wm.read_work_mode(text="Nothing about it.") == _wm.NOTHING,
+)
+
+# --- pure, and one importer ---------------------------------------------------------
+_WM_SRC = _wm_inspect.getsource(_wm)
+
+
+def _wm_imports(src: str) -> set:
+    mods: set = set()
+    for node in _wm_ast.walk(_wm_ast.parse(src)):
+        if isinstance(node, _wm_ast.Import):
+            mods |= {a.name for a in node.names}
+        elif isinstance(node, _wm_ast.ImportFrom):
+            mods.add("." * node.level + (node.module or ""))
+    return mods
+
+
+def _wm_is_pure(src: str) -> bool:
+    clock = {
+        n.attr for n in _wm_ast.walk(_wm_ast.parse(src)) if isinstance(n, _wm_ast.Attribute)
+    } & {"now", "utcnow", "today"}
+    return _wm_imports(src) == {"__future__", "re", "dataclasses"} and not clock
+
+
+_WM_IMPURE = (
+    "from app.core.scorer import fit_score",
+    "from app.core.job_match import _http_get",
+    "from app.core import scorer",
+    "import app.llm.client",
+    "from datetime import datetime",
+    "stamp = __import__('datetime').datetime.now()",
+)
+_wm_unrefused = [p for p in _WM_IMPURE if _wm_is_pure(_WM_SRC + "\n" + p + "\n")]
+check(
+    "work mode: the reader imports EXACTLY __future__, re and dataclasses and reads no clock (AST), and the "
+    "app's own model, network and clock one import away are refused",
+    len(_WM_SRC) > 3000 and _wm_is_pure(_WM_SRC) and _wm_unrefused == [],
+    f"imports={sorted(_wm_imports(_WM_SRC))} not refused={_wm_unrefused}",
+)
+_WM_APP = _wm_Path(_wm.__file__).parents[1]
+_WM_IMPORTERS: list = []
+for _wm_py in sorted(_WM_APP.rglob("*.py")):
+    _wm_rel = str(_wm_py.relative_to(_WM_APP)).replace("\\", "/")
+    if _wm_rel == "core/work_mode.py":
+        continue
+    for _wm_node in _wm_ast.walk(_wm_ast.parse(_wm_py.read_text(encoding="utf-8"))):
+        if (
+            isinstance(_wm_node, _wm_ast.ImportFrom)
+            and (
+                (_wm_node.module or "").split(".")[-1] == "work_mode"
+                or any(a.name == "work_mode" for a in _wm_node.names)
+            )
+        ) or (
+            isinstance(_wm_node, _wm_ast.Import)
+            and any(a.name.split(".")[-1] == "work_mode" for a in _wm_node.names)
+        ):
+            _WM_IMPORTERS.append(_wm_rel)
+            break
+check(
+    "work mode: exactly one importer in the whole app — core/job_search.py — and the reader answers in the "
+    "same three words, in the same order, as SearchContext's WORK_MODES",
+    _WM_IMPORTERS == ["core/job_search.py"]
+    and set(_WM_ORDER) == set(_wm.MODES)
+    and _WM_ORDER == (_R, _O, _H),
+    f"importers={_WM_IMPORTERS} order={_WM_ORDER}",
+)
+
+# --- the stored value ----------------------------------------------------------------
+_WM_CANON = {
+    "any": "any", "": "any", None: "any", "junk": "any", "remote": "remote", "onsite": "onsite",
+    "hybrid": "hybrid", "hybrid,remote": "remote,hybrid", " remote , onsite ": "remote,onsite",
+    "remote,foo": "remote", "remote,onsite,hybrid": "any", "hybrid,hybrid": "hybrid",
+}
+_wm_canon_wrong = {
+    repr(v): _WmCtx(work_mode=v).work_mode for v, want in _WM_CANON.items() if _WmCtx(work_mode=v).work_mode != want
+}
+_wm_stored = _WmCtx.model_validate_json('{"job_title": "Dev", "work_mode": "onsite"}')
+check(
+    "work mode: SearchContext holds ONE canonical string — a legacy single word reads back as itself (a stored "
+    "alert included), picks are written in WORK_MODES order, and junk or all three modes is 'any'",
+    _wm_canon_wrong == {} and _wm_stored.work_mode == "onsite" and _wm_modes("any") == (),
+    str(_wm_canon_wrong),
+)
+check(
+    "work mode: LinkedIn is still sent every pick, comma-separated as its own page writes it, and 'any' sends none",
+    "f_WT=2%2C3" in _wm_url("X", "Y", "remote,hybrid", 0)
+    and _wm_url("X", "Y", "onsite", 0).endswith("&f_WT=1")
+    and "f_WT" not in _wm_url("X", "Y", "any", 0),
+)
+
+
+def _wm_ww_locations(mode: str) -> list:
+    # `job_titles` is what the queries loop over; only `_resolve_context` fills it.
+    ctx = _WmCtx(job_title="Dev", job_titles=["Dev"], location="Tel Aviv", work_mode=mode,
+                 include_worldwide=True, sources=[_wm_js.WORLDWIDE_BOARD])
+    return [loc for _t, loc, _m, _o in _wm_js._board_queries(_wm_js.WORLDWIDE_BOARD, ctx)]
+
+
+check(
+    "work mode: the worldwide pass runs when 'remote' is among the picks or nothing is picked, and not for "
+    "on-site plus hybrid",
+    len(_wm_ww_locations("remote,onsite")) == 1 + len(_wm_js.WORLDWIDE_REMOTE_LOCATIONS)
+    and len(_wm_ww_locations("any")) == 1 + len(_wm_js.WORLDWIDE_REMOTE_LOCATIONS)
+    and _wm_ww_locations("onsite,hybrid") == ["Tel Aviv"],
+)
+
+# --- the gate --------------------------------------------------------------------------
+
+
+def _wm_gate(text: str, picked: str, origin: str = "", **hit) -> tuple:  # noqa: ANN003
+    v = _wm_js._work_mode_gate(_wm_Hit(origin_market=origin, **hit), text, picked)
+    return (v[0], sorted(v[1].modes)) if v else None
+
+
+check(
+    "work mode gate: a local posting goes only when it states modes and none was picked; one that says "
+    "nothing, or says a picked mode among others, stays; 'any' removes nothing",
+    _wm_gate("Work Model: On-site", "remote") == ("work_mode", [_O])
+    and _wm_gate("Work Model: On-site", "remote,onsite") is None
+    and _wm_gate("A backend role.", "remote") is None
+    and _wm_gate("Option to work from home.", "hybrid") is None
+    and _wm_gate("Work Model: On-site", "any") is None,
+)
+check(
+    "work mode gate: a WORLDWIDE posting stays only when it says remote — on-site and silent ones both go as "
+    "'not_remote', whatever the user picked",
+    _wm_gate("This role is fully remote.", "any", origin="United States") is None
+    and _wm_gate("Is 100% onsite.", "any", origin="United States") == ("not_remote", [_O])
+    and _wm_gate("A backend role.", "remote", origin="United States") == ("not_remote", [])
+    and _wm_gate("A backend role.", "any", title="Backend Engineer (Remote)", origin="United Kingdom") is None,
+)
+
+# --- end to end, through the real fan-out ---------------------------------------------
+_WM_PLAIN = "Python and SQL work on a distributed backend."
+_WM_LOCAL_BOARD = "wm_local"
+
+
+def _wm_hit(slug: str, posted: str, *, title: str = "", location: str = "Tel Aviv", desc: str = "",
+            source: str = _WM_LOCAL_BOARD) -> "_wm_Hit":
+    # Distinct title AND company per posting: the fan-out also dedupes by content,
+    # and a fixture that collapses passes by never firing.
+    return _wm_Hit(
+        source=source, title=title or f"Backend Engineer {slug}", company=f"ModeCo {slug}",
+        location=location, url=f"https://mode.test/{slug}", posted_at=posted, description=desc,
+    )
+
+
+class _WmBoard:
+    """Cards per queried location; the description per slug arrives on FETCH,
+    except where a card carries it inline, and every fetch is recorded."""
+
+    def __init__(self, name: str, by_location: dict, texts: dict) -> None:
+        self.name = name
+        self.by_location = by_location
+        self.texts = texts
+        self.fetched: list = []
+
+    def search(self, ctx):  # noqa: ANN001
+        return [_wm_hit(*a, **k) for a, k in self.by_location.get(ctx.location, [])]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        slug = hit.url.rsplit("/", 1)[-1]
+        self.fetched.append(slug)
+        return hit.description or self.texts.get(slug, _WM_PLAIN)
+
+
+def _wm_slugs(items) -> list:  # noqa: ANN001
+    return sorted(i.url.rsplit("/", 1)[-1] for i in items)
+
+
+_wm_stub = _wm_get_llm()
+_wm_orig_cjson = _wm_stub.complete_json
+_wm_calls: list = []
+
+
+def _wm_counting(system, user):  # noqa: ANN001, ANN202
+    _wm_calls.append(system[:40].upper())
+    return _wm_orig_cjson(system, user)
+
+
+def _wm_search(board, ctx, **kw):  # noqa: ANN001, ANN003, ANN202
+    """(result, error, JD_FIT calls), CAUGHT: an uncaught raise here would abort the
+    process and turn one red check into hundreds that silently never ran."""
+    _wm_calls.clear()
+    real = _wm_PROV.get(board.name)
+    _wm_PROV[board.name] = board
+    _wm_stub.complete_json = _wm_counting
+    try:
+        return _wm_js.search_jobs(resume, ctx, **kw), "", len([c for c in _wm_calls if "JD_FIT" in c])
+    except Exception as e:  # noqa: BLE001
+        return None, f"{type(e).__name__}: {e}", 0
+    finally:
+        _wm_stub.complete_json = _wm_orig_cjson
+        if real is not None:
+            _wm_PROV[board.name] = real
+        else:
+            _wm_PROV.pop(board.name, None)
+
+
+def _wm_ctx(**over):  # noqa: ANN003, ANN202
+    base = dict(job_title="Backend Engineer", location="Tel Aviv", work_mode="remote",
+                sources=[_WM_LOCAL_BOARD], max_age_days=0, limit=4)
+    return _WmCtx(**(base | over))
+
+
+# Newest first: without the filter the four slots are card_hybrid, inline_hybrid,
+# text_onsite and silent.
+_WM_LOCAL = {"Tel Aviv": [
+    (("card_hybrid", "2099-01-09"), {"title": "Backend Engineer (Hybrid)"}),
+    (("inline_hybrid", "2099-01-08"), {"desc": "Backend work.\nאזור השרון | היברידי"}),
+    (("text_onsite", "2099-01-07"), {}),
+    (("silent", "2099-01-06"), {}),
+    (("says_remote", "2099-01-05"), {}),
+    (("refill", "2099-01-04"), {}),
+]}
+_WM_LOCAL_TEXTS = {"text_onsite": "Python and SQL.\nWork Model: On-site", "says_remote": "This role is fully remote."}
+
+_wm_b1 = _WmBoard(_WM_LOCAL_BOARD, _WM_LOCAL, _WM_LOCAL_TEXTS)
+_wm_events: list = []
+_wm_r1, _wm_e1, _wm_jd1 = _wm_search(_wm_b1, _wm_ctx(), progress=_wm_events.append)
+check(
+    "work mode search: a card that SAYS another mode (in its title, or in an inline description) is removed "
+    "before selection, never fetched and never counted, and the postings below it take the two slots",
+    _wm_e1 == ""
+    and _wm_slugs(_wm_r1.matches) == ["refill", "says_remote", "silent"]
+    and "card_hybrid" not in _wm_b1.fetched
+    and "card_hybrid" not in [f.url.rsplit("/", 1)[-1] for f in _wm_r1.filtered]
+    and "inline_hybrid" not in [f.url.rsplit("/", 1)[-1] for f in _wm_r1.filtered]
+    and {e["total"] for e in _wm_events if e["stage"] == "scoring"} == {4},
+    _wm_e1 or f"ranked={_wm_slugs(_wm_r1.matches)} fetched={_wm_b1.fetched}",
+)
+_wm_row = _wm_r1.filtered[0] if _wm_r1 and _wm_r1.filtered else None
+check(
+    "work mode search: a posting whose FETCHED text says another mode is returned as one 'work_mode' row with "
+    "its modes and the words, costs no model call, and is not counted as skipped; the one that says nothing "
+    "is ranked",
+    _wm_r1 is not None
+    and [(f.url.rsplit("/", 1)[-1], f.reason) for f in _wm_r1.filtered] == [("text_onsite", "work_mode")]
+    and _wm_row.work_modes == [_O]
+    and _wm_row.work_mode_evidence == "Work Model: On-site"
+    and _wm_row.geo_restriction is None
+    and _wm_r1.skipped == 0
+    and _wm_jd1 == 3,
+    f"rows={[(f.url, f.reason, f.work_modes) for f in (_wm_r1.filtered if _wm_r1 else [])]} "
+    f"skipped={_wm_r1.skipped if _wm_r1 else None} jd_fit={_wm_jd1}",
+)
+_wm_r2, _wm_e2, _ = _wm_search(_WmBoard(_WM_LOCAL_BOARD, _WM_LOCAL, _WM_LOCAL_TEXTS), _wm_ctx(work_mode="any", limit=6))
+_wm_r3, _wm_e3, _ = _wm_search(
+    _WmBoard(_WM_LOCAL_BOARD, _WM_LOCAL, _WM_LOCAL_TEXTS), _wm_ctx(work_mode="remote,onsite", limit=6)
+)
+check(
+    "work mode search: the filter is the PICK, not the words — 'any' ranks all six, and remote + on-site ranks "
+    "the on-site posting while both hybrid ones still go",
+    _wm_e2 == "" and len(_wm_r2.matches) == 6 and _wm_r2.filtered == []
+    and _wm_e3 == "" and _wm_slugs(_wm_r3.matches) == ["refill", "says_remote", "silent", "text_onsite"]
+    and _wm_r3.filtered == [],
+    _wm_e2 or _wm_e3 or f"any={_wm_slugs(_wm_r2.matches)} r+o={_wm_slugs(_wm_r3.matches)}",
+)
+
+# The cache branch skips the fetch and the model, so it is the one that gets
+# forgotten: a posting scored last week says "on-site" this week too.
+_wm_b4 = _WmBoard(_WM_LOCAL_BOARD, _WM_LOCAL, _WM_LOCAL_TEXTS)
+_wm_cache = {"https://mode.test/text_onsite": _wm_js.CachedScore(
+    jd_text="Python and SQL.\nWork Model: On-site", overall=80.0, keyword_coverage=70.0, fit_score=90.0,
+    top_matched=("Python",), top_gaps=(), title="Cached", company="ModeCo", location="Tel Aviv",
+    posted_at="", logo_url="", is_full_match=True,
+)}
+_wm_r4, _wm_e4, _wm_jd4 = _wm_search(_wm_b4, _wm_ctx(), cache=_wm_cache)
+check(
+    "work mode search: a full-match CACHED posting is still removed for its work mode, with no fetch",
+    _wm_e4 == ""
+    and [(f.url.rsplit("/", 1)[-1], f.reason) for f in _wm_r4.filtered] == [("text_onsite", "work_mode")]
+    and "text_onsite" not in _wm_b4.fetched
+    and _wm_jd4 == 3,
+    _wm_e4 or f"rows={[f.url for f in _wm_r4.filtered]} fetched={_wm_b4.fetched}",
+)
+
+# All of it gone after the fetch is a 200 with the list; all of it gone BEFORE
+# selection is an honest "none of them is a mode you picked", never "none posted".
+_wm_r5, _wm_e5, _ = _wm_search(
+    _WmBoard(_WM_LOCAL_BOARD, {"Tel Aviv": [(("text_onsite", "2099-01-07"), {})]}, _WM_LOCAL_TEXTS), _wm_ctx()
+)
+_wm_r6, _wm_e6, _ = _wm_search(
+    _WmBoard(_WM_LOCAL_BOARD, {"Tel Aviv": [(("card_hybrid", "2099-01-09"), {"title": "Backend Engineer (Hybrid)"})]},
+             {}),
+    _wm_ctx(),
+)
+check(
+    "work mode search: every posting removed after the fetch is a 200 carrying the rows, and every one removed "
+    "before selection raises a sentence that names the work mode, not the posting dates",
+    _wm_e5 == "" and _wm_r5.matches == [] and [f.reason for f in _wm_r5.filtered] == ["work_mode"]
+    and _wm_r6 is None and "work mode you didn't pick" in _wm_e6 and "last" not in _wm_e6,
+    _wm_e5 or _wm_e6,
+)
+
+# The worldwide pass: kept only when it says remote.
+_WM_WW = _wm_js.WORLDWIDE_BOARD
+_WM_WW_CARDS = {
+    "Tel Aviv": [(("local_silent", "2099-01-09"), {"source": _WM_WW})],
+    "United States": [
+        (("us_remote", "2099-01-08"), {"source": _WM_WW, "location": "United States"}),
+        (("us_onsite", "2099-01-07"), {"source": _WM_WW, "location": "Seattle, WA"}),
+        (("us_silent", "2099-01-06"), {"source": _WM_WW, "location": "Houston, TX"}),
+        (("us_card_hybrid", "2099-01-05"), {"source": _WM_WW, "location": "Austin, TX (Hybrid)"}),
+    ],
+}
+_WM_WW_TEXTS = {
+    "us_remote": "Great team.\n#LI-Remote",
+    "us_onsite": "Location: This role is based in the Dayton, OH area , and is 100% onsite.",
+}
+_wm_b7 = _WmBoard(_WM_WW, _WM_WW_CARDS, _WM_WW_TEXTS)
+_wm_r7, _wm_e7, _ = _wm_search(
+    _wm_b7, _wm_ctx(work_mode="any", include_worldwide=True, sources=[_WM_WW], limit=10)
+)
+check(
+    "work mode, worldwide: an abroad posting that says remote is ranked, an on-site one and a silent one are "
+    "returned as 'not_remote' rows, one whose CARD says hybrid never takes a slot, and the local posting that "
+    "says nothing is ranked",
+    _wm_e7 == ""
+    and _wm_slugs(_wm_r7.matches) == ["local_silent", "us_remote"]
+    and sorted((f.url.rsplit("/", 1)[-1], f.reason, tuple(f.work_modes)) for f in _wm_r7.filtered)
+    == [("us_onsite", "not_remote", (_O,)), ("us_silent", "not_remote", ())]
+    and "us_card_hybrid" not in _wm_b7.fetched
+    and _wm_r7.skipped == 0,
+    _wm_e7 or f"ranked={_wm_slugs(_wm_r7.matches)} rows={[(f.url, f.reason) for f in _wm_r7.filtered]}",
+)
+_wm_r8, _wm_e8, _ = _wm_search(
+    _WmBoard(_WM_WW, _WM_WW_CARDS, _WM_WW_TEXTS),
+    _wm_ctx(work_mode="any", include_worldwide=False, sources=[_WM_WW], limit=10),
+)
+check(
+    "work mode, worldwide: with the worldwide pass off nothing is asked to say remote (the origin stamp is the "
+    "gate), so the local posting that says nothing is ranked and there are no rows",
+    _wm_e8 == "" and _wm_slugs(_wm_r8.matches) == ["local_silent"] and _wm_r8.filtered == [],
+    _wm_e8 or f"ranked={_wm_slugs(_wm_r8.matches)} rows={[f.url for f in _wm_r8.filtered]}",
+)
 
 # 21d. The market memory (PLAN 28.3). `posting_sightings` is the only thing in
 # this app that can say how long a posting has REALLY been open: `job_search_hits`

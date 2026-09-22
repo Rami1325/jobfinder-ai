@@ -47,6 +47,10 @@ class JobHit:
     logo_url: str = ""  # company logo image URL, "" when the board has none
     language: str = "en"  # "he" | "en" — best-effort detection by the provider
     raw: dict = field(default_factory=dict)  # provider-native payload for debugging
+    # The board's OWN statement of the work mode, verbatim ("Hybrid"), when it
+    # has a field for it: Comeet's `workplace_type`. "" for every other board.
+    # `app.core.work_mode` reads it before the posting's words, and it wins.
+    work_mode: str = ""
     # Cross-board duplicates merged into this hit (PLAN 15.1): the same posting
     # found on other boards, as {"source": ..., "url": ...}. Filled by the
     # fan-out's dedupe, never by providers.
@@ -58,13 +62,16 @@ class JobHit:
     # The worldwide-remote market this hit came back from ("United States",
     # "United Kingdom", "European Union"), or "" for the context's own
     # location. Set by the fan-out's _search_board, NEVER by providers — the
-    # remote-ness and the market live in the QUERY (f_WT=2 + location) and
-    # nothing in a LinkedIn card echoes them back. This is the gate on BOTH
-    # worldwide-only classifiers: the geo-restriction one, and the pay-market
-    # filter (`pay_market`, which reads `location`, because the "European
-    # Union" query returns every member state). With include_worldwide off
-    # every stamp is "" and neither is ever called, so a normal search and
-    # every Israeli-board posting are structurally out of their reach.
+    # market lives in the QUERY's location and nothing in a LinkedIn card echoes
+    # it back. Remote-ness does NOT live in the query: the `f_WT=2` sent with it
+    # is ignored by LinkedIn's logged-out search (measured 2026-09-22), so the
+    # posting must say it (`job_search`'s "not_remote" reason). This is the gate
+    # on every worldwide-only rule: the geo-restriction classifier, the
+    # pay-market filter (`pay_market`, which reads `location`, because the
+    # "European Union" query returns every member state) and the say-remote
+    # rule. With include_worldwide off every stamp is "" and none of them ever
+    # runs, so a normal search and every Israeli-board posting are structurally
+    # out of their reach.
     origin_market: str = ""
     # Evidence text set by `fetch_description` when the BOARD ITSELF says the
     # posting is dead — the guest page's own banner ("No longer accepting

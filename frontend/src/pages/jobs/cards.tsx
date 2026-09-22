@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Ghost,
   Globe,
+  Laptop,
   MessageCircle,
   Bookmark,
   BookmarkCheck,
@@ -240,6 +241,44 @@ function MarketNote({ location }: { location: string }) {
   );
 }
 
+/** Why a posting was hidden for its work mode, in the posting's own words. The
+ * backend read them (`app.core.work_mode`) after the fetch and before any model
+ * call, so the modes it states and the words that stated them ARE the evidence,
+ * quoted like `GeoNote`'s sentence. "work_mode": it states only modes the user did
+ * not pick. "not_remote": it came from the worldwide pass and does not say it is
+ * remote, which may mean it states other modes or states none. */
+function WorkModeNote({ job }: { job: FilteredJob }) {
+  const { t } = useTranslation("jobs");
+  const modes = (job.work_modes ?? []).map((m) => t(`workModes.${m}`)).join(", ");
+  const sentence =
+    job.reason === "work_mode"
+      ? t("card.workModeNote", { modes })
+      : modes
+        ? t("card.notRemoteNote", { modes })
+        : t("card.notRemoteSilent");
+  return (
+    <p className="mt-2 flex items-start gap-1.5 text-xs text-warn">
+      {job.reason === "work_mode" ? (
+        <Building2 size={12} className="mt-0.5 shrink-0" />
+      ) : (
+        <Laptop size={12} className="mt-0.5 shrink-0" />
+      )}
+      <span className="min-w-0 break-words">
+        {sentence}
+        {job.work_mode_evidence ? (
+          // Isolated on the QUOTE, for GeoNote's reason: an English sentence
+          // inside a Hebrew line reorders around its own quotes otherwise.
+          <bdi dir="auto" className="text-ink-faint">
+            {" · “"}
+            {job.work_mode_evidence}
+            {"”"}
+          </bdi>
+        ) : null}
+      </span>
+    </p>
+  );
+}
+
 // Every ghost `kind` this build has a string for. A newer backend may emit a
 // kind we have never heard of, and `t("card.ghost.<unknown>")` renders the KEY
 // — a dotted path at 12px in amber, on the card, in production. So an unknown
@@ -385,6 +424,7 @@ export function RestrictedRow({ job }: { job: FilteredJob }) {
   // build has never heard of draws no note, which is the honest direction.
   const closed = job.reason === "closed";
   const market = job.reason === "market";
+  const mode = job.reason === "work_mode" || job.reason === "not_remote";
   const restriction = !job.reason || job.reason === "restriction";
   return (
     <JobResultCard>
@@ -408,6 +448,8 @@ export function RestrictedRow({ job }: { job: FilteredJob }) {
             <GhostNote ghost={job.ghost} />
           ) : market ? (
             <MarketNote location={job.location} />
+          ) : mode ? (
+            <WorkModeNote job={job} />
           ) : restriction ? (
             <GeoNote geo={job.geo_restriction} />
           ) : null}

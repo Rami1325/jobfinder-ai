@@ -143,6 +143,7 @@
     "location": "Location",
     "locationPlaceholder": "e.g. Tel Aviv, Israel",
     "workMode": "Work mode",
+    "workModeHint": "Pick one or more. We go by what each job says, and keep jobs that don't say.",
     "postedWithin": "Posted within",
     "limit": "Jobs to rank (1–25)",
     "detecting": "Detecting from your resume…",
@@ -211,7 +212,11 @@
     "filteredClosed_one": "{{count}} posting is no longer accepting applications",
     "filteredClosed_other": "{{count}} postings are no longer accepting applications",
     "filteredMarket_one": "{{count}} job hidden: it's in a country where pay is well below Israel's.",
-    "filteredMarket_other": "{{count}} jobs hidden: they're in countries where pay is well below Israel's."
+    "filteredMarket_other": "{{count}} jobs hidden: they're in countries where pay is well below Israel's.",
+    "filteredWorkMode_one": "{{count}} job hidden: it says it's a work mode you didn't pick.",
+    "filteredWorkMode_other": "{{count}} jobs hidden: they say they're a work mode you didn't pick.",
+    "filteredNotRemote_one": "{{count}} job abroad hidden: it doesn't say it's remote.",
+    "filteredNotRemote_other": "{{count}} jobs abroad hidden: they don't say they're remote."
   },
   "workModes": {
     "any": "Any",
@@ -267,6 +272,9 @@
     "geoNote": "Quoted from the posting — we report what it says, never whether you qualify.",
     "geoNotScored": "Not scored",
     "marketNote": "Hidden because pay in {{location}} is well below Israel's.",
+    "workModeNote": "Hidden because it says: {{modes}}.",
+    "notRemoteNote": "Hidden: it's abroad and says {{modes}}, not remote.",
+    "notRemoteSilent": "Hidden: it's abroad and doesn't say it's remote.",
     "ghost": {
       "closed": "No longer accepting applications",
       "evergreen": "A general application, not a specific role",
