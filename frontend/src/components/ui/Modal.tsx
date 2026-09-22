@@ -1,8 +1,9 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { cn } from "../../lib/cn";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 
 interface ModalProps {
   open: boolean;
@@ -13,6 +14,9 @@ interface ModalProps {
 }
 
 export default function Modal({ open, onClose, title, children, maxWidth = "max-w-3xl" }: ModalProps) {
+  // Focus goes in on open, stays in on Tab, and returns to the opener on close.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(open, dialogRef);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -35,6 +39,8 @@ export default function Modal({ open, onClose, title, children, maxWidth = "max-
           exit={{ opacity: 0 }}
         >
           <motion.div
+            ref={dialogRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
@@ -43,7 +49,7 @@ export default function Modal({ open, onClose, title, children, maxWidth = "max-
             exit={{ opacity: 0, y: 16, scale: 0.98 }}
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             className={cn(
-              "w-full rounded-xl2 border border-line bg-panel p-6 shadow-panel",
+              "w-full rounded-xl2 border border-line bg-panel p-6 shadow-panel outline-none",
               maxWidth,
             )}
           >

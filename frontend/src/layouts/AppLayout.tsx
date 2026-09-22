@@ -883,8 +883,20 @@ export default function AppLayout() {
           (styles.css), because DocumentToolbar has to span the window like the
           header above it while the paper stays in the column. A toolbar inside
           a centered `main` can only reach the window edge through a 100vw
-          bleed, and 100vw counts the Windows scrollbar. */}
-      <main className={cn("pb-24 pt-8 lg:pb-10", !docRoute && "mx-auto max-w-6xl px-4 lg:px-8")}>
+          bleed, and 100vw counts the Windows scrollbar.
+
+          Below `lg` the bottom padding must clear the FEEDBACK PILL, not only
+          the tab bar: the pill's top edge is 4.25rem + its own ~2.4rem above
+          the viewport's bottom, plus the safe-area inset. `pb-24` (6rem, no
+          inset) left the last line under the pill by 10 px at 390 px, and by
+          the whole 34 px home-indicator inset more on an iPhone, where no
+          scroll could bring it out. Measured with Playwright at 390x844. */}
+      <main
+        className={cn(
+          "pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-8 lg:pb-10",
+          !docRoute && "mx-auto max-w-6xl px-4 lg:px-8",
+        )}
+      >
         {/* After the guard, never in the spinner branch above: it takes
             `google=superseded` out of the address as it mounts, and there it
             would be unmounted before anyone read it (check-mirrors 32(l)). */}

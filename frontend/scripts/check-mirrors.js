@@ -10083,6 +10083,109 @@ try {
   fail(`History New-badge check (check 40) could not run: ${e.message}`);
 }
 
+// ---- 41. the page's last line clears the feedback pill ---------------------- //
+// Found in the Phase 29 browser pass, fixed 2026-09-22. Below `lg` the feedback
+// pill floats at `bottom-[calc(4.25rem+env(safe-area-inset-bottom))]`, and
+// `main` was padded `pb-24`: 6rem, under the pill's top edge (4.25rem + its own
+// ~2.4rem) by 10 px at 390x844 (measured with Playwright: the /app template note's
+// last line sat under it with the page scrolled to the end), and with no
+// safe-area inset at all, so on an iPhone the 34 px home indicator made it 44 px
+// that no scroll could bring out. The two numbers live in two files, so the
+// check reads both: main's base padding must carry the inset and be at least the
+// pill's offset plus its height.
+try {
+  const PILL_REM = 2.5; // py-2.5 plus a 20 px line: 2.375rem, rounded up
+  const pill = decomment(read("components/FeedbackButton.tsx"));
+  const layout = decomment(read("layouts/AppLayout.tsx"));
+  const pillAt = /\bfixed\b[^"]*?\bbottom-\[calc\(([\d.]+)rem\+env\(safe-area-inset-bottom\)\)\]/.exec(pill);
+  if (!pillAt) throw new Error("components/FeedbackButton.tsx has no fixed bottom-[calc(<n>rem+env(safe-area-inset-bottom))]");
+  const mainTag = /<main\b[\s\S]*?>/.exec(layout);
+  if (!mainTag) throw new Error("layouts/AppLayout.tsx renders no <main>");
+  // The base (unprefixed) bottom padding: `pb-…` not preceded by a `sm:`/`lg:` prefix.
+  const pad = /(?:^|[\s"'`(])pb-(\[calc\(([\d.]+)rem\+env\(safe-area-inset-bottom\)\)\]|(\d+))(?=[\s"'`)])/.exec(mainTag[0]);
+  if (!pad) throw new Error("AppLayout's <main> has no base pb-… class");
+  const needed = Number(pillAt[1]) + PILL_REM;
+  if (pad[3] !== undefined)
+    fail(
+      `layouts/AppLayout.tsx: <main> is padded pb-${pad[3]}, with no safe-area inset, while the feedback pill sits ` +
+        `${pillAt[1]}rem PLUS the inset above the bottom: on an iPhone the page's last line stays under it. ` +
+        `Use pb-[calc(<at least ${needed}>rem+env(safe-area-inset-bottom))].`,
+    );
+  else if (Number(pad[2]) < needed)
+    fail(
+      `layouts/AppLayout.tsx: <main>'s bottom padding (${pad[2]}rem + inset) is under the feedback pill's top edge ` +
+        `(${pillAt[1]}rem + ${PILL_REM}rem + inset), so the page's last line can never scroll out from under it.`,
+    );
+  // Both directions on the padding reader.
+  const readPad = (tag) => /(?:^|[\s"'`(])pb-(\[calc\(([\d.]+)rem\+env\(safe-area-inset-bottom\)\)\]|(\d+))(?=[\s"'`)])/.exec(tag);
+  if (readPad('<main className={cn("lg:pb-10 pt-8")}>') ||
+      readPad('<main className={cn("pb-24 pt-8 lg:pb-10")}>')?.[3] !== "24" ||
+      readPad('<main className={cn("pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-8")}>')?.[2] !== "7.5")
+    fail("check 41's padding reader reads a prefixed lg:pb as the base padding, or misses a base one");
+} catch (e) {
+  fail(`feedback pill clearance check (check 41) could not run: ${e.message}`);
+}
+
+// ---- 42. a modal overlay takes focus, keeps it, and gives it back (EXECUTED) //
+// Found in the 2026-09-21 390 px pass, fixed 2026-09-22. The review drawer is
+// `aria-modal` below `lg`, yet after it opened `document.activeElement` stayed on
+// the "Check my CV" pill OUTSIDE it (all four runs), so a keyboard or screen-
+// reader user was left behind the overlay; `Modal` had no trap and no way back
+// either. `hooks/useDialogFocus` does all three. Measured after the fix with
+// Playwright at 390x844, en and he: focus lands in the drawer and in the
+// feedback modal, 0 of 25 Tabs and 0 of 25 Shift+Tabs leave either, and Escape
+// and the close button hand focus back to the opener. With the hook turned off
+// the same script read 25 of 25 leaving and focus on the pill.
+//
+// (a) EXECUTES `trapTarget`, the pure step of the trap, over every case; (b)
+// pins the wiring by shape: the drawer calls the hook with the breakpoint in its
+// condition (it is modal below `lg` only) and the ref on the `aside`, and Modal
+// with `open` and the ref on its dialog, each container focusable (`tabIndex={-1}`).
+try {
+  const df = runProbeBundle("dialog-focus", `export * from "./hooks/useDialogFocus";\n`);
+  if (typeof df.trapTarget !== "function") throw new Error("hooks/useDialogFocus.ts does not export trapTarget");
+  const a = "a", b = "b", c = "c";
+  const cases = [
+    [[a, b, c], c, true, false, a, "Tab on the last item wraps to the first"],
+    [[a, b, c], a, true, true, c, "Shift+Tab on the first item wraps to the last"],
+    [[a, b, c], b, true, false, null, "Tab in the middle is the browser's own move"],
+    [[a, b, c], b, true, true, null, "Shift+Tab in the middle is the browser's own move"],
+    [[a, b, c], "box", true, false, a, "Tab on the container itself goes to the first item"],
+    [[a, b, c], "box", true, true, c, "Shift+Tab on the container itself goes to the last item"],
+    [[a, b, c], "page", false, false, a, "focus that left the overlay comes back to the first item"],
+    [[a, b, c], "page", false, true, c, "…or the last one on Shift+Tab"],
+    [[], "box", true, false, "none", "an overlay with nothing to tab to keeps focus on itself"],
+  ];
+  for (const [items, active, inside, shift, want, label] of cases) {
+    const got = df.trapTarget(items, active, inside, shift);
+    if (got !== want) fail(`check 42: trapTarget — ${label}: got ${JSON.stringify(got)}, not ${JSON.stringify(want)}`);
+  }
+
+  const panel = decomment(read("components/DocumentPanel.tsx"));
+  const call = /\buseDialogFocus\(\s*([^,]+?)\s*,\s*(\w+)\s*\)/.exec(panel);
+  if (!call) fail("components/DocumentPanel.tsx: the review drawer does not call useDialogFocus");
+  else {
+    if (!/\breviewOpen\b/.test(call[1]) || !/!\s*isWide\b/.test(call[1]))
+      fail(
+        `components/DocumentPanel.tsx: useDialogFocus(${call[1]}, …) — the drawer is modal only while it is open AND ` +
+          "below `lg` (`!isWide`); from `lg` it sits beside the paper and must take nothing",
+      );
+    const aside = /<aside\b[\s\S]*?>/.exec(panel.slice(panel.indexOf("createPortal(")))?.[0] ?? "";
+    if (!new RegExp(`\\bref=\\{\\s*${call[2]}\\s*\\}`).test(aside) || !/tabIndex=\{\s*-1\s*\}/.test(aside))
+      fail(`components/DocumentPanel.tsx: the drawer's <aside> must carry ref={${call[2]}} and tabIndex={-1}, or focus has nowhere to land`);
+  }
+  const modal = decomment(read("components/ui/Modal.tsx"));
+  const mcall = /\buseDialogFocus\(\s*open\s*,\s*(\w+)\s*\)/.exec(modal);
+  if (!mcall) fail("components/ui/Modal.tsx does not call useDialogFocus(open, <ref>)");
+  else {
+    const dialog = /<motion\.div\b(?=[^>]*role="dialog")[\s\S]*?>/.exec(modal)?.[0] ?? "";
+    if (!new RegExp(`\\bref=\\{\\s*${mcall[1]}\\s*\\}`).test(dialog) || !/tabIndex=\{\s*-1\s*\}/.test(dialog))
+      fail(`components/ui/Modal.tsx: the role="dialog" element must carry ref={${mcall[1]}} and tabIndex={-1}`);
+  }
+} catch (e) {
+  fail(`overlay focus check (check 42) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

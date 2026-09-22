@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { EntryInsertKind, NamedInsertKind } from "../lib/resumeBlocks";
 import { useTranslation } from "react-i18next";
@@ -20,6 +20,7 @@ import TemplatePicker from "./TemplatePicker";
 import ResumeUpload from "./ResumeUpload";
 import XrayResult from "./XrayResult";
 import { usePdfPreview, useXray } from "../hooks/useFilePreview";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 import { downloadResume, resumeFilename, reviewRewrites, type ResumeTemplate } from "../api/client";
 import { PDF_ONLY, TEMPLATE_SPECS } from "../lib/templateSpecs";
 import { Button, Card, CardTitle, Skeleton } from "./ui";
@@ -222,6 +223,12 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   // sits beside the paper rather than over it.
   const isWide =
     typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
+  // Below `lg` the drawer is modal, so focus goes into it when it opens, stays in
+  // it on Tab, and returns to the "Check my CV" pill when it closes. It used to
+  // stay on the pill, outside an `aria-modal` dialog (the 2026-09-21 390 px
+  // pass). From `lg` it sits beside the paper and takes nothing.
+  const drawerRef = useRef<HTMLElement>(null);
+  useDialogFocus(reviewOpen && !!onJumpToBlock && !isWide, drawerRef);
   // Closing drops the tint with the drawer. Without this, moving the pointer
   // off a row and onto the close button leaves the highlighted blocks lit with
   // nothing on screen that explains them — a mark on the document the user
@@ -480,7 +487,9 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
               // `overscroll-contain` on the aside itself and not only on the
               // scroller, because the header row is outside the scroller and a
               // drag starting there would otherwise chain to the page.
-              className="animate-drawer-in fixed top-14 bottom-0 end-0 z-40 flex w-full max-w-[380px] flex-col overscroll-contain border-s border-line bg-panel shadow-2xl"
+              ref={drawerRef}
+              tabIndex={-1}
+              className="animate-drawer-in fixed top-14 bottom-0 end-0 z-40 flex w-full max-w-[380px] flex-col overscroll-contain border-s border-line bg-panel shadow-2xl outline-none"
               aria-label={t("doc.review.title")}
               role="dialog"
               aria-modal={!isWide}
