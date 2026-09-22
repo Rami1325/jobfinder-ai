@@ -664,6 +664,10 @@ export interface JobSearchHit {
   top_gaps: string[];
   jd_text: string;
   posted_at: string; // ISO date the job was posted; empty when unknown
+  // The earliest date a board stated for the role, min-merged across searches;
+  // the listing's own posted_at verbatim unless an earlier date is known, and
+  // "" (or absent, on an older backend) when unknown.
+  first_posted_at?: string;
   source?: string; // provider id ("linkedin", "drushim", …); absent on older backends
   logo_url?: string; // company logo from the board; empty/absent when it has none
   also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)

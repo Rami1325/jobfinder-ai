@@ -191,6 +191,12 @@ class JobSearchHit(Base):
     top_matched_json: Mapped[str] = mapped_column(Text, default="[]")
     jd_text: Mapped[str] = mapped_column(Text, default="")
     posted_at: Mapped[str] = mapped_column(String(32), default="")  # ISO date; "" when unknown
+    # The earliest date a board stated for this role (`JobMatch.first_posted_at`),
+    # min-merged as instants across every search that returned this URL, so the
+    # History tab stops calling a relisted role "New" from this listing's own
+    # date. "" on rows no search has written since the column arrived: unknown,
+    # and the page then reads `posted_at` as it always did.
+    first_posted_at: Mapped[str] = mapped_column(String(32), default="")
     source: Mapped[str] = mapped_column(String(32), default="linkedin")  # job board (PROVIDERS key)
     logo_url: Mapped[str] = mapped_column(String(1000), default="")  # company logo; "" when none
     # PLAN 15.1: the same posting on other boards, [{"source","url"}] JSON

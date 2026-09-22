@@ -794,6 +794,12 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
 export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: number) => void }) {
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
+  // The backend hands the listing's own date back verbatim unless a board
+  // stated an EARLIER one for the role, so a different string IS an earlier
+  // date (the StaleBadge rule): no date comparison lives here. A relisted role
+  // is then not "New", and its row says when it was first posted.
+  const firstPosted = hit.first_posted_at || hit.posted_at;
+  const earlier = !!hit.first_posted_at && hit.first_posted_at !== hit.posted_at;
   return (
     <JobResultCard>
       <ProgressRing value={hit.overall} size={64} stroke={6} label={t("card.fit")} />
@@ -804,7 +810,7 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
             <p className="min-w-0 max-w-full truncate font-semibold text-ink">
               {hit.title || t("card.untitled")}
             </p>
-            <NewBadge postedAt={hit.posted_at} />
+            <NewBadge postedAt={firstPosted} />
             {hit.source && <Badge className="shrink-0">{sourceLabel(hit.source)}</Badge>}
             {hit.salary?.raw && (
               <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
@@ -822,6 +828,11 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
             <span>{t("history.searchedOn", { date: hit.searched_at.slice(0, 10) })}</span>
             {hit.posted_at && (
               <span title={hit.posted_at}>{t("card.posted", { when: postedAgo(hit.posted_at, t) })}</span>
+            )}
+            {earlier && (
+              <span title={hit.first_posted_at}>
+                {t("card.firstPosted", { when: postedAgo(hit.first_posted_at ?? "", t) })}
+              </span>
             )}
             {hit.url && (
               <a

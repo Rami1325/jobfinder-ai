@@ -5210,6 +5210,61 @@ check(
     _by_url["https://x/jobs/1"].also_on_json,
 )
 
+# The History tab called a relisted role "New · Posted yesterday": it stored
+# only this listing's own date. A history row now keeps the earliest date a
+# board stated for the role, min-merged as instants across searches, and GET
+# /jobs/history hands it back for the New badge to read.
+from app.api.routes import jobs_history as _jobs_history_route  # noqa: E402
+
+_FP_URL, _FP_OFF = "https://x/jobs/relisted", "https://x/jobs/offsets"
+
+
+def _fp_rows() -> dict:  # noqa: ANN202
+    return {h.url: (h.first_posted_at, h.posted_at) for h in list_search_hits(_db, _admin_id)}
+
+
+record_search_hits(_db, [
+    JobMatch(title="Relisted", company="Pentera", url=_FP_URL, posted_at="2026-09-20", first_posted_at="2026-09-07"),
+    JobMatch(title="Plain", company="Acme", url="https://x/jobs/plain", posted_at="2026-09-19"),
+    JobMatch(title="Offsets", company="GH", url=_FP_OFF, posted_at="2026-06-02T05:00:00Z"),
+], _admin_id)
+_fp_first = _fp_rows()
+record_search_hits(_db, [
+    JobMatch(title="Relisted", company="Pentera", url=_FP_URL, posted_at="2026-09-21", first_posted_at=""),
+    JobMatch(title="Offsets", company="GH", url=_FP_OFF, posted_at="2026-06-02T03:17:15-04:00"),
+], _admin_id)
+_fp_second = _fp_rows()
+record_search_hits(_db, [
+    JobMatch(title="Relisted", company="Pentera", url=_FP_URL, posted_at="2026-09-21",
+             first_posted_at="2026-09-01T10:00:00+03:00"),
+    JobMatch(title="Plain", company="Acme", url="https://x/jobs/plain", posted_at="2026-09-19",
+             first_posted_at="not a date"),
+], _admin_id)
+_fp_third = _fp_rows()
+check(
+    "history first_posted_at: a relisted role keeps the earlier board date; a later search that no longer sees it "
+    "(first_posted_at '') does not forget it while posted_at moves on; an even earlier date replaces it",
+    _fp_first[_FP_URL] == ("2026-09-07", "2026-09-20")
+    and _fp_second[_FP_URL] == ("2026-09-07", "2026-09-21")
+    and _fp_third[_FP_URL] == ("2026-09-01T10:00:00+03:00", "2026-09-21"),
+    f"{_fp_first.get(_FP_URL)} {_fp_second.get(_FP_URL)} {_fp_third.get(_FP_URL)}",
+)
+check(
+    "history first_posted_at twins: with nothing earlier it is the listing's own posted_at, verbatim (the identity "
+    "the badge reads); a string no parser can read never displaces a date; and dates compare as instants, so "
+    "'03:17:15-04:00' (07:17 UTC) does not displace '05:00:00Z' although it sorts first as a string",
+    _fp_first["https://x/jobs/plain"] == ("2026-09-19", "2026-09-19")
+    and _fp_third["https://x/jobs/plain"][0] == "2026-09-19"
+    and _fp_second[_FP_OFF] == ("2026-06-02T05:00:00Z", "2026-06-02T03:17:15-04:00"),
+    f"{_fp_first.get('https://x/jobs/plain')} {_fp_third.get('https://x/jobs/plain')} {_fp_second.get(_FP_OFF)}",
+)
+_fp_out = {h.url: h for h in _jobs_history_route(db=_db, user=_admin_user).hits}
+check(
+    "GET /jobs/history hands first_posted_at back beside posted_at",
+    _fp_out[_FP_URL].first_posted_at == "2026-09-01T10:00:00+03:00" and _fp_out[_FP_URL].posted_at == "2026-09-21",
+    str(_fp_out.get(_FP_URL)),
+)
+
 # Already-applied marking on search results: the point is to stop re-reading a
 # job you have handled. Matching by URL alone is not enough — the tracker's URL
 # and the search card's URL differ in shape for the same LinkedIn posting, and

@@ -251,6 +251,7 @@
     "atsLabel": "ATS coverage",
     "recruiterFitLabel": "Recruiter fit",
     "posted": "Posted {{when}}",
+    "firstPosted": "First posted {{when}}",
     "viewOn": "View on {{source}}",
     "openOn": "Open on {{source}}",
     "tailorToThis": "Tailor to this",

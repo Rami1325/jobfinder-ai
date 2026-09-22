@@ -1522,6 +1522,10 @@ class JobSearchHitOut(BaseModel):
     top_gaps: list[str] = Field(default_factory=list)
     jd_text: str = ""
     posted_at: str = ""  # ISO date the job was posted; empty when unknown
+    # The earliest date a board stated for the role, as stored (see
+    # JobSearchHit.first_posted_at); "" when unknown. Equal to `posted_at` unless
+    # an earlier date is known, the identity rule `JobMatch.first_posted_at` keeps.
+    first_posted_at: str = ""
     source: str = "linkedin"  # which job board surfaced this hit
     logo_url: str = ""  # company logo from the board; empty when it has none
     also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards

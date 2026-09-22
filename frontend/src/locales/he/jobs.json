@@ -270,6 +270,7 @@
     "atsLabel": "כיסוי ATS",
     "recruiterFitLabel": "התאמה למגייס",
     "posted": "פורסם {{when}}",
+    "firstPosted": "פורסם לראשונה {{when}}",
     "viewOn": "צפייה ב{{source}}",
     "openOn": "פתיחה ב{{source}}",
     "tailorToThis": "התאימו למשרה הזו",

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.job_match import _linkedin_job_id
 from app.core.job_search import CachedScore
 from app.db.models import Application, JobSearchHit
+from app.db.sightings import _replaces as _earlier_board_date
 from app.models import JobMatch
 
 MAX_HISTORY = 100  # newest rows kept per user; older ones are trimmed on every record
@@ -51,6 +52,13 @@ def record_search_hits(
         row.top_matched_json = json.dumps(m.top_matched)
         row.jd_text = m.jd_text
         row.posted_at = m.posted_at
+        # Min-merged, never overwritten: a later search that no longer sees the
+        # earlier listing sends first_posted_at == posted_at, and this row must
+        # not forget a date a board once stated for the role. Compared as
+        # instants through the one parser, like `posting_sightings.first_posted_at`.
+        stated = m.first_posted_at or m.posted_at
+        if _earlier_board_date(stated, row.first_posted_at or ""):
+            row.first_posted_at = stated
         row.source = m.source
         row.logo_url = m.logo_url
         row.also_on_json = json.dumps([a.model_dump() for a in m.also_on])

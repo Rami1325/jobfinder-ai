@@ -10039,6 +10039,50 @@ try {
   fail(`context-overflow kind check (check 39) could not run: ${e.message}`);
 }
 
+// ---- 40. both surfaces date "New" by the role's first board date ------------ //
+// Found 2026-09-21, fixed 2026-09-22. The search card's NewBadge read
+// `m.first_posted_at || m.posted_at`, but the History tab's read `hit.posted_at`
+// alone, because history stored no earlier date: a relisted role said "New ·
+// Posted yesterday" there for up to 48 hours while the same posting on the
+// search page said "Older · first posted Sep 7". Rows now store a min-merged
+// `first_posted_at` (smoke pins the merge), and both badges must read it first.
+// Pinned by the badge's ARGUMENT, not by the name's presence, and the field by
+// both mirrors, because a renamed field compiles green and reads undefined.
+try {
+  const cards = decomment(read("pages/jobs/cards.tsx"));
+  const row = fnSource(cards, "export function HistoryRow");
+  const badge = /<NewBadge\s+postedAt=\{\s*([^}]+?)\s*\}/.exec(row);
+  if (!badge) throw new Error("HistoryRow renders no <NewBadge postedAt={…}>");
+  const arg = badge[1];
+  const bound = /^[A-Za-z_$][\w$]*$/.test(arg)
+    ? (new RegExp(`\\bconst\\s+${arg}\\s*=\\s*([^;\\n]+)`).exec(row) || [])[1] ?? ""
+    : arg;
+  const FIRST_THEN_OWN = /^hit\.first_posted_at\s*\|\|\s*hit\.posted_at$/;
+  if (!FIRST_THEN_OWN.test(bound.trim()))
+    fail(
+      `pages/jobs/cards.tsx: HistoryRow's NewBadge reads ${JSON.stringify(bound.trim() || arg)}, not ` +
+        "`hit.first_posted_at || hit.posted_at`, so History calls a relisted role New from this listing's own date " +
+        "while the search card calls the same posting Older.",
+    );
+  if (!/<NewBadge\s+postedAt=\{\s*m\.first_posted_at\s*\|\|\s*m\.posted_at\s*\}/.test(cards))
+    fail("pages/jobs/cards.tsx: the search card's NewBadge no longer reads `m.first_posted_at || m.posted_at`");
+  if (FIRST_THEN_OWN.test("hit.posted_at") || FIRST_THEN_OWN.test("hit.posted_at || hit.first_posted_at") ||
+      !FIRST_THEN_OWN.test("hit.first_posted_at || hit.posted_at"))
+    fail("check 40's reader cannot tell the first board date from the listing's own");
+  const hitType = blockAfter(read("types.ts"), "export interface JobSearchHit ", "JobSearchHit in types.ts");
+  if (!topLevelKeys(hitType).includes("first_posted_at"))
+    fail("types.ts: JobSearchHit has no first_posted_at, so HistoryRow reads undefined and falls back for ever");
+  const models = pySource("app/models/__init__.py", "check 40");
+  if (models !== null) {
+    const out = /class JobSearchHitOut\(BaseModel\):([\s\S]*?)\n(?=class |\S)/.exec(models.replace(/\r\n/g, "\n"));
+    if (!out) throw new Error("could not find class JobSearchHitOut in backend/app/models/__init__.py");
+    if (!/^\s+first_posted_at:\s*str\b/m.test(out[1]))
+      fail("backend JobSearchHitOut has no first_posted_at, which types.ts's JobSearchHit and HistoryRow read");
+  }
+} catch (e) {
+  fail(`History New-badge check (check 40) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

@@ -1009,6 +1009,7 @@ def jobs_history(
                 top_gaps=_keyword_list(row.top_gaps_json),
                 jd_text=row.jd_text,
                 posted_at=row.posted_at or "",
+                first_posted_at=row.first_posted_at or "",
                 source=row.source or "linkedin",
                 logo_url=row.logo_url or "",
                 also_on=[
