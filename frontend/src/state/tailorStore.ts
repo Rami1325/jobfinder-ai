@@ -2,13 +2,22 @@
 // route changes: TailorPage unmounts when the user navigates away, but the
 // request promise and everything on screen (resume, JD, results, tracker
 // state) live here, not in component state, and are intact when they return.
-import { analyzeJD, getMasterResume, saveMasterResume, tailor } from "../api/client";
+import {
+  analyzeJD,
+  getMasterResume,
+  saveApplication,
+  saveApplicationDraft,
+  saveMasterResume,
+  tailor,
+  type ResumeTemplate,
+} from "../api/client";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { clearDraft, writeDraft } from "../lib/draft";
 import { resumeLanguage } from "../lib/lang";
 import type { Overrides } from "../lib/resumeOverrides";
 import type {
+  ApplicationDraft,
   FactsLedger,
   FitCheckResult,
   JDModel,
@@ -44,14 +53,14 @@ export type TailorState = {
    * is never mirrored into the 22.11 local draft (that draft is the MASTER's,
    * and `draftOver` spreads it over the master), and it dies with the result.
    *
-   * IT LIVES IN MODULE MEMORY AND NOWHERE ELSE, and that is a decision with a
-   * cost the UI has to carry: no draft mirror (correct — the draft is the
-   * master's), no sessionStorage, so a backgrounded iOS tab that gets discarded
-   * takes these sentences with it. Re-tailoring the same posting does not bring
-   * them back either: `temperature=0.3` means the second answer is different
-   * text. `TailorPage` therefore registers a `beforeunload` guard for exactly as
-   * long as this map is non-empty, and `edit.tailoredHint` says out loud that
-   * the edits live for this visit only.
+   * THE MAP ITSELF LIVES IN MODULE MEMORY AND NOWHERE ELSE: no draft mirror
+   * (correct — the draft is the master's) and no sessionStorage. What it
+   * PRODUCES does not: since PLAN 31.3/4 the document it writes, with the user's
+   * sentences over the AI's, is saved with its job on the tracker row
+   * (`syncDraft` below), a short pause after each change. So a backgrounded iOS
+   * tab that gets discarded costs the review's controls, not the words.
+   * `TailorPage` warns before the tab closes only while a change has not
+   * reached the row yet.
    */
   tailorOverrides: Overrides;
   /**
@@ -77,8 +86,14 @@ export type TailorState = {
   clearedOverrides: Overrides | null;
   loading: boolean;
   error: string;
-  saved: boolean;
+  /** The job's tracker row this review's draft is saved on (PLAN 31.3/4), and
+   * the trimmed posting text it was saved for. A re-tailor of that same text
+   * keeps the row and writes its new draft over the old one; any other posting
+   * gets its own (`startTailor`). */
   savedAppId: number | null;
+  savedFor: string | null;
+  /** Where the draft on that row stands; see `DraftSave`. */
+  draftSave: DraftSave;
   applyClicked: boolean;
   applied: boolean;
   coverLetterText: string;
@@ -123,6 +138,12 @@ export type TailorState = {
   editUndo: ResumeModel[];
   editSaving: boolean;
   editError: string;
+  /** The design the document is drawn, previewed and downloaded in. Here, not
+   * in the page, since PLAN 31.3/4: the draft saved with its job records it, so
+   * a page that forgot it on a remount would re-save the job's draft as
+   * "standard" merely because the user looked at the tracker and came back. A
+   * choice of design, not a fact about a resume: nothing resets it. */
+  template: ResumeTemplate;
   // Target job carried over from the Jobs page ("Tailor to this").
   jobUrl?: string;
   jobTitle?: string;
@@ -142,8 +163,9 @@ let state: TailorState = {
   clearedOverrides: null,
   loading: false,
   error: "",
-  saved: false,
   savedAppId: null,
+  savedFor: null,
+  draftSave: "idle",
   applyClicked: false,
   applied: false,
   coverLetterText: "",
@@ -157,6 +179,7 @@ let state: TailorState = {
   editUndo: [],
   editSaving: false,
   editError: "",
+  template: "standard",
 };
 
 const listeners = new Set<() => void>();
@@ -186,6 +209,8 @@ export function setTargetJob(
 ): void {
   if (navKey === consumedNavKey) return;
   consumedNavKey = navKey;
+  // A new target is a new row. A change still waiting belongs to the old one.
+  newDraftRow();
   setTailorState({
     jdText: target.jdText ?? "",
     jobUrl: target.jobUrl,
@@ -201,8 +226,9 @@ export function setTargetJob(
     // re-apply one application's sentences onto another application's CV.
     clearedOverrides: null,
     error: "",
-    saved: false,
     savedAppId: null,
+    savedFor: null,
+    draftSave: "idle",
     applyClicked: false,
     applied: false,
     coverLetterText: "",
@@ -244,6 +270,14 @@ export function startTailor(): void {
   // be false.
   const sameJd = state.checkedFor !== null && state.checkedFor === jdText.trim();
   const prior = sameJd ? state.jd : null;
+  // THE JOB'S ROW IS KEPT FOR A RE-TAILOR OF THE SAME POSTING, and only then
+  // (PLAN 31.3/4, owner decision 2: one job, one draft). Matched on the posting
+  // TEXT, not the URL: a pasted posting has no URL, and `POST /applications`
+  // already merges the ones that do (31.1/5), so without this a pasted job
+  // tailored twice got two rows. Any other posting starts a row of its own, and
+  // a change still waiting is sent to the row it was typed for first.
+  const keepRow = state.savedAppId !== null && state.savedFor === jdText.trim();
+  if (!keepRow) newDraftRow();
   setTailorState({
     loading: true,
     error: "",
@@ -262,13 +296,16 @@ export function startTailor(): void {
     // text, so there is nothing to recover them from.
     tailorOverrides: {},
     clearedOverrides: null,
-    saved: false,
-    // The tracker row holds the PREVIOUS tailored resume for the PREVIOUS
-    // posting. Leaving the id made `save()` take its `savedAppId !== null`
-    // short-circuit and toast "Already in your tracker" while writing nothing,
-    // so the row kept a CV for a job the user is no longer applying to.
-    // `applied` / `applyClicked` answer "did you apply to THAT job".
-    savedAppId: null,
+    // For another posting the row holds the PREVIOUS tailored resume for the
+    // PREVIOUS job, and must not receive this one. Leaving the id unconditionally
+    // is the shipped defect check-mirrors 13 names: `save()` short-circuited on
+    // it and toasted "Already in your tracker" while writing nothing. For the
+    // SAME posting the row is this job's, and this run's draft is written over
+    // the last one when it lands (`syncDraft`). `applied` / `applyClicked` answer
+    // "did you apply with THIS draft".
+    savedAppId: keepRow ? state.savedAppId : null,
+    savedFor: keepRow ? state.savedFor : null,
+    draftSave: "idle",
     applyClicked: false,
     applied: false,
     coverLetterText: "",
@@ -353,9 +390,11 @@ export function startTailor(): void {
  * wrong fix for the confusing affordance: it would remove the last control on
  * the surface and strand the user in a mode they cannot leave.
  *
- * This discards a MEMO, not a RECORD. `savedAppId` / `saved` / `applied` stay:
- * the tracker row this review produced still exists on the server, and clearing
- * the id would let the next save write a duplicate row for the same job. The
+ * This discards a MEMO, not a RECORD. `savedAppId` / `savedFor` / `applied`
+ * stay: the tracker row this review produced still exists on the server WITH
+ * the draft as it last stood (PLAN 31.3/4; a change still waiting is sent all
+ * the same), and clearing the id would let the next save write a duplicate row
+ * for the same job. The
  * target job stays for `adoptMaster`'s reason — closing a review of a posting
  * does not change which posting you are aiming at, and `jdText` is what makes
  * the next Tailor one tap away.
@@ -521,6 +560,7 @@ export function restoreClearedOverrides(): void {
  */
 export function adoptMaster(m: MasterResume): void {
   seq++; // cancel an in-flight tailor — it is about the resume that just went
+  newDraftRow();
   setTailorState({
     resume: m.resume,
     // The dirty baseline is the incoming copy, never the document on screen:
@@ -537,8 +577,9 @@ export function adoptMaster(m: MasterResume): void {
     rejectedEdits: [],
     tailorOverrides: {},
     clearedOverrides: null,
-    saved: false,
     savedAppId: null,
+    savedFor: null,
+    draftSave: "idle",
     applyClicked: false,
     applied: false,
     coverLetterText: "",
@@ -651,4 +692,217 @@ export async function commitResumeEdits(label: string, fallbackError: string): P
     setTailorState({ editSaving: false, editError: apiErrorMessage(e, fallbackError) });
     return false;
   }
+}
+
+// --------------------------------------------------------------------------- //
+// The draft, saved with its job (PLAN 31.3/4)
+// --------------------------------------------------------------------------- //
+//
+// Owner decision 2: finishing a tailor creates or updates the job's tracker row
+// in Saved WITH the draft, and every later accept, decline, typed line, design
+// and letter updates it. Until this, the draft lived in module memory, "Save
+// to tracker" was a button, and `edit.tailoredHint` had to tell the user their
+// edits lived for this visit, in this tab.
+
+/**
+ * Where the draft on the job's tracker row stands.
+ *
+ * `saving` covers a change still waiting out the pause as well as one on the
+ * wire: either way the row does not have it yet, and that is the one thing the
+ * page's "Saved" and its before-you-close warning have to know.
+ */
+export type DraftSave = "idle" | "saving" | "saved" | "failed";
+
+/** What one save did, for the page's toast: `created` is the save that made
+ * the row. */
+export type DraftOutcome = "created" | "saved" | "unchanged" | "failed";
+
+/**
+ * The draft as it stands, and the job it is for. The page builds it from the
+ * document on screen. The `job` half is read only when the row does not exist
+ * yet: `POST /applications` then creates it in Saved, or updates this user's
+ * row for the same URL (31.1/5).
+ */
+export type DraftSnapshot = {
+  draft: ApplicationDraft;
+  job: { job_title: string; company: string; jd_text: string; job_url?: string };
+};
+
+type DraftJob = { epoch: number; snap: DraftSnapshot };
+
+/** The pause after the last change before the row is written: one PUT for a
+ * burst of typing or a run of accepts, and short enough that closing the tab
+ * inside it is rare. The page also sends a waiting change the moment it is
+ * hidden, and warns before closing while one is unsent. */
+const DRAFT_PAUSE_MS = 1200;
+
+// WHICH ROW A CHANGE BELONGS TO IS DECIDED WHEN IT IS MADE, never when it is
+// sent. `draftEpoch` moves wherever `savedAppId` is cleared (another posting, a
+// new target, a new master), every save carries the epoch it was queued in, and
+// `draftRows` maps an epoch to its row. So a sentence typed for one job cannot
+// land on the next job's row, whatever order the requests come back in.
+let draftEpoch = 0;
+const draftRows = new Map<number, number>();
+// The epoch whose row is being CREATED, set before the request leaves. React
+// runs a mount effect twice in development, in one tick, and a flag set when
+// the request started would let both runs create a row.
+let draftCreating: number | null = null;
+// `${row}|${json}` of the last draft the server confirmed: a remount, or a
+// toggle and its reverse, sends nothing.
+let draftOnServer = "";
+// One save at a time, in order: a slow older PUT must never land after a newer
+// one. `draftLast` settles after the newest save AND its effect on the state.
+let draftChain: Promise<unknown> = Promise.resolve();
+let draftLast: Promise<unknown> = Promise.resolve();
+let draftPending = 0;
+// The newest change, waiting out the pause. A newer change REPLACES its
+// snapshot and keeps its promise, so every caller hears how the save that
+// carried its change, or a later one, went.
+let draftWaiting: { job: DraftJob; done: Promise<DraftOutcome>; resolve: (o: DraftOutcome) => void } | null = null;
+let draftTimer: ReturnType<typeof setTimeout> | null = null;
+
+const draftKey = (row: number, draft: ApplicationDraft) => `${row}|${JSON.stringify(draft)}`;
+
+/** The state speaks for the CURRENT row only: a save still finishing for the
+ * last job must not tell this one it is saved. */
+function setDraftSave(epoch: number, next: DraftSave): void {
+  if (epoch === draftEpoch && state.draftSave !== next) setTailorState({ draftSave: next });
+}
+
+/** The row changes. Called by every reset that clears `savedAppId`, BEFORE it
+ * does, so a change still waiting is sent to the row it was typed for. */
+function newDraftRow(): void {
+  flushDraftSave();
+  draftEpoch++;
+}
+
+async function runDraftJob(job: DraftJob): Promise<DraftOutcome> {
+  let row = draftRows.get(job.epoch);
+  if (row !== undefined && draftKey(row, job.snap.draft) === draftOnServer) return "unchanged";
+  try {
+    if (row !== undefined) {
+      try {
+        await saveApplicationDraft(row, job.snap.draft);
+        draftOnServer = draftKey(row, job.snap.draft);
+        return "saved";
+      } catch (e) {
+        // Deleted in the tracker while this review was open: the draft makes a
+        // new row rather than vanishing. Anything else is a failure to report.
+        if ((e as { response?: { status?: number } })?.response?.status !== 404) throw e;
+        draftRows.delete(job.epoch);
+        if (job.epoch === draftEpoch) setTailorState({ savedAppId: null, savedFor: null });
+      }
+    }
+    const { draft, job: posting } = job.snap;
+    // The create goes through the route every other save of a job uses, so a
+    // job already tracked under this URL gets the draft instead of a twin.
+    // Unknown signals are LEFT OUT (the server stores None), never sent as 0.
+    const app = await saveApplication({
+      ...posting,
+      tailored_resume: draft.tailored_resume,
+      cover_letter: draft.cover_letter,
+      overall_score: draft.overall_score ?? 0,
+      template: draft.template as ResumeTemplate,
+      voice_score: draft.voice_score ?? undefined,
+      fabrication_flag_count: draft.fabrication_flag_count ?? undefined,
+      status: "saved",
+    });
+    row = app.id;
+    draftRows.set(job.epoch, row);
+    draftOnServer = draftKey(row, draft);
+    if (job.epoch === draftEpoch) setTailorState({ savedAppId: row, savedFor: posting.jd_text.trim() });
+    return "created";
+  } catch {
+    return "failed";
+  } finally {
+    if (draftCreating === job.epoch) draftCreating = null;
+  }
+}
+
+function enqueueDraftJob(job: DraftJob): Promise<DraftOutcome> {
+  draftPending++;
+  const run = draftChain.then(() => runDraftJob(job));
+  draftChain = run.catch(() => undefined);
+  const out = run.then((outcome) => {
+    draftPending--;
+    // While a newer change waits or is on the wire, this answer is not the
+    // row's last word.
+    const more = draftPending > 0 || (draftWaiting !== null && draftWaiting.job.epoch === job.epoch);
+    if (!more) setDraftSave(job.epoch, outcome === "failed" ? "failed" : "saved");
+    return outcome;
+  });
+  draftLast = out;
+  return out;
+}
+
+/**
+ * Keep the job's row holding the draft on screen. The page calls this whenever
+ * the draft changes, and it is cheap to call when nothing did.
+ *
+ * The FIRST save of a row goes at once, so the row exists while the result is
+ * still on screen; every later one waits out `DRAFT_PAUSE_MS` after the last
+ * change. `now` skips the pause (Try again, Mark applied).
+ */
+export function syncDraft(snap: DraftSnapshot, now = false): Promise<DraftOutcome> {
+  const epoch = draftEpoch;
+  const row = draftRows.get(epoch);
+  if (row === undefined && draftCreating !== epoch) {
+    draftCreating = epoch;
+    setDraftSave(epoch, "saving");
+    return enqueueDraftJob({ epoch, snap });
+  }
+  if (
+    row !== undefined &&
+    draftPending === 0 &&
+    draftWaiting === null &&
+    draftKey(row, snap.draft) === draftOnServer
+  ) {
+    setDraftSave(epoch, "saved");
+    return Promise.resolve("unchanged");
+  }
+  if (draftWaiting !== null && draftWaiting.job.epoch !== epoch) flushDraftSave();
+  if (draftWaiting !== null) draftWaiting.job = { epoch, snap };
+  else {
+    let resolve: (o: DraftOutcome) => void = () => {};
+    const done = new Promise<DraftOutcome>((r) => {
+      resolve = r;
+    });
+    draftWaiting = { job: { epoch, snap }, done, resolve };
+  }
+  const { done } = draftWaiting;
+  setDraftSave(epoch, "saving");
+  if (draftTimer !== null) clearTimeout(draftTimer);
+  draftTimer = now ? null : setTimeout(flushDraftSave, DRAFT_PAUSE_MS);
+  if (now) flushDraftSave();
+  return done;
+}
+
+/** Send the change waiting out the pause, now: when the page is hidden or
+ * closing, and before any reset moves the row. */
+export function flushDraftSave(): void {
+  if (draftTimer !== null) clearTimeout(draftTimer);
+  draftTimer = null;
+  const w = draftWaiting;
+  if (w === null) return;
+  draftWaiting = null;
+  void enqueueDraftJob(w.job).then(w.resolve);
+}
+
+/** Every change sent and answered: how the row stands, and which row it is.
+ * "Back to my resume" asks before it lets typed lines go, and Mark applied
+ * needs the row the draft is on. */
+export async function settleDraft(): Promise<{ save: DraftSave; row: number | null }> {
+  const epoch = draftEpoch;
+  flushDraftSave();
+  await draftLast;
+  return { save: epoch === draftEpoch ? state.draftSave : "idle", row: draftRows.get(epoch) ?? null };
+}
+
+/** A row the page made itself (Mark applied, when no draft save had made one)
+ * becomes this review's row, so the next save updates it instead of making
+ * another. `draft` is what that request carried, if it carried the draft. */
+export function bindDraftRow(id: number, postingText: string, draft?: ApplicationDraft): void {
+  draftRows.set(draftEpoch, id);
+  if (draft) draftOnServer = draftKey(id, draft);
+  setTailorState({ savedAppId: id, savedFor: postingText.trim(), ...(draft ? { draftSave: "saved" as const } : {}) });
 }

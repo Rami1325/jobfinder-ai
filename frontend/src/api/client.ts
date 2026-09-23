@@ -9,6 +9,7 @@ import type {
   AlertRunResult,
   AlertSettings,
   ApplicationDetail,
+  ApplicationDraft,
   ApplicationOut,
   AuthMe,
   ResendResult,
@@ -1189,6 +1190,15 @@ export async function saveApplication(payload: {
   fabrication_flag_count?: number;
 }): Promise<ApplicationOut> {
   const { data } = await api.post<ApplicationOut>("/applications", payload);
+  invalidateData("applications", "nudges");
+  return data;
+}
+
+/** Keep the tailored draft on its job's tracker row (PLAN 31.3/4). The tailor
+ * page calls this after a pause in the user's changes; it reaches no model and
+ * spends nothing. A 404 means the row was deleted meanwhile. */
+export async function saveApplicationDraft(id: number, draft: ApplicationDraft): Promise<ApplicationOut> {
+  const { data } = await api.put<ApplicationOut>(`/applications/${id}/draft`, draft);
   invalidateData("applications", "nudges");
   return data;
 }

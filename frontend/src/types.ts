@@ -328,6 +328,22 @@ export interface ApplicationOut {
   last_email_kind?: string;
 }
 
+/** PUT /applications/{id}/draft (PLAN 31.3/4): the tailored draft, saved with
+ * its job while it is reviewed. The resume and its three what-was-sent signals
+ * are written TOGETHER, null included: once the user has typed over the AI's
+ * draft its fabrication count is unknown, never the AI version's number. The
+ * letter is the one field that is left alone when absent, so a draft saved
+ * before a letter was written cannot erase one the row holds. The backend
+ * refuses a field it does not read (`extra="forbid"`). */
+export interface ApplicationDraft {
+  tailored_resume: ResumeModel;
+  template: string;
+  voice_score: number | null;
+  fabrication_flag_count: number | null;
+  overall_score: number | null;
+  cover_letter?: string;
+}
+
 export interface ApplicationDetail {
   id: number;
   job_title: string;

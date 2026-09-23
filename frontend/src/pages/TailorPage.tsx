@@ -57,16 +57,22 @@ import { Badge, Button, Card, CardTitle, Skeleton, useToast } from "../component
 import {
   adoptMaster,
   applyBlockEdit,
+  bindDraftRow,
   clearAllBlockOverrides,
   clearBlockOverride,
   discardTailorResult,
+  flushDraftSave,
   getTailorState,
   restoreClearedOverrides,
   setBlockOverride,
   setTailorState,
   setTargetJob,
+  settleDraft,
   startTailor,
   subscribeTailor,
+  syncDraft,
+  type DraftOutcome,
+  type DraftSnapshot,
 } from "../state/tailorStore";
 import type { FactsLedger, ResumeModel } from "../types";
 
@@ -138,8 +144,9 @@ export default function TailorPage() {
     clearedOverrides,
     loading,
     error,
-    saved,
     savedAppId,
+    savedFor,
+    draftSave,
     applyClicked,
     applied,
     coverLetterText,
@@ -153,13 +160,16 @@ export default function TailorPage() {
     editUndo,
     editSaving,
     editError,
+    template,
     jobUrl,
     jobTitle,
     company,
   } = useSyncExternalStore(subscribeTailor, getTailorState);
   const toast = useToast();
-  // Download-card template choice (visual only — every option is ATS-safe).
-  const [template, setTemplate] = useState<ResumeTemplate>("standard");
+  // The design (visual only — every option is ATS-safe). In the store since
+  // PLAN 31.3/4: the draft saved with its job records it, and page state went
+  // back to "standard" on every remount.
+  const setTemplate = useCallback((next: ResumeTemplate) => setTailorState({ template: next }), []);
   const persistMaster = useSaveMasterResume();
 
   // Deep handoff from the Chrome extension ("Save & tailor"): ?tailor_app=<id>
@@ -843,31 +853,46 @@ export default function TailorPage() {
   // Disarm the moment there is nothing left to warn about. Without it, undoing
   // the last hand-edit from the list while the exit is armed leaves a red
   // "Discard my 1 edit and leave" standing over a document with none — a confirm
-  // whose sentence is false, which is worse than no confirm at all.
+  // whose sentence is false, which is worse than no confirm at all. The same
+  // holds once the lines reach the job's row (PLAN 31.3/4): leaving then costs
+  // them nothing.
   useEffect(() => {
-    if (!result || overrideCount === 0) setDiscardArmed(false);
-  }, [result, overrideCount]);
+    if (!result || overrideCount === 0 || draftSave === "saved") setDiscardArmed(false);
+  }, [result, overrideCount, draftSave]);
 
   /**
    * Warn before the tab closes, for exactly as long as there is something to
    * lose.
    *
-   * `tailorOverrides` lives in module memory and nowhere else — no draft mirror
-   * (correct: the 22.11 draft is the MASTER's) and no sessionStorage — and iOS
-   * discards a backgrounded tab routinely. Re-tailoring the same posting is not
-   * a recovery either: `temperature=0.3` returns different text, so the
-   * sentences are gone for good.
+   * Since PLAN 31.3/4 the draft is saved with its job a short pause after each
+   * change (`syncDraft`), so what can be lost is only a change that has not
+   * reached the row: one waiting out the pause, one on the wire, or one whose
+   * save failed. A hidden page sends a waiting change at once (iOS discards a
+   * backgrounded tab routinely), and so does a closing one, before it asks.
    *
    * REGISTERED CONDITIONALLY, never once for the page. A permanent
    * `beforeunload` makes every reload of an untouched document ask a question
    * with no stakes, and a browser that sees the prompt abused stops honouring
-   * it. The string is the browser's own — none of them has let a page choose it
-   * for years — so the honest copy has to live where the user can read it before
-   * that moment, which is `edit.tailoredHint` on the toolbar.
+   * it. The string is the browser's own, so the honest copy lives where the user
+   * can read it before that moment: the draft's save status under the paper.
    */
   useEffect(() => {
-    if (!result || overrideCount === 0) return;
+    const hidden = () => {
+      if (document.visibilityState === "hidden") flushDraftSave();
+    };
+    document.addEventListener("visibilitychange", hidden);
+    return () => document.removeEventListener("visibilitychange", hidden);
+  }, []);
+  const unsent = !!result && (draftSave === "saving" || draftSave === "failed");
+  // Lines typed on the draft that did not reach the job's row: the one case in
+  // which leaving the review loses words (PLAN 31.3/4). "saving" is not it: the
+  // exit sends a waiting change first, and a note that flickered for a second
+  // after every keystroke would be noise.
+  const unsavedLines = !!result && overrideCount > 0 && draftSave === "failed";
+  useEffect(() => {
+    if (!unsent) return;
     const warn = (e: BeforeUnloadEvent) => {
+      flushDraftSave();
       e.preventDefault();
       // Still required by Chrome and Safari to show the prompt at all, despite
       // being deprecated in the spec; `preventDefault()` alone is Firefox-only.
@@ -875,7 +900,7 @@ export default function TailorPage() {
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [result, overrideCount]);
+  }, [unsent]);
 
   const smooth = () =>
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -956,8 +981,11 @@ export default function TailorPage() {
   }
 
   // Feedback loop (§26): the AI wording the user rejected becomes a stored
-  // negative signal — future tailors receive it as an avoid-list. Fired on
-  // save/apply (the moment the review decisions are final), best-effort.
+  // negative signal — future tailors receive it as an avoid-list. Fired when
+  // the review's decisions are final: a download (the file leaves the app) and
+  // Mark applied. It fired on Save until PLAN 31.3/4 made saving automatic; a
+  // save a pause after every toggle would teach the list a decline the user
+  // took back a second later. Best-effort, and deduped server-side.
   function persistRejectedPhrases() {
     // Rewrites only. A rejected TRUNCATION means "put the cut text back", not
     // "I dislike this wording" — posting its `after` would teach the avoid-list
@@ -969,55 +997,79 @@ export default function TailorPage() {
     recordRejectedPhrases(phrases).catch(() => {});
   }
 
-  /** What was actually sent, recorded on the tracker row so the analytics can
-   * later say which resume earned the replies (PLAN 17.3). */
-  function sentSignals() {
-    return {
-      template,
-      voice_score: result?.voice_report?.human_voice_score,
-      // UNKNOWN, not a number, once the user has written into the document. The
-      // guard ran against `result.tailored_resume`; what this row records is
-      // `effectiveResume`, which has their own text over it — text no guard has
-      // ever seen. A row that predates the field means unknown and the analytics
-      // drops it from that dimension, which is exactly the right treatment here;
-      // storing 0 would let a hand-typed claim be counted as guard-clean forever.
-      fabrication_flag_count: overrideCount > 0 ? undefined : result?.fabrication_flags.length,
-    };
-  }
-
   // A save's toast offers the next step, not only the news (PLAN 31.2/10).
   const viewTracker = { action: { label: tCommon("actions.view"), onClick: () => navigate("/tracker") } };
 
-  async function save() {
-    if (!result || !jd) return;
-    if (savedAppId !== null) {
-      // Already created (by Save or "Yes, applied") — never double-create.
-      setTailorState({ saved: true });
-      toast("success", t("toasts.alreadyInTracker"), viewTracker);
-      return;
-    }
-    const app = await saveApplication({
-      job_title: jd.job_title,
-      company: jd.company,
+  /** The job this draft is for, as the tracker row names it. */
+  const posting = useMemo(
+    () => ({
+      job_title: jd?.job_title || jobTitle || "",
+      company: jd?.company || company || "",
       jd_text: jdText,
-      tailored_resume: effectiveResume ?? result.tailored_resume,
-      cover_letter: coverLetterText,
-      overall_score: result.score_after.overall,
       job_url: jobUrl || undefined,
-      ...sentSignals(),
-    });
-    setTailorState({ savedAppId: app.id, saved: true });
-    persistRejectedPhrases();
-    toast("success", t("toasts.savedToTracker"), viewTracker);
+    }),
+    [jd, jobTitle, company, jdText, jobUrl],
+  );
+
+  /**
+   * THE DRAFT, AS IT WILL BE SAVED WITH ITS JOB (PLAN 31.3/4, owner decision 2).
+   *
+   * `effectiveResume` — the document on screen, every decision and hand-edit in
+   * it — with what was sent (PLAN 17.3), so the analytics can later say which
+   * resume earned the replies. The fabrication count is UNKNOWN (null), not a
+   * number, once the user has written into the document: the guard ran against
+   * `result.tailored_resume`, and this has their own text over it, text no guard
+   * has seen. Storing the AI version's count would let a hand-typed claim be
+   * counted as guard-clean forever. The letter rides only once there is one, so
+   * a draft saved before it cannot erase a letter the row already holds.
+   */
+  const draftSnap = useMemo<DraftSnapshot | null>(() => {
+    if (!result || !jd || !effectiveResume || loading) return null;
+    return {
+      draft: {
+        tailored_resume: effectiveResume,
+        template,
+        voice_score: result.voice_report?.human_voice_score ?? null,
+        fabrication_flag_count: overrideCount > 0 ? null : result.fabrication_flags.length,
+        overall_score: result.score_after.overall,
+        ...(coverLetterText ? { cover_letter: coverLetterText } : {}),
+      },
+      job: posting,
+    };
+  }, [result, jd, effectiveResume, loading, template, overrideCount, coverLetterText, posting]);
+
+  // One toast for the save that made the row, one for a failure (not one per
+  // failed retry while offline); "Saved" beside the draft says the rest.
+  const failToasted = useRef(false);
+  const onDraftSaved = useCallback(
+    (o: DraftOutcome) => {
+      if (o === "created") toast("success", t("toasts.savedToTracker"), viewTracker);
+      if (o === "failed" && !failToasted.current) toast("error", t("toasts.trackerError"));
+      failToasted.current = o === "failed";
+    },
+    // `viewTracker` is rebuilt every render and closes over nothing that changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toast, t],
+  );
+  // Every change to the draft, saved with its job. The saver sends nothing
+  // when the draft on screen is the one the row already has.
+  useEffect(() => {
+    if (draftSnap) void syncDraft(draftSnap).then(onDraftSaved);
+  }, [draftSnap, onDraftSaved]);
+
+  /** Try again, after a save that failed: now, without the pause. */
+  function retrySave() {
+    if (draftSnap) void syncDraft(draftSnap, true).then(onDraftSaved);
   }
 
   // A download from this draft, which is when "Mark applied" becomes the next
-  // step (PLAN 31.2/2). Page state: a new result starts again from "Save".
+  // step (PLAN 31.2/2). Page state: a new result starts again from "Saved".
   const [downloaded, setDownloaded] = useState(false);
   useEffect(() => setDownloaded(false), [result]);
   function downloadDraft(fmt: "docx" | "pdf") {
     if (!effectiveResume) return;
     setDownloaded(true);
+    persistRejectedPhrases();
     void downloadResume(effectiveResume, fmt, resumeFilename(effectiveResume.contact.name, jd?.company ?? ""), template);
   }
   // The bar is up while a draft is; its height is what the toast stack and the
@@ -1032,28 +1084,39 @@ export default function TailorPage() {
     };
   }, [barUp]);
 
+  /** The job's row moves to Applied. With a draft up, the row is the one the
+   * draft is saved on: every change is sent first, so the row holds what was
+   * sent. Without one (the posting was opened before any tailor), or if no save
+   * could make the row, this makes it, and the review adopts it. */
   async function markApplied() {
     try {
-      if (savedAppId !== null) {
-        await updateApplication(savedAppId, { status: "applied" });
-        setTailorState({ saved: true, applied: true });
+      let id = savedAppId;
+      if (draftSnap) {
+        void syncDraft(draftSnap, true);
+        id = (await settleDraft()).row;
+      }
+      if (id !== null) {
+        await updateApplication(id, { status: "applied" });
       } else {
         const app = await saveApplication({
-          job_title: jd?.job_title || jobTitle || "",
-          company: jd?.company || company || "",
-          jd_text: jdText,
-          // Backend accepts a missing tailored_resume; axios drops undefined fields.
-          tailored_resume: effectiveResume as ResumeModel,
-          cover_letter: coverLetterText,
+          ...posting,
           overall_score: result?.score_after.overall ?? 0,
           status: "applied",
-          job_url: jobUrl,
-          ...sentSignals(),
+          ...(draftSnap
+            ? {
+                tailored_resume: draftSnap.draft.tailored_resume,
+                cover_letter: draftSnap.draft.cover_letter,
+                template,
+                voice_score: draftSnap.draft.voice_score ?? undefined,
+                fabrication_flag_count: draftSnap.draft.fabrication_flag_count ?? undefined,
+              }
+            : {}),
         });
-        setTailorState({ savedAppId: app.id, saved: true, applied: true });
+        bindDraftRow(app.id, jdText, draftSnap?.draft);
       }
+      setTailorState({ applied: true });
       persistRejectedPhrases();
-      toast("success", t("toasts.markedApplied"));
+      toast("success", t("toasts.markedApplied"), viewTracker);
     } catch {
       toast("error", t("toasts.trackerError"));
     }
@@ -1194,11 +1257,17 @@ export default function TailorPage() {
               size="sm"
               variant="ghost"
               icon={<ArrowLeft size={15} className="rtl:-scale-x-100" />}
-              onClick={() => (overrideCount > 0 ? setDiscardArmed(true) : discardTailorResult())}
+              // Typed lines are lost by leaving ONLY when they never reached the
+              // job's row (PLAN 31.3/4): every change is sent first, and the exit
+              // arms only if the row still does not have them.
+              onClick={() => {
+                if (overrideCount === 0) return discardTailorResult();
+                void settleDraft().then(({ save }) => (save === "saved" ? discardTailorResult() : setDiscardArmed(true)));
+              }}
               // Only on the harmless branch, and only because it is a
               // DESCRIPTION there rather than a warning.
-              title={overrideCount > 0 ? undefined : t("discard.title")}
-              className={cn("shrink-0", overrideCount > 0 && "text-warn")}
+              title={unsavedLines ? undefined : t("discard.title")}
+              className={cn("shrink-0", unsavedLines && "text-warn")}
             >
               <span className="sr-only sm:not-sr-only">{t("discard.cta")}</span>
             </Button>
@@ -1307,7 +1376,7 @@ export default function TailorPage() {
           </>
         }
         notes={
-          loading || error || (result && overrideCount > 0) ? (
+          loading || error || unsavedLines ? (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {loading && <span className="text-xs text-ink-muted">{t("run.keepsRunning")}</span>}
               {error && <span className="text-sm text-danger">{error}</span>}
@@ -1316,8 +1385,10 @@ export default function TailorPage() {
                   for the danger zone: "read what it admits to once armed" is
                   the wrong order for something irreversible. It turns
                   danger-coloured once armed, so arming still changes something
-                  visible. It is the one line a draft's row may grow by. */}
-              {result && overrideCount > 0 && (
+                  visible. It is the one line a draft's row may grow by, and
+                  since PLAN 31.3/4 only while the lines are NOT on the job's
+                  row: saved, leaving costs them nothing. */}
+              {unsavedLines && (
                 <span className={cn("text-xs leading-relaxed", discardArmed ? "text-danger" : "text-ink-muted")}>
                   {t("discard.edited", { count: overrideCount })}
                 </span>
@@ -1507,6 +1578,29 @@ export default function TailorPage() {
                   be found would be worse than no number. */}
               <div className="space-y-2 text-xs">
                 <p className="leading-relaxed text-ink-muted">{t("edit.tailoredHint")}</p>
+                {/* WHERE THIS DRAFT IS KEPT, and whether the last change got
+                    there (PLAN 31.3/4). It replaced "these edits live only for
+                    this visit, in this tab", and it may say "saved" only when
+                    the row has answered. */}
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 leading-relaxed">
+                  {draftSave === "failed" ? (
+                    <>
+                      <span className="text-danger">{t("jobDraft.failed")}</span>
+                      <button type="button" onClick={retrySave} className="font-medium text-accent-soft hover:underline">
+                        {t("jobDraft.retry")}
+                      </button>
+                    </>
+                  ) : draftSave === "saved" ? (
+                    <>
+                      <span className="text-mint">✓ {t("jobDraft.saved")}</span>
+                      <Link to="/tracker" className="font-medium text-accent-soft hover:underline">
+                        {tCommon("actions.view")}
+                      </Link>
+                    </>
+                  ) : (
+                    <span className="text-ink-faint">{t("jobDraft.saving")}</span>
+                  )}
+                </p>
                 {(overrideCount > 0 || clearedCount > 0) && (
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     {overrideCount > 0 && (
@@ -1650,9 +1744,17 @@ export default function TailorPage() {
                     </a>
                   )}
                   {applied && <Badge tone="mint">{t("target.appliedBadge")}</Badge>}
-                  <Button variant="ghost" icon={<Save size={16} />} disabled={saved} onClick={save}>
-                    {saved ? t("save.saved") : t("save.cta")}
-                  </Button>
+                  {/* Saved with its job by itself (PLAN 31.3/4): a status, and
+                      a button again only when the save failed. */}
+                  {draftSave === "failed" ? (
+                    <Button variant="ghost" icon={<Save size={16} />} onClick={retrySave}>
+                      {t("save.cta")}
+                    </Button>
+                  ) : (
+                    <span className={cn("text-sm", draftSave === "saved" ? "text-mint" : "text-ink-faint")}>
+                      {draftSave === "saved" ? t("save.saved") : t("save.saving")}
+                    </span>
+                  )}
                 </div>
                 {appliedPrompt}
                 {/* A two-column pick can't ship as .docx, so the ATS line is
@@ -1691,7 +1793,8 @@ export default function TailorPage() {
                 resume={effectiveResume}
                 jd={jd}
                 initialText={coverLetterText}
-                onGenerated={(letter) => setTailorState({ coverLetterText: letter, saved: false })}
+                // The letter rides the next draft save to the job's row.
+                onGenerated={(letter) => setTailorState({ coverLetterText: letter })}
               />
             </motion.div>
           )}
@@ -1729,10 +1832,11 @@ export default function TailorPage() {
       {/* THE LAST STEP, WHERE THE THUMB IS (PLAN 31.2/2). Download and the
           job's status sat about 6,580 px down a 7,168 px page at 390 px. Below
           lg this bar rides on the tab bar while a draft is up. The status is
-          the NEXT step, one at a time: Save, then (once saved) Saved, then
-          after a download or opening the posting "Mark applied", then
-          Applied. Only an action is the primary. The result card further down
-          keeps its buttons, for a desktop and for the notes beside them. */}
+          the NEXT step, one at a time: Saved (by itself since PLAN 31.3/4,
+          and a Save button again only when that failed), then after a
+          download or opening the posting "Mark applied", then Applied. Only
+          an action is the primary. The result card further down keeps its
+          buttons, for a desktop and for the notes beside them. */}
       {barUp && (
         <div
           role="region"
@@ -1761,12 +1865,14 @@ export default function TailorPage() {
                 <span className="text-sm font-semibold text-mint">{t("target.appliedBadge")}</span>
               ) : downloaded || applyClicked ? (
                 <Button onClick={markApplied}>{t("bar.markApplied")}</Button>
-              ) : saved ? (
-                <span className="text-sm font-semibold text-mint">✓ {t("bar.saved")}</span>
-              ) : (
-                <Button icon={<Save size={16} />} aria-label={t("save.cta")} onClick={save}>
+              ) : draftSave === "failed" ? (
+                <Button icon={<Save size={16} />} aria-label={t("save.cta")} onClick={retrySave}>
                   {t("bar.save")}
                 </Button>
+              ) : draftSave === "saved" ? (
+                <span className="text-sm font-semibold text-mint">✓ {t("bar.saved")}</span>
+              ) : (
+                <span className="text-sm text-ink-faint">{t("bar.saving")}</span>
               )}
             </div>
           </div>
@@ -1785,10 +1891,14 @@ export default function TailorPage() {
           fit={fit}
           tailoring={loading}
           hasResult={!!result}
-          // The overlay's Tailor button destroys these, so it is the overlay
+          // The overlay's Tailor button can destroy these, so it is the overlay
           // that has to arm-then-confirm and to name the count in its own
-          // "this starts again from your master resume" note.
+          // "this starts again from your master resume" note. Since PLAN
+          // 31.3/4 it destroys them only for the same posting, whose new draft
+          // replaces the saved one, or when they never reached the job's row.
           overrideCount={overrideCount}
+          savedFor={savedFor}
+          draftSaved={draftSave === "saved"}
           onChecked={(text, f) =>
             // `fitScoredAt`, never `scoredAt`: this stamp belongs to THIS
             // reading. `scoredAt` is the tailor's, written by `startTailor`'s

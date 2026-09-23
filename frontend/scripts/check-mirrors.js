@@ -11322,6 +11322,135 @@ try {
   fail(`phone PDF pictures check (check 60) could not run: ${e.message}`);
 }
 
+// ---- 61. a job's draft is saved on that job's row, and only there (EXECUTED) //
+// PLAN 31.3/4, owner decision 2: a finished tailor creates or updates the job's
+// tracker row in Saved WITH the draft, and every later change updates it. The
+// defect pinned here is the one the saver is built around: a change made for
+// one job landing on ANOTHER job's row, which files a CV tailored for job B
+// under the application for job A, the record the user sends from. So (a)
+// EXECUTES the real store with the API stubbed and every POST and PUT recorded:
+// three tailors, a change waiting out the pause when a new target arrives, and
+// a new master. Each reset that clears `savedAppId` must move the saver to a new
+// row and first send a waiting change to the row it was typed for; a re-tailor
+// of the SAME posting keeps its row; an unchanged draft sends nothing. (b) pins
+// the page by shape: the draft is saved whenever it changes, a hand-edited
+// draft carries an UNKNOWN fabrication count (23.7's rule, which moved here
+// from `sentSignals`), and "Saved" is said only once the row has answered.
+// Probed with the store's own source mutated, and the page's.
+try {
+  const storeSrc = read("state/tailorStore.ts");
+  const R61 = { contact: { name: "Probe" }, summary: "Probe summary.", experience: [], education: [], skills: [] };
+  const draftRun = async (src) => {
+    const calls = [];
+    let nextId = 1;
+    const st = runProbeBundle("draft-rows", src, {
+      "../api/client": {
+        analyzeJD: async () => ({ language: "en", job_title: "Probe", company: "Probe Co" }),
+        getMasterResume: async () => null,
+        saveMasterResume: async () => ({ resume: R61, label: "" }),
+        tailor: async () => ({ tailored_resume: R61, fabrication_flags: [], score_after: { overall: 50 } }),
+        saveApplication: async (p) => {
+          const id = nextId++;
+          calls.push(`POST:${id}:${p.jd_text}`);
+          return { id };
+        },
+        saveApplicationDraft: async (id, d) => {
+          calls.push(`PUT:${id}:${d.template}`);
+          return { id };
+        },
+      },
+      "../hooks/useMasterResume": { resetMasterCache: () => {} },
+      "../lib/apiError": { apiErrorMessage: (_e, f) => f },
+      "../lib/draft": { clearDraft: () => {}, writeDraft: () => {} },
+      "../lib/lang": { resumeLanguage: () => "en" },
+    });
+    for (const name of ["syncDraft", "settleDraft", "flushDraftSave", "startTailor", "setTargetJob", "adoptMaster", "setTailorState", "getTailorState"])
+      if (typeof st[name] !== "function") throw new Error(`state/tailorStore.ts does not export ${name}`);
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const snap = (posting, template) => ({
+      draft: { tailored_resume: R61, template, voice_score: null, fabrication_flag_count: null, overall_score: 50 },
+      job: { job_title: "T", company: "C", jd_text: posting },
+    });
+    const tailorFor = async (posting) => {
+      st.setTailorState({ jdText: posting });
+      st.startTailor();
+      for (let i = 0; i < 10 && st.getTailorState().loading; i++) await tick();
+      if (!st.getTailorState().result) throw new Error(`the stubbed tailor for "${posting}" never finished`);
+    };
+    st.setTailorState({ resume: R61 });
+    await tailorFor("Posting A");
+    await st.syncDraft(snap("Posting A", "standard")); // the row is made
+    await st.syncDraft(snap("Posting A", "executive"), true); // a change
+    await st.syncDraft(snap("Posting A", "executive"), true); // unchanged: nothing is sent
+    await tailorFor("Posting A"); // the same posting again keeps the row
+    await st.syncDraft(snap("Posting A", "classic"), true);
+    await tailorFor("Posting B"); // another posting: a row of its own
+    await st.syncDraft(snap("Posting B", "standard"));
+    void st.syncDraft(snap("Posting B", "modern")); // waiting out the pause...
+    st.setTargetJob("check-61-nav", { jdText: "Posting C" }); // ...when a new target arrives
+    await st.syncDraft(snap("Posting C", "standard"));
+    st.adoptMaster({ resume: R61, ledger: null, label: "", language: "en", updated_at: "" });
+    await st.syncDraft(snap("Posting C", "standard"));
+    st.flushDraftSave();
+    await st.settleDraft();
+    return calls.join(" ");
+  };
+  const WANT61 =
+    "POST:1:Posting A PUT:1:executive PUT:1:classic POST:2:Posting B PUT:2:modern POST:3:Posting C POST:4:Posting C";
+  const real = await draftRun(storeSrc);
+  for (const [label, mutated] of [
+    ["a new target that does not move the row", storeSrc.replace(/(consumedNavKey = navKey;\s*)(?:\/\/[^\n]*\n\s*)*newDraftRow\(\);/, "$1")],
+    ["a re-tailor that keeps the row for any posting", storeSrc.replace("state.savedAppId !== null && state.savedFor === jdText.trim()", "state.savedAppId !== null")],
+  ]) {
+    if (mutated === storeSrc) {
+      if (real !== WANT61) continue; // the real store already fails; reported below
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if ((await draftRun(mutated)) === WANT61) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+  if (real !== WANT61)
+    fail(
+      `check 61: state/tailorStore.ts wrote [${real}] where [${WANT61}] is right. A draft saved with its job must ` +
+        "reach that job's row and no other: a new posting, a new target and a new master each get a row of their " +
+        "own, a change still waiting goes to the row it was typed for, the same posting keeps its row, and an " +
+        "unchanged draft sends nothing (PLAN 31.3/4)",
+    );
+
+  const read61 = (pg) => {
+    const out = [];
+    if (!/useEffect\(\(\) => \{\s*if \(draftSnap\) void syncDraft\(draftSnap\)[^;]*;\s*\}, \[draftSnap\b/.test(pg))
+      out.push("no effect saves the draft whenever it changes (`syncDraft(draftSnap)`, keyed on `draftSnap`)");
+    if (!/fabrication_flag_count: overrideCount > 0 \? null : result\.fabrication_flags\.length/.test(pg))
+      out.push("the draft saved after a hand-edit carries the AI version's fabrication count instead of unknown (null)");
+    for (const [key, gate] of [
+      ["jobDraft.saved", /draftSave === "saved" \? \(\s*<>\s*<span[^>]*>✓ \{t\("jobDraft\.saved"\)\}/],
+      ["bar.saved", /draftSave === "saved" \? \(\s*<span[^>]*>✓ \{t\("bar\.saved"\)\}/],
+      ["save.saved", /draftSave === "saved" \? t\("save\.saved"\)/],
+    ]) {
+      const uses = pg.split(`t("${key}")`).length - 1;
+      if (uses !== 1 || !gate.test(pg))
+        out.push(`t("${key}") is said ${uses === 1 ? "without" : `${uses} times, not once, behind`} the \`draftSave === "saved"\` gate, so the page can call a draft saved before the row has it`);
+    }
+    return out;
+  };
+  const page61 = decomment(read("pages/TailorPage.tsx"));
+  const realPage = read61(page61);
+  for (const [label, pg] of [
+    ["a draft never saved", page61.replace("if (draftSnap) void syncDraft(draftSnap)", "if (false) void syncDraft(draftSnap)")],
+    ["a known count over typed text", page61.replace("overrideCount > 0 ? null : result.fabrication_flags.length", "result.fabrication_flags.length")],
+    ["an ungated Saved", page61.replace(/draftSave === "saved" \? \(\s*<>/, "true ? (\n<>")],
+  ]) {
+    if (pg === page61) {
+      if (realPage.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!read61(pg).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of realPage) fail(`check 61: pages/TailorPage.tsx: ${p} (PLAN 31.3/4)`);
+} catch (e) {
+  fail(`draft-with-its-job check (check 61) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

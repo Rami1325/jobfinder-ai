@@ -36,13 +36,19 @@ interface Props {
    * How many blocks of the document on the page below the user typed themselves.
    *
    * The Tailor button here calls `startTailor`, which resets `tailorOverrides`
-   * to `{}` — so above zero this dialog's primary action DELETES the user's own
-   * sentences, and there is nothing to recover them from: they are mirrored
-   * nowhere, and a second tailor of the same posting comes back as different
-   * text at `temperature=0.3`. Above zero the button arms first and the note
-   * names the count at rest.
+   * to `{}`. Since PLAN 31.3/4 the draft those lines are in is saved with its
+   * job, so they are LOST only two ways: tailoring the same posting again, whose
+   * new draft replaces the one on that job's row, or lines that never reached
+   * the row (a failed save). Then the button arms first and the note names the
+   * count at rest; a second tailor comes back as different text at
+   * `temperature=0.3`, so nothing brings them back. Tailoring ANOTHER posting
+   * leaves them on the previous job's row, and the note says so instead.
    */
   overrideCount?: number;
+  /** The posting the job's row was saved for, and whether the draft on the page
+   * has reached it (PLAN 31.3/4). They decide which of the cases above this is. */
+  savedFor?: string | null;
+  draftSaved?: boolean;
 }
 
 const TOP_MISSING = 8;
@@ -83,6 +89,8 @@ export default function TailorOverlay({
   tailoring,
   hasResult,
   overrideCount = 0,
+  savedFor = null,
+  draftSaved = false,
 }: Props) {
   const { t } = useTranslation("tailor");
   // The uses copy lives in common.json, through its own named binding.
@@ -92,7 +100,9 @@ export default function TailorOverlay({
   const [err, setErr] = useState("");
   // Tailoring would throw away hand-edits, so the button asks once first.
   const [armed, setArmed] = useState(false);
-  const guarded = hasResult && overrideCount > 0;
+  // The same posting as the job's row: its new draft replaces the saved one.
+  const samePosting = !!savedFor && draft.trim() === savedFor;
+  const guarded = hasResult && overrideCount > 0 && (!draftSaved || samePosting);
 
   // Reseed on open only — reseeding on every render would fight typing.
   //
@@ -235,7 +245,16 @@ export default function TailorOverlay({
               armed ? "border-danger/40 bg-danger/10 text-danger" : "border-line bg-bg-soft text-ink-muted"
             }`}
           >
-            {guarded ? t("overlay.replacesEdited", { count: overrideCount }) : t("overlay.replaces")}
+            {/* Four truths since PLAN 31.3/4: typed lines replaced with the
+                job's saved draft, typed lines that never reached the tracker,
+                a draft that stays saved with its job, or no draft saved yet. */}
+            {guarded
+              ? draftSaved
+                ? t("overlay.replacesSaved", { count: overrideCount })
+                : t("overlay.replacesEdited", { count: overrideCount })
+              : draftSaved && !samePosting
+                ? t("overlay.replacesKept")
+                : t("overlay.replaces")}
           </p>
         )}
 

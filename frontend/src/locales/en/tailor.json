@@ -43,9 +43,8 @@
     }
   },
   "toasts": {
-    "alreadyInTracker": "Already in your tracker",
-    "savedToTracker": "Saved to tracker",
-    "markedApplied": "Marked as applied — added to tracker",
+    "savedToTracker": "Saved with this job in your tracker",
+    "markedApplied": "Marked as applied in your tracker",
     "trackerError": "Couldn't update your tracker. Check your connection and try again.",
     "handoffFailed": "Couldn't load the saved job — it may have been deleted."
   },
@@ -112,7 +111,8 @@
   },
   "save": {
     "cta": "Save to tracker",
-    "saved": "✓ Saved to tracker"
+    "saved": "✓ Saved to tracker",
+    "saving": "Saving…"
   },
   "jdPaste": {
     "placeholder": "Paste the job description — or drop a job link (LinkedIn, Greenhouse, Lever…) and fetch it.",
@@ -489,8 +489,11 @@
     "openDifferent": "Tailor for a different job",
     "retailor": "Tailor for this job instead",
     "replaces": "This starts again from your master resume. The review on screen is replaced; your saved master is not changed.",
-    "replacesEdited_one": "This starts again from your master resume — and deletes the 1 line you typed onto this CV. Those edits live only in this browser tab, so there is no way to get them back. Your saved master is not changed either way.",
-    "replacesEdited_other": "This starts again from your master resume — and deletes the {{count}} lines you typed onto this CV. Those edits live only in this browser tab, so there is no way to get them back. Your saved master is not changed either way.",
+    "replacesEdited_one": "This starts again from your master resume — and deletes the 1 line you typed onto this CV. It did not reach your tracker, so there is no way to get it back. Your saved master is not changed either way.",
+    "replacesEdited_other": "This starts again from your master resume — and deletes the {{count}} lines you typed onto this CV. They did not reach your tracker, so there is no way to get them back. Your saved master is not changed either way.",
+    "replacesSaved_one": "This starts again from your master resume and replaces the draft saved with this job, with the 1 line you typed. Your saved master is not changed.",
+    "replacesSaved_other": "This starts again from your master resume and replaces the draft saved with this job, with the {{count}} lines you typed. Your saved master is not changed.",
+    "replacesKept": "This starts again from your master resume. The draft on screen stays saved with its job in your tracker, and your saved master is not changed.",
     "retailorDiscard_one": "Discard my 1 edit and tailor",
     "retailorDiscard_other": "Discard my {{count}} edits and tailor",
     "keepEdits": "Keep my edits",
@@ -533,7 +536,7 @@
   },
   "edit": {
     "hint": "Tap anything on your resume to edit it.",
-    "tailoredHint": "Type anywhere to change this application's CV. Your master resume is untouched — and these edits live only for this visit, in this tab.",
+    "tailoredHint": "Type anywhere to change this application's CV. Your master resume is untouched.",
     "tailoredNoAdd": "To add something new, edit your master resume and tailor again.",
     "tailoredNoBlankEntry": "Emptying every field would leave a blank entry on the CV, not remove it — and it would print that way. To take a whole role, project, degree or service out, edit your master resume and tailor again.",
     "yours_one": "1 edit of your own",
@@ -636,6 +639,13 @@
     "pdfName": "Download PDF",
     "save": "Save",
     "saved": "Saved",
-    "markApplied": "Mark applied"
+    "markApplied": "Mark applied",
+    "saving": "Saving…"
+  },
+  "jobDraft": {
+    "saved": "Saved with this job in your tracker",
+    "saving": "Saving to your tracker…",
+    "failed": "Not saved to your tracker.",
+    "retry": "Try again"
   }
 }
