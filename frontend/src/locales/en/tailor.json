@@ -46,7 +46,7 @@
     "alreadyInTracker": "Already in your tracker",
     "savedToTracker": "Saved to tracker",
     "markedApplied": "Marked as applied — added to tracker",
-    "trackerError": "Could not update the tracker. Is the backend running?",
+    "trackerError": "Couldn't update your tracker. Check your connection and try again.",
     "handoffFailed": "Couldn't load the saved job — it may have been deleted."
   },
   "download": {

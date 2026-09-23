@@ -2,7 +2,7 @@
   "title": "Application tracker",
   "sub_one": "{{count}} application · move them across stages as you go.",
   "sub_other": "{{count}} applications · move them across stages as you go.",
-  "loadError": "Could not load applications. Is the backend running?",
+  "loadError": "Couldn't load your applications. Check your connection and try again.",
   "status": {
     "saved": "Saved",
     "applied": "Applied",

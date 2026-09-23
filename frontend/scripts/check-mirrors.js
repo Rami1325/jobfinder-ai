@@ -10567,6 +10567,68 @@ try {
   fail(`guard tile check (check 48) could not run: ${e.message}`);
 }
 
+// ---- 49. no developer wording reaches a user ------------------------------- //
+// PLAN 31.1/7, found in the 2026-09-23 review. Users could read "Could not load
+// applications. Is the backend running?", the same on a failed tracker update,
+// and "(ALERT_SMTP_* in backend/.env)" on the alerts card, in both languages.
+// Every string in every namespace of both locales is swept. "Backend Engineer"
+// in a job-title placeholder is a job title, not a server, and stays allowed.
+// The detector is probed both ways on every run.
+try {
+  const DEV = [
+    [/\bbackend\b(?!\s+(?:engineer|developer|team))/i, "the word backend"],
+    [/\.env\b/, "a .env file"],
+    [/\b[A-Z][A-Z0-9]*_[A-Z0-9_]*\*?/, "an ENV_VAR name"],
+    [/\bis the (?:backend|server|api) (?:running|up)\b/i, "\"is the server running\""],
+    [/השרת רץ/, "\"השרת רץ\""],
+    [/\blocalhost\b|127\.0\.0\.1/i, "a local address"],
+    [/\buvicorn\b|\bstack trace\b|\btraceback\b/i, "a server tool"],
+  ];
+  const devHits = (value) => DEV.filter(([re]) => re.test(value)).map(([, why]) => why);
+  for (const [value, want] of [
+    ["Could not load applications. Is the backend running?", true],
+    ["(ALERT_SMTP_* in backend/.env)", true],
+    ["לא הצלחנו לעדכן את המעקב. האם השרת רץ?", true],
+    ["e.g. Backend Engineer", false],
+    ["Couldn't load your applications. Check your connection and try again.", false],
+    ["למשל: Backend Engineer", false],
+  ])
+    if (devHits(value).length > 0 !== want)
+      throw new Error(`the detector reads ${JSON.stringify(value)} as ${want ? "clean" : "developer wording"}, so it cannot be trusted`);
+  const walk = (node, keyPath, out) => {
+    if (typeof node === "string") out.push([keyPath, node]);
+    else if (node && typeof node === "object") for (const [k, v] of Object.entries(node)) walk(v, keyPath ? `${keyPath}.${k}` : k, out);
+    return out;
+  };
+  // Strings only the ADMIN ever sees, who is the one person who sets these
+  // variables. Each is rendered under an `isAdmin` branch, which is checked here
+  // too, so the allowance cannot outlive the branch that justifies it.
+  const ADMIN_ONLY = { "settings.json": { "extension.adminNote": "pages/SettingsPage.tsx" } };
+  for (const [file, keys] of Object.entries(ADMIN_ONLY))
+    for (const [keyPath, page] of Object.entries(keys)) {
+      const src = decomment(read(page));
+      const ns = file.replace(/\.json$/, "");
+      const leaf = keyPath.replace(/\./g, "\\.");
+      if (!new RegExp(`isAdmin\\s*\\?\\s*\\(?\\s*<[^>]*>\\s*\\{\\s*t\\(\\s*"${leaf}"`).test(src))
+        fail(`check 49: ${ns}:${keyPath} is allowed developer wording only because ${page} renders it for the admin alone, and that isAdmin branch is gone`);
+    }
+  let swept = 0;
+  for (const loc of ["en", "he"]) {
+    const dir = path.join(SRC, "locales", loc);
+    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".json"))) {
+      for (const [keyPath, value] of walk(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")), "", [])) {
+        swept += 1;
+        if (ADMIN_ONLY[file]?.[keyPath]) continue;
+        const hits = devHits(value);
+        if (hits.length) fail(`locales/${loc}/${file}: ${keyPath} shows a user ${hits.join(", ")}: ${JSON.stringify(value.slice(0, 90))} (PLAN 31.1/7)`);
+      }
+    }
+  }
+  if (swept < 500) throw new Error(`swept only ${swept} strings across both locales — the walk is not reading the catalogs`);
+} catch (e) {
+  fail(`developer wording check (check 49) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

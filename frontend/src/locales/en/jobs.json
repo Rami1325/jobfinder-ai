@@ -320,7 +320,7 @@
     "customizeHint": "The daily alert always runs this exact search — edit and save to change it.",
     "autoNote": "The daily search is derived automatically from your resume. Customize it to pin exact keywords, location, or boards.",
     "unsaved": "Unsaved changes — save to apply them to the daily alert.",
-    "noSmtp": "Email sending isn't set up on the server yet (ALERT_SMTP_* in backend/.env) — runs will refresh your history but can't email."
+    "noSmtp": "Email alerts can't be sent right now. Runs still refresh your search history, but no email goes out."
   },
   "posted": {
     "today": "today",
