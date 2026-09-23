@@ -247,6 +247,20 @@
     "applied": "Date applied",
     "match": "Match"
   },
+  "review": {
+    "title": "To review",
+    "status": {
+      "done": "Ready to review",
+      "running": "Tailoring…",
+      "queued": "Queued",
+      "failed": "Failed"
+    },
+    "claims_one": "1 claim to check",
+    "claims_other": "{{count}} claims to check",
+    "continue_one": "Continue tailoring 1 queued draft",
+    "continue_other": "Continue tailoring {{count}} queued drafts",
+    "working": "Tailoring drafts in the background…"
+  },
   "job": {
     "back": "All applications",
     "list": "Your applications",
@@ -294,6 +308,18 @@
       "saveError": "Couldn't save the letter with this job. Copy it before you leave.",
       "readError": "Couldn't read the posting. Try again.",
       "needsResume": "Add your resume first, and the letter is written from it."
+    },
+    "send": {
+      "title": "Send it through Comeet",
+      "body": "Comeet can deliver this resume (as a PDF) and your letter straight to {{company}}'s application inbox.",
+      "cta": "Send application",
+      "confirmTitle": "Send this application?",
+      "confirmBody": "We'll send the resume above (as a PDF) and your cover letter straight to {{company}}'s application inbox through Comeet — the same place their own Apply button delivers to. This is a real application and can't be undone.",
+      "note": "Sending works only for Comeet postings whose draft has no claims to check. It's capped per day, never applies twice to the same company, and never touches LinkedIn.",
+      "confirm": "Send it",
+      "sent": "Application sent to {{company}}",
+      "questionnaire": "Complete their questionnaire",
+      "error": "Could not send the application."
     },
     "prepare": {
       "title": "Prepare"

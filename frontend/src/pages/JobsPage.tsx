@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import {
@@ -11,13 +10,10 @@ import {
   Globe,
   Laptop,
   Link2,
-  Loader2,
   Plus,
   Search,
-  Send,
   Trash2,
   Trophy,
-  Wand2,
   X,
 } from "lucide-react";
 import {
@@ -38,14 +34,6 @@ import {
   startJobSearch,
   subscribeJobSearch,
 } from "../state/jobSearchStore";
-import {
-  getKitsState,
-  loadKits,
-  removeKitUndoable,
-  resumeKitQueue,
-  sendKitApplication,
-  subscribeKits,
-} from "../state/kitsStore";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
@@ -53,20 +41,19 @@ import { resumeLanguage } from "../lib/lang";
 import { onboardingRole } from "../lib/onboarding";
 import { useUses } from "../lib/usesStore";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
-import { Button, Card, CardTitle, Modal, Skeleton, useToast } from "../components/ui";
+import { Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
 import UsesNote from "../components/UsesNote";
 import type {
   ApplicationOut,
   FactsLedger,
   JobMatch,
   JobSearchHit,
-  KitOut,
   ResumeModel,
   SearchContext,
 } from "../types";
 import { AlertsCard, CustomizeFields } from "./jobs/AlertsCard";
 import { HistoryRow, MatchCard, RestrictedRow } from "./jobs/cards";
-import { BatchTailorCard, KIT_THRESHOLDS, KitRow } from "./jobs/kits";
+import { BatchTailorCard, KIT_THRESHOLDS } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
 import { VersionHistoryModal } from "./jobs/VersionHistory";
 import { SearchScanPanel } from "./jobs/ScanPanel";
@@ -89,53 +76,12 @@ export default function JobsPage() {
   const { t } = useTranslation("jobs");
   const { master, masters, loading, setMaster } = useMasterResume();
   const persistMaster = useSaveMasterResume();
-  // "Back to kits" from the review page lands on the Kits tab directly.
-  const loc = useLocation() as { state?: { tab?: string } };
-  const [mode, setMode] = useState<"search" | "manual" | "history" | "kits">(
-    loc.state?.tab === "kits" ? "kits" : "search",
-  );
+  // No Kits tab since PLAN 31.4/5: a batch's drafts wait on their jobs in the
+  // tracker's To review, and each is reviewed, sent or deleted from its pages.
+  const [mode, setMode] = useState<"search" | "manual" | "history">("search");
   const toast = useToast();
   // A search and a ranking each use 1 (Phase 30 / B4); none left disables both.
   const searchUses = useUses("search");
-
-  // -- Batch auto-tailor kits (PLAN 8.1) --
-  const {
-    batching,
-    kits,
-    kitsLoading,
-    kitsError,
-  } = useSyncExternalStore(subscribeKits, getKitsState);
-  useEffect(() => {
-    if (mode === "kits") loadKits();
-  }, [mode]);
-  const queuedKits = kits?.filter((k) => k.status === "queued").length ?? 0;
-
-  // PLAN 31.1/6: the kit leaves the list at once and is deleted when the undo
-  // window closes; Undo, or a failed delete, puts it back.
-  function deleteKitRow(id: number) {
-    const undo = removeKitUndoable(id, () => toast("error", t("kits.deleteError")));
-    toast("info", t("kits.deleted"), {
-      action: { label: t("common:actions.undo"), onClick: undo },
-      durationMs: UNDO_MS,
-    });
-  }
-
-  // -- True auto-submit (PLAN 8.4): per-kit confirm, then a real application --
-  const [sendTarget, setSendTarget] = useState<KitOut | null>(null);
-  const [sendingKit, setSendingKit] = useState(false);
-  async function confirmSendKit() {
-    if (!sendTarget || sendingKit) return;
-    setSendingKit(true);
-    try {
-      const updated = await sendKitApplication(sendTarget.id);
-      toast("success", t("kits.submittedToast", { company: updated.company || updated.job_title }));
-      setSendTarget(null);
-    } catch (e: unknown) {
-      toast("error", apiErrorMessage(e, t("kits.submitError")));
-    } finally {
-      setSendingKit(false);
-    }
-  }
 
   // -- Resume upload state (Jobs is the front door: upload lives here too) --
   const [showReplace, setShowReplace] = useState(false);
@@ -610,10 +556,6 @@ export default function JobsPage() {
               key: "history",
               label: history ? t("tabs.historyCount", { count: history.length }) : t("tabs.history"),
             },
-            {
-              key: "kits",
-              label: kits?.length ? t("tabs.kitsCount", { count: kits.length }) : t("tabs.kits"),
-            },
           ] as const
         ).map((tab) => (
           <button
@@ -908,11 +850,7 @@ export default function JobsPage() {
                 {searchResult.matches.some(
                   (m) => m.url && m.jd_text && Math.round(m.overall) >= KIT_THRESHOLDS[0],
                 ) && (
-                  <BatchTailorCard
-                    matches={searchResult.matches}
-                    onViewKits={() => setMode("kits")}
-                    attractKey={startedAt}
-                  />
+                  <BatchTailorCard matches={searchResult.matches} attractKey={startedAt} />
                 )}
               </motion.div>
             )}
@@ -1118,104 +1056,6 @@ export default function JobsPage() {
         </>
       )}
 
-      {mode === "kits" && (
-        <>
-          <Card>
-            <CardTitle className="flex items-center gap-2">
-              <Wand2 size={16} className="text-accent-soft" /> {t("kits.title")}
-            </CardTitle>
-            <p className="mt-1 text-sm text-ink-muted">{t("kits.body")}</p>
-            {queuedKits > 0 && !batching && (
-              <Button
-                size="sm"
-                variant="secondary"
-                className="mt-3"
-                icon={<Wand2 size={14} />}
-                onClick={() => resumeKitQueue()}
-              >
-                {t("kits.processQueue", { count: queuedKits })}
-              </Button>
-            )}
-            {batching && (
-              <p className="mt-3 flex items-center gap-2 text-sm text-ink-muted">
-                <Loader2 size={15} className="animate-spin text-accent-soft" />
-                {t("kits.processing")}
-              </p>
-            )}
-          </Card>
-
-          {kitsLoading && kits === null && (
-            <div className="space-y-3">
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-24 w-full" />
-            </div>
-          )}
-
-          {!kitsLoading && kitsError && (
-            <Card className="flex flex-wrap items-center gap-3">
-              <span className="text-sm text-danger">{kitsError}</span>
-              <Button size="sm" variant="secondary" onClick={() => loadKits(true)}>
-                {t("kits.retry")}
-              </Button>
-            </Card>
-          )}
-
-          {!kitsLoading && !kitsError && kits && kits.length === 0 && (
-            <Card>
-              <CardTitle>{t("kits.emptyTitle")}</CardTitle>
-              <p className="mt-1 text-sm text-ink-muted">{t("kits.emptyBody")}</p>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="mt-4"
-                icon={<Search size={14} />}
-                onClick={() => setMode("search")}
-              >
-                {t("kits.emptyCta")}
-              </Button>
-            </Card>
-          )}
-
-          {kits && kits.length > 0 && (
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-              <p className="text-xs text-ink-faint">{t("kits.reviewSoon")}</p>
-              {kits.map((kit) => (
-                <KitRow key={kit.id} kit={kit} onDelete={deleteKitRow} onSend={setSendTarget} />
-              ))}
-            </motion.div>
-          )}
-        </>
-      )}
-
-      {/* True auto-submit confirm (PLAN 8.4) — this sends a REAL application. */}
-      <Modal
-        open={sendTarget !== null}
-        onClose={() => !sendingKit && setSendTarget(null)}
-        title={t("kits.submitTitle")}
-        maxWidth="max-w-lg"
-      >
-        {sendTarget && (
-          <div className="space-y-4">
-            <p className="text-sm text-ink-muted">
-              {t("kits.submitBody", { company: sendTarget.company || sendTarget.job_title })}
-            </p>
-            <p className="text-xs text-ink-faint">{t("kits.submitNote")}</p>
-            <div className="flex items-center justify-end gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setSendTarget(null)} disabled={sendingKit}>
-                {t("search.dismiss")}
-              </Button>
-              <Button
-                size="sm"
-                icon={sendingKit ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} className="rtl:-scale-x-100" />}
-                onClick={confirmSendKit}
-                disabled={sendingKit}
-              >
-                {t("kits.confirmSubmit")}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }

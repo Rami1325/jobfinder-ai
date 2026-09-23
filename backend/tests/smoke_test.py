@@ -13257,8 +13257,18 @@ try:
             _r.text[:150],
         )
 
-        _tc.post(f"/kits/{_sk1['id']}/approve", json={"cover_letter": "Cover A"}, headers=_SUB_H)
-        _tc.post(f"/kits/{_sk2['id']}/approve", json={"cover_letter": "Cover B"}, headers=_SUB_H)
+        _sk1_app = _tc.post(f"/kits/{_sk1['id']}/approve", json={"cover_letter": "Cover A"}, headers=_SUB_H).json()
+        _sk2_app = _tc.post(f"/kits/{_sk2['id']}/approve", json={"cover_letter": "Cover B"}, headers=_SUB_H).json()
+        # PLAN 31.4/5: the Jobs page's Kits tab is gone, and the send is offered on
+        # the job's own page, named by the detail while it would go.
+        _sk1_detail = _tc.get(f"/applications/{_sk1_app.get('application_id')}", headers=_SUB_H).json()
+        check(
+            "31.4/5: an approved, guard-clean Comeet kit is named on its job's page as the one to send",
+            (_sk1_detail.get("send_kit") or {}).get("id") == _sk1["id"]
+            and (_sk1_detail.get("send_kit") or {}).get("status") == "approved"
+            and _sk1_detail.get("fabrication_flag_count") == 0,
+            str(_sk1_detail.get("send_kit")),
+        )
 
         _r = _tc.post(f"/kits/{_sk1['id']}/submit", headers=_SUB_H)
         check(
@@ -13293,6 +13303,11 @@ try:
             and "https://apply.example/q/1" in _sub_app["notes"],
             str(_sub_app.get("notes"))[:200],
         )
+        check(
+            "31.4/5: …and a sent kit is no longer offered on its job's page",
+            "send_kit" in _sub_app and _sub_app.get("send_kit") is None,
+            str(_sub_app.get("send_kit")),
+        )
         _r = _tc.post(f"/kits/{_sk1['id']}/submit", headers=_SUB_H)
         check(
             "a submitted kit can't be sent twice",
@@ -13305,6 +13320,38 @@ try:
             _r.status_code == 429
             and _r.json()["detail"] == {"code": "daily_limit", "action": "submit", "cap": 1},
             _r.text[:150],
+        )
+        # PLAN 31.4/5: the kit's flags were read at approval, but the send takes the
+        # row's draft as it is NOW. A line typed on the job's draft stores an
+        # unknown count (31.3/4), and unknown is never clean: the page stops
+        # offering the send and the send refuses, before the cap and the network.
+        _sk2_row = _sk2_app.get("application_id")
+        _sk2_before = _tc.get(f"/applications/{_sk2_row}", headers=_SUB_H).json().get("send_kit")
+        _sk2_typed = resume.model_copy(deep=True)
+        _sk2_typed.summary = "A line the user typed after approving the draft."
+        _sk2_put = _tc.put(
+            f"/applications/{_sk2_row}/draft",
+            json={"tailored_resume": _sk2_typed.model_dump(), "fabrication_flag_count": None},
+            headers=_SUB_H,
+        )
+        _sk2_after = _tc.get(f"/applications/{_sk2_row}", headers=_SUB_H).json()
+        check(
+            "31.4/5: a job whose draft was typed on after approval is not offered for sending, "
+            "while the same row with the approved draft was",
+            (_sk2_before or {}).get("id") == _sk2["id"]
+            and _sk2_put.status_code == 200
+            and "send_kit" in _sk2_after
+            and _sk2_after.get("send_kit") is None
+            and _sk2_after.get("fabrication_flag_count") is None,
+            f"{_sk2_before} → {_sk2_put.status_code} {_sk2_after.get('send_kit')}",
+        )
+        _r = _tc.post(f"/kits/{_sk2['id']}/submit", headers=_SUB_H)
+        check(
+            "31.4/5: …and the send itself refuses that draft, before the daily cap and the network",
+            _r.status_code == 400
+            and "changed after you approved" in str(_r.json().get("detail"))
+            and len(_sent_apps) == 1,
+            _r.text[:200],
         )
         check(
             "refused submits never reached the network (exactly one real send)",
@@ -19322,9 +19369,12 @@ _asub29._default_post = lambda url, body, content_type: '{"post_submit_questionn
 _asub29._resolve_token = lambda db, ref: "TOK-29"
 try:
     _stamp_user29 = _mint29(_db29, "Stamp Tester")
+    # An approved row, as `approve_kit` writes one: its draft carries the kit's
+    # flag count, and a send refuses a draft without a clean one (31.4/5).
     _stamp_app29 = _App29(
         user_id=_stamp_user29.id, company="StampCo", job_title="Backend Dev", status="saved",
         tailored_resume_json=_RM29(contact=_Contact29(name="Stamp Tester", email="stamp@example.com")).model_dump_json(),
+        fabrication_flag_count=0,
     )
     _db29.add(_stamp_app29)
     _db29.commit()

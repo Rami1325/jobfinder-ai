@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
@@ -8,9 +8,12 @@ import {
   ClipboardList,
   Clock,
   KanbanSquare,
+  Loader2,
   MessageSquare,
+  ShieldAlert,
   Star,
   StickyNote,
+  Wand2,
 } from "lucide-react";
 import {
   deleteApplication,
@@ -21,14 +24,16 @@ import {
 import TrackerAnalytics from "../components/TrackerAnalytics";
 import InboxBar from "../components/inbox/InboxBar";
 import { CardDate, CardEmailBadge } from "../components/inbox/shared";
-import { Badge, Card, CardTitle, CountUp, Skeleton, useToast } from "../components/ui";
+import { Badge, Button, Card, CardTitle, CountUp, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
+import { kitsToReview } from "../lib/kitsReview";
 import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
 import { sortApps, type ListSort } from "../lib/trackerSort";
 import { followUpStage } from "../hooks/useJobContext";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import type { ApplicationOut, StaleApplication } from "../types";
+import { getKitsState, resumeKitQueue, subscribeKits } from "../state/kitsStore";
+import type { ApplicationOut, KitOut, StaleApplication } from "../types";
 
 // Column labels come from the "tracker" catalog via `status.<key>`.
 const COLUMNS: {
@@ -268,6 +273,110 @@ function AppCard({
   );
 }
 
+/** A draft's state → its chip face. Ready to review is the one that asks for a
+ * tap, so it alone takes the accent. */
+const KIT_FACES: Record<string, string> = {
+  done: "border-accent/50 bg-accent/15 text-accent-soft",
+  running: "border-line bg-panel-2 text-ink-muted",
+  queued: "border-line bg-panel-2 text-ink-muted",
+  failed: "border-danger/50 bg-danger/15 text-danger",
+};
+
+/** One batch-tailored draft waiting on its job (PLAN 31.4/5), the size of an
+ * application card. Like `AppCard`, the card IS the way to its page: the title
+ * is a link stretched over the card, to the draft's review, where it is
+ * approved onto its job, turned down or deleted. Nothing acts in place. The
+ * match is shown only for a draft that was tailored: a queued one has only the
+ * search's reading, a different measurement, and the slot would mix the two. */
+function KitCard({ kit }: { kit: KitOut }) {
+  const { t } = useTranslation("tracker");
+  const tailored = kit.status === "done";
+  return (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <Link
+            to={`/kits/${kit.id}`}
+            dir="auto"
+            className="block truncate text-sm font-semibold text-ink after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-accent/70"
+          >
+            {kit.job_title || "—"}
+          </Link>
+          <p dir="auto" className="truncate text-xs text-ink-muted">
+            {kit.company || "—"}
+          </p>
+        </div>
+        {tailored && (
+          <span className="shrink-0 rounded-md bg-panel-2 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-ink-muted">
+            {Math.round(kit.score_after)}%
+          </span>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span
+          className={cn(
+            "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-semibold leading-none",
+            KIT_FACES[kit.status] ?? KIT_FACES.queued,
+          )}
+        >
+          {t(`review.status.${kit.status}`)}
+        </span>
+        {/* A warning only: no chip is not a claim that the draft is clean. */}
+        {tailored && kit.flag_count > 0 && (
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-warn">
+            <ShieldAlert size={12} aria-hidden />
+            {t("review.claims", { count: kit.flag_count })}
+          </span>
+        )}
+      </div>
+      {kit.status === "failed" && kit.error && (
+        <p dir="auto" className="mt-1.5 line-clamp-2 text-xs text-danger">
+          {kit.error}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** The drafts waiting on their jobs, and the one control their queue needs: a
+ * batch left queued (a reload, a dropped connection) continues from here, where
+ * the Jobs page's Kits tab offered it. One copy is mounted, the phone list's
+ * tab or the strip over the board. */
+function ReviewList({ kits, grid }: { kits: KitOut[]; grid?: boolean }) {
+  const { t } = useTranslation("tracker");
+  const { batching, error } = useSyncExternalStore(subscribeKits, getKitsState);
+  const queued = kits.filter((k) => k.status === "queued").length;
+  return (
+    <div className="space-y-3">
+      {batching ? (
+        <p role="status" className="flex items-center gap-2 text-xs text-ink-muted">
+          <Loader2 size={14} className="animate-spin text-accent-soft" aria-hidden />
+          {t("review.working")}
+        </p>
+      ) : (
+        <>
+          {queued > 0 && (
+            <Button size="sm" variant="secondary" icon={<Wand2 size={14} />} onClick={() => void resumeKitQueue()}>
+              {t("review.continue", { count: queued })}
+            </Button>
+          )}
+          {error && <p className="text-xs text-danger">{error}</p>}
+        </>
+      )}
+      <div className={cn("gap-3", grid ? "grid md:grid-cols-2 xl:grid-cols-3" : "flex flex-col")}>
+        {kits.map((k) => (
+          <div
+            key={k.id}
+            className="relative rounded-xl border border-line bg-gradient-to-b from-panel to-panel/70 p-3.5 shadow-card transition-colors hover:border-accent/40"
+          >
+            <KitCard kit={k} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Module-level cache: the board's applications survive tab switches so revisits
 // render instantly instead of flashing the metrics skeleton. null = never loaded.
 let appsCache: ApplicationOut[] | null = null;
@@ -291,10 +400,18 @@ export default function TrackerPage() {
   // both render each card, and the board's `layoutId` glide and the split-flap's
   // pending flip each assume one copy of a card on the page.
   const boardFits = useMediaQuery("(min-width: 768px)");
+  // The drafts a batch tailored, waiting on their jobs (PLAN 31.4/5): the
+  // phone list's first tab, and a strip over the board. The layout loads them
+  // once per session and every change a page makes lands in the same store.
+  const { kits } = useSyncExternalStore(subscribeKits, getKitsState);
+  const toReview = useMemo(() => kitsToReview(kits), [kits]);
   // The phone list's status tab and order (PLAN 31.2/7). `null` = the first
   // status that has anything in it, so the list never opens on an empty tab
-  // while another holds the user's applications.
-  const [listStatus, setListStatus] = useState<string | null>(null);
+  // while another holds the user's applications. "review" is To review, which
+  // a draft's page and the batch card open straight onto.
+  const [listStatus, setListStatus] = useState<string | null>(() =>
+    (loc.state as { show?: unknown } | null)?.show === "review" ? "review" : null,
+  );
   const [listSort, setListSort] = useState<ListSort>("newest");
   // C2 — receiving-column pulse: set on every status change, keyed by `n` so a
   // repeat move into the same column re-fires the flash.
@@ -442,7 +559,11 @@ export default function TrackerPage() {
     for (const a of apps) c[a.status || "saved"] = (c[a.status || "saved"] ?? 0) + 1;
     return c;
   }, [apps]);
-  const shownStatus = listStatus ?? STATUSES.find((s) => counts[s] > 0) ?? "saved";
+  // To review comes first, as it does on the board, and exists only while a
+  // draft does: asked for with none left (the last one just approved), the list
+  // opens where it would have.
+  const firstStatus = toReview.length > 0 ? "review" : (STATUSES.find((s) => counts[s] > 0) ?? "saved");
+  const shownStatus = listStatus === "review" && toReview.length === 0 ? firstStatus : (listStatus ?? firstStatus);
   const listed = useMemo(
     () => sortApps(apps.filter((a) => (a.status || "saved") === shownStatus), listSort),
     [apps, shownStatus, listSort],
@@ -553,7 +674,7 @@ export default function TrackerPage() {
           <Skeleton className="h-40" />
           <Skeleton className="h-40" />
         </div>
-      ) : apps.length === 0 ? (
+      ) : apps.length === 0 && toReview.length === 0 ? (
         <Card className="animate-fade-up py-12 text-center">
           <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent">
             <ClipboardList size={22} />
@@ -574,6 +695,21 @@ export default function TrackerPage() {
         </Card>
       ) : (
         boardFits ? (
+        <>
+        {/* To review, over the board (PLAN 31.4/5): the drafts come before
+            Saved in a job's life, as the tab does on a phone. A strip, not a
+            sixth column: at xl six columns leave 168 px a card. */}
+        {toReview.length > 0 && (
+          <section aria-labelledby="to-review" className="rounded-2xl border border-accent/30 bg-panel/40 p-3">
+            <h2 id="to-review" className="mb-2 flex items-center gap-2 px-1 text-sm font-semibold text-ink">
+              {t("review.title")}
+              <span className="rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-ink-muted">
+                {toReview.length}
+              </span>
+            </h2>
+            <ReviewList kits={toReview} grid />
+          </section>
+        )}
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           {COLUMNS.map((col) => {
             const items = apps.filter((a) => (a.status || "saved") === col.key);
@@ -639,6 +775,7 @@ export default function TrackerPage() {
             );
           })}
         </div>
+        </>
         ) : (
           // THE PHONE LIST (PLAN 31.2/7). Five columns swiped sideways put one
           // column on a 390 px screen at a time; this is the same tracker as
@@ -646,6 +783,24 @@ export default function TrackerPage() {
           // that includes the date applied.
           <div className="space-y-3">
             <div role="tablist" aria-label={t("statusLabel")} className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1">
+              {/* To review, first while a draft waits (PLAN 31.4/5). */}
+              {toReview.length > 0 && (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={shownStatus === "review"}
+                  onClick={() => setListStatus("review")}
+                  className={cn(
+                    "relative inline-flex min-h-9 shrink-0 items-center gap-1.5 overflow-hidden rounded-full border px-3 text-xs font-semibold transition-colors",
+                    shownStatus === "review"
+                      ? "border-accent bg-accent text-white"
+                      : "border-accent/50 bg-accent/10 text-accent-soft hover:text-ink",
+                  )}
+                >
+                  {t("review.title")}
+                  <span className="tabular-nums opacity-80">{toReview.length}</span>
+                </button>
+              )}
               {COLUMNS.map((col) => (
                 <button
                   key={col.key}
@@ -677,6 +832,10 @@ export default function TrackerPage() {
                 </button>
               ))}
             </div>
+            {shownStatus === "review" ? (
+              <ReviewList kits={toReview} />
+            ) : (
+            <>
             <label className="flex items-center justify-end gap-2 text-xs font-semibold text-ink-muted">
               {t("listSort.label")}
               <select
@@ -713,6 +872,8 @@ export default function TrackerPage() {
                   </motion.div>
                 ))}
               </AnimatePresence>
+            )}
+            </>
             )}
           </div>
         )

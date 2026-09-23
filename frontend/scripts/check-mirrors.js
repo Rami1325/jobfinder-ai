@@ -4053,11 +4053,12 @@ try {
 // this check can see them.
 try {
   // [file, floor on every literal call, floor on the search.* / card.* calls].
-  // Floors sit just under what each file carries today (82 and 22 in
-  // JobsPage.tsx, 38 and 37 in cards.tsx), check 29's convention: adding or
-  // removing a string does not trip them, a call shape going dark does.
+  // Floors sit just under what each file carries today (69 and 22 in
+  // JobsPage.tsx since PLAN 31.4/5 deleted the Kits tab with its calls, 38 and
+  // 37 in cards.tsx), check 29's convention: adding or removing a string does
+  // not trip them, a call shape going dark does.
   const files = [
-    ["pages/JobsPage.tsx", 72, 19],
+    ["pages/JobsPage.tsx", 60, 19],
     ["pages/jobs/cards.tsx", 34, 33],
   ];
   const IN_SCOPE = /^(?:search|card)\./;
@@ -10765,14 +10766,17 @@ try {
   };
   const tracker = decomment(read("pages/TrackerPage.tsx"));
   const jobs = decomment(read("pages/JobsPage.tsx"));
+  const kitPage = decomment(read("pages/KitReviewPage.tsx"));
   const planted = tracker.replace(/function remove\(id: number\) \{/, "async function remove(id: number) {\n    await deleteApplication(id);");
   if (planted === tracker) throw new Error("the probe could not plant a direct delete into TrackerPage's remove");
   if (!siteProblems(planted, "function remove(id: number)", "deleteApplication", "scheduleUndoable").length)
     throw new Error("the site detector passes a remove() that awaits deleteApplication, so it cannot be trusted");
+  // The kit's delete moved from the Jobs page's Kits tab to the kit's own page
+  // with PLAN 31.4/5; the same three rules hold there.
   for (const [file, src, head, api, scheduler] of [
     ["pages/TrackerPage.tsx", tracker, "function remove(id: number)", "deleteApplication", "scheduleUndoable"],
     ["pages/JobsPage.tsx", jobs, "function deleteHit(id: number)", "deleteJobHistoryItem", "scheduleUndoable"],
-    ["pages/JobsPage.tsx", jobs, "function deleteKitRow(id: number)", "deleteKit", "removeKitUndoable"],
+    ["pages/KitReviewPage.tsx", kitPage, "function onDelete()", "deleteKit", "removeKitUndoable"],
   ])
     for (const p of siteProblems(src, head, api, scheduler)) fail(`check 51: ${file} \`${head}\` ${p} (PLAN 31.1/6)`);
   const store = decomment(read("state/kitsStore.ts"));
@@ -11764,8 +11768,10 @@ try {
     // (b)
     const card = /<Link\s+to=\{`\/applications\/\$\{a\.id\}`\}[\s\S]{0,300}?after:absolute after:inset-0/.test(tracker);
     if (!card) out.push("(b) the tracker card's title is not a link to `/applications/${a.id}` stretched over the card");
+    // Three wrappers hold a stretched link since PLAN 31.4/5: the board's card,
+    // the phone list's, and a draft's in To review (its title links to the draft).
     const wrappers = (tracker.match(/className="(?:group )?relative rounded-xl border border-line/g) || []).length;
-    if (wrappers < 2) out.push(`(b) ${wrappers} of the 2 card wrappers are \`relative\`, so the stretched link escapes a card`);
+    if (wrappers < 3) out.push(`(b) ${wrappers} of the 3 card wrappers are \`relative\`, so the stretched link escapes a card`);
     for (const gone of ["<Modal", "getApplication(", "onView", "onDelete"])
       if (tracker.includes(gone)) out.push(`(b) TrackerPage still carries \`${gone}\` (the detail modal or the per-card action row)`);
     // (c)
@@ -11778,12 +11784,15 @@ try {
       out.push("(d) JobPage's delete does not hand the id to the tracker (`nav(\"/tracker\", { state: { remove: detail.id } })`)");
     const handover = /typeof toRemove !== "number"[\s\S]{0,200}?nav\("\.", \{ replace: true, state: null \}\);\s*remove\(toRemove\);/.test(tracker);
     if (!handover) out.push("(d) the tracker does not clear the handed-over state BEFORE `remove(toRemove)`, so Back could delete again");
-    // (e)
+    // (e) `also` is a list of prefixes since PLAN 31.4/5 (a job's page and a
+    // draft's page both light the Tracker); a single string is read too.
     const routes = [...app.matchAll(/<Route path="([^"]+)"/g)].map((m) => m[1]);
-    const alsos = [...layout.matchAll(/\balso:\s*"([^"]+)"/g)].map((m) => m[1]);
+    const alsos = [];
+    for (const m of layout.matchAll(/\balso:\s*(\[[^\]]*\]|"[^"]+")/g))
+      for (const s of m[1].matchAll(/"([^"]+)"/g)) alsos.push(s[1]);
     if (!alsos.length) out.push("(e) AppLayout's nav names no `also` prefix, so a job's page lights no tab");
     for (const p of alsos)
-      if (!routes.some((r) => r.startsWith(p))) out.push(`(e) the nav's \`also: "${p}"\` starts no route App.tsx declares, so it lights nothing`);
+      if (!routes.some((r) => r.startsWith(p))) out.push(`(e) the nav's \`also\` prefix "${p}" starts no route App.tsx declares, so it lights nothing`);
     return out;
   };
 
@@ -11801,7 +11810,8 @@ try {
   plant("job", "void load();", "void load(); void analyzeJD(\"x\");", "a model call in an effect");
   plant("job", "state: { remove: detail.id }", "state: { removed: detail.id }", "a delete that is never handed over");
   plant("tracker", 'nav(".", { replace: true, state: null });', "", "a handover that keeps its state");
-  plant("layout", 'also: "/applications/"', 'also: "/application-page/"', "a dead also prefix");
+  plant("layout", 'also: ["/applications/"', 'also: ["/application-page/"', "a dead also prefix");
+  plant("layout", '"/kits/"]', '"/kit-page/"]', "a dead second also prefix");
   for (const p of problems65) fail(`check 65: ${p} (PLAN 31.4/2)`);
 } catch (e) {
   fail(`job page check (check 65) could not run: ${e.message}`);
@@ -12031,6 +12041,106 @@ try {
     fail("check 68: openSavedReview does not put the saved review back on the page (its result, row, template, declines, typed lines, reading's minute and sent state) (PLAN 31.4/4)");
 } catch (e) {
   fail(`saved review check (check 68) could not run: ${e.message}`);
+}
+
+// ---- 69. a batch's drafts wait on their jobs, in the tracker (EXECUTED) ------ //
+// PLAN 31.4/5. The batch tailor's "kits" were a tab of their own on the Jobs
+// page, apart from the jobs they were made for, and the count of them rode the
+// Jobs entry. A kit is what it is to a user now, a draft waiting on its job:
+// (a) EXECUTES lib/kitsReview.ts. To review lists exactly the drafts still
+//     waiting (ready, tailoring, queued, failed), in that order and newest first
+//     within one, never an approved, rejected or submitted one, which is
+//     decided; it never sorts the store's own array; a list never loaded lists
+//     nothing; and the nav's count is the ready ones alone.
+// (b) Pins the wiring by shape: no Kits tab on the Jobs page and no kit row left
+//     beside the jobs; the tracker lists them through `kitsToReview`, as the
+//     phone list's tab and as a strip over the board; the count rides the
+//     Tracker entry (`drafts: true`) and never Jobs; a draft's page leads back to
+//     To review and tells the store what was decided (`putKit`); the batch
+//     card's link opens To review; and the job page offers Comeet's send only
+//     from the server's `send_kit`, sending that kit.
+// Probed every run: an approved draft listed, the list in the store's order, a
+// count of every draft, the count off the Tracker and back on Jobs, a Kits tab
+// back, the tracker's own list, and a send offered without `send_kit`.
+try {
+  const reviewSrc = read("lib/kitsReview.ts");
+  const ALL69 = [[1, "failed"], [2, "done"], [3, "approved"], [4, "queued"], [5, "running"], [6, "rejected"], [7, "submitted"], [8, "done"], [9, "queued"]];
+  const run69 = (src) => {
+    const m = runProbeBundle("kits-review", src);
+    const input = ALL69.map(([id, status]) => ({ id, status }));
+    const before = input.map((k) => k.id).join(",");
+    return {
+      listed: m.kitsToReview(input).map((k) => `${k.id}:${k.status}`).join(" "),
+      inPlace: input.map((k) => k.id).join(",") !== before,
+      none: m.kitsToReview(null).length,
+      count: m.awaitingReview(input),
+      countNone: m.awaitingReview(null),
+    };
+  };
+  const WANT69 = "8:done 2:done 5:running 9:queued 4:queued 1:failed";
+  const ok69 = (r) => r.listed === WANT69 && !r.inPlace && r.none === 0 && r.count === 2 && r.countNone === 0;
+  for (const [label, mutated] of [
+    ["an approved draft listed", reviewSrc.replace('["done", "running", "queued", "failed"]', '["done", "running", "queued", "failed", "approved"]')],
+    ["the list in the store's order", reviewSrc.replace("|| b.id - a.id", "|| a.id - b.id")],
+    ["a count of every draft", reviewSrc.replace('kits.filter((k) => k.status === "done").length', "kits.length")],
+  ]) {
+    if (mutated === reviewSrc) throw new Error(`the probe could not plant "${label}"`);
+    if (ok69(run69(mutated))) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+  const real69 = run69(reviewSrc);
+  if (!ok69(real69))
+    fail(
+      `check 69: lib/kitsReview.ts lists [${real69.listed}] (in place: ${real69.inPlace}; a list never loaded: ` +
+        `${real69.none}) and counts ${real69.count} (never loaded: ${real69.countNone}), where [${WANT69}], 0, 2 and 0 ` +
+        "are right: To review lists the drafts still waiting, ready first, and the nav counts the ready ones (PLAN 31.4/5)",
+    );
+
+  const real = {
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    kitsFile: decomment(read("pages/jobs/kits.tsx")),
+    tracker: decomment(read("pages/TrackerPage.tsx")),
+    layout: decomment(read("layouts/AppLayout.tsx")),
+    kitPage: decomment(read("pages/KitReviewPage.tsx")),
+    job: decomment(read("pages/JobPage.tsx")),
+  };
+  const read69 = ({ jobs, kitsFile, tracker, layout, kitPage, job }) => {
+    const out = [];
+    if (/key:\s*"kits"/.test(jobs) || /mode === "kits"/.test(jobs)) out.push("the Jobs page has a Kits tab again");
+    if (/\bKitRow\b/.test(jobs + kitsFile)) out.push("a kit row is back beside the jobs");
+    if (!/\bkitsToReview\(kits\)/.test(tracker)) out.push("the tracker does not list its drafts through kitsToReview");
+    if ((tracker.match(/<ReviewList\b/g) || []).length < 2) out.push("To review is not on both the phone list and the board");
+    if (!/setListStatus\("review"\)/.test(tracker)) out.push("the phone list has no To review tab");
+    const entry = (to) => (layout.match(new RegExp(`\\{ to: "${to}",[^}]*\\}`)) || [""])[0];
+    if (!/\bdrafts: true\b/.test(entry("/tracker"))) out.push("the Tracker entry does not carry the drafts count (`drafts: true`)");
+    if (/\bdrafts: true\b/.test(entry("/jobs"))) out.push("the Jobs entry carries the drafts count");
+    if (!/item\.drafts \? kitsBadge/.test(layout) || !/item\.drafts && awaiting > 0/.test(layout))
+      out.push("the menu and the tab bar do not draw the count on the entry that carries it");
+    if (/spinner \?\? kitsBadge/.test(layout) || /item\.live &&[^\n]*awaiting > 0/.test(layout))
+      out.push("the count still rides the search's indicator on Jobs");
+    if (!/\bawaitingReview\(kits\)/.test(layout)) out.push("the nav's count is not awaitingReview(kits)");
+    if (!/to="\/tracker"\s+state=\{\{ show: "review" \}\}/.test(kitPage)) out.push("a draft's page does not lead back to To review");
+    if (!/\bputKit\(/.test(kitPage)) out.push("a draft's page does not tell the store what was decided (putKit)");
+    if (!/nav\("\/tracker", \{ state: \{ show: "review" \} \}\)/.test(kitsFile)) out.push("the batch card's link does not open To review");
+    const send = fnSource(job, "function SendSection(");
+    if (!/const kit = detail\.send_kit \?\? null;\s*if \(!kit\) return null;/.test(send))
+      out.push("the job page offers Comeet's send without the server's send_kit");
+    if (!/sendKitApplication\(kit\.id\)/.test(send)) out.push("the job page's send does not send the kit the server named");
+    return out;
+  };
+  const problems69 = read69(real);
+  const plant69 = (key, from, to, label) => {
+    const next = real[key].replace(from, to);
+    if (next === real[key]) throw new Error(`the probe could not plant ${label}`);
+    if (!read69({ ...real, [key]: next }).length) throw new Error(`the reader passes ${label}, so it cannot be trusted`);
+  };
+  plant69("layout", ', drafts: true }', " }", "the count off the Tracker");
+  plant69("layout", "live: true }", "live: true, drafts: true }", "the count back on Jobs");
+  plant69("jobs", 'key: "history"', 'key: "kits"', "a Kits tab back");
+  plant69("tracker", "kitsToReview(kits)", "(kits ?? [])", "the tracker's own list");
+  plant69("job", "if (!kit) return null;", "", "a send offered without send_kit");
+  for (const p of problems69) fail(`check 69: ${p} (PLAN 31.4/5)`);
+} catch (e) {
+  fail(`drafts-to-review check (check 69) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

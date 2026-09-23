@@ -17,9 +17,12 @@ Research outcome (live-verified 2026-07-06, see PLAN.md):
 Hard guardrails (every one enforced in `submit_kit`, none bypassable from the
 API): only kits a human APPROVED in the 8.2 review, only guard-clean kits
 (`flag_count == 0` — flagged kits are never auto-submittable, the reviewer
-override only reaches the tracker), only the Comeet channel (LinkedIn is never
-automated), one auto-application per company per user, a per-user daily cap
-(`DAILY_SUBMIT_CAP`), and a full audit trail on the tracker application.
+override only reaches the tracker), only while the draft on the job's row still
+reads exactly 0 flags (PLAN 31.4/5: it can be tailored again or typed on after
+the approval, and an unknown count is never clean), only the Comeet channel
+(LinkedIn is never automated), one auto-application per company per user, a
+per-user daily cap (`DAILY_SUBMIT_CAP`), and a full audit trail on the tracker
+application.
 
 `parse_comeet_position_url`, `split_name`, and `build_multipart` are pure
 functions pinned by the smoke test; the HTTP POST is injectable so the whole
@@ -39,6 +42,7 @@ from typing import Callable, NamedTuple
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.db.applications import draft_guard_clean
 from app.db.models import Application, TailorKit, User
 from app.models import ResumeModel
 
@@ -267,6 +271,16 @@ def submit_kit(
     app_row = db.get(Application, kit.application_id) if kit.application_id else None
     if app_row is None or app_row.user_id != user.id or not app_row.tailored_resume_json:
         raise ValueError("This kit's approved application is missing — re-approve it.")
+    # PLAN 31.4/5: the kit's flags above were read when it was approved, but what
+    # is sent is the row's draft NOW. The job's page can tailor the job again onto
+    # this row, and the document writes every typed line to it with an unknown
+    # count, so a clean kit is no answer for the draft that would go out.
+    if not draft_guard_clean(app_row):
+        raise ValueError(
+            "The resume on this job changed after you approved it (a new tailor, "
+            "or lines you typed), so it has no clean fabrication-guard reading to "
+            "send on. Apply on the Comeet page, or with the extension's assisted apply."
+        )
     try:
         resume = ResumeModel.model_validate_json(app_row.tailored_resume_json)
     except Exception:  # noqa: BLE001 - corrupt row, user-facing

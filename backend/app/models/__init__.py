@@ -1139,9 +1139,10 @@ class ApplicationOut(BaseModel):
 
 
 class ApplicationKit(BaseModel):
-    """A batch-tailored draft on its way to this job, or waiting for review
-    (PLAN 31.4: a kit is a tailored draft waiting on a job). Only a kit that has
-    not been decided yet is named: queued, running or done."""
+    """A batch-tailored draft and this job (PLAN 31.4: a kit is a tailored draft
+    waiting on a job). `ApplicationDetail.pending_kit` names one nobody has
+    decided yet (queued, running or done); `send_kit` names the approved one
+    Comeet may still send the job's draft with."""
 
     id: int
     status: str
@@ -1187,6 +1188,11 @@ class ApplicationDetail(BaseModel):
     voice_score: Optional[float] = None
     fabrication_flag_count: Optional[int] = None
     pending_kit: Optional[ApplicationKit] = None
+    # PLAN 31.4/5: the approved Comeet kit that may still send this job's draft
+    # (`db/applications.sendable_kit`), so the job's page can offer the send the
+    # Jobs page's Kits tab offered. None whenever the send would be refused on
+    # the kit or on the draft (a count that is not exactly 0).
+    send_kit: Optional[ApplicationKit] = None
     # PLAN 31.4/4: whether the review behind the draft is stored whole, so the
     # document can open it again (`GET /applications/{id}/review`). Kept out of
     # this answer on purpose: every page that reads a job would carry it.

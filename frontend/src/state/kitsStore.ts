@@ -2,6 +2,8 @@
 // survives route changes: the client drives the queue — POST /kits/batch, then
 // POST /kits/process-next in a loop, one tailor pipeline run per request (the
 // serverless-safe pattern) — and that loop must not die when JobsPage unmounts.
+// Since PLAN 31.4/5 a kit is a draft waiting on its job: the list is read by the
+// tracker's To review and the Tracker tab's count, not by a Kits tab on Jobs.
 import { createKitBatch, deleteKit, listKits, processNextKit, submitKit } from "../api/client";
 import { apiErrorMessage } from "../lib/apiError";
 import { scheduleUndoable } from "../lib/undoableDelete";
@@ -21,7 +23,7 @@ export type KitsState = {
   lastKit: KitOut | null; // most recently processed kit (for the progress line)
   lastBatch: BatchSummary | null; // set when a batch finishes; null while idle/running
   error: string;
-  kits: KitOut[] | null; // the Kits tab list; null = never loaded
+  kits: KitOut[] | null; // every kit, newest first; null = never loaded
   kitsLoading: boolean;
   kitsError: string;
 };
@@ -93,7 +95,7 @@ export async function startKitBatch(jobs: KitJobIn[]): Promise<BatchSummary | nu
     await drain(id, summary);
     if (id !== seq) return null;
     set({ batching: false, lastBatch: summary });
-    void loadKits(true); // refresh the Kits tab in the background
+    void loadKits(true); // refresh To review and the Tracker tab's count in the background
     return summary;
   } catch (e: unknown) {
     if (id === seq) set({ batching: false, error: apiErrorMessage(e, "Something went wrong.") });
@@ -120,34 +122,56 @@ export async function resumeKitQueue(): Promise<BatchSummary | null> {
   }
 }
 
+// Kits whose delete is waiting out its undo window: still on the server, so a
+// load in the meantime (a batch finishing) must not bring them back.
+const deleting = new Set<number>();
+
 export async function loadKits(force = false): Promise<void> {
   if (state.kitsLoading || (state.kits !== null && !force)) return;
   set({ kitsLoading: true, kitsError: "" });
   try {
-    set({ kits: await listKits(), kitsLoading: false });
+    const kits = await listKits();
+    set({ kits: kits.filter((k) => !deleting.has(k.id)), kitsLoading: false });
   } catch (e: unknown) {
     set({ kitsLoading: false, kitsError: apiErrorMessage(e, "Something went wrong.") });
   }
 }
 
+/** A kit the server just answered for (an approval, a rejection), put in place
+ * of the one the list holds: the nav's count and the tracker's To review read
+ * the list, and nothing else refreshes it until a batch finishes (PLAN 31.4/5).
+ * A kit the list does not hold is left to the next load. */
+export function putKit(kit: KitOut): void {
+  const list = state.kits;
+  if (!list?.some((k) => k.id === kit.id)) return;
+  set({ kits: list.map((k) => (k.id === kit.id ? kit : k)) });
+}
+
 /** Hide a kit now and delete it on the server once the undo window closes
  * (PLAN 31.1/6: one tap deleted a kit for good). Returns the Undo: it cancels
  * the delete and puts the kit back where it was. A delete that fails puts it
- * back too, then calls `onFailed` so the page can say so. */
-export function removeKitUndoable(id: number, onFailed: () => void): () => void {
+ * back too, then calls `onFailed` so the page can say so.
+ *
+ * It takes the kit, not its id, because the delete lives on the kit's own page
+ * since PLAN 31.4/5, which can be open before the list has loaded (a reload of
+ * /kits/:id). The delete is scheduled either way: an id missing from the list
+ * used to return a no-op, so the page said "deleted" over a kit left alone. */
+export function removeKitUndoable(kit: KitOut, onFailed: () => void): () => void {
+  const id = kit.id;
   const list = state.kits ?? [];
   const index = list.findIndex((k) => k.id === id);
-  if (index === -1) return () => {};
-  const kit = list[index];
-  set({ kits: list.filter((k) => k.id !== id) });
+  if (index !== -1) set({ kits: list.filter((k) => k.id !== id) });
+  deleting.add(id);
   const restore = () => {
-    const now = state.kits ?? [];
-    if (now.some((k) => k.id === id)) return;
-    const at = Math.min(index, now.length);
+    deleting.delete(id);
+    const now = state.kits;
+    // A list never loaded shows it on its first load; one holding it is done.
+    if (now === null || now.some((k) => k.id === id)) return;
+    const at = index === -1 ? 0 : Math.min(index, now.length);
     set({ kits: [...now.slice(0, at), kit, ...now.slice(at)] });
   };
   const cancel = scheduleUndoable(
-    () => deleteKit(id),
+    () => deleteKit(id).then(() => void deleting.delete(id)),
     () => {
       restore();
       onFailed();

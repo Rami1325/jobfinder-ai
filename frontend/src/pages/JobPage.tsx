@@ -30,7 +30,7 @@ import CoverLetter from "../components/CoverLetter";
 import EmailTimeline from "../components/inbox/EmailTimeline";
 import { formatDay, useLocaleTag } from "../components/inbox/shared";
 import UsesNote from "../components/UsesNote";
-import { Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
+import { Button, Card, CardTitle, Modal, Skeleton, useToast } from "../components/ui";
 import { usePageImages } from "../hooks/useFilePreview";
 import { followUpStage } from "../hooks/useJobContext";
 import { useMasterResume } from "../hooks/useMasterResume";
@@ -39,6 +39,7 @@ import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
 import { TEMPLATE_IDS } from "../lib/templateSpecs";
 import { useUses } from "../lib/usesStore";
+import { sendKitApplication } from "../state/kitsStore";
 import { getTailorState } from "../state/tailorStore";
 import type { ApplicationDetail, ApplicationOut, JDModel } from "../types";
 import { postedAgo } from "./jobs/shared";
@@ -314,6 +315,7 @@ function JobBody({
       <AsksSection detail={detail} />
       <ResumeSection detail={detail} />
       <LetterSection detail={detail} onSaved={(letter) => onChange({ ...detail, cover_letter: letter })} onJd={(jd) => onChange({ ...detail, jd })} />
+      <SendSection detail={detail} reload={reload} />
       <PrepareSection detail={detail} />
       <TimelineSection detail={detail} reload={reload} />
       <NotesSection detail={detail} onSaved={(notes) => onChange({ ...detail, notes })} />
@@ -679,6 +681,72 @@ function SavedLetter({ text }: { text: string }) {
   );
 }
 
+/** Send the application through Comeet (PLAN 8.4), offered here since the Jobs
+ * page's Kits tab went (PLAN 31.4/5). Only while the server names a kit that may
+ * send (`send_kit`: approved, a Comeet posting, no flags, and the job's draft
+ * still clean); the send itself re-checks all of it, and the per-company rule,
+ * the bot check and the daily cap too, each refusal a sentence of its own. It
+ * sends the draft and the letter on this page, and this is a REAL application,
+ * so it asks first. */
+function SendSection({ detail, reload }: { detail: ApplicationDetail; reload: () => Promise<void> }) {
+  const { t } = useTranslation("tracker");
+  const { t: tCommon } = useTranslation();
+  const toast = useToast();
+  const [asking, setAsking] = useState(false);
+  const [sending, setSending] = useState(false);
+  const kit = detail.send_kit ?? null;
+  if (!kit) return null;
+  const company = detail.company || detail.job_title;
+
+  async function send() {
+    if (!kit || sending) return;
+    setSending(true);
+    try {
+      const sent = await sendKitApplication(kit.id);
+      setAsking(false);
+      const questionnaire = sent.submit_note;
+      // The company's follow-up questions, when it sent any: a toast long enough
+      // to reach, and the link stays in the notes the send wrote.
+      toast("success", t("job.send.sent", { company }), questionnaire
+        ? {
+            action: { label: t("job.send.questionnaire"), onClick: () => window.open(questionnaire, "_blank", "noopener,noreferrer") },
+            durationMs: 12000,
+          }
+        : undefined);
+      // The row is Applied now, with the send written into its notes.
+      await reload();
+    } catch (e: unknown) {
+      toast("error", apiErrorMessage(e, t("job.send.error")));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardTitle>{t("job.send.title")}</CardTitle>
+      <p className="mt-1 text-sm text-ink-muted">{t("job.send.body", { company })}</p>
+      <Button className="mt-3" icon={<Send size={15} className="rtl:-scale-x-100" />} onClick={() => setAsking(true)}>
+        {t("job.send.cta")}
+      </Button>
+      <Modal open={asking} onClose={() => !sending && setAsking(false)} title={t("job.send.confirmTitle")} maxWidth="max-w-lg">
+        <div className="space-y-4">
+          <p className="text-sm text-ink-muted">{t("job.send.confirmBody", { company })}</p>
+          <p className="text-xs text-ink-faint">{t("job.send.note")}</p>
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setAsking(false)} disabled={sending}>
+              {tCommon("actions.cancel")}
+            </Button>
+            <Button size="sm" loading={sending} icon={<Send size={14} className="rtl:-scale-x-100" />} onClick={() => void send()}>
+              {t("job.send.confirm")}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </Card>
+  );
+}
+
 /** The tools that prepare for this job, each opened with the job's posting,
  * company and role (`?app=` names the job, so the tool can find its way back). */
 function PrepareSection({ detail }: { detail: ApplicationDetail }) {
@@ -777,6 +845,14 @@ function NotesSection({ detail, onSaved }: { detail: ApplicationDetail; onSaved:
   const toast = useToast();
   const [draft, setDraft] = useState(detail.notes);
   const [saving, setSaving] = useState(false);
+  // Notes written elsewhere while the page is open (a Comeet send appends its
+  // record, PLAN 31.4/5) replace the box's text when nothing was typed in it.
+  // Otherwise the box kept the old notes, and Save wrote them over the record.
+  const [seen, setSeen] = useState(detail.notes);
+  if (detail.notes !== seen) {
+    setSeen(detail.notes);
+    if (draft === seen) setDraft(detail.notes);
+  }
   async function save() {
     setSaving(true);
     try {

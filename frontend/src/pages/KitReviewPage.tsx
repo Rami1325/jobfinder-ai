@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -10,6 +10,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ThumbsDown,
+  Trash2,
 } from "lucide-react";
 import {
   approveKit,
@@ -24,11 +25,13 @@ import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
 import VoicePanel from "../components/VoicePanel";
 import { apiErrorMessage } from "../lib/apiError";
+import { UNDO_MS } from "../lib/undoableDelete";
+import { putKit, removeKitUndoable } from "../state/kitsStore";
 import { editContainsValue, mergeForReview } from "../lib/resumeDiff";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, Stamp, useToast } from "../components/ui";
 import type { KitDetail, KitOut } from "../types";
 
-// Mirrors the Kits tab chips on JobsPage.
+// A draft's state as a chip (the tracker's To review draws the four it lists).
 const STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" | "danger"> = {
   queued: "neutral",
   running: "partial",
@@ -39,15 +42,19 @@ const STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" | "da
   submitted: "mint",
 };
 
-/** Review one application kit (PLAN 8.2): the per-bullet accept/reject diff,
- * match report, guard status, and cover letter — then Approve into the
- * tracker (ready to send) or Reject with a reason. Reuses the Tailor page's
- * prop-driven components; decisions live in local state, and the effective
- * resume they produce is what gets approved and downloaded. */
+/** Review one batch-tailored draft (PLAN 8.2; a "kit" in the code): the
+ * per-bullet accept/reject diff, match report, guard status, and cover letter —
+ * then Approve it onto its job in the tracker or Reject it with a reason.
+ * Reuses the Tailor page's prop-driven components; decisions live in local
+ * state, and the effective resume they produce is what gets approved and
+ * downloaded. Since PLAN 31.4/5 it is reached from the tracker's To review and
+ * from its job's page, and it is where a draft is deleted; an approved draft's
+ * Comeet send is on its job's page. */
 export default function KitReviewPage() {
   const { id } = useParams<{ id: string }>();
   const { t } = useTranslation("jobs");
   const toast = useToast();
+  const nav = useNavigate();
 
   const [kit, setKit] = useState<KitDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -117,6 +124,21 @@ export default function KitReviewPage() {
 
   function mergeReview(updated: KitOut) {
     setKit((k) => (k ? { ...k, ...updated } : k));
+    // The tracker's To review and the Tracker tab's count read the store, and
+    // nothing else would tell it the draft was decided.
+    putKit(updated);
+  }
+
+  /** Delete the draft, with the undo window every delete in the app waits out
+   * (check-mirrors 51), and go back to where drafts wait. */
+  function onDelete() {
+    if (!kit) return;
+    const undo = removeKitUndoable(kit, () => toast("error", t("kits.deleteError")));
+    toast("info", t("kits.deleted"), {
+      action: { label: t("common:actions.undo"), onClick: undo },
+      durationMs: UNDO_MS,
+    });
+    nav("/tracker", { state: { show: "review" } });
   }
 
   async function onApprove() {
@@ -165,8 +187,8 @@ export default function KitReviewPage() {
 
   const backLink = (
     <Link
-      to="/jobs"
-      state={{ tab: "kits" }}
+      to="/tracker"
+      state={{ show: "review" }}
       className="inline-flex items-center gap-1.5 text-sm font-semibold text-accent-soft hover:underline"
     >
       <ArrowLeft size={15} className="rtl:-scale-x-100" /> {t("kitReview.back")}
@@ -195,6 +217,8 @@ export default function KitReviewPage() {
   }
 
   const reviewable = kit.status === "done";
+  // The row an approval put the draft on; the tracker when none is linked.
+  const jobHref = kit.application_id ? `/applications/${kit.application_id}` : "/tracker";
 
   return (
     <motion.div
@@ -313,11 +337,13 @@ export default function KitReviewPage() {
         </div>
       )}
 
+      {/* A decided draft is its job's now: both banners lead to the job's page,
+          where it is downloaded, written a letter for, and (Comeet) sent. */}
       {kit.status === "approved" && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-mint/40 bg-mint/10 px-3 py-2 text-sm text-mint">
           <span>{t("kitReview.approvedBanner")}</span>
-          <Link to="/tracker" className="font-semibold underline">
-            {t("kitReview.viewInTracker")}
+          <Link to={jobHref} className="font-semibold underline">
+            {t("kitReview.openJob")}
           </Link>
         </div>
       )}
@@ -329,8 +355,8 @@ export default function KitReviewPage() {
               {t("kits.questionnaireLink")}
             </a>
           )}
-          <Link to="/tracker" className="font-semibold underline">
-            {t("kitReview.viewInTracker")}
+          <Link to={jobHref} className="font-semibold underline">
+            {t("kitReview.openJob")}
           </Link>
         </div>
       )}
@@ -406,6 +432,21 @@ export default function KitReviewPage() {
           )}
         </>
       )}
+
+      {/* Where a draft is deleted since the Jobs page's Kits tab went (PLAN
+          31.4/5). A draft still queued gives its use back; one that ran keeps it. */}
+      <div className="flex justify-center pt-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Trash2 size={15} />}
+          className="text-ink-muted hover:text-danger"
+          disabled={approving || rejecting}
+          onClick={onDelete}
+        >
+          {t("kits.delete")}
+        </Button>
+      </div>
     </motion.div>
   );
 }

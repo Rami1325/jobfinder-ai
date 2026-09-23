@@ -1,23 +1,16 @@
-// Batch auto-tailor kits UI (PLAN 8.1/8.2; split out of JobsPage.tsx — 12.5d).
+// Batch auto-tailor (PLAN 8.1; split out of JobsPage.tsx — 12.5d). The drafts it
+// makes are reviewed from the tracker's To review since PLAN 31.4/5, where the
+// Jobs page's Kits tab went.
 import { useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import {
-  ArrowRight,
-  ExternalLink,
-  Send,
-  ShieldAlert,
-  ShieldCheck,
-  Trash2,
-  Wand2,
-} from "lucide-react";
-import { Badge, Button, Card, CardTitle, ProgressRing, useToast } from "../../components/ui";
+import { Wand2 } from "lucide-react";
+import { Button, Card, CardTitle, useToast } from "../../components/ui";
 import UsesNote from "../../components/UsesNote";
 import { useUses } from "../../lib/usesStore";
 import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
-import type { JobMatch, KitOut } from "../../types";
-import { CompanyAvatar, JobResultCard } from "./cards";
-import { inputCls, kitJobFromMatch, normalizeJobUrl, sourceLabel } from "./shared";
+import type { JobMatch } from "../../types";
+import { inputCls, kitJobFromMatch, normalizeJobUrl } from "./shared";
 
 // Batch auto-tailor (PLAN 8.1): jobs at/above the fit threshold become queued
 // "application kits" — the backend tailors them one process-next call at a
@@ -28,11 +21,9 @@ export const KIT_THRESHOLDS = [60, 65, 70, 75, 80, 85, 90] as const;
 
 export function BatchTailorCard({
   matches,
-  onViewKits,
   attractKey,
 }: {
   matches: JobMatch[];
-  onViewKits: () => void;
   /** Changes when a fresh search lands — restarts the attention pulse (PLAN
    * 15.9: users scrolled straight past this card to the result rows). */
   attractKey?: number | null;
@@ -40,6 +31,7 @@ export function BatchTailorCard({
   const { t } = useTranslation("jobs");
   const { t: tCommon } = useTranslation();
   const toast = useToast();
+  const nav = useNavigate();
   const { batching, total, done, lastKit, lastBatch, error, kits } = useSyncExternalStore(
     subscribeKits,
     getKitsState,
@@ -178,163 +170,15 @@ export function BatchTailorCard({
               ...(lastBatch.failed > 0 ? [t("batch.doneFailed", { count: lastBatch.failed })] : []),
             ].join(" · ")}
           </span>
-          <button onClick={onViewKits} className="font-semibold text-accent-soft hover:underline">
+          {/* The drafts wait in the tracker's To review (PLAN 31.4/5). */}
+          <button
+            onClick={() => nav("/tracker", { state: { show: "review" } })}
+            className="font-semibold text-accent-soft hover:underline"
+          >
             {t("batch.viewKits")}
           </button>
         </div>
       )}
     </Card>
-  );
-}
-
-const KIT_STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" | "danger"> = {
-  queued: "neutral",
-  running: "partial",
-  done: "mint",
-  failed: "danger",
-  approved: "mint",
-  rejected: "neutral",
-  submitted: "mint",
-};
-
-export function KitRow({
-  kit,
-  onDelete,
-  onSend,
-}: {
-  kit: KitOut;
-  onDelete: (id: number) => void;
-  onSend: (kit: KitOut) => void;
-}) {
-  const { t, i18n } = useTranslation("jobs");
-  const nav = useNavigate();
-  // Kits keep their tailor outcome through review: approved/rejected/submitted
-  // rows still show scores and guard status, not just fresh "done" ones.
-  const processed =
-    kit.status === "done" ||
-    kit.status === "approved" ||
-    kit.status === "rejected" ||
-    kit.status === "submitted";
-  // True auto-submit (PLAN 8.4): only approved, guard-clean Comeet kits — the
-  // backend re-enforces all of this; the button just doesn't offer dead ends.
-  const canSend = kit.status === "approved" && kit.source === "comeet" && kit.flag_count === 0;
-  return (
-    <JobResultCard>
-      <ProgressRing
-        value={processed ? kit.score_after : kit.search_overall}
-        size={64}
-        stroke={6}
-        label={processed ? t("kits.after") : t("card.fit")}
-      />
-      <div className="flex min-w-0 flex-1 items-start gap-3">
-        <CompanyAvatar company={kit.company} url={kit.url || undefined} logoUrl={kit.logo_url} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="min-w-0 max-w-full truncate font-semibold text-ink">
-              {kit.job_title || t("card.untitled")}
-            </p>
-            <Badge tone={KIT_STATUS_TONE[kit.status]} className="shrink-0">
-              {t(`kits.status.${kit.status}`)}
-            </Badge>
-            {kit.source && <Badge className="shrink-0">{sourceLabel(kit.source)}</Badge>}
-            {processed &&
-              (kit.flag_count > 0 ? (
-                <Badge tone="danger" className="inline-flex shrink-0 items-center gap-1">
-                  <ShieldAlert size={11} /> {t("kits.guardFlags", { count: kit.flag_count })}
-                </Badge>
-              ) : (
-                <Badge tone="mint" className="inline-flex shrink-0 items-center gap-1">
-                  <ShieldCheck size={11} /> {t("kits.guardClean")}
-                </Badge>
-              ))}
-          </div>
-          <p className="text-sm text-ink-muted">
-            {kit.company || "—"}
-            {kit.location ? ` · ${kit.location}` : ""}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-            {processed && (
-              <span className="font-semibold text-ink">
-                {t("kits.score", {
-                  before: Math.round(kit.score_before),
-                  after: Math.round(kit.score_after),
-                })}
-              </span>
-            )}
-            <span>{t("kits.searchFit", { pct: Math.round(kit.search_overall) })}</span>
-            {kit.url && (
-              <a
-                href={kit.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-accent-soft hover:underline"
-              >
-                <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(kit.source) || "LinkedIn" })}
-              </a>
-            )}
-          </div>
-          {kit.status === "failed" && kit.error && (
-            <p dir="auto" className="mt-1 text-xs text-danger">
-              {kit.error}
-            </p>
-          )}
-          {kit.status === "rejected" && kit.reject_reason && (
-            <p dir="auto" className="mt-1 text-xs text-ink-faint">
-              {t("kits.rejectedBecause", { reason: kit.reject_reason })}
-            </p>
-          )}
-          {kit.status === "submitted" && (
-            <p className="mt-1 text-xs text-ink-faint">
-              {kit.submitted_at &&
-                t("kits.submittedOn", {
-                  date: new Date(kit.submitted_at).toLocaleDateString(i18n.language),
-                })}
-              {kit.submit_note && (
-                <>
-                  {" · "}
-                  {t("kits.questionnaireNote")}{" "}
-                  <a
-                    href={kit.submit_note}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-accent-soft hover:underline"
-                  >
-                    {t("kits.questionnaireLink")}
-                  </a>
-                </>
-              )}
-            </p>
-          )}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {canSend && (
-          <Button
-            size="sm"
-            icon={<Send size={14} className="rtl:-scale-x-100" />}
-            onClick={() => onSend(kit)}
-          >
-            {t("kits.submit")}
-          </Button>
-        )}
-        {processed && (
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
-            onClick={() => nav(`/kits/${kit.id}`)}
-          >
-            {t("kits.review")}
-          </Button>
-        )}
-        <button
-          onClick={() => onDelete(kit.id)}
-          title={t("kits.delete")}
-          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-all hover:-translate-y-0.5 hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
-    </JobResultCard>
   );
 }

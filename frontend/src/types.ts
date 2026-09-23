@@ -378,11 +378,12 @@ export interface ApplicationReviewOut {
   scored_at: number | null;
 }
 
-/** PLAN 31.4: a batch-tailored draft on its way to a job, or waiting for
- * review. Only an undecided kit is named: queued, running or done. */
+/** PLAN 31.4: a batch-tailored draft and its job. `pending_kit` names one nobody
+ * has decided yet (queued, running or done); `send_kit` names the approved one
+ * Comeet may still send the job's draft with. */
 export interface ApplicationKit {
   id: number;
-  status: "queued" | "running" | "done";
+  status: "queued" | "running" | "done" | "approved";
 }
 
 export interface ApplicationDetail {
@@ -425,6 +426,10 @@ export interface ApplicationDetail {
   voice_score?: number | null;
   fabrication_flag_count?: number | null;
   pending_kit?: ApplicationKit | null;
+  /** PLAN 31.4/5: the approved Comeet kit that may still send this job's draft;
+   * null whenever the send would be refused on the kit or on the draft (a flag
+   * count that is not exactly 0). The job's page offers the send only from it. */
+  send_kit?: ApplicationKit | null;
   /** PLAN 31.4/4: the review behind the draft is stored whole, so the document
    * can open it again (`getApplicationReview`). */
   has_review?: boolean;

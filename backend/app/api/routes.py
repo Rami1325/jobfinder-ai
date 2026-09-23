@@ -2257,6 +2257,7 @@ def get_application(
     conn = inbox_sync_core.connection_for(db, user.id)
     mailbox = (conn.email_address or "") if conn is not None and conn.provider == "gmail" else ""
     kit = applications_db.pending_kit(db, user.id, app.job_url)
+    send = applications_db.sendable_kit(db, user.id, app)
     return ApplicationDetail(
         id=app.id,
         job_title=app.job_title,
@@ -2285,6 +2286,7 @@ def get_application(
         voice_score=app.voice_score,
         fabrication_flag_count=app.fabrication_flag_count,
         pending_kit=ApplicationKit(id=kit.id, status=kit.status) if kit is not None else None,
+        send_kit=ApplicationKit(id=send.id, status=send.status) if send is not None else None,
         has_review=_review_whole(_stored_review(app)),
     )
 

@@ -51,6 +51,7 @@ import { isOnboarded, markOnboardedHere, onboardingStep } from "../lib/onboardin
 import { authRedirectUrl } from "../lib/safeNext";
 import { signOut } from "../lib/session";
 import { announceAccount, watchAccount } from "../lib/accountWatch";
+import { awaitingReview } from "../lib/kitsReview";
 import { shouldRefreshUses, usesFor, useUsesState } from "../lib/usesStore";
 import { getJobSearchState, subscribeJobSearch } from "../state/jobSearchStore";
 import { getKitsState, loadKits, subscribeKits } from "../state/kitsStore";
@@ -60,7 +61,7 @@ type NavEntry = {
   to: string;
   labelKey: string;
   icon: LucideIcon;
-  /** This entry carries live indicators (the search spinner, the kits count).
+  /** This entry carries the search's live indicator (the spinner, the dot).
    *
    * A FLAG, not a route-string comparison. Comparing `item.to` against a
    * hard-coded path is documented in CLAUDE.md as fragile — renaming the route
@@ -70,17 +71,22 @@ type NavEntry = {
    * the Jobs destination quietly stop being validated. The literal stays in the
    * table; nothing has to repeat it. */
   live?: true;
-  /** A path PREFIX whose pages also light this entry: a page you reach from it,
-   * at an address of its own (PLAN 31.4: a job's page, `/applications/:id`,
-   * belongs to the Tracker). A prefix, not a destination, so check 9 has no
-   * route to resolve for it. It must stay disjoint from `moreActive`. */
-  also?: string;
+  /** Path PREFIXES whose pages also light this entry: pages you reach from it,
+   * at addresses of their own (PLAN 31.4: a job's page, `/applications/:id`,
+   * and a batch draft's, `/kits/:id`, belong to the Tracker). Prefixes, not
+   * destinations, so check 9 has no route to resolve for them. They must stay
+   * disjoint from `moreActive`. */
+  also?: readonly string[];
+  /** This entry carries the count of drafts waiting for review: the Tracker,
+   * whose To review lists them (PLAN 31.4/5; it rode the Jobs entry while a
+   * Kits tab there listed them). A flag, for `live`'s reason. */
+  drafts?: true;
 };
 
 const primaryNav: NavEntry[] = [
   { to: "/app", labelKey: "nav.resume", icon: FileText },
   { to: "/jobs", labelKey: "nav.jobs", icon: Briefcase, live: true },
-  { to: "/tracker", labelKey: "nav.tracker", icon: KanbanSquare, also: "/applications/" },
+  { to: "/tracker", labelKey: "nav.tracker", icon: KanbanSquare, also: ["/applications/", "/kits/"], drafts: true },
 ];
 
 const moreNav: NavEntry[] = [
@@ -150,11 +156,11 @@ function NavItem({
   label: string;
   trailing?: ReactNode;
   end?: boolean;
-  also?: string;
+  also?: readonly string[];
   onNavigate?: () => void;
 }) {
   const { pathname } = useLocation();
-  const lit = (isActive: boolean) => isActive || (!!also && pathname.startsWith(also));
+  const lit = (isActive: boolean) => isActive || !!also?.some((p) => pathname.startsWith(p));
   return (
     <NavLink
       to={to}
@@ -239,12 +245,10 @@ function MenuPanel({
   ) : undefined;
   // A finished background batch is otherwise INVISIBLE until someone thinks to
   // look: BatchTailorCard tailors asynchronously, and nothing on any other page
-  // said so. The count is kits with status "done" — tailored and waiting for a
-  // human — which is exactly what approveKit requires.
-  //
-  // The spinner wins when both apply. A search in flight is about what you just
-  // did and resolves in seconds; the kit count is patient and will still be
-  // there afterwards.
+  // said so. The count is drafts with status "done" — tailored and waiting for a
+  // human — which is exactly what approveKit requires. It rides the Tracker,
+  // whose To review lists them (PLAN 31.4/5), so the search's spinner on Jobs
+  // and this count no longer share an entry.
   const kitsBadge =
     awaiting > 0 ? (
       <span
@@ -270,7 +274,7 @@ function MenuPanel({
                 to={item.to}
                 icon={item.icon}
                 label={t(item.labelKey)}
-                trailing={item.live ? spinner ?? kitsBadge : undefined}
+                trailing={item.live ? spinner : item.drafts ? kitsBadge : undefined}
                 also={item.also}
                 onNavigate={onNavigate}
               />
@@ -625,7 +629,7 @@ function MobileTabBar({
       active ? "text-accent-soft" : "text-ink-muted",
     );
   // An entry is lit on its own route and on the pages it names in `also`.
-  const lit = (item: NavEntry, isActive: boolean) => isActive || (!!item.also && pathname.startsWith(item.also));
+  const lit = (item: NavEntry, isActive: boolean) => isActive || !!item.also?.some((p) => pathname.startsWith(p));
   return (
     <nav
       aria-label={t("nav.primary")}
@@ -658,7 +662,7 @@ function MobileTabBar({
                   {/* Capped at 9+ deliberately: the slot is 94.8px at 390px and
                       a three-digit pill would push the label into an ellipsis,
                       which is the one thing 22.9 measured this bar to avoid. */}
-                  {item.live && !searching && awaiting > 0 && (
+                  {item.drafts && awaiting > 0 && (
                     <span
                       aria-label={t("nav.kitsAwaiting", { count: awaiting })}
                       className="absolute -end-2 -top-1.5 grid min-w-[16px] place-items-center rounded-full bg-accent px-1 text-[10px] font-bold leading-[15px] tabular-nums text-white"
@@ -714,9 +718,10 @@ export default function AppLayout() {
   // see `main` below.
   const docRoute = pathname.replace(/\/+$/, "") === "/app";
   const { searching } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
-  // Kits load HERE, not on JobsPage. JobsPage called loadKits() only once its
-  // Kits tab was open, which made a count on that tab unbuildable: it read zero
-  // until you had already gone and looked, which is the one moment a badge is
+  // Kits load HERE, not on the page that lists them (JobsPage's Kits tab until
+  // PLAN 31.4/5, the tracker's To review since). A page that loads them only
+  // once it is open makes a count on the nav unbuildable: it read zero until
+  // you had already gone and looked, which is the one moment a badge is
   // useless. The layout is the only component mounted on every app route, and
   // loadKits() no-ops once the store is populated — so this is ONE GET /kits per
   // app session, not one per visit, and the store already refreshes itself
@@ -846,7 +851,7 @@ export default function AppLayout() {
   }, [authed]);
   // "done" is tailored-and-waiting-for-a-human, and it is the exact status
   // approveKit requires — a queued or failed kit is not something to review.
-  const awaitingKits = kits?.filter((k) => k.status === "done").length ?? 0;
+  const awaitingKits = awaitingReview(kits);
 
   // Three popovers, one at a time — opening any closes the others: the Menu
   // dropdown (lg and up), the account card, and the More sheet (below lg).

@@ -3,7 +3,8 @@
 `routes.create_application` and `kits.approve_kit` both write a tracked job, and
 both must find the row a posting already has instead of adding a second one
 (PLAN 31.1/5 and 31.4: one posting, one tracker row). The job page (PLAN 31.4)
-also asks which undecided kit is on its way to a row's posting.
+also asks which undecided kit is on its way to a row's posting, and which
+approved kit Comeet may still send it with.
 """
 
 from __future__ import annotations
@@ -53,3 +54,39 @@ def pending_kit(db: Session, user_id: int, job_url: str) -> TailorKit | None:
         )
         .order_by(TailorKit.id.desc())
     ).scalars().first()
+
+
+def draft_guard_clean(app: Application) -> bool:
+    """Whether the draft on this row has a clean fabrication-guard reading NOW.
+
+    Exactly 0, never None: a draft typed on after the tailor stores an unknown
+    count (PLAN 31.3/4), and unknown is never clean. The count is the row's
+    CURRENT one, because a kit's approval is not the last word on the row's
+    draft: since PLAN 31.4/4 the job's page re-tailors onto the same row, and
+    the document writes every typed line to it."""
+    return app.fabrication_flag_count == 0
+
+
+def sendable_kit(db: Session, user_id: int, app: Application) -> TailorKit | None:
+    """The kit this row was approved from, while Comeet's apply API may still
+    send the row's draft with it (PLAN 8.4, offered on the job's page since
+    31.4/5), or None.
+
+    The same conditions `auto_submit.submit_kit` refuses on before it reaches
+    the network: approved and not yet sent, a Comeet posting, no flags on the
+    kit, and the row's own draft still clean (`draft_guard_clean`). The
+    per-company dedupe, the reCAPTCHA check and the daily cap stay the send's
+    alone, and each answers with a sentence of its own."""
+    if not draft_guard_clean(app):
+        return None
+    kits = db.execute(
+        select(TailorKit)
+        .where(
+            TailorKit.user_id == user_id,
+            TailorKit.application_id == app.id,
+            TailorKit.status == "approved",
+            TailorKit.source == "comeet",
+        )
+        .order_by(TailorKit.id.desc())
+    ).scalars().all()
+    return next((k for k in kits if (k.flag_count or 0) == 0), None)
