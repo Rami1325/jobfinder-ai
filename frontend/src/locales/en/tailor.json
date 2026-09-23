@@ -331,6 +331,7 @@
       "empty": "Nothing to fix — every check ran clean on this version.",
       "failed": "We couldn't check your resume just now.",
       "skipped": "Couldn't check: {{list}} — not counted either way.",
+      "needsJob": "Tailor for a job to also check which of your skills it asks for.",
       "upTo": "up to {{pct}}%",
       "why": "Why this matters",
       "showInDoc": "Show on the CV",

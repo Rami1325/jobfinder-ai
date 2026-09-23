@@ -1534,6 +1534,30 @@ check(
         _he_cv.experience[0].model_copy(update={"bullets": ["צמצמתי את זמן הטיפול ב-40% עבור 12 אנליסטים."]})]})),
     str([f.raw[:34] for f in _rv_find(_rv_numbers_cv, "no-outcome")]),
 )
+# PLAN 31.1/10: three real results the check flagged as "no measured result" on
+# the 2026-09-23 review's CV — a fall to zero, a count with an adjective before
+# its unit, and a time unit instead of another — each beside a twin of the same
+# shape that states NO result and must stay flagged, so widening the patterns
+# cannot pass by flagging nothing.
+_rv_results = _tidy.model_copy(update={"experience": [_tidy.experience[0].model_copy(update={"bullets": [
+    "Designed the idempotency layer for card refunds; duplicate refunds dropped to zero over 14 months.",
+    "Mentored 3 junior engineers and ran the team's on-call rotation.",
+    "Moved nightly batch jobs to Kafka streams, so stock levels update in seconds instead of hours.",
+]})]})
+_rv_twins = _tidy.model_copy(update={"experience": [_tidy.experience[0].model_copy(update={"bullets": [
+    "Dropped support for IE11 across the product.",
+    "Used Kafka instead of RabbitMQ for the event bus.",
+    "Worked with the junior team on the rotation.",
+]})]})
+check(
+    "review (31.1/10): 'dropped to zero', '3 junior engineers' and 'seconds instead of hours' "
+    "are measured results — while 'dropped support', 'Kafka instead of RabbitMQ' and a count "
+    "with no number still are not",
+    "no-outcome" not in _rv_ids(_rv_results)
+    and len(_rv_find(_rv_twins, "no-outcome")) == 3,
+    f"results={[f.raw[:30] for f in _rv_find(_rv_results, 'no-outcome')]} "
+    f"twins={len(_rv_find(_rv_twins, 'no-outcome'))}",
+)
 _rv_many = _tidy.model_copy(update={"experience": [_tidy.experience[0].model_copy(
     update={"bullets": [f"Maintained the internal service number {i}." for i in range(9)]})]})
 check(

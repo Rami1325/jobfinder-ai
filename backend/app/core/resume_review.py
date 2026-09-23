@@ -293,7 +293,11 @@ _METRIC = re.compile(
       | [₪$€£]\s*\d                             # ₪120k
       | \d+(?:[.,]\d+)?\s*(?:k|m|bn?)\b         # 1.2M
       | \d+(?:[.,]\d+)?\s*(?:ms|s|sec|seconds?|min|minutes?|hours?|hrs?)\b
-      | \d+(?:[.,]\d+)?\s*(?:users?|customers?|clients?|requests?|rps|qps|tps
+      # Up to two words may sit between the count and its unit: "3 junior
+      # engineers", "400 enterprise customers". Without them a real count read
+      # as no result (PLAN 31.1/10). The unit list is unchanged, so `2 years`,
+      # `8200`, `Python 3` and `ISO 27001` still match nothing.
+      | \d+(?:[.,]\d+)?\s*(?:[a-z][a-z-]*\s+){0,2}(?:users?|customers?|clients?|requests?|rps|qps|tps
             |transactions?|records?|rows?|queries|tickets?|orders?|installs?
             |downloads?|engineers?|people|teams?|stores?|branches?)\b
       | \d+(?:[.,]\d+)?\s*(?:משתמשים|לקוחות|בקשות|עסקאות|שורות|אחוז|שעות|דקות|שניות)
@@ -302,9 +306,22 @@ _METRIC = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 # The other honest shape of a result: a stated movement between two values.
+#
+# PLAN 31.1/10 added three narrow shapes, each beside a twin that must still
+# read as no result (smoke): a fall stated BY, TO or FROM an amount or zero
+# ("duplicate refunds dropped to zero", not "dropped support for IE11"); zero
+# of a bad thing ("zero downtime"); and one time unit instead of another ("in
+# seconds instead of hours", not "Kafka instead of RabbitMQ"). Each ends on a
+# whole word or number, because the group's trailing \b cuts a match that ends
+# mid-number: "by 30%" must end on "30", never on "3".
 _DELTA = re.compile(
     r"(?<!\w)(?:from\s+\d[\d.,]*\s*\S*\s+to\s+\d|reduc\w+|cut|increas\w+|grew|grow\w+"
-    r"|improv\w+|doubl\w+|tripl\w+|halv\w+|saved|sped\s+up|scaled)\b",
+    r"|improv\w+|doubl\w+|tripl\w+|halv\w+|saved|sped\s+up|scaled"
+    r"|(?:dropp|lower|decreas|shr[au]nk|fell)\w*(?:\s+\S+){0,3}?\s+(?:by|to|from)\s+(?:\d+|zero)"
+    r"|down\s+to\s+(?:\d+|zero)"
+    r"|zero\s+(?:downtime|incidents?|defects?|errors?|outages?|bugs?|complaints?|duplicates?)"
+    r"|(?:seconds?|minutes?|hours?|days?|weeks?)\s+instead\s+of\s+"
+    r"(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?))\b",
     re.IGNORECASE,
 )
 

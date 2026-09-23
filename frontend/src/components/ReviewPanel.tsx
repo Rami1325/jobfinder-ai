@@ -502,13 +502,31 @@ export default function ReviewPanel({
           sentence: "we could not check your dates" and "we could not check this
           against a job" are different facts and only one is fixable by
           attaching a posting. */}
-      {data.skipped.length > 0 && (
-        <p className="text-[11px] leading-relaxed text-ink-faint">
-          {t("doc.review.skipped", {
-            list: data.skipped.map((id) => t(`doc.review.checks.${id}.label`)).join(", "),
-          })}
-        </p>
-      )}
+      {/* PLAN 31.1/10: `skills-unasked` is skipped for exactly two reasons, no
+          skills or no job (`_check_skills`), and on a resume that HAS skills
+          only the second is left. Listed under "Couldn't check" by its finding
+          label it read "Couldn't check: Mostly skills this job never asks for"
+          on a review with no job at all, so that case gets its own sentence,
+          which says what would make it run. Still shown, never dropped: a
+          check that could not run is never silently clean. */}
+      {(() => {
+        const needsJob = data.skipped.includes("skills-unasked") && resume.skills.length > 0;
+        const rest = needsJob ? data.skipped.filter((id) => id !== "skills-unasked") : data.skipped;
+        return (
+          <>
+            {needsJob && (
+              <p className="text-[11px] leading-relaxed text-ink-faint">{t("doc.review.needsJob")}</p>
+            )}
+            {rest.length > 0 && (
+              <p className="text-[11px] leading-relaxed text-ink-faint">
+                {t("doc.review.skipped", {
+                  list: rest.map((id) => t(`doc.review.checks.${id}.label`)).join(", "),
+                })}
+              </p>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
