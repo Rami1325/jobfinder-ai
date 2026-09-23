@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import {
@@ -7,39 +7,27 @@ import {
   ChevronDown,
   ClipboardList,
   Clock,
-  Download,
-  ExternalLink,
-  Eye,
   KanbanSquare,
-  Mail,
   MessageSquare,
   Star,
   StickyNote,
-  Trash2,
 } from "lucide-react";
 import {
   deleteApplication,
-  downloadResume,
-  resumeFilename,
-  getApplication,
   listApplications,
   updateApplication,
   getStaleApplications,
-  type ResumeTemplate,
 } from "../api/client";
-import ResumeView from "../components/ResumeView";
 import TrackerAnalytics from "../components/TrackerAnalytics";
-import EmailTimeline from "../components/inbox/EmailTimeline";
 import InboxBar from "../components/inbox/InboxBar";
-import { AppliedBadge, CardDate, CardEmailBadge } from "../components/inbox/shared";
-import { Badge, Button, Card, CardTitle, CountUp, Modal, Skeleton, useToast } from "../components/ui";
+import { CardDate, CardEmailBadge } from "../components/inbox/shared";
+import { Badge, Card, CardTitle, CountUp, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
-import { TEMPLATE_IDS } from "../lib/templateSpecs";
 import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
 import { sortApps, type ListSort } from "../lib/trackerSort";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import type { ApplicationDetail, ApplicationOut, StaleApplication } from "../types";
+import type { ApplicationOut, StaleApplication } from "../types";
 
 // Column labels come from the "tracker" catalog via `status.<key>`.
 const COLUMNS: {
@@ -56,15 +44,6 @@ const COLUMNS: {
 ];
 
 const STATUSES = COLUMNS.map((c) => c.key);
-
-/** The template this application was SENT in, for a re-download from the
- * tracker. The row records it (`sentSignals`), and the downloads ignored it and
- * rendered the default, so a CV sent as Executive came back as Standard
- * (PLAN 31.1/8). "" (a row from before 17.3) or an id this build does not know
- * is `undefined`, which renders the default. */
-function sentTemplate(template: string): ResumeTemplate | undefined {
-  return (TEMPLATE_IDS as readonly string[]).includes(template) ? (template as ResumeTemplate) : undefined;
-}
 
 // Which follow-up stage to pre-select when jumping to the follow-up writer.
 function followUpStage(status: string): string {
@@ -176,19 +155,22 @@ function FlipStatusChip({ id, status }: { id: number; status: string }) {
  * ONE tappable chip (PLAN 31.2/7): the split-flap face shows it, and a native
  * select lies over it, transparent, so a phone opens its own picker and a
  * screen reader hears "Status, Applied". The full-width select that sat under
- * every card, repeating the chip, is gone. */
+ * every card, repeating the chip, is gone.
+ *
+ * The card IS the way to its job's page (PLAN 31.4): the title is a link whose
+ * hit area stretches over the whole card (`after:inset-0`, inside the wrapper's
+ * `relative`), and the controls that act in place (the stars, the status, the
+ * Interviewed toggle) sit above it. The row of three buttons under every card,
+ * the posting, the detail modal and Delete, is gone: all three live on the job's
+ * page now. */
 function AppCard({
   a,
   onStatus,
-  onView,
-  onDelete,
   onRate,
   onToggleInterviewed,
 }: {
   a: ApplicationOut;
   onStatus: (id: number, status: string) => void;
-  onView: (id: number) => void;
-  onDelete: (id: number) => void;
   onRate: (a: ApplicationOut, n: number) => void;
   onToggleInterviewed: (a: ApplicationOut) => void;
 }) {
@@ -198,9 +180,13 @@ function AppCard({
     <>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p dir="auto" className="truncate text-sm font-semibold text-ink">
+          <Link
+            to={`/applications/${a.id}`}
+            dir="auto"
+            className="block truncate text-sm font-semibold text-ink after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-accent/70"
+          >
             {a.job_title || "—"}
-          </p>
+          </Link>
           <p dir="auto" className="truncate text-xs text-ink-muted">
             {a.company || "—"}
           </p>
@@ -226,21 +212,22 @@ function AppCard({
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2">
-        <Stars value={a.excitement || 0} onRate={(n) => onRate(a, n)} />
+        <div className="relative z-10">
+          <Stars value={a.excitement || 0} onRate={(n) => onRate(a, n)} />
+        </div>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           {/* The newest email's kind, only when it adds to the column (see
-              CardEmailBadge). Static: nothing inside a card may open over it,
-              and the eye button below already opens the timeline. */}
+              CardEmailBadge). Static: a tap on it is a tap on the card, which
+              opens the job's page and its emails. */}
           <CardEmailBadge app={a} />
           {a.notes && (
-            <button
-              onClick={() => onView(a.id)}
+            <span
               title={t("notes.indicator")}
-              className="inline-flex items-center gap-1 rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors hover:border-accent/40 hover:text-ink"
+              className="inline-flex items-center gap-1 rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-medium text-ink-muted"
             >
               <StickyNote size={11} />
               {t("notes.chip")}
-            </button>
+            </span>
           )}
         </div>
       </div>
@@ -249,7 +236,7 @@ function AppCard({
         {/* "Applied <date>" when the date it was sent is known, else the day it
             was added (I3). */}
         <CardDate app={a} />
-        <div className="flex items-center gap-1.5">
+        <div className="relative z-10 flex items-center gap-1.5">
           <span className="relative inline-flex items-center gap-0.5">
             <FlipStatusChip id={a.id} status={a.status || "saved"} />
             <ChevronDown size={12} aria-hidden className="text-ink-faint" />
@@ -283,37 +270,6 @@ function AppCard({
           )}
         </div>
       </div>
-
-      <div className="mt-3 flex items-center gap-1.5">
-        {a.job_url && (
-          <a
-            href={a.job_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={t("actions.openJob")}
-            aria-label={t("actions.openJob")}
-            className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-accent/50 hover:text-accent"
-          >
-            <ExternalLink size={15} />
-          </a>
-        )}
-        <button
-          onClick={() => onView(a.id)}
-          title={t("actions.view")}
-          aria-label={t("actions.view")}
-          className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-accent/50 hover:text-ink"
-        >
-          <Eye size={15} />
-        </button>
-        <button
-          onClick={() => onDelete(a.id)}
-          title={t("actions.delete")}
-          aria-label={t("actions.delete")}
-          className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-danger/50 hover:text-danger"
-        >
-          <Trash2 size={15} />
-        </button>
-      </div>
     </>
   );
 }
@@ -326,6 +282,7 @@ export default function TrackerPage() {
   const { t } = useTranslation("tracker");
   const { t: tCommon } = useTranslation();
   const nav = useNavigate();
+  const loc = useLocation();
   const [apps, setApps] = useState<ApplicationOut[]>(appsCache ?? []);
   // Only the first load shows the skeleton; later visits render the cache and
   // refresh in the background (no flicker when switching tabs).
@@ -334,11 +291,6 @@ export default function TrackerPage() {
   // PLAN 22.9 — rehomed from the deleted Home dashboard. Nudges are post-send,
   // which is this page, and the /tools/follow-up handoff already lives here.
   const [nudges, setNudges] = useState<StaleApplication[]>([]);
-  const [detail, setDetail] = useState<ApplicationDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [notesDraft, setNotesDraft] = useState("");
-  const [notesSaving, setNotesSaving] = useState(false);
   const [tab, setTab] = useState<"board" | "analytics">("board");
   // Whether the five-column board fits: `md` and up. Below it the tracker is a
   // list (PLAN 31.2/7). Read live, because only ONE of the two may be mounted:
@@ -464,47 +416,21 @@ export default function TrackerPage() {
     });
   }
 
-  async function view(id: number) {
-    setOpen(true);
-    setDetailLoading(true);
-    setDetail(null);
-    setNotesDraft("");
-    try {
-      const d = await getApplication(id);
-      setDetail(d);
-      setNotesDraft(d.notes);
-    } finally {
-      setDetailLoading(false);
-    }
-  }
-
-  /** Re-read the open application after an email on it was undone. Only the
-   * detail is replaced, never `notesDraft`: a half-typed note survives an undo.
-   * Undoing the email that CREATED the card deletes the application, and a 404
-   * then closes the modal, which has nothing left to show. */
-  async function reloadDetail(id: number) {
-    try {
-      const d = await getApplication(id);
-      setDetail((cur) => (cur?.id === id ? d : cur));
-    } catch (e) {
-      if ((e as { response?: { status?: number } })?.response?.status === 404) setOpen(false);
-    }
-  }
-
-  async function saveNotes() {
-    if (!detail) return;
-    setNotesSaving(true);
-    try {
-      const updated = await updateApplication(detail.id, { notes: notesDraft });
-      setDetail((d) => (d ? { ...d, notes: updated.notes } : d));
-      setApps((prev) => prev.map((x) => (x.id === detail.id ? updated : x)));
-      toast("success", t("notes.saved"));
-    } catch {
-      toast("error", t("notes.error"));
-    } finally {
-      setNotesSaving(false);
-    }
-  }
+  // A delete asked for on a job's page (PLAN 31.4) runs HERE, through `remove`:
+  // the card leaves this list at once, the server delete waits out the undo
+  // window, and Undo puts it back where it was. It waits for the list, since the
+  // card has to be in it to be taken out, and runs once per request: the ref
+  // survives StrictMode's second effect, and the state is cleared so a reload or
+  // Back never deletes again.
+  const handedOver = useRef<unknown>(null);
+  const toRemove = (loc.state as { remove?: unknown } | null)?.remove;
+  useEffect(() => {
+    if (loading || typeof toRemove !== "number" || handedOver.current === loc.key) return;
+    handedOver.current = loc.key;
+    nav(".", { replace: true, state: null });
+    remove(toRemove);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, toRemove, loc.key]);
 
   const tiles: { label: string; value: number }[] = [
     { label: t("tiles.total"), value: metrics.total },
@@ -703,13 +629,11 @@ export default function TrackerPage() {
                           ease: [0.22, 1, 0.36, 1],
                           layout: { type: "spring", duration: 0.25, bounce: 0.15 },
                         }}
-                        className="group rounded-xl border border-line bg-gradient-to-b from-panel to-panel/70 p-3.5 shadow-card transition-all duration-200 hover:border-accent/40 hover:shadow-glow"
+                        className="group relative rounded-xl border border-line bg-gradient-to-b from-panel to-panel/70 p-3.5 shadow-card transition-all duration-200 hover:border-accent/40 hover:shadow-glow"
                       >
                         <AppCard
                           a={a}
                           onStatus={changeStatus}
-                          onView={view}
-                          onDelete={remove}
                           onRate={rate}
                           onToggleInterviewed={toggleInterviewed}
                         />
@@ -784,13 +708,11 @@ export default function TrackerPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.97 }}
                     transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                    className="rounded-xl border border-line bg-gradient-to-b from-panel to-panel/70 p-3.5 shadow-card"
+                    className="relative rounded-xl border border-line bg-gradient-to-b from-panel to-panel/70 p-3.5 shadow-card"
                   >
                     <AppCard
                       a={a}
                       onStatus={changeStatus}
-                      onView={view}
-                      onDelete={remove}
                       onRate={rate}
                       onToggleInterviewed={toggleInterviewed}
                     />
@@ -801,142 +723,6 @@ export default function TrackerPage() {
           </div>
         )
       )}
-
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={
-          detail
-            ? `${detail.job_title || t("modal.resumeFallback")}${detail.company ? " · " + detail.company : ""}`
-            : t("modal.loading")
-        }
-      >
-        {detailLoading && <Skeleton className="h-64 w-full" />}
-        {detail && (
-          <>
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              {/* Only a scored row has a match to show. The card already renders an
-                  unscored row as a dash, and every card the Gmail sync creates is
-                  unscored — unconditional, this printed a made-up "Match 0%". */}
-              {detail.overall_score ? (
-                <Badge tone="accent">{t("modal.match", { pct: Math.round(detail.overall_score) })}</Badge>
-              ) : null}
-              {detail.interviewed && (
-                <Badge tone="mint">
-                  <MessageSquare size={11} /> {t("interviewed")}
-                </Badge>
-              )}
-              <AppliedBadge appliedAt={detail.applied_at} />
-              {detail.job_url && (
-                <a
-                  href={detail.job_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={t("actions.openJob")}
-                  className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
-                >
-                  <ExternalLink size={13} /> {t("modal.jobPosting")}
-                </a>
-              )}
-              <div className="flex-1" />
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<Mail size={15} />}
-                onClick={() =>
-                  nav("/tools/follow-up", {
-                    state: {
-                      company: detail.company,
-                      role: detail.job_title,
-                      stage: followUpStage(detail.status),
-                    },
-                  })
-                }
-              >
-                {t("actions.followUp")}
-              </Button>
-              {detail.tailored_resume && (
-                <>
-                  <Button
-                    size="sm"
-                    icon={<Download size={15} />}
-                    onClick={() =>
-                      downloadResume(
-                        detail.tailored_resume!,
-                        "docx",
-                        resumeFilename(detail.tailored_resume!.contact.name, detail.company),
-                        sentTemplate(detail.template ?? ""),
-                      )
-                    }
-                  >
-                    .docx
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={<Download size={15} />}
-                    onClick={() =>
-                      downloadResume(
-                        detail.tailored_resume!,
-                        "pdf",
-                        resumeFilename(detail.tailored_resume!.contact.name, detail.company),
-                        sentTemplate(detail.template ?? ""),
-                      )
-                    }
-                  >
-                    .pdf
-                  </Button>
-                </>
-              )}
-            </div>
-            {/* ABOVE the resume view: see EmailTimeline for why. */}
-            {detail.email_events?.length ? (
-              <EmailTimeline
-                events={detail.email_events}
-                onUndone={() => {
-                  void refresh();
-                  void reloadDetail(detail.id);
-                }}
-              />
-            ) : null}
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
-              {t("notes.label")}
-            </h3>
-            <textarea
-              value={notesDraft}
-              onChange={(e) => setNotesDraft(e.target.value)}
-              placeholder={t("notes.placeholder")}
-              rows={3}
-              className="w-full resize-y rounded-xl border border-line bg-bg-soft p-3 text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
-            />
-            <div className="mb-5 mt-2 flex justify-end">
-              <Button size="sm" variant="secondary" loading={notesSaving} disabled={notesDraft === detail.notes} onClick={saveNotes}>
-                {t("notes.save")}
-              </Button>
-            </div>
-
-            {detail.tailored_resume ? (
-              <ResumeView resume={detail.tailored_resume} />
-            ) : (
-              <p className="text-sm text-ink-muted">{t("modal.noResume")}</p>
-            )}
-            {detail.cover_letter && (
-              <>
-                <h3 className="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
-                  {t("modal.coverLetter")}
-                </h3>
-                {/* The letter's own direction, not the UI's (see CoverLetter). */}
-                <div
-                  dir="auto"
-                  className="whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink"
-                >
-                  {detail.cover_letter}
-                </div>
-              </>
-            )}
-          </>
-        )}
-      </Modal>
     </div>
   );
 }

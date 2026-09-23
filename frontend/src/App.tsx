@@ -25,6 +25,7 @@ const ResetPage = lazy(() => import("./pages/auth/ResetPage"));
 const AppLayout = lazy(() => import("./layouts/AppLayout"));
 const TailorPage = lazy(() => import("./pages/TailorPage"));
 const TrackerPage = lazy(() => import("./pages/TrackerPage"));
+const JobPage = lazy(() => import("./pages/JobPage"));
 const InterviewPage = lazy(() => import("./pages/InterviewPage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
 const KitReviewPage = lazy(() => import("./pages/KitReviewPage"));
@@ -97,6 +98,9 @@ export default function App() {
             <Route path="/tools/screening" element={<ScreeningToolPage />} />
             <Route path="/tools/company-brief" element={<CompanyBriefToolPage />} />
             <Route path="/tracker" element={<TrackerPage />} />
+            {/* One job, one page (PLAN 31.4). A link the alert email, the
+                extension and the tracker all carry, so the path is kept. */}
+            <Route path="/applications/:id" element={<JobPage />} />
             {/* A real page INSIDE the layout group, not a redirect. The rule
                 only pushes redirects out (a <Navigate> under this route paints
                 the full-screen <Suspense> fallback, then an empty shell, then

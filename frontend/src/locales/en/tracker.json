@@ -54,20 +54,6 @@
     "interviewedError": "Could not update interview status",
     "excitementError": "Could not save the rating"
   },
-  "actions": {
-    "openJob": "Open job posting",
-    "view": "View",
-    "delete": "Delete",
-    "followUp": "Follow up"
-  },
-  "modal": {
-    "loading": "Loading…",
-    "resumeFallback": "Resume",
-    "match": "Match {{pct}}%",
-    "jobPosting": "Job posting",
-    "noResume": "No saved resume for this entry.",
-    "coverLetter": "Cover letter"
-  },
   "inbox": {
     "provider": {
       "gmail": "Gmail",
@@ -260,5 +246,65 @@
     "newest": "Newest",
     "applied": "Date applied",
     "match": "Match"
+  },
+  "job": {
+    "back": "All applications",
+    "list": "Your applications",
+    "loading": "Loading this job…",
+    "notFound": "This job isn't in your tracker any more.",
+    "loadError": "Couldn't load this job. Check your connection and try again.",
+    "retry": "Try again",
+    "untitled": "Untitled job",
+    "posted": "Posted {{when}}",
+    "openPosting": "Open the posting",
+    "match": "Match {{pct}}%",
+    "statusError": "Couldn't change the status. Try again.",
+    "resume": {
+      "title": "Your resume for this job",
+      "none": "No resume tailored for this job yet.",
+      "tailor": "Tailor my resume",
+      "open": "Open on the document",
+      "word": "Word",
+      "pdf": "PDF",
+      "downloadWord": "Download Word",
+      "downloadPdf": "Download PDF",
+      "preview": "The first page of your tailored resume",
+      "previewFailed": "Couldn't draw the first page. The downloads still work.",
+      "kitDone": "A draft is ready. Review it before you send it.",
+      "kitReview": "Review the draft",
+      "kitWorking": "A draft is being tailored for this job.",
+      "retailor": "Tailor again"
+    },
+    "asks": {
+      "title": "What they ask for",
+      "must": "Must-haves",
+      "nice": "Nice to have",
+      "none": "Check the fit or tailor your resume, and what this posting asks for appears here.",
+      "showPosting": "Read the posting",
+      "hidePosting": "Hide the posting",
+      "noPosting": "No job description is saved for this job."
+    },
+    "letter": {
+      "title": "Cover letter",
+      "write": "Write a cover letter",
+      "reading": "Reading the posting…",
+      "needsPosting": "No job description is saved for this job, so there is nothing to write a letter from.",
+      "copy": "Copy",
+      "copied": "Copied",
+      "saveError": "Couldn't save the letter with this job. Copy it before you leave.",
+      "readError": "Couldn't read the posting. Try again.",
+      "needsResume": "Add your resume first, and the letter is written from it."
+    },
+    "prepare": {
+      "title": "Prepare"
+    },
+    "timeline": {
+      "title": "Timeline",
+      "added": "Added to your tracker",
+      "addedEmail": "Added from your email",
+      "applied": "Applied",
+      "moved": "Status changed to {{status}}"
+    },
+    "delete": "Delete this application"
   }
 }

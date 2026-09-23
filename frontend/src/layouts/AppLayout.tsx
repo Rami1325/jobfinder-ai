@@ -70,12 +70,17 @@ type NavEntry = {
    * the Jobs destination quietly stop being validated. The literal stays in the
    * table; nothing has to repeat it. */
   live?: true;
+  /** A path PREFIX whose pages also light this entry: a page you reach from it,
+   * at an address of its own (PLAN 31.4: a job's page, `/applications/:id`,
+   * belongs to the Tracker). A prefix, not a destination, so check 9 has no
+   * route to resolve for it. It must stay disjoint from `moreActive`. */
+  also?: string;
 };
 
 const primaryNav: NavEntry[] = [
   { to: "/app", labelKey: "nav.resume", icon: FileText },
   { to: "/jobs", labelKey: "nav.jobs", icon: Briefcase, live: true },
-  { to: "/tracker", labelKey: "nav.tracker", icon: KanbanSquare },
+  { to: "/tracker", labelKey: "nav.tracker", icon: KanbanSquare, also: "/applications/" },
 ];
 
 const moreNav: NavEntry[] = [
@@ -137,6 +142,7 @@ function NavItem({
   label,
   trailing,
   end,
+  also,
   onNavigate,
 }: {
   to: string;
@@ -144,8 +150,11 @@ function NavItem({
   label: string;
   trailing?: ReactNode;
   end?: boolean;
+  also?: string;
   onNavigate?: () => void;
 }) {
+  const { pathname } = useLocation();
+  const lit = (isActive: boolean) => isActive || (!!also && pathname.startsWith(also));
   return (
     <NavLink
       to={to}
@@ -154,13 +163,15 @@ function NavItem({
       className={({ isActive }) =>
         cn(
           "relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-          isActive
+          lit(isActive)
             ? "font-semibold text-ink"
             : "text-ink-muted hover:bg-panel-2/60 hover:text-ink",
         )
       }
     >
-      {({ isActive }) => (
+      {({ isActive: own }) => {
+        const isActive = lit(own);
+        return (
         <>
           {isActive && (
             // Shared-layout pill: slides between nav entries. The panel is the
@@ -181,7 +192,8 @@ function NavItem({
           <span className="relative min-w-0 flex-1 truncate">{label}</span>
           {trailing && <span className="relative shrink-0">{trailing}</span>}
         </>
-      )}
+        );
+      }}
     </NavLink>
   );
 }
@@ -259,6 +271,7 @@ function MenuPanel({
                 icon={item.icon}
                 label={t(item.labelKey)}
                 trailing={item.live ? spinner ?? kitsBadge : undefined}
+                also={item.also}
                 onNavigate={onNavigate}
               />
             ))}
@@ -605,11 +618,14 @@ function MobileTabBar({
   onMore: () => void;
 }) {
   const { t } = useTranslation();
+  const { pathname } = useLocation();
   const tabCls = (active: boolean) =>
     cn(
       "relative flex min-w-0 flex-1 flex-col items-center gap-1 pb-1.5 pt-2 text-xs font-semibold transition-colors",
       active ? "text-accent-soft" : "text-ink-muted",
     );
+  // An entry is lit on its own route and on the pages it names in `also`.
+  const lit = (item: NavEntry, isActive: boolean) => isActive || (!!item.also && pathname.startsWith(item.also));
   return (
     <nav
       aria-label={t("nav.primary")}
@@ -617,8 +633,10 @@ function MobileTabBar({
     >
       <div className="mx-auto flex max-w-md items-stretch">
         {primaryNav.map((item) => (
-          <NavLink key={item.to} to={item.to} className={({ isActive }) => tabCls(isActive)}>
-            {({ isActive }) => (
+          <NavLink key={item.to} to={item.to} className={({ isActive }) => tabCls(lit(item, isActive))}>
+            {({ isActive: own }) => {
+              const isActive = lit(item, own);
+              return (
               <>
                 {isActive && (
                   <motion.span
@@ -651,7 +669,8 @@ function MobileTabBar({
                 </span>
                 <span className="max-w-full truncate">{t(item.labelKey)}</span>
               </>
-            )}
+              );
+            }}
           </NavLink>
         ))}
         {/* This button DOES carry its state, and the reasoning it used to carry

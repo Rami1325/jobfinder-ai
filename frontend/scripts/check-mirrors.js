@@ -4945,6 +4945,9 @@ try {
     // what it buys, the tailor that follows. Its predecessor, `fitOrTailor`,
     // priced two buttons the dialog no longer offers side by side.
     ["components/TailorOverlay.tsx", 1, ["uses.fitThenTailor"]],
+    // The job page's Tailor (PLAN 31.4): it opens the tailor dialog, whose first
+    // step is the fit check, so it is priced by the same sentence, by name.
+    ["pages/JobPage.tsx", 1, ["uses.fitThenTailor"]],
     // The review panel's own zero line, required by name for the same reason:
     // the generic one lists "the review" among what stays free, directly under
     // the one button in that panel that spends.
@@ -11703,6 +11706,96 @@ try {
   for (const p of real64d) fail(`check 64: ${p} (PLAN 31.3/2)`);
 } catch (e) {
   fail(`tailor progress check (check 64) could not run: ${e.message}`);
+}
+
+// ---- 65. one job, one page (PLAN 31.4/2) -------------------------------------- //
+// A tracked job has a page of its own, and the tracker's detail modal and the
+// row of three buttons under every card are gone. (a) The page is a route:
+// `/applications/:id` renders JobPage. (b) A card IS the way there: its title
+// links to `/applications/<id>` and stretches over the whole card
+// (`after:absolute after:inset-0`), which only stays inside the card while both
+// card wrappers are `relative` (without it the link covers the page from the
+// nearest positioned ancestor); nothing on the tracker opens a modal or fetches
+// one application any more. (c) Viewing the page never runs a model: no effect
+// in JobPage calls a model route, so a model call can only follow a tap (the
+// letter's "Write", which says what it costs). (d) Delete on the job page runs
+// on the tracker, through `remove` and its undo window: the page hands the id
+// over in navigation state, and the tracker clears that state before removing,
+// so Back or a reload never deletes a second time. (e) Every `also` prefix in
+// AppLayout's nav (a page that lights a tab from its own address) is the start
+// of a route App.tsx declares, or it lights nothing. Probed red with each rule
+// broken on the real files.
+try {
+  const app65 = decomment(read("App.tsx"));
+  const tracker65 = decomment(read("pages/TrackerPage.tsx"));
+  const job65 = decomment(read("pages/JobPage.tsx"));
+  const layout65 = decomment(read("layouts/AppLayout.tsx"));
+
+  // (c)'s reader: the body of every `useEffect(`, matched by brace depth.
+  const effectBodies = (src) => {
+    const bodies = [];
+    for (const m of src.matchAll(/\buseEffect\(\s*(?:async\s*)?\(\)\s*=>\s*\{/g)) {
+      let depth = 1;
+      let i = m.index + m[0].length;
+      for (; i < src.length && depth > 0; i++) {
+        if (src[i] === "{") depth++;
+        else if (src[i] === "}") depth--;
+      }
+      bodies.push(src.slice(m.index + m[0].length, i - 1));
+    }
+    return bodies;
+  };
+  const MODEL_CALLS = /\b(?:analyzeJD|checkFit|coverLetter|tailorStream|tailorResume|startTailor|interviewQuestions|companyBrief|outreach|followUp)\(/;
+
+  const read65 = ({ app, tracker, job, layout }) => {
+    const out = [];
+    // (a)
+    if (!/<Route path="\/applications\/:id" element=\{<JobPage \/>\} \/>/.test(app))
+      out.push("(a) App.tsx does not route `/applications/:id` to <JobPage />");
+    // (b)
+    const card = /<Link\s+to=\{`\/applications\/\$\{a\.id\}`\}[\s\S]{0,300}?after:absolute after:inset-0/.test(tracker);
+    if (!card) out.push("(b) the tracker card's title is not a link to `/applications/${a.id}` stretched over the card");
+    const wrappers = (tracker.match(/className="(?:group )?relative rounded-xl border border-line/g) || []).length;
+    if (wrappers < 2) out.push(`(b) ${wrappers} of the 2 card wrappers are \`relative\`, so the stretched link escapes a card`);
+    for (const gone of ["<Modal", "getApplication(", "onView", "onDelete"])
+      if (tracker.includes(gone)) out.push(`(b) TrackerPage still carries \`${gone}\` (the detail modal or the per-card action row)`);
+    // (c)
+    const bodies = effectBodies(job);
+    if (bodies.length < 2) throw new Error(`found ${bodies.length} effects in JobPage.tsx, expected its loaders`);
+    for (const body of bodies)
+      if (MODEL_CALLS.test(body)) out.push(`(c) an effect in JobPage calls a model route (${body.match(MODEL_CALLS)[0]}), so viewing the page spends`);
+    // (d)
+    if (!/nav\("\/tracker", \{ state: \{ remove: detail\.id \} \}\)/.test(job))
+      out.push("(d) JobPage's delete does not hand the id to the tracker (`nav(\"/tracker\", { state: { remove: detail.id } })`)");
+    const handover = /typeof toRemove !== "number"[\s\S]{0,200}?nav\("\.", \{ replace: true, state: null \}\);\s*remove\(toRemove\);/.test(tracker);
+    if (!handover) out.push("(d) the tracker does not clear the handed-over state BEFORE `remove(toRemove)`, so Back could delete again");
+    // (e)
+    const routes = [...app.matchAll(/<Route path="([^"]+)"/g)].map((m) => m[1]);
+    const alsos = [...layout.matchAll(/\balso:\s*"([^"]+)"/g)].map((m) => m[1]);
+    if (!alsos.length) out.push("(e) AppLayout's nav names no `also` prefix, so a job's page lights no tab");
+    for (const p of alsos)
+      if (!routes.some((r) => r.startsWith(p))) out.push(`(e) the nav's \`also: "${p}"\` starts no route App.tsx declares, so it lights nothing`);
+    return out;
+  };
+
+  const real = { app: app65, tracker: tracker65, job: job65, layout: layout65 };
+  const problems65 = read65(real);
+  // Each probe breaks one rule on the real files and must go red.
+  const plant = (key, from, to, label) => {
+    const next = real[key].replace(from, to);
+    if (next === real[key]) throw new Error(`the probe could not plant ${label}`);
+    if (!read65({ ...real, [key]: next }).length) throw new Error(`the reader passes ${label}, so it cannot be trusted`);
+  };
+  plant("app", 'path="/applications/:id"', 'path="/application/:id"', "a renamed job route");
+  plant("tracker", "after:absolute after:inset-0", "after:inset-0", "a card link that does not stretch");
+  plant("tracker", 'className="relative rounded-xl border border-line', 'className="rounded-xl border border-line', "a card wrapper that is not relative");
+  plant("job", "void load();", "void load(); void analyzeJD(\"x\");", "a model call in an effect");
+  plant("job", "state: { remove: detail.id }", "state: { removed: detail.id }", "a delete that is never handed over");
+  plant("tracker", 'nav(".", { replace: true, state: null });', "", "a handover that keeps its state");
+  plant("layout", 'also: "/applications/"', 'also: "/application-page/"', "a dead also prefix");
+  for (const p of problems65) fail(`check 65: ${p} (PLAN 31.4/2)`);
+} catch (e) {
+  fail(`job page check (check 65) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //
