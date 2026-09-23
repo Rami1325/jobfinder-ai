@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ResumeModel } from "../types";
@@ -16,6 +16,7 @@ import {
   type NamedInsertKind,
 } from "../lib/resumeBlocks";
 import { resumeLanguage } from "../lib/lang";
+import { loadLanguage, type Language } from "../i18n";
 import { TEMPLATE_SPECS, bandFill, headingRuleFill, type TemplateSpec } from "../lib/templateSpecs";
 
 /**
@@ -731,6 +732,34 @@ export default function ResumeView({
       ? "rtl"
       : "ltr";
 
+  /** The paper's LANGUAGE — the section headings are printed in it, the way both
+   * renderers print them (`labels_for(resume_language(...))`).
+   *
+   * They used to come from the interface's `t`, so under the Hebrew UI an English
+   * CV showed "תקציר מקצועי" on screen while the PDF and the Word file said
+   * "PROFESSIONAL SUMMARY": the everyday case in the primary market, a Hebrew
+   * interface and an English CV for a tech job, and the preview disagreed with the
+   * download (PLAN 31.1/3). Everything else on the sheet that is not the document
+   * — the placeholders, "Add skill", the notes — stays in the interface language:
+   * it speaks to the user and never reaches the file.
+   *
+   * Only the interface's language is loaded at start, so the other one is loaded
+   * here when the paper needs it, and the sheet re-renders once it has arrived
+   * (i18next falls back to English until then). check-mirrors 47 pins it. */
+  const paperLang: Language = paperDir === "rtl" ? "he" : "en";
+  const [, setPaperCatalog] = useState(0);
+  useEffect(() => {
+    if (i18n.hasResourceBundle(paperLang, "tailor")) return;
+    let live = true;
+    void loadLanguage(paperLang).then(() => {
+      if (live) setPaperCatalog((n) => n + 1);
+    });
+    return () => {
+      live = false;
+    };
+  }, [i18n, paperLang]);
+  const tPaper = i18n.getFixedT(paperLang, "tailor");
+
   /* --- the template ------------------------------------------------------ */
   // `?? classic` is `get_template`'s own fallback: an unknown name renders the
   // default rather than nothing, so an old client or a stale stored row cannot
@@ -764,13 +793,15 @@ export default function ResumeView({
    * because en and he would be missing it together.
    *
    * The `defaultValue` is the SHORT label rather than the raw key, so the worst
-   * a gap can do is print a correct heading from the other set. */
+   * a gap can do is print a correct heading from the other set.
+   *
+   * In the PAPER's language (`tPaper`), never the interface's: see `paperLang`. */
   const sectionLabel = (key: string, fallback?: string) =>
     styled && spec.labelSet !== "short"
-      ? t(`sections.${spec.labelSet}.${key}`, {
-          defaultValue: t(`sections.${key}`, fallback ?? key),
+      ? tPaper(`sections.${spec.labelSet}.${key}`, {
+          defaultValue: tPaper(`sections.${key}`, fallback ?? key),
         })
-      : t(`sections.${key}`, fallback ?? key);
+      : tPaper(`sections.${key}`, fallback ?? key);
   /** `meta_sep` — "" keeps each site's own default, which is not one string. */
   const sep = (styled && spec.metaSep) || " · ";
   /** The three sites the renderers join with `meta_sep` write it TRIMMED and let

@@ -10473,6 +10473,52 @@ try {
   fail(`job card width check (check 46) could not run: ${e.message}`);
 }
 
+// ---- 47. the paper's headings are printed in the PAPER's language ---------- //
+// PLAN 31.1/3, found in the 2026-09-23 review. `sectionLabel` read the interface's
+// `t`, while both renderers print `labels_for(resume_language(resume))`, so under
+// the Hebrew UI an English CV showed "תקציר מקצועי" on screen and the downloaded
+// PDF said "PROFESSIONAL SUMMARY" — the everyday case in the primary market (a
+// Hebrew interface, an English CV for a tech job). The headings come from a
+// fixed-language `t` keyed on the paper's own direction, and the other language's
+// catalog is loaded when the paper needs it (only the interface's is loaded at
+// start, and a missing bundle falls back to English). The detector is probed
+// both ways on every run.
+try {
+  const view = decomment(read("components/ResumeView.tsx"));
+  const labelDef = (src) => {
+    const at = src.indexOf("const sectionLabel =");
+    if (at === -1) return null;
+    const end = src.indexOf(";", at);
+    return end === -1 ? null : src.slice(at, end);
+  };
+  const problems47 = (src) => {
+    const out = [];
+    const def = labelDef(src);
+    if (def === null) throw new Error("could not find `const sectionLabel =` in components/ResumeView.tsx");
+    const fixed = /const\s+(\w+)\s*=\s*i18n\.getFixedT\(\s*(\w+)\s*,\s*"tailor"\s*\)/.exec(src);
+    if (!fixed) out.push("no `const <tPaper> = i18n.getFixedT(<paperLang>, \"tailor\")`");
+    else {
+      const [, tName, langName] = fixed;
+      if (!new RegExp(`\\b${tName}\\(\\s*\`sections\\.`).test(def))
+        out.push(`sectionLabel does not read its headings through ${tName}`);
+      if (/(^|[^\w.])t\(\s*`sections\./.test(def))
+        out.push("sectionLabel reads a heading through the interface's `t`");
+      if (!new RegExp(`const\\s+${langName}\\s*(?::\\s*\\w+\\s*)?=\\s*paperDir\\s*===\\s*"rtl"\\s*\\?\\s*"he"\\s*:\\s*"en"`).test(src))
+        out.push(`${langName} is not derived from paperDir (rtl → "he", else "en")`);
+      if (!new RegExp(`loadLanguage\\(\\s*${langName}\\s*\\)`).test(src))
+        out.push(`nothing loads ${langName}'s catalog, so under the other interface language the headings fall back to English`);
+    }
+    return out;
+  };
+  const planted = view.replace(/(const sectionLabel =[^;]*?)\btPaper\(/g, "$1t(");
+  if (planted === view) throw new Error("the probe could not plant the defect (no tPaper( inside sectionLabel to swap for t()");
+  if (!problems47(planted).length) throw new Error("the detector passes a sectionLabel that reads the interface's t, so it cannot see the defect it exists for");
+  for (const p of problems47(view))
+    fail(`components/ResumeView.tsx: ${p} — the on-screen headings must follow the paper's language, as both renderers do (PLAN 31.1/3)`);
+} catch (e) {
+  fail(`paper heading language check (check 47) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
