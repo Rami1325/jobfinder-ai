@@ -45,6 +45,7 @@ from app.core.job_market import stamp_market
 from app.core.lang import detect_language
 from app.core.tailor import tailor_resume
 from app.core import resume_prefs, writing_prefs
+from app.db.applications import tracked_job
 from app.db.models import Application, SavedResume, TailorKit, User
 from app.models import (
     FactsLedger,
@@ -551,10 +552,12 @@ def approve_kit(
     resume: ResumeModel | None = None,
     cover_letter: str = "",
 ) -> TailorKit:
-    """Approve a reviewed kit (PLAN 8.2): create a tracker Application carrying
-    the final artifacts — the reviewer's effective resume (after per-bullet
+    """Approve a reviewed kit (PLAN 8.2): put the final artifacts on the job's
+    tracker row — the reviewer's effective resume (after per-bullet
     accept/reject; falls back to the kit's full tailored resume) and cover
-    letter — as "saved" = ready to send, and link it back to the kit.
+    letter — as "saved" = ready to send, and link it back to the kit. The row
+    is the one this user already tracks for the posting's URL when there is one
+    (PLAN 31.4), and a new row otherwise.
 
     Only a "done" kit can be approved; this is the HUMAN approval step, so
     guard-flagged kits are allowed through here (the reviewer saw the flags —
@@ -577,20 +580,54 @@ def approve_kit(
     # A tab that sends no letter (one loaded before kits stored theirs) still
     # approves the letter the page last generated and saved.
     cover_letter = cover_letter or row.cover_letter or ""
-    app = Application(
-        user_id=user.id,
-        job_title=row.job_title,
-        company=row.company,
-        jd_text=row.jd_text,
-        tailored_resume_json=resume.model_dump_json(),
-        cover_letter=cover_letter,
-        overall_score=row.score_after or 0.0,
-        status="saved",
-        job_url=row.url,
-        voice_score=voice_score,
-        fabrication_flag_count=flag_count,
-    )
-    db.add(app)
+    # PLAN 31.4: one posting, one tracker row, on this path too. A job the user
+    # already tracks (saved from a search, tailored on /app, clipped by the
+    # extension) takes the approved draft onto ITS row, by the rules
+    # `routes.create_application` merges by: the resume replaces the stored one
+    # with its signals (the template unknown, as below), a letter replaces it
+    # when there is one, the analysis replaces it, and a title, company,
+    # description, place or date fills only a blank. The status is left alone:
+    # an approval is "saved", and never pulls an applied row back.
+    app = tracked_job(db, user.id, row.url)
+    if app is not None:
+        app.tailored_resume_json = resume.model_dump_json()
+        app.overall_score = row.score_after or 0.0
+        app.template = ""
+        app.voice_score = voice_score
+        app.fabrication_flag_count = flag_count
+        if cover_letter:
+            app.cover_letter = cover_letter
+        if row.jd_json:
+            app.jd_json = row.jd_json
+        for field, value in (
+            ("job_title", row.job_title), ("company", row.company), ("jd_text", row.jd_text),
+            ("location", row.location), ("posted_at", row.posted_at),
+        ):
+            if value and not getattr(app, field):
+                setattr(app, field, value)
+    else:
+        now = _now()
+        app = Application(
+            user_id=user.id,
+            job_title=row.job_title,
+            company=row.company,
+            jd_text=row.jd_text,
+            tailored_resume_json=resume.model_dump_json(),
+            cover_letter=cover_letter,
+            overall_score=row.score_after or 0.0,
+            status="saved",
+            job_url=row.url,
+            voice_score=voice_score,
+            fabrication_flag_count=flag_count,
+            # Who made the row and when, as `create_application` stamps them:
+            # the inbox's rule 5 and the job page's timeline both read them.
+            status_changed_at=now,
+            status_source="created",
+            location=row.location or "",
+            posted_at=row.posted_at or "",
+            jd_json=row.jd_json or "",
+        )
+        db.add(app)
     db.flush()  # need app.id for the back-link
     row.status = "approved"
     row.application_id = app.id

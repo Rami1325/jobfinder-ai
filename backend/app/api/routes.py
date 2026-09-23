@@ -81,6 +81,7 @@ from app.db.database import SessionLocal, get_db
 from app.db.greenhouse import list_companies as list_greenhouse_companies
 from app.db.sightings import load_sightings, record_sightings
 from app.db.users import mint_user
+from app.db import applications as applications_db
 from app.db import resume_versions
 from app.db.history import (
     application_statuses,
@@ -126,6 +127,7 @@ from app.models import (
     ApplicationCreate,
     ApplicationDraft,
     ApplicationDetail,
+    ApplicationKit,
     ApplicationOut,
     ApplicationUpdate,
     ATSXrayRequest,
@@ -2134,7 +2136,29 @@ def _to_out(app: Application, email_kind: str = "") -> ApplicationOut:
         applied_at=_utc_iso(app.applied_at),
         last_email_at=_utc_iso(app.last_email_at),
         last_email_kind=email_kind,
+        location=app.location or "",
+        posted_at=app.posted_at or "",
     )
+
+
+def _stored_jd(jd: JDModel) -> str:
+    """An analysed posting as the row stores it (PLAN 31.4), refused past the cap
+    every other route puts on an analysed JD sent back by a client: a 413 of kind
+    "jd", the one `main.py` already words, never a truncated analysis."""
+    raw = jd.model_dump_json()
+    require_within(raw, get_settings().max_jd_json_kb, "jd")
+    return raw
+
+
+def _row_jd(app: Application) -> JDModel | None:
+    """The row's stored analysis, or None when it has none or it no longer
+    parses (a legacy or corrupt value is an unknown, never a 500)."""
+    if not app.jd_json:
+        return None
+    try:
+        return JDModel.model_validate_json(app.jd_json)
+    except Exception:  # noqa: BLE001 - tolerate legacy/corrupt rows
+        return None
 
 
 def _email_kind(db: Session, user_id: int, app_id: int) -> str:
@@ -2190,6 +2214,7 @@ def get_application(
     events = inbox_apply.events_for_application(db, user.id, app.id)
     conn = inbox_sync_core.connection_for(db, user.id)
     mailbox = (conn.email_address or "") if conn is not None and conn.provider == "gmail" else ""
+    kit = applications_db.pending_kit(db, user.id, app.job_url)
     return ApplicationDetail(
         id=app.id,
         job_title=app.job_title,
@@ -2210,23 +2235,15 @@ def get_application(
         last_email_at=_utc_iso(app.last_email_at),
         last_email_kind=events[0].kind if events else "",
         email_events=[inbox_sync_core.event_out(e, mailbox) for e in events],
+        location=app.location or "",
+        posted_at=app.posted_at or "",
+        jd=_row_jd(app),
+        status_changed_at=_utc_iso(app.status_changed_at),
+        status_source=app.status_source or "",
+        voice_score=app.voice_score,
+        fabrication_flag_count=app.fabrication_flag_count,
+        pending_kit=ApplicationKit(id=kit.id, status=kit.status) if kit is not None else None,
     )
-
-
-def _tracked_job(db: Session, user: User, job_url: str) -> Application | None:
-    """This user's newest tracker row for exactly this posting URL, or None.
-
-    Exact, trimmed match only. A URL is the one identity a saved job, its
-    tailor handoff and its save all carry unchanged; anything looser (title and
-    company, a normalised LinkedIn host) could merge two real applications."""
-    url = (job_url or "").strip()
-    if not url:
-        return None
-    return db.execute(
-        select(Application)
-        .where(Application.user_id == user.id, Application.job_url == url)
-        .order_by(Application.id.desc())
-    ).scalars().first()
 
 
 @router.post("/applications", response_model=ApplicationOut)
@@ -2245,7 +2262,11 @@ def create_application(
     #   * the status only moves FORWARD, saved -> applied, and never back: the
     #     inbox and the user's own moves own everything past Applied.
     # No URL (a pasted posting) is a new row, exactly as before.
-    existing = _tracked_job(db, user, body.job_url)
+    # PLAN 31.4 adds three: a place and a posted date fill only a blank, like a
+    # title; an analysis REPLACES the stored one, because it is the one the draft
+    # beside it was tailored against, and the letter's pass is keyed by it.
+    jd_json = _stored_jd(body.jd) if body.jd is not None else ""
+    existing = applications_db.tracked_job(db, user.id, body.job_url)
     if existing is not None:
         now = datetime.now(timezone.utc)
         if body.tailored_resume is not None:
@@ -2262,6 +2283,12 @@ def create_application(
             existing.job_title = body.job_title
         if body.company and not existing.company:
             existing.company = body.company
+        if body.location and not existing.location:
+            existing.location = body.location
+        if body.posted_at and not existing.posted_at:
+            existing.posted_at = body.posted_at
+        if jd_json:
+            existing.jd_json = jd_json
         if body.status == "applied" and existing.status == "saved":
             existing.status = "applied"
             existing.status_changed_at = now
@@ -2289,6 +2316,9 @@ def create_application(
         # a row saved straight into Applied — when it was sent (I3).
         status_source="created",
         applied_at=datetime.now(timezone.utc) if body.status == "applied" else None,
+        location=body.location,
+        posted_at=body.posted_at,
+        jd_json=jd_json,
     )
     db.add(app)
     db.commit()
@@ -2304,6 +2334,9 @@ def update_application(
     user: User = Depends(current_user),
 ) -> ApplicationOut:
     app = _owned_application(db, app_id, user)
+    # PLAN 31.4: measured before anything is written, so a refused analysis
+    # leaves the whole row as it was.
+    jd_json = _stored_jd(body.jd) if body.jd is not None else ""
     if body.status is not None:
         if body.status != app.status:
             app.status_changed_at = datetime.now(timezone.utc)
@@ -2320,6 +2353,10 @@ def update_application(
         app.interviewed = body.interviewed
     if body.excitement is not None:
         app.excitement = body.excitement
+    if body.cover_letter is not None:
+        app.cover_letter = body.cover_letter
+    if jd_json:
+        app.jd_json = jd_json
     db.commit()
     db.refresh(app)
     return _to_out(app, _email_kind(db, user.id, app.id))
@@ -2338,8 +2375,11 @@ def save_application_draft(
     every accept, decline, typed edit, template and letter. Reaches no model and
     spends nothing, so it is plain `current_user`, classed `free` in smoke 32.13.
     The resume and its signals are written together, None included; the letter
-    only when one is sent (`ApplicationDraft`). Someone else's row is a 404."""
+    only when one is sent (`ApplicationDraft`). Someone else's row is a 404.
+    The analysis likewise (PLAN 31.4): written when sent, since a tailor started
+    from the job's own page saves onto its row here, never through the POST."""
     app = _owned_application(db, app_id, user)
+    jd_json = _stored_jd(body.jd) if body.jd is not None else ""
     app.tailored_resume_json = body.tailored_resume.model_dump_json()
     app.template = body.template
     app.voice_score = body.voice_score
@@ -2348,6 +2388,8 @@ def save_application_draft(
         app.overall_score = body.overall_score
     if body.cover_letter is not None:
         app.cover_letter = body.cover_letter
+    if jd_json:
+        app.jd_json = jd_json
     db.commit()
     db.refresh(app)
     return _to_out(app, _email_kind(db, user.id, app.id))

@@ -1283,6 +1283,12 @@ export async function saveApplication(payload: {
   template?: ResumeTemplate;
   voice_score?: number;
   fabrication_flag_count?: number;
+  /** PLAN 31.4, the job page: the posting's place and board date (each fills
+   * only a blank on a row the URL already has), and the analysis a fit check or
+   * tailor ran on it (replaces the stored one). */
+  location?: string;
+  posted_at?: string;
+  jd?: JDModel;
 }): Promise<ApplicationOut> {
   const { data } = await api.post<ApplicationOut>("/applications", payload);
   invalidateData("applications", "nudges");
@@ -1300,7 +1306,16 @@ export async function saveApplicationDraft(id: number, draft: ApplicationDraft):
 
 export async function updateApplication(
   id: number,
-  patch: { status?: string; notes?: string; interviewed?: boolean; excitement?: number },
+  patch: {
+    status?: string;
+    notes?: string;
+    interviewed?: boolean;
+    excitement?: number;
+    /** PLAN 31.4: the job page's letter, and the analysis it had to run first
+     * on a row that held none. Absent leaves each alone. */
+    cover_letter?: string;
+    jd?: JDModel;
+  },
 ): Promise<ApplicationOut> {
   const { data } = await api.patch<ApplicationOut>(`/applications/${id}`, patch);
   invalidateData("applications", "nudges");

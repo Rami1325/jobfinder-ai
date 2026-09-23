@@ -326,6 +326,11 @@ export interface ApplicationOut {
   last_email_at?: string | null;
   /** That email's kind (see `InboxEvent.kind`); "" when none is linked. */
   last_email_kind?: string;
+  /** PLAN 31.4: where the posting is, and the date its board states. "" is
+   * unknown (a row from before the job page, or a writer that did not know):
+   * print nothing for it, never a guess. Optional: an older backend omits both. */
+  location?: string;
+  posted_at?: string;
 }
 
 /** PUT /applications/{id}/draft (PLAN 31.3/4): the tailored draft, saved with
@@ -342,6 +347,16 @@ export interface ApplicationDraft {
   fabrication_flag_count: number | null;
   overall_score: number | null;
   cover_letter?: string;
+  /** PLAN 31.4: the analysis this draft was tailored against, written when sent
+   * and left alone when absent, like the letter. */
+  jd?: JDModel;
+}
+
+/** PLAN 31.4: a batch-tailored draft on its way to a job, or waiting for
+ * review. Only an undecided kit is named: queued, running or done. */
+export interface ApplicationKit {
+  id: number;
+  status: "queued" | "running" | "done";
 }
 
 export interface ApplicationDetail {
@@ -368,6 +383,22 @@ export interface ApplicationDetail {
   /** Every email the scanner tied to this row, newest first. Absent on a
    * backend without the inbox. */
   email_events?: InboxEvent[];
+  /** PLAN 31.4, the job page. Each is optional: an older backend omits it, and
+   * every reader treats absent as unknown. */
+  location?: string;
+  posted_at?: string;
+  /** The analysis a fit check, tailor or kit already ran on this posting; null
+   * when none was stored, and the page then shows the posting itself. Viewing
+   * the page never runs a model to fill it. */
+  jd?: JDModel | null;
+  /** The ONE status change the row records, and who made it ("created",
+   * "manual", "email", "" = before anyone recorded it). There is no history
+   * beyond it, so the timeline never invents one. */
+  status_changed_at?: string | null;
+  status_source?: string;
+  voice_score?: number | null;
+  fabrication_flag_count?: number | null;
+  pending_kit?: ApplicationKit | null;
 }
 
 /** GET /inbox/status: whether this account can use Gmail sync, and how the

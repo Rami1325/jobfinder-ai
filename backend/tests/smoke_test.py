@@ -9269,6 +9269,162 @@ with TestClient(_fastapi_app) as _tc:
     )
     _tc.delete(f"/applications/{_dr_row['id']}", headers=_ADMIN_H)
 
+    # PLAN 31.4, the job page. A row carries the posting's place and posted date
+    # and the analysis a fit check or tailor already ran on it, so the page can
+    # say "what they ask for" without a model call; the detail also hands back
+    # the timeline's one recorded change and the what-was-sent signals.
+    _jp_url = "https://jobpage.test/jobs/31-4-1"
+    _jp_jd = jd.model_dump()
+    _jp_go = dict(_jp_jd, hard_skills=["Go"])
+    _jp_row = _tc.post(
+        "/applications",
+        json={
+            "job_title": "Job Page Eng", "company": "PageCo", "job_url": _jp_url, "status": "saved",
+            "location": "Tel Aviv, Israel", "posted_at": "2026-09-20", "jd": _jp_jd,
+            "tailored_resume": _resume_json, "voice_score": 90.0, "fabrication_flag_count": 1,
+        },
+        headers=_ADMIN_H,
+    ).json()
+    _jp_detail = _tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H).json()
+    _jp_listed = next((a for a in _tc.get("/applications", headers=_ADMIN_H).json() if a["id"] == _jp_row["id"]), {})
+    check(
+        "31.4/1: a job saved with its place, posted date and analysis hands all three back on the detail, beside "
+        "the timeline's last change (made by the save, with its time) and the what-was-sent signals; the list "
+        "carries the place and the date too",
+        _jp_detail.get("location") == "Tel Aviv, Israel"
+        and _jp_detail.get("posted_at") == "2026-09-20"
+        and (_jp_detail.get("jd") or {}).get("hard_skills") == _jp_jd["hard_skills"]
+        and _jp_detail.get("status_source") == "created"
+        and bool(_jp_detail.get("status_changed_at"))
+        and _jp_detail.get("voice_score") == 90.0
+        and _jp_detail.get("fabrication_flag_count") == 1
+        and _jp_detail.get("pending_kit") is None
+        and _jp_listed.get("location") == "Tel Aviv, Israel"
+        and _jp_listed.get("posted_at") == "2026-09-20",
+        str({k: _jp_detail.get(k) for k in ("location", "posted_at", "status_source", "status_changed_at")}),
+    )
+    _tc.post(
+        "/applications",
+        json={"job_title": "Job Page Eng", "company": "PageCo", "job_url": _jp_url, "status": "saved",
+              "location": "Haifa, Israel", "posted_at": "2026-01-01", "jd": _jp_go},
+        headers=_ADMIN_H,
+    )
+    _jp_after = _tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H).json()
+    _tc.post(
+        "/applications",
+        json={"job_title": "Job Page Eng", "company": "PageCo", "job_url": _jp_url, "status": "saved"},
+        headers=_ADMIN_H,
+    )
+    _jp_kept = _tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H).json()
+    _jp_blank = _tc.post(
+        "/applications",
+        json={"job_title": "No Place Eng", "company": "PageCo", "job_url": _jp_url + "-blank", "status": "saved"},
+        headers=_ADMIN_H,
+    ).json()
+    _tc.post(
+        "/applications",
+        json={"job_title": "No Place Eng", "company": "PageCo", "job_url": _jp_url + "-blank", "status": "saved",
+              "location": "Remote", "posted_at": "2026-09-21"},
+        headers=_ADMIN_H,
+    )
+    _jp_filled = _tc.get(f"/applications/{_jp_blank['id']}", headers=_ADMIN_H).json()
+    check(
+        "31.4/1: a repeat save fills a blank place or date and never overwrites a known one, while its analysis "
+        "REPLACES the stored one (the draft beside it was tailored against it); a save with no analysis leaves it",
+        _jp_after.get("location") == "Tel Aviv, Israel"
+        and _jp_after.get("posted_at") == "2026-09-20"
+        and (_jp_after.get("jd") or {}).get("hard_skills") == ["Go"]
+        and (_jp_kept.get("jd") or {}).get("hard_skills") == ["Go"]
+        and _jp_filled.get("location") == "Remote"
+        and _jp_filled.get("posted_at") == "2026-09-21",
+        str({"after": _jp_after.get("location"), "jd": (_jp_after.get("jd") or {}).get("hard_skills"),
+             "filled": _jp_filled.get("location")}),
+    )
+    _jp_put = _tc.put(
+        f"/applications/{_jp_row['id']}/draft",
+        json={"tailored_resume": _resume_json, "template": "classic", "jd": _jp_jd},
+        headers=_ADMIN_H,
+    )
+    _jp_put_jd = (_tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H).json().get("jd") or {}).get("hard_skills")
+    _tc.put(
+        f"/applications/{_jp_row['id']}/draft",
+        json={"tailored_resume": _resume_json, "template": "classic"},
+        headers=_ADMIN_H,
+    )
+    _jp_put_kept = (_tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H).json().get("jd") or {}).get("hard_skills")
+    check(
+        "31.4/1: the draft PUT writes an analysis it is sent (a tailor started from the job's own page saves "
+        "onto its row there) and leaves the stored one when it is sent none",
+        _jp_put.status_code == 200 and _jp_put_jd == _jp_jd["hard_skills"] and _jp_put_kept == _jp_jd["hard_skills"],
+        f"{_jp_put.status_code} {_jp_put_jd} {_jp_put_kept}",
+    )
+    _jp_patch = _tc.patch(
+        f"/applications/{_jp_row['id']}", json={"cover_letter": "Dear PageCo,", "jd": _jp_go}, headers=_ADMIN_H
+    )
+    _jp_patched = _tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H).json()
+    _tc.patch(f"/applications/{_jp_row['id']}", json={"notes": "Called the recruiter"}, headers=_ADMIN_H)
+    _jp_untouched = _tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H).json()
+    _jp_long = _tc.patch(f"/applications/{_jp_row['id']}", json={"cover_letter": "x" * 20_001}, headers=_ADMIN_H)
+    _jp_friend = _tc.patch(f"/applications/{_jp_row['id']}", json={"cover_letter": "Not yours"}, headers=_FRIEND_H)
+    check(
+        "31.4/1: the job page's PATCH writes a letter and an analysis, a PATCH of neither leaves both, a letter "
+        "over 20,000 characters is a 422 with the row unchanged, and another account's row is a 404",
+        _jp_patch.status_code == 200
+        and _jp_patched.get("cover_letter") == "Dear PageCo,"
+        and (_jp_patched.get("jd") or {}).get("hard_skills") == ["Go"]
+        and _jp_untouched.get("cover_letter") == "Dear PageCo,"
+        and (_jp_untouched.get("jd") or {}).get("hard_skills") == ["Go"]
+        and _jp_long.status_code == 422
+        and _jp_friend.status_code == 404
+        and _tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H).json().get("cover_letter") == "Dear PageCo,",
+        f"{_jp_patch.status_code}/{_jp_long.status_code}/{_jp_friend.status_code}",
+    )
+    # A stored analysis is bounded by the cap every route puts on an analysed JD a
+    # client sends back, refused whole (a 413 of kind "jd"), never truncated; the
+    # place and the date are bounded by their columns, since Postgres refuses a
+    # longer value and takes the whole save with it.
+    _jp_huge = dict(_jp_jd, responsibilities=["y" * 1000] * (get_settings().max_jd_json_kb + 4))
+    _jp_big_url = _jp_url + "-huge"
+    _jp_413 = _tc.post(
+        "/applications", json={"job_title": "Huge", "company": "PageCo", "job_url": _jp_big_url, "jd": _jp_huge},
+        headers=_ADMIN_H,
+    )
+    _jp_413_patch = _tc.patch(f"/applications/{_jp_row['id']}", json={"jd": _jp_huge, "notes": "never"}, headers=_ADMIN_H)
+    _jp_after_413 = _tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H).json()
+    _jp_long_place = _tc.post(
+        "/applications", json={"job_title": "Long", "job_url": _jp_url + "-lp", "location": "x" * 256}, headers=_ADMIN_H
+    )
+    _jp_long_date = _tc.post(
+        "/applications", json={"job_title": "Long", "job_url": _jp_url + "-ld", "posted_at": "x" * 33}, headers=_ADMIN_H
+    )
+    check(
+        "31.4/1: an analysis past the analysed-JD cap is a 413 of kind jd that writes nothing (no row on a save, "
+        "and a PATCH beside it leaves the notes as they were); a place over 255 characters or a date over 32 is a 422",
+        _jp_413.status_code == 413
+        and (_jp_413.json().get("detail") or {}).get("kind") == "jd"
+        and not any(a["job_url"] == _jp_big_url for a in _tc.get("/applications", headers=_ADMIN_H).json())
+        and _jp_413_patch.status_code == 413
+        and _jp_after_413.get("notes") == "Called the recruiter"
+        and _jp_long_place.status_code == 422
+        and _jp_long_date.status_code == 422,
+        f"{_jp_413.status_code} {str(_jp_413.json())[:120]} / patch {_jp_413_patch.status_code} "
+        f"/ {_jp_long_place.status_code} / {_jp_long_date.status_code}",
+    )
+    _jp_db = SessionLocal()
+    try:
+        _jp_db.get(Application, _jp_row["id"]).jd_json = "not json"
+        _jp_db.commit()
+    finally:
+        _jp_db.close()
+    _jp_corrupt = _tc.get(f"/applications/{_jp_row['id']}", headers=_ADMIN_H)
+    check(
+        "31.4/1: a stored analysis that no longer parses reads as none on the detail, never a 500",
+        _jp_corrupt.status_code == 200 and _jp_corrupt.json().get("jd") is None,
+        f"{_jp_corrupt.status_code}",
+    )
+    for _jp_id in (_jp_row["id"], _jp_blank["id"]):
+        _tc.delete(f"/applications/{_jp_id}", headers=_ADMIN_H)
+
     # Stale-application nudges (Home reminder): an "applied" app with no status
     # change for STALE_APPLICATION_DAYS (7) days surfaces; a fresh one does not.
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
@@ -12708,6 +12864,73 @@ with TestClient(_fastapi_app) as _tc:
         "kit cover letter: an approval with no letter in its body carries the saved one to the tracker",
         _cl_apr.status_code == 200 and _cl_app.get("cover_letter") == "Saved before approval",
         str(_cl_app)[:200],
+    )
+    check(
+        "31.4/1: a kit approved for a posting nobody tracked makes a row stamped the way a save stamps one "
+        "(made by its creation, with the time), carrying the kit's place and analysis",
+        _cl_app.get("status_source") == "created"
+        and bool(_cl_app.get("status_changed_at"))
+        and _cl_app.get("location") == "Tel Aviv"
+        and _cl_app.get("jd") is not None,
+        str({k: _cl_app.get(k) for k in ("status_source", "status_changed_at", "location")}),
+    )
+
+    # PLAN 31.4: one posting, one tracker row, on the kit path too. A job the user
+    # already tracks takes the approved draft onto ITS row (approval used to add a
+    # second row beside it), and until the kit is decided the job's page names it.
+    _mk_job = _kit_job(22)
+    _mk_row = _tc.post(
+        "/applications",
+        json={"job_title": _mk_job["title"], "company": "KitCo", "job_url": _mk_job["url"], "status": "applied"},
+        headers=_ADMIN_H,
+    ).json()
+    _mk_kim_row = _tc.post(
+        "/applications",
+        json={"job_title": _mk_job["title"], "company": "KitCo", "job_url": _mk_job["url"], "status": "saved"},
+        headers=_KIM_H,
+    ).json()
+    _tc.post("/kits/batch", json={"jobs": [_mk_job]}, headers=_ADMIN_H)
+    _mk_queued = _tc.get(f"/applications/{_mk_row['id']}", headers=_ADMIN_H).json().get("pending_kit")
+    _mk_kit = _tc.post("/kits/process-next", headers=_ADMIN_H).json()["kit"]
+    _mk_pending = _tc.get(f"/applications/{_mk_row['id']}", headers=_ADMIN_H).json().get("pending_kit")
+    _mk_apr = _tc.post(f"/kits/{_mk_kit['id']}/approve", json={"cover_letter": "Dear KitCo, merged"}, headers=_ADMIN_H)
+    _mk_rows = [a for a in _tc.get("/applications", headers=_ADMIN_H).json() if a["job_url"] == _mk_job["url"]]
+    _mk_detail = _tc.get(f"/applications/{_mk_row['id']}", headers=_ADMIN_H).json()
+    _mk_kim_detail = _tc.get(f"/applications/{_mk_kim_row['id']}", headers=_KIM_H).json()
+    check(
+        "31.4/1: until a kit is decided the job's page names it (queued, then done, with its id), and another "
+        "account's row for the same posting never names this account's kit",
+        (_mk_queued or {}).get("status") == "queued"
+        and _mk_pending == {"id": _mk_kit["id"], "status": "done"}
+        and _tc.get(f"/applications/{_mk_kim_row['id']}", headers=_KIM_H).json().get("pending_kit") is None,
+        f"queued={_mk_queued} pending={_mk_pending}",
+    )
+    check(
+        "31.4/1: approving a kit for a posting this account already tracks puts the draft on THAT row: one row, "
+        "the kit linked to it, the draft, the letter and the kit's analysis on it, a blank place filled, the "
+        "status left alone (an approval never pulls Applied back to Saved), and no kit named once it is decided",
+        _mk_apr.status_code == 200
+        and _mk_apr.json().get("application_id") == _mk_row["id"]
+        and len(_mk_rows) == 1
+        and _mk_detail.get("tailored_resume") is not None
+        and _mk_detail.get("cover_letter") == "Dear KitCo, merged"
+        and _mk_detail.get("jd") is not None
+        and _mk_detail.get("location") == "Tel Aviv"
+        and _mk_detail.get("status") == "applied"
+        and _mk_detail.get("pending_kit") is None,
+        f"{_mk_apr.status_code} app={_mk_apr.json().get('application_id')} row={_mk_row['id']} rows={len(_mk_rows)} "
+        f"status={_mk_detail.get('status')} kit={_mk_detail.get('pending_kit')}",
+    )
+    check(
+        "31.4/1: the false-positive half — another account's row for the same posting is never merged into, and "
+        "a rejected kit is never named as on its way",
+        _mk_kim_detail.get("tailored_resume") is None
+        and _mk_kim_detail.get("status") == "saved"
+        and _tc.get(
+            f"/applications/{_tc.post('/applications', json={'job_title': 'Rejected', 'job_url': _kit_job(20)['url']}, headers=_ADMIN_H).json()['id']}",
+            headers=_ADMIN_H,
+        ).json().get("pending_kit") is None,
+        str({k: _mk_kim_detail.get(k) for k in ("status", "pending_kit")}),
     )
 
     # No master resume → the kit fails with a clear error, the loop keeps 200ing.

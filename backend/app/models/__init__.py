@@ -1026,6 +1026,13 @@ class ApplicationCreate(BaseModel):
     template: str = ""
     voice_score: Optional[float] = None
     fabrication_flag_count: Optional[int] = None
+    # PLAN 31.4, the job page: where the posting is, when its board says it was
+    # posted, and the analysis a fit check or tailor already ran on it. Each is
+    # optional; an absent one stays unknown on the row. Bounded by the columns
+    # they land in (Postgres refuses a longer value, and the whole save with it).
+    location: str = Field(default="", max_length=255)
+    posted_at: str = Field(default="", max_length=32)
+    jd: Optional[JDModel] = None
 
 
 class ApplicationUpdate(BaseModel):
@@ -1033,6 +1040,10 @@ class ApplicationUpdate(BaseModel):
     notes: Optional[str] = None
     interviewed: Optional[bool] = None
     excitement: Optional[int] = Field(default=None, ge=0, le=5)  # 0 clears the rating
+    # PLAN 31.4: the job page writes a letter and, before its first letter on a
+    # row with no analysis, the analysis it had to run. None leaves each alone.
+    cover_letter: Optional[str] = Field(default=None, max_length=20_000)
+    jd: Optional[JDModel] = None
 
 
 class ApplicationDraft(BaseModel):
@@ -1056,6 +1067,10 @@ class ApplicationDraft(BaseModel):
     fabrication_flag_count: Optional[int] = None
     overall_score: Optional[float] = None
     cover_letter: Optional[str] = Field(default=None, max_length=20_000)
+    # PLAN 31.4: the analysis this draft was tailored against. A tailor started
+    # from a job's own page saves onto that row with this PUT, so the analysis
+    # has to ride here too. None leaves the row's analysis alone, like the letter.
+    jd: Optional[JDModel] = None
 
 
 class ApplicationOut(BaseModel):
@@ -1080,6 +1095,19 @@ class ApplicationOut(BaseModel):
     applied_at: Optional[str] = None
     last_email_at: Optional[str] = None
     last_email_kind: str = ""  # the newest linked email's kind; "" when none
+    # PLAN 31.4: where the posting is and when its board says it was posted;
+    # "" = unknown (a row from before the job page, or a writer that did not know).
+    location: str = ""
+    posted_at: str = ""
+
+
+class ApplicationKit(BaseModel):
+    """A batch-tailored draft on its way to this job, or waiting for review
+    (PLAN 31.4: a kit is a tailored draft waiting on a job). Only a kit that has
+    not been decided yet is named: queued, running or done."""
+
+    id: int
+    status: str
 
 
 class ApplicationDetail(BaseModel):
@@ -1107,6 +1135,21 @@ class ApplicationDetail(BaseModel):
     last_email_kind: str = ""
     # Every email tied to this row, newest first.
     email_events: list[InboxEventOut] = Field(default_factory=list)
+    # PLAN 31.4, the job page. The header's place and posted date ("" unknown);
+    # the analysis "What they ask for" reads (None = none stored, and the page
+    # then shows the posting itself, never a model call); the timeline's last
+    # status change, which is ALL the row records of its history (who made it:
+    # "created" / "manual" / "email", "" = before anyone recorded it); the
+    # what-was-sent signals ApplicationOut carries; and a draft still on its way
+    # or waiting for review.
+    location: str = ""
+    posted_at: str = ""
+    jd: Optional[JDModel] = None
+    status_changed_at: Optional[str] = None
+    status_source: str = ""
+    voice_score: Optional[float] = None
+    fabrication_flag_count: Optional[int] = None
+    pending_kit: Optional[ApplicationKit] = None
 
 
 class StaleApplication(BaseModel):

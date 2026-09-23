@@ -177,6 +177,17 @@ class Application(Base):
     applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     # The newest email the inbox tied to this row.
     last_email_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # PLAN 31.4, the job page. The posting's place and the date its board stated,
+    # carried from where the job was found (a search result, a kit). "" when the
+    # writer did not know: the page prints nothing for an unknown, never a guess.
+    # `posted_at` keeps the board's string as `job_search_hits.posted_at` does.
+    location: Mapped[str] = mapped_column(String(255), default="")
+    posted_at: Mapped[str] = mapped_column(String(32), default="")
+    # The analysed posting (a JDModel as JSON) from the fit check or tailor that
+    # made this row's draft, or from the kit that did. The job page's "What they
+    # ask for" reads it, and the cover letter is keyed by it, so viewing the page
+    # never needs a model call. "" = no analysis was ever stored for this row.
+    jd_json: Mapped[str] = mapped_column(Text, default="")
 
 
 class JobSearchHit(Base):
