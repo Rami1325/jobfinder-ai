@@ -311,10 +311,10 @@
     },
     "send": {
       "title": "Send it through Comeet",
-      "body": "Comeet can deliver this resume (as a PDF) and your letter straight to {{company}}'s application inbox.",
+      "body": "Comeet can deliver this resume (as a PDF) and your letter straight to the application inbox at {{company}}.",
       "cta": "Send application",
       "confirmTitle": "Send this application?",
-      "confirmBody": "We'll send the resume above (as a PDF) and your cover letter straight to {{company}}'s application inbox through Comeet — the same place their own Apply button delivers to. This is a real application and can't be undone.",
+      "confirmBody": "We'll send the resume above (as a PDF) and your cover letter straight to the application inbox at {{company}} through Comeet — the same place their own Apply button delivers to. This is a real application and can't be undone.",
       "note": "Sending works only for Comeet postings whose draft has no claims to check. It's capped per day, never applies twice to the same company, and never touches LinkedIn.",
       "confirm": "Send it",
       "sent": "Application sent to {{company}}",

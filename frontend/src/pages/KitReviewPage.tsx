@@ -30,6 +30,7 @@ import { putKit, removeKitUndoable } from "../state/kitsStore";
 import { editContainsValue, mergeForReview } from "../lib/resumeDiff";
 import { Badge, Button, Card, CardTitle, ProgressRing, Skeleton, Stamp, useToast } from "../components/ui";
 import type { KitDetail, KitOut } from "../types";
+import { sourceLabel } from "./jobs/shared";
 
 // A draft's state as a chip (the tracker's To review draws the four it lists).
 const STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" | "danger"> = {
@@ -282,7 +283,7 @@ export default function KitReviewPage() {
                 className="inline-flex items-center gap-1 text-accent-soft hover:underline"
               >
                 <ExternalLink size={12} />{" "}
-                {t("card.openOn", { source: kit.source || "LinkedIn" })}
+                {t("card.openOn", { source: sourceLabel(kit.source) || "LinkedIn" })}
               </a>
             )}
           </div>
