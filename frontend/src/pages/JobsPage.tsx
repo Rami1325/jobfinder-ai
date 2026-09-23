@@ -41,13 +41,14 @@ import {
 import {
   getKitsState,
   loadKits,
-  removeKit,
+  removeKitUndoable,
   resumeKitQueue,
   sendKitApplication,
   subscribeKits,
 } from "../state/kitsStore";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
+import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
 import { resumeLanguage } from "../lib/lang";
 import { onboardingRole } from "../lib/onboarding";
 import { useUses } from "../lib/usesStore";
@@ -109,8 +110,14 @@ export default function JobsPage() {
   }, [mode]);
   const queuedKits = kits?.filter((k) => k.status === "queued").length ?? 0;
 
-  async function deleteKitRow(id: number) {
-    if (!(await removeKit(id))) toast("error", t("kits.deleteError"));
+  // PLAN 31.1/6: the kit leaves the list at once and is deleted when the undo
+  // window closes; Undo, or a failed delete, puts it back.
+  function deleteKitRow(id: number) {
+    const undo = removeKitUndoable(id, () => toast("error", t("kits.deleteError")));
+    toast("info", t("kits.deleted"), {
+      action: { label: t("common:actions.undo"), onClick: undo },
+      durationMs: UNDO_MS,
+    });
   }
 
   // -- True auto-submit (PLAN 8.4): per-kit confirm, then a real application --
@@ -253,13 +260,36 @@ export default function JobsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  async function deleteHit(id: number) {
-    try {
-      await deleteJobHistoryItem(id);
-      setHistory((p) => (p ? p.filter((h) => h.id !== id) : p));
-    } catch {
-      toast("error", t("history.deleteError"));
-    }
+  // PLAN 31.1/6: the row leaves at once and the server delete waits out the undo
+  // window; Undo, or a failed delete, puts it back where it was.
+  function deleteHit(id: number) {
+    const index = history?.findIndex((h) => h.id === id) ?? -1;
+    if (!history || index === -1) return;
+    const row = history[index];
+    setHistory((p) => (p ? p.filter((h) => h.id !== id) : p));
+    const restore = () =>
+      setHistory((p) => {
+        if (!p || p.some((h) => h.id === id)) return p;
+        const at = Math.min(index, p.length);
+        return [...p.slice(0, at), row, ...p.slice(at)];
+      });
+    const cancel = scheduleUndoable(
+      () => deleteJobHistoryItem(id),
+      () => {
+        restore();
+        toast("error", t("history.deleteError"));
+      },
+    );
+    toast("info", t("history.deleted"), {
+      action: {
+        label: t("common:actions.undo"),
+        onClick: () => {
+          cancel();
+          restore();
+        },
+      },
+      durationMs: UNDO_MS,
+    });
   }
 
   async function clearAll() {

@@ -49,6 +49,7 @@
   "interviewedToggle": "Did you interview for this job?",
   "interviewed": "Interviewed",
   "toasts": {
+    "deleteError": "Couldn't delete that application. It's back on your board.",
     "deleted": "Application deleted",
     "interviewedError": "Could not update interview status",
     "excitementError": "Could not save the rating"

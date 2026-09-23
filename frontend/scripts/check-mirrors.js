@@ -10669,6 +10669,88 @@ try {
   fail(`control name check (check 50) could not run: ${e.message}`);
 }
 
+// ---- 51. a delete waits out an undo window (EXECUTED) ---------------------- //
+// PLAN 31.1/6, found in the 2026-09-23 review. A tracker card, a kit and a
+// History row were deleted on one tap, with no confirm and no way back. Each now
+// leaves the list at once while the server delete waits in `scheduleUndoable`,
+// behind a toast whose Undo cancels it. (a) EXECUTES lib/undoableDelete.ts: no
+// commit inside the window, exactly one after it, none after an Undo, and a
+// failed commit reported through onFailed. (b) Pins the three sites by shape:
+// none awaits its delete call in the tap's own path, each schedules it, and each
+// toast carries an action for the whole window. The site detector is probed
+// both ways on every run.
+try {
+  const ud = runProbeBundle("undoable-delete", `export * from "./lib/undoableDelete";\n`);
+  if (typeof ud.scheduleUndoable !== "function" || typeof ud.UNDO_MS !== "number")
+    throw new Error("lib/undoableDelete.ts does not export scheduleUndoable and UNDO_MS");
+  if (ud.UNDO_MS < 3000) fail(`check 51: UNDO_MS is ${ud.UNDO_MS} ms — too short to read a toast and press Undo`);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const run = async (label, commitFn, cancelAt) => {
+    const log = [];
+    const cancel = ud.scheduleUndoable(() => { log.push("commit"); return commitFn(); }, () => log.push("failed"), 30);
+    if (log.length) fail(`check 51 (${label}): the delete ran inside the undo window`);
+    if (cancelAt === "before") cancel();
+    await wait(90);
+    if (cancelAt === "after") cancel();
+    await wait(10);
+    return log;
+  };
+  const ok = await run("plain", () => Promise.resolve(), null);
+  const undone = await run("undo", () => Promise.resolve(), "before");
+  const failed = await run("failure", () => Promise.reject(new Error("boom")), null);
+  const late = await run("undo after the commit", () => Promise.resolve(), "after");
+  for (const [label, got, want] of [
+    ["an untouched window commits once", ok, ["commit"]],
+    ["an Undo inside the window commits nothing", undone, []],
+    ["a failed delete is reported", failed, ["commit", "failed"]],
+    ["an Undo after the commit changes nothing", late, ["commit"]],
+  ])
+    if (JSON.stringify(got) !== JSON.stringify(want)) fail(`check 51: ${label} — got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+
+  const body = (src, head) => {
+    const at = src.indexOf(head);
+    if (at === -1) return null;
+    let depth = 0;
+    for (let i = src.indexOf("{", at); i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) return src.slice(at, i + 1);
+    }
+    return null;
+  };
+  const siteProblems = (src, head, apiCall, scheduler) => {
+    const b = body(src, head);
+    if (b === null) throw new Error(`could not find \`${head}\``);
+    const out = [];
+    if (new RegExp(`await\\s+${apiCall}\\(`).test(b)) out.push(`awaits ${apiCall}( in the tap's own path`);
+    if (!b.includes(`${scheduler}(`)) out.push(`does not go through ${scheduler}`);
+    if (!/action:\s*\{/.test(b) || !/durationMs:\s*UNDO_MS/.test(b)) out.push("its toast carries no Undo action for the whole window");
+    return out;
+  };
+  const tracker = decomment(read("pages/TrackerPage.tsx"));
+  const jobs = decomment(read("pages/JobsPage.tsx"));
+  const planted = tracker.replace(/function remove\(id: number\) \{/, "async function remove(id: number) {\n    await deleteApplication(id);");
+  if (planted === tracker) throw new Error("the probe could not plant a direct delete into TrackerPage's remove");
+  if (!siteProblems(planted, "function remove(id: number)", "deleteApplication", "scheduleUndoable").length)
+    throw new Error("the site detector passes a remove() that awaits deleteApplication, so it cannot be trusted");
+  for (const [file, src, head, api, scheduler] of [
+    ["pages/TrackerPage.tsx", tracker, "function remove(id: number)", "deleteApplication", "scheduleUndoable"],
+    ["pages/JobsPage.tsx", jobs, "function deleteHit(id: number)", "deleteJobHistoryItem", "scheduleUndoable"],
+    ["pages/JobsPage.tsx", jobs, "function deleteKitRow(id: number)", "deleteKit", "removeKitUndoable"],
+  ])
+    for (const p of siteProblems(src, head, api, scheduler)) fail(`check 51: ${file} \`${head}\` ${p} (PLAN 31.1/6)`);
+  const store = decomment(read("state/kitsStore.ts"));
+  const undoable = body(store, "export function removeKitUndoable(");
+  if (!undoable || !/scheduleUndoable\(\s*\(\)\s*=>\s*deleteKit\(id\)/.test(undoable))
+    fail("check 51: state/kitsStore.ts removeKitUndoable must hand deleteKit(id) to scheduleUndoable");
+  if (/export\s+async\s+function\s+removeKit\(/.test(store))
+    fail("check 51: state/kitsStore.ts still exports removeKit, a delete with no undo window");
+  const toastSrc = decomment(read("components/ui/Toast.tsx"));
+  if (!/\{t\.action\s*&&/.test(toastSrc) || !/t\.action\?\.onClick\(\)/.test(toastSrc))
+    fail("check 51: components/ui/Toast.tsx does not render a toast's action button, so Undo is never offered");
+} catch (e) {
+  fail(`undo window check (check 51) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

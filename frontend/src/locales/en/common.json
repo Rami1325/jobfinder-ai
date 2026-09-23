@@ -37,6 +37,7 @@
   },
   "loading": "Loading…",
   "actions": {
+    "undo": "Undo",
     "cancel": "Cancel",
     "replace": "Replace",
     "delete": "Delete",

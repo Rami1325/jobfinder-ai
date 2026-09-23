@@ -38,6 +38,7 @@
   },
   "loading": "טוען…",
   "actions": {
+    "undo": "ביטול המחיקה",
     "cancel": "ביטול",
     "replace": "החלפה",
     "delete": "מחיקה",

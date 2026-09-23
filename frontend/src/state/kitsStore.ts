@@ -4,6 +4,7 @@
 // serverless-safe pattern) — and that loop must not die when JobsPage unmounts.
 import { createKitBatch, deleteKit, listKits, processNextKit, submitKit } from "../api/client";
 import { apiErrorMessage } from "../lib/apiError";
+import { scheduleUndoable } from "../lib/undoableDelete";
 import type { KitJobIn, KitOut } from "../types";
 
 export type BatchSummary = {
@@ -129,14 +130,33 @@ export async function loadKits(force = false): Promise<void> {
   }
 }
 
-export async function removeKit(id: number): Promise<boolean> {
-  try {
-    await deleteKit(id);
-    set({ kits: state.kits?.filter((k) => k.id !== id) ?? null });
-    return true;
-  } catch {
-    return false;
-  }
+/** Hide a kit now and delete it on the server once the undo window closes
+ * (PLAN 31.1/6: one tap deleted a kit for good). Returns the Undo: it cancels
+ * the delete and puts the kit back where it was. A delete that fails puts it
+ * back too, then calls `onFailed` so the page can say so. */
+export function removeKitUndoable(id: number, onFailed: () => void): () => void {
+  const list = state.kits ?? [];
+  const index = list.findIndex((k) => k.id === id);
+  if (index === -1) return () => {};
+  const kit = list[index];
+  set({ kits: list.filter((k) => k.id !== id) });
+  const restore = () => {
+    const now = state.kits ?? [];
+    if (now.some((k) => k.id === id)) return;
+    const at = Math.min(index, now.length);
+    set({ kits: [...now.slice(0, at), kit, ...now.slice(at)] });
+  };
+  const cancel = scheduleUndoable(
+    () => deleteKit(id),
+    () => {
+      restore();
+      onFailed();
+    },
+  );
+  return () => {
+    cancel();
+    restore();
+  };
 }
 
 /** True auto-submit (PLAN 8.4) — really sends the application. Throws on

@@ -4,13 +4,26 @@ import { CheckCircle2, AlertTriangle, Info } from "lucide-react";
 import SparkBurst from "./ClickSpark";
 
 type ToastKind = "success" | "error" | "info";
+/** An action offered inside the toast, such as Undo (PLAN 31.1/6). Pressing it
+ * runs `onClick` and closes the toast. */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+export interface ToastOptions {
+  action?: ToastAction;
+  /** How long the toast stays up; defaults to 3600 ms. A toast carrying an
+   * action should stay for the whole window the action is good for. */
+  durationMs?: number;
+}
 interface ToastItem {
   id: number;
   kind: ToastKind;
   message: string;
+  action?: ToastAction;
 }
 
-const ToastCtx = createContext<(kind: ToastKind, message: string) => void>(() => {});
+const ToastCtx = createContext<(kind: ToastKind, message: string, options?: ToastOptions) => void>(() => {});
 
 export function useToast() {
   return useContext(ToastCtx);
@@ -37,11 +50,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const reduce = useReducedMotion();
 
-  const push = useCallback((kind: ToastKind, message: string) => {
+  const push = useCallback((kind: ToastKind, message: string, options?: ToastOptions) => {
     const id = Date.now() + Math.random();
-    setItems((prev) => [...prev, { id, kind, message }]);
-    setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 3600);
+    setItems((prev) => [...prev, { id, kind, message, action: options?.action }]);
+    setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), options?.durationMs ?? 3600);
   }, []);
+  const dismiss = useCallback((id: number) => setItems((prev) => prev.filter((t) => t.id !== id)), []);
 
   // The stack sits at the inline-end edge, so toasts spring in from that side.
   // Re-evaluated on every push (each push re-renders), so language switches
@@ -68,6 +82,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 {t.kind === "success" && !reduce && <SuccessSpark />}
               </span>
               {t.message}
+              {t.action && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    t.action?.onClick();
+                    dismiss(t.id);
+                  }}
+                  className="ms-2 min-h-8 shrink-0 rounded-md px-2 text-sm font-semibold text-accent transition-colors hover:bg-accent/10"
+                >
+                  {t.action.label}
+                </button>
+              )}
             </motion.div>
           ))}
         </AnimatePresence>

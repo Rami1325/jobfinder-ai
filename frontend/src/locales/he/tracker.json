@@ -52,6 +52,7 @@
   "interviewedToggle": "האם רואיינתם למשרה הזו?",
   "interviewed": "רואיינתי",
   "toasts": {
+    "deleteError": "לא הצלחנו למחוק את המועמדות. היא חזרה ללוח.",
     "deleted": "המועמדות נמחקה",
     "interviewedError": "לא הצלחנו לעדכן את סטטוס הראיון",
     "excitementError": "לא הצלחנו לשמור את הדירוג"

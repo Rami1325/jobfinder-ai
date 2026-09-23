@@ -66,6 +66,7 @@
     "viewKits": "View kits"
   },
   "kits": {
+    "deleted": "Kit deleted",
     "title": "Application kits",
     "body": "Each kit is your resume tailored to one job and checked by the fabrication guard — flagged kits are never auto-approvable.",
     "after": "Match",
@@ -357,6 +358,7 @@
     "genericError": "Something went wrong."
   },
   "history": {
+    "deleted": "Removed from history",
     "emptyTitle": "No saved searches yet",
     "emptyBody": "Run a job search — every scraped job is saved here so you can apply later.",
     "emptyCta": "Go to job search",

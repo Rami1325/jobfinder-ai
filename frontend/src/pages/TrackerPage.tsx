@@ -39,6 +39,7 @@ import { AppliedBadge, CardDate, CardEmailBadge } from "../components/inbox/shar
 import { Badge, Button, Card, CardTitle, CountUp, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
 import { TEMPLATE_IDS } from "../lib/templateSpecs";
+import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
 import type { ApplicationDetail, ApplicationOut, StaleApplication } from "../types";
 
@@ -58,7 +59,6 @@ const COLUMNS: {
 
 const STATUSES = COLUMNS.map((c) => c.key);
 
-// Which follow-up stage to pre-select when jumping to the follow-up writer.
 /** The template this application was SENT in, for a re-download from the
  * tracker. The row records it (`sentSignals`), and the downloads ignored it and
  * rendered the default, so a CV sent as Executive came back as Standard
@@ -68,6 +68,7 @@ function sentTemplate(template: string): ResumeTemplate | undefined {
   return (TEMPLATE_IDS as readonly string[]).includes(template) ? (template as ResumeTemplate) : undefined;
 }
 
+// Which follow-up stage to pre-select when jumping to the follow-up writer.
 function followUpStage(status: string): string {
   if (status === "interview") return "after an interview";
   if (status === "offer") return "after an offer";
@@ -179,6 +180,7 @@ let appsCache: ApplicationOut[] | null = null;
 
 export default function TrackerPage() {
   const { t } = useTranslation("tracker");
+  const { t: tCommon } = useTranslation();
   const nav = useNavigate();
   const [apps, setApps] = useState<ApplicationOut[]>(appsCache ?? []);
   // Only the first load shows the skeleton; later visits render the cache and
@@ -275,11 +277,37 @@ export default function TrackerPage() {
     }
   }
 
-  async function remove(id: number) {
-    await deleteApplication(id);
-    pendingFlips.delete(id);
+  // PLAN 31.1/6: one tap deleted an application for good, no confirm, no way
+  // back. The card leaves at once and the server delete waits out the undo
+  // window; Undo (or a failed delete) puts the card back where it was.
+  function remove(id: number) {
+    const index = apps.findIndex((a) => a.id === id);
+    if (index === -1) return;
+    const card = apps[index];
     setApps((prev) => prev.filter((a) => a.id !== id));
-    toast("info", t("toasts.deleted"));
+    const restore = () =>
+      setApps((prev) => {
+        if (prev.some((a) => a.id === id)) return prev;
+        const at = Math.min(index, prev.length);
+        return [...prev.slice(0, at), card, ...prev.slice(at)];
+      });
+    const cancel = scheduleUndoable(
+      () => deleteApplication(id).then(() => pendingFlips.delete(id)),
+      () => {
+        restore();
+        toast("error", t("toasts.deleteError"));
+      },
+    );
+    toast("info", t("toasts.deleted"), {
+      action: {
+        label: tCommon("actions.undo"),
+        onClick: () => {
+          cancel();
+          restore();
+        },
+      },
+      durationMs: UNDO_MS,
+    });
   }
 
   async function view(id: number) {
