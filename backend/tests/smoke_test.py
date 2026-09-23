@@ -12893,6 +12893,10 @@ with TestClient(_fastapi_app) as _tc:
     _mk_queued = _tc.get(f"/applications/{_mk_row['id']}", headers=_ADMIN_H).json().get("pending_kit")
     _mk_kit = _tc.post("/kits/process-next", headers=_ADMIN_H).json()["kit"]
     _mk_pending = _tc.get(f"/applications/{_mk_row['id']}", headers=_ADMIN_H).json().get("pending_kit")
+    # Read while this account's kit is still undecided: after the approval below
+    # it is named nowhere, so a check made then could never catch a kit named on
+    # someone else's row (the probe found exactly that).
+    _mk_kim_pending = _tc.get(f"/applications/{_mk_kim_row['id']}", headers=_KIM_H).json().get("pending_kit")
     _mk_apr = _tc.post(f"/kits/{_mk_kit['id']}/approve", json={"cover_letter": "Dear KitCo, merged"}, headers=_ADMIN_H)
     _mk_rows = [a for a in _tc.get("/applications", headers=_ADMIN_H).json() if a["job_url"] == _mk_job["url"]]
     _mk_detail = _tc.get(f"/applications/{_mk_row['id']}", headers=_ADMIN_H).json()
@@ -12902,8 +12906,8 @@ with TestClient(_fastapi_app) as _tc:
         "account's row for the same posting never names this account's kit",
         (_mk_queued or {}).get("status") == "queued"
         and _mk_pending == {"id": _mk_kit["id"], "status": "done"}
-        and _tc.get(f"/applications/{_mk_kim_row['id']}", headers=_KIM_H).json().get("pending_kit") is None,
-        f"queued={_mk_queued} pending={_mk_pending}",
+        and _mk_kim_pending is None,
+        f"queued={_mk_queued} pending={_mk_pending} other account's row={_mk_kim_pending}",
     )
     check(
         "31.4/1: approving a kit for a posting this account already tracks puts the draft on THAT row: one row, "
