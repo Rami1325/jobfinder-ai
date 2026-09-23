@@ -1071,6 +1071,11 @@ class ApplicationDetail(BaseModel):
     excitement: int = 0
     created_at: str
     source: str = ""
+    # The template the tailored resume was SENT in ("" = a row from before
+    # 17.3, which re-downloads in the default). ApplicationOut always carried
+    # it and the detail did not, so the tracker's re-download rendered every
+    # CV as the default template (PLAN 31.1/8).
+    template: str = ""
     applied_at: Optional[str] = None
     last_email_at: Optional[str] = None
     last_email_kind: str = ""

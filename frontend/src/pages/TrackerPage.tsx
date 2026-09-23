@@ -29,6 +29,7 @@ import {
   listApplications,
   updateApplication,
   getStaleApplications,
+  type ResumeTemplate,
 } from "../api/client";
 import ResumeView from "../components/ResumeView";
 import TrackerAnalytics from "../components/TrackerAnalytics";
@@ -37,6 +38,7 @@ import InboxBar from "../components/inbox/InboxBar";
 import { AppliedBadge, CardDate, CardEmailBadge } from "../components/inbox/shared";
 import { Badge, Button, Card, CardTitle, CountUp, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
+import { TEMPLATE_IDS } from "../lib/templateSpecs";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
 import type { ApplicationDetail, ApplicationOut, StaleApplication } from "../types";
 
@@ -57,6 +59,15 @@ const COLUMNS: {
 const STATUSES = COLUMNS.map((c) => c.key);
 
 // Which follow-up stage to pre-select when jumping to the follow-up writer.
+/** The template this application was SENT in, for a re-download from the
+ * tracker. The row records it (`sentSignals`), and the downloads ignored it and
+ * rendered the default, so a CV sent as Executive came back as Standard
+ * (PLAN 31.1/8). "" (a row from before 17.3) or an id this build does not know
+ * is `undefined`, which renders the default. */
+function sentTemplate(template: string): ResumeTemplate | undefined {
+  return (TEMPLATE_IDS as readonly string[]).includes(template) ? (template as ResumeTemplate) : undefined;
+}
+
 function followUpStage(status: string): string {
   if (status === "interview") return "after an interview";
   if (status === "offer") return "after an offer";
@@ -740,6 +751,7 @@ export default function TrackerPage() {
                         detail.tailored_resume!,
                         "docx",
                         resumeFilename(detail.tailored_resume!.contact.name, detail.company),
+                        sentTemplate(detail.template ?? ""),
                       )
                     }
                   >
@@ -754,6 +766,7 @@ export default function TrackerPage() {
                         detail.tailored_resume!,
                         "pdf",
                         resumeFilename(detail.tailored_resume!.contact.name, detail.company),
+                        sentTemplate(detail.template ?? ""),
                       )
                     }
                   >

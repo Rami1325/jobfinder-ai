@@ -9082,6 +9082,17 @@ with TestClient(_fastapi_app) as _tc:
             for a in _tc.get("/applications", headers=_ADMIN_H).json()
         ),
     )
+    # PLAN 31.1/8: the tracker's detail view re-downloads the CV in the template
+    # it was SENT in, so the detail must carry it — ApplicationOut always did and
+    # ApplicationDetail did not, and every re-download came back as the default.
+    # The unknown twin stays "" (re-downloads in the default), never a guess.
+    _sent_detail = _tc.get(f"/applications/{_sent['id']}", headers=_ADMIN_H).json()
+    _unknown_detail = _tc.get(f"/applications/{_unknown['id']}", headers=_ADMIN_H).json()
+    check(
+        "31.1/8: the application detail carries the template it was sent in",
+        _sent_detail.get("template") == "executive" and _unknown_detail.get("template") == "",
+        f"sent={_sent_detail.get('template')!r} unknown={_unknown_detail.get('template')!r}",
+    )
 
     # Stale-application nudges (Home reminder): an "applied" app with no status
     # change for STALE_APPLICATION_DAYS (7) days surfaces; a fresh one does not.

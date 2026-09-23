@@ -2046,6 +2046,7 @@ def get_application(
         excitement=app.excitement or 0,
         created_at=app.created_at.isoformat() if app.created_at else "",
         source=app.source or "",
+        template=app.template or "",
         applied_at=_utc_iso(app.applied_at),
         last_email_at=_utc_iso(app.last_email_at),
         last_email_kind=events[0].kind if events else "",

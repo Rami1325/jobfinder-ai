@@ -334,6 +334,9 @@ export interface ApplicationDetail {
   excitement: number;
   created_at: string;
   source?: string;
+  /** The template the resume was SENT in; "" for a row from before 17.3, which
+   * re-downloads in the default. Optional: an older backend omits it. */
+  template?: string;
   applied_at?: string | null;
   last_email_at?: string | null;
   last_email_kind?: string;
