@@ -15,9 +15,12 @@ export function fitReason(
   t: TFn,
 ): string {
   const strong = (matched ?? []).filter(Boolean).slice(0, 3);
-  if (strong.length === 0) return "";
-  let s = t("fit.strongOn", { skills: strong.join(", ") });
   const gap = (gaps ?? []).filter(Boolean).slice(0, 2);
+  // Gaps alone still say something: the compact job row (PLAN 31.2/5) dropped
+  // the keyword chips that used to show them, so a posting that matched none
+  // of its top terms would otherwise say nothing at all about why.
+  if (strong.length === 0) return gap.length > 0 ? t("fit.gapOnly", { skills: gap.join(", ") }) : "";
+  let s = t("fit.strongOn", { skills: strong.join(", ") });
   if (gap.length > 0) s += " · " + t("fit.gap", { skills: gap.join(", ") });
   return s;
 }

@@ -66,7 +66,7 @@ import type {
 } from "../types";
 import { AlertsCard, CustomizeFields } from "./jobs/AlertsCard";
 import { HistoryRow, MatchCard, RestrictedRow } from "./jobs/cards";
-import { BatchTailorCard, KitRow } from "./jobs/kits";
+import { BatchTailorCard, KIT_THRESHOLDS, KitRow } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
 import { VersionHistoryModal } from "./jobs/VersionHistory";
 import { SearchScanPanel } from "./jobs/ScanPanel";
@@ -152,6 +152,11 @@ export default function JobsPage() {
 
   // -- Find on LinkedIn state --
   const [customOpen, setCustomOpen] = useState(false);
+  // RESULTS FIRST (PLAN 31.2/6). Once a search has answered, its card folds to
+  // one line ("Backend Engineer in Tel Aviv — 10 ranked · Edit") and the jobs
+  // start under it; the whole card stood between the user and the results.
+  // "Edit" unfolds it, and the next search folds it again.
+  const [editSearch, setEditSearch] = useState(false);
   const [ctx, setCtx] = useState<SearchContext | null>(null);
   const [prefilling, setPrefilling] = useState(false);
 
@@ -344,6 +349,7 @@ export default function JobsPage() {
 
   useEffect(() => {
     if (!searchResult) return;
+    setEditSearch(false);
     setCtx((p) => p ?? searchResult.context); // so opening Customize later starts from what was searched
     setSourceErrorsDismissed(false); // a fresh result gets a fresh warning
     setShowRestricted(false); // a fresh result starts with the filtered set collapsed
@@ -463,6 +469,33 @@ export default function JobsPage() {
   const searchedTitle = searched
     ? (searched.job_titles?.length ? searched.job_titles : [searched.job_title]).join(", ")
     : "";
+  const searchFolded = !!searchResult && !searching && !editSearch;
+  // The one-line account of what was searched and what came back, said once:
+  // on the folded card, or over the results while the card is open.
+  const searchSummary =
+    searched && searchResult ? (
+      <>
+        <Trans
+          t={t}
+          i18nKey={searched.location ? "search.summaryLoc" : "search.summary"}
+          values={{ title: searchedTitle, location: searched.location }}
+          components={[
+            <span key="0" />,
+            <span key="1" className="font-semibold text-ink" />,
+            <span key="2" />,
+            <span key="3" className="font-semibold text-ink" />,
+          ]}
+        />
+        {parseWorkModes(searched.work_mode).length > 0 &&
+          ` · ${parseWorkModes(searched.work_mode)
+            .map((w) => t(`workModes.${w}`))
+            .join(", ")}`}
+        {allowsRemote(searched.work_mode) && searched.include_worldwide && ` · ${t("search.worldwideTag")}`}
+        {" — "}
+        {t("search.ranked", { count: searchResult.matches.length })}
+        {searchResult.skipped > 0 && t("search.skipped", { count: searchResult.skipped })}
+      </>
+    ) : null;
   // The backend returns matches ranked by fit; re-sort client-side on demand.
   // "Best match" stays pinned to the top-fit job whatever the sort order.
   const bestMatch =
@@ -599,6 +632,15 @@ export default function JobsPage() {
 
       {mode === "search" && (
         <>
+          {searchFolded ? (
+            <Card className="flex items-center gap-3 py-3">
+              <Search size={16} className="shrink-0 text-accent-soft" aria-hidden />
+              <p className="min-w-0 flex-1 truncate text-sm text-ink-muted">{searchSummary}</p>
+              <Button size="sm" variant="secondary" onClick={() => setEditSearch(true)}>
+                {t("search.edit")}
+              </Button>
+            </Card>
+          ) : (
           <Card>
             <CardTitle>{t("search.cardTitle")}</CardTitle>
             <p className="mt-1 hidden text-sm text-ink-muted sm:block">
@@ -646,7 +688,14 @@ export default function JobsPage() {
             </div>
             <UsesNote feature="search" className="mt-2" />
           </Card>
+          )}
 
+          {/* The per-board progress is the best loading state in the app, and
+              once the search has answered it is a receipt standing between the
+              user and the jobs (measured: 440 px at 390). It folds with the
+              search card; a board that failed or came back empty is still said
+              above the results (`source_errors`, `source_empty`). */}
+          {!searchFolded && (
           <SearchScanPanel
             searching={searching}
             startedAt={startedAt}
@@ -654,6 +703,7 @@ export default function JobsPage() {
             result={searchResult}
             requestedSources={requestedSources}
           />
+          )}
 
           {/* Streamed match cards: each scored job lands here the moment its
               `match` frame arrives, sorted in by fit — the same MatchCard the
@@ -737,31 +787,9 @@ export default function JobsPage() {
                   </p>
                 )}
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  {searched && (
-                    <p className="text-sm text-ink-muted">
-                      <Trans
-                        t={t}
-                        i18nKey={searched.location ? "search.summaryLoc" : "search.summary"}
-                        values={{ title: searchedTitle, location: searched.location }}
-                        components={[
-                          <span key="0" />,
-                          <span key="1" className="font-semibold text-ink" />,
-                          <span key="2" />,
-                          <span key="3" className="font-semibold text-ink" />,
-                        ]}
-                      />
-                      {parseWorkModes(searched.work_mode).length > 0 &&
-                        ` · ${parseWorkModes(searched.work_mode)
-                          .map((w) => t(`workModes.${w}`))
-                          .join(", ")}`}
-                      {allowsRemote(searched.work_mode) &&
-                        searched.include_worldwide &&
-                        ` · ${t("search.worldwideTag")}`}
-                      {" — "}
-                      {t("search.ranked", { count: searchResult.matches.length })}
-                      {searchResult.skipped > 0 && t("search.skipped", { count: searchResult.skipped })}
-                    </p>
-                  )}
+                  {/* The summary lives on the folded search card; while that
+                      card is open for editing it is said here instead. */}
+                  {!searchFolded && searchSummary && <p className="text-sm text-ink-muted">{searchSummary}</p>}
                   <div className="flex flex-wrap items-center gap-4">
                     {appliedCount > 0 && (
                       <label
@@ -857,13 +885,6 @@ export default function JobsPage() {
                       </p>
                     );
                   })()}
-                {sortedMatches.length > 0 && (
-                  <BatchTailorCard
-                    matches={searchResult.matches}
-                    onViewKits={() => setMode("kits")}
-                    attractKey={startedAt}
-                  />
-                )}
                 {visible(sortedMatches).map((m, i) => (
                   <motion.div
                     key={m.url || i}
@@ -878,6 +899,21 @@ export default function JobsPage() {
                   (searchResult.filtered ?? []).map((job, i) => (
                     <RestrictedRow key={job.url || `filtered-${i}`} job={job} />
                   ))}
+                {/* BELOW the jobs, since PLAN 31.2/6, and only when a job can
+                    clear its bar at the lowest setting it offers: above the list
+                    it stood between the user and the results, and on a search
+                    with nothing strong enough it showed a disabled "Tailor 0
+                    matches". Rounded as the card and the email round (the
+                    displayed integer, job-search.md). */}
+                {searchResult.matches.some(
+                  (m) => m.url && m.jd_text && Math.round(m.overall) >= KIT_THRESHOLDS[0],
+                ) && (
+                  <BatchTailorCard
+                    matches={searchResult.matches}
+                    onViewKits={() => setMode("kits")}
+                    attractKey={startedAt}
+                  />
+                )}
               </motion.div>
             )}
           </AnimatePresence>

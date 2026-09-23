@@ -10,7 +10,6 @@ import {
   FileText,
   LayoutTemplate,
   Monitor,
-  MoreHorizontal,
   ScanEye,
   type LucideIcon,
   X,
@@ -24,11 +23,12 @@ import { usePdfPreview, useXray } from "../hooks/useFilePreview";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { downloadResume, resumeFilename, reviewRewrites, type ResumeTemplate } from "../api/client";
 import { PDF_ONLY, TEMPLATE_SPECS } from "../lib/templateSpecs";
-import { Button, Card, CardTitle, Skeleton } from "./ui";
+import { Button, Card, CardTitle, MoreMenu, Skeleton, type MoreItem } from "./ui";
 import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
 import type { FactsLedger, ResumeModel, ReviewResult, ReviewRewrite } from "../types";
 
+export type { MoreItem };
 export type DocView = "screen" | "file" | "ats";
 const VIEWS: DocView[] = ["screen", "file", "ats"];
 
@@ -64,83 +64,6 @@ interface Tool {
    * tooltip, and the icon says the rest. */
   short?: string;
   onClick: () => void;
-}
-
-/** An entry in the phone row's "⋯" menu (PLAN 31.2/3): the actions that have
- * no place in a four-slot row. Replace resume today; 31.6 adds the version
- * history. TailorPage passes its own ("Tailor for a different job"). */
-export interface MoreItem {
-  key: string;
-  label: string;
-  Icon: LucideIcon;
-  onClick: () => void;
-}
-
-/** The "⋯" at the end of the phone row, and the short list it opens. A list of
- * buttons that says so, not `role="menu"`: the account menu's reason (the menu
- * pattern owes arrow keys and a roving tabindex). Outside the row's scroller,
- * so the list it opens is never clipped by it. Escape and a tap outside close
- * it, and a choice closes it before it runs. */
-function MoreMenu({ items, label }: { items: MoreItem[]; label: string }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      setOpen(false);
-      buttonRef.current?.focus();
-    };
-    const onDown = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onDown, true);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onDown, true);
-    };
-  }, [open]);
-  return (
-    <div ref={ref} className="relative shrink-0">
-      <button
-        ref={buttonRef}
-        type="button"
-        aria-label={label}
-        title={label}
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          "grid min-h-8 w-9 place-items-center rounded-lg border transition",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
-          open
-            ? "border-accent bg-accent text-white"
-            : "border-line bg-panel text-ink-muted hover:border-accent/40 hover:text-ink",
-        )}
-      >
-        <MoreHorizontal size={15} aria-hidden />
-      </button>
-      {open && (
-        <div className="animate-fade-up absolute end-0 top-[calc(100%+0.375rem)] z-30 w-56 rounded-xl border border-line bg-bg-soft p-1.5 shadow-panel">
-          {items.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                item.onClick();
-              }}
-              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-start text-sm font-medium text-ink-muted transition-colors hover:bg-panel-2/60 hover:text-ink"
-            >
-              <item.Icon size={15} className="shrink-0" aria-hidden />
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 /**

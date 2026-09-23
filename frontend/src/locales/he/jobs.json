@@ -237,7 +237,8 @@
     "filteredWorkMode_other": "{{count}} משרות הוסתרו: כתוב בהן אופן עבודה שלא בחרתם.",
     "filteredNotRemote_one": "משרה אחת בחו\"ל הוסתרה: לא כתוב בה שהיא מרחוק.",
     "filteredNotRemote_two": "{{count}} משרות בחו\"ל הוסתרו: לא כתוב בהן שהן מרחוק.",
-    "filteredNotRemote_other": "{{count}} משרות בחו\"ל הוסתרו: לא כתוב בהן שהן מרחוק."
+    "filteredNotRemote_other": "{{count}} משרות בחו\"ל הוסתרו: לא כתוב בהן שהן מרחוק.",
+    "edit": "עריכה"
   },
   "workModes": {
     "any": "הכול",
@@ -268,13 +269,10 @@
     "alsoOn": "גם ב־",
     "salaryNote": "השכר כפי שכתוב במשרה — אנחנו אף פעם לא מנחשים.",
     "untitled": "משרה ללא שם",
-    "atsLabel": "כיסוי ATS",
-    "recruiterFitLabel": "התאמה למגייס",
     "posted": "פורסם {{when}}",
     "firstPosted": "פורסם לראשונה {{when}}",
     "viewOn": "צפייה ב{{source}}",
     "openOn": "פתיחה ב{{source}}",
-    "tailorToThis": "התאימו למשרה הזו",
     "kit": "ערכת הגשה",
     "kitFailed": "התאמת הערכה נכשלה — נסו שוב.",
     "kitExists": "למשרה הזו כבר יש ערכה — בדקו בלשונית ערכות ההגשה.",
@@ -282,7 +280,6 @@
     "outreach": "פנייה",
     "brief": "תדריך חברה",
     "removeFromHistory": "הסרה מההיסטוריה",
-    "share": "שיתוף",
     "shareWhatsApp": "שיתוף בוואטסאפ",
     "geo": {
       "us": "כנראה לארה\"ב בלבד",
@@ -310,11 +307,14 @@
     "save": "שמירה למאוחר",
     "saveDone": "נשמר — במעקב המשרות.",
     "saveFailed": "לא הצלחנו לשמור את המשרה. נסו שוב.",
-    "savedGoTracker": "נשמרה · למעקב"
+    "savedGoTracker": "נשמרה · למעקב",
+    "matchChip": "התאמה {{value}}%",
+    "moreActions": "פעולות נוספות"
   },
   "fit": {
     "strongOn": "חוזקות: {{skills}}",
-    "gap": "לסגור: {{skills}}"
+    "gap": "לסגור: {{skills}}",
+    "gapOnly": "חסר: {{skills}}"
   },
   "alerts": {
     "title": "התראות במייל",

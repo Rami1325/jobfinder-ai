@@ -11118,6 +11118,67 @@ try {
   fail(`action bar clearance check (check 56) could not run: ${e.message}`);
 }
 
+// ---- 57. a compact job row keeps every door, and its "⋯" is on top ------------ //
+// PLAN 31.2/5 and /6, 2026-09-23. A search result was about 700 px at 390 (a ring,
+// three numbers, five chips, five stacked buttons): one job per screen. It is a
+// compact row now, three per screen, and what left it went under "⋯" until the
+// job page (31.4) exists: the kit, the outreach, the brief, the posting and the
+// share, and on a History row Remove. Two things are pinned: (a) every one of
+// those entries is still in each row's list, and (b) the list is PORTALLED to
+// <body>, because inside the row it opened BEHIND the next card (each card's
+// entry animation is a stacking context; measured, not reasoned). And (c) on the
+// Jobs page, "Tailor my top matches" sits BELOW the results and only when a job
+// can clear its lowest bar: above them it stood between the user and the jobs,
+// with a disabled "Tailor 0 matches" on a weak search. Probed on the real files.
+try {
+  const keysOf = (src, head) => {
+    const body = fnSource(src, head);
+    const list = /const more: MoreItem\[\] = \[([\s\S]*?)\n  \];/.exec(body);
+    if (!list) throw new Error(`could not find \`const more: MoreItem[]\` in ${head}`);
+    return new Set([...list[1].matchAll(/\bkey:\s*"(\w+)"/g)].map((m) => m[1]));
+  };
+  const read57 = (cards, menu, jobs) => {
+    const out = [];
+    for (const [head, want] of [
+      ["export function MatchCard(", ["kit", "outreach", "brief", "open", "share"]],
+      ["export function HistoryRow(", ["outreach", "brief", "open", "share", "remove"]],
+    ]) {
+      const have = keysOf(cards, head);
+      for (const k of want) if (!have.has(k)) out.push(`${head.replace("export function ", "").replace("(", "")}'s "⋯" lost its "${k}" entry, a door the row had before it was compacted`);
+    }
+    // The TARGET, after the list's closing tag: the list's own `dir` also
+    // reads document.body, and a looser reader passed a portal aimed elsewhere.
+    if (!/createPortal\([\s\S]*?<\/div>,\s*document\.body,?\s*\)/.test(menu))
+      out.push("MoreMenu's list is not portalled to document.body, so it opens behind the next card");
+    const list = jobs.indexOf("visible(sortedMatches).map(");
+    const batch = jobs.indexOf("<BatchTailorCard");
+    if (list === -1 || batch === -1) throw new Error("could not find the results list or <BatchTailorCard> in JobsPage");
+    if (batch < list) out.push("\"Tailor my top matches\" is above the results again");
+    if (!/KIT_THRESHOLDS\[0\][\s\S]{0,200}?<BatchTailorCard/.test(jobs))
+      out.push("\"Tailor my top matches\" shows when no job can clear its lowest bar (\"Tailor 0 matches\")");
+    return out;
+  };
+  const cards = decomment(read("pages/jobs/cards.tsx"));
+  const menu = decomment(read("components/ui/MoreMenu.tsx"));
+  const jobs = decomment(read("pages/JobsPage.tsx"));
+  const real = read57(cards, menu, jobs);
+  for (const [label, c, m, j] of [
+    ["the kit entry dropped", cards.replace('? [{ key: "kit", label:', '? [{ key: "kitx", label:'), menu, jobs],
+    ["History's remove dropped", cards.replace('{ key: "remove", label:', '{ key: "removed", label:'), menu, jobs],
+    ["the list back inside the row", cards, menu.replace("document.body,", "ref.current as HTMLElement,"), jobs],
+    ["no bar on the batch card", cards, menu, jobs.replace("Math.round(m.overall) >= KIT_THRESHOLDS[0]", "Math.round(m.overall) >= 0")],
+  ]) {
+    if (c === cards && m === menu && j === jobs) {
+      if (real.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!read57(c, m, j).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of real) fail(`check 57: ${p} (PLAN 31.2/5, /6)`);
+} catch (e) {
+  fail(`compact job row check (check 57) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

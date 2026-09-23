@@ -19,7 +19,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { listKits, saveApplication } from "../../api/client";
-import { Badge, BorderGlow, Button, CountUp, ProgressRing, useToast } from "../../components/ui";
+import { Badge, BorderGlow, Button, MoreMenu, useToast, type MoreItem } from "../../components/ui";
 import { fitReason } from "../../lib/fitReason";
 import { useUses } from "../../lib/usesStore";
 import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
@@ -106,21 +106,11 @@ export function CompanyAvatar({ company, url, logoUrl }: { company: string; url?
 }
 
 /** WhatsApp share for a job card — Israel's default way to pass a job along. */
-export function WhatsAppShare({ title, company, url }: { title: string; company: string; url: string }) {
-  const { t } = useTranslation("jobs");
-  if (!url) return null;
+/** A WhatsApp share of the posting: its title, company and link. An entry in
+ * the job row's "⋯" since PLAN 31.2/5, where it was a link on every card. */
+export function whatsAppHref(title: string, company: string, url: string, t: TFunction<"jobs">): string {
   const text = `${title || t("card.untitled")}${company ? ` — ${company}` : ""}\n${url}`;
-  return (
-    <a
-      href={`https://wa.me/?text=${encodeURIComponent(text)}`}
-      target="_blank"
-      rel="noreferrer"
-      title={t("card.shareWhatsApp")}
-      className="inline-flex items-center gap-1 text-mint hover:underline"
-    >
-      <MessageCircle size={12} /> {t("card.share")}
-    </a>
-  );
+  return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
 
@@ -500,32 +490,26 @@ export function AppStatusBadge({ status }: { status: string }) {
 
 // Matched (green) then missing (red) JD keywords on a job card. Matched chips
 // are capped at 3 (PLAN 5.1/9.1) — the gaps are the actionable part.
-export function KeywordChips({ matched, gaps }: { matched?: string[]; gaps: string[] }) {
-  const top = (matched ?? []).slice(0, 3);
-  if (top.length === 0 && gaps.length === 0) return null;
-  return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
-      {top.map((k) => (
-        <Badge key={`ok-${k}`} tone="covered">
-          {k}
-        </Badge>
-      ))}
-      {gaps.map((g) => (
-        <Badge key={g} tone="missing">
-          {g}
-        </Badge>
-      ))}
-    </div>
-  );
+/** A job result's surface. Every row wears the cursor-reactive BorderGlow (the
+ * owner asked for it on every card, 2026-07-13); the top match is called out by
+ * its mint "best" badge. COMPACT since PLAN 31.2/5: a card measured about 700 px
+ * at 390 (a 100 px ring, three numbers, five chips and five stacked buttons), so
+ * a phone showed one job per screen. */
+export function JobResultCard({ children }: { children: ReactNode }) {
+  return <BorderGlow innerClassName="flex items-start gap-3 p-3.5">{children}</BorderGlow>;
 }
 
-/** Job-result card surface — every row gets the cursor-reactive BorderGlow;
- * the top match is still called out by its mint "best" badge. */
-export function JobResultCard({ children }: { children: ReactNode }) {
+/** The search's one number, as a chip (PLAN 31.2/5): the blend it ranks by
+ * (job-search.md, "`overall` is the right currency here"), rounded half-up like
+ * every place that reads it (`alerts.displayed_score`, the kit threshold), so
+ * this chip, the email and the batch queue cannot disagree about a job. The
+ * ring and the two numbers it blends move to the job page (31.4). */
+export function MatchChip({ value }: { value: number }) {
+  const { t } = useTranslation("jobs");
   return (
-    <BorderGlow innerClassName="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
-      {children}
-    </BorderGlow>
+    <span className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-ink">
+      {t("card.matchChip", { value: Math.round(value) })}
+    </span>
   );
 }
 
@@ -536,7 +520,7 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
   const toast = useToast();
   const { batching, kits } = useSyncExternalStore(subscribeKits, getKitsState);
   // Opening a job's existing kit is free and a new one uses 1 (Phase 30 / C4), so
-  // at none left the button is disabled only when the loaded kits hold no live
+  // at none left the kit entry is disabled only when the loaded kits hold no live
   // kit for this posting. With the list not loaded, the server decides.
   const tailorOut = useUses("tailor").out;
   const hasKit =
@@ -584,7 +568,7 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
     setKitError("");
     const summary = await startKitBatch([kitJobFromMatch(m)]);
     if (!summary) {
-      // A refusal, the monthly limit included, is said under this button rather
+      // A refusal, the monthly limit included, is said under the row rather
       // than in a toast that is gone before anyone reads why.
       setKitError(getKitsState().error);
       return;
@@ -607,196 +591,169 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
     toast("info", t("card.kitExists"));
   }
 
+  const jdForTools = jdTextWithLocation(m.jd_text, m.location);
+  const reason = fitReason(m.top_matched, m.top_gaps, t);
+  // What has no slot of its own on a compact row (PLAN 31.2/5). The kit, the
+  // outreach and the brief move to the job's own page with 31.4; until then
+  // they are here, so a search result keeps every door it had.
+  const more: MoreItem[] = [
+    ...(m.url && m.jd_text
+      ? [{ key: "kit", label: t("card.kit"), Icon: Wand2, onClick: () => void makeKit(), disabled: kitOut || batching }]
+      : []),
+    {
+      key: "outreach",
+      label: t("card.outreach"),
+      Icon: Send,
+      onClick: () => nav("/tools/outreach", { state: { jdText: jdForTools, company: m.company, jobTitle: m.title } }),
+    },
+    {
+      key: "brief",
+      label: t("card.brief"),
+      Icon: Building2,
+      onClick: () =>
+        nav("/tools/company-brief", { state: { jdText: jdForTools, company: m.company, jobTitle: m.title } }),
+    },
+    ...(m.url
+      ? [
+          {
+            key: "open",
+            label: t("card.viewOn", { source: sourceLabel(m.source) || "LinkedIn" }),
+            Icon: ExternalLink,
+            href: m.url,
+          },
+          { key: "share", label: t("card.shareWhatsApp"), Icon: MessageCircle, href: whatsAppHref(m.title, m.company, m.url, t) },
+        ]
+      : []),
+  ];
+
   return (
     <JobResultCard>
-      <ProgressRing value={m.overall} size={92} stroke={8} label={t("card.fit")} />
-      <div className="flex min-w-0 flex-1 items-start gap-3">
-        <CompanyAvatar company={m.company} url={m.url || undefined} logoUrl={m.logo_url} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            {best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}
-            <p className="min-w-0 max-w-full truncate font-semibold text-ink">
-              {m.title || t("card.untitled")}
-            </p>
-            {/* "New" never sits beside "Older", and it reads the EARLIEST board
-                date: a role relisted yesterday, or a Greenhouse role touched
-                yesterday but first published last month, is not new at any
-                "Posted within" setting. */}
-            {!m.stale && <NewBadge postedAt={m.first_posted_at || m.posted_at} />}
-            {/* NEVER TWO AGE CHIPS. A `long_open` ghost line and the "Older"
-                badge make the same claim — this posting is old — and drawing
-                both has the card arguing with itself about which number to
-                believe. StaleBadge counts from the earliest BOARD-STATED date
-                (`first_posted_at`), not the listing's rewritable `posted_at`,
-                but the ghost line still wins because it also carries the
-                suspicion — even when its first_seen basis is LATER than
-                `first_posted_at` (a known gap: long_open does not read that
-                date yet). The alert email follows the same rule
-                (`alerts._older_chip_date`). This is the kind of line a later
-                edit silently reinstates, so note the two wrong ways to write
-                it: an unconditional `<StaleBadge>` puts both back, and gating
-                on `m.ghost` instead deletes the age from every card carrying a
-                signal we chose NOT to draw. The gate is `ghostShown`, the same
-                value `GhostNote` renders — derived, never restated. */}
-            {ghostShown?.kind !== "long_open" && (
-              <StaleBadge stale={m.stale} postedAt={m.posted_at} firstPostedAt={m.first_posted_at} />
-            )}
-            {m.source && <Badge className="shrink-0">{sourceLabel(m.source)}</Badge>}
-            {m.salary?.raw && (
-              <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
-                {m.salary.raw}
-              </Badge>
-            )}
-            <AlsoOnLinks links={m.also_on} />
-            {status && <AppStatusBadge status={status} />}
-          </div>
-          {/* The work modes the POSTING states, as words on this line rather
-              than one more badge in a row already full at 390 px. Nothing when
-              it says nothing: unknown is not "on-site", and a "Remote" search
-              keeps such a posting on purpose (the hint under the control). */}
-          <p className="text-sm text-ink-muted">
-            {m.company || "—"}
-            {m.location ? ` · ${m.location}` : ""}
-            {m.work_modes && m.work_modes.length > 0
-              ? ` · ${m.work_modes.map((mode) => t(`workModes.${mode}`)).join(" / ")}`
-              : ""}
+      <CompanyAvatar company={m.company} url={m.url || undefined} logoUrl={m.logo_url} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start gap-2">
+          {/* `dir="auto"`: an English title in the Hebrew UI is an LTR run in
+              an RTL box, and `truncate` would clip its START, where the words
+              that identify the job are. The toolbar's name has the same rule. */}
+          <p dir="auto" className="min-w-0 flex-1 truncate font-semibold text-ink">
+            {m.title || t("card.untitled")}
           </p>
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-            <span>
-              {t("card.atsLabel")}{" "}
-              <CountUp
-                to={Math.round(m.keyword_coverage)}
-                duration={0.9}
-                suffix="%"
-                className="font-medium tabular-nums text-ink"
-              />
-            </span>
-            <span>
-              {t("card.recruiterFitLabel")}{" "}
-              <CountUp
-                to={Math.round(m.fit_score)}
-                duration={0.9}
-                suffix="%"
-                className="font-medium tabular-nums text-ink"
-              />
-            </span>
-            {m.posted_at && (
-              <span title={m.posted_at}>{t("card.posted", { when: postedAgo(m.posted_at, t) })}</span>
-            )}
-            {m.url && (
-              <a
-                href={m.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-accent-soft hover:underline"
-              >
-                <ExternalLink size={12} /> {t("card.viewOn", { source: sourceLabel(m.source) || "LinkedIn" })}
-              </a>
-            )}
-            <WhatsAppShare title={m.title} company={m.company} url={m.url} />
-          </div>
-          <GeoNote geo={m.geo_restriction} />
-          <GhostNote ghost={m.ghost} />
-          <PostingNote geo={!!m.geo_restriction} ghost={!!ghostShown} />
-          {(() => {
-            const reason = fitReason(m.top_matched, m.top_gaps, t);
-            return reason ? (
-              <p dir="auto" className="mt-2 text-xs text-ink-faint">{reason}</p>
-            ) : null;
-          })()}
-          <KeywordChips matched={m.top_matched} gaps={m.top_gaps} />
+          <MatchChip value={m.overall} />
         </div>
-      </div>
-      <div className="flex shrink-0 flex-col gap-2">
-        <Button
-          variant="secondary"
-          icon={<ArrowRight size={15} className="rtl:-scale-x-100" />}
-          onClick={() =>
-            nav("/app", {
-              state: {
-                jdText: jdTextWithLocation(m.jd_text, m.location),
-                jobUrl: m.url || undefined,
-                jobTitle: m.title,
-                company: m.company,
-              },
-            })
-          }
-        >
-          {t("card.tailorToThis")}
-        </Button>
-        {m.url && m.jd_text && (
-          <>
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={batching}
-              disabled={kitOut}
-              icon={<Wand2 size={14} />}
-              onClick={makeKit}
-            >
-              {t("card.kit")}
-            </Button>
-            {kitError && (
-              <p role="alert" className="max-w-[16rem] text-sm text-danger">
-                {kitError}
-              </p>
-            )}
-          </>
+        {/* company · when · the work modes the POSTING states · place. Words on
+            this line rather than more badges; nothing for modes when it says
+            nothing, because unknown is not "on-site" and a "Remote" search
+            keeps such a posting on purpose (the hint under the control). The
+            place goes LAST because it is the long part ("Tel Aviv District,
+            Israel") and the one to lose when the line is cut; `dir="auto"` so
+            the cut lands at its end, not at the company's first letters. */}
+        <p dir="auto" className="truncate text-sm text-ink-muted">
+          {m.company || "—"}
+          {m.posted_at && <span title={m.posted_at}>{` · ${postedAgo(m.posted_at, t)}`}</span>}
+          {m.work_modes && m.work_modes.length > 0
+            ? ` · ${m.work_modes.map((mode) => t(`workModes.${mode}`)).join(" / ")}`
+            : ""}
+          {m.location ? ` · ${m.location}` : ""}
+        </p>
+        {/* Only when one of them has something to say (`empty:hidden`). */}
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">
+          {best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}
+          {/* "New" never sits beside "Older", and it reads the EARLIEST board
+              date: a role relisted yesterday, or a Greenhouse role touched
+              yesterday but first published last month, is not new at any
+              "Posted within" setting. */}
+          {!m.stale && <NewBadge postedAt={m.first_posted_at || m.posted_at} />}
+          {/* NEVER TWO AGE CHIPS. A `long_open` ghost line and the "Older"
+              badge make the same claim — this posting is old — and drawing
+              both has the card arguing with itself about which number to
+              believe. StaleBadge counts from the earliest BOARD-STATED date
+              (`first_posted_at`), not the listing's rewritable `posted_at`,
+              but the ghost line still wins because it also carries the
+              suspicion — even when its first_seen basis is LATER than
+              `first_posted_at` (a known gap: long_open does not read that
+              date yet). The alert email follows the same rule
+              (`alerts._older_chip_date`). This is the kind of line a later
+              edit silently reinstates, so note the two wrong ways to write
+              it: an unconditional `<StaleBadge>` puts both back, and gating
+              on `m.ghost` instead deletes the age from every card carrying a
+              signal we chose NOT to draw. The gate is `ghostShown`, the same
+              value `GhostNote` renders — derived, never restated. */}
+          {ghostShown?.kind !== "long_open" && (
+            <StaleBadge stale={m.stale} postedAt={m.posted_at} firstPostedAt={m.first_posted_at} />
+          )}
+          {m.salary?.raw && (
+            <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
+              {m.salary.raw}
+            </Badge>
+          )}
+          <AlsoOnLinks links={m.also_on} />
+          {status && <AppStatusBadge status={status} />}
+        </div>
+        <GeoNote geo={m.geo_restriction} />
+        <GhostNote ghost={m.ghost} />
+        <PostingNote geo={!!m.geo_restriction} ghost={!!ghostShown} />
+        {/* The verdict and its reason in one line: the top terms it has and the
+            top ones it misses, by name. Not "Has 3 of 5": the lists are the
+            first six of each, so a count would be a count of what we kept. */}
+        {reason && (
+          <p dir="auto" className="mt-1 truncate text-xs text-ink-faint">
+            {reason}
+          </p>
         )}
-        {status ? (
-          // NOT disabled: it is the only route to the tracker the toast just
-          // named, and a disabled button dispatches no click at all.
+        <div className="mt-2 flex items-center gap-2">
           <Button
-            variant="ghost"
             size="sm"
-            icon={<BookmarkCheck size={14} />}
-            onClick={() => nav("/tracker")}
+            icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
+            onClick={() =>
+              nav("/app", {
+                state: {
+                  jdText: jdForTools,
+                  jobUrl: m.url || undefined,
+                  jobTitle: m.title,
+                  company: m.company,
+                },
+              })
+            }
           >
-            {t("card.savedGoTracker")}
+            {t("card.tailor")}
           </Button>
-        ) : (
-          // Only offered when the posting has a URL. A pasted listing has none
-          // (`match_jobs` builds JobMatch without one), so its tracker row
-          // could never be matched back by `appStatusByUrl` — the button would
-          // reappear on every render and write a duplicate row each time, with
-          // no way to reopen the posting from the tracker.
-          m.url && (
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={saving}
-              disabled={saving}
-              icon={<Bookmark size={14} />}
-              onClick={saveForLater}
+          {status ? (
+            // NOT disabled: it is the only route to the tracker the toast just
+            // named, and a disabled button dispatches no click at all.
+            <button
+              type="button"
+              aria-label={t("card.savedGoTracker")}
+              title={t("card.savedGoTracker")}
+              onClick={() => nav("/tracker")}
+              className="grid min-h-8 w-9 place-items-center rounded-lg border border-mint/40 bg-mint/10 text-mint transition hover:bg-mint/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
             >
-              {t("card.save")}
-            </Button>
-          )
+              <BookmarkCheck size={15} aria-hidden />
+            </button>
+          ) : (
+            // Only offered when the posting has a URL. A pasted listing has none
+            // (`match_jobs` builds JobMatch without one), so its tracker row
+            // could never be matched back by `appStatusByUrl` — the button would
+            // reappear on every render and write a duplicate row each time, with
+            // no way to reopen the posting from the tracker.
+            m.url && (
+              <button
+                type="button"
+                aria-label={t("card.save")}
+                title={t("card.save")}
+                disabled={saving}
+                onClick={saveForLater}
+                className="grid min-h-8 w-9 place-items-center rounded-lg border border-line bg-panel text-ink-muted transition hover:border-accent/40 hover:text-ink disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                <Bookmark size={15} aria-hidden />
+              </button>
+            )
+          )}
+          <MoreMenu items={more} label={t("card.moreActions")} className="ms-auto" />
+        </div>
+        {kitError && (
+          <p role="alert" className="mt-1.5 text-sm text-danger">
+            {kitError}
+          </p>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<Send size={14} className="rtl:-scale-x-100" />}
-          onClick={() =>
-            nav("/tools/outreach", {
-              state: { jdText: jdTextWithLocation(m.jd_text, m.location), company: m.company, jobTitle: m.title },
-            })
-          }
-        >
-          {t("card.outreach")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<Building2 size={14} />}
-          onClick={() =>
-            nav("/tools/company-brief", {
-              state: { jdText: jdTextWithLocation(m.jd_text, m.location), company: m.company, jobTitle: m.title },
-            })
-          }
-        >
-          {t("card.brief")}
-        </Button>
       </div>
     </JobResultCard>
   );
@@ -811,110 +768,102 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
   // is then not "New", and its row says when it was first posted.
   const firstPosted = hit.first_posted_at || hit.posted_at;
   const earlier = !!hit.first_posted_at && hit.first_posted_at !== hit.posted_at;
+  const jdForTools = jdTextWithLocation(hit.jd_text, hit.location);
+  const reason = fitReason(hit.top_matched, hit.top_gaps, t);
+  // The compact row's "⋯" (PLAN 31.2/5), the search row's list plus Remove,
+  // which still waits out its undo window (JobsPage `deleteHit`, 31.1/6).
+  const more: MoreItem[] = [
+    {
+      key: "outreach",
+      label: t("card.outreach"),
+      Icon: Send,
+      onClick: () => nav("/tools/outreach", { state: { jdText: jdForTools, company: hit.company, jobTitle: hit.title } }),
+    },
+    {
+      key: "brief",
+      label: t("card.brief"),
+      Icon: Building2,
+      onClick: () =>
+        nav("/tools/company-brief", { state: { jdText: jdForTools, company: hit.company, jobTitle: hit.title } }),
+    },
+    ...(hit.url
+      ? [
+          {
+            key: "open",
+            label: t("card.openOn", { source: sourceLabel(hit.source) || "LinkedIn" }),
+            Icon: ExternalLink,
+            href: hit.url,
+          },
+          {
+            key: "share",
+            label: t("card.shareWhatsApp"),
+            Icon: MessageCircle,
+            href: whatsAppHref(hit.title, hit.company, hit.url, t),
+          },
+        ]
+      : []),
+    { key: "remove", label: t("card.removeFromHistory"), Icon: Trash2, onClick: () => onDelete(hit.id) },
+  ];
   return (
     <JobResultCard>
-      <ProgressRing value={hit.overall} size={64} stroke={6} label={t("card.fit")} />
-      <div className="flex min-w-0 flex-1 items-start gap-3">
-        <CompanyAvatar company={hit.company} url={hit.url || undefined} logoUrl={hit.logo_url} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="min-w-0 max-w-full truncate font-semibold text-ink">
-              {hit.title || t("card.untitled")}
-            </p>
-            <NewBadge postedAt={firstPosted} />
-            {hit.source && <Badge className="shrink-0">{sourceLabel(hit.source)}</Badge>}
-            {hit.salary?.raw && (
-              <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
-                {hit.salary.raw}
-              </Badge>
-            )}
-            <AlsoOnLinks links={hit.also_on} />
-            <AppStatusBadge status={hit.app_status} />
-          </div>
-          <p className="text-sm text-ink-muted">
-            {hit.company || "—"}
-            {hit.location ? ` · ${hit.location}` : ""}
+      <CompanyAvatar company={hit.company} url={hit.url || undefined} logoUrl={hit.logo_url} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start gap-2">
+          <p dir="auto" className="min-w-0 flex-1 truncate font-semibold text-ink">
+            {hit.title || t("card.untitled")}
           </p>
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-            <span>{t("history.searchedOn", { date: hit.searched_at.slice(0, 10) })}</span>
-            {hit.posted_at && (
-              <span title={hit.posted_at}>{t("card.posted", { when: postedAgo(hit.posted_at, t) })}</span>
-            )}
-            {earlier && (
-              <span title={hit.first_posted_at}>
-                {t("card.firstPosted", { when: postedAgo(hit.first_posted_at ?? "", t) })}
-              </span>
-            )}
-            {hit.url && (
-              <a
-                href={hit.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-accent-soft hover:underline"
-              >
-                <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(hit.source) || "LinkedIn" })}
-              </a>
-            )}
-            <WhatsAppShare title={hit.title} company={hit.company} url={hit.url} />
-          </div>
-          {(() => {
-            const reason = fitReason(hit.top_matched, hit.top_gaps, t);
-            return reason ? (
-              <p dir="auto" className="mt-2 text-xs text-ink-faint">{reason}</p>
-            ) : null;
-          })()}
-          <KeywordChips matched={hit.top_matched} gaps={hit.top_gaps} />
+          <MatchChip value={hit.overall} />
         </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
-          onClick={() =>
-            nav("/app", {
-              state: {
-                jdText: jdTextWithLocation(hit.jd_text, hit.location),
-                jobUrl: hit.url || undefined,
-                jobTitle: hit.title,
-                company: hit.company,
-              },
-            })
-          }
-        >
-          {t("card.tailor")}
-        </Button>
-        <button
-          onClick={() =>
-            nav("/tools/outreach", {
-              state: { jdText: jdTextWithLocation(hit.jd_text, hit.location), company: hit.company, jobTitle: hit.title },
-            })
-          }
-          title={t("card.outreach")}
-          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:text-accent-soft md:min-h-0 md:min-w-0"
-        >
-          <Send size={14} className="rtl:-scale-x-100" />
-        </button>
-        <button
-          onClick={() =>
-            nav("/tools/company-brief", {
-              state: { jdText: jdTextWithLocation(hit.jd_text, hit.location), company: hit.company, jobTitle: hit.title },
-            })
-          }
-          title={t("card.brief")}
-          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:text-accent-soft md:min-h-0 md:min-w-0"
-        >
-          <Building2 size={14} />
-        </button>
-        <button
-          onClick={() => onDelete(hit.id)}
-          title={t("card.removeFromHistory")}
-          className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-line p-2 text-ink-muted transition-all hover:-translate-y-0.5 hover:border-danger/50 hover:text-danger md:min-h-0 md:min-w-0"
-        >
-          <Trash2 size={14} />
-        </button>
+        {/* The search row's order and direction, for its reasons. */}
+        <p dir="auto" className="truncate text-sm text-ink-muted">
+          {hit.company || "—"}
+          {hit.posted_at && <span title={hit.posted_at}>{` · ${postedAgo(hit.posted_at, t)}`}</span>}
+          {hit.location ? ` · ${hit.location}` : ""}
+        </p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">
+          <NewBadge postedAt={firstPosted} />
+          {hit.salary?.raw && (
+            <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
+              {hit.salary.raw}
+            </Badge>
+          )}
+          <AlsoOnLinks links={hit.also_on} />
+          <AppStatusBadge status={hit.app_status} />
+        </div>
+        <p className="mt-1 text-xs text-ink-faint">
+          {t("history.searchedOn", { date: hit.searched_at.slice(0, 10) })}
+          {earlier && (
+            <span title={hit.first_posted_at}>
+              {" · "}
+              {t("card.firstPosted", { when: postedAgo(hit.first_posted_at ?? "", t) })}
+            </span>
+          )}
+        </p>
+        {reason && (
+          <p dir="auto" className="mt-1 truncate text-xs text-ink-faint">
+            {reason}
+          </p>
+        )}
+        <div className="mt-2 flex items-center gap-2">
+          <Button
+            size="sm"
+            icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
+            onClick={() =>
+              nav("/app", {
+                state: {
+                  jdText: jdForTools,
+                  jobUrl: hit.url || undefined,
+                  jobTitle: hit.title,
+                  company: hit.company,
+                },
+              })
+            }
+          >
+            {t("card.tailor")}
+          </Button>
+          <MoreMenu items={more} label={t("card.moreActions")} className="ms-auto" />
+        </div>
       </div>
     </JobResultCard>
   );
 }
-

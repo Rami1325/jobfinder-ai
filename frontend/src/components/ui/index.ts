@@ -17,3 +17,4 @@ export { default as Modal } from "./Modal";
 export { default as Disclosure } from "./Disclosure";
 export { default as Spinner } from "./Spinner";
 export { ToastProvider, useToast } from "./Toast";
+export { default as MoreMenu, type MoreItem } from "./MoreMenu";

@@ -218,7 +218,8 @@
     "filteredWorkMode_one": "{{count}} job hidden: it says it's a work mode you didn't pick.",
     "filteredWorkMode_other": "{{count}} jobs hidden: they say they're a work mode you didn't pick.",
     "filteredNotRemote_one": "{{count}} job abroad hidden: it doesn't say it's remote.",
-    "filteredNotRemote_other": "{{count}} jobs abroad hidden: they don't say they're remote."
+    "filteredNotRemote_other": "{{count}} jobs abroad hidden: they don't say they're remote.",
+    "edit": "Edit"
   },
   "workModes": {
     "any": "Any",
@@ -249,13 +250,10 @@
     "alsoOn": "Also on",
     "salaryNote": "Salary as stated in the posting — we never estimate.",
     "untitled": "Untitled role",
-    "atsLabel": "ATS coverage",
-    "recruiterFitLabel": "Recruiter fit",
     "posted": "Posted {{when}}",
     "firstPosted": "First posted {{when}}",
     "viewOn": "View on {{source}}",
     "openOn": "Open on {{source}}",
-    "tailorToThis": "Tailor to this",
     "kit": "Application kit",
     "kitFailed": "Tailoring this kit failed — try again.",
     "kitExists": "This job already has a kit — see the Kits tab.",
@@ -263,7 +261,6 @@
     "outreach": "Outreach",
     "brief": "Company brief",
     "removeFromHistory": "Remove from history",
-    "share": "Share",
     "shareWhatsApp": "Share via WhatsApp",
     "geo": {
       "us": "Likely US-only",
@@ -291,11 +288,14 @@
     "save": "Save for later",
     "saveDone": "Saved — find it on the Tracker.",
     "saveFailed": "Couldn't save that job. Try again.",
-    "savedGoTracker": "Saved · open Tracker"
+    "savedGoTracker": "Saved · open Tracker",
+    "matchChip": "{{value}}% match",
+    "moreActions": "More actions"
   },
   "fit": {
     "strongOn": "Strong on {{skills}}",
-    "gap": "gap: {{skills}}"
+    "gap": "gap: {{skills}}",
+    "gapOnly": "Missing {{skills}}"
   },
   "alerts": {
     "title": "Email alerts",
