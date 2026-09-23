@@ -24,11 +24,17 @@ export default function PageBadge({
   resume,
   template,
   enabled = true,
+  compact = false,
   className,
 }: {
   resume: ResumeModel | null;
   template: ResumeTemplate;
   enabled?: boolean;
+  /** Below `lg`, the count and the target only ("1 page", "3 pages · target 2"),
+   * for the document toolbar's one row (PLAN 31.2/1): the sentence was 200 px
+   * of a 358 px row on its own. The sentence stays for screen readers, and in
+   * full from `lg`. */
+  compact?: boolean;
   className?: string;
 }) {
   const { t } = useTranslation("tailor");
@@ -42,6 +48,11 @@ export default function PageBadge({
   const value = t("pages.value", { count: n });
   const over = n > max;
   const hardOver = n > hard;
+  const sentence = hardOver
+    ? t("pages.hardOver", { pages: value, hard })
+    : over
+      ? t("pages.over", { pages: value, max })
+      : t("pages.fits", { pages: value, max });
   return (
     <span
       className={cn(
@@ -52,11 +63,20 @@ export default function PageBadge({
       )}
     >
       <FileText size={12} aria-hidden />
-      {hardOver
-        ? t("pages.hardOver", { pages: value, hard })
-        : over
-          ? t("pages.over", { pages: value, max })
-          : t("pages.fits", { pages: value, max })}
+      {compact ? (
+        <>
+          <span aria-hidden className="lg:hidden">
+            {hardOver
+              ? t("pages.compactHard", { pages: value, hard })
+              : over
+                ? t("pages.compactOver", { pages: value, max })
+                : value}
+          </span>
+          <span className="sr-only lg:not-sr-only">{sentence}</span>
+        </>
+      ) : (
+        sentence
+      )}
       {pages.stale && <span className="text-ink-faint">· {t("pages.measuring")}</span>}
     </span>
   );

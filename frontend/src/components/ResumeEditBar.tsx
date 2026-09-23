@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Pencil, Save, Undo2 } from "lucide-react";
+import { AlertTriangle, Save, Undo2 } from "lucide-react";
 import { Button, useToast } from "./ui";
 import { commitResumeEdits, undoBlockEdit } from "../state/tailorStore";
 import { masterResumeLabel } from "../hooks/useSaveMasterResume";
@@ -65,22 +65,11 @@ export default function ResumeEditBar({ resume, savedResume, masterLabel, unsave
     void run();
   }
 
-  // Nothing to save and nothing broken: the slot teaches the one interaction
-  // the whole page is built on, and since the previous step it teaches strictly
-  // more than it says — contact details and skills are typed on directly too.
-  // `w-full` so it lands under the toolbar and immediately above the paper it
-  // is pointing at. `order-last` is what keeps that from costing a row: a
-  // full-width item breaks the flex line where it SITS, so without it the
-  // Tailor button that follows this fragment would be pushed onto a third row
-  // in the commonest state on the page. Order moves the paint, not the DOM, so
-  // the reading order for assistive tech is untouched.
-  if (unsaved === 0 && !error) {
-    return (
-      <p className="order-last flex w-full items-center gap-1.5 text-xs text-ink-faint">
-        <Pencil size={12} aria-hidden /> {t("edit.hint")}
-      </p>
-    );
-  }
+  // Nothing to save and nothing broken: nothing here. The "tap anything to
+  // edit" hint this slot used to show on every visit cost the toolbar a whole
+  // row over the paper; it is a one-time line above the paper now, in
+  // TailorPage (PLAN 31.2/1).
+  if (unsaved === 0 && !error) return null;
 
   const unsavedLabel = t("edit.unsaved", { count: unsaved });
   // "Unsaved" is only half the truth — the other half is WHERE the work is

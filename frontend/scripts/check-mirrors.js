@@ -11024,6 +11024,57 @@ try {
   fail(`installed app check (check 54) could not run: ${e.message}`);
 }
 
+// ---- 55. the document toolbar is one row on a phone (PLAN 31.2/1) --------- //
+// Measured 2026-09-23 at 390 px: the sticky bar over the paper was 139 px on the
+// master and 241 on a tailored draft, four rows and a three-line note. It is one
+// row now (51 and 46). Three things keep it there, and one keeps a feature:
+// (a) the title YIELDS (`flex-1 basis-0 min-w-0 truncate`), so a long name
+// truncates instead of pushing a button onto a second line; (b) the "tap to edit"
+// hint lives outside the toolbar, once per device, so no rest state adds a row;
+// (c) the save cluster renders nothing at rest; (d) when "Tailor for a different
+// job" is hidden below lg on a draft, the tool row's "⋯" still offers it, or a
+// phone could no longer re-aim a draft at all. Probed on the real files.
+try {
+  const readers = (bar, page, editBar) => {
+    const out = [];
+    const h1 = /<h1\b[^>]*className="([^"]*)"/.exec(bar);
+    if (!h1) throw new Error("components/DocumentToolbar.tsx renders no <h1 className=…>");
+    for (const c of ["flex-1", "basis-0", "min-w-0", "truncate"])
+      if (!h1[1].split(/\s+/).includes(c)) out.push(`DocumentToolbar's title lacks \`${c}\`, so it can push the row's buttons onto a second line`);
+    const toolbar = /<DocumentToolbar\b[\s\S]*?\n {6}\/>/.exec(page);
+    if (!toolbar) throw new Error("could not find TailorPage's <DocumentToolbar … />");
+    if (/t\("edit\.hint"\)/.test(toolbar[0])) out.push("the \"tap to edit\" hint is back inside the toolbar, a row on every visit");
+    if (!/!hintSeen\s*&&[\s\S]{0,400}?t\("edit\.hint"\)/.test(page)) out.push("the \"tap to edit\" hint is no longer shown once per device (`!hintSeen`)");
+    if (!/if \(unsaved === 0 && !error\) return null;/.test(editBar)) out.push("ResumeEditBar renders something at rest, which costs the toolbar a row");
+    if (/className=\{cn\("shrink-0", result && "hidden lg:inline-flex"\)\}/.test(toolbar[0])) {
+      // On the SAME condition that hides the button (`result`), so a ⋯ entry
+      // gated on anything else, or switched off, is no way back to it.
+      const more = /moreItems=\{\s*result\b[^?]*\?[\s\S]*?t\("overlay\.openDifferent"\)[\s\S]*?setTailorState\(\{ overlayOpen: true \}\)/.test(page);
+      if (!more) out.push("\"Tailor for a different job\" is hidden below lg on a draft and nothing under \"⋯\" offers it");
+    }
+    return out;
+  };
+  const bar = decomment(read("components/DocumentToolbar.tsx"));
+  const page = decomment(read("pages/TailorPage.tsx"));
+  const editBar = decomment(read("components/ResumeEditBar.tsx"));
+  const real = readers(bar, page, editBar);
+  for (const [label, b, pg, e] of [
+    ["a title that does not yield", bar.replace("min-w-0 flex-1 basis-0 truncate", "min-w-0 truncate"), page, editBar],
+    ["no ⋯ for a different job", bar, page.replace('label: t("overlay.openDifferent"),', 'label: t("overlay.open"),'), editBar],
+    ["a save cluster that shows at rest", bar, page, editBar.replace("if (unsaved === 0 && !error) return null;", "if (unsaved === 0 && !error) return <p />;")],
+    ["a ⋯ entry switched off", bar, page.replace(/moreItems=\{\s*result && canRun/, "moreItems={\n              false && canRun"), editBar],
+  ]) {
+    if (b === bar && pg === page && e === editBar) {
+      if (real.length) continue; // the real file already has it; reported below
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!readers(b, pg, e).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of real) fail(`check 55: ${p} (PLAN 31.2/1)`);
+} catch (e) {
+  fail(`one-row toolbar check (check 55) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
-import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft, ScanEye, Target } from "lucide-react";
+import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft, ScanEye, Target, Pencil } from "lucide-react";
 import {
   downloadResume,
   resumeFilename,
@@ -102,6 +102,10 @@ import type { FactsLedger, ResumeModel } from "../types";
  */
 const ownsAnchor = (editAnchor: string, overrideAnchor: string, whole: boolean): boolean =>
   overrideAnchor === editAnchor || (whole && overrideAnchor.startsWith(`${editAnchor}.`));
+
+/** Where the one-time "tap to edit" hint remembers it was seen. Per device, and
+ * kept through a sign-out: it teaches a gesture, not anything about an account. */
+const EDIT_HINT_KEY = "jf-edit-hint-v1";
 
 export default function TailorPage() {
   const { t } = useTranslation("tailor");
@@ -585,6 +589,11 @@ export default function TailorPage() {
   // the paper: a heading is not `contentEditable`, so unlike the sheet's
   // placeholder it can never be committed into `contact.name` by a tap.
   const docTitle = shown?.contact?.name?.trim() || t("sections.fallbackName");
+  // A tailored draft is named by its JOB in the one-row toolbar ("For Paywise"):
+  // the person's name is on the paper right under it, and which job this draft
+  // is for is the thing a phone could no longer see (PLAN 31.2/1).
+  const tailoredName = (jd?.company || company || jobTitle || jd?.job_title || "").trim();
+  const tailoredTitle = tailoredName ? t("toolbar.tailoredFor", { name: tailoredName }) : t("toolbar.tailoredDraft");
 
   // The live, deterministic half of the match — recomputed from the document as
   // it stands, on every accept and decline. The other half cannot move without
@@ -756,6 +765,25 @@ export default function TailorPage() {
   // sharing one flag lets a user who armed one confirm under the other — and
   // here the two sit side by side in the same toolbar row.
   const [discardArmed, setDiscardArmed] = useState(false);
+  // "Tap anything on your resume to edit it", ONCE per device (PLAN 31.2/1). It
+  // sat in the sticky toolbar on every visit, a whole row over the paper it
+  // points at, long after the gesture was learned. It goes when "Got it" is
+  // tapped or the first edit lands, whichever comes first.
+  const [hintSeen, setHintSeen] = useState(() => {
+    try {
+      return localStorage.getItem(EDIT_HINT_KEY) !== null;
+    } catch {
+      return true; // storage unavailable: never nag
+    }
+  });
+  const dismissHint = useCallback(() => {
+    setHintSeen(true);
+    try {
+      localStorage.setItem(EDIT_HINT_KEY, "1");
+    } catch {
+      /* storage unavailable: it shows again next visit */
+    }
+  }, []);
   const [editPath, setEditPath] = useState<string | null>(null);
   // The entry THIS session just added, so an abandoned add can be undone and a
   // pre-existing blank entry cannot be deleted by accident.
@@ -776,6 +804,9 @@ export default function TailorPage() {
   // needed. So: master ⇒ edit the document; tailored ⇒ edit an overlay that is
   // discarded with the result.
   const isMaster = !result && !!resume;
+  useEffect(() => {
+    if (!hintSeen && editUndo.length > 0) dismissHint();
+  }, [hintSeen, editUndo.length, dismissHint]);
   const canEditDoc = !!shown;
   // The paper's own direction, frozen from the resume rather than the UI: the
   // chrome follows the locale, the document follows its own language.
@@ -1097,55 +1128,119 @@ export default function TailorPage() {
         </div>
       )}
 
-      {/* One row of chrome over the document: who this is, what has been
-          measured about it, and what you can do to it. Tailoring is a thing you
-          DO to the CV on screen, not a stage you pass through. */}
+      {/* ONE ROW over the document (PLAN 31.2/1): the name, a page chip and one
+          primary on the master; the way back, the job and the changes on a
+          tailored draft. It measured 139 px on the master and 241 on a draft at
+          390 px, four rows and a three-line note stuck over the paper. What
+          left it: the "tap to edit" hint (a one-time line above the paper), the
+          "Review N changes" link (the changes chip), the draft's note and the
+          list of your own edits (under the document, beside the changes), and,
+          below lg, "Tailor for a different job" (the tool row's "⋯"). What
+          stays whatever it costs: a failure, and what leaving a draft you typed
+          on will cost, stated AT REST (23.5's rule for an irreversible action).
+          Tailoring is still a thing you DO to the CV on screen, not a stage. */}
       <DocumentToolbar
-        title={docTitle}
+        lead={
+          !result ? undefined : overrideCount > 0 && discardArmed ? (
+            // THE EXIT FROM REVIEW MODE, armed. Until 23.7 there was no exit:
+            // `editable` is `!result`, and nothing set `result` back to null.
+            // With hand-edits on the draft it deletes every sentence typed on
+            // it, so it arms first; the consequence is in the notes below.
+            <>
+              <Button
+                size="sm"
+                variant="danger"
+                icon={<ArrowLeft size={15} className="rtl:-scale-x-100" />}
+                onClick={() => {
+                  setDiscardArmed(false);
+                  discardTailorResult();
+                }}
+              >
+                {t("discard.confirm", { count: overrideCount })}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setDiscardArmed(false)}>
+                {t("discard.keep")}
+              </Button>
+            </>
+          ) : (
+            // An icon below sm, its words from sm. The name stays the words, so
+            // a screen reader hears the same thing at every width.
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<ArrowLeft size={15} className="rtl:-scale-x-100" />}
+              onClick={() => (overrideCount > 0 ? setDiscardArmed(true) : discardTailorResult())}
+              // Only on the harmless branch, and only because it is a
+              // DESCRIPTION there rather than a warning.
+              title={overrideCount > 0 ? undefined : t("discard.title")}
+              className={cn("shrink-0", overrideCount > 0 && "text-warn")}
+            >
+              <span className="sr-only sm:not-sr-only">{t("discard.cta")}</span>
+            </Button>
+          )
+        }
+        title={result ? tailoredTitle : docTitle}
         badges={
           <>
-            {resume && masterLabel && (
-              <span className="inline-flex items-center gap-1 text-xs text-mint">
+            {/* The saved master's own label, from lg. On a phone the title
+                already names the document, and saying it twice cost the row. */}
+            {!result && resume && masterLabel && (
+              <span className="hidden shrink-0 items-center gap-1 text-xs text-mint lg:inline-flex">
                 <BadgeCheck size={13} aria-hidden /> {masterLabel}
               </span>
             )}
-            {/* MEASURED, deterministic, uncapped and free — which is the whole
-                reason it can sit on a toolbar at all. It also answers the
-                question at the moment it can still be acted on: the count used
-                to appear only inside the review panel, so you learned your CV
-                was three pages after paying to tailor it. `!result` because
-                ChangeLog mounts the same badge while a result is up, and two
-                mounts would double every server render. */}
-            {!result && <PageBadge resume={shown} template={template} />}
+            {/* MEASURED, deterministic, uncapped and free, which is the whole
+                reason it can sit on a toolbar at all, and it answers before a
+                tailor is paid for. `!result` because ChangeLog mounts the same
+                badge while a result is up, and two mounts would double every
+                server render. Compact below lg: the count and the target. */}
+            {!result && <PageBadge compact resume={shown} template={template} className="shrink-0" />}
+            {/* The number of changes IS the way to them: it was a "Review N
+                changes" link on a line of its own under the row. */}
+            {result && edits.length > 0 && (
+              <button
+                type="button"
+                onClick={() =>
+                  document.getElementById("trust-panel")?.scrollIntoView({ behavior: smooth(), block: "start" })
+                }
+                className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-ink transition-colors hover:bg-accent/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                {t("toolbar.changes", { count: edits.length })}
+              </button>
+            )}
             {/* The other live, deterministic number, in ScoreCard's own words
-                rather than a second phrasing — the toolbar and the score card
-                must not be able to describe one measurement two ways, which is
-                exactly what PageBadge was extracted to prevent. A COUNT, never
-                a band and never `overall`: half of that blend is stale by
-                construction and it is off this surface on purpose. */}
+                from lg and as a bare count below it, where the sentence would
+                cost the row. A COUNT, never a band and never `overall`: half of
+                that blend is stale by construction and it is off this surface
+                on purpose. */}
             {coverage.data && (
               <span
                 title={t("fit.coverage")}
                 className={cn(
-                  "inline-flex items-center gap-1 text-xs tabular-nums text-ink-muted transition-opacity",
+                  "inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-ink-muted transition-opacity",
                   coverage.stale && "opacity-50",
                 )}
               >
                 <Target size={12} aria-hidden />
-                {t("fit.coverageSub", {
-                  covered: coverage.data.covered,
-                  total: coverage.data.total,
-                  partial: coverage.data.partial,
-                })}
+                <span aria-hidden className="lg:hidden">
+                  {t("fit.coverageShort", { covered: coverage.data.covered, total: coverage.data.total })}
+                </span>
+                <span className="sr-only lg:not-sr-only">
+                  {t("fit.coverageSub", {
+                    covered: coverage.data.covered,
+                    total: coverage.data.total,
+                    partial: coverage.data.partial,
+                  })}
+                </span>
               </span>
             )}
           </>
         }
         actions={
           <>
-            {/* MASTER only, and it must stay that way. Its `edit.hint` says
-                "your resume", and its Save writes `state.resume` — a different
-                document from the one on screen while a result is up. */}
+            {/* MASTER only, and it must stay that way. Its Save writes
+                `state.resume`, a different document from the one on screen
+                while a result is up. */}
             {isMaster && shown && (
               <ResumeEditBar
                 resume={shown}
@@ -1156,219 +1251,53 @@ export default function TailorPage() {
                 error={editError}
               />
             )}
-            {/* THE EXIT FROM REVIEW MODE, and until 23.7 there was none:
-                `editable` is `!result`, so a tailor result made the document
-                non-editable AND took the Replace tool with it, and nothing on
-                this page ever set `result` back to null. Tailoring once locked
-                /app into review for the rest of the session, short of a full
-                reload — which is also why "just hide Tailor while a result is
-                up" was the wrong answer to the confusing affordance. */}
-            {/* ARMED ONLY WHEN THERE IS SOMETHING TO LOSE. With no hand-edits
-                this discards a memo and one tap is right; with hand-edits it
-                deletes every sentence the user typed on this CV, with no undo
-                and no mirror anywhere — and it sits directly beside "Tailor for
-                a different job", which destroys the same map. Two adjacent
-                one-tap buttons that both silently delete the user's own writing
-                is the shape this splits up. The consequence is stated AT REST in
-                the notes row below (23.5's rule: what an irreversible action
-                admits to may not be held back until it is armed), never in a
-                `title` — a tooltip does not exist on the phone this is used
-                on. */}
-            {result && overrideCount > 0 && discardArmed ? (
-              <>
-                <Button
-                  variant="danger"
-                  icon={<ArrowLeft size={16} className="rtl:-scale-x-100" />}
-                  onClick={() => {
-                    setDiscardArmed(false);
-                    discardTailorResult();
-                  }}
-                >
-                  {t("discard.confirm", { count: overrideCount })}
-                </Button>
-                <Button variant="secondary" onClick={() => setDiscardArmed(false)}>
-                  {t("discard.keep")}
-                </Button>
-              </>
-            ) : (
-              result && (
-                <Button
-                  variant="ghost"
-                  icon={<ArrowLeft size={16} className="rtl:-scale-x-100" />}
-                  onClick={() => (overrideCount > 0 ? setDiscardArmed(true) : discardTailorResult())}
-                  // Only on the harmless branch, and only because it is a
-                  // DESCRIPTION there rather than a warning.
-                  title={overrideCount > 0 ? undefined : t("discard.title")}
-                >
-                  {t("discard.cta")}
-                </Button>
-              )
-            )}
+            {/* ONE primary per row (PLAN 31.7): while there is work to save,
+                Save is it and this goes quiet, an icon below sm. On a tailored
+                draft it is "a different job", from lg; below lg it is under the
+                tool row's "⋯", because the loudest thing on a draft belongs to
+                review and download, not to starting over. */}
             <Button
-              // With a result up the loudest control on the page belongs to
-              // review + download below, not to starting over. Same button,
-              // demoted — a re-aim is a secondary action here.
-              variant={result ? "secondary" : "primary"}
+              size="sm"
+              variant={result || editUndo.length > 0 ? "secondary" : "primary"}
               loading={loading}
-              icon={<Wand2 size={17} />}
+              icon={<Wand2 size={15} />}
               disabled={!canRun}
               title={!resume ? t("run.uploadFirst") : undefined}
               onClick={() => setTailorState({ overlayOpen: true })}
+              className={cn("shrink-0", result && "hidden lg:inline-flex")}
             >
               {result ? (
-                // No sm/lg split here: there is no title to interpolate, so the
-                // one label fits a 390px row beside the ghost exit above.
-                // Naming the job ALREADY tailored for is what read as "tailor
-                // the tailored one again" — the complaint this replaces.
                 t("overlay.openDifferent")
               ) : (
-                <>
-                  {/* The job title earns its place on a wide screen and costs a
-                      whole extra row on a 390px one, where the target card above
-                      already names the job. */}
+                <span className={editUndo.length > 0 ? "sr-only sm:not-sr-only" : undefined}>
+                  {/* The job title earns its place on a wide screen and costs the
+                      row on a 390px one, where the target card above names it. */}
                   <span className="sm:hidden">{t("overlay.open")}</span>
                   <span className="hidden sm:inline">
                     {jd?.job_title ? t("overlay.openFor", { title: jd.job_title }) : t("overlay.open")}
                   </span>
-                </>
+                </span>
               )}
             </Button>
           </>
         }
         notes={
-          loading || error || edits.length > 0 || result ? (
-            <>
+          loading || error || (result && overrideCount > 0) ? (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {loading && <span className="text-xs text-ink-muted">{t("run.keepsRunning")}</span>}
               {error && <span className="text-sm text-danger">{error}</span>}
-              {edits.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    document.getElementById("trust-panel")?.scrollIntoView({ behavior: smooth(), block: "start" })
-                  }
-                  className="text-xs font-medium text-accent-soft hover:underline"
-                >
-                  {t("toolbar.review", { count: edits.length })}
-                </button>
-              )}
-              {/* The tailored document is typed on and nothing said so. It
-                  cannot ride ResumeEditBar's `edit.hint`: that bar stays
-                  master-only, and its "your resume" plus a Save button would
-                  both be about a different document from the one on screen. */}
-              {result && <span className="text-xs text-ink-muted">{t("edit.tailoredHint")}</span>}
+              {/* THE CONSEQUENCE, AT REST. It says what leaving this review
+                  costs before the way back is touched, the order 23.5 settled
+                  for the danger zone: "read what it admits to once armed" is
+                  the wrong order for something irreversible. It turns
+                  danger-coloured once armed, so arming still changes something
+                  visible. It is the one line a draft's row may grow by. */}
               {result && overrideCount > 0 && (
-                <>
-                  {/* The count IS the reveal. It was a plain span, and a number
-                      whose members cannot be found is worse than no number: an
-                      override that DELETED a block has nothing to mark on the
-                      paper and no review row to sit in, so "3 edits of your own"
-                      could stand beside one mint bar and one badge with the only
-                      recovery being "Clear my edits" — which reverts all three. */}
-                  <button
-                    type="button"
-                    aria-expanded={yoursOpen}
-                    onClick={() => setYoursOpen((o) => !o)}
-                    className="text-xs font-medium text-mint hover:underline"
-                  >
-                    {t("edit.yours", { count: overrideCount })}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={clearAllBlockOverrides}
-                    className="text-xs font-medium text-accent-soft hover:underline"
-                  >
-                    {t("edit.yoursClear")}
-                  </button>
-                  {/* THE CONSEQUENCE, AT REST. It says what leaving this review
-                      costs before the button beside it is touched, which is the
-                      order 23.5 settled for the danger zone: "read what it
-                      admits to once armed" is the wrong order for something
-                      irreversible. It turns danger-coloured once armed, so
-                      arming still changes something visible. */}
-                  <span
-                    className={cn(
-                      "basis-full text-xs leading-relaxed sm:basis-auto",
-                      discardArmed ? "text-danger" : "text-ink-muted",
-                    )}
-                  >
-                    {t("discard.edited", { count: overrideCount })}
-                  </span>
-                </>
-              )}
-              {/* The one-step undo for "Clear my edits", and it is deliberately
-                  OUTSIDE the block above: clearing takes `overrideCount` to zero
-                  and that block with it, so an offer rendered inside would
-                  vanish in the same frame as the thing it undoes. Restoring
-                  MERGES, so anything typed since the clear survives it. */}
-              {result && clearedCount > 0 && (
-                <button
-                  type="button"
-                  onClick={restoreClearedOverrides}
-                  className="text-xs font-medium text-mint hover:underline"
-                >
-                  {t("edit.yoursRestoreCleared", { count: clearedCount })}
-                </button>
+                <span className={cn("text-xs leading-relaxed", discardArmed ? "text-danger" : "text-ink-muted")}>
+                  {t("discard.edited", { count: overrideCount })}
+                </span>
               )}
             </div>
-            {/* A conditional render with `animate-fade-up`, never a height tween:
-                this bar re-renders on every keystroke and every coverage
-                response, and an element mid-tween is left frozen at its
-                interpolated px with `overflow-hidden` clipping it (check 11,
-                seven shipped instances). Capped and scrollable because it sits
-                inside a sticky bar — a long list would push the document off the
-                screen it is stuck to. */}
-            {result && yoursOpen && overrideCount > 0 && (
-              <div className="animate-fade-up mt-2 max-h-40 overflow-y-auto rounded-lg border border-line bg-panel-2/60 p-2">
-                <ul className="space-y-1">
-                  {myEdits.map((e) => (
-                    <li key={e.anchor} className="space-y-0.5">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                      <span dir="auto" className="min-w-0 flex-1 truncate text-ink-muted">
-                        {e.text || "—"}
-                      </span>
-                      <span
-                        className={cn(
-                          "shrink-0 font-medium",
-                          e.state === "removed"
-                            ? "text-warn"
-                            : e.state === "hidden"
-                              ? "text-ink-faint"
-                              : "text-mint",
-                        )}
-                      >
-                        {e.state === "removed"
-                          ? t("edit.yoursDeletedLine")
-                          : e.state === "hidden"
-                            ? t("edit.yoursOff")
-                            : t("edit.yoursOn")}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => clearBlockOverride(e.anchor)}
-                        className="shrink-0 rounded-md border border-line px-2 py-0.5 font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
-                      >
-                        {e.state === "removed" ? t("edit.yoursPutBack") : t("edit.yoursUndoOne")}
-                      </button>
-                    </div>
-                    {/* WHAT THE BUTTON ABOVE WILL PUT BACK. Read off the
-                        pre-override merge through the row's own anchor, so it is
-                        the block's real previous wording rather than a guess —
-                        and without it the undo replaces the text on this line
-                        with something that appears nowhere on the page. Its own
-                        line, not a fourth item in the flex row: at 390px in
-                        Hebrew that row already wraps. */}
-                    {e.was && e.was !== e.text && (
-                      <p dir="auto" className="truncate text-[11px] text-ink-faint">
-                        {t("edit.yoursWas", { text: e.was })}
-                      </p>
-                    )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            </>
           ) : undefined
         }
       />
@@ -1378,6 +1307,20 @@ export default function TailorPage() {
           edit sheet and the tailor overlay below portal out of the page and
           stay outside this wrapper so nothing here can constrain them. */}
       <div className="app-col space-y-6">
+        {isMaster && shown && !hintSeen && (
+          <p className="animate-fade-up flex items-center gap-1.5 text-xs text-ink-faint">
+            <Pencil size={12} aria-hidden className="shrink-0" />
+            <span className="min-w-0 flex-1">{t("edit.hint")}</span>
+            <button
+              type="button"
+              onClick={dismissHint}
+              className="shrink-0 rounded-md px-2 py-1 font-medium text-accent-soft hover:bg-accent/10"
+            >
+              {t("edit.hintDismiss")}
+            </button>
+          </p>
+        )}
+
         {/* The document, or — with no resume yet — the one thing there is to do. */}
         {shown ? (
           <DocumentPanel
@@ -1435,6 +1378,20 @@ export default function TailorPage() {
             // the empty state uses, so the cold start and the replacement are one
             // path.
             onReplace={isMaster ? onParsed : undefined}
+            // On a draft, below lg, "Tailor for a different job" left the
+            // toolbar's one row for the tool row's "⋯" (PLAN 31.2/1).
+            moreItems={
+              result && canRun
+                ? [
+                    {
+                      key: "retailor",
+                      label: t("overlay.openDifferent"),
+                      Icon: Wand2,
+                      onClick: () => setTailorState({ overlayOpen: true }),
+                    },
+                  ]
+                : undefined
+            }
           />
         ) : masterLoad === "loading" ? (
           // Where the paper will be, the height DocumentPanel's file view gives
@@ -1516,6 +1473,102 @@ export default function TailorPage() {
               transition={{ duration: 0.4 }}
               className="space-y-6"
             >
+              {/* The draft's own note and the lines you typed on it. Both lived
+                  in the sticky toolbar, over the paper (PLAN 31.2/1); they are
+                  here, beside the changes they belong with, until 31.3 gives the
+                  changes a drawer of their own. The count IS the reveal: an
+                  override that deleted a block has nothing to mark on the paper
+                  and no review row to sit in, so a number whose members cannot
+                  be found would be worse than no number. */}
+              <div className="space-y-2 text-xs">
+                <p className="leading-relaxed text-ink-muted">{t("edit.tailoredHint")}</p>
+                {(overrideCount > 0 || clearedCount > 0) && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {overrideCount > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          aria-expanded={yoursOpen}
+                          onClick={() => setYoursOpen((o) => !o)}
+                          className="font-medium text-mint hover:underline"
+                        >
+                          {t("edit.yours", { count: overrideCount })}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearAllBlockOverrides}
+                          className="font-medium text-accent-soft hover:underline"
+                        >
+                          {t("edit.yoursClear")}
+                        </button>
+                      </>
+                    )}
+                    {/* The one-step undo for "Clear my edits", deliberately outside
+                        the block above: clearing takes `overrideCount` to zero and
+                        that block with it, so an offer rendered inside would vanish
+                        in the same frame as the thing it undoes. Restoring MERGES,
+                        so anything typed since the clear survives it. */}
+                    {clearedCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={restoreClearedOverrides}
+                        className="font-medium text-mint hover:underline"
+                      >
+                        {t("edit.yoursRestoreCleared", { count: clearedCount })}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {/* A conditional render with `animate-fade-up`, never a height
+                    tween (check 11). */}
+                {yoursOpen && overrideCount > 0 && (
+                  <div className="animate-fade-up rounded-lg border border-line bg-panel-2/60 p-2">
+                    <ul className="space-y-1">
+                      {myEdits.map((e) => (
+                        <li key={e.anchor} className="space-y-0.5">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span dir="auto" className="min-w-0 flex-1 truncate text-ink-muted">
+                              {e.text || "—"}
+                            </span>
+                            <span
+                              className={cn(
+                                "shrink-0 font-medium",
+                                e.state === "removed"
+                                  ? "text-warn"
+                                  : e.state === "hidden"
+                                    ? "text-ink-faint"
+                                    : "text-mint",
+                              )}
+                            >
+                              {e.state === "removed"
+                                ? t("edit.yoursDeletedLine")
+                                : e.state === "hidden"
+                                  ? t("edit.yoursOff")
+                                  : t("edit.yoursOn")}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => clearBlockOverride(e.anchor)}
+                              className="shrink-0 rounded-md border border-line px-2 py-0.5 font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+                            >
+                              {e.state === "removed" ? t("edit.yoursPutBack") : t("edit.yoursUndoOne")}
+                            </button>
+                          </div>
+                          {/* WHAT THE BUTTON ABOVE WILL PUT BACK, read off the
+                              pre-override merge through the row's own anchor, so
+                              it is the block's real previous wording. */}
+                          {e.was && e.was !== e.text && (
+                            <p dir="auto" className="truncate text-[11px] text-ink-faint">
+                              {t("edit.yoursWas", { text: e.was })}
+                            </p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
               <VoicePanel
                 report={result.voice_report}
                 plan={result.plan}

@@ -107,7 +107,8 @@
         "desc": "Nothing but type — nothing between the reader and what you did."
       }
     },
-    "xrayLink": "See what a parser actually reads from this file"
+    "xrayLink": "See what a parser actually reads from this file",
+    "short": "PDF"
   },
   "save": {
     "cta": "Save to tracker",
@@ -316,7 +317,9 @@
     "over": "{{pages}} — over the {{max}}-page target. Recruiters skim; the download still works.",
     "hardOver": "{{pages}} — past the {{hard}}-page ceiling. Expect it to be skimmed or dropped.",
     "measuring": "re-measuring…",
-    "unavailable": "Couldn't re-measure the page count."
+    "unavailable": "Couldn't re-measure the page count.",
+    "compactOver": "{{pages}} · target {{max}}",
+    "compactHard": "{{pages}} · max {{hard}}"
   },
   "doc": {
     "review": {
@@ -443,7 +446,8 @@
           "label": "Length does not match the experience",
           "how": "This renders as {{pages}} pages against {{years}} years of experience — aim for one page up to about ten years and two beyond that, trimming the oldest roles and the weakest bullets first."
         }
-      }
+      },
+      "short": "Check"
     },
     "toolsLabel": "Document tools",
     "views": {
@@ -472,7 +476,9 @@
       "tool": "Replace resume",
       "title": "Replace your resume",
       "body": "Upload a new file and it becomes your master resume everywhere — this page, job matching, interview prep and every tool."
-    }
+    },
+    "more": "More actions",
+    "viewsLabel": "View"
   },
   "overlay": {
     "open": "Tailor for a job",
@@ -513,11 +519,14 @@
     "recruiter": "Recruiter fit",
     "asOf": "One AI reading, taken {{time}}. It doesn't move as you edit: a second reading costs another model call, and part of any difference between two readings is sampling noise rather than progress.",
     "notMeasured": "Not measured yet",
-    "notMeasuredNote": "Reading how a recruiter would rate this costs one model call. Check fit, or tailor, and it appears here."
+    "notMeasuredNote": "Reading how a recruiter would rate this costs one model call. Check fit, or tailor, and it appears here.",
+    "coverageShort": "{{covered}}/{{total}}"
   },
   "toolbar": {
-    "review_one": "Review 1 change",
-    "review_other": "Review {{count}} changes"
+    "tailoredFor": "For {{name}}",
+    "tailoredDraft": "Tailored draft",
+    "changes_one": "1 change",
+    "changes_other": "{{count}} changes"
   },
   "edit": {
     "hint": "Tap anything on your resume to edit it.",
@@ -607,7 +616,8 @@
       "skill": "Skill",
       "certification": "Certification",
       "language": "Language"
-    }
+    },
+    "hintDismiss": "Got it"
   },
   "draft": {
     "title": "Unsaved changes from your last visit",
