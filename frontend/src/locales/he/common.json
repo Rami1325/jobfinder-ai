@@ -17,7 +17,6 @@
     "account": "חשבון",
     "signedInAs": "מחוברים בתור {{name}}",
     "settings": "הגדרות",
-    "closeAccount": "סגירת החשבון שלי",
     "signOut": "התנתקות"
   },
   "header": {

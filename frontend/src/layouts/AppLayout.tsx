@@ -27,7 +27,6 @@ import {
   MoreHorizontal,
   Settings,
   LogOut,
-  Trash2,
   User,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -458,24 +457,12 @@ function AccountMenu({
               <Settings size={15} className="shrink-0" />
               {t("nav.settings")}
             </Link>
+            {/* "Close my account" lived here, in red, one tap from Settings
+                (PLAN 31.1/12). It is only in Settings' danger zone now, which
+                states each way out's cost before it is pressed
+                (document-editor.md, "Two ways out"). SettingsPage still scrolls
+                to #danger for any link that carries the anchor. */}
             <div className="my-1 border-t border-line" />
-            {/* The To is an OBJECT, not "/settings#danger". Check 9 builds an
-                exact-match regex per <Route path> and a hash glued onto the
-                literal would never match /settings — the object keeps the
-                pathname a real path while still carrying the anchor. The
-                pathname itself is still guarded, by the Settings item above.
-                SettingsPage does the scrolling: react-router does not act on a
-                hash, and pushState does not trigger the browser's own fragment
-                navigation, so this landed at the TOP of Settings with the
-                danger zone four cards below the fold. */}
-            <Link
-              to={{ pathname: "/settings", hash: "#danger" }}
-              onClick={onClose}
-              className={cn(item, "text-danger hover:bg-danger/10")}
-            >
-              <Trash2 size={15} className="shrink-0" />
-              {t("nav.closeAccount")}
-            </Link>
             <button
               type="button"
               onClick={() => void signOut("/")}
