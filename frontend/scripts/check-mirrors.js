@@ -10751,6 +10751,138 @@ try {
   fail(`undo window check (check 51) could not run: ${e.message}`);
 }
 
+// ---- 52. onboarding is asked once per ACCOUNT (EXECUTED) ------------------- //
+// PLAN 31.1/11, found in the 2026-09-23 review. The first-run questions were
+// remembered in this browser's localStorage alone, which sign-out clears, so an
+// account holding a resume and five applications was asked again on every new
+// device and after every sign-out. The account now keeps the record (POST
+// /profile/onboarded, read back as /auth/me's `onboarded`), and the shell opens
+// the modal only once that answer is in. (a) EXECUTES lib/onboarding.ts:
+// onboardingStep over every pair of answers, and markOnboardedHere against a
+// fake localStorage, which must keep a stored role. (b) Pins the wiring by
+// shape: the modal starts closed, the guard hands the account's answer to
+// onboardingStep and runs each step, nothing else opens it, the modal's finish
+// tells the account, and the client and both AuthUser mirrors agree with the
+// route and the field the backend serves. The shell reader is probed each run.
+try {
+  const ob = runProbeBundle("onboarding-account", `export * from "./lib/onboarding";\n`);
+  for (const name of ["onboardingStep", "markOnboardedHere", "isOnboarded", "saveOnboarding", "onboardingRole"])
+    if (typeof ob[name] !== "function") throw new Error(`lib/onboarding.ts does not export ${name}`);
+  for (const [account, here, want, why] of [
+    [true, false, "adopt", "answered on another device, so this one must not ask"],
+    [true, true, "none", "both have answered"],
+    [false, false, "ask", "a new account on a new device"],
+    [false, true, "report", "this device answered before the account kept a record"],
+    [undefined, false, "ask", "an older backend or no account, and this device has not answered"],
+    [undefined, true, "none", "an older backend or no account, and this device has answered"],
+  ]) {
+    const got = ob.onboardingStep(account, here);
+    if (got !== want)
+      fail(`check 52: onboardingStep(${account}, ${here}) is ${JSON.stringify(got)}, not "${want}" (${why})`);
+  }
+  const store = new Map();
+  const fake = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => void store.set(k, String(v)),
+    removeItem: (k) => void store.delete(k),
+  };
+  const had = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", { value: fake, configurable: true, writable: true });
+  try {
+    if (ob.isOnboarded()) throw new Error("the fake localStorage did not take: an empty store reads as onboarded");
+    ob.markOnboardedHere();
+    if (!ob.isOnboarded())
+      fail("check 52: after markOnboardedHere this device still reads as not onboarded, so it would ask again");
+    store.clear();
+    ob.saveOnboarding({ role: "Product manager" });
+    ob.markOnboardedHere();
+    if (ob.onboardingRole() !== "Product manager")
+      fail("check 52: markOnboardedHere overwrote the stored role, which prefills the job search and alerts");
+  } finally {
+    if (had) Object.defineProperty(globalThis, "localStorage", had);
+    else delete globalThis.localStorage;
+  }
+
+  // (b) the shell. The seed must be a plain `false`; each step must run its action.
+  const SEED = /const \[onboardOpen, setOnboardOpen\] = useState(?:<[^>]*>)?\(([^;]*)\);/;
+  const ARMS = [
+    ["ask", /case\s+"ask"\s*:\s*setOnboardOpen\(\s*true\s*\)\s*;\s*break\s*;/],
+    ["adopt", /case\s+"adopt"\s*:\s*markOnboardedHere\(\s*\)\s*;\s*break\s*;/],
+    ["report", /case\s+"report"\s*:\s*void\s+markOnboarded\(\s*\)\s*\.catch\(/],
+  ];
+  const shellProblems = (src) => {
+    const out = [];
+    const seed = src.match(SEED);
+    if (!seed) return ["has no `const [onboardOpen, setOnboardOpen] = useState(…)`"];
+    if (seed[1].trim() !== "false")
+      out.push(
+        `opens onboarding at mount (useState(${seed[1].trim()})), before /auth/me says whether the ACCOUNT ` +
+          "answered: a returning account on a new device sees the questions flash",
+      );
+    if (!/switch\s*\(\s*onboardingStep\(\s*account\s*,\s*isOnboarded\(\)\s*\)\s*\)/.test(src))
+      out.push("does not decide with onboardingStep(account, isOnboarded())");
+    for (const [step, arm] of ARMS) if (!arm.test(src)) out.push(`does not run the "${step}" step's action`);
+    if (!/\bonboard\(\s*a\.user\?\.onboarded\s*\)/.test(src))
+      out.push("does not hand /auth/me's `onboarded` to the decision");
+    if (!/\.catch\(\(\)\s*=>\s*\{[^}]*\bonboard\(\s*undefined\s*\)/.test(src))
+      out.push("does not let this device decide when the guard fails open");
+    const opens = (src.match(/setOnboardOpen\(\s*true\s*\)/g) || []).length;
+    if (opens !== 1) out.push(`opens the modal from ${opens} places, not only the "ask" step`);
+    return out;
+  };
+  const shell = decomment(read("layouts/AppLayout.tsx"));
+  for (const [label, planted] of [
+    ["a device-only seed", shell.replace(SEED, "const [onboardOpen, setOnboardOpen] = useState(() => !isOnboarded());")],
+    ["swapped arms", shell.replace(/case\s+"ask"\s*:/, 'case "PLANTED":').replace(/case\s+"adopt"\s*:/, 'case "ask":')],
+    [
+      "a second opener",
+      shell.replace(
+        /(\n\s*useEffect\(\(\) => \{\n\s*let live = true;)/,
+        "\n  useEffect(() => { if (!isOnboarded()) setOnboardOpen(true); }, []);$1",
+      ),
+    ],
+  ]) {
+    // Nothing to plant because the file already has the defect: the real check
+    // below reports it. Nothing to plant on a CLEAN file means the anchor moved.
+    if (planted === shell) {
+      if (shellProblems(shell).length) continue;
+      throw new Error(`the probe could not plant ${label} into AppLayout`);
+    }
+    if (!shellProblems(planted).length) throw new Error(`the shell reader passes ${label}, so it cannot be trusted`);
+  }
+  for (const p of shellProblems(shell)) fail(`check 52: layouts/AppLayout.tsx ${p} (PLAN 31.1/11)`);
+
+  const modal = decomment(read("components/OnboardingModal.tsx"));
+  if (!/\bmarkOnboarded\(\s*\)/.test(fnSource(modal, "function finish(")))
+    fail(
+      "check 52: OnboardingModal's finish() does not call markOnboarded(), so the account never learns and " +
+        "every new device asks again",
+    );
+  const client = decomment(read("api/client.ts"));
+  if (!/\bapi\.post\(\s*["'`]\/profile\/onboarded["'`]\s*\)/.test(fnSource(client, "export async function markOnboarded(")))
+    fail('check 52: api/client.ts markOnboarded does not POST "/profile/onboarded"');
+  const block = (src, head) => {
+    const at = src.indexOf(head);
+    if (at === -1) throw new Error(`could not find \`${head}\``);
+    const end = src.indexOf("\n}", at);
+    return src.slice(at, end === -1 ? undefined : end);
+  };
+  if (!/\n\s*onboarded\?:\s*boolean;/.test(block(decomment(read("types.ts")), "export interface AuthUser {")))
+    fail("check 52: types.ts AuthUser carries no `onboarded?: boolean`, so the shell cannot read the account's answer");
+  const routes = pySource("app/api/routes.py", "check 52");
+  if (routes !== null && !/^@router\.post\(\s*"\/profile\/onboarded"/m.test(routes))
+    fail('check 52: backend/app/api/routes.py mounts no POST "/profile/onboarded", which markOnboarded calls');
+  const models = pySource("app/models/__init__.py", "check 52");
+  if (models !== null) {
+    const m = models.match(/^class AuthUser\(BaseModel\):\n((?:[ \t]+.*\n|[ \t]*\n)+)/m);
+    if (!m) throw new Error("could not find class AuthUser in backend/app/models/__init__.py");
+    if (!/^\s+onboarded:\s*bool\b/m.test(m[1]))
+      fail("check 52: the backend's AuthUser serves no `onboarded: bool`, so every device falls back to its own record");
+  }
+} catch (e) {
+  fail(`onboarding per account check (check 52) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

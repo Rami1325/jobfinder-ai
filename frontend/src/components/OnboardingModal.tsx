@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Briefcase, FileText, MessageSquareText, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { markOnboarded } from "../api/client";
 import { ONBOARDING_ROUTES, onboardingOptionFor, saveOnboarding, type OnboardingOption } from "../lib/onboarding";
 import { useUsesState } from "../lib/usesStore";
 import { Button, Modal } from "./ui";
@@ -12,8 +13,6 @@ interface Props {
   onClose: () => void;
 }
 
-const TIMELINES = ["now", "soon", "exploring"] as const;
-
 // Where each choice leads lives in lib/onboarding.ts, beside the function that
 // matches a page to a choice, so the two cannot name different routes.
 const HELP_OPTIONS: { id: OnboardingOption; icon: LucideIcon }[] = [
@@ -22,8 +21,10 @@ const HELP_OPTIONS: { id: OnboardingOption; icon: LucideIcon }[] = [
   { id: "interview", icon: MessageSquareText },
 ];
 
-/** First-visit, 3-question goal onboarding: target role, timeline, and where
- * help is needed first. Any way of closing persists, so it never shows twice.
+/** First-visit onboarding: the target role, and where help is needed first.
+ * Any way of closing records it on this device AND on the account (PLAN
+ * 31.1/11), so it never shows twice, on any device. The "how urgent" question
+ * that sat between the two is gone: nothing ever read its answer.
  *
  * The choice FOLLOWS THE PAGE it opens on (Phase 30 / C7). Sign-up carries the
  * visitor's destination, so a new account landing on /tools/scan or /app came
@@ -37,11 +38,12 @@ export default function OnboardingModal({ open, onClose }: Props) {
   const { pathname } = useLocation();
   const uses = useUsesState();
   const [role, setRole] = useState("");
-  const [timeline, setTimeline] = useState("");
   const [help, setHelp] = useState<OnboardingOption | null>(() => onboardingOptionFor(pathname));
 
   function finish(navigateTo?: string) {
-    saveOnboarding({ role: role.trim(), timeline });
+    saveOnboarding({ role: role.trim() });
+    // Best effort: the device's own record already keeps the modal shut here.
+    void markOnboarded().catch(() => {});
     onClose();
     if (navigateTo) navigate(navigateTo);
   }
@@ -72,28 +74,6 @@ export default function OnboardingModal({ open, onClose }: Props) {
             className="mt-1.5 w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
           />
           <p className="mt-1 text-xs text-ink-faint">{t("onboarding.roleHint")}</p>
-        </div>
-
-        <div>
-          <span className="text-sm font-medium text-ink">{t("onboarding.timelineLabel")}</span>
-          <div className="mt-1.5 flex flex-wrap gap-2">
-            {TIMELINES.map((tl) => (
-              <button
-                key={tl}
-                type="button"
-                aria-pressed={timeline === tl}
-                onClick={() => setTimeline(timeline === tl ? "" : tl)}
-                className={cn(
-                  "rounded-full border px-3 py-1.5 text-sm font-medium transition",
-                  timeline === tl
-                    ? "border-accent/60 bg-accent/15 text-accent-soft"
-                    : "border-line text-ink-muted hover:border-accent/40 hover:text-ink",
-                )}
-              >
-                {t(`onboarding.timeline.${tl}`)}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div>

@@ -39,8 +39,8 @@ import GoogleNotice from "../components/GoogleNotice";
 import LanguageSwitch from "../components/LanguageSwitch";
 import OnboardingModal from "../components/OnboardingModal";
 import ThemeToggle from "../components/ThemeToggle";
-import { getAuthMe, refreshUses } from "../api/client";
-import { isOnboarded } from "../lib/onboarding";
+import { getAuthMe, markOnboarded, refreshUses } from "../api/client";
+import { isOnboarded, markOnboardedHere, onboardingStep } from "../lib/onboarding";
 import { authRedirectUrl } from "../lib/safeNext";
 import { signOut } from "../lib/session";
 import { announceAccount, watchAccount } from "../lib/accountWatch";
@@ -627,6 +627,11 @@ export default function AppLayout() {
   // With the gate off locally, /auth/me answers with the dev admin, which is
   // authenticated and verified, so nothing redirects.
   const [authed, setAuthed] = useState(false);
+  // Opened by the guard below once /auth/me has said whether this ACCOUNT has
+  // answered the first-run questions (PLAN 31.1/11). Never at mount: deciding
+  // from this device alone flashed the modal at a returning account on a new
+  // browser before the account's answer arrived.
+  const [onboardOpen, setOnboardOpen] = useState(false);
   // Who is signed in, from that same answer: the avatar initial and the
   // "Signed in as" line. Null when the guard failed open, and then the avatar
   // is a generic User glyph and every other control in the header still works.
@@ -636,6 +641,23 @@ export default function AppLayout() {
   const [meId, setMeId] = useState<number | null>(null);
   useEffect(() => {
     let live = true;
+    // PLAN 31.1/11: the first-run questions belong to the ACCOUNT. They were
+    // remembered per device and cleared on sign-out, so an account with a resume
+    // and five applications was asked again on every new browser. The modal
+    // opens only from here, once /auth/me has said whether the account answered.
+    const onboard = (account: boolean | undefined) => {
+      switch (onboardingStep(account, isOnboarded())) {
+        case "ask":
+          setOnboardOpen(true);
+          break;
+        case "adopt":
+          markOnboardedHere();
+          break;
+        case "report":
+          void markOnboarded().catch(() => {});
+          break;
+      }
+    };
     getAuthMe()
       .then((a) => {
         if (!live) return;
@@ -653,10 +675,14 @@ export default function AppLayout() {
           // Tell this browser's other tabs who holds the cookie now (lib/accountWatch).
           announceAccount(a.user.id);
         }
+        onboard(a.user?.onboarded);
         setAuthed(true);
       })
       .catch(() => {
-        if (live) setAuthed(true);
+        if (!live) return;
+        setAuthed(true);
+        // The guard failed open: no account to ask, so this device decides.
+        onboard(undefined);
       });
     return () => {
       live = false;
@@ -707,7 +733,6 @@ export default function AppLayout() {
   // "done" is tailored-and-waiting-for-a-human, and it is the exact status
   // approveKit requires — a queued or failed kit is not something to review.
   const awaitingKits = kits?.filter((k) => k.status === "done").length ?? 0;
-  const [onboardOpen, setOnboardOpen] = useState(() => !isOnboarded());
 
   // Two popovers, one at a time — opening either closes the other, so the panel
   // and the account card can never overlap at the top-end corner on a phone.

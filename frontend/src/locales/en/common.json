@@ -172,16 +172,10 @@
   },
   "onboarding": {
     "title": "Welcome — let's point you the right way",
-    "sub": "Three quick questions. You can change everything later.",
+    "sub": "Two quick questions. You can change everything later.",
     "roleLabel": "What role are you looking for?",
     "rolePlaceholder": "e.g. Backend Engineer",
     "roleHint": "We'll prefill your job search with it.",
-    "timelineLabel": "How urgent is your search?",
-    "timeline": {
-      "now": "Actively applying",
-      "soon": "In the next few months",
-      "exploring": "Just exploring"
-    },
     "helpLabel": "Where do you need help first?",
     "help": {
       "jobs": {

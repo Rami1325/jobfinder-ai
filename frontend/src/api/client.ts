@@ -807,6 +807,14 @@ export async function updateResumePrefs(prefs: ResumePrefs): Promise<ResumePrefs
 
 // ---- accounts: the /auth routes -------------------------------------------- //
 
+/** POST /profile/onboarded (PLAN 31.1/11): record that this ACCOUNT finished or
+ * skipped the first-run questions, so no other device asks again. Free, no
+ * model, idempotent; callers treat a failure as harmless (the device's own
+ * record still keeps the modal from reopening here). */
+export async function markOnboarded(): Promise<void> {
+  await api.post("/profile/onboarded");
+}
+
 /** Who this browser is, and whether that account may use the app. Always 200.
  *
  * Un-cached, for getMe's reason and a sharper one: every auth page and the app

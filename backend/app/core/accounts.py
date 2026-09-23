@@ -83,7 +83,7 @@ from app.core.sessions import (
     token_hash,
     utc_now,
 )
-from app.db.models import AuthEvent, AuthSession, AuthToken, User, UserLogin
+from app.db.models import AuthEvent, AuthSession, AuthToken, SavedResume, User, UserLogin
 from app.db.users import ensure_admin, new_invite_code
 from app.models import AuthMe, AuthUser, UsageOut
 
@@ -184,6 +184,21 @@ def whoami(db: Session, request: Request) -> tuple[User | None, str, int | None]
     return None, "", None
 
 
+def _onboarded(db: Session, user: User) -> bool:
+    """The first-run questions are done for this ACCOUNT (PLAN 31.1/11): recorded
+    by POST /profile/onboarded, or the account already holds a master resume, so
+    an account from before the column (the owner, the friends) is never asked
+    again on a new browser or after a sign-out. Best effort, like `_usage`: a
+    failed read answers False, which shows the questions once rather than
+    answering /auth/me with a 500."""
+    if user.onboarded_at is not None:
+        return True
+    try:
+        return db.execute(select(SavedResume.id).where(SavedResume.user_id == user.id).limit(1)).first() is not None
+    except Exception:  # noqa: BLE001 - /auth/me must never 500 on bookkeeping
+        return False
+
+
 def me(db: Session, user: User | None, method: str) -> AuthMe:
     """The /auth/me payload.
 
@@ -221,6 +236,7 @@ def me(db: Session, user: User | None, method: str) -> AuthMe:
             has_password=bool(login is not None and login.password_hash),
             google_linked=bool(login is not None and login.google_sub),
             signup_source=user.signup_source or "",
+            onboarded=_onboarded(db, user),
         ),
         usage=_usage(db, user) if verified else None,
     )

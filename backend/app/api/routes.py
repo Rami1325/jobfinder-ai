@@ -2294,6 +2294,21 @@ def get_me(user: User = Depends(current_user)) -> MeOut:
     return MeOut(name=user.name, email=user.email, is_admin=user.is_admin)
 
 
+@router.post("/profile/onboarded")
+def mark_onboarded(db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+    """Record that this ACCOUNT finished or skipped the first-run questions
+    (PLAN 31.1/11), so no device asks again: they were remembered per device
+    and cleared on sign-out. Idempotent: the first stamp is kept.
+
+    `current_user`, like `/profile/me`: it writes one timestamp on an already
+    loaded row and takes no body, so nothing reachable from here can grow a
+    model call, and a daily cap would only be theatre."""
+    if user.onboarded_at is None:
+        user.onboarded_at = datetime.now(timezone.utc)
+        db.commit()
+    return {"onboarded": True}
+
+
 @router.delete("/profile/data", response_model=DeleteMyDataResult)
 def delete_my_data(
     db: Session = Depends(get_db), user: User = Depends(current_user)
