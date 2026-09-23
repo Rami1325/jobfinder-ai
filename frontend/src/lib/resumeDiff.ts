@@ -6,6 +6,7 @@
 import type {
   Education,
   Experience,
+  FabricationFlag,
   LanguageSkill,
   MilitaryService,
   Project,
@@ -941,4 +942,51 @@ export function blockSubtreeContainsValue(
     if (!bullet) return false;
     if (bullet.fields.some((f) => holds(f.value, value))) return true;
   }
+}
+
+/** A fabrication flag, and whether its value is still on the document. */
+export type FlagState = { flag: FabricationFlag; resolved: boolean };
+
+/**
+ * Which of the guard's flags the document on screen still carries. ONE answer
+ * for every place that states it (PLAN 31.3/3): the drawer's flag rows and the
+ * summary line over the paper read this, so "2 claims to check" above the
+ * document and the rows inside the drawer can never disagree.
+ *
+ * A flag is RESOLVED when no edit carrying its value still has it on the page:
+ * `anchoredEdits` names the block each edit landed in, and that block's subtree
+ * is searched (`blockSubtreeContainsValue`, for the reason it documents). No
+ * block for an edit means it is off the document (a declined addition, an
+ * accepted removal). No `effective` means the document cannot be read, and "we
+ * cannot check" may never render as resolved. A flag no edit accounts for stays
+ * UNRESOLVED: silence is not a clearance.
+ */
+export function flagStates(
+  flags: FabricationFlag[],
+  edits: ResumeEdit[],
+  anchoredEdits: Record<string, string> | undefined,
+  effective: ResumeModel | null,
+): FlagState[] {
+  return flags.map((flag) => {
+    const carriers = edits.filter((e) => editContainsValue(e, flag.value));
+    return {
+      flag,
+      resolved: carriers.length > 0 && carriers.every((e) => !editValueOnDocument(e, flag.value, anchoredEdits, effective)),
+    };
+  });
+}
+
+/** Whether a value an edit introduced is still on the DOCUMENT, on the block that
+ * edit landed in: the per-row reading `flagStates` is built from, exported so a
+ * row's own badge and the rows above it can never disagree about one value. */
+export function editValueOnDocument(
+  edit: ResumeEdit,
+  value: string,
+  anchoredEdits: Record<string, string> | undefined,
+  effective: ResumeModel | null,
+): boolean {
+  const path = anchoredEdits?.[edit.id];
+  if (!path) return false;
+  if (!effective) return true;
+  return blockSubtreeContainsValue(effective, path, value);
 }

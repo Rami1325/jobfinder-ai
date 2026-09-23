@@ -120,7 +120,13 @@ export default function MoreMenu({ items, label, className }: { items: MoreItem[
                   href={item.href}
                   target="_blank"
                   rel="noreferrer"
-                  onClick={() => setOpen(false)}
+                  // A link can still have something to say that it was opened:
+                  // "Open the posting" on a draft is what makes Mark applied
+                  // the next step (PLAN 31.3/3).
+                  onClick={() => {
+                    setOpen(false);
+                    item.onClick?.();
+                  }}
                   className={row}
                 >
                   <item.Icon size={15} className="shrink-0" aria-hidden />

@@ -1541,6 +1541,9 @@ try {
     // key at 12px in Hebrew.
     ["components/ReviewPanel.tsx", 9],
     ["components/DocumentPanel.tsx", 2],
+    // The tailored draft's summary line over the paper (PLAN 31.3/3): every
+    // word of it is a `review.summary.*` key and it was in no list.
+    ["components/DraftSummary.tsx", 6],
   ];
   // `[,)]` for check 9's reason: a counted or interpolated label —
   // t("edit.yours", { count }) — is exactly the kind most likely to be renamed,
@@ -1548,7 +1551,9 @@ try {
   // `doc\.review` before `review` in the alternation would still match the
   // shorter branch first on a `doc.review.*` key, so the prefix is spelled out
   // as its own branch and the regex is anchored by `t("`.
-  const CALL = /\bt\("((?:doc\.review|review|edit)\.[^"]+)"\s*[,)]/g;
+  // `doc.changes` since PLAN 31.3/3: the drawer's second pane names itself
+  // with it, in DocumentPanel, which this check already reads.
+  const CALL = /\bt\("((?:doc\.review|doc\.changes|review|edit)\.[^"]+)"\s*[,)]/g;
   const keys = new Set();
   for (const [f, floor] of files) {
     const here = [...decomment(read(f)).matchAll(CALL)].map((m) => m[1]);
@@ -10571,7 +10576,12 @@ try {
     const m = /<ScoreCard\b[\s\S]*?\bflags=\{([^}]*)\}/.exec(src);
     if (!m) throw new Error("could not find TailorPage's <ScoreCard … flags={…}>");
     const expr = m[1].replace(/\s+/g, " ").trim();
-    const ok = /^result \? result\.fabrication_flags : null$/.test(expr) || /^result\?\.fabrication_flags \?\? null$/.test(expr);
+    // `null` itself is the third honest shape: since PLAN 31.3/3 the card shows
+    // only before a tailor (`fit && !result`), where there is never a rewrite.
+    const ok =
+      /^result \? result\.fabrication_flags : null$/.test(expr) ||
+      /^result\?\.fabrication_flags \?\? null$/.test(expr) ||
+      expr === "null";
     return ok ? null : `TailorPage passes flags={${expr}} — with no tailor result it must be null, never a clean []`;
   };
   const tileProblem = (src) => {
@@ -11449,6 +11459,115 @@ try {
   for (const p of realPage) fail(`check 61: pages/TailorPage.tsx: ${p} (PLAN 31.3/4)`);
 } catch (e) {
   fail(`draft-with-its-job check (check 61) could not run: ${e.message}`);
+}
+
+// ---- 62. a tailored draft is the document and one line; its claims are one answer (EXECUTED) //
+// PLAN 31.3/3. The draft page was the document and then four cards for about
+// 7,000 px, saying the keywords three times and the claims twice. It is the
+// document and one summary line now, and the rest is the drawer's "Changes"
+// pane. Three things keep it that way. (a) "N claims to check" over the paper
+// and the flag rows inside the drawer are ONE reading, `flagStates` in
+// lib/resumeDiff: EXECUTED here over the cases its contract names (on the
+// document, typed away, declined, carried by no change, an unreadable
+// document), and both callers must use it, never a copy. (b) The change list,
+// the keyword report, the voice check and the letter render only inside the
+// pane's content, so a card re-added under the paper goes red. (c) The line
+// never says "No new claims found" about lines the user typed, which the guard
+// never read. Probed with resumeDiff mutated, a card planted, and the claims
+// chain reordered.
+try {
+  const diffSrc = read("lib/resumeDiff.ts");
+  const R62 = (summary) => ({
+    contact: { name: "", email: "", phone: "", location: "", linkedin: "", website: "" },
+    headline: "",
+    summary,
+    experience: [],
+    education: [],
+    skills: [],
+    certifications: [],
+    projects: [],
+    languages: [],
+    military_service: [],
+  });
+  const flag = (value) => ({ category: "number", value, detail: "" });
+  const edit = { id: "summary", kind: "edited", section: "summary", context: "", before: "Led a team.", after: "Led a team of 12 engineers." };
+  const run62 = (src) => {
+    const mod = runProbeBundle("flag-states", src.replace(/from "\.\/(keywords|resumeBlocks)"/g, 'from "./lib/$1"'));
+    if (typeof mod.flagStates !== "function") throw new Error("lib/resumeDiff.ts does not export flagStates");
+    const one = (flags, anchored, effective) => mod.flagStates(flags, [edit], anchored, effective).map((s) => s.resolved);
+    const out = [];
+    const want = (label, got, expected) => {
+      if (JSON.stringify(got) !== JSON.stringify(expected)) out.push(`${label}: resolved ${JSON.stringify(got)}, not ${JSON.stringify(expected)}`);
+    };
+    want("a flagged number still on the line it was put on", one([flag("12")], { summary: "@summary" }, R62("Led a team of 12 engineers.")), [false]);
+    want("the number typed away by the user", one([flag("12")], { summary: "@summary" }, R62("Led a team of engineers.")), [true]);
+    want("the change declined (its block is off the page)", one([flag("12")], {}, R62("Led a team.")), [true]);
+    want("a flag no change carries (silence is not a clearance)", one([flag("99")], { summary: "@summary" }, R62("Led a team of 12 engineers.")), [false]);
+    want("a document that cannot be read", one([flag("12")], { summary: "@summary" }, null), [false]);
+    return out;
+  };
+  const real = run62(diffSrc);
+  for (const [label, src] of [
+    ["a reading that ignores the document", diffSrc.replace(/!editValueOnDocument\([^)]*\)/, "true")],
+    ["a flag no change carries counted as resolved", diffSrc.replace("carriers.length > 0 && carriers.every", "carriers.every")],
+  ]) {
+    if (src === diffSrc) {
+      if (real.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!run62(src).length) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of real) fail(`check 62: lib/resumeDiff.ts flagStates, ${p} (PLAN 31.3/3)`);
+
+  // Both callers read that function, never their own copy of it.
+  const log = decomment(read("components/ChangeLog.tsx"));
+  const page = decomment(read("pages/TailorPage.tsx"));
+  if (!/\bflagStates\(/.test(log) || /\bblockSubtreeContainsValue\(/.test(log))
+    fail("check 62: components/ChangeLog.tsx does not read the flag rows through flagStates, so the drawer and the summary can disagree about the claims");
+  if (!/\bconst flagView = useMemo\(\s*\(\) => \(result \? flagStates\(/.test(page))
+    fail("check 62: pages/TailorPage.tsx does not count the summary's claims through flagStates, so the line over the paper can disagree with the drawer");
+
+  // (b) the cards live in the pane, and only there
+  const read62b = (src) => {
+    const at = src.indexOf("const reviewPane =");
+    const end = at === -1 ? -1 : src.indexOf(": undefined;", at);
+    if (at === -1 || end === -1) throw new Error("could not find TailorPage's `const reviewPane = … : undefined;`");
+    const pane = src.slice(at, end);
+    const out = [];
+    for (const tag of ["<ChangeLog", "<MatchReport", "<VoicePanel", "<CoverLetter", "<LeftOut"]) {
+      const all = src.split(tag).length - 1;
+      const inPane = pane.split(tag).length - 1;
+      if (inPane !== 1) out.push(`${tag}> is ${inPane ? `in the drawer pane ${inPane} times` : "not in the drawer pane"}`);
+      if (all !== inPane) out.push(`${tag}> is rendered outside the drawer pane too, under the paper`);
+    }
+    return out;
+  };
+  const realB = read62b(page);
+  // Planted where a card would go back: beside the document. `decomment`
+  // strips JSX comments, so the anchor is code.
+  const plantedB = page.replace("<DocumentPanel", '<MatchReport bare gaps={[]} jdText="" />\n<DocumentPanel');
+  if (plantedB === page) {
+    if (!realB.length) throw new Error("the card probe could not plant a report under the paper");
+  } else if (!read62b(plantedB).length) throw new Error("the reader passes a keyword report planted on the page, so it cannot be trusted");
+  for (const p of realB) fail(`check 62: pages/TailorPage.tsx: ${p} (PLAN 31.3/3: the page is the document and one line)`);
+
+  // (c) no "No new claims found" over lines the user typed
+  const summary = decomment(read("components/DraftSummary.tsx"));
+  const read62c = (src, pg) => {
+    const out = [];
+    const chain = /claimsOpen > 0\s*\?[\s\S]*?:\s*claimsRaised > 0\s*\?[\s\S]*?:\s*typed > 0\s*\?\s*t\("review\.summary\.noClaimsTyped"\)\s*:\s*t\("review\.summary\.noClaims"\)/;
+    if (!chain.test(src)) out.push("components/DraftSummary.tsx can say review.summary.noClaims while the user has typed lines the guard never read");
+    if (!/<DraftSummary\b[\s\S]*?\btyped=\{overrideCount\}/.test(pg)) out.push("pages/TailorPage.tsx does not pass typed={overrideCount} to DraftSummary");
+    return out;
+  };
+  const realC = read62c(summary, page);
+  const plantedC = summary.replace(/typed > 0\s*\?\s*t\("review\.summary\.noClaimsTyped"\)\s*:\s*t\("review\.summary\.noClaims"\)/, 't("review.summary.noClaims")');
+  if (plantedC === summary) {
+    if (!realC.length) throw new Error("the claims probe could not plant the unguarded sentence");
+  } else if (!read62c(plantedC, page).length) throw new Error("the reader passes an unguarded 'No new claims found', so it cannot be trusted");
+  for (const p of realC) fail(`check 62: ${p} (PLAN 31.3/3)`);
+} catch (e) {
+  fail(`tailored-draft summary check (check 62) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Check, Crosshair, Scissors, ShieldAlert, ShieldCheck, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ChangeLogEntry, CVPlan, FabricationFlag, LengthReport, ResumeModel } from "../types";
 import type { ResumeTemplate } from "../api/client";
 import type { DiffSeg, EditSection, ResumeEdit } from "../lib/resumeDiff";
-import { blockSubtreeContainsValue, editContainsValue, keywordsServed, wordDiff } from "../lib/resumeDiff";
+import { editContainsValue, editValueOnDocument, flagStates, keywordsServed, wordDiff } from "../lib/resumeDiff";
 import {
   CURATION_KEY,
   curationCause,
@@ -74,6 +74,40 @@ interface Props {
   /** Undo the user's own DELETION, leaving the accept/decline decision alone —
    * neither of the two above describes putting a deleted line back. */
   onRestoreMine?: (id: string) => void;
+  /**
+   * `card` (the kit page) is the panel as it always was. `drawer` is the tailored
+   * draft's review since PLAN 31.3/3: no card around it, no page chip (the
+   * summary over the paper carries it), each section under the reason the tailor
+   * wrote for it instead of a separate "AI notes" list, and "Left out of this
+   * version" rendered apart by `LeftOut`, below the keywords and the voice check.
+   */
+  variant?: "card" | "drawer";
+  /** Drawer only: what sits between the claims and the change groups (the lines
+   * the user typed, which belong beside the changes they outrank). */
+  beforeGroups?: ReactNode;
+}
+
+/** A changelog entry's free-text section, as the review's `EditSection`. The
+ * model writes these ("summary", "Professional summary", "Work experience"), and
+ * the pipeline adds its own ("skills", "keywords", "languages"); one without a
+ * section of its own stays in the notes, never dropped. */
+const REASON_SECTION: [RegExp, EditSection][] = [
+  [/headline|title line/, "headline"],
+  [/summary|profile|about/, "summary"],
+  [/skill/, "skills"],
+  [/military|service/, "militaryService"],
+  [/experience|role|work|position|employment/, "experience"],
+  [/project/, "projects"],
+  [/education|degree/, "education"],
+  [/certif/, "certifications"],
+  [/language/, "languages"],
+  [/contact/, "contact"],
+];
+
+export function reasonSection(section: string): EditSection | null {
+  const s = section.trim().toLowerCase();
+  for (const [re, key] of REASON_SECTION) if (re.test(s)) return key;
+  return null;
 }
 
 const CURATION_SECTION_ORDER: EditSection[] = [
@@ -410,8 +444,11 @@ export default function ChangeLog({
   onUseAi,
   onUseOriginal,
   onRestoreMine,
+  variant = "card",
+  beforeGroups,
 }: Props) {
   const { t } = useTranslation("tailor");
+  const drawer = variant === "drawer";
 
   // Explicit user toggles only; anything untouched falls back to the default,
   // so a new tailor result gets fresh defaults without a reset effect and an
@@ -437,31 +474,15 @@ export default function ChangeLog({
    * then type over the same bullet keeping the invented number: the mint stayed
    * and the number shipped. Reproduced by execution, not reasoned about.
    *
-   * No path means the edit's block is not in the document at all — a declined
-   * addition, an accepted removal — so its value is not on the page. No
-   * `effective` means we cannot read the document, and "we cannot check" may
-   * never render as "resolved".
-   *
-   * IT SEARCHES THE BLOCK'S SUBTREE, not the block. An added or removed ENTRY
-   * anchors to its META path, whose fields are title/employer/dates, while the
-   * edit's text folds the entry's BULLETS in — so a flagged number living in a
-   * bullet was matched by `editContainsValue` and then looked for only in the
-   * meta line, which cleared the flag and printed "Nothing flagged is on your CV
-   * any more" over a CV that still carried it.
+   * The reading lives in `lib/resumeDiff` (`flagStates`, `editValueOnDocument`)
+   * since PLAN 31.3/3, because the summary line over the paper states the same
+   * count and one question may have only one answer. The subtree search, and
+   * why a missing document never reads as resolved, are documented there.
    */
-  const onDocument = (e: ResumeEdit, value: string): boolean => {
-    const path = anchoredEdits?.[e.id];
-    if (!path) return false;
-    if (!effective) return true;
-    return blockSubtreeContainsValue(effective, path, value);
-  };
+  const onDocument = (e: ResumeEdit, value: string): boolean =>
+    editValueOnDocument(e, value, anchoredEdits, effective);
   /** A flag is resolved when nothing on the document still carries its value. */
-  const flagRows = flags.map((f) => {
-    const carriers = edits.filter((e) => editContainsValue(e, f.value));
-    // Zero carriers stays UNRESOLVED, as it always has: a flag no edit accounts
-    // for is one we cannot say anything about, and silence is not a clearance.
-    return { flag: f, resolved: carriers.length > 0 && carriers.every((e) => !onDocument(e, f.value)) };
-  });
+  const flagRows = flagStates(flags, edits, anchoredEdits, effective);
   const clean = flags.length === 0;
   const allResolved = !clean && flagRows.every((r) => r.resolved);
 
@@ -510,30 +531,194 @@ export default function ChangeLog({
   const curation = groups.find((g) => g.key === CURATION_KEY);
   const decided = groups.filter((g) => g.key !== CURATION_KEY);
 
+  // Each section under the reason the tailor wrote for it (PLAN 31.3/3). The
+  // drawer prints a section's reasons once, above its first unflagged group; a
+  // reason with no section of its own stays in the notes at the end.
+  const reasons = useMemo(() => {
+    const bySection = new Map<EditSection, ChangeLogEntry[]>();
+    const loose: ChangeLogEntry[] = [];
+    for (const c of changelog) {
+      const s = reasonSection(c.section);
+      if (s && decided.some((g) => g.section === s)) bySection.set(s, [...(bySection.get(s) ?? []), c]);
+      else loose.push(c);
+    }
+    return { bySection, loose };
+  }, [changelog, decided]);
 
-  return (
-    <Card
-      id="trust-panel"
-      glow={clean || allResolved}
-      className={cn("scroll-mt-20", clean || allResolved ? "border-mint/40" : "border-danger/50")}
-    >
-      <div className="flex items-center gap-3">
-        <span
+  const groupCard = (g: EditGroup) => {
+    const open = isOpen(g);
+    const groupIds = g.edits.map((e) => e.id);
+    const rejectedHere = groupIds.filter((id) => rejected.has(id)).length;
+    return (
+      <Disclosure
+        key={g.key}
+        open={open}
+        onToggle={() => toggle(g)}
+        className="bg-panel-2/30"
+        summary={
+          <span className="flex flex-wrap items-center gap-2">
+            <Badge tone={g.cls === "addition" ? "mint" : "accent"}>{t(`groups.${g.cls}.title`)}</Badge>
+            <span className="text-xs font-medium text-ink-muted">{t(`sections.${g.section}`)}</span>
+            {g.context && (
+              <span dir="auto" className="min-w-0 truncate text-xs text-ink-faint">
+                {g.context}
+              </span>
+            )}
+            <span className="text-xs tabular-nums text-ink-faint">
+              {t(`groups.${g.cls}.count`, { count: g.edits.length })}
+            </span>
+            {g.flagged > 0 && (
+              <Badge tone="danger">
+                <ShieldAlert size={11} /> {t("groups.flagged", { count: g.flagged })}
+              </Badge>
+            )}
+            {rejectedHere > 0 && (
+              <span className="text-xs font-medium text-warn">
+                {t("groups.rejectedHere", { count: rejectedHere })}
+              </span>
+            )}
+          </span>
+        }
+      >
+        <div className="space-y-2 px-3 pb-3">
+          {g.edits.length > 1 && (
+            <div className="flex gap-3 text-xs">
+              <button
+                type="button"
+                onClick={() => setManyRejected(groupIds, false)}
+                disabled={rejectedHere === 0}
+                className="text-mint hover:underline disabled:cursor-default disabled:opacity-40"
+              >
+                {t("groups.acceptGroup")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setManyRejected(groupIds, true)}
+                disabled={rejectedHere === groupIds.length}
+                className="text-danger hover:underline disabled:cursor-default disabled:opacity-40"
+              >
+                {t("groups.rejectGroup")}
+              </button>
+            </div>
+          )}
+          {g.section === "skills" && g.cls === "addition" && (
+            <p className="text-xs text-ink-faint">{t("additions.skillsNote")}</p>
+          )}
+          {g.edits.map((edit, i) => (
+            <EditRow
+              key={edit.id}
+              edit={edit}
+              flags={flags}
+              jdKeywords={jdKeywords}
+              isRejected={rejected.has(edit.id)}
+              // The same document reading the flag rows use, so the row
+              // badge and the row above it can never disagree about one
+              // value.
+              flagOnDoc={flags.some((f) => editContainsValue(edit, f.value) && onDocument(edit, f.value))}
+              onDecide={(r) => setRejected(edit.id, r)}
+              decryptDelay={Math.min(i, 15) * 40}
+              onShowInDoc={onShowInDoc && anchoredEdits?.[edit.id] ? () => onShowInDoc(edit.id) : undefined}
+              override={overridden?.[edit.id]}
+              onUseAi={onUseAi && (() => onUseAi(edit.id))}
+              onUseOriginal={onUseOriginal && (() => onUseOriginal(edit.id))}
+              onRestoreMine={onRestoreMine && (() => onRestoreMine(edit.id))}
+            />
+          ))}
+        </div>
+      </Disclosure>
+    );
+  };
+
+  // The drawer's list: flagged groups first under their own heading, then each
+  // section once, under the tailor's reason for it.
+  const drawerGroups = () => {
+    const out: ReactNode[] = [];
+    let last: EditSection | null = null;
+    let flaggedHeading = false;
+    for (const g of decided) {
+      if (g.flagged > 0) {
+        if (!flaggedHeading) {
+          flaggedHeading = true;
+          out.push(
+            <h4 key="h:flagged" className="pt-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-danger">
+              {t("review.toCheck")}
+            </h4>,
+          );
+        }
+        out.push(groupCard(g));
+        continue;
+      }
+      if (g.section !== last) {
+        last = g.section;
+        const why = reasons.bySection.get(g.section) ?? [];
+        out.push(
+          <div key={`h:${g.section}`} className="pt-2">
+            <h4 className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-muted">
+              {t(`sections.${g.section}`)}
+            </h4>
+            {why.map((c, i) => (
+              <p key={i} dir="auto" className="mt-0.5 text-xs leading-relaxed text-ink-faint">
+                {c.reason ? t("review.sectionWhy", { change: c.change, reason: c.reason }) : c.change}
+              </p>
+            ))}
+          </div>,
+        );
+      }
+      out.push(groupCard(g));
+    }
+    return out;
+  };
+
+  const notes = drawer ? reasons.loose : changelog;
+
+  const body = (
+    <>
+      {!drawer && (
+        <div className="flex items-center gap-3">
+          <span
+            className={cn(
+              "grid h-11 w-11 shrink-0 place-items-center rounded-xl",
+              clean || allResolved ? "bg-mint/15 text-mint" : "bg-danger/15 text-danger",
+            )}
+          >
+            {clean || allResolved ? <ShieldCheck size={22} /> : <ShieldAlert size={22} />}
+          </span>
+          <div>
+            <CardTitle>{clean ? t("changelog.cleanTitle") : t("changelog.flaggedTitle")}</CardTitle>
+            <p className="mt-0.5 text-sm text-ink-muted">
+              {/* The clean body is the one sentence here that makes a claim about
+                  the WHOLE document ("every employer, title, date, credential and
+                  number… also appears in your original"), and the guard read only
+                  the AI's rewrite. Anything the user typed afterwards it has never
+                  seen, so the count is named rather than quietly folded in. */}
+              {clean
+                ? overrideCount > 0
+                  ? t("changelog.cleanBodyEdited", { count: overrideCount })
+                  : t("changelog.cleanBody")
+                : allResolved
+                  ? t("review.resolvedBody")
+                  : t("changelog.flagged", { count: flags.length })}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* In the drawer the claims are ONE line with its icon, and the rows under
+          it when there are any: the same sentences the card used, so what the
+          guard can and cannot say is stated in one set of words. */}
+      {drawer && (
+        <p
           className={cn(
-            "grid h-11 w-11 shrink-0 place-items-center rounded-xl",
-            clean || allResolved ? "bg-mint/15 text-mint" : "bg-danger/15 text-danger",
+            "flex items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+            clean || allResolved ? "border-mint/30 bg-mint/5 text-ink-muted" : "border-danger/30 bg-danger/5 text-ink",
           )}
         >
-          {clean || allResolved ? <ShieldCheck size={22} /> : <ShieldAlert size={22} />}
-        </span>
-        <div>
-          <CardTitle>{clean ? t("changelog.cleanTitle") : t("changelog.flaggedTitle")}</CardTitle>
-          <p className="mt-0.5 text-sm text-ink-muted">
-            {/* The clean body is the one sentence here that makes a claim about
-                the WHOLE document ("every employer, title, date, credential and
-                number… also appears in your original"), and the guard read only
-                the AI's rewrite. Anything the user typed afterwards it has never
-                seen, so the count is named rather than quietly folded in. */}
+          {clean || allResolved ? (
+            <ShieldCheck size={16} className="mt-0.5 shrink-0 text-mint" />
+          ) : (
+            <ShieldAlert size={16} className="mt-0.5 shrink-0 text-danger" />
+          )}
+          <span>
             {clean
               ? overrideCount > 0
                 ? t("changelog.cleanBodyEdited", { count: overrideCount })
@@ -541,9 +726,9 @@ export default function ChangeLog({
               : allResolved
                 ? t("review.resolvedBody")
                 : t("changelog.flagged", { count: flags.length })}
-          </p>
-        </div>
-      </div>
+          </span>
+        </p>
+      )}
 
       {!clean && (
         <div className="mt-4 space-y-2">
@@ -565,6 +750,8 @@ export default function ChangeLog({
           ))}
         </div>
       )}
+
+      {drawer && beforeGroups}
 
       <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">{t("review.title")}</h3>
@@ -597,7 +784,7 @@ export default function ChangeLog({
       {edits.length > 0 && (
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
           <p className="text-xs text-ink-faint">{t("review.note")}</p>
-          <PageBadge resume={effective} template={template} className="ms-auto" />
+          {!drawer && <PageBadge resume={effective} template={template} className="ms-auto" />}
         </div>
       )}
 
@@ -605,93 +792,9 @@ export default function ChangeLog({
         <p className="mt-2 text-sm text-ink-muted">{t("changelog.noChanges")}</p>
       ) : (
         <div className="mt-3 space-y-2">
-          {decided.map((g) => {
-            const open = isOpen(g);
-            const groupIds = g.edits.map((e) => e.id);
-            const rejectedHere = groupIds.filter((id) => rejected.has(id)).length;
-            return (
-              <Disclosure
-                key={g.key}
-                open={open}
-                onToggle={() => toggle(g)}
-                className="bg-panel-2/30"
-                summary={
-                  <span className="flex flex-wrap items-center gap-2">
-                    <Badge tone={g.cls === "addition" ? "mint" : "accent"}>{t(`groups.${g.cls}.title`)}</Badge>
-                    <span className="text-xs font-medium text-ink-muted">{t(`sections.${g.section}`)}</span>
-                    {g.context && (
-                      <span dir="auto" className="min-w-0 truncate text-xs text-ink-faint">
-                        {g.context}
-                      </span>
-                    )}
-                    <span className="text-xs tabular-nums text-ink-faint">
-                      {t(`groups.${g.cls}.count`, { count: g.edits.length })}
-                    </span>
-                    {g.flagged > 0 && (
-                      <Badge tone="danger">
-                        <ShieldAlert size={11} /> {t("groups.flagged", { count: g.flagged })}
-                      </Badge>
-                    )}
-                    {rejectedHere > 0 && (
-                      <span className="text-xs font-medium text-warn">
-                        {t("groups.rejectedHere", { count: rejectedHere })}
-                      </span>
-                    )}
-                  </span>
-                }
-              >
-                <div className="space-y-2 px-3 pb-3">
-                  {g.edits.length > 1 && (
-                    <div className="flex gap-3 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => setManyRejected(groupIds, false)}
-                        disabled={rejectedHere === 0}
-                        className="text-mint hover:underline disabled:cursor-default disabled:opacity-40"
-                      >
-                        {t("groups.acceptGroup")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setManyRejected(groupIds, true)}
-                        disabled={rejectedHere === groupIds.length}
-                        className="text-danger hover:underline disabled:cursor-default disabled:opacity-40"
-                      >
-                        {t("groups.rejectGroup")}
-                      </button>
-                    </div>
-                  )}
-                  {g.section === "skills" && g.cls === "addition" && (
-                    <p className="text-xs text-ink-faint">{t("additions.skillsNote")}</p>
-                  )}
-                  {g.edits.map((edit, i) => (
-                    <EditRow
-                      key={edit.id}
-                      edit={edit}
-                      flags={flags}
-                      jdKeywords={jdKeywords}
-                      isRejected={rejected.has(edit.id)}
-                      // The same document reading the flag rows use, so the row
-                      // badge and the row above it can never disagree about one
-                      // value.
-                      flagOnDoc={flags.some((f) => editContainsValue(edit, f.value) && onDocument(edit, f.value))}
-                      onDecide={(r) => setRejected(edit.id, r)}
-                      decryptDelay={Math.min(i, 15) * 40}
-                      onShowInDoc={
-                        onShowInDoc && anchoredEdits?.[edit.id] ? () => onShowInDoc(edit.id) : undefined
-                      }
-                      override={overridden?.[edit.id]}
-                      onUseAi={onUseAi && (() => onUseAi(edit.id))}
-                      onUseOriginal={onUseOriginal && (() => onUseOriginal(edit.id))}
-                      onRestoreMine={onRestoreMine && (() => onRestoreMine(edit.id))}
-                    />
-                  ))}
-                </div>
-              </Disclosure>
-            );
-          })}
+          {drawer ? drawerGroups() : decided.map(groupCard)}
 
-          {curation && (
+          {!drawer && curation && (
             <CurationCard
               group={curation}
               open={isOpen(curation)}
@@ -708,13 +811,13 @@ export default function ChangeLog({
         </div>
       )}
 
-      {changelog.length > 0 && (
+      {notes.length > 0 && (
         <details className="mt-4">
           <summary className="cursor-pointer text-xs font-medium text-ink-muted hover:text-ink">
-            {t("review.aiNotes")}
+            {drawer ? t("review.otherNotes") : t("review.aiNotes")}
           </summary>
           <div className="mt-2 space-y-2">
-            {changelog.map((c, i) => (
+            {notes.map((c, i) => (
               <div key={i} className="rounded-lg border-s-2 border-accent bg-panel-2/60 px-3 py-2">
                 <div className="text-sm">
                   <span className="font-semibold capitalize text-accent-soft">{c.section}</span>
@@ -728,7 +831,76 @@ export default function ChangeLog({
           </div>
         </details>
       )}
+    </>
+  );
+
+  // The drawer is the card's content without the card: the drawer is already
+  // the container, and a bordered, glowing card inside it is a box in a box.
+  return drawer ? (
+    <section id="trust-panel" className="scroll-mt-4">
+      {body}
+    </section>
+  ) : (
+    <Card
+      id="trust-panel"
+      glow={clean || allResolved}
+      className={cn("scroll-mt-20", clean || allResolved ? "border-mint/40" : "border-danger/50")}
+    >
+      {body}
     </Card>
+  );
+}
+
+/**
+ * "Left out of this version", on its own (PLAN 31.3/3): the drawer shows it
+ * after the keywords and the voice check, as its own section, where the card
+ * kept it inside the change list. The same `CurationCard`, over the same group
+ * `groupEdits` makes, and the same `rejected` set, so a Restore here and one in
+ * the card form are one decision. `groupEdits` is handed a never-flagged
+ * predicate on purpose: the quiet card provably holds no flag (see
+ * `opensByDefault`), so the flag rule has nothing to decide here.
+ */
+export function LeftOut({
+  edits,
+  rejected,
+  onSetRejected,
+  original = null,
+  lengthReport,
+  plan,
+  overridden,
+}: {
+  edits: ResumeEdit[];
+  rejected: ReadonlySet<string>;
+  onSetRejected: (ids: string[]) => void;
+  original?: ResumeModel | null;
+  lengthReport?: LengthReport;
+  plan?: CVPlan | null;
+  overridden?: Record<string, "yours" | "hidden" | "removed">;
+}) {
+  const curation = useMemo(() => groupEdits(edits, () => false).find((g) => g.key === CURATION_KEY), [edits]);
+  const [open, setOpen] = useState<boolean | null>(null);
+  if (!curation) return null;
+  const setMany = (ids: string[], isRejected: boolean) => {
+    const next = new Set(rejected);
+    for (const id of ids) {
+      if (isRejected) next.add(id);
+      else next.delete(id);
+    }
+    onSetRejected([...next]);
+  };
+  return (
+    <CurationCard
+      group={curation}
+      open={open ?? opensByDefault(curation)}
+      onToggle={() => setOpen(!(open ?? opensByDefault(curation)))}
+      original={original}
+      lengthReport={lengthReport}
+      plan={plan}
+      rejected={rejected}
+      onRestore={(id, r) => setMany([id], r)}
+      onRestoreAll={(ids) => setMany(ids, true)}
+      overridden={overridden}
+    />
   );
 }
 

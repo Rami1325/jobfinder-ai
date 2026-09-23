@@ -9,6 +9,9 @@ import { countOccurrences, keywordRegex } from "../lib/keywords";
 interface Props {
   gaps: GapItem[];
   jdText: string;
+  /** Without the card and its title (PLAN 31.3/3): the tailored draft's drawer
+   * gives the keyword list a section heading of its own. */
+  bare?: boolean;
 }
 
 const groupMeta = {
@@ -57,7 +60,7 @@ function highlightNodes(text: string, keyword: string): (string | JSX.Element)[]
  * user is looking at and can click to verify; a count about the resume is a
  * claim, and claims about the resume are the server's to make.
  */
-export default function MatchReport({ gaps, jdText }: Props) {
+export default function MatchReport({ gaps, jdText, bare = false }: Props) {
   const { t } = useTranslation("tailor");
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -77,10 +80,11 @@ export default function MatchReport({ gaps, jdText }: Props) {
     /(@@missing@@|@@total@@)/,
   );
 
+  const Shell = bare ? "div" : Card;
   return (
-    <Card>
-      <CardTitle>{t("report.title")}</CardTitle>
-      <p className="mt-1 text-sm text-ink-muted">
+    <Shell>
+      {!bare && <CardTitle>{t("report.title")}</CardTitle>}
+      <p className={bare ? "text-sm text-ink-muted" : "mt-1 text-sm text-ink-muted"}>
         {summaryParts.map((part, i) =>
           part === "@@missing@@" ? (
             <CountUp key={i} to={missing} duration={0.8} className="tabular-nums" />
@@ -160,6 +164,6 @@ export default function MatchReport({ gaps, jdText }: Props) {
           </div>
         )}
       </>
-    </Card>
+    </Shell>
   );
 }

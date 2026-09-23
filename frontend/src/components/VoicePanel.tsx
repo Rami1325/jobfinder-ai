@@ -17,18 +17,23 @@ import { cn } from "../lib/cn";
 export default function VoicePanel({
   report,
   plan,
+  bare = false,
 }: {
   report?: VoiceReport;
   plan?: CVPlan | null;
+  /** Without the card and its title (PLAN 31.3/3): the drawer's section heading
+   * names it, and the score chip stands alone. */
+  bare?: boolean;
 }) {
   const { t } = useTranslation("tailor");
   if (!report) return null;
   const clean = report.issues.length === 0;
 
+  const Shell = bare ? "div" : Card;
   return (
-    <Card>
+    <Shell>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <CardTitle>{t("voice.title")}</CardTitle>
+        {!bare && <CardTitle>{t("voice.title")}</CardTitle>}
         <span
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold",
@@ -89,6 +94,6 @@ export default function VoicePanel({
         </ul>
       )}
 
-    </Card>
+    </Shell>
   );
 }

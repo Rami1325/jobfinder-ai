@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
-import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft, ScanEye, Target, Pencil } from "lucide-react";
+import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft, Target, Pencil } from "lucide-react";
 import {
   downloadResume,
   resumeFilename,
@@ -18,8 +18,9 @@ import { isPdfOnlyTemplate } from "../components/TemplatePicker";
 import PageBadge from "../components/PageBadge";
 import DocumentToolbar from "../components/DocumentToolbar";
 import DraftRestoreBar from "../components/DraftRestoreBar";
-import ChangeLog from "../components/ChangeLog";
-import DocumentPanel, { type DocView } from "../components/DocumentPanel";
+import ChangeLog, { LeftOut } from "../components/ChangeLog";
+import DocumentPanel, { type DocView, type DrawerPane } from "../components/DocumentPanel";
+import DraftSummary from "../components/DraftSummary";
 import TailorOverlay from "../components/TailorOverlay";
 import BlockEditSheet from "../components/BlockEditSheet";
 import ResumeEditBar from "../components/ResumeEditBar";
@@ -33,7 +34,7 @@ import ScoreCard from "../components/ScoreCard";
 import VoicePanel from "../components/VoicePanel";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
-import { blocksByEdit, mergeForReview } from "../lib/resumeDiff";
+import { blocksByEdit, flagStates, mergeForReview } from "../lib/resumeDiff";
 import { applyOverrides, blockText, movedPath } from "../lib/resumeOverrides";
 import {
   inlineField,
@@ -118,7 +119,7 @@ const BAR_HEIGHT = "3.75rem";
 const EDIT_HINT_KEY = "jf-edit-hint-v1";
 
 export default function TailorPage() {
-  const { t } = useTranslation("tailor");
+  const { t, i18n } = useTranslation("tailor");
   const { t: tCommon } = useTranslation("common");
   const navigate = useNavigate();
   const loc = useLocation() as {
@@ -768,6 +769,11 @@ export default function TailorPage() {
   // carries a nonce so clicking the same block twice re-fires the effect.
   const docRef = useRef<HTMLDivElement>(null);
   const [docView, setDocView] = useState<DocView>("screen");
+  // Which pane the document's drawer shows (PLAN 31.3/3). Held here, not in
+  // DocumentPanel, because a draft's changes open from three places the panel
+  // does not own: the toolbar's "N changes", the summary over the paper, and a
+  // changed block tapped on the paper.
+  const [pane, setPane] = useState<DrawerPane | null>(null);
   // Ephemeral, per session: the enumeration of the user's own edits is an answer
   // to a question they just asked, not a preference to remember. It needs no
   // reset either — the list is gated on `overrideCount`, so clearing the edits
@@ -937,17 +943,23 @@ export default function TailorPage() {
     scrollToBlock(path);
   }
 
-  /** Review row → document. */
+  /** Review row → document. Below `lg` the drawer covers the paper, so the jump
+   * closes it first, the rule the "Check my CV" rows already follow
+   * (`review.md`); evaluated at tap time so a rotation is handled. */
   function showInDoc(id: string) {
     const path = editBlock[id];
     if (!path) return; // an accepted removal is not on the page — nothing to point at
+    if (!window.matchMedia("(min-width: 1024px)").matches) setPane(null);
     jumpToBlock(path);
   }
 
-  /** Document block → review row. */
+  /** Document block → review row. The row lives in the drawer since PLAN
+   * 31.3/3, so the drawer opens on the changes and the change list scrolls to
+   * the row (`focusEdit`). */
   function selectBlock(path: string) {
     const id = merged?.blocks[path]?.[0];
     if (!id) return; // an untouched block has nothing to show
+    setPane("changes");
     setFocusEdit({ id, nonce: Date.now() });
   }
 
@@ -1122,6 +1134,209 @@ export default function TailorPage() {
     }
   }
 
+  // --- the tailored draft's review, in the document's drawer (PLAN 31.3/3) ---
+  //
+  // The page was the document and then four cards for about 7,000 px: a score
+  // card, a keyword report, a voice check and the change list, with the keywords
+  // said three times and the claims twice. Now the page is the document and one
+  // summary line over it, and all of this is the drawer's "Changes" pane, the
+  // drawer "Check my CV" already opens.
+
+  /** Which of the guard's flags the document still carries: the drawer's own
+   * reading (`flagStates`), so the summary's "N claims to check" and the rows
+   * in the drawer are one answer. */
+  const flagView = useMemo(
+    () => (result ? flagStates(result.fabrication_flags, edits, editBlock, effectiveResume) : []),
+    [result, edits, editBlock, effectiveResume],
+  );
+  const claimsOpen = flagView.filter((f) => !f.resolved).length;
+  /** Keywords the resume carried BEFORE the tailor, out of the same analysed
+   * posting the live count uses: the server's `score_before`, counted the way
+   * `/tools/coverage` counts (`covered` over every gap). */
+  const beforeCounts = result
+    ? {
+        covered: result.score_before.gaps.filter((g) => g.status === "covered").length,
+        total: result.score_before.gaps.length,
+      }
+    : null;
+
+  /** The lines the user typed on this draft, beside the changes they outrank.
+   * The count IS the reveal: an override that deleted a block has nothing to
+   * mark on the paper and no change row to sit in, so a number whose members
+   * cannot be found would be worse than no number. */
+  const yoursBlock =
+    overrideCount > 0 || clearedCount > 0 ? (
+      <div className="mt-4 space-y-2 text-xs">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {overrideCount > 0 && (
+            <>
+              <button
+                type="button"
+                aria-expanded={yoursOpen}
+                onClick={() => setYoursOpen((o) => !o)}
+                className="font-medium text-mint hover:underline"
+              >
+                {t("edit.yours", { count: overrideCount })}
+              </button>
+              <button
+                type="button"
+                onClick={clearAllBlockOverrides}
+                className="font-medium text-accent-soft hover:underline"
+              >
+                {t("edit.yoursClear")}
+              </button>
+            </>
+          )}
+          {/* The one-step undo for "Clear my edits", deliberately outside the
+              block above: clearing takes `overrideCount` to zero and that block
+              with it, so an offer rendered inside would vanish in the same frame
+              as the thing it undoes. Restoring MERGES, so anything typed since
+              the clear survives it. */}
+          {clearedCount > 0 && (
+            <button type="button" onClick={restoreClearedOverrides} className="font-medium text-mint hover:underline">
+              {t("edit.yoursRestoreCleared", { count: clearedCount })}
+            </button>
+          )}
+        </div>
+        {/* A conditional render with `animate-fade-up`, never a height tween
+            (check 11). */}
+        {yoursOpen && overrideCount > 0 && (
+          <div className="animate-fade-up rounded-lg border border-line bg-panel-2/60 p-2">
+            <ul className="space-y-1">
+              {myEdits.map((e) => (
+                <li key={e.anchor} className="space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span dir="auto" className="min-w-0 flex-1 truncate text-ink-muted">
+                      {e.text || "—"}
+                    </span>
+                    <span
+                      className={cn(
+                        "shrink-0 font-medium",
+                        e.state === "removed" ? "text-warn" : e.state === "hidden" ? "text-ink-faint" : "text-mint",
+                      )}
+                    >
+                      {e.state === "removed"
+                        ? t("edit.yoursDeletedLine")
+                        : e.state === "hidden"
+                          ? t("edit.yoursOff")
+                          : t("edit.yoursOn")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => clearBlockOverride(e.anchor)}
+                      className="shrink-0 rounded-md border border-line px-2 py-0.5 font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+                    >
+                      {e.state === "removed" ? t("edit.yoursPutBack") : t("edit.yoursUndoOne")}
+                    </button>
+                  </div>
+                  {/* WHAT THE BUTTON ABOVE WILL PUT BACK, read off the
+                      pre-override merge through the row's own anchor, so it is
+                      the block's real previous wording. */}
+                  {e.was && e.was !== e.text && (
+                    <p dir="auto" className="truncate text-[11px] text-ink-faint">
+                      {t("edit.yoursWas", { text: e.was })}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    ) : null;
+
+  const fitTime =
+    scoredAt !== null
+      ? new Intl.DateTimeFormat(i18n.language, { hour: "2-digit", minute: "2-digit" }).format(scoredAt)
+      : "";
+  const sectionHeading = "text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted";
+  const reviewPane =
+    result && jd && effectiveResume && !loading
+      ? {
+          count: edits.length,
+          content: (
+            <div className="space-y-8">
+              {/* The changes: the claims first, then the lines the user typed,
+                  then every change, flagged first and each section under the
+                  reason the tailor gave for it. */}
+              <ChangeLog
+                variant="drawer"
+                beforeGroups={yoursBlock}
+                edits={edits}
+                changelog={result.changelog}
+                flags={result.fabrication_flags}
+                jdKeywords={result.score_after.gaps.map((g) => g.keyword)}
+                rejected={rejectedSet}
+                onSetRejected={(ids) => setTailorState({ rejectedEdits: ids })}
+                original={original}
+                effective={effectiveResume}
+                lengthReport={result.length_report}
+                plan={result.plan}
+                template={template}
+                onShowInDoc={showInDoc}
+                anchoredEdits={editBlock}
+                focusEdit={focusEdit}
+                overridden={overriddenEdits}
+                overrideCount={overrideCount}
+                onUseAi={(id) => resolveOverride(id, false)}
+                onUseOriginal={(id) => resolveOverride(id, true)}
+                onRestoreMine={restoreOverride}
+              />
+
+              {/* The keywords, of the document ON SCREEN: the live coverage
+                  the summary's "after" reads, not the AI version's. Above them
+                  the one recruiter-fit reading, with the minute it was taken
+                  and no before/after: two samples at temperature 0.3 are not a
+                  measurement of improvement (`scoring.md`). */}
+              <section className="space-y-3">
+                <h3 className={sectionHeading}>{t("report.title")}</h3>
+                <p className="text-xs leading-relaxed text-ink-muted">
+                  <span className="font-semibold tabular-nums text-ink">
+                    {t("fit.recruiter")} {Math.round(result.score_after.fit_score)}
+                  </span>{" "}
+                  · {t("fit.asOf", { time: fitTime })}
+                </p>
+                {result.score_after.rationale && (
+                  <p className="text-xs leading-relaxed text-ink-muted">{result.score_after.rationale}</p>
+                )}
+                <MatchReport bare gaps={coverage.data?.gaps ?? result.score_after.gaps} jdText={jdText} />
+              </section>
+
+              {result.voice_report && (
+                <section className="space-y-2">
+                  <h3 className={sectionHeading}>{t("voice.title")}</h3>
+                  <VoicePanel bare report={result.voice_report} plan={result.plan} />
+                </section>
+              )}
+
+              {/* "Left out of this version": its own card, whose summary line
+                  is its heading. The same `rejected` set as every change above,
+                  so Restore here and a decline there are one decision. */}
+              <LeftOut
+                edits={edits}
+                rejected={rejectedSet}
+                onSetRejected={(ids) => setTailorState({ rejectedEdits: ids })}
+                original={original}
+                lengthReport={result.length_report}
+                plan={result.plan}
+                overridden={overriddenEdits}
+              />
+
+              {/* `initialText`: the drawer remounts the card on every open, and
+                  the letter the user paid for lives in the store, not in the
+                  card. It rides the next draft save to the job's row, and moves
+                  to the job's own page with 31.4. */}
+              <CoverLetter
+                resume={effectiveResume}
+                jd={jd}
+                initialText={coverLetterText}
+                onGenerated={(letter) => setTailorState({ coverLetterText: letter })}
+              />
+            </div>
+          ),
+        }
+      : undefined;
+
   const appliedPrompt = (
     <>
       {applyClicked && !applied && (
@@ -1145,7 +1360,9 @@ export default function TailorPage() {
       {/* No page heading and no subtitle any more: the document's own name is
           the <h1>, up in DocumentToolbar. Two lines of chrome that said less
           than the CV's name does were the cheapest thing on this page to cut. */}
-      {(jobTitle || company) && (
+      {/* Before a draft only: on one, the toolbar names the job ("For <company>")
+          and a breadcrumb and a target card said it twice more (PLAN 31.3/3). */}
+      {(jobTitle || company) && !result && (
         <div className="app-col flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           <Link
             to="/jobs"
@@ -1170,7 +1387,7 @@ export default function TailorPage() {
         </div>
       )}
 
-      {jobUrl && (
+      {jobUrl && !result && (
         <div className="app-col">
           <Card className="border-accent/40">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -1190,7 +1407,7 @@ export default function TailorPage() {
               </a>
               {applied && <Badge tone="mint">{t("target.appliedBadge")}</Badge>}
             </div>
-            {!result && appliedPrompt}
+            {appliedPrompt}
           </Card>
         </div>
       )}
@@ -1294,9 +1511,9 @@ export default function TailorPage() {
             {result && edits.length > 0 && (
               <button
                 type="button"
-                onClick={() =>
-                  document.getElementById("trust-panel")?.scrollIntoView({ behavior: smooth(), block: "start" })
-                }
+                // The changes live in the document's drawer (PLAN 31.3/3).
+                onClick={() => setPane("changes")}
+                aria-expanded={pane === "changes"}
                 className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-ink transition-colors hover:bg-accent/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
               >
                 {t("toolbar.changes", { count: edits.length })}
@@ -1417,6 +1634,23 @@ export default function TailorPage() {
           </p>
         )}
 
+        {/* A TAILORED DRAFT IN ONE LINE (PLAN 31.3/3): keywords before and
+            after, the claims to check, the page count. Every part of it opens
+            the drawer that holds the rest. */}
+        {reviewPane && result && effectiveResume && (
+          <DraftSummary
+            before={beforeCounts}
+            after={coverage.data ? { covered: coverage.data.covered, total: coverage.data.total } : null}
+            stale={coverage.stale}
+            claimsOpen={claimsOpen}
+            claimsRaised={result.fabrication_flags.length}
+            typed={overrideCount}
+            resume={effectiveResume}
+            template={template}
+            onOpen={() => setPane("changes")}
+          />
+        )}
+
         {/* The document, or — with no resume yet — the one thing there is to do. */}
         {shown ? (
           <DocumentPanel
@@ -1485,9 +1719,28 @@ export default function TailorPage() {
                       Icon: Wand2,
                       onClick: () => setTailorState({ overlayOpen: true }),
                     },
+                    // The posting, on a draft (PLAN 31.3/3): its target card
+                    // left the page, and opening it is what makes Mark applied
+                    // the bar's next step.
+                    ...(jobUrl
+                      ? [
+                          {
+                            key: "posting",
+                            label: t("target.open"),
+                            Icon: ExternalLink,
+                            href: jobUrl,
+                            onClick: () => setTailorState({ applyClicked: true }),
+                          },
+                        ]
+                      : []),
                   ]
                 : undefined
             }
+            // A tailored draft's review is the drawer's second pane, opened from
+            // the toolbar, the summary line and a changed block.
+            changes={reviewPane}
+            pane={pane}
+            onPane={setPane}
           />
         ) : masterLoad === "loading" ? (
           // Where the paper will be, the height DocumentPanel's file view gives
@@ -1526,30 +1779,26 @@ export default function TailorPage() {
           </Card>
         )}
 
-        {/* The two numbers, as soon as either exists — a fit check produces one
-            before any tailoring. */}
-        {(fit || result) && shown && (
+        {/* A fit reading on the MASTER, before any tailor. A tailored draft's
+            numbers moved to the summary line over it and the drawer behind it
+            (PLAN 31.3/3); 31.3/1 folds this card into the one way in. */}
+        {fit && !result && shown && (
           <ScoreCard
             coverage={coverage.data}
             coverageStale={coverage.stale}
-            fitScore={result ? result.score_after.fit_score : (fit?.fit_score ?? null)}
-            rationale={result ? result.score_after.rationale : fit?.rationale}
-            // THE STAMP THAT BELONGS TO THE NUMBER ABOVE IT, picked by the same
-            // condition and on the same line as the number, so the two cannot
-            // drift. One field served both readings until 23.8: the tailor's
-            // success branch re-stamped it, so after "Back to my resume" the tile
-            // paired the PRE-tailor fit reading with the TAILOR's clock — and the
-            // timestamp is the entire honesty mechanism of that tile, which
-            // deliberately shows one reading with no before/after and no delta.
-            scoredAt={result ? scoredAt : fitScoredAt}
-            // `null`, not `[]`, when there is no rewrite: a fit check alone gives
-            // the guard nothing to check, and `[]` painted "0 · Checked · Facts
-            // ledger" about a rewrite that does not exist (PLAN 31.1/4).
-            flags={result ? result.fabrication_flags : null}
-            // The guard ran on the AI's rewrite; the document beside this tile —
-            // and in the PDF preview, the x-ray, both downloads and the tracker row
-            // — is `effectiveResume`, with the user's own sentences over it. The
-            // count is how the tile says which of the two it is describing.
+            fitScore={fit.fit_score}
+            rationale={fit.rationale}
+            // THE STAMP THAT BELONGS TO THE NUMBER ABOVE IT: the fit check's own,
+            // never the tailor's `scoredAt`. One field served both readings until
+            // 23.8, and after "Back to my resume" the tile paired the PRE-tailor
+            // reading with the TAILOR's clock; the timestamp is the entire
+            // honesty mechanism of a tile that shows one reading and no delta.
+            scoredAt={fitScoredAt}
+            // `null`, never `[]`: with no rewrite the guard has had nothing to
+            // check, and `[]` painted "0 · Checked · Facts ledger" about a
+            // rewrite that does not exist (PLAN 31.1/4). This card shows only
+            // before a tailor, so there is never a rewrite here to report on.
+            flags={null}
             overrideCount={overrideCount}
           />
         )}
@@ -1567,16 +1816,11 @@ export default function TailorPage() {
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
-              className="space-y-6"
+              className="space-y-4"
             >
-              {/* The draft's own note and the lines you typed on it. Both lived
-                  in the sticky toolbar, over the paper (PLAN 31.2/1); they are
-                  here, beside the changes they belong with, until 31.3 gives the
-                  changes a drawer of their own. The count IS the reveal: an
-                  override that deleted a block has nothing to mark on the paper
-                  and no review row to sit in, so a number whose members cannot
-                  be found would be worse than no number. */}
-              <div className="space-y-2 text-xs">
+              {/* The draft's own note, and where it is kept. The lines the user
+                  typed and every change moved into the drawer (PLAN 31.3/3). */}
+              <div className="space-y-1 text-xs">
                 <p className="leading-relaxed text-ink-muted">{t("edit.tailoredHint")}</p>
                 {/* WHERE THIS DRAFT IS KEPT, and whether the last change got
                     there (PLAN 31.3/4). It replaced "these edits live only for
@@ -1601,137 +1845,22 @@ export default function TailorPage() {
                     <span className="text-ink-faint">{t("jobDraft.saving")}</span>
                   )}
                 </p>
-                {(overrideCount > 0 || clearedCount > 0) && (
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    {overrideCount > 0 && (
-                      <>
-                        <button
-                          type="button"
-                          aria-expanded={yoursOpen}
-                          onClick={() => setYoursOpen((o) => !o)}
-                          className="font-medium text-mint hover:underline"
-                        >
-                          {t("edit.yours", { count: overrideCount })}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={clearAllBlockOverrides}
-                          className="font-medium text-accent-soft hover:underline"
-                        >
-                          {t("edit.yoursClear")}
-                        </button>
-                      </>
-                    )}
-                    {/* The one-step undo for "Clear my edits", deliberately outside
-                        the block above: clearing takes `overrideCount` to zero and
-                        that block with it, so an offer rendered inside would vanish
-                        in the same frame as the thing it undoes. Restoring MERGES,
-                        so anything typed since the clear survives it. */}
-                    {clearedCount > 0 && (
-                      <button
-                        type="button"
-                        onClick={restoreClearedOverrides}
-                        className="font-medium text-mint hover:underline"
-                      >
-                        {t("edit.yoursRestoreCleared", { count: clearedCount })}
-                      </button>
-                    )}
-                  </div>
-                )}
-                {/* A conditional render with `animate-fade-up`, never a height
-                    tween (check 11). */}
-                {yoursOpen && overrideCount > 0 && (
-                  <div className="animate-fade-up rounded-lg border border-line bg-panel-2/60 p-2">
-                    <ul className="space-y-1">
-                      {myEdits.map((e) => (
-                        <li key={e.anchor} className="space-y-0.5">
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span dir="auto" className="min-w-0 flex-1 truncate text-ink-muted">
-                              {e.text || "—"}
-                            </span>
-                            <span
-                              className={cn(
-                                "shrink-0 font-medium",
-                                e.state === "removed"
-                                  ? "text-warn"
-                                  : e.state === "hidden"
-                                    ? "text-ink-faint"
-                                    : "text-mint",
-                              )}
-                            >
-                              {e.state === "removed"
-                                ? t("edit.yoursDeletedLine")
-                                : e.state === "hidden"
-                                  ? t("edit.yoursOff")
-                                  : t("edit.yoursOn")}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => clearBlockOverride(e.anchor)}
-                              className="shrink-0 rounded-md border border-line px-2 py-0.5 font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
-                            >
-                              {e.state === "removed" ? t("edit.yoursPutBack") : t("edit.yoursUndoOne")}
-                            </button>
-                          </div>
-                          {/* WHAT THE BUTTON ABOVE WILL PUT BACK, read off the
-                              pre-override merge through the row's own anchor, so
-                              it is the block's real previous wording. */}
-                          {e.was && e.was !== e.text && (
-                            <p dir="auto" className="truncate text-[11px] text-ink-faint">
-                              {t("edit.yoursWas", { text: e.was })}
-                            </p>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </div>
 
-              <VoicePanel
-                report={result.voice_report}
-                plan={result.plan}
-              />
-              <MatchReport gaps={result.score_after.gaps} jdText={jdText} />
-
-              <ChangeLog
-                edits={edits}
-                changelog={result.changelog}
-                flags={result.fabrication_flags}
-                jdKeywords={result.score_after.gaps.map((g) => g.keyword)}
-                rejected={rejectedSet}
-                onSetRejected={(ids) => setTailorState({ rejectedEdits: ids })}
-                original={original}
-                effective={effectiveResume}
-                lengthReport={result.length_report}
-                plan={result.plan}
-                template={template}
-                onShowInDoc={showInDoc}
-                anchoredEdits={editBlock}
-                focusEdit={focusEdit}
-                overridden={overriddenEdits}
-                overrideCount={overrideCount}
-                onUseAi={(id) => resolveOverride(id, false)}
-                onUseOriginal={(id) => resolveOverride(id, true)}
-                onRestoreMine={restoreOverride}
-              />
-
-              <Card>
-                <CardTitle>{t("download.title")}</CardTitle>
-                {/* The picker moved to the document's own tool rail (PLAN 6:
-                    every option is ATS-safe by construction — no tables, text
-                    boxes or images in any of them). It was locked in here, which
-                    meant the design could only be chosen after a tailor had been
-                    paid for and never governed the master document at all. The
-                    note under the buttons still says what the .docx does. */}
-                <div className="mt-3 flex flex-wrap items-center gap-3">
+              {/* THE LAST STEP ON A DESKTOP, in one row: what the phone's bar on
+                  the tab bar holds (Word, PDF and the one next step), plus the
+                  posting. It was a card with a title, an ATS note and an x-ray
+                  link; the views over the paper already switch to "What the ATS
+                  reads", and the Word fallback of a two-column design is the one
+                  note that still changes what the user gets. */}
+              <div className="hidden space-y-2 lg:block">
+                <div className="flex flex-wrap items-center gap-3">
                   <Button icon={<Download size={16} />} onClick={() => downloadDraft("docx")}>
                     {t("download.docx")}
                   </Button>
                   <Button variant="secondary" icon={<Download size={16} />} onClick={() => downloadDraft("pdf")}>
                     {t("download.pdf")}
                   </Button>
-                  <div className="flex-1" />
                   {jobUrl && (
                     <a
                       href={jobUrl}
@@ -1743,10 +1872,15 @@ export default function TailorPage() {
                       <ExternalLink size={14} /> {t("target.open")}
                     </a>
                   )}
-                  {applied && <Badge tone="mint">{t("target.appliedBadge")}</Badge>}
-                  {/* Saved with its job by itself (PLAN 31.3/4): a status, and
-                      a button again only when the save failed. */}
-                  {draftSave === "failed" ? (
+                  <div className="flex-1" />
+                  {/* The one next step, as on the phone's bar: Saved by itself
+                      (a Save button only after a failure), Mark applied after a
+                      download or opening the posting, then Applied. */}
+                  {applied ? (
+                    <Badge tone="mint">{t("target.appliedBadge")}</Badge>
+                  ) : downloaded || applyClicked ? (
+                    <Button onClick={markApplied}>{t("bar.markApplied")}</Button>
+                  ) : draftSave === "failed" ? (
                     <Button variant="ghost" icon={<Save size={16} />} onClick={retrySave}>
                       {t("save.cta")}
                     </Button>
@@ -1756,46 +1890,15 @@ export default function TailorPage() {
                     </span>
                   )}
                 </div>
+                {/* A two-column pick can't ship as .docx: the Word button above
+                    sends the single-column fallback, and this says so. */}
+                {isPdfOnlyTemplate(template) && (
+                  <p className="text-xs text-ink-muted">
+                    {t("download.docxFallback", { name: t(`download.templates.${template}.name`) })}
+                  </p>
+                )}
                 {appliedPrompt}
-                {/* A two-column pick can't ship as .docx, so the ATS line is
-                    replaced (not stacked) by the plain-language fallback note —
-                    "single-column" would otherwise be false for its PDF. */}
-                <p className="mt-3 text-xs text-ink-muted">
-                  {isPdfOnlyTemplate(template)
-                    ? t("download.docxFallback", { name: t(`download.templates.${template}.name`) })
-                    : t("download.atsNote")}
-                </p>
-                {/* The honest half of shipping two-column designs: don't just warn
-                    that a parser might interleave them — let the user SEE what one
-                    actually reads back from this exact file. It used to navigate to
-                    /tools/xray, which meant leaving the review to check the review;
-                    now it opens the ATS view in place, on the resume as it stands
-                    right now rather than on the saved master. */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDocView("ats");
-                    requestAnimationFrame(() =>
-                      docRef.current?.scrollIntoView({ block: "start", behavior: smooth() }),
-                    );
-                  }}
-                  className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent-soft underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-                >
-                  <ScanEye size={13} />
-                  {t("download.xrayLink")}
-                </button>
-              </Card>
-
-              {/* `initialText`: the card remounts whenever this page does
-                  (Tracker and back), and the letter the user paid for lives
-                  in the store, not in the card. */}
-              <CoverLetter
-                resume={effectiveResume}
-                jd={jd}
-                initialText={coverLetterText}
-                // The letter rides the next draft save to the job's row.
-                onGenerated={(letter) => setTailorState({ coverLetterText: letter })}
-              />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { EntryInsertKind, NamedInsertKind } from "../lib/resumeBlocks";
 import { useTranslation } from "react-i18next";
@@ -8,6 +8,7 @@ import {
   FileUp,
   FileText,
   LayoutTemplate,
+  ListChecks,
   Monitor,
   ScanEye,
   type LucideIcon,
@@ -31,6 +32,21 @@ import type { FactsLedger, ResumeModel, ReviewResult, ReviewRewrite } from "../t
 export type { MoreItem };
 export type DocView = "screen" | "file" | "ats";
 const VIEWS: DocView[] = ["screen", "file", "ats"];
+
+/** What the drawer is showing: the deterministic review of the document
+ * ("Check my CV"), or a tailored draft's changes (PLAN 31.3/3). ONE drawer,
+ * so the two can never be open over each other, and one set of rules (the
+ * portal, the inline-end edge, the focus trap below `lg`) serves both. */
+export type DrawerPane = "review" | "changes";
+
+// The phone row's actions after the review (check-mirrors 44 holds the review
+// first). On a tailored draft the bar on the tab bar already holds both
+// downloads, and the changes open from the toolbar's "N changes" and the
+// summary over the paper: a third door to the same drawer in a 358 px row was
+// clipped at its count (measured at 390), so the draft's row is the template
+// alone. The desktop rail keeps a Changes tool, where everything is in view.
+const PHONE_MASTER = ["template", "download"];
+const PHONE_DRAFT = ["template"];
 
 const ICON = { screen: Monitor, file: FileText, ats: ScanEye } as const;
 
@@ -59,6 +75,10 @@ interface Tool {
    * pinned to a button is noise, and the panel says "clean" in words.
    */
   count?: number;
+  /** What the count is. `danger` (the default) is things to fix, the review's;
+   * `accent` is things to look at, a draft's changes (PLAN 31.3/3): 24 changes
+   * in the red of 24 problems says the tailor did something wrong 24 times. */
+  countTone?: "danger" | "accent";
   /** The pill's visible text on a phone when `label` is too long for a row
    * with no room to scroll ("Download" for "Download .pdf"). `label` stays the
    * tooltip, and the icon says the rest. */
@@ -116,7 +136,11 @@ function ToolButton({ tool, labelled }: { tool: Tool; labelled?: boolean }) {
           <span
             className={cn(
               "rounded-full px-1.5 text-[11px] font-semibold tabular-nums",
-              tool.active ? "bg-white/25 text-white" : "bg-danger/15 text-danger",
+              tool.active
+                ? "bg-white/25 text-white"
+                : tool.countTone === "accent"
+                  ? "bg-accent/15 text-accent"
+                  : "bg-danger/15 text-danger",
             )}
           >
             {badge}
@@ -124,7 +148,10 @@ function ToolButton({ tool, labelled }: { tool: Tool; labelled?: boolean }) {
         ) : (
           <span
             aria-hidden
-            className="absolute -top-1.5 -end-1.5 min-w-[16px] rounded-full border border-panel bg-danger px-1 text-[10px] font-semibold leading-4 tabular-nums text-white"
+            className={cn(
+              "absolute -top-1.5 -end-1.5 min-w-[16px] rounded-full border border-panel px-1 text-[10px] font-semibold leading-4 tabular-nums text-white",
+              tool.countTone === "accent" ? "bg-accent" : "bg-danger",
+            )}
           >
             {badge}
           </span>
@@ -195,6 +222,18 @@ interface Props {
   onReplace?: (resume: ResumeModel, ledger: FactsLedger) => void;
   /** More entries for the phone row's "⋯" (PLAN 31.2/3), after Replace. */
   moreItems?: MoreItem[];
+  /**
+   * A tailored draft's review, as the drawer's second pane (PLAN 31.3/3): the
+   * changes, the keywords, the voice check and what was left out, in the drawer
+   * "Check my CV" already opens, instead of four cards under the paper. `count`
+   * rides the tool the way the review's does: absent, never 0, until known.
+   */
+  changes?: { count?: number; content: ReactNode };
+  /** The pane the drawer shows, when the PAGE decides it: the toolbar's
+   * "N changes", the summary over the paper and a changed block on it all open
+   * the changes. Without `onPane` the drawer keeps its own state. */
+  pane?: DrawerPane | null;
+  onPane?: (pane: DrawerPane | null) => void;
 }
 
 /**
@@ -216,7 +255,7 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, onTemplate, company = "", marks, flags, review, reviewStale, reviewFailed, onJumpToBlock, onUseRewrite, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddNamed, onAddBullet, footNote, onReplace, moreItems },
+  { resume, template, view, onView, onTemplate, company = "", marks, flags, review, reviewStale, reviewFailed, onJumpToBlock, onUseRewrite, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddNamed, onAddBullet, footNote, onReplace, moreItems, changes, pane: paneProp, onPane },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
@@ -229,7 +268,14 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   const xray = useXray(resume, template, view === "ats");
   const [tplOpen, setTplOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
+  // The drawer's pane. Controlled by the page when it passes `onPane` (a draft's
+  // changes open from three places outside this component); its own otherwise.
+  const [ownPane, setOwnPane] = useState<DrawerPane | null>(null);
+  const pane: DrawerPane | null = onPane ? (paneProp ?? null) : ownPane;
+  const setPane = onPane ?? setOwnPane;
+  // Open at all, whichever pane: the name the focus trap and the page's
+  // reserved width have always read.
+  const reviewOpen = pane !== null;
   // The blocks the pointer is over in the drawer. Local to this component
   // because nothing above it needs to know: it paints a tint and is gone on
   // mouseleave, so lifting it to TailorPage would re-render the whole
@@ -250,9 +296,15 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   // nothing on screen that explains them — a mark on the document the user
   // cannot get rid of short of hovering another row.
   const closeReview = () => {
-    setReviewOpen(false);
+    setPane(null);
     setHoverPaths(null);
   };
+  // A draft's changes close with the draft: "Back to my resume" or a new tailor
+  // takes `changes` away, and a drawer left open on a pane with nothing in it
+  // would be a blank panel with a close button.
+  useEffect(() => {
+    if (pane === "changes" && !changes) setPane(null);
+  }, [pane, changes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // THE DRAWER RESERVES ITS WIDTH FROM `lg` UP, where it has no backdrop and is
   // meant to sit BESIDE the document rather than over it. It is `position:
@@ -368,10 +420,25 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
             Icon: ClipboardCheck,
             label: t("doc.review.tool"),
             short: t("doc.review.short"),
-            active: reviewOpen,
+            active: pane === "review",
             // `undefined` until the first response, never 0 — see `Tool.count`.
             count: review ? badCount(review) : undefined,
-            onClick: () => (reviewOpen ? closeReview() : setReviewOpen(true)),
+            onClick: () => (pane === "review" ? closeReview() : setPane("review")),
+          },
+        ]
+      : []),
+    // A tailored draft's changes (PLAN 31.3/3), beside the review they share a
+    // drawer with.
+    ...(onJumpToBlock && changes
+      ? [
+          {
+            key: "changes",
+            Icon: ListChecks,
+            label: t("doc.changes.tool"),
+            active: pane === "changes",
+            count: changes.count,
+            countTone: "accent" as const,
+            onClick: () => (pane === "changes" ? closeReview() : setPane("changes")),
           },
         ]
       : []),
@@ -413,7 +480,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   // things that are not actions at all. The views are a segmented control of
   // their own under this row, and what has no slot here (Replace, and what the
   // page adds) is under "⋯", so Download is always in view.
-  const phoneTools = [...tools.filter((x) => x.key === "review"), ...tools.filter((x) => x.key === "template" || x.key === "download")];
+  const phoneTools = [...tools.filter((x) => x.key === "review"), ...tools.filter((x) => (changes ? PHONE_DRAFT : PHONE_MASTER).includes(x.key))];
   const more: MoreItem[] = [
     ...(onReplace
       ? [{ key: "replace", label: t("doc.replace.tool"), Icon: FileUp, onClick: () => setReplaceOpen((o) => !o) }]
@@ -560,12 +627,37 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
               ref={drawerRef}
               tabIndex={-1}
               className="animate-drawer-in fixed top-14 bottom-0 end-0 z-40 flex w-full max-w-[380px] flex-col overscroll-contain border-s border-line bg-panel shadow-2xl outline-none"
-              aria-label={t("doc.review.title")}
+              aria-label={pane === "changes" ? t("doc.changes.title") : t("doc.review.title")}
               role="dialog"
               aria-modal={!isWide}
             >
-              <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
-                <p className="text-sm font-semibold text-ink">{t("doc.review.title")}</p>
+              <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
+                {changes ? (
+                  // Two panes, one drawer: a switch in its own header, so the
+                  // changes and the review of the same draft are one tap apart.
+                  <div
+                    role="group"
+                    aria-label={t("doc.changes.panes")}
+                    className="flex min-w-0 rounded-lg border border-line bg-panel-2/40 p-0.5"
+                  >
+                    {(["changes", "review"] as const).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        aria-pressed={pane === p}
+                        onClick={() => setPane(p)}
+                        className={cn(
+                          "min-h-8 truncate rounded-md px-2.5 text-xs font-semibold transition-colors",
+                          pane === p ? "bg-panel text-ink shadow-sm" : "text-ink-muted hover:text-ink",
+                        )}
+                      >
+                        {p === "changes" ? t("doc.changes.title") : t("doc.review.title")}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm font-semibold text-ink">{t("doc.review.title")}</p>
+                )}
                 <button
                   type="button"
                   aria-label={t("doc.review.close")}
@@ -585,32 +677,36 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
                   bottom-anchored fixed element in the app without one, and on a
                   gesture-bar phone the last row sits under the bar. */}
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
-                <ReviewPanel
-                  resume={resume}
-                  data={review ?? null}
-                  stale={!!reviewStale}
-                  failed={!!reviewFailed}
-                  // BELOW `lg` THE JUMP CLOSES THE DRAWER, because the
-                  // drawer is what the jump would land behind. `jumpToBlock`
-                  // switches the view, spotlights the block and scrolls to it --
-                  // all three under an opaque full-bleed panel on a phone, with
-                  // a 2200 ms spotlight the user cannot see start. The inline
-                  // card this replaced sat ABOVE the document and never had the
-                  // problem; the drawer reintroduced it. Evaluated at click
-                  // time so a rotation is handled.
-                  onJump={(path) => {
-                    onJumpToBlock(path);
-                    if (!window.matchMedia("(min-width: 1024px)").matches) closeReview();
-                  }}
-                  // Hover marks the paper; the tap still scrolls and spotlights.
-                  onHover={(paths) => setHoverPaths(paths ? new Set(paths) : null)}
-                  onUseRewrite={onUseRewrite}
-                  rewrites={rewrites ?? undefined}
-                  rewritesDropped={rewritesDropped}
-                  rewritesBusy={rewritesBusy}
-                  rewritesError={rewritesError}
-                  onSuggestRewrites={suggestRewrites}
-                />
+                {pane === "changes" && changes ? (
+                  changes.content
+                ) : (
+                  <ReviewPanel
+                    resume={resume}
+                    data={review ?? null}
+                    stale={!!reviewStale}
+                    failed={!!reviewFailed}
+                    // BELOW `lg` THE JUMP CLOSES THE DRAWER, because the
+                    // drawer is what the jump would land behind. `jumpToBlock`
+                    // switches the view, spotlights the block and scrolls to it --
+                    // all three under an opaque full-bleed panel on a phone, with
+                    // a 2200 ms spotlight the user cannot see start. The inline
+                    // card this replaced sat ABOVE the document and never had the
+                    // problem; the drawer reintroduced it. Evaluated at click
+                    // time so a rotation is handled.
+                    onJump={(path) => {
+                      onJumpToBlock(path);
+                      if (!window.matchMedia("(min-width: 1024px)").matches) closeReview();
+                    }}
+                    // Hover marks the paper; the tap still scrolls and spotlights.
+                    onHover={(paths) => setHoverPaths(paths ? new Set(paths) : null)}
+                    onUseRewrite={onUseRewrite}
+                    rewrites={rewrites ?? undefined}
+                    rewritesDropped={rewritesDropped}
+                    rewritesBusy={rewritesBusy}
+                    rewritesError={rewritesError}
+                    onSuggestRewrites={suggestRewrites}
+                  />
+                )}
               </div>
             </aside>
           </>,

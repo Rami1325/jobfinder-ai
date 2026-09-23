@@ -39,6 +39,7 @@
 
 ### The drawer — the portal, the edge it opens from, hover, and the 390 px pass
 
+- **It has two panes on a tailored draft** (2026-09-23, PLAN 31.3/3): "Changes" (the tailor's review, built by `TailorPage`) and this review, switched in the drawer's own header. It stays ONE drawer with every rule below, and its open state is a PANE (`DrawerPane`) the page can hold, since a draft's changes open from the toolbar and the summary line; `reviewOpen` is "any pane", the name check-mirrors 42's focus pin reads. `document-editor.md` has the pane's contents.
 These bullets continue the review's list; in `CLAUDE.md` they had drifted under the *One clock, one frame* heading.
 
 - **The panel is a DRAWER, portalled to `document.body`, and the portal is not tidiness.** An ancestor of `DocumentPanel` carries a `transform` (a motion wrapper mid-tween), and a transformed element becomes the containing block for every fixed-position descendant — so `position: fixed` resolved against a div two thousand pixels down the page. Measured before the portal: `top 162, bottom 3316`, pinned to neither edge, on a green build. `BlockEditSheet` and `Modal` portal for the same reason (so did `AccessGate`, until Phase 29 made it render nothing).

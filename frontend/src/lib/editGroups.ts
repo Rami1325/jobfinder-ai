@@ -201,9 +201,17 @@ export function groupEdits(
     const aQuiet = a.key === CURATION_KEY ? 1 : 0;
     const bQuiet = b.key === CURATION_KEY ? 1 : 0;
     if (aQuiet !== bQuiet) return aQuiet - bQuiet;
-    if (CLASS_RANK[a.cls] !== CLASS_RANK[b.cls]) return CLASS_RANK[a.cls] - CLASS_RANK[b.cls];
+    // FLAGGED FIRST, then BY SECTION (PLAN 31.3/3). A claim to check is the
+    // first thing the review owes its reader, and the tailor writes its reason
+    // per section, so a section's groups sit together under that reason:
+    // rewrites before additions inside a section, not every rewrite on the
+    // resume before any addition.
+    const aFlag = a.flagged > 0 ? 0 : 1;
+    const bFlag = b.flagged > 0 ? 0 : 1;
+    if (aFlag !== bFlag) return aFlag - bFlag;
     if (SECTION_RANK[a.section] !== SECTION_RANK[b.section])
       return SECTION_RANK[a.section] - SECTION_RANK[b.section];
+    if (CLASS_RANK[a.cls] !== CLASS_RANK[b.cls]) return CLASS_RANK[a.cls] - CLASS_RANK[b.cls];
     return order.indexOf(a.key) - order.indexOf(b.key);
   });
 }

@@ -23,3 +23,4 @@
 ### Two numbers, two clocks
 
 - **Two numbers on two clocks, never a blended one.** Keyword coverage is live and deterministic; recruiter fit is ONE timestamped model reading with no before/after, because two samples at `temperature=0.3` are not a measurement of improvement. `overall` (`0.5*coverage + 0.5*fit`) is off the live surface entirely — half of it is stale by construction. It still exists on the type and in the tracker, where historical rows were scored that way.
+- **The one before → after is Keywords** (PLAN 31.3/3): a tailored draft's summary line reads the server's `score_before` gaps against the live `/tools/coverage` of the document on screen, both `covered` over every gap of the same analysed posting, so both ends are this matcher's answer. The recruiter fit sits in the drawer as its one reading and the minute it was taken, with no before.

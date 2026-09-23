@@ -195,7 +195,7 @@
     "accepted": "{{accepted}} of {{total}} accepted",
     "note": "Rejected edits keep your original wording and are left out of downloads, tracker saves, and the keyword report.",
     "acceptAll": "Accept all",
-    "rejectAll": "Reject all",
+    "rejectAll": "Keep my wording",
     "accept": "Accept",
     "reject": "Reject",
     "kind": {
@@ -230,7 +230,20 @@
     "yoursHidden": "Your wording isn't in this version — a declined change removed the line it was on.",
     "yoursRemoved": "You deleted this line from this application's CV.",
     "yoursDeleted": "You deleted this",
-    "yoursRestore": "Put the line back"
+    "yoursRestore": "Put the line back",
+    "toCheck": "To check",
+    "sectionWhy": "{{change}}. Why: {{reason}}",
+    "otherNotes": "Other notes from the tailor",
+    "summary": {
+      "keywords": "Keywords {{before}} → {{after}} of {{total}}",
+      "keywordsNow": "Keywords {{after}} of {{total}}",
+      "claims_one": "1 claim to check",
+      "claims_other": "{{count}} claims to check",
+      "claimsResolved": "Flagged claims resolved",
+      "noClaims": "No new claims found",
+      "noClaimsTyped": "No new claims in the AI's changes",
+      "open": "Review"
+    }
   },
   "cover": {
     "title": "Cover letter",
@@ -481,7 +494,12 @@
       "body": "Upload a new file and it becomes your master resume everywhere — this page, job matching, interview prep and every tool."
     },
     "more": "More actions",
-    "viewsLabel": "View"
+    "viewsLabel": "View",
+    "changes": {
+      "tool": "Changes",
+      "title": "Changes",
+      "panes": "What the panel shows"
+    }
   },
   "overlay": {
     "open": "Tailor for a job",
