@@ -134,6 +134,8 @@
     "stampVerified": "Checked · Facts ledger",
     "stampPartial": "Checked · AI rewrite",
     "stampReview": "Needs review",
+    "guardNotRun": "Not run yet",
+    "guardNotRunNote": "Checked when you tailor: every name, date, credential and number in the rewrite, against your original.",
     "guardNoteClean": "We checked every name, date, credential and number against your original. Nothing new turned up.",
     "guardNoteCleanEdited_one": "Nothing new turned up in the AI's rewrite. The line you rewrote yourself wasn't checked.",
     "guardNoteCleanEdited_other": "Nothing new turned up in the AI's rewrite. The {{count}} lines you rewrote yourself weren't checked.",

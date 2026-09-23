@@ -10519,6 +10519,54 @@ try {
   fail(`paper heading language check (check 47) could not run: ${e.message}`);
 }
 
+// ---- 48. the guard tile claims no check that never ran --------------------- //
+// PLAN 31.1/4, found in the 2026-09-23 review. After a fit check with no tailor,
+// TailorPage passed `flags={result?.fabrication_flags ?? []}`, and the tile turned
+// that `[]` into "Facts invented 0 · No new facts detected · Checked · Facts
+// ledger" about a rewrite that did not exist: the house rule "the UI may not claim
+// more than the code proves", and "unknown is never zero, and never clean". No
+// rewrite is `null` now, and the tile shows "Not run yet" for it. Pinned by
+// POLARITY (checks 15/21's lesson): a `[]` fallback, or a tile that reads `flags`
+// before handling `null`, goes red. Both detectors are probed both ways.
+try {
+  const page = decomment(read("pages/TailorPage.tsx"));
+  const card = decomment(read("components/ScoreCard.tsx"));
+  const pageProblem = (src) => {
+    const m = /<ScoreCard\b[\s\S]*?\bflags=\{([^}]*)\}/.exec(src);
+    if (!m) throw new Error("could not find TailorPage's <ScoreCard … flags={…}>");
+    const expr = m[1].replace(/\s+/g, " ").trim();
+    const ok = /^result \? result\.fabrication_flags : null$/.test(expr) || /^result\?\.fabrication_flags \?\? null$/.test(expr);
+    return ok ? null : `TailorPage passes flags={${expr}} — with no tailor result it must be null, never a clean []`;
+  };
+  const tileProblem = (src) => {
+    const at = src.indexOf("function GuardTile(");
+    if (at === -1) throw new Error("could not find function GuardTile in components/ScoreCard.tsx");
+    const body = src.slice(at, src.indexOf("\nfunction ", at + 10) === -1 ? undefined : src.indexOf("\nfunction ", at + 10));
+    const nullAt = body.search(/if\s*\(\s*flags\s*===\s*null\s*\)\s*\{?\s*return\b/);
+    const useAt = body.search(/flags\.length/);
+    if (nullAt === -1) return "GuardTile has no `if (flags === null) return …` branch for a check that never ran";
+    if (useAt !== -1 && useAt < nullAt) return "GuardTile reads flags.length before handling flags === null";
+    if (!/t\(\s*"score\.guardNotRun"\s*\)/.test(body.slice(nullAt))) return "GuardTile's not-run face does not say score.guardNotRun";
+    return null;
+  };
+  // The self-probes plant the defect into a copy. When the real file already
+  // carries it, the plant is a no-op and the real check below reports it.
+  const plantedPage = page.replace(/(<ScoreCard\b[\s\S]*?\bflags=\{)[^}]*\}/, "$1result?.fabrication_flags ?? []}");
+  const plantedTile = card.replace(/if\s*\(\s*flags\s*===\s*null\s*\)/, "if (false)");
+  if (plantedPage !== page && !pageProblem(plantedPage)) throw new Error("the page detector passes a `?? []` fallback");
+  if (plantedTile !== card && !tileProblem(plantedTile)) throw new Error("the tile detector passes a GuardTile with no null branch");
+  if (plantedPage === page && !pageProblem(page)) throw new Error("the page probe could not plant the defect, so the check would pass by never firing");
+  if (plantedTile === card && !tileProblem(card)) throw new Error("the tile probe could not plant the defect, so the check would pass by never firing");
+  for (const p of [pageProblem(page), tileProblem(card)]) if (p) fail(`check 48: ${p} (PLAN 31.1/4)`);
+  for (const loc of ["en", "he"]) {
+    const score = JSON.parse(read(`locales/${loc}/tailor.json`)).score || {};
+    for (const k of ["guardNotRun", "guardNotRunNote"])
+      if (typeof score[k] !== "string" || !score[k].trim()) fail(`locales/${loc}/tailor.json: score.${k} is missing — the not-run guard tile would print the raw key`);
+  }
+} catch (e) {
+  fail(`guard tile check (check 48) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

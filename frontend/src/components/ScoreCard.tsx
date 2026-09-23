@@ -20,8 +20,26 @@ import { cn } from "../lib/cn";
  * — nothing new turned up IN THE REWRITE — so the number and the ring stand, and
  * the words name the exception instead.
  */
-function GuardTile({ flags, overrides }: { flags: FabricationFlag[]; overrides: number }) {
+function GuardTile({ flags, overrides }: { flags: FabricationFlag[] | null; overrides: number }) {
   const { t } = useTranslation("tailor");
+  // No rewrite yet (a fit check alone): the guard has had nothing to check, and
+  // "0 · No new facts detected · Checked · Facts ledger" about a rewrite that
+  // does not exist is a claim the code cannot back (PLAN 31.1/4). Unknown is
+  // never zero and never clean, so the tile says the check has not run.
+  if (flags === null) {
+    return (
+      <div className="flex flex-col items-center gap-3">
+        <div className="flex h-28 w-28 flex-col items-center justify-center rounded-full border-[6px] border-line">
+          <ShieldCheck size={22} className="text-ink-faint" />
+          <span className="mt-1 px-2 text-center text-[11px] font-medium leading-tight text-ink-faint">
+            {t("score.guardNotRun")}
+          </span>
+        </div>
+        <p className="text-sm font-semibold text-ink">{t("score.guard")}</p>
+        <p className="max-w-[26ch] text-center text-xs leading-snug text-ink-faint">{t("score.guardNotRunNote")}</p>
+      </div>
+    );
+  }
   const clean = flags.length === 0;
   // Only the CLEAN face makes a claim about the whole document. The flagged one
   // says "N claims we couldn't find in your resume", which stays true either way.
@@ -93,7 +111,9 @@ interface Props {
   rationale?: string;
   /** When the fit reading was taken, epoch ms. */
   scoredAt: number | null;
-  flags: FabricationFlag[];
+  /** The guard's findings on the AI's rewrite, or `null` when there is no
+   * rewrite yet (a fit check alone), which the tile shows as not run. */
+  flags: FabricationFlag[] | null;
   /** How many blocks of the document the user wrote themselves. The guard never
    * saw those, and the tile may not imply otherwise — see `GuardTile`. */
   overrideCount?: number;

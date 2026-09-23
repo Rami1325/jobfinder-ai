@@ -1484,7 +1484,10 @@ export default function TailorPage() {
             // timestamp is the entire honesty mechanism of that tile, which
             // deliberately shows one reading with no before/after and no delta.
             scoredAt={result ? scoredAt : fitScoredAt}
-            flags={result?.fabrication_flags ?? []}
+            // `null`, not `[]`, when there is no rewrite: a fit check alone gives
+            // the guard nothing to check, and `[]` painted "0 · Checked · Facts
+            // ledger" about a rewrite that does not exist (PLAN 31.1/4).
+            flags={result ? result.fabrication_flags : null}
             // The guard ran on the AI's rewrite; the document beside this tile —
             // and in the PDF preview, the x-ray, both downloads and the tracker row
             // — is `effectiveResume`, with the user's own sentences over it. The
