@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import base64
 import io
 import json
 import logging
@@ -181,6 +182,8 @@ from app.models import (
     MasterResumeOut,
     MeOut,
     PageCountRequest,
+    PageImagesRequest,
+    PageImagesResult,
     PageCountResult,
     ResumeVersionList,
     ResumeVersionOut,
@@ -211,6 +214,7 @@ from app.models import (
 from app.parsers.resume_parser import extract_text
 from app.parsers.structurer import build_facts_ledger, structure_resume
 from app.render.docx_renderer import render_docx
+from app.render.page_images import pdf_page_pngs
 from app.render.pdf_renderer import page_count, render_pdf
 from app.render.templates import get_template
 
@@ -450,6 +454,27 @@ def render(body: RenderRequest):
         io.BytesIO(content),
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/render/pages", response_model=PageImagesResult)
+def render_pages(body: PageImagesRequest) -> PageImagesResult:
+    """The real PDF as page pictures, for a phone (PLAN 31.2/4): phone browsers
+    do not draw a `blob:` PDF inside the page, so "The real PDF" showed nothing
+    of the file on the one screen whose job is to show it. Drawn from the same
+    bytes the download sends (`render_pdf`), by PDFium (`render/page_images`).
+    Deterministic, uncapped and uncharged, like `/render` it stands beside."""
+    spec = get_template(body.template)
+    try:
+        pages, total = pdf_page_pngs(render_pdf(body.resume, template=spec.id))
+    except _SIZE_ERRORS:
+        raise  # app-level 413/503, never a drawing error
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Error while drawing the pages: {e}")
+    return PageImagesResult(
+        pages=[base64.b64encode(p).decode("ascii") for p in pages],
+        total=total,
+        template=spec.id,
     )
 
 

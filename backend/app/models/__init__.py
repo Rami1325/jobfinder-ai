@@ -1684,6 +1684,28 @@ class FitCheckResult(BaseModel):
     tailor_expires_in_s: int = 0
 
 
+class PageImagesRequest(BaseModel):
+    """POST /render/pages: the real PDF as page pictures, for a phone (PLAN
+    31.2/4). The same two fields as a render. `extra="forbid"`: the route is
+    uncapped and reaches no model, so a field it does not read is refused
+    rather than quietly ignored (the deterministic-routes rule)."""
+
+    model_config = {"extra": "forbid"}
+    resume: ResumeModel
+    template: str = ""  # "" falls back to the default, like every render call
+
+
+class PageImagesResult(BaseModel):
+    """The pages of the file the download would produce, as base64 PNG, in
+    order. `total` is the file's page count, which can exceed `len(pages)`
+    (the pictures stop at `page_images.MAX_PAGES`), so the view can say the
+    rest are in the download rather than drop them without a word."""
+
+    pages: list[str]
+    total: int
+    template: str = ""  # the RESOLVED id; "" only on a model built without one
+
+
 class PageCountRequest(BaseModel):
     resume: ResumeModel
     template: str = ""  # "" falls back to the default, like every render call

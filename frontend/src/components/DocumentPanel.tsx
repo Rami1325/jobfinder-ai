@@ -6,7 +6,6 @@ import {
   ClipboardCheck,
   Download,
   FileUp,
-  ExternalLink,
   FileText,
   LayoutTemplate,
   Monitor,
@@ -19,7 +18,8 @@ import ReviewPanel, { badCount } from "./ReviewPanel";
 import TemplatePicker from "./TemplatePicker";
 import ResumeUpload from "./ResumeUpload";
 import XrayResult from "./XrayResult";
-import { usePdfPreview, useXray } from "../hooks/useFilePreview";
+import { usePageImages, usePdfPreview, useXray } from "../hooks/useFilePreview";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { downloadResume, resumeFilename, reviewRewrites, type ResumeTemplate } from "../api/client";
 import { PDF_ONLY, TEMPLATE_SPECS } from "../lib/templateSpecs";
@@ -220,7 +220,12 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
-  const pdf = usePdfPreview(resume, template, view === "file");
+  // From sm the browser draws the real PDF in a frame; below it, a phone gets
+  // pictures of the same file (PLAN 31.2/4). Only the one the screen shows is
+  // fetched.
+  const framesPdf = useMediaQuery("(min-width: 640px)");
+  const pdf = usePdfPreview(resume, template, view === "file" && framesPdf);
+  const pics = usePageImages(resume, template, view === "file" && !framesPdf);
   const xray = useXray(resume, template, view === "ats");
   const [tplOpen, setTplOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
@@ -674,43 +679,55 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
         {view === "file" && (
           <div className="space-y-3">
             <p className="text-xs leading-relaxed text-ink-faint">{t("doc.file.note")}</p>
-            {pdf.failed && !pdf.url ? (
-              <p className="text-sm text-danger">{t("doc.file.failed")}</p>
-            ) : !pdf.url ? (
-              <Skeleton className="h-[70vh] w-full" />
-            ) : (
-              <>
-                {/* An <iframe>, not <embed>: <embed> has no accessible name.
-                    dir="ltr" because an RTL horizontal scroller starts at the
-                    wrong end. Hidden below sm — mobile browsers will not render a
-                    blob: PDF inline, and a blank rectangle on the one screen whose
-                    job is "this is really your file" reads as our bug. */}
+            {framesPdf ? (
+              pdf.failed && !pdf.url ? (
+                <p className="text-sm text-danger">{t("doc.file.failed")}</p>
+              ) : !pdf.url ? (
+                <Skeleton className="h-[70vh] w-full" />
+              ) : (
+                // An <iframe>, not <embed>: <embed> has no accessible name.
+                // dir="ltr" because an RTL horizontal scroller starts at the
+                // wrong end.
                 <iframe
                   title={t("doc.views.file")}
                   dir="ltr"
                   src={`${pdf.url}#toolbar=0&navpanes=0&view=FitH`}
-                  className={cn("hidden h-[70vh] w-full rounded-lg border border-line bg-white sm:block", pdf.loading && "opacity-60")}
+                  className={cn("h-[70vh] w-full rounded-lg border border-line bg-white", pdf.loading && "opacity-60")}
                 />
-                <p className="text-sm text-ink-muted sm:hidden">{t("doc.file.mobile")}</p>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="ghost"
-                    icon={<ExternalLink size={15} />}
-                    onClick={() => window.open(pdf.url!, "_blank", "noopener")}
-                    className="sm:hidden"
-                  >
-                    {t("doc.file.open")}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    icon={<Download size={15} />}
-                    onClick={() => downloadResume(resume, "pdf", resumeFilename(resume.contact?.name ?? "", company), template)}
-                  >
-                    {t("doc.file.download")}
-                  </Button>
-                </div>
-              </>
+              )
+            ) : pics.failed && !pics.data ? (
+              <p className="text-sm text-danger">{t("doc.file.failed")}</p>
+            ) : !pics.data ? (
+              <Skeleton className="aspect-[1/1.414] w-full" />
+            ) : (
+              // PICTURES OF THE FILE, on a phone (PLAN 31.2/4). A phone browser
+              // does not draw a `blob:` PDF inside a page, so this view said so
+              // and offered Open and Download: the one view whose job is "this
+              // is really your file" showed nothing of it. These are drawn by
+              // PDFium from the same bytes the download sends.
+              <div className={cn("space-y-3", pics.loading && "opacity-60")}>
+                {pics.data.pages.map((png, i) => (
+                  <img
+                    key={i}
+                    src={`data:image/png;base64,${png}`}
+                    alt={t("doc.file.pageAlt", { n: i + 1, total: pics.data!.total })}
+                    className="w-full rounded-lg border border-line bg-white shadow-sm"
+                  />
+                ))}
+                {pics.data.total > pics.data.pages.length && (
+                  <p className="text-xs text-ink-muted">
+                    {t("doc.file.morePages", { count: pics.data.total - pics.data.pages.length })}
+                  </p>
+                )}
+              </div>
             )}
+            <Button
+              variant="ghost"
+              icon={<Download size={15} />}
+              onClick={() => downloadResume(resume, "pdf", resumeFilename(resume.contact?.name ?? "", company), template)}
+            >
+              {t("doc.file.download")}
+            </Button>
           </div>
         )}
 

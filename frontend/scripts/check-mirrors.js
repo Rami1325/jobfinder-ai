@@ -11282,6 +11282,46 @@ try {
   fail(`saved-job sheet check (check 59) could not run: ${e.message}`);
 }
 
+// ---- 60. the real PDF on a phone is pictures of the real file (PLAN 31.2/4) --- //
+// Phone browsers do not draw a `blob:` PDF inside a page, so below sm "The real
+// PDF" said so and offered Open and Download: the one view whose job is "this is
+// really your file" showed nothing of it. It shows PDFium's pictures of the same
+// bytes now (`POST /render/pages`, deterministic and free, smoke-pinned). This
+// holds the wiring: the client posts to the route `routes.py` mounts, and the
+// panel fetches the pictures exactly when it does NOT frame the PDF, and the
+// frame exactly when it does, so a phone is never back to a sentence.
+try {
+  const client = decomment(read("api/client.ts"));
+  if (!/\bapi\.post<PageImagesResult>\(\s*"\/render\/pages"/.test(fnSource(client, "export async function renderPages(")))
+    fail('check 60: api/client.ts renderPages does not POST "/render/pages"');
+  const routes = pySource("app/api/routes.py", "check 60");
+  if (routes !== null && !/^@router\.post\(\s*"\/render\/pages"/m.test(routes))
+    fail('check 60: backend/app/api/routes.py mounts no POST "/render/pages", which renderPages calls');
+  const read60 = (panel) => {
+    const out = [];
+    if (!/usePdfPreview\(resume, template, view === "file" && framesPdf\)/.test(panel)) out.push("the PDF frame is not fetched on the frame's own condition (`framesPdf`)");
+    if (!/usePageImages\(resume, template, view === "file" && !framesPdf\)/.test(panel)) out.push("the page pictures are not fetched when the PDF cannot be framed (`!framesPdf`)");
+    if (!/<img\b[^>]*src=\{`data:image\/png;base64,\$\{png\}`\}/.test(panel)) out.push("the phone's file view draws no page pictures");
+    if (/doc\.file\.mobile/.test(panel)) out.push("the phone's file view still says it cannot show the PDF");
+    return out;
+  };
+  const panel = decomment(read("components/DocumentPanel.tsx"));
+  const real = read60(panel);
+  for (const [label, pl] of [
+    ["no pictures on a phone", panel.replace('usePageImages(resume, template, view === "file" && !framesPdf)', 'usePageImages(resume, template, false)')],
+    ["both fetched", panel.replace('usePdfPreview(resume, template, view === "file" && framesPdf)', 'usePdfPreview(resume, template, view === "file")')],
+  ]) {
+    if (pl === panel) {
+      if (real.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!read60(pl).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of real) fail(`check 60: components/DocumentPanel.tsx: ${p} (PLAN 31.2/4)`);
+} catch (e) {
+  fail(`phone PDF pictures check (check 60) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

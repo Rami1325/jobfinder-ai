@@ -225,6 +225,15 @@ export interface FitCheckResult {
 }
 
 /** A live page measurement for the document the user is about to download. */
+/** POST /render/pages (PLAN 31.2/4): the pages of the file the download would
+ * produce, as base64 PNG, in order. `total` is the file's page count and can
+ * exceed `pages.length`, since the pictures stop at four. */
+export interface PageImagesResult {
+  pages: string[];
+  total: number;
+  template: string;
+}
+
 export interface PageCountResult {
   pages: number;
   max_pages: number;

@@ -60,6 +60,7 @@ import type {
   TailorResult,
   ATSXrayResult,
   UsagePassOut,
+  PageImagesResult,
 } from "../types";
 
 // In dev, requests go through the Vite proxy at /api -> http://localhost:8000.
@@ -628,6 +629,17 @@ export async function atsXray(
   signal?: AbortSignal,
 ): Promise<ATSXrayResult> {
   const { data } = await api.post<ATSXrayResult>("/tools/ats-xray", { resume, template, fmt }, { signal });
+  return data;
+}
+
+/** The real PDF as page pictures, for a phone, which cannot draw a PDF inside
+ * the page (PLAN 31.2/4). Deterministic and free, like the render it draws. */
+export async function renderPages(
+  resume: ResumeModel,
+  template: ResumeTemplate = "standard",
+  signal?: AbortSignal,
+): Promise<PageImagesResult> {
+  const { data } = await api.post<PageImagesResult>("/render/pages", { resume, template }, { signal });
   return data;
 }
 

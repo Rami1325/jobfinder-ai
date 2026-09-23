@@ -460,9 +460,10 @@
     "file": {
       "note": "Rendered by the same call the Download button makes, from your resume exactly as it stands — every change you have accepted or declined included.",
       "download": "Download this PDF",
-      "open": "Open the PDF",
-      "mobile": "Phone browsers can't show a PDF inside a page. Open it — it's the same file.",
-      "failed": "Couldn't build the PDF just now."
+      "failed": "Couldn't build the PDF just now.",
+      "pageAlt": "Page {{n}} of {{total}} of the PDF",
+      "morePages_one": "1 more page is in the download.",
+      "morePages_other": "{{count}} more pages are in the download."
     },
     "ats": {
       "note": "We render that PDF, then read it back with the same parser we run on resumes people upload. What follows is the file's own text — not a text version of the page above.",

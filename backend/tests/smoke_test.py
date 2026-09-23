@@ -15442,6 +15442,42 @@ with TestClient(_fastapi_app) as _tc:
         _tc.post("/tools/page-count", json={"resume": _resume_json, "template": "no-such-template"},
                  headers=_CAP_H).json()["template"] == DEFAULT_TEMPLATE,
     )
+    # PLAN 31.2/4: the real PDF as page pictures for a phone. The pictures must
+    # be OF the file the download sends: as many as the renderer measures, each a
+    # PNG, for the resolved template; free like /render; and a field it does not
+    # read (`fmt`, a stale render client's) refused, never silently ignored.
+    import base64 as _b64_pages  # noqa: E402
+
+    _pg_resp = _tc.post("/render/pages", json={"resume": _resume_json, "template": "classic"}, headers=_CAP_H)
+    _pg_body = _pg_resp.json() if _pg_resp.status_code == 200 else {}
+    _pg_want = _pc(ResumeModel.model_validate(_resume_json), template="classic")
+    check(
+        "31.2/4 /render/pages draws every page of the file the download sends: as many pictures as "
+        "pdf_renderer.page_count() measures, each a PNG, for the resolved template, and it is not charged",
+        _pg_resp.status_code == 200
+        and _pg_body.get("total") == _pg_want
+        and len(_pg_body.get("pages", [])) == min(_pg_want, 4)
+        and all(_b64_pages.b64decode(pg)[:8] == b"\x89PNG\r\n\x1a\n" for pg in _pg_body.get("pages", []))
+        and _pg_body.get("template") == "classic",
+        {k: (v if k != "pages" else len(v)) for k, v in _pg_body.items()} or _pg_resp.status_code,
+    )
+    check(
+        "31.2/4 /render/pages refuses a field it does not read (extra=forbid): a render client's `fmt` is a 422",
+        _tc.post("/render/pages", json={"resume": _resume_json, "fmt": "pdf"}, headers=_CAP_H).status_code == 422,
+    )
+    # Past the cap, the file's own count still comes back, so the view can say
+    # the rest are in the download instead of stopping without a word.
+    from app.render.page_images import pdf_page_pngs as _pdf_pngs  # noqa: E402
+    from app.render.pdf_renderer import render_pdf as _render_pdf_pages  # noqa: E402
+
+    _pg_pics, _pg_total = _pdf_pngs(
+        _render_pdf_pages(ResumeModel.model_validate(_resume_json), template="classic"), max_pages=0
+    )
+    check(
+        "31.2/4 the page pictures stop at their cap and still report the file's page count",
+        _pg_pics == [] and _pg_total == _pg_want,
+        (len(_pg_pics), _pg_total, _pg_want),
+    )
     check(
         "page-count carries the live budget, so the UI never reads a stale length_report",
         _pc_body["max_pages"] == get_settings().resume_max_pages
@@ -25753,6 +25789,7 @@ _ROUTE_COST = {
     ("POST", "/jobs/fetch"): "net_capped:fetch",
     # free: the deterministic tools
     ("POST", "/render"): "free",
+    ("POST", "/render/pages"): "free",
     ("POST", "/tools/review"): "free",
     ("POST", "/tools/coverage"): "free",
     ("POST", "/tools/ats-xray"): "free",
@@ -26479,6 +26516,8 @@ try:
                  lambda s: _as32("POST", f"/kits/{_SW32.get('kit_c', 0)}/submit", _SW32["h"]), statuses=(400,))
         _plain32(("POST", "/render"),
                  lambda s: _as32("POST", "/render", _SW32["h"], json={"resume": _R32, "fmt": "pdf"}), statuses=(200,))
+        _plain32(("POST", "/render/pages"),
+                 lambda s: _as32("POST", "/render/pages", _SW32["h"], json={"resume": _R32}), statuses=(200,))
         _plain32(("POST", "/tools/review"),
                  lambda s: _as32("POST", "/tools/review", _SW32["h"], json={"resume": _R32, "jd": None}),
                  statuses=(200,))
@@ -26784,13 +26823,13 @@ check(
     f"limit={_sw_snap32.limit} plan={_sw_snap32.plan} {str(_free_bad32)[:800]}",
 )
 _free_calls32 = {key: (_sweep32.get(key) or {}).get("calls", 0) for key, cls in _ROUTE_COST.items() if cls == "free"}
-_DETERMINISTIC32 = (("POST", "/render"), ("POST", "/tools/review"), ("POST", "/tools/coverage"),
+_DETERMINISTIC32 = (("POST", "/render"), ("POST", "/render/pages"), ("POST", "/tools/review"), ("POST", "/tools/coverage"),
                     ("POST", "/tools/ats-xray"), ("POST", "/tools/page-count"), ("POST", "/jobs/fetch"))
 check(
     "32.13(c) the /tools/ats-scan catch: no driven row that made a stub model call is classed free — every free row "
     "made ZERO calls on the StubClient class — and the counter is live: the tailor, the fit check, a resume upload and "
-    "the kit pipeline each made calls, while the six model-free routes (render, review, coverage, x-ray, page count, "
-    "fetch) were driven and made none. The call counts are read off the SWEEP, not off the free rows, because the "
+    "the kit pipeline each made calls, while the seven model-free routes (render, the page pictures, review, "
+    "coverage, x-ray, page count, fetch) were driven and made none. The call counts are read off the SWEEP, not off the free rows, because the "
     "fetch is net_capped now (COST-3) and a `free`-only reader would have answered None for it and passed",
     [key for key, n in _free_calls32.items() if n > 0] == []
     and all((_sweep32.get(key) or {}).get("calls", 0) > 0
