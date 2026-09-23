@@ -20,13 +20,16 @@ interface Props {
   checkedFor: string | null;
   fit: FitCheckResult | null;
   onChecked: (jdText: string, fit: FitCheckResult) => void;
-  onTailor: (jdText: string) => void;
+  /** Tailor for this text. `reading` is a fit check taken in this dialog while
+   * a draft was up, which the page adopts as the posting's reading first, so
+   * the tailor claims the ride it opened (PLAN 31.3/1). */
+  onTailor: (jdText: string, reading: HeldReading | null) => void;
   tailoring: boolean;
   /**
    * A tailor result is on screen; this dialog is now for aiming at a DIFFERENT
    * posting, not for re-reading this one. It re-labels the dialog and — the
    * part that matters — makes the cached fit panel unreachable: that reading
-   * was taken against the MASTER, while `ScoreCard` on the page below is
+   * was taken against the MASTER, while the page below is
    * showing the TAILORED document's, and two unlabelled recruiter-fit rings
    * with different numbers for different documents is precisely what "two
    * numbers on two clocks, never a blended one" forbids.
@@ -52,6 +55,13 @@ interface Props {
 }
 
 const TOP_MISSING = 8;
+
+/** A fit check taken while a tailored draft is up (PLAN 31.3/1). HELD HERE, not
+ * written to the store, until Tailor: the page's `jdText`, `jd` and `fit`
+ * describe the draft on screen and its posting, and writing another posting's
+ * reading into them would leave that draft beside a job it was not tailored
+ * for. `at` is the reading's own minute, for the stamp the page keeps. */
+export type HeldReading = { text: string; fit: FitCheckResult; at: number };
 
 /**
  * Tailor for a job, in one place: paste the posting or drop its link, see how
@@ -100,6 +110,13 @@ export default function TailorOverlay({
   const [err, setErr] = useState("");
   // Tailoring would throw away hand-edits, so the button asks once first.
   const [armed, setArmed] = useState(false);
+  const [held, setHeld] = useState<HeldReading | null>(null);
+  // A held reading goes with the draft it was taken beside. Once the page has
+  // adopted it (Tailor) the store holds it; once the draft is gone (back to the
+  // master) the page's own reading is the one to show.
+  useEffect(() => {
+    if (!hasResult) setHeld(null);
+  }, [hasResult]);
   // The same posting as the job's row: its new draft replaces the saved one.
   const samePosting = !!savedFor && draft.trim() === savedFor;
   const guarded = hasResult && overrideCount > 0 && (!draftSaved || samePosting);
@@ -111,7 +128,9 @@ export default function TailorOverlay({
   // what makes the stale fit panel below structurally unreachable.
   useEffect(() => {
     if (!open) return;
-    setDraft(hasResult ? "" : jdText);
+    // A reading held from an earlier open comes back with its text, so a use
+    // spent on it is never spent again for the same answer.
+    setDraft(hasResult ? (held?.text ?? "") : jdText);
     setErr("");
     // Re-opening is a fresh decision. A dialog that opens already armed puts a
     // red "discard my edits" button under the user's thumb before they have
@@ -126,26 +145,34 @@ export default function TailorOverlay({
   // `!hasResult` is belt as well as braces. `checkedFor` is never "" (a check
   // only fires when `ready`, i.e. over 30 characters), so the empty draft above
   // already makes this false — but the panel it gates paints a reading taken
-  // against the MASTER while ScoreCard on the page paints the TAILORED
+  // against the MASTER while the page below describes the TAILORED
   // document's, and that contradiction is worth being able to SEE in one
   // expression rather than deducing from two files. check-mirrors 15 reads it.
   const cached = !hasResult && !!fit && checkedFor !== null && checkedFor === draft.trim();
+  // The reading this dialog shows: the page's (no draft up) or one held here
+  // (a draft up), and only for exactly the text in the box. Never the page's
+  // reading while a draft is up: that one is the MASTER against the draft's own
+  // posting, the two-rings contradiction check-mirrors 15 exists for.
+  const heldHere = hasResult && held !== null && held.text === draft.trim();
+  const reading = cached ? fit : heldHere ? held.fit : null;
 
-  // What each button spends (Phase 30 / C3, C4). The fit check's included tailor
-  // counts only while this dialog shows that reading (`cached`): another draft is
-  // another posting, and with a result up the dialog aims elsewhere. `out` is
-  // the one thing that disables a counted button, and it is false for a covered
-  // call, so at 0 uses left an included Tailor stays enabled.
+  // What each step spends (Phase 30 / C3, C4). The fit check's included tailor
+  // counts only while this dialog shows that reading: another text is another
+  // posting. `out` is the one thing that disables a counted button, and it is
+  // false for a covered call, so at 0 uses left an included Tailor stays enabled.
   const fitUses = useUses("fit_check");
-  const includedUntil = cached ? fit?.tailor_included_until : undefined;
+  const includedUntil = reading ? reading.tailor_included_until : undefined;
   const tailorUses = useUses("tailor", includedUntil);
 
   async function run() {
     if (!ready || busy) return;
     setBusy(true);
     setErr("");
+    const text = draft.trim();
     try {
-      onChecked(draft.trim(), await checkFit(resume, draft.trim()));
+      const r = await checkFit(resume, text);
+      if (hasResult) setHeld({ text, fit: r, at: Date.now() });
+      else onChecked(text, r);
     } catch (e: unknown) {
       setErr(apiErrorMessage(e, t("overlay.failed")));
     } finally {
@@ -153,13 +180,13 @@ export default function TailorOverlay({
     }
   }
 
-  const missing = (fit?.gaps ?? []).filter((g) => g.status === "missing").slice(0, TOP_MISSING);
+  const missing = (reading?.gaps ?? []).filter((g) => g.status === "missing").slice(0, TOP_MISSING);
   // Partials were hidden here, which is backwards: a partial is the cheapest
   // thing on the list to fix. The posting wants its own wording and the
   // candidate already has the experience, so it costs one edit and no use --
   // and it is half a point of coverage each, which is exactly why the ring
   // disagreed with the "N of M" line beneath it.
-  const partial = (fit?.gaps ?? []).filter((g) => g.status === "partial").slice(0, TOP_MISSING);
+  const partial = (reading?.gaps ?? []).filter((g) => g.status === "partial").slice(0, TOP_MISSING);
 
   return (
     <Modal
@@ -180,25 +207,25 @@ export default function TailorOverlay({
         <JDPaste
           value={draft}
           onChange={setDraft}
-          folded={cached && fit ? { title: fit.jd.job_title, company: fit.jd.company } : null}
+          folded={reading ? { title: reading.jd.job_title, company: reading.jd.company } : null}
         />
 
-        {cached && fit && (
+        {reading && (
           <div className="space-y-3 rounded-xl border border-line bg-bg-soft/60 p-4">
             <div className="flex flex-wrap items-center justify-around gap-4">
               <div className="flex flex-col items-center gap-1.5">
-                <ProgressRing value={fit.keyword_coverage} size={84} tone="accent" delay={0.1} />
+                <ProgressRing value={reading.keyword_coverage} size={84} tone="accent" delay={0.1} />
                 <span className="text-xs font-semibold text-ink">{t("fit.coverage")}</span>
                 <span className="text-[11px] tabular-nums text-ink-muted">
-                  {t("fit.coverageSub", { covered: fit.covered, total: fit.total, partial: fit.partial })}
+                  {t("fit.coverageSub", { covered: reading.covered, total: reading.total, partial: reading.partial })}
                 </span>
               </div>
               <div className="flex flex-col items-center gap-1.5">
-                <ProgressRing value={fit.fit_score} size={84} tone="mint" delay={0.1} />
+                <ProgressRing value={reading.fit_score} size={84} tone="mint" delay={0.1} />
                 <span className="text-xs font-semibold text-ink">{t("fit.recruiter")}</span>
               </div>
             </div>
-            {fit.rationale && <p className="text-sm leading-relaxed text-ink-muted">{fit.rationale}</p>}
+            {reading.rationale && <p className="text-sm leading-relaxed text-ink-muted">{reading.rationale}</p>}
             {missing.length > 0 && (
               <div>
                 <p className="mb-1.5 text-xs font-semibold text-ink">{t("overlay.topMissing")}</p>
@@ -262,17 +289,22 @@ export default function TailorOverlay({
           <Button variant="ghost" onClick={onClose} disabled={busy || tailoring}>
             {t("overlay.close")}
           </Button>
-          {!cached && (
+          {/* ONE WAY IN, one step at a time (PLAN 31.3/1). It offered Check fit
+              OR Tailor, a choice the user could not make yet: both spend a use,
+              and the only difference was whether they saw the match first.
+              Now the fit check is step one and the tailor step two, and that is
+              still one use in all, because the check includes the tailor of the
+              posting it read (Phase 30 / B4.4). */}
+          {!reading ? (
             <Button loading={busy} disabled={!ready || fitUses.out} icon={<Sparkles size={16} />} onClick={run}>
               {busy ? t("overlay.checking") : t("overlay.checkFit")}
             </Button>
-          )}
-          {/* ARM, THEN CONFIRM — the Settings danger-zone shape, because above
+          ) : /* ARM, THEN CONFIRM — the Settings danger-zone shape, because above
               zero this button is destructive and was one tap. The consequence is
               already stated at rest in the note above (it names the count
               whether or not anything is armed), so arming reveals no new fact;
-              it only separates the intent from the act. */}
-          {guarded && !armed ? (
+              it only separates the intent from the act. */
+          guarded && !armed ? (
             <Button
               disabled={!ready || busy || tailorUses.out}
               icon={<Wand2 size={16} />}
@@ -292,28 +324,30 @@ export default function TailorOverlay({
                 loading={tailoring}
                 disabled={!ready || busy || tailorUses.out}
                 icon={<Wand2 size={16} />}
-                onClick={() => onTailor(draft.trim())}
+                onClick={() => onTailor(draft.trim(), heldHere ? held : null)}
               >
                 {guarded
                   ? t("overlay.retailorDiscard", { count: overrideCount })
-                  : hasResult
-                    ? t("overlay.retailor")
-                    : t("overlay.tailor")}
+                  : tailorUses.covered
+                    ? t("overlay.tailorIncluded")
+                    : hasResult
+                      ? t("overlay.retailor")
+                      : t("overlay.tailor")}
               </Button>
             </>
           )}
         </div>
-        {/* The cost, stated under the buttons that spend it. With no fit
-            reading on screen both buttons are live and both spend, so one line
-            prices either one and says what checking fit first buys; with this
-            posting's reading up, Tailor is the only counted control left and
-            that reading includes it while it lasts. Nothing at all for an
-            account with no monthly limit or an unknown count. */}
-        {cached ? (
+        {/* The cost, stated under the one button that spends it. Before a
+            reading that is the fit check, and the line says what it buys: the
+            tailor that follows is included. With the reading up, Tailor is the
+            counted control, and that reading includes it while it lasts.
+            Nothing at all for an account with no monthly limit or an unknown
+            count. */}
+        {reading ? (
           <UsesNote feature="tailor" includedUntil={includedUntil} className="text-end" />
         ) : (
           <UsesNote feature="fit_check" className="text-end">
-            {tCommon("uses.fitOrTailor", { count: fitUses.remaining ?? 0 })}
+            {tCommon("uses.fitThenTailor", { count: fitUses.remaining ?? 0 })}
           </UsesNote>
         )}
         {!ready && <p className="text-end text-xs text-ink-muted">{t("overlay.needsJd")}</p>}

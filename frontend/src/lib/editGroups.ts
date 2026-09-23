@@ -219,7 +219,7 @@ export function groupEdits(
 /**
  * Which groups start open.
  *
- * A group carrying a fabrication flag is NEVER collapsed — `ScoreCard` deep-links
+ * A group carrying a fabrication flag is NEVER collapsed — the summary line deep-links
  * into this panel and must never land on hidden content. That is safe by
  * construction for the quiet card: flag matching requires a non-empty `after`,
  * and every member of that card is either a removal (`after === ""`) or a

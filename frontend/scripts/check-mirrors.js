@@ -4939,12 +4939,12 @@ try {
     // more uses than are left, and its sentence is the one place that says so.
     ["pages/jobs/kits.tsx", 1, ["uses.batchCap"]],
     ["components/CoverLetter.tsx", 1, []],
-    // The overlay's two counted buttons share ONE line, and `uses.fitOrTailor`
-    // is it — required BY NAME, because the state it prices is the state that
-    // had no line at all (Phase 30 review, known item 4): with no fit reading
-    // on screen both Check fit and Tailor are live and both spend, and the only
-    // sentence there described the fit check.
-    ["components/TailorOverlay.tsx", 1, ["uses.fitOrTailor"]],
+    // The overlay's line before a reading, required BY NAME: that state had no
+    // line at all once (Phase 30 review, known item 4). Since PLAN 31.3/1 it
+    // has one button, Check fit, and `uses.fitThenTailor` prices it AND says
+    // what it buys, the tailor that follows. Its predecessor, `fitOrTailor`,
+    // priced two buttons the dialog no longer offers side by side.
+    ["components/TailorOverlay.tsx", 1, ["uses.fitThenTailor"]],
     // The review panel's own zero line, required by name for the same reason:
     // the generic one lists "the review" among what stays free, directly under
     // the one button in that panel that spends.
@@ -10560,57 +10560,45 @@ try {
   fail(`paper heading language check (check 47) could not run: ${e.message}`);
 }
 
-// ---- 48. the guard tile claims no check that never ran --------------------- //
-// PLAN 31.1/4, found in the 2026-09-23 review. After a fit check with no tailor,
-// TailorPage passed `flags={result?.fabrication_flags ?? []}`, and the tile turned
-// that `[]` into "Facts invented 0 · No new facts detected · Checked · Facts
-// ledger" about a rewrite that did not exist: the house rule "the UI may not claim
-// more than the code proves", and "unknown is never zero, and never clean". No
-// rewrite is `null` now, and the tile shows "Not run yet" for it. Pinned by
-// POLARITY (checks 15/21's lesson): a `[]` fallback, or a tile that reads `flags`
-// before handling `null`, goes red. Both detectors are probed both ways.
+// ---- 48. nothing states a claims verdict before a tailor ran ----------------- //
+// PLAN 31.1/4, found in the 2026-09-23 review: after a fit check with no tailor,
+// the score card's guard tile read "Facts invented 0 · No new facts detected ·
+// Checked · Facts ledger" about a rewrite that did not exist. That breaks the
+// house rules "the UI may not claim more than the code proves" and "unknown is
+// never zero, and never clean". Since PLAN 31.3/1 the score card is GONE: a fit
+// reading on the master is one line with no guard in it, and the claims live in
+// a draft's summary line and in the drawer's Changes pane. So this pins what
+// keeps a verdict off the page before a tailor: the summary is mounted only
+// under `result`, the pane is built only from `result`, and TailorPage says no
+// claims sentence of its own anywhere else. Probed with each gate loosened and a
+// verdict planted on the page.
 try {
-  const page = decomment(read("pages/TailorPage.tsx"));
-  const card = decomment(read("components/ScoreCard.tsx"));
-  const pageProblem = (src) => {
-    const m = /<ScoreCard\b[\s\S]*?\bflags=\{([^}]*)\}/.exec(src);
-    if (!m) throw new Error("could not find TailorPage's <ScoreCard … flags={…}>");
-    const expr = m[1].replace(/\s+/g, " ").trim();
-    // `null` itself is the third honest shape: since PLAN 31.3/3 the card shows
-    // only before a tailor (`fit && !result`), where there is never a rewrite.
-    const ok =
-      /^result \? result\.fabrication_flags : null$/.test(expr) ||
-      /^result\?\.fabrication_flags \?\? null$/.test(expr) ||
-      expr === "null";
-    return ok ? null : `TailorPage passes flags={${expr}} — with no tailor result it must be null, never a clean []`;
+  const page48 = decomment(read("pages/TailorPage.tsx"));
+  const read48 = (pg) => {
+    const out = [];
+    if (!/\{reviewPane && result && effectiveResume && \(\s*<DraftSummary\b/.test(pg))
+      out.push("DraftSummary, which states the claims, is not mounted only under a tailor result");
+    if (!/const reviewPane =\s*result && jd && effectiveResume && !loading\s*\?/.test(pg))
+      out.push("the drawer's Changes pane, which lists the claims, is not built only from a tailor result");
+    if (/t\("(?:review\.summary\.(?:claims|noClaims|noClaimsTyped|claimsResolved)|changelog\.clean\w*|review\.resolvedBody)"/.test(pg))
+      out.push("TailorPage states a claims verdict of its own, outside the draft's summary line and drawer");
+    return out;
   };
-  const tileProblem = (src) => {
-    const at = src.indexOf("function GuardTile(");
-    if (at === -1) throw new Error("could not find function GuardTile in components/ScoreCard.tsx");
-    const body = src.slice(at, src.indexOf("\nfunction ", at + 10) === -1 ? undefined : src.indexOf("\nfunction ", at + 10));
-    const nullAt = body.search(/if\s*\(\s*flags\s*===\s*null\s*\)\s*\{?\s*return\b/);
-    const useAt = body.search(/flags\.length/);
-    if (nullAt === -1) return "GuardTile has no `if (flags === null) return …` branch for a check that never ran";
-    if (useAt !== -1 && useAt < nullAt) return "GuardTile reads flags.length before handling flags === null";
-    if (!/t\(\s*"score\.guardNotRun"\s*\)/.test(body.slice(nullAt))) return "GuardTile's not-run face does not say score.guardNotRun";
-    return null;
-  };
-  // The self-probes plant the defect into a copy. When the real file already
-  // carries it, the plant is a no-op and the real check below reports it.
-  const plantedPage = page.replace(/(<ScoreCard\b[\s\S]*?\bflags=\{)[^}]*\}/, "$1result?.fabrication_flags ?? []}");
-  const plantedTile = card.replace(/if\s*\(\s*flags\s*===\s*null\s*\)/, "if (false)");
-  if (plantedPage !== page && !pageProblem(plantedPage)) throw new Error("the page detector passes a `?? []` fallback");
-  if (plantedTile !== card && !tileProblem(plantedTile)) throw new Error("the tile detector passes a GuardTile with no null branch");
-  if (plantedPage === page && !pageProblem(page)) throw new Error("the page probe could not plant the defect, so the check would pass by never firing");
-  if (plantedTile === card && !tileProblem(card)) throw new Error("the tile probe could not plant the defect, so the check would pass by never firing");
-  for (const p of [pageProblem(page), tileProblem(card)]) if (p) fail(`check 48: ${p} (PLAN 31.1/4)`);
-  for (const loc of ["en", "he"]) {
-    const score = JSON.parse(read(`locales/${loc}/tailor.json`)).score || {};
-    for (const k of ["guardNotRun", "guardNotRunNote"])
-      if (typeof score[k] !== "string" || !score[k].trim()) fail(`locales/${loc}/tailor.json: score.${k} is missing — the not-run guard tile would print the raw key`);
+  const real48 = read48(page48);
+  for (const [label, pg] of [
+    ["a summary with no result gate", page48.replace("{reviewPane && result && effectiveResume && (", "{reviewPane && effectiveResume && (")],
+    ["a pane built without a result", page48.replace(/const reviewPane =\s*result && jd/, "const reviewPane =\n    jd")],
+    ["a verdict on the page", page48.replace("<DocumentPanel", '{t("review.summary.noClaims")}\n<DocumentPanel')],
+  ]) {
+    if (pg === page48) {
+      if (real48.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!read48(pg).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
   }
+  for (const p of real48) fail(`check 48: pages/TailorPage.tsx: ${p} (PLAN 31.1/4, 31.3/1)`);
 } catch (e) {
-  fail(`guard tile check (check 48) could not run: ${e.message}`);
+  fail(`claims-before-a-tailor check (check 48) could not run: ${e.message}`);
 }
 
 // ---- 49. no developer wording reaches a user ------------------------------- //
@@ -11268,7 +11256,11 @@ try {
     if (!/addEventListener\("keydown", onKey, true\)/.test(paste) || !/e\.stopPropagation\(\);\s*setPicking\(false\)/.test(paste))
       out.push("JDPaste's sheet no longer takes Escape in the capture phase and stops it, so it closes the dialog around it too");
     if (!/createPortal\([\s\S]*?role="dialog"[\s\S]*?document\.body/.test(paste)) out.push("JDPaste's saved-job sheet is not portalled");
-    if (!/folded=\{cached && fit \?/.test(overlay)) out.push("TailorOverlay folds the posting without the fit reading being for this very text (`cached`)");
+    // Since PLAN 31.3/1 the reading is the page's (`cached`) or one held in the
+    // dialog beside a draft (`heldHere`), and each is for this very text.
+    if (!/folded=\{reading \?/.test(overlay)) out.push("TailorOverlay folds the posting without a reading for this very text (`reading`)");
+    if (!/const reading = cached \? fit : heldHere \? held\.fit : null;/.test(overlay)) out.push("TailorOverlay's `reading` is not the page's reading or the held one, and nothing else");
+    if (!/const heldHere = hasResult && held !== null && held\.text === draft\.trim\(\);/.test(overlay)) out.push("TailorOverlay shows a held reading for a text other than the one in the box");
     if (!/analyzedFor === jdText\s*\?/.test(interview)) out.push("InterviewPage folds the posting without checking it is still the analysed text");
     return out;
   };
@@ -11278,7 +11270,8 @@ try {
   const real = read59(paste, overlay, interview);
   for (const [label, pa, ov, iv] of [
     ["a bubbling Escape", paste.replace('addEventListener("keydown", onKey, true)', 'addEventListener("keydown", onKey)'), overlay, interview],
-    ["a fold on any fit", paste, overlay.replace("folded={cached && fit ?", "folded={fit ?"), interview],
+    ["a fold on any fit", paste, overlay.replace("folded={reading ?", "folded={fit ?"), interview],
+    ["a held reading for any text", paste, overlay.replace("held.text === draft.trim()", "true"), interview],
     ["a fold on any questions", paste, overlay, interview.replace("analyzedFor === jdText\n", "true\n")],
   ]) {
     if (pa === paste && ov === overlay && iv === interview) {
@@ -11568,6 +11561,61 @@ try {
   for (const p of realC) fail(`check 62: ${p} (PLAN 31.3/3)`);
 } catch (e) {
   fail(`tailored-draft summary check (check 62) could not run: ${e.message}`);
+}
+
+// ---- 63. one way in: check the fit, then tailor, for one use (PLAN 31.3/1) ---- //
+// The tailor dialog offered "Check fit" OR "Tailor my resume" side by side, a
+// choice the user could not make yet: both spent a use, and the only difference
+// was whether they saw the match first. It is one path now: the fit check is
+// step one, and with its reading up "Tailor my resume — included" is step two,
+// still one use in all because the check includes the tailor of the posting it
+// read (Phase 30 / B4.4). Two things keep that true. (a) The dialog never
+// offers both at once: Check fit renders only while there is no reading for the
+// text in the box, and the Tailor button only in the branch where there is.
+// (b) A reading taken beside a draft is held in the dialog, and the page makes
+// it the posting's reading BEFORE `startTailor` runs, the same four fields
+// `onChecked` writes; without that the tailor analyses the posting again, misses
+// the ride, and spends a second use while the button says "included".
+try {
+  const overlay63 = decomment(read("components/TailorOverlay.tsx"));
+  const page63 = decomment(read("pages/TailorPage.tsx"));
+  const read63 = (ov, pg) => {
+    const out = [];
+    const step = /\{!reading \? \(\s*<Button\b[\s\S]{0,200}?onClick=\{run\}[\s\S]*?\) : /.exec(ov);
+    if (!step) out.push("TailorOverlay offers Check fit other than as the one step before a reading (`!reading ? (<Button … onClick={run}>) : …`)");
+    else {
+      const before = ov.slice(0, step.index);
+      const inStep = step[0];
+      if (/onTailor\(/.test(before) || /onTailor\(/.test(inStep))
+        out.push("TailorOverlay can tailor before there is a reading for the text in the box");
+      if ((ov.match(/onClick=\{run\}/g) || []).length !== 1)
+        out.push("TailorOverlay starts a fit check from more than the one step");
+    }
+    const handler = /onTailor=\{\(text, held\) => \{([\s\S]*?)\n\s*\}\}/.exec(pg);
+    if (!handler) out.push("pages/TailorPage.tsx's onTailor does not take the held reading (`(text, held) => {…}`)");
+    else {
+      const body = handler[1];
+      const adopt = body.search(/\.\.\.\(held \? \{ jd: held\.fit\.jd, fit: held\.fit, checkedFor: text, fitScoredAt: held\.at \} : \{\}\)/);
+      const start = body.indexOf("startTailor()");
+      if (adopt === -1) out.push("pages/TailorPage.tsx's onTailor does not make a held reading the posting's reading (jd, fit, checkedFor, fitScoredAt)");
+      else if (start === -1 || start < adopt) out.push("pages/TailorPage.tsx's onTailor starts the tailor before adopting the held reading");
+    }
+    return out;
+  };
+  const real63 = read63(overlay63, page63);
+  for (const [label, ov, pg] of [
+    ["both buttons at once", overlay63.replace("{!reading ? (", "{true ? ("), page63],
+    ["a tailor that ignores the held reading", overlay63, page63.replace(/\.\.\.\(held \? \{ jd: held\.fit\.jd, fit: held\.fit, checkedFor: text, fitScoredAt: held\.at \} : \{\}\),?/, "")],
+  ]) {
+    if (ov === overlay63 && pg === page63) {
+      if (real63.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!read63(ov, pg).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of real63) fail(`check 63: ${p} (PLAN 31.3/1)`);
+} catch (e) {
+  fail(`one-way-in check (check 63) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

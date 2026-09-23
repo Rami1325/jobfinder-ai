@@ -126,8 +126,6 @@
     "fitCheck_one": "Uses your 1 use · tailoring this job afterwards is included",
     "fitCheck_other": "Uses 1 of the {{count}} you have left this month · tailoring this job afterwards is included",
     "includedFit": "Included with your fit check",
-    "fitOrTailor_one": "Either button uses your last use this month · a fit check also covers tailoring this job",
-    "fitOrTailor_other": "Either button uses 1 of the {{count}} you have left this month · a fit check also covers tailoring this job",
     "coverLetter_one": "Uses your 1 use · changes to this letter are included",
     "coverLetter_other": "Uses 1 of the {{count}} you have left this month · changes to this letter are included",
     "coverIncluded_one": "Changes included · 1 left until {{time}}",
@@ -169,7 +167,9 @@
     },
     "headerLeft_one": "{{count}} use left",
     "headerLeft_other": "{{count}} uses left",
-    "headerNone": "No uses left"
+    "headerNone": "No uses left",
+    "fitThenTailor_one": "Uses your last use this month · tailoring this job afterwards is included",
+    "fitThenTailor_other": "Uses 1 of the {{count}} you have left this month · tailoring this job afterwards is included"
   },
   "placeholder": {
     "body": "This section is being built. Check back shortly."

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
-import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft, Target, Pencil } from "lucide-react";
+import { Wand2, Download, Save, BadgeCheck, Briefcase, ChevronRight, ExternalLink, ArrowLeft, Target, Pencil } from "lucide-react";
 import {
   downloadResume,
   resumeFilename,
@@ -30,9 +30,9 @@ import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
 import ResumeUpload from "../components/ResumeUpload";
 import { flagsOf } from "../components/ReviewPanel";
-import ScoreCard from "../components/ScoreCard";
 import VoicePanel from "../components/VoicePanel";
 import { resetMasterCache } from "../hooks/useMasterResume";
+import { useUses } from "../lib/usesStore";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { blocksByEdit, flagStates, mergeForReview } from "../lib/resumeDiff";
 import { applyOverrides, blockText, movedPath } from "../lib/resumeOverrides";
@@ -815,7 +815,7 @@ export default function TailorPage() {
   // still gates everything that touches the master — the draft restore bar, the
   // save/undo cluster, Replace — and everything that ADDS a claim, because a
   // claim typed after the tailor ran carries no fabrication-guard verdict while
-  // ScoreCard below keeps rendering `result.fabrication_flags` beside it.
+  // the summary line and the drawer keep reporting `result.fabrication_flags`.
   //
   // `canEditDoc` is new and is simply "there is a document": the paper is typed
   // on either way. With a result up the writes do not go into `resume` at all —
@@ -1013,6 +1013,11 @@ export default function TailorPage() {
   const viewTracker = { action: { label: tCommon("actions.view"), onClick: () => navigate("/tracker") } };
 
   /** The job this draft is for, as the tracker row names it. */
+  // Whether the fit reading on the MASTER still includes its tailor (PLAN
+  // 31.3/1), for the one line over the paper that offers it. Called on every
+  // render, like every hook; the reading only matters while no draft is up.
+  const fitRide = useUses("tailor", fit && !result ? fit.tailor_included_until : undefined);
+
   const posting = useMemo(
     () => ({
       job_title: jd?.job_title || jobTitle || "",
@@ -1519,7 +1524,7 @@ export default function TailorPage() {
                 {t("toolbar.changes", { count: edits.length })}
               </button>
             )}
-            {/* The other live, deterministic number, in ScoreCard's own words
+            {/* The other live, deterministic number, in the coverage sentence's words
                 from lg and as a bare count below it, where the sentence would
                 cost the row. A COUNT, never a band and never `overall`: half of
                 that blend is stale by construction and it is off this surface
@@ -1634,6 +1639,42 @@ export default function TailorPage() {
           </p>
         )}
 
+        {/* A FIT READING ON THE MASTER IN ONE LINE (PLAN 31.3/1): the check is
+            step one of tailoring, and a reading left on the page leads back to
+            step two, the dialog with it and its Tailor. It replaced a three-tile
+            score card whose third tile said the guard had not run yet. Only for
+            the posting in `jdText`: the reading and its text are one thing. */}
+        {fit && !result && shown && checkedFor !== null && checkedFor === jdText.trim() && (
+          <button
+            type="button"
+            onClick={() => setTailorState({ overlayOpen: true })}
+            className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-panel px-3 py-2 text-start text-xs text-ink-muted shadow-sm transition-colors hover:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+          >
+            <span className={cn("inline-flex items-center gap-1 tabular-nums text-ink", coverage.stale && "opacity-60")}>
+              <Target size={13} aria-hidden className="shrink-0 text-accent-soft" />
+              {t("review.summary.keywordsNow", {
+                after: coverage.data?.covered ?? fit.covered,
+                total: coverage.data?.total ?? fit.total,
+              })}
+            </span>
+            {/* One model reading and the minute it was taken, its whole claim
+                to honesty: it does not move as the resume is edited. */}
+            <span className="tabular-nums">
+              {t("review.summary.fitAt", {
+                score: Math.round(fit.fit_score),
+                time:
+                  fitScoredAt !== null
+                    ? new Intl.DateTimeFormat(i18n.language, { hour: "2-digit", minute: "2-digit" }).format(fitScoredAt)
+                    : "",
+              })}
+            </span>
+            <span className="ms-auto inline-flex items-center gap-0.5 font-semibold text-accent-soft">
+              {fitRide.covered ? t("overlay.tailorIncluded") : t("overlay.tailor")}
+              <ChevronRight size={14} aria-hidden className="rtl:-scale-x-100" />
+            </span>
+          </button>
+        )}
+
         {/* A TAILORED DRAFT IN ONE LINE (PLAN 31.3/3): keywords before and
             after, the claims to check, the page count. Every part of it opens
             the drawer that holds the rest. */}
@@ -1690,7 +1731,7 @@ export default function TailorPage() {
             onInlineCommit={canEditDoc ? commitInline : undefined}
             // ADDING stays master-only, and the reason is the fabrication guard,
             // not caution. It ran against `result.tailored_resume`; a claim typed
-            // in afterwards carries no verdict at all, while ScoreCard below goes
+            // in afterwards carries no verdict at all, while the drawer goes
             // on rendering `result.fabrication_flags` as though it described the
             // document on screen. An added block also exists in neither the
             // original nor the tailored resume, so it has no source anchor to be
@@ -1777,30 +1818,6 @@ export default function TailorPage() {
               {t("upload.buildLink")}
             </button>
           </Card>
-        )}
-
-        {/* A fit reading on the MASTER, before any tailor. A tailored draft's
-            numbers moved to the summary line over it and the drawer behind it
-            (PLAN 31.3/3); 31.3/1 folds this card into the one way in. */}
-        {fit && !result && shown && (
-          <ScoreCard
-            coverage={coverage.data}
-            coverageStale={coverage.stale}
-            fitScore={fit.fit_score}
-            rationale={fit.rationale}
-            // THE STAMP THAT BELONGS TO THE NUMBER ABOVE IT: the fit check's own,
-            // never the tailor's `scoredAt`. One field served both readings until
-            // 23.8, and after "Back to my resume" the tile paired the PRE-tailor
-            // reading with the TAILOR's clock; the timestamp is the entire
-            // honesty mechanism of a tile that shows one reading and no delta.
-            scoredAt={fitScoredAt}
-            // `null`, never `[]`: with no rewrite the guard has had nothing to
-            // check, and `[]` painted "0 · Checked · Facts ledger" about a
-            // rewrite that does not exist (PLAN 31.1/4). This card shows only
-            // before a tailor, so there is never a rewrite here to report on.
-            flags={null}
-            overrideCount={overrideCount}
-          />
         )}
 
         {loading && (
@@ -2008,7 +2025,7 @@ export default function TailorPage() {
             // success branch beside `result.score_after`.
             setTailorState({ jdText: text, jd: f.jd, fit: f, checkedFor: text, fitScoredAt: Date.now() })
           }
-          onTailor={(text) => {
+          onTailor={(text, held) => {
             // The Jobs-page handoff (`setTargetJob`) sets jobUrl/jobTitle/company
             // alongside jdText. Tailoring for a DIFFERENT posting must not leave
             // the breadcrumb, the target card and `save()`'s `job_url` naming the
@@ -2022,17 +2039,18 @@ export default function TailorPage() {
             // wipe a correct target on a trailing newline — a guard firing on
             // legitimate input.
             const changed = text !== jdText.trim();
-            setTailorState(
-              changed
-                ? {
-                    jdText: text,
-                    overlayOpen: false,
-                    jobUrl: undefined,
-                    jobTitle: undefined,
-                    company: undefined,
-                  }
-                : { jdText: text, overlayOpen: false },
-            );
+            setTailorState({
+              ...(changed
+                ? { jdText: text, jobUrl: undefined, jobTitle: undefined, company: undefined }
+                : { jdText: text }),
+              // A fit check taken in the dialog while a draft was up becomes
+              // this posting's reading NOW, before `startTailor` reads it: the
+              // same four fields `onChecked` writes, so the tailor reuses its
+              // analysed JD and claims the ride that check opened (PLAN 31.3/1:
+              // one use for the check and the tailor, whichever way in).
+              ...(held ? { jd: held.fit.jd, fit: held.fit, checkedFor: text, fitScoredAt: held.at } : {}),
+              overlayOpen: false,
+            });
             startTailor();
           }}
         />

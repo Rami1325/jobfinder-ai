@@ -128,23 +128,6 @@
     "edit": "Edit",
     "thisJob": "This job"
   },
-  "score": {
-    "guard": "Facts invented",
-    "guardClean": "No new facts detected",
-    "guardFlags_one": "{{count}} claim to review",
-    "guardFlags_other": "{{count}} claims to review",
-    "guardDetail": "See the full fabrication check below",
-    "stampVerified": "Checked · Facts ledger",
-    "stampPartial": "Checked · AI rewrite",
-    "stampReview": "Needs review",
-    "guardNotRun": "Not run yet",
-    "guardNotRunNote": "Checked when you tailor: every name, date, credential and number in the rewrite, against your original.",
-    "guardNoteClean": "We checked every name, date, credential and number against your original. Nothing new turned up.",
-    "guardNoteCleanEdited_one": "Nothing new turned up in the AI's rewrite. The line you rewrote yourself wasn't checked.",
-    "guardNoteCleanEdited_other": "Nothing new turned up in the AI's rewrite. The {{count}} lines you rewrote yourself weren't checked.",
-    "guardNoteFlags_one": "{{count}} claim we couldn't find in your resume. It doesn't ship until you approve it.",
-    "guardNoteFlags_other": "{{count}} claims we couldn't find in your resume. They don't ship until you approve them."
-  },
   "voice": {
     "title": "Human voice check",
     "score": "{{value}}/100",
@@ -242,7 +225,8 @@
       "claimsResolved": "Flagged claims resolved",
       "noClaims": "No new claims found",
       "noClaimsTyped": "No new claims in the AI's changes",
-      "open": "Review"
+      "open": "Review",
+      "fitAt": "Recruiter fit {{score}}, read at {{time}}"
     }
   },
   "cover": {
@@ -524,7 +508,8 @@
     "needsJd": "Paste a job description first.",
     "failed": "Couldn't read that posting just now.",
     "topMissing": "Most-wanted terms your CV doesn't say yet",
-    "topPartial": "Close — but not in the posting's own words"
+    "topPartial": "Close — but not in the posting's own words",
+    "tailorIncluded": "Tailor my resume — included"
   },
   "discard": {
     "cta": "Back to my resume",
