@@ -143,12 +143,23 @@ try {
 // Same class of bug as check 2, so the same shape of check: ChangeLog renders
 // t(`groups.${cls}.title`), and a class added to the union without a label
 // prints the raw key.
+//
+// It renders t(`groups.${cls}.count`, { count }) beside it, for EVERY class,
+// and `groups.curation` carried only a title until 2026-09-23 (PLAN 31.1/2): a
+// whole role, degree or service left out, the one curation the review makes
+// loud, printed "groups.curation.count" at 390 px. Check 8 stayed green because
+// both locales missed it together. The count needs its full plural set: English
+// one/other, Hebrew one/two/other (a missing `_two` prints the raw key for 2).
 try {
   const src = read("lib/editGroups.ts");
   const at = src.indexOf("export type EditClass =");
   if (at === -1) throw new Error("could not find the EditClass union");
   const classes = [...src.slice(at, src.indexOf(";", at)).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
   if (!classes.length) throw new Error("EditClass union parsed as empty");
+  const log = decomment(read("components/ChangeLog.tsx"));
+  if (!/t\(`groups\.\$\{g\.cls\}\.count`/.test(log))
+    throw new Error("could not find ChangeLog's t(`groups.${g.cls}.count`) call — if the count moved, move this check with it");
+  const forms = { en: ["one", "other"], he: ["one", "two", "other"] };
 
   for (const loc of ["en", "he"]) {
     const groups = JSON.parse(read(`locales/${loc}/tailor.json`)).groups || {};
@@ -158,6 +169,14 @@ try {
         `locales/${loc}/tailor.json: groups.{${missing.join(", ")}}.title missing — ` +
           `ChangeLog renders t("groups.<class>.title"), so the raw key hits the screen.`,
       );
+    }
+    for (const c of classes) {
+      const gaps = forms[loc].filter((f) => typeof groups[c]?.[`count_${f}`] !== "string");
+      if (gaps.length)
+        fail(
+          `locales/${loc}/tailor.json: groups.${c}.count is missing ${gaps.map((f) => `_${f}`).join(", ")} — ` +
+            `ChangeLog renders t(\`groups.\${g.cls}.count\`) for every class, so a group of that size prints the raw key.`,
+        );
     }
   }
 } catch (e) {

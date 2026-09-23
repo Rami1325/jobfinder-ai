@@ -277,7 +277,9 @@
       "count_other": "{{count}} additions"
     },
     "curation": {
-      "title": "Left out"
+      "title": "Left out",
+      "count_one": "1 whole entry",
+      "count_other": "{{count}} whole entries"
     },
     "flagged_one": "1 flagged",
     "flagged_other": "{{count}} flagged",

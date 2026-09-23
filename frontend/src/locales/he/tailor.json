@@ -287,7 +287,10 @@
       "count_other": "{{count}} תוספות"
     },
     "curation": {
-      "title": "לא נכלל"
+      "title": "לא נכלל",
+      "count_one": "פריט שלם אחד",
+      "count_two": "{{count}} פריטים שלמים",
+      "count_other": "{{count}} פריטים שלמים"
     },
     "flagged_one": "אחד סומן",
     "flagged_two": "{{count}} סומנו",
