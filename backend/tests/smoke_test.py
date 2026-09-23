@@ -9118,6 +9118,76 @@ with TestClient(_fastapi_app) as _tc:
         f"sent={_sent_detail.get('template')!r} unknown={_unknown_detail.get('template')!r}",
     )
 
+    # PLAN 31.1/5: one posting, one tracker row. A saved job reaches /app with its
+    # URL but not its row id, so saving the tailored CV (or "Yes, applied") posted
+    # a SECOND row. A post for a URL this user already tracks updates that row.
+    _dup_url = "https://dup.test/jobs/31-1-5"
+    _dup_saved = _tc.post(
+        "/applications",
+        json={"job_title": "Platform Eng", "company": "DupCo", "job_url": _dup_url, "status": "saved"},
+        headers=_ADMIN_H,
+    ).json()
+    _dup_tailored = _tc.post(
+        "/applications",
+        json={
+            "job_title": "Platform Eng", "company": "DupCo", "job_url": _dup_url, "status": "saved",
+            "tailored_resume": _resume_json, "overall_score": 77.0, "template": "executive",
+            "voice_score": 91.0, "fabrication_flag_count": 0, "cover_letter": "Dear DupCo,",
+        },
+        headers=_ADMIN_H,
+    ).json()
+    _dup_applied = _tc.post(
+        "/applications",
+        json={"job_title": "Platform Eng", "company": "DupCo", "job_url": _dup_url, "status": "applied"},
+        headers=_ADMIN_H,
+    ).json()
+    _dup_again = _tc.post(
+        "/applications",
+        json={"job_title": "Platform Eng", "company": "DupCo", "job_url": _dup_url, "status": "saved"},
+        headers=_ADMIN_H,
+    ).json()
+    _dup_rows = [a for a in _tc.get("/applications", headers=_ADMIN_H).json() if a["job_url"] == _dup_url]
+    _dup_detail = _tc.get(f"/applications/{_dup_saved['id']}", headers=_ADMIN_H).json()
+    check(
+        "31.1/5: saving a posting this user already tracks updates that row — one row, the "
+        "tailored CV and its what-was-sent signals on it, the letter kept",
+        len(_dup_rows) == 1
+        and _dup_saved["id"] == _dup_tailored["id"] == _dup_applied["id"] == _dup_again["id"]
+        and _dup_detail.get("tailored_resume") is not None
+        and _dup_detail.get("template") == "executive"
+        and _dup_tailored["voice_score"] == 91.0
+        and _dup_detail.get("cover_letter") == "Dear DupCo,",
+        f"rows={len(_dup_rows)} ids={[_dup_saved['id'], _dup_tailored['id'], _dup_applied['id'], _dup_again['id']]}",
+    )
+    check(
+        "31.1/5: the status only moves forward on a repeat save — saved → applied, and a later "
+        "'saved' post does not pull it back",
+        _dup_applied["status"] == "applied"
+        and _dup_applied.get("applied_at")
+        and _dup_again["status"] == "applied",
+        f"{_dup_applied['status']} then {_dup_again['status']}",
+    )
+    _nourl_a = _tc.post("/applications", json={"job_title": "Pasted", "company": "NoUrlCo"}, headers=_ADMIN_H).json()
+    _nourl_b = _tc.post("/applications", json={"job_title": "Pasted", "company": "NoUrlCo"}, headers=_ADMIN_H).json()
+    _friend_dup = _tc.post(
+        "/applications",
+        json={"job_title": "Platform Eng", "company": "DupCo", "job_url": _dup_url, "status": "saved"},
+        headers=_FRIEND_H,
+    ).json()
+    check(
+        "31.1/5: the false-positive half — a posting with no URL is a new row every time, and "
+        "another user's row for the same URL is never merged into this one",
+        _nourl_a["id"] != _nourl_b["id"]
+        and _friend_dup["id"] != _dup_saved["id"]
+        and _friend_dup["status"] == "saved",
+        f"nourl={_nourl_a['id']},{_nourl_b['id']} friend={_friend_dup['id']} admin={_dup_saved['id']}",
+    )
+    for _dup_id, _dup_h in (
+        (_dup_saved["id"], _ADMIN_H), (_nourl_a["id"], _ADMIN_H), (_nourl_b["id"], _ADMIN_H),
+        (_friend_dup["id"], _FRIEND_H),
+    ):
+        _tc.delete(f"/applications/{_dup_id}", headers=_dup_h)
+
     # Stale-application nudges (Home reminder): an "applied" app with no status
     # change for STALE_APPLICATION_DAYS (7) days surfaces; a fresh one does not.
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402

@@ -2054,12 +2054,64 @@ def get_application(
     )
 
 
+def _tracked_job(db: Session, user: User, job_url: str) -> Application | None:
+    """This user's newest tracker row for exactly this posting URL, or None.
+
+    Exact, trimmed match only. A URL is the one identity a saved job, its
+    tailor handoff and its save all carry unchanged; anything looser (title and
+    company, a normalised LinkedIn host) could merge two real applications."""
+    url = (job_url or "").strip()
+    if not url:
+        return None
+    return db.execute(
+        select(Application)
+        .where(Application.user_id == user.id, Application.job_url == url)
+        .order_by(Application.id.desc())
+    ).scalars().first()
+
+
 @router.post("/applications", response_model=ApplicationOut)
 def create_application(
     body: ApplicationCreate,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> ApplicationOut:
+    # PLAN 31.1/5: one posting, one tracker row. A job saved from Jobs, from the
+    # extension or through "Use a job you saved" reaches /app with its URL but not
+    # its row id, so "Save to tracker" and "Yes, applied" posted a SECOND row for
+    # it. A post for a URL this user already tracks updates that row instead:
+    #   * a tailored resume replaces the stored one, with the three what-was-sent
+    #     signals it came with (None stays unknown, never a stale value);
+    #   * a letter, a job description, a title or a company fills only a blank;
+    #   * the status only moves FORWARD, saved -> applied, and never back: the
+    #     inbox and the user's own moves own everything past Applied.
+    # No URL (a pasted posting) is a new row, exactly as before.
+    existing = _tracked_job(db, user, body.job_url)
+    if existing is not None:
+        now = datetime.now(timezone.utc)
+        if body.tailored_resume is not None:
+            existing.tailored_resume_json = body.tailored_resume.model_dump_json()
+            existing.overall_score = body.overall_score
+            existing.template = body.template
+            existing.voice_score = body.voice_score
+            existing.fabrication_flag_count = body.fabrication_flag_count
+        if body.cover_letter:
+            existing.cover_letter = body.cover_letter
+        if body.jd_text and not existing.jd_text:
+            existing.jd_text = body.jd_text
+        if body.job_title and not existing.job_title:
+            existing.job_title = body.job_title
+        if body.company and not existing.company:
+            existing.company = body.company
+        if body.status == "applied" and existing.status == "saved":
+            existing.status = "applied"
+            existing.status_changed_at = now
+            existing.status_source = "manual"
+            if existing.applied_at is None:
+                existing.applied_at = now
+        db.commit()
+        db.refresh(existing)
+        return _to_out(existing, _email_kind(db, user.id, existing.id))
     app = Application(
         user_id=user.id,
         job_title=body.job_title,
