@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 // Eager: the marketing landing is the most latency-sensitive first visit and
 // must render with zero extra roundtrips — keep it in the entry chunk.
 import MarketingLayout from "./layouts/MarketingLayout";
@@ -37,9 +38,11 @@ const CompanyBriefToolPage = lazy(() => import("./pages/tools/CompanyBriefToolPa
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 function RouteFallback() {
+  // main.tsx awaits initI18n before the first render, so `t` is ready here.
+  const { t } = useTranslation("common");
   return (
-    <div className="min-h-dvh grid place-items-center">
-      <Loader2 className="h-6 w-6 animate-spin text-ink-muted" aria-label="Loading" />
+    <div className="min-h-dvh grid place-items-center" role="status">
+      <Loader2 className="h-6 w-6 animate-spin text-ink-muted" aria-label={t("loading")} />
     </div>
   );
 }

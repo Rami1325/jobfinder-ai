@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/cn";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 
@@ -14,6 +15,7 @@ interface ModalProps {
 }
 
 export default function Modal({ open, onClose, title, children, maxWidth = "max-w-3xl" }: ModalProps) {
+  const { t } = useTranslation("common");
   // Focus goes in on open, stays in on Tab, and returns to the opener on close.
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogFocus(open, dialogRef);
@@ -57,7 +59,7 @@ export default function Modal({ open, onClose, title, children, maxWidth = "max-
               <div className="text-lg font-semibold text-ink">{title}</div>
               <button
                 onClick={onClose}
-                aria-label="Close"
+                aria-label={t("actions.close")}
                 className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-panel-2 hover:text-ink"
               >
                 <X size={18} />

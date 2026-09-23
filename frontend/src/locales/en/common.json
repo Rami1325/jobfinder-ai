@@ -36,6 +36,7 @@
     "freeScan": "CV scan",
     "privacy": "Privacy"
   },
+  "loading": "Loading…",
   "actions": {
     "cancel": "Cancel",
     "replace": "Replace",

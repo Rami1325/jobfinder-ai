@@ -10629,6 +10629,46 @@ try {
   fail(`developer wording check (check 49) could not run: ${e.message}`);
 }
 
+// ---- 50. every control has a name, in the reader's language ---------------- //
+// PLAN 31.1/9, found in the 2026-09-23 review. Below `sm` the floating feedback
+// button's only label is `hidden sm:inline`, so a screen reader announced a
+// nameless "button" on every page of a phone-first app; every dialog's close
+// button was aria-label="Close" in both languages, and the route spinner
+// "Loading". (a) No `aria-label` or `title` in any .tsx under src/ is an English
+// literal: it goes through t(). (b) The feedback button carries an aria-label.
+// The sweep is probed both ways on every run.
+try {
+  const LITERAL = /\b(?:aria-label|title)="([^"{]*[A-Za-z][^"{]*)"/g;
+  const literalLabels = (src) => [...src.matchAll(LITERAL)].map((m) => m[1]);
+  if (!literalLabels('<X aria-label="Close" />').length || literalLabels('<X aria-label={t("actions.close")} title={x} />').length)
+    throw new Error("the literal-label detector misreads its own probes, so it cannot be trusted");
+  const tsxFiles = [];
+  const walkDir = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) walkDir(full);
+      else if (ent.name.endsWith(".tsx")) tsxFiles.push(full);
+    }
+  };
+  walkDir(SRC);
+  if (tsxFiles.length < 50) throw new Error(`found only ${tsxFiles.length} .tsx files under src/ — the walk is not reading the app`);
+  for (const file of tsxFiles) {
+    const rel = path.relative(SRC, file).replace(/\\/g, "/");
+    for (const label of literalLabels(decomment(fs.readFileSync(file, "utf8"))))
+      fail(`${rel}: a hard-coded English label "${label}" — a Hebrew screen reader hears English; use t() (PLAN 31.1/9)`);
+  }
+  const feedback = decomment(read("components/FeedbackButton.tsx"));
+  // The opening tag's attributes run to its first child tag. A `>` is no end
+  // marker: `onClick={() => …}` carries one.
+  const btn = /<button\b([^<]*)</.exec(feedback);
+  if (!btn) throw new Error("could not find FeedbackButton's <button>");
+  if (!/\bonClick=/.test(btn[1])) throw new Error("FeedbackButton's <button> attributes parsed without its onClick — the reader is cutting the tag short");
+  if (!/\baria-label=\{\s*t\(/.test(btn[1]))
+    fail("components/FeedbackButton.tsx: the floating button has no aria-label, and its visible label is hidden below sm, so on a phone it is a nameless button (PLAN 31.1/9)");
+} catch (e) {
+  fail(`control name check (check 50) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
