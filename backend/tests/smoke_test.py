@@ -9216,6 +9216,59 @@ with TestClient(_fastapi_app) as _tc:
     ):
         _tc.delete(f"/applications/{_dup_id}", headers=_dup_h)
 
+    # PLAN 31.3/4 (owner decision 2): a tailored draft is saved WITH its job as it
+    # is reviewed. The row is written when the tailor finishes and kept current by
+    # PUT /applications/{id}/draft: the resume and its signals together, None
+    # included (typing over the draft makes its fabrication count unknown, never
+    # the AI version's number), the letter only when one is sent.
+    _dr_row = _tc.post(
+        "/applications",
+        json={
+            "job_title": "Draft Eng", "company": "DraftCo", "job_url": "https://draft.test/jobs/31-3-4",
+            "status": "saved", "tailored_resume": _resume_json, "overall_score": 70.0, "template": "classic",
+            "voice_score": 88.0, "fabrication_flag_count": 2, "cover_letter": "Dear DraftCo,",
+        },
+        headers=_ADMIN_H,
+    ).json()
+    _dr_edited = dict(_resume_json)
+    _dr_edited["summary"] = "Typed over the tailored draft by hand."
+    _dr_put = _tc.put(
+        f"/applications/{_dr_row['id']}/draft",
+        json={"tailored_resume": _dr_edited, "template": "executive", "voice_score": 91.0,
+              "fabrication_flag_count": None, "overall_score": 72.0},
+        headers=_ADMIN_H,
+    )
+    _dr_detail = _tc.get(f"/applications/{_dr_row['id']}", headers=_ADMIN_H).json()
+    check(
+        "31.3/4: a saved draft is written with its signals — the typed resume, the template, and an UNKNOWN "
+        "fabrication count (None over 2, never the AI version's number) — and the letter the row held is kept "
+        "when the save sends none",
+        _dr_put.status_code == 200
+        and (_dr_detail.get("tailored_resume") or {}).get("summary") == "Typed over the tailored draft by hand."
+        and _dr_detail.get("template") == "executive"
+        and _dr_put.json().get("fabrication_flag_count") is None
+        and _dr_put.json().get("voice_score") == 91.0
+        and _dr_put.json().get("overall_score") == 72.0
+        and _dr_detail.get("cover_letter") == "Dear DraftCo,",
+        f"{_dr_put.status_code} {str(_dr_put.json())[:200]}",
+    )
+    _dr_letter = _tc.put(
+        f"/applications/{_dr_row['id']}/draft",
+        json={"tailored_resume": _dr_edited, "template": "executive", "cover_letter": "Dear DraftCo, again"},
+        headers=_ADMIN_H,
+    )
+    check(
+        "31.3/4: a letter sent with the draft replaces the row's; another account's row is a 404, and a field the "
+        "route does not read (a create body's `status`) is a 422",
+        _dr_letter.status_code == 200
+        and _tc.get(f"/applications/{_dr_row['id']}", headers=_ADMIN_H).json().get("cover_letter") == "Dear DraftCo, again"
+        and _tc.put(f"/applications/{_dr_row['id']}/draft", json={"tailored_resume": _dr_edited},
+                    headers=_FRIEND_H).status_code == 404
+        and _tc.put(f"/applications/{_dr_row['id']}/draft", json={"tailored_resume": _dr_edited, "status": "applied"},
+                    headers=_ADMIN_H).status_code == 422,
+    )
+    _tc.delete(f"/applications/{_dr_row['id']}", headers=_ADMIN_H)
+
     # Stale-application nudges (Home reminder): an "applied" app with no status
     # change for STALE_APPLICATION_DAYS (7) days surfaces; a fresh one does not.
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
@@ -25790,6 +25843,7 @@ _ROUTE_COST = {
     # free: the deterministic tools
     ("POST", "/render"): "free",
     ("POST", "/render/pages"): "free",
+    ("PUT", "/applications/{app_id}/draft"): "free",
     ("POST", "/tools/review"): "free",
     ("POST", "/tools/coverage"): "free",
     ("POST", "/tools/ats-xray"): "free",
@@ -26435,6 +26489,9 @@ try:
         _plain32(("PATCH", "/applications/{app_id}"),
                  lambda s: _as32("PATCH", f"/applications/{_SW32.get('app', 0)}", _SW32["h"], json={"notes": "sweep"}),
                  statuses=(200,))
+        _plain32(("PUT", "/applications/{app_id}/draft"),
+                 lambda s: _as32("PUT", f"/applications/{_SW32.get('app', 0)}/draft", _SW32["h"],
+                                 json={"tailored_resume": _R32}), statuses=(200,))
         _plain32(("DELETE", "/applications/{app_id}"),
                  lambda s: _as32("DELETE", f"/applications/{_SW32.get('app', 0)}", _SW32["h"]), statuses=(200,))
         _plain32(("GET", "/jobs/search-prefs"), lambda s: _as32("GET", "/jobs/search-prefs", _SW32["h"]),

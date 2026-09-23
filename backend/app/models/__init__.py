@@ -1035,6 +1035,29 @@ class ApplicationUpdate(BaseModel):
     excitement: Optional[int] = Field(default=None, ge=0, le=5)  # 0 clears the rating
 
 
+class ApplicationDraft(BaseModel):
+    """PUT /applications/{id}/draft (PLAN 31.3/4, owner decision 2): a tailored
+    draft saved WITH its job while the user reviews it, so nothing is lost on
+    navigation and "these edits live only for this visit" could go.
+
+    The resume and its what-was-sent signals are WRITTEN TOGETHER, None
+    included, the way `create_application`'s merge writes them: a signal
+    describes the resume beside it, and once the user has typed over the AI's
+    draft its fabrication count is unknown, never the AI version's number
+    (data-and-privacy.md, what a tracker row records). `cover_letter` is the one
+    field None LEAVES alone: a draft saved before any letter was written must
+    not erase one the row already holds. `extra="forbid"`: a stale client's
+    field is refused, never quietly dropped."""
+
+    model_config = {"extra": "forbid"}
+    tailored_resume: ResumeModel
+    template: str = ""
+    voice_score: Optional[float] = None
+    fabrication_flag_count: Optional[int] = None
+    overall_score: Optional[float] = None
+    cover_letter: Optional[str] = Field(default=None, max_length=20_000)
+
+
 class ApplicationOut(BaseModel):
     id: int
     job_title: str

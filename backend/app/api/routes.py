@@ -124,6 +124,7 @@ from app.models import (
     AlertSettingsIn,
     AlertSettingsOut,
     ApplicationCreate,
+    ApplicationDraft,
     ApplicationDetail,
     ApplicationOut,
     ApplicationUpdate,
@@ -2186,6 +2187,34 @@ def update_application(
         app.interviewed = body.interviewed
     if body.excitement is not None:
         app.excitement = body.excitement
+    db.commit()
+    db.refresh(app)
+    return _to_out(app, _email_kind(db, user.id, app.id))
+
+
+@router.put("/applications/{app_id}/draft", response_model=ApplicationOut)
+def save_application_draft(
+    app_id: int,
+    body: ApplicationDraft,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ApplicationOut:
+    """The tailored draft, saved with its job as the user reviews it (PLAN
+    31.3/4, owner decision 2). The page writes the row when a tailor finishes
+    (`POST /applications`, which merges by URL) and then keeps it current here:
+    every accept, decline, typed edit, template and letter. Reaches no model and
+    spends nothing, so it is plain `current_user`, classed `free` in smoke 32.13.
+    The resume and its signals are written together, None included; the letter
+    only when one is sent (`ApplicationDraft`). Someone else's row is a 404."""
+    app = _owned_application(db, app_id, user)
+    app.tailored_resume_json = body.tailored_resume.model_dump_json()
+    app.template = body.template
+    app.voice_score = body.voice_score
+    app.fabrication_flag_count = body.fabrication_flag_count
+    if body.overall_score is not None:
+        app.overall_score = body.overall_score
+    if body.cover_letter is not None:
+        app.cover_letter = body.cover_letter
     db.commit()
     db.refresh(app)
     return _to_out(app, _email_kind(db, user.id, app.id))
