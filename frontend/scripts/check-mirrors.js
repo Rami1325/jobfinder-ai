@@ -10417,6 +10417,43 @@ try {
   fail(`account switch check (check 45) could not run: ${e.message}`);
 }
 
+// ---- 46. a job card never grows past the screen ---------------------------- //
+// PLAN 31.1/1, found in the 2026-09-23 review at 390 px. Every job result card is
+// a BorderGlow, whose card is `display: grid` with one implicit `auto` column, and
+// a grid item's automatic minimum is its min-content width. A title under
+// `truncate` is `white-space: nowrap`, so its min-content is the WHOLE title: 2 of
+// 10 cards measured 423 px and 636 px wide at a 390 px viewport, with the title,
+// company, date and links clipped at the screen's edge. The grid item has to be
+// allowed to shrink (`min-width: 0` on `.border-glow-inner`), or the card's column
+// has to be bounded (`grid-template-columns: minmax(0, 1fr)`). The detector is
+// probed both ways on every run.
+try {
+  const css = decomment(read("components/ui/BorderGlow.css"));
+  const rule = (src, sel) => {
+    const m = new RegExp(`(?:^|[}\\s])${sel.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`, "m").exec(src);
+    return m ? m[1] : null;
+  };
+  const unbounded = (src) => {
+    const card = rule(src, ".border-glow-card");
+    const inner = rule(src, ".border-glow-inner");
+    if (card === null || inner === null)
+      throw new Error("could not find the .border-glow-card and .border-glow-inner rules in components/ui/BorderGlow.css");
+    const isGrid = /\bdisplay\s*:\s*grid\b/.test(card);
+    const innerShrinks = /\bmin-width\s*:\s*0(?:px)?\s*(?:;|$)/.test(inner);
+    const columnBounded = /\bgrid-template-columns\s*:\s*minmax\(\s*0(?:px)?\s*,/.test(card);
+    return isGrid && !innerShrinks && !columnBounded;
+  };
+  const planted = css.replace(/(\.border-glow-inner\s*\{[^}]*?)\bmin-width\s*:\s*0(?:px)?\s*;?/, "$1");
+  if (planted === css && !unbounded(css))
+    throw new Error("the probe could not plant the defect: `.border-glow-inner` carries no `min-width: 0` to remove, so the check would pass by never firing");
+  if (!unbounded(planted))
+    throw new Error("the detector passes a card with no min-width: 0 and no bounded column, so it cannot see the defect it exists for");
+  if (unbounded(css))
+    fail("components/ui/BorderGlow.css: .border-glow-card is a grid and neither `.border-glow-inner { min-width: 0 }` nor `grid-template-columns: minmax(0, 1fr)` bounds it, so a long job title widens its card past a 390 px screen (PLAN 31.1/1: 636 px measured)");
+} catch (e) {
+  fail(`job card width check (check 46) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

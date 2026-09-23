@@ -129,8 +129,16 @@
 }
 
 /* Layout is left to the caller (innerClassName); we only ensure the content
-   sits above the glow layers. */
+   sits above the glow layers.
+
+   `min-width: 0` is load-bearing. The card is `display: grid` with one implicit
+   `auto` column, and a grid item's automatic minimum is its min-content width.
+   A job title under `truncate` is `white-space: nowrap`, so its min-content is
+   the WHOLE title, and a long one widened the column past the screen instead of
+   ellipsing: 423 px and 636 px wide cards at a 390 px viewport, with the title,
+   company, date and links clipped (PLAN 31.1/1). check-mirrors 46 pins it. */
 .border-glow-inner {
   position: relative;
   z-index: 1;
+  min-width: 0;
 }
