@@ -9902,7 +9902,7 @@ try {
         );
     }
   }
-  if (mounts < 2) throw new Error(`found ${mounts} <CoverLetter> elements under src/, expected TailorPage's and KitReviewPage's`);
+  if (mounts < 2) throw new Error(`found ${mounts} <CoverLetter> elements under src/, expected JobPage's and KitReviewPage's (the letter left TailorPage for the job's page in PLAN 31.4/4)`);
   if (!/\buseState\(\s*initialText\b/.test(decomment(read("components/CoverLetter.tsx"))))
     fail("components/CoverLetter.tsx no longer seeds its text from initialText, so no page can hand a letter back");
 
@@ -11371,6 +11371,8 @@ try {
       "../lib/apiError": { apiErrorMessage: (_e, f) => f },
       "../lib/draft": { clearDraft: () => {}, writeDraft: () => {} },
       "../lib/lang": { resumeLanguage: () => "en" },
+      // PLAN 31.4/4: `openSavedReview` keeps a restored template only when this build knows it.
+      "../lib/templateSpecs": { TEMPLATE_IDS: ["standard", "classic", "executive", "modern"] },
     });
     for (const name of ["syncDraft", "settleDraft", "flushDraftSave", "startTailor", "setTargetJob", "adoptMaster", "setTailorState", "getTailorState"])
       if (typeof st[name] !== "function") throw new Error(`state/tailorStore.ts does not export ${name}`);
@@ -11468,8 +11470,10 @@ try {
 // lib/resumeDiff: EXECUTED here over the cases its contract names (on the
 // document, typed away, declined, carried by no change, an unreadable
 // document), and both callers must use it, never a copy. (b) The change list,
-// the keyword report, the voice check and the letter render only inside the
-// pane's content, so a card re-added under the paper goes red. (c) The line
+// the keyword report and the voice check render only inside the pane's content,
+// so a card re-added under the paper goes red; and since PLAN 31.4/4 the letter
+// is on no part of this page at all (the job's own page is its one writer), the
+// pane pointing there instead. (c) The line
 // never says "No new claims found" about lines the user typed, which the guard
 // never read. Probed with resumeDiff mutated, a card planted, and the claims
 // chain reordered.
@@ -11532,12 +11536,17 @@ try {
     if (at === -1 || end === -1) throw new Error("could not find TailorPage's `const reviewPane = … : undefined;`");
     const pane = src.slice(at, end);
     const out = [];
-    for (const tag of ["<ChangeLog", "<MatchReport", "<VoicePanel", "<CoverLetter", "<LeftOut"]) {
+    for (const tag of ["<ChangeLog", "<MatchReport", "<VoicePanel", "<LeftOut"]) {
       const all = src.split(tag).length - 1;
       const inPane = pane.split(tag).length - 1;
       if (inPane !== 1) out.push(`${tag}> is ${inPane ? `in the drawer pane ${inPane} times` : "not in the drawer pane"}`);
       if (all !== inPane) out.push(`${tag}> is rendered outside the drawer pane too, under the paper`);
     }
+    // PLAN 31.4/4: the letter left this page for the job's own page, its one
+    // writer, and the pane points there instead (a letter written from this
+    // page's memory could overwrite a newer one written on the job's page).
+    if (src.includes("<CoverLetter")) out.push("<CoverLetter> is on the tailor page again; the job's page is the letter's one writer");
+    if (!/to=\{`\/applications\/\$\{savedAppId\}`\}/.test(pane)) out.push("the drawer pane does not point to the job's page for the letter");
     return out;
   };
   const realB = read62b(page);
@@ -11911,6 +11920,117 @@ try {
   for (const p of problems67) fail(`check 67: ${p} (PLAN 31.4/3)`);
 } catch (e) {
   fail(`Prepare check (check 67) could not run: ${e.message}`);
+}
+
+// ---- 68. a job's draft opens again, and is written onto its own row (EXECUTED) - //
+// PLAN 31.4/4. The review behind a saved draft (the tailor's result, the resume
+// it came from, the declines, the typed lines) rides the saves, so the job's page
+// can open it on the document after a reload, and a tailor started from a job's
+// page writes onto THAT job's row. EXECUTES the real store with the API stubbed,
+// recording each save as `<method>:<row>:<template>:<review>`, where the review
+// is `R` (the result sent whole), `d` (the decisions only) or `-` (none):
+//   * `setTargetJob(…, id)` binds the row, so the tailor's first save is a PUT
+//     onto it, never a POST that makes a second row;
+//   * the result is sent ONCE per row: the next save carries the decisions only;
+//   * a new tailor is a new result, sent whole again;
+//   * `openSavedReview` binds its row with the result already on the server, so
+//     the next save is a lean PUT, and puts the review back on the page;
+//   * a target with no row still creates one, with the review whole.
+// Probed with a saver that always sends the whole result, a `setTargetJob` that
+// ignores the id, and an `openSavedReview` that forgets what the server holds.
+try {
+  const storeSrc = read("state/tailorStore.ts");
+  const R68 = { contact: { name: "Probe" }, summary: "Probe summary.", experience: [], education: [], skills: [] };
+  const run68 = async (src) => {
+    const calls = [];
+    let nextId = 1;
+    const reviewTag = (d) => (d.review ? (d.review.result ? "R" : "d") : "-");
+    const st = runProbeBundle("draft-review", src, {
+      "../api/client": {
+        analyzeJD: async () => ({ language: "en", job_title: "Probe", company: "Probe Co" }),
+        getMasterResume: async () => null,
+        saveMasterResume: async () => ({ resume: R68, label: "" }),
+        tailorStream: async () => ({ tailored_resume: R68, fabrication_flags: [], score_after: { overall: 50 } }),
+        saveApplication: async (p) => {
+          const id = nextId++;
+          calls.push(`POST:${id}:${p.template}:${p.review ? (p.review.result ? "R" : "d") : "-"}`);
+          return { id };
+        },
+        saveApplicationDraft: async (id, d) => {
+          calls.push(`PUT:${id}:${d.template}:${reviewTag(d)}`);
+          return { id };
+        },
+      },
+      "../hooks/useMasterResume": { resetMasterCache: () => {} },
+      "../lib/apiError": { apiErrorMessage: (_e, f) => f },
+      "../lib/draft": { clearDraft: () => {}, writeDraft: () => {} },
+      "../lib/lang": { resumeLanguage: () => "en" },
+      "../lib/templateSpecs": { TEMPLATE_IDS: ["standard", "classic", "executive", "modern"] },
+    });
+    for (const name of ["syncDraft", "settleDraft", "startTailor", "setTargetJob", "openSavedReview", "setTailorState", "getTailorState"])
+      if (typeof st[name] !== "function") throw new Error(`state/tailorStore.ts does not export ${name}`);
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const tailor = async () => {
+      st.startTailor();
+      for (let i = 0; i < 10 && st.getTailorState().loading; i++) await tick();
+      if (!st.getTailorState().result) throw new Error("the stubbed tailor never finished");
+    };
+    // The snapshot the page builds: the review's result IS the store's result.
+    const snap = (posting, template) => {
+      const s = st.getTailorState();
+      return {
+        draft: {
+          tailored_resume: R68, template, voice_score: null, fabrication_flag_count: null, overall_score: 50,
+          review: { result: s.result, base: s.tailoredFrom, rejected: s.rejectedEdits, overrides: s.tailorOverrides, scored_at: null },
+        },
+        job: { job_title: "T", company: "C", jd_text: posting },
+      };
+    };
+    st.setTailorState({ resume: R68 });
+    st.setTargetJob("check-68-a", { jdText: "Posting X" }, 7);
+    await tailor();
+    await st.syncDraft(snap("Posting X", "standard"), true);
+    await st.syncDraft(snap("Posting X", "executive"), true);
+    await tailor(); // the same posting again: the row kept, a new result
+    await st.syncDraft(snap("Posting X", "classic"), true);
+    const restored = { tailored_resume: R68, fabrication_flags: [], score_after: { overall: 61 } };
+    st.openSavedReview(
+      { id: 9, jd_text: "Posting Y ", job_url: "", job_title: "Y", company: "YCo", template: "modern", status: "applied", jd: null },
+      { result: restored, base: R68, rejected: ["exp.0.b.1"], overrides: { summary: { summary: "Mine" } }, scored_at: 5 },
+    );
+    const s = st.getTailorState();
+    const back =
+      s.result === restored && s.savedAppId === 9 && s.savedFor === "Posting Y" && s.template === "modern" &&
+      s.rejectedEdits.join() === "exp.0.b.1" && s.tailorOverrides.summary?.summary === "Mine" &&
+      s.applied === true && s.scoredAt === 5 && s.draftSave === "saved";
+    await st.syncDraft(snap("Posting Y", "modern"), true);
+    st.setTargetJob("check-68-b", { jdText: "Posting Z" });
+    await tailor();
+    await st.syncDraft(snap("Posting Z", "standard"));
+    await st.settleDraft();
+    return { calls: calls.join(" "), back };
+  };
+  const WANT68 = "PUT:7:standard:R PUT:7:executive:d PUT:7:classic:R PUT:9:modern:d POST:1:standard:R";
+  const real68 = await run68(storeSrc);
+  for (const [label, mutated] of [
+    ["a saver that always sends the whole result", storeSrc.replace("if (!review?.result || sentReview?.row !== row", "if (true || !review?.result || sentReview?.row !== row")],
+    ["a setTargetJob that ignores the row id", storeSrc.replace("if (bound !== null) draftRows.set(draftEpoch, bound);", "")],
+    ["an openSavedReview that forgets what the server holds", storeSrc.replace("  sentReview = { row: app.id, result: review.result };\n", "")],
+  ]) {
+    if (mutated === storeSrc) throw new Error(`the probe could not plant "${label}"`);
+    const out = await run68(mutated);
+    if (out.calls === WANT68 && out.back) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+  if (real68.calls !== WANT68)
+    fail(
+      `check 68: state/tailorStore.ts wrote [${real68.calls}] where [${WANT68}] is right. A draft from a job's own page ` +
+        "must reach that row (a PUT, never a second row), its review's result must be sent once per row and the " +
+        "decisions after it, and a restored review must save onto its row without resending (PLAN 31.4/4)",
+    );
+  if (!real68.back)
+    fail("check 68: openSavedReview does not put the saved review back on the page (its result, row, template, declines, typed lines, reading's minute and sent state) (PLAN 31.4/4)");
+} catch (e) {
+  fail(`saved review check (check 68) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

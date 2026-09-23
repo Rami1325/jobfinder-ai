@@ -17,8 +17,11 @@ import { clearDraft, writeDraft } from "../lib/draft";
 import { resumeLanguage } from "../lib/lang";
 import type { Overrides } from "../lib/resumeOverrides";
 import type { TailorStage } from "../lib/tailorStages";
+import { TEMPLATE_IDS } from "../lib/templateSpecs";
 import type {
+  ApplicationDetail,
   ApplicationDraft,
+  ApplicationReviewOut,
   FactsLedger,
   FitCheckResult,
   JDModel,
@@ -100,7 +103,6 @@ export type TailorState = {
   draftSave: DraftSave;
   applyClicked: boolean;
   applied: boolean;
-  coverLetterText: string;
   // Set when the JD's language differed from the loaded resume and a saved
   // master in the JD's language was swapped in ("he" | "en"); null otherwise.
   langSwitched: "he" | "en" | null;
@@ -173,7 +175,6 @@ let state: TailorState = {
   draftSave: "idle",
   applyClicked: false,
   applied: false,
-  coverLetterText: "",
   langSwitched: null,
   fit: null,
   checkedFor: null,
@@ -207,15 +208,25 @@ let consumedNavKey = ""; // each router navigation has a unique key — apply it
 
 /** Load a target job handed over by navigation (Jobs page → "Tailor to this").
  * Keyed by the router location key so revisiting the same history entry
- * (back/forward) doesn't wipe in-progress work a second time. */
+ * (back/forward) doesn't wipe in-progress work a second time.
+ *
+ * `appId` is the job's tracker row when the job already has one (PLAN 31.4/4:
+ * the job page's Tailor, the extension's "Save & tailor"). It is BOUND to the
+ * new epoch, with the posting as `savedFor`, so `startTailor` keeps it and the
+ * tailor's draft is written onto THAT row, never a second one. A pasted posting
+ * saved earlier has no URL for `POST /applications` to merge by, so without the
+ * id each re-tailor after a reload made a new row. */
 export function setTargetJob(
   navKey: string,
   target: { jdText?: string; jobUrl?: string; jobTitle?: string; company?: string },
+  appId?: number,
 ): void {
   if (navKey === consumedNavKey) return;
   consumedNavKey = navKey;
   // A new target is a new row. A change still waiting belongs to the old one.
   newDraftRow();
+  const bound = appId !== undefined && Number.isInteger(appId) && appId > 0 ? appId : null;
+  if (bound !== null) draftRows.set(draftEpoch, bound);
   setTailorState({
     jdText: target.jdText ?? "",
     jobUrl: target.jobUrl,
@@ -231,12 +242,11 @@ export function setTargetJob(
     // re-apply one application's sentences onto another application's CV.
     clearedOverrides: null,
     error: "",
-    savedAppId: null,
-    savedFor: null,
+    savedAppId: bound,
+    savedFor: bound !== null ? (target.jdText ?? "").trim() : null,
     draftSave: "idle",
     applyClicked: false,
     applied: false,
-    coverLetterText: "",
     langSwitched: null,
   });
 }
@@ -315,7 +325,6 @@ export function startTailor(): void {
     draftSave: "idle",
     applyClicked: false,
     applied: false,
-    coverLetterText: "",
     langSwitched: null,
     // A fit reading, the posting it was taken for and the minute it was taken
     // are ONE thing: reused together or dropped together. Same pairing
@@ -442,8 +451,61 @@ export function discardTailorResult(): void {
     clearedOverrides: null,
     // The tailor's own stamp, going with the tailor's own reading.
     scoredAt: null,
-    coverLetterText: "",
     error: "",
+  });
+}
+
+/**
+ * Open a job's saved draft on the document again (PLAN 31.4/4), from its row:
+ * after a reload, or from the job's page in a tab that never held it.
+ *
+ * The review is RESTORED, not re-derived: the tailor's result, the resume it was
+ * tailored from (the diff baseline, whatever the master is now), the changes
+ * declined and the lines typed, exactly as the saver stored them, so the page
+ * shows the draft the row holds and every control on it works as it did. The
+ * row is bound to a fresh epoch, and the server already holds this result, so
+ * the next save is a lean PUT onto it, never a second row.
+ *
+ * Its reset is `startTailor`'s: every key describing the review on screen is
+ * replaced. `resume` (the master) is left alone, since a saved draft does not
+ * say anything about the master, and `jd` is the row's analysis, or null when
+ * none was stored (the fit reading, dated by `scored_at`, is the result's own).
+ */
+export function openSavedReview(app: ApplicationDetail, review: ApplicationReviewOut): void {
+  seq++; // a tailor still running belongs to the review this replaces
+  newDraftRow();
+  draftRows.set(draftEpoch, app.id);
+  sentReview = { row: app.id, result: review.result };
+  const template = (TEMPLATE_IDS as readonly string[]).includes(app.template ?? "")
+    ? (app.template as ResumeTemplate)
+    : state.template;
+  setTailorState({
+    jdText: app.jd_text,
+    jobUrl: app.job_url || undefined,
+    jobTitle: app.job_title || undefined,
+    company: app.company || undefined,
+    jd: app.jd ?? null,
+    loading: false,
+    tailorStages: [],
+    error: "",
+    result: review.result,
+    tailoredFrom: review.base,
+    rejectedEdits: review.rejected,
+    tailorOverrides: review.overrides,
+    clearedOverrides: null,
+    savedAppId: app.id,
+    savedFor: app.jd_text.trim(),
+    draftSave: "saved",
+    applyClicked: false,
+    // "Did you apply with THIS draft": the row says whether it was sent.
+    applied: (app.status || "saved") !== "saved",
+    langSwitched: null,
+    fit: null,
+    checkedFor: null,
+    fitScoredAt: null,
+    scoredAt: review.scored_at ?? null,
+    template,
+    overlayOpen: false,
   });
 }
 
@@ -594,7 +656,6 @@ export function adoptMaster(m: MasterResume): void {
     draftSave: "idle",
     applyClicked: false,
     applied: false,
-    coverLetterText: "",
     langSwitched: null,
     fit: null,
     checkedFor: null,
@@ -775,6 +836,25 @@ let draftTimer: ReturnType<typeof setTimeout> | null = null;
 
 const draftKey = (row: number, draft: ApplicationDraft) => `${row}|${JSON.stringify(draft)}`;
 
+// PLAN 31.4/4: the review behind the draft rides the saves, so the document can
+// open it again after a reload. Its bulk (the tailor's result and the resume it
+// came from) is sent ONCE per result per row, and every later save carries only
+// the decisions: which result the server holds for which row is recorded here,
+// by identity, since a new tailor is a new result object.
+let sentReview: { row: number; result: TailorResult } | null = null;
+
+/** The draft as a PUT to `row` sends it: without the review's result and base
+ * when the server already holds this very result for this row. */
+function leanDraft(row: number, draft: ApplicationDraft): ApplicationDraft {
+  const review = draft.review;
+  if (!review?.result || sentReview?.row !== row || sentReview.result !== review.result) return draft;
+  return { ...draft, review: { rejected: review.rejected, overrides: review.overrides } };
+}
+
+function noteSentReview(row: number, draft: ApplicationDraft): void {
+  if (draft.review?.result) sentReview = { row, result: draft.review.result };
+}
+
 /** The state speaks for the CURRENT row only: a save still finishing for the
  * last job must not tell this one it is saved. */
 function setDraftSave(epoch: number, next: DraftSave): void {
@@ -794,8 +874,9 @@ async function runDraftJob(job: DraftJob): Promise<DraftOutcome> {
   try {
     if (row !== undefined) {
       try {
-        await saveApplicationDraft(row, job.snap.draft);
+        await saveApplicationDraft(row, leanDraft(row, job.snap.draft));
         draftOnServer = draftKey(row, job.snap.draft);
+        noteSentReview(row, job.snap.draft);
         return "saved";
       } catch (e) {
         // Deleted in the tracker while this review was open: the draft makes a
@@ -817,11 +898,16 @@ async function runDraftJob(job: DraftJob): Promise<DraftOutcome> {
       template: draft.template as ResumeTemplate,
       voice_score: draft.voice_score ?? undefined,
       fabrication_flag_count: draft.fabrication_flag_count ?? undefined,
+      // PLAN 31.4: the analysis the draft was tailored against, and its review,
+      // whole: a created row holds neither yet.
+      jd: draft.jd,
+      review: draft.review,
       status: "saved",
     });
     row = app.id;
     draftRows.set(job.epoch, row);
     draftOnServer = draftKey(row, draft);
+    noteSentReview(row, draft);
     if (job.epoch === draftEpoch) setTailorState({ savedAppId: row, savedFor: posting.jd_text.trim() });
     return "created";
   } catch {

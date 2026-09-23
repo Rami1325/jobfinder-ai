@@ -3,7 +3,8 @@
     "back": "חזרה למשרות",
     "thisJob": "המשרה הזו",
     "tailoringFor": "מתאימים עבור: <1>{{title}}</1>",
-    "tailoringForAt": "מתאימים עבור: <1>{{title}}</1> ב<3>{{company}}</3>"
+    "tailoringForAt": "מתאימים עבור: <1>{{title}}</1> ב<3>{{company}}</3>",
+    "backToJob": "חזרה למשרה"
   },
   "target": {
     "label": "משרת יעד: {{title}}",
@@ -233,7 +234,9 @@
       "noClaimsTyped": "אין טענות חדשות בשינויים של ה-AI",
       "open": "לסקירה",
       "fitAt": "התאמה בעיני מגייס {{score}}, נקראה ב-{{time}}"
-    }
+    },
+    "letterOnJob": "את המכתב המקדים כותבים בדף המשרה, מהטיוטה הזו.",
+    "openJobPage": "לדף המשרה"
   },
   "cover": {
     "title": "מכתב מקדים",

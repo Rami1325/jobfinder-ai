@@ -473,10 +473,13 @@ function ResumeSection({ detail }: { detail: ApplicationDetail }) {
   const template = sentTemplate(detail.template);
   const pics = usePageImages(resume, template ?? "standard", !!resume);
   const kit = detail.pending_kit ?? null;
-  // The review behind a draft lives in this tab's tailor store while the tab
-  // that made it is open; only then can the document show it again.
+  // The draft's review is in this tab's tailor store while the tab that made it
+  // is open, and stored with the row since PLAN 31.4/4, so the document can
+  // open it again after a reload (`?open_app=`, `openSavedReview`). In this tab
+  // the page goes straight back to it, unsaved typing included.
   const store = getTailorState();
   const inThisTab = store.savedAppId === detail.id && !!store.result;
+  const openHref = inThisTab ? "/app" : detail.has_review ? `/app?open_app=${detail.id}` : null;
   const tailorHref = `/app?tailor_app=${detail.id}`;
 
   if (!resume) {
@@ -556,8 +559,8 @@ function ResumeSection({ detail }: { detail: ApplicationDetail }) {
               {t("job.resume.pdf")}
             </Button>
           </div>
-          {inThisTab ? (
-            <Button size="sm" variant="ghost" icon={<FileText size={15} />} onClick={() => nav("/app")}>
+          {openHref ? (
+            <Button size="sm" variant="ghost" icon={<FileText size={15} />} onClick={() => nav(openHref)}>
               {t("job.resume.open")}
             </Button>
           ) : (

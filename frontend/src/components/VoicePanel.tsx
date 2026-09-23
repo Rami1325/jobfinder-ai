@@ -50,7 +50,10 @@ export default function VoicePanel({
           <Compass size={15} className="mt-0.5 shrink-0 text-accent-soft" />
           <span>
             <span className="font-semibold text-ink">{t("voice.positioning")}</span>{" "}
-            {plan.positioning}
+            {/* The model's sentence is in the resume's language, not the
+                interface's: an English one under the Hebrew UI put its full
+                stop first (".engineer focused on …"), seen at 390 px. */}
+            <span dir="auto">{plan.positioning}</span>
           </span>
         </p>
       )}
@@ -82,7 +85,7 @@ export default function VoicePanel({
             <li key={`${i.category}:${i.value}:${i.location}`} className="flex items-start gap-2 text-sm">
               <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
               <span className="min-w-0 leading-snug">
-                <span className="font-semibold text-ink">"{i.value}"</span>{" "}
+                <span dir="auto" className="font-semibold text-ink">"{i.value}"</span>{" "}
                 <span className="text-ink-faint">
                   {t(`voice.cat.${i.category}`)}
                   {i.location ? ` — ${i.location}` : ""}

@@ -350,6 +350,32 @@ export interface ApplicationDraft {
   /** PLAN 31.4: the analysis this draft was tailored against, written when sent
    * and left alone when absent, like the letter. */
   jd?: JDModel;
+  /** PLAN 31.4/4: the review behind this draft, written WITH it. Unlike the
+   * letter, absent CLEARS the stored review: a review of the previous draft
+   * would reopen the wrong document. */
+  review?: ApplicationReview;
+}
+
+/** The review behind a saved draft (PLAN 31.4/4): what the document needs to
+ * open it again after a reload. `result` and `base` ride only a result's FIRST
+ * save; the saves after it carry the decisions alone, and the server keeps the
+ * result it has. `rejected` are `lib/resumeDiff` edit ids; `overrides` are the
+ * lines typed over the draft, keyed by source anchor. */
+export interface ApplicationReview {
+  result?: TailorResult;
+  base?: ResumeModel;
+  rejected: string[];
+  overrides: Record<string, Record<string, string>>;
+  scored_at?: number | null;
+}
+
+/** GET /applications/{id}/review: a stored review, whole. */
+export interface ApplicationReviewOut {
+  result: TailorResult;
+  base: ResumeModel;
+  rejected: string[];
+  overrides: Record<string, Record<string, string>>;
+  scored_at: number | null;
 }
 
 /** PLAN 31.4: a batch-tailored draft on its way to a job, or waiting for
@@ -399,6 +425,9 @@ export interface ApplicationDetail {
   voice_score?: number | null;
   fabrication_flag_count?: number | null;
   pending_kit?: ApplicationKit | null;
+  /** PLAN 31.4/4: the review behind the draft is stored whole, so the document
+   * can open it again (`getApplicationReview`). */
+  has_review?: boolean;
 }
 
 /** GET /inbox/status: whether this account can use Gmail sync, and how the

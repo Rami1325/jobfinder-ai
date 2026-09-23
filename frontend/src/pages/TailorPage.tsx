@@ -7,6 +7,7 @@ import {
   downloadResume,
   resumeFilename,
   getApplication,
+  getApplicationReview,
   getAuthMe,
   getMasterResume,
   recordRejectedPhrases,
@@ -27,7 +28,6 @@ import BlockEditSheet from "../components/BlockEditSheet";
 import ResumeEditBar from "../components/ResumeEditBar";
 import { useCoverage } from "../hooks/useCoverage";
 import { useReview } from "../hooks/useReview";
-import CoverLetter from "../components/CoverLetter";
 import MatchReport from "../components/MatchReport";
 import ResumeUpload from "../components/ResumeUpload";
 import { flagsOf } from "../components/ReviewPanel";
@@ -65,6 +65,7 @@ import {
   discardTailorResult,
   flushDraftSave,
   getTailorState,
+  openSavedReview,
   restoreClearedOverrides,
   setBlockOverride,
   setTailorState,
@@ -152,7 +153,6 @@ export default function TailorPage() {
     draftSave,
     applyClicked,
     applied,
-    coverLetterText,
     langSwitched,
     fit,
     checkedFor,
@@ -183,24 +183,42 @@ export default function TailorPage() {
   // not reached `searchParams` by the second run — so one handoff fetched twice and a
   // failure toasted twice (Phase 29 browser pass). The ref survives that remount.
   const handledHandoff = useRef<string | null>(null);
+  //
+  // PLAN 31.4/4: the row id is BOUND to the target (`setTargetJob`'s third
+  // argument), so the tailor's draft is written onto that job's row and never a
+  // second one. And `?open_app=<id>` is the job page's "Open on the document":
+  // it restores the review saved with that row's draft (`openSavedReview`), and
+  // when the row holds none (written before reviews were stored, or by a kit)
+  // it falls back to a new tailor bound to the same row.
   useEffect(() => {
-    const raw = searchParams.get("tailor_app");
-    if (!raw || handledHandoff.current === raw) return;
-    handledHandoff.current = raw;
+    const tailorRaw = searchParams.get("tailor_app");
+    const openRaw = searchParams.get("open_app");
+    const raw = openRaw ?? tailorRaw;
+    const key = `${openRaw ? "open" : "tailor"}:${raw}`;
+    if (!raw || handledHandoff.current === key) return;
+    handledHandoff.current = key;
     const next = new URLSearchParams(searchParams);
     next.delete("tailor_app");
+    next.delete("open_app");
     setSearchParams(next, { replace: true });
     const id = Number(raw);
     if (!Number.isInteger(id) || id <= 0) return;
     (async () => {
       try {
         const d = await getApplication(id);
-        setTargetJob(`tailor-app-${id}-${Date.now()}`, {
-          jdText: d.jd_text,
-          jobUrl: d.job_url,
-          jobTitle: d.job_title,
-          company: d.company,
-        });
+        if (openRaw && d.has_review) {
+          try {
+            openSavedReview(d, await getApplicationReview(id));
+            return;
+          } catch {
+            // Gone between the two reads: a new tailor for the job, below.
+          }
+        }
+        setTargetJob(
+          `tailor-app-${id}-${Date.now()}`,
+          { jdText: d.jd_text, jobUrl: d.job_url, jobTitle: d.job_title, company: d.company },
+          id,
+        );
       } catch {
         toast("error", t("toasts.handoffFailed"));
       }
@@ -1039,8 +1057,15 @@ export default function TailorPage() {
    * number, once the user has written into the document: the guard ran against
    * `result.tailored_resume`, and this has their own text over it, text no guard
    * has seen. Storing the AI version's count would let a hand-typed claim be
-   * counted as guard-clean forever. The letter rides only once there is one, so
-   * a draft saved before it cannot erase a letter the row already holds.
+   * counted as guard-clean forever.
+   *
+   * PLAN 31.4/4 adds two, and takes one away. The analysis the draft was
+   * tailored against rides with it, and so does the REVIEW behind it (the
+   * result, its base, the declines, the typed lines and the reading's minute),
+   * so the job's page can open this very review on the document after a reload;
+   * the saver sends the result once per row (`leanDraft`). And the letter is no
+   * longer written here: its one writer is the job's page, and a letter sent
+   * from this page's memory could overwrite a newer one written there.
    */
   const draftSnap = useMemo<DraftSnapshot | null>(() => {
     if (!result || !jd || !effectiveResume || loading) return null;
@@ -1051,11 +1076,18 @@ export default function TailorPage() {
         voice_score: result.voice_report?.human_voice_score ?? null,
         fabrication_flag_count: overrideCount > 0 ? null : result.fabrication_flags.length,
         overall_score: result.score_after.overall,
-        ...(coverLetterText ? { cover_letter: coverLetterText } : {}),
+        jd,
+        review: {
+          result,
+          base: tailoredFrom ?? undefined,
+          rejected: rejectedEdits,
+          overrides: tailorOverrides,
+          scored_at: scoredAt,
+        },
       },
       job: posting,
     };
-  }, [result, jd, effectiveResume, loading, template, overrideCount, coverLetterText, posting]);
+  }, [result, jd, effectiveResume, loading, template, overrideCount, posting, tailoredFrom, rejectedEdits, tailorOverrides, scoredAt]);
 
   // One toast for the save that made the row, one for a failure (not one per
   // failed retry while offline); "Saved" beside the draft says the rest.
@@ -1329,16 +1361,22 @@ export default function TailorPage() {
                 overridden={overriddenEdits}
               />
 
-              {/* `initialText`: the drawer remounts the card on every open, and
-                  the letter the user paid for lives in the store, not in the
-                  card. It rides the next draft save to the job's row, and moves
-                  to the job's own page with 31.4. */}
-              <CoverLetter
-                resume={effectiveResume}
-                jd={jd}
-                initialText={coverLetterText}
-                onGenerated={(letter) => setTailorState({ coverLetterText: letter })}
-              />
+              {/* The letter lives on the job's own page (PLAN 31.4/4): written
+                  there from this draft, keyed by the same analysis, so a pass
+                  opened here or there covers both. Offered once the draft is
+                  saved with its job, which is when the page exists. */}
+              {savedAppId !== null && (
+                <Card>
+                  <CardTitle>{t("cover.title")}</CardTitle>
+                  <p className="mt-2 text-sm text-ink-muted">{t("review.letterOnJob")}</p>
+                  <Link
+                    to={`/applications/${savedAppId}`}
+                    className="mt-2 inline-flex min-h-9 items-center gap-1 text-sm font-medium text-accent hover:underline"
+                  >
+                    {t("review.openJobPage")}
+                  </Link>
+                </Card>
+              )}
             </div>
           ),
         }
@@ -1371,11 +1409,14 @@ export default function TailorPage() {
           and a breadcrumb and a target card said it twice more (PLAN 31.3/3). */}
       {(jobTitle || company) && !result && (
         <div className="app-col flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          {/* A job that came with its row (its page's Tailor, the extension)
+              goes back to that job's page, not the job list (PLAN 31.4/4). */}
           <Link
-            to="/jobs"
+            to={savedAppId !== null ? `/applications/${savedAppId}` : "/jobs"}
             className="inline-flex items-center gap-1 text-accent-soft hover:underline"
           >
-            <ArrowLeft size={14} className="rtl:-scale-x-100" /> {t("breadcrumb.back")}
+            <ArrowLeft size={14} className="rtl:-scale-x-100" />{" "}
+            {savedAppId !== null ? t("breadcrumb.backToJob") : t("breadcrumb.back")}
           </Link>
           <span className="text-ink-faint">·</span>
           <span className="min-w-0 truncate text-ink-muted">

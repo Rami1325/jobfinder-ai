@@ -9425,6 +9425,85 @@ with TestClient(_fastapi_app) as _tc:
     for _jp_id in (_jp_row["id"], _jp_blank["id"]):
         _tc.delete(f"/applications/{_jp_id}", headers=_ADMIN_H)
 
+    # PLAN 31.4/4: the review behind a draft is stored WITH it, so the document can
+    # open it again after a reload. A result's first save carries it whole, the
+    # saves after it only the declined changes and the typed lines; a draft
+    # written without one clears it; and it is read back on its own route.
+    _rv_result = {"tailored_resume": _resume_json, "covered_keywords": ["Python"]}
+    _rv_row = _tc.post(
+        "/applications",
+        json={
+            "job_title": "Review Eng", "company": "ReviewCo", "job_url": "https://review.test/jobs/31-4-4",
+            "status": "saved", "tailored_resume": _resume_json,
+            "review": {"result": _rv_result, "base": _resume_json, "rejected": ["exp.0.b.1"],
+                       "overrides": {"summary": {"summary": "Typed by hand."}}, "scored_at": 1790000000000},
+        },
+        headers=_ADMIN_H,
+    ).json()
+    _rv_first = _tc.get(f"/applications/{_rv_row['id']}/review", headers=_ADMIN_H)
+    _rv_has = _tc.get(f"/applications/{_rv_row['id']}", headers=_ADMIN_H).json().get("has_review")
+    check(
+        "31.4/4: a draft saved with its review hands the review back whole on its own route (the result, the resume "
+        "it came from, the changes declined, the lines typed, the minute of its reading), and the detail says it has one",
+        _rv_first.status_code == 200
+        and (_rv_first.json().get("result") or {}).get("covered_keywords") == ["Python"]
+        and ((_rv_first.json().get("base") or {}).get("contact") or {}).get("name") == _resume_json["contact"]["name"]
+        and _rv_first.json().get("rejected") == ["exp.0.b.1"]
+        and _rv_first.json().get("overrides") == {"summary": {"summary": "Typed by hand."}}
+        and _rv_first.json().get("scored_at") == 1790000000000
+        and _rv_has is True,
+        f"{_rv_first.status_code} {str(_rv_first.json())[:160]} has={_rv_has}",
+    )
+    _rv_lean = _tc.put(
+        f"/applications/{_rv_row['id']}/draft",
+        json={"tailored_resume": _resume_json, "review": {"rejected": ["exp.0.b.2"], "overrides": {}}},
+        headers=_ADMIN_H,
+    )
+    _rv_after_lean = _tc.get(f"/applications/{_rv_row['id']}/review", headers=_ADMIN_H).json()
+    _tc.patch(f"/applications/{_rv_row['id']}", json={"cover_letter": "Dear ReviewCo,"}, headers=_ADMIN_H)
+    _rv_after_patch = _tc.get(f"/applications/{_rv_row['id']}", headers=_ADMIN_H).json().get("has_review")
+    _tc.put(
+        f"/applications/{_rv_row['id']}/draft",
+        json={"tailored_resume": _resume_json,
+              "review": {"result": dict(_rv_result, covered_keywords=["Go"]), "base": _resume_json}},
+        headers=_ADMIN_H,
+    )
+    _rv_after_new = _tc.get(f"/applications/{_rv_row['id']}/review", headers=_ADMIN_H).json()
+    check(
+        "31.4/4: a save after the first carries only the decisions and keeps the stored result; a PATCH of the letter "
+        "leaves the review; a new result replaces the stored one, with its own decisions",
+        _rv_lean.status_code == 200
+        and (_rv_after_lean.get("result") or {}).get("covered_keywords") == ["Python"]
+        and _rv_after_lean.get("rejected") == ["exp.0.b.2"]
+        and _rv_after_lean.get("overrides") == {}
+        and _rv_after_patch is True
+        and (_rv_after_new.get("result") or {}).get("covered_keywords") == ["Go"]
+        and _rv_after_new.get("rejected") == []
+        and _rv_after_new.get("scored_at") is None,
+        f"lean={_rv_after_lean.get('rejected')} new={(_rv_after_new.get('result') or {}).get('covered_keywords')}",
+    )
+    _rv_huge = {"tailored_resume": _resume_json,
+                # About twice the cap (4 x max_resume_kb, in KiB), so the refusal is unambiguous.
+                "review": {"result": dict(_rv_result, covered_keywords=["y" * 2048] * (4 * get_settings().max_resume_kb)),
+                           "base": _resume_json}}
+    _rv_413 = _tc.put(f"/applications/{_rv_row['id']}/draft", json=_rv_huge, headers=_ADMIN_H)
+    _rv_kept = _tc.get(f"/applications/{_rv_row['id']}/review", headers=_ADMIN_H).json()
+    _rv_friend = _tc.get(f"/applications/{_rv_row['id']}/review", headers=_FRIEND_H)
+    _tc.put(f"/applications/{_rv_row['id']}/draft", json={"tailored_resume": _resume_json}, headers=_ADMIN_H)
+    _rv_cleared = _tc.get(f"/applications/{_rv_row['id']}/review", headers=_ADMIN_H)
+    _rv_cleared_has = _tc.get(f"/applications/{_rv_row['id']}", headers=_ADMIN_H).json().get("has_review")
+    check(
+        "31.4/4: a review past four times the resume cap is a 413 that writes nothing; another account's review is a "
+        "404; and a draft written WITHOUT a review clears the stored one (it described the draft being replaced)",
+        _rv_413.status_code == 413
+        and (_rv_kept.get("result") or {}).get("covered_keywords") == ["Go"]
+        and _rv_friend.status_code == 404
+        and _rv_cleared.status_code == 404
+        and _rv_cleared_has is False,
+        f"{_rv_413.status_code} friend={_rv_friend.status_code} cleared={_rv_cleared.status_code} has={_rv_cleared_has}",
+    )
+    _tc.delete(f"/applications/{_rv_row['id']}", headers=_ADMIN_H)
+
     # Stale-application nudges (Home reminder): an "applied" app with no status
     # change for STALE_APPLICATION_DAYS (7) days surfaces; a fresh one does not.
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
@@ -12889,6 +12968,14 @@ with TestClient(_fastapi_app) as _tc:
         json={"job_title": _mk_job["title"], "company": "KitCo", "job_url": _mk_job["url"], "status": "saved"},
         headers=_KIM_H,
     ).json()
+    # The tracked row already holds a draft with its review (PLAN 31.4/4): the
+    # approval replaces the draft, so that review must go with it.
+    _tc.put(
+        f"/applications/{_mk_row['id']}/draft",
+        json={"tailored_resume": _effective, "review": {"result": {"tailored_resume": _effective}, "base": _effective}},
+        headers=_ADMIN_H,
+    )
+    _mk_had_review = _tc.get(f"/applications/{_mk_row['id']}", headers=_ADMIN_H).json().get("has_review")
     _tc.post("/kits/batch", json={"jobs": [_mk_job]}, headers=_ADMIN_H)
     _mk_queued = _tc.get(f"/applications/{_mk_row['id']}", headers=_ADMIN_H).json().get("pending_kit")
     _mk_kit = _tc.post("/kits/process-next", headers=_ADMIN_H).json()["kit"]
@@ -12912,7 +12999,8 @@ with TestClient(_fastapi_app) as _tc:
     check(
         "31.4/1: approving a kit for a posting this account already tracks puts the draft on THAT row: one row, "
         "the kit linked to it, the draft, the letter and the kit's analysis on it, a blank place filled, the "
-        "status left alone (an approval never pulls Applied back to Saved), and no kit named once it is decided",
+        "status left alone (an approval never pulls Applied back to Saved), no kit named once it is decided, and the "
+        "review of the draft it replaced gone with that draft (PLAN 31.4/4)",
         _mk_apr.status_code == 200
         and _mk_apr.json().get("application_id") == _mk_row["id"]
         and len(_mk_rows) == 1
@@ -12921,7 +13009,9 @@ with TestClient(_fastapi_app) as _tc:
         and _mk_detail.get("jd") is not None
         and _mk_detail.get("location") == "Tel Aviv"
         and _mk_detail.get("status") == "applied"
-        and _mk_detail.get("pending_kit") is None,
+        and _mk_detail.get("pending_kit") is None
+        and _mk_had_review is True
+        and _mk_detail.get("has_review") is False,
         f"{_mk_apr.status_code} app={_mk_apr.json().get('application_id')} row={_mk_row['id']} rows={len(_mk_rows)} "
         f"status={_mk_detail.get('status')} kit={_mk_detail.get('pending_kit')}",
     )
@@ -26160,6 +26250,8 @@ _ROUTE_COST = {
     ("POST", "/render"): "free",
     ("POST", "/render/pages"): "free",
     ("PUT", "/applications/{app_id}/draft"): "free",
+    # free (PLAN 31.4/4): reads back the review stored with a draft, and reaches no model
+    ("GET", "/applications/{app_id}/review"): "free",
     ("POST", "/tools/review"): "free",
     ("POST", "/tools/coverage"): "free",
     ("POST", "/tools/ats-xray"): "free",
@@ -26810,6 +26902,10 @@ try:
         _plain32(("PUT", "/applications/{app_id}/draft"),
                  lambda s: _as32("PUT", f"/applications/{_SW32.get('app', 0)}/draft", _SW32["h"],
                                  json={"tailored_resume": _R32}), statuses=(200,))
+        # The draft above was written with no review, so there is none to read back.
+        _plain32(("GET", "/applications/{app_id}/review"),
+                 lambda s: _as32("GET", f"/applications/{_SW32.get('app', 0)}/review", _SW32["h"]),
+                 statuses=(200, 404))
         _plain32(("DELETE", "/applications/{app_id}"),
                  lambda s: _as32("DELETE", f"/applications/{_SW32.get('app', 0)}", _SW32["h"]), statuses=(200,))
         _plain32(("GET", "/jobs/search-prefs"), lambda s: _as32("GET", "/jobs/search-prefs", _SW32["h"]),

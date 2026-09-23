@@ -3,7 +3,8 @@
     "back": "Back to jobs",
     "thisJob": "this job",
     "tailoringFor": "Tailoring for: <1>{{title}}</1>",
-    "tailoringForAt": "Tailoring for: <1>{{title}}</1> at <3>{{company}}</3>"
+    "tailoringForAt": "Tailoring for: <1>{{title}}</1> at <3>{{company}}</3>",
+    "backToJob": "Back to the job"
   },
   "target": {
     "label": "Target job: {{title}}",
@@ -227,7 +228,9 @@
       "noClaimsTyped": "No new claims in the AI's changes",
       "open": "Review",
       "fitAt": "Recruiter fit {{score}}, read at {{time}}"
-    }
+    },
+    "letterOnJob": "The cover letter is written on this job's page, from this draft.",
+    "openJobPage": "Open the job's page"
   },
   "cover": {
     "title": "Cover letter",

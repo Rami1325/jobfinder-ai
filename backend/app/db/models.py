@@ -188,6 +188,13 @@ class Application(Base):
     # ask for" reads it, and the cover letter is keyed by it, so viewing the page
     # never needs a model call. "" = no analysis was ever stored for this row.
     jd_json: Mapped[str] = mapped_column(Text, default="")
+    # PLAN 31.4/4: the review behind the draft on this row, so the document can
+    # open it again after a reload: the tailor's result, the resume it was
+    # tailored from, the changes declined and the lines typed over it (JSON).
+    # Written TOGETHER with `tailored_resume_json` and cleared whenever the draft
+    # is written without one, so it always describes the draft beside it or is
+    # "" (a draft whose review is unknown opens as a new tailor, never a stale one).
+    review_json: Mapped[str] = mapped_column(Text, default="")
 
 
 class JobSearchHit(Base):

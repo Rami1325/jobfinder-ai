@@ -12,6 +12,8 @@ import type {
   ApplicationDetail,
   ApplicationDraft,
   ApplicationOut,
+  ApplicationReview,
+  ApplicationReviewOut,
   AuthMe,
   ResendResult,
   VerifyEmailResult,
@@ -1266,6 +1268,14 @@ export async function getApplication(id: number): Promise<ApplicationDetail> {
   return data;
 }
 
+/** The review behind a job's saved draft, whole (PLAN 31.4/4), for the document
+ * to open it again. A 404 means the row has none (it was written without one, or
+ * before reviews were stored). Reaches no model and spends nothing. */
+export async function getApplicationReview(id: number): Promise<ApplicationReviewOut> {
+  const { data } = await api.get<ApplicationReviewOut>(`/applications/${id}/review`);
+  return data;
+}
+
 export async function saveApplication(payload: {
   job_title: string;
   company: string;
@@ -1289,6 +1299,8 @@ export async function saveApplication(payload: {
   location?: string;
   posted_at?: string;
   jd?: JDModel;
+  /** PLAN 31.4/4: the review behind `tailored_resume`, written with it. */
+  review?: ApplicationReview;
 }): Promise<ApplicationOut> {
   const { data } = await api.post<ApplicationOut>("/applications", payload);
   invalidateData("applications", "nudges");

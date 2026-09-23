@@ -591,6 +591,9 @@ def approve_kit(
     app = tracked_job(db, user.id, row.url)
     if app is not None:
         app.tailored_resume_json = resume.model_dump_json()
+        # The row's review described the draft this replaces (PLAN 31.4/4); the
+        # kit's own review stays on the kit.
+        app.review_json = ""
         app.overall_score = row.score_after or 0.0
         app.template = ""
         app.voice_score = voice_score

@@ -129,6 +129,8 @@ from app.models import (
     ApplicationDetail,
     ApplicationKit,
     ApplicationOut,
+    ApplicationReview,
+    ApplicationReviewOut,
     ApplicationUpdate,
     ATSXrayRequest,
     ATSXrayResult,
@@ -2150,6 +2152,46 @@ def _stored_jd(jd: JDModel) -> str:
     return raw
 
 
+def _stored_review(app: Application) -> dict:
+    """The row's stored review as a dict, or {} when it has none or it no longer
+    parses (an unknown, never a 500)."""
+    if not app.review_json:
+        return {}
+    try:
+        stored = json.loads(app.review_json)
+    except ValueError:
+        return {}
+    return stored if isinstance(stored, dict) else {}
+
+
+def _review_whole(stored: dict) -> bool:
+    """A review the document can open: a result and the resume it came from."""
+    return isinstance(stored.get("result"), dict) and isinstance(stored.get("base"), dict)
+
+
+def _next_review(stored: dict, review: ApplicationReview | None) -> str:
+    """The review to store beside a draft being written (PLAN 31.4/4).
+
+    None clears it: the draft is being replaced, and a review of the previous
+    one would reopen the wrong document. A review with a `result` replaces the
+    stored result and base; one without (the saves after a result's first)
+    keeps them and replaces only the declined changes and the typed lines.
+    Measured before anything is written, like the analysis: a review past four
+    times the resume cap is a 413, never truncated."""
+    if review is None:
+        return ""
+    stored = dict(stored)
+    if review.result is not None:
+        stored["result"] = review.result.model_dump(mode="json")
+        stored["base"] = review.base.model_dump(mode="json") if review.base is not None else None
+        stored["scored_at"] = review.scored_at
+    stored["rejected"] = review.rejected
+    stored["overrides"] = review.overrides
+    raw = json.dumps(stored, ensure_ascii=False)
+    require_within(raw, 4 * get_settings().max_resume_kb, "resume")
+    return raw
+
+
 def _row_jd(app: Application) -> JDModel | None:
     """The row's stored analysis, or None when it has none or it no longer
     parses (a legacy or corrupt value is an unknown, never a 500)."""
@@ -2243,7 +2285,34 @@ def get_application(
         voice_score=app.voice_score,
         fabrication_flag_count=app.fabrication_flag_count,
         pending_kit=ApplicationKit(id=kit.id, status=kit.status) if kit is not None else None,
+        has_review=_review_whole(_stored_review(app)),
     )
+
+
+@router.get("/applications/{app_id}/review", response_model=ApplicationReviewOut)
+def get_application_review(
+    app_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> ApplicationReviewOut:
+    """The review behind a job's saved draft, whole (PLAN 31.4/4): what the
+    document needs to open it again after a reload. Its own route rather than a
+    field on the detail, because every page that reads a job would carry it.
+    Reaches no model and spends nothing (classed `free` in smoke 32.13). A row
+    with no whole review, or one that no longer parses, is a 404, and so is
+    someone else's row."""
+    app = _owned_application(db, app_id, user)
+    stored = _stored_review(app)
+    if not _review_whole(stored):
+        raise HTTPException(404, "This draft has no saved review.")
+    try:
+        return ApplicationReviewOut(
+            result=stored["result"],
+            base=stored["base"],
+            rejected=stored.get("rejected") or [],
+            overrides=stored.get("overrides") or {},
+            scored_at=stored.get("scored_at"),
+        )
+    except Exception:  # noqa: BLE001 - a legacy or corrupt review is an unknown
+        raise HTTPException(404, "This draft has no saved review.")
 
 
 @router.post("/applications", response_model=ApplicationOut)
@@ -2265,9 +2334,15 @@ def create_application(
     # PLAN 31.4 adds three: a place and a posted date fill only a blank, like a
     # title; an analysis REPLACES the stored one, because it is the one the draft
     # beside it was tailored against, and the letter's pass is keyed by it.
+    # PLAN 31.4/4: a tailored resume carries its review, written with it (none
+    # clears the stored one). Everything that can refuse is measured before
+    # anything is written.
     jd_json = _stored_jd(body.jd) if body.jd is not None else ""
     existing = applications_db.tracked_job(db, user.id, body.job_url)
     if existing is not None:
+        review_json = (
+            _next_review(_stored_review(existing), body.review) if body.tailored_resume is not None else None
+        )
         now = datetime.now(timezone.utc)
         if body.tailored_resume is not None:
             existing.tailored_resume_json = body.tailored_resume.model_dump_json()
@@ -2275,6 +2350,7 @@ def create_application(
             existing.template = body.template
             existing.voice_score = body.voice_score
             existing.fabrication_flag_count = body.fabrication_flag_count
+            existing.review_json = review_json or ""
         if body.cover_letter:
             existing.cover_letter = body.cover_letter
         if body.jd_text and not existing.jd_text:
@@ -2298,12 +2374,14 @@ def create_application(
         db.commit()
         db.refresh(existing)
         return _to_out(existing, _email_kind(db, user.id, existing.id))
+    review_json = _next_review({}, body.review) if body.tailored_resume is not None else ""
     app = Application(
         user_id=user.id,
         job_title=body.job_title,
         company=body.company,
         jd_text=body.jd_text,
         tailored_resume_json=body.tailored_resume.model_dump_json() if body.tailored_resume else "",
+        review_json=review_json,
         cover_letter=body.cover_letter,
         overall_score=body.overall_score,
         status=body.status,
@@ -2377,10 +2455,14 @@ def save_application_draft(
     The resume and its signals are written together, None included; the letter
     only when one is sent (`ApplicationDraft`). Someone else's row is a 404.
     The analysis likewise (PLAN 31.4): written when sent, since a tailor started
-    from the job's own page saves onto its row here, never through the POST."""
+    from the job's own page saves onto its row here, never through the POST.
+    The review behind the draft is written WITH it (PLAN 31.4/4), and a save
+    without one clears the stored review (`_next_review`)."""
     app = _owned_application(db, app_id, user)
     jd_json = _stored_jd(body.jd) if body.jd is not None else ""
+    review_json = _next_review(_stored_review(app), body.review)
     app.tailored_resume_json = body.tailored_resume.model_dump_json()
+    app.review_json = review_json
     app.template = body.template
     app.voice_score = body.voice_score
     app.fabrication_flag_count = body.fabrication_flag_count

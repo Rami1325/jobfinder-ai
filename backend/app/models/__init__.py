@@ -1013,6 +1013,36 @@ class InboxDisconnectOut(BaseModel):
 # --------------------------------------------------------------------------- #
 # Application tracker
 # --------------------------------------------------------------------------- #
+class ApplicationReview(BaseModel):
+    """The review behind a saved draft (PLAN 31.4/4): what the document needs to
+    open it again after a reload. Sent with the draft by the tailor page.
+
+    `result` and `base` (the tailor's answer and the master it was tailored
+    from) are sent with the FIRST save of each result and left out of the saves
+    after it, which carry only what changes on every tap: the edits declined
+    (`lib/resumeDiff` ids) and the lines typed over the draft (source anchor →
+    field → text). None for `result` keeps the stored one. `scored_at` is the
+    minute the tailor's recruiter-fit reading was taken, stamped on the client
+    and kept with the reading it dates."""
+
+    model_config = {"extra": "forbid"}
+    result: Optional[TailorResult] = None
+    base: Optional[ResumeModel] = None
+    rejected: list[str] = Field(default_factory=list, max_length=5000)
+    overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
+    scored_at: Optional[float] = None
+
+
+class ApplicationReviewOut(BaseModel):
+    """GET /applications/{id}/review: a stored review, whole."""
+
+    result: TailorResult
+    base: ResumeModel
+    rejected: list[str] = Field(default_factory=list)
+    overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
+    scored_at: Optional[float] = None
+
+
 class ApplicationCreate(BaseModel):
     job_title: str = ""
     company: str = ""
@@ -1033,6 +1063,9 @@ class ApplicationCreate(BaseModel):
     location: str = Field(default="", max_length=255)
     posted_at: str = Field(default="", max_length=32)
     jd: Optional[JDModel] = None
+    # PLAN 31.4/4: the review behind `tailored_resume`, written with it. A
+    # tailored resume sent without one clears the stored review.
+    review: Optional[ApplicationReview] = None
 
 
 class ApplicationUpdate(BaseModel):
@@ -1071,6 +1104,10 @@ class ApplicationDraft(BaseModel):
     # from a job's own page saves onto that row with this PUT, so the analysis
     # has to ride here too. None leaves the row's analysis alone, like the letter.
     jd: Optional[JDModel] = None
+    # PLAN 31.4/4: the review behind this draft, written with it. Unlike the
+    # letter and the analysis, None CLEARS the stored review: the draft is being
+    # replaced, and a review of the previous draft would reopen the wrong one.
+    review: Optional[ApplicationReview] = None
 
 
 class ApplicationOut(BaseModel):
@@ -1150,6 +1187,10 @@ class ApplicationDetail(BaseModel):
     voice_score: Optional[float] = None
     fabrication_flag_count: Optional[int] = None
     pending_kit: Optional[ApplicationKit] = None
+    # PLAN 31.4/4: whether the review behind the draft is stored whole, so the
+    # document can open it again (`GET /applications/{id}/review`). Kept out of
+    # this answer on purpose: every page that reads a job would carry it.
+    has_review: bool = False
 
 
 class StaleApplication(BaseModel):
