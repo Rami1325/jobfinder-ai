@@ -42,6 +42,7 @@ import html as html_lib
 import logging
 import math
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from functools import partial
 from typing import Callable
@@ -333,15 +334,28 @@ def _ghost_label(ghost: GhostReport | None) -> str:
     return ""
 
 
+def _job_link(m: JobMatch, app_url: str = "") -> str:
+    """Where a job in an alert email opens (PLAN 31.4/6): the job IN THE APP,
+    through the Jobs page's `?open=<posting>`, which opens the job's own page
+    once it is tracked and its History row until then, so the fit, the reasons
+    and Tailor are one tap away. The posting itself when no app URL is
+    configured, as before, and "" for a match with no URL."""
+    if not m.url:
+        return ""
+    base = app_url.strip().rstrip("/")
+    return f"{base}/jobs?open={urllib.parse.quote(m.url, safe='')}" if base else m.url
+
+
 def build_alert_email(
-    new: list[JobMatch], ctx: SearchContext, min_score: int = 0
+    new: list[JobMatch], ctx: SearchContext, min_score: int = 0, app_url: str = ""
 ) -> tuple[str, str]:
     """(subject, plain-text body) for an alert email. Pure — smoke-pinned.
 
     `new` is already filtered by the caller (`run_alert`), so every count here
     describes what the reader can actually see; `min_score` only names the bar in
     the footer. Keeping the filter OUT of the builders is what lets both bodies
-    stay pure functions of the list they render.
+    stay pure functions of the list they render. `app_url` sends every job's
+    link into the app (`_job_link`), as the HTML twin's do.
     """
     where = f" in {ctx.location}" if ctx.location.strip() else ""
     subject = f"JobFinder: {len(new)} new job{'s' if len(new) != 1 else ''} for {ctx.job_title}{where}"
@@ -371,8 +385,8 @@ def build_alert_email(
         if label := _ghost_label(m.ghost):
             bits.append(f"({label[:1].lower()}{label[1:]})")
         lines.append("• " + " ".join(bits))
-        if m.url:
-            lines.append(f"  {m.url}")
+        if link := _job_link(m, app_url):
+            lines.append(f"  {link}")
     lines += [""]
     if note := _bar_note(min_score):
         lines += [note]
@@ -420,12 +434,14 @@ def _fit_pill(overall: float) -> str:
     )
 
 
-def _job_card_html(m: JobMatch) -> str:
+def _job_card_html(m: JobMatch, app_url: str = "") -> str:
     esc = html_lib.escape
     title = esc(m.title or "Untitled role")
-    if m.url:
+    # Both links open the job in the app when an app URL is configured.
+    link = _job_link(m, app_url)
+    if link:
         title = (
-            f'<a href="{esc(m.url, quote=True)}" style="color:{_EM["ink"]};'
+            f'<a href="{esc(link, quote=True)}" style="color:{_EM["ink"]};'
             f'text-decoration:none;">{title}</a>'
         )
     sub_bits = [esc(b) for b in (m.company, m.location) if b]
@@ -484,9 +500,9 @@ def _job_card_html(m: JobMatch) -> str:
             f"{esc(ghost_label)}</span>"
         )
     view = (
-        f'<a href="{esc(m.url, quote=True)}" style="color:{_EM["accent_soft"]};'
+        f'<a href="{esc(link, quote=True)}" style="color:{_EM["accent_soft"]};'
         f'font:600 13px {_EM_FONT};text-decoration:none;">View job &#8594;</a>'
-        if m.url
+        if link
         else ""
     )
     sub_row = (
@@ -533,7 +549,7 @@ def build_alert_email_html(
     n = len(new)
     headline = f"{n} new job{'s' if n != 1 else ''}"
     search_desc = esc(f"{ctx.job_title}{where}")
-    cards = "".join(_job_card_html(m) for m in new)
+    cards = "".join(_job_card_html(m, app_url) for m in new)
     bar = _bar_note(min_score)
     bar_row = (
         f'<div style="padding-bottom:6px;">{esc(bar)}</div>' if bar else ""
@@ -808,10 +824,9 @@ def run_alert(
         send = _resolve_send(send_fn)
         email_error = ""
         if worth and row.email and send is not None:
-            subject, body = build_alert_email(worth, result.context, min_score)
-            html = build_alert_email_html(
-                worth, result.context, app_url=get_settings().app_base_url, min_score=min_score
-            )
+            app_url = get_settings().app_base_url
+            subject, body = build_alert_email(worth, result.context, min_score, app_url=app_url)
+            html = build_alert_email_html(worth, result.context, app_url=app_url, min_score=min_score)
             try:
                 send(row.email, subject, body, html=html)
                 emailed = True

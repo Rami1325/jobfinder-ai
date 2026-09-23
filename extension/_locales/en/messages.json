@@ -154,8 +154,8 @@
   "successSaved": {
     "message": "Saved! The job was added to your application tracker."
   },
-  "linkOpenTracker": {
-    "message": "Open tracker"
+  "linkOpenJob": {
+    "message": "Open the job"
   },
   "linkOpenOptions": {
     "message": "Open settings"

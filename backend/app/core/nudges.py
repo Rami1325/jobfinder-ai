@@ -75,6 +75,15 @@ def to_stale_out(
     return items
 
 
+def _application_link(it: StaleApplication, app_url: str = "") -> str:
+    """Where a quiet application in the nudge email opens (PLAN 31.4/6): its
+    job's own page in the app, where the follow-up is one tap away (Prepare) and
+    its emails and posting are; the posting itself when no app URL is
+    configured, as before."""
+    base = app_url.strip().rstrip("/")
+    return f"{base}/applications/{it.id}" if base else (it.job_url or "")
+
+
 def build_nudge_email(items: list[StaleApplication], app_url: str = "") -> tuple[str, str]:
     """(subject, plain-text body). Pure — smoke-pinned."""
     n = len(items)
@@ -91,8 +100,8 @@ def build_nudge_email(items: list[StaleApplication], app_url: str = "") -> tuple
             bits.append(f"at {it.company}")
         bits.append(f"— {it.days_stale} days without a response")
         lines.append("• " + " ".join(bits))
-        if it.job_url:
-            lines.append(f"  {it.job_url}")
+        if link := _application_link(it, app_url):
+            lines.append(f"  {link}")
     tail = (
         f"Write the follow-up from your tracker: {app_url.rstrip('/')}/tracker"
         if app_url.strip()
@@ -102,12 +111,12 @@ def build_nudge_email(items: list[StaleApplication], app_url: str = "") -> tuple
     return subject, "\n".join(lines)
 
 
-def _nudge_row_html(it: StaleApplication) -> str:
+def _nudge_row_html(it: StaleApplication, app_url: str = "") -> str:
     esc = html_lib.escape
     title = esc(it.job_title or "Untitled role")
-    if it.job_url:
+    if link := _application_link(it, app_url):
         title = (
-            f'<a href="{esc(it.job_url, quote=True)}" style="color:{_EM["ink"]};'
+            f'<a href="{esc(link, quote=True)}" style="color:{_EM["ink"]};'
             f'text-decoration:none;">{title}</a>'
         )
     company = (
@@ -145,7 +154,7 @@ def build_nudge_email_html(items: list[StaleApplication], app_url: str = "") -> 
     esc = html_lib.escape
     n = len(items)
     headline = f"{n} application{'s' if n != 1 else ''} went quiet"
-    rows = "".join(_nudge_row_html(it) for it in items)
+    rows = "".join(_nudge_row_html(it, app_url) for it in items)
     cta = (
         f'<a href="{esc(app_url.rstrip("/"), quote=True)}/tracker" '
         f'style="display:inline-block;padding:10px 22px;border-radius:999px;'

@@ -1029,8 +1029,18 @@ export default function TailorPage() {
     recordRejectedPhrases(phrases).catch(() => {});
   }
 
-  // A save's toast offers the next step, not only the news (PLAN 31.2/10).
-  const viewTracker = { action: { label: tCommon("actions.view"), onClick: () => navigate("/tracker") } };
+  // A save's toast offers the next step, not only the news (PLAN 31.2/10): the
+  // job's own page (PLAN 31.4/6), read from the store when tapped, since the
+  // toast can be shown before the row it names is known here.
+  const viewTracker = {
+    action: {
+      label: tCommon("actions.view"),
+      onClick: () => {
+        const row = getTailorState().savedAppId;
+        navigate(row ? `/applications/${row}` : "/tracker");
+      },
+    },
+  };
 
   /** The job this draft is for, as the tracker row names it. */
   // Whether the fit reading on the MASTER still includes its tailor (PLAN
@@ -1893,7 +1903,7 @@ export default function TailorPage() {
                   ) : draftSave === "saved" ? (
                     <>
                       <span className="text-mint">✓ {t("jobDraft.saved")}</span>
-                      <Link to="/tracker" className="font-medium text-accent-soft hover:underline">
+                      <Link to={savedAppId ? `/applications/${savedAppId}` : "/tracker"} className="font-medium text-accent-soft hover:underline">
                         {tCommon("actions.view")}
                       </Link>
                     </>

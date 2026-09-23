@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -151,28 +152,36 @@ def _url_key(url: str) -> str:
     return _linkedin_job_id(url) or url.split("?")[0].rstrip("/")
 
 
-def applied_status_map(db: Session, user_id: int) -> dict[str, str]:
+class Tracked(NamedTuple):
+    """The tracker row a posting maps to: its status, and its id, so a search
+    card or a History row can open the job's own page (PLAN 31.4/6)."""
+
+    status: str
+    id: int
+
+
+def applied_status_map(db: Session, user_id: int) -> dict[str, Tracked]:
     """Every job this user already has in the tracker, keyed by normalized URL.
 
     Read once and passed around as a plain dict so the SSE search can stamp
     results after it has released its pooled connection — that stream runs for
     minutes and must not hold a Neon connection open to answer this.
     Newest application wins if the same job was saved twice."""
-    status_by_key: dict[str, str] = {}
+    status_by_key: dict[str, Tracked] = {}
     rows = db.execute(
-        select(Application.job_url, Application.status)
+        select(Application.job_url, Application.status, Application.id)
         .where(Application.job_url != "", Application.user_id == user_id)
         .order_by(Application.id)
     ).all()
-    for job_url, status in rows:
-        status_by_key[_url_key(job_url)] = status or "saved"
+    for job_url, status, app_id in rows:
+        status_by_key[_url_key(job_url)] = Tracked(status or "saved", app_id)
     return status_by_key
 
 
-def application_statuses(db: Session, urls: list[str], user_id: int) -> dict[str, str]:
-    """Map each history URL to its tracker status ('' when never saved/applied)."""
+def application_statuses(db: Session, urls: list[str], user_id: int) -> dict[str, Tracked | None]:
+    """Map each history URL to its tracker row (None when never saved/applied)."""
     status_by_key = applied_status_map(db, user_id)
-    return {u: status_by_key.get(_url_key(u), "") for u in urls if u}
+    return {u: status_by_key.get(_url_key(u)) for u in urls if u}
 
 
 def _match_urls(m: JobMatch | dict) -> list[str]:
@@ -182,8 +191,9 @@ def _match_urls(m: JobMatch | dict) -> list[str]:
     return [m.url, *(a.url for a in m.also_on)]
 
 
-def stamp_applied(matches: Sequence[JobMatch | dict], status_by_key: dict[str, str]) -> None:
-    """Mark search results the user has already dealt with, in place.
+def stamp_applied(matches: Sequence[JobMatch | dict], status_by_key: dict[str, Tracked]) -> None:
+    """Mark search results the user has already dealt with, in place: the
+    tracker status, and the row's id, which the card opens (PLAN 31.4/6).
 
     Also checks the cross-board duplicates (`also_on`): the same posting shows
     up on LinkedIn and Comeet under different URLs, and having applied through
@@ -197,13 +207,15 @@ def stamp_applied(matches: Sequence[JobMatch | dict], status_by_key: dict[str, s
         return
     for m in matches:
         for url in _match_urls(m):
-            status = status_by_key.get(_url_key(url)) if url else ""
-            if not status:
+            tracked = status_by_key.get(_url_key(url)) if url else None
+            if tracked is None:
                 continue
             if isinstance(m, dict):
-                m["application_status"] = status
+                m["application_status"] = tracked.status
+                m["application_id"] = tracked.id
             else:
-                m.application_status = status
+                m.application_status = tracked.status
+                m.application_id = tracked.id
             break
 
 

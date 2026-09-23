@@ -619,7 +619,9 @@ export default function TrackerPage() {
                 <button
                   key={n.id}
                   onClick={() =>
-                    nav("/tools/follow-up", {
+                    // The job rides `?app=` (PLAN 31.4/6, 31.4/3's rule), so a
+                    // reload keeps it and the tool's Back returns to the job.
+                    nav(`/tools/follow-up?app=${n.id}`, {
                       state: {
                         company: n.company,
                         role: n.job_title,

@@ -591,7 +591,8 @@ async function checkDuplicate(settings, currentUrl) {
     return u && (urlKey(u) === exact || (loose && urlKeyLoose(u) === loose));
   });
   if (!dup) return;
-  if (settings.appUrl) $("dupLink").href = settings.appUrl + "/tracker";
+  // The job's own page in the app (PLAN 31.4/6), not the whole tracker.
+  if (settings.appUrl) $("dupLink").href = settings.appUrl + "/applications/" + dup.id;
   else $("dupLink").hidden = true;
   $("dupHint").hidden = false;
 }
@@ -1038,18 +1039,20 @@ async function saveClip(openTailor) {
     });
 
     if (res.ok) {
+      // The row the save made or updated (the backend merges by URL).
+      var saved = await res.json();
       if (openTailor && settings.appUrl) {
         // Deep Tailor handoff: the app's Tailor page loads this application's
         // JD via ?tailor_app=<id>. Opening the tab closes the popup.
-        var saved = await res.json();
         chrome.tabs.create({ url: settings.appUrl + "/app?tailor_app=" + saved.id });
         return;
       }
       $("clipForm").hidden = true;
       $("applySection").hidden = true;
       $("reviewHint").hidden = true;
+      // The job's own page in the app (PLAN 31.4/6), not the whole tracker.
       $("openTracker").href = settings.appUrl
-        ? settings.appUrl + "/tracker"
+        ? settings.appUrl + "/applications/" + saved.id
         : "#";
       $("success").hidden = false;
     } else if (res.status === 401) {

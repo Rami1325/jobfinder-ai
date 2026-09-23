@@ -12143,6 +12143,129 @@ try {
   fail(`drafts-to-review check (check 69) could not run: ${e.message}`);
 }
 
+// ---- 70. every way into a job's page (EXECUTED) ------------------------------ //
+// PLAN 31.4/6. A job's own page existed, but the ways to it still led elsewhere:
+// a saved search result's icon and the extension's two links opened the whole
+// tracker, and the alert and nudge emails opened the board's posting.
+// (a) EXECUTES lib/openJob.ts, the answer for an alert email's `/jobs?open=`,
+//     with the Jobs page's real URL key: a tracked job opens its page through the
+//     row History names, or through the tracker's row when History no longer
+//     holds it; an untracked job History holds opens its row, found by its URL
+//     or the same posting on another board; neither says so; and the notice's
+//     posting link is made of an http(s) URL only.
+// (b) Pins by shape: the Jobs page reads `open` and hands it to `openTarget`,
+//     opens `/applications/${target.id}` for a job and rings the opened row; the
+//     search card's and the History row's saved icons open the job's page; the
+//     tracker's nudge opens the follow-up tool with `?app=`; and the extension's
+//     two links (after a save, and the duplicate warning) open the row's page.
+// (c) The Python half (degraded without backend/): the alert email links a job
+//     through `/jobs?open=` with its URL quoted whole, and the nudge email links
+//     an application to `/applications/{id}`.
+// Probed every run with a resolver that ignores the row History names, one that
+// forgets the other boards, a permissive posting link, and a saved icon, a job
+// link and an extension link sent back to the tracker.
+try {
+  const openSrc = read("lib/openJob.ts");
+  const run70 = (src) => {
+    const m = runProbeBundle(
+      "open-job",
+      `${src}\nexport { normalizeJobUrl } from "./pages/jobs/shared";\n`,
+    );
+    const hits = [
+      { id: 11, url: "https://www.linkedin.com/jobs/view/4460000001", also_on: [], app_id: 34 },
+      { id: 12, url: "https://boards.example/jobs/77/", also_on: [{ source: "comeet", url: "https://www.comeet.com/jobs/acme/A1.001/dev/B1.011" }], app_id: null },
+      { id: 13, url: "https://boards.example/jobs/untracked", also_on: [], app_id: null },
+    ];
+    const rows = [{ id: 51, job_url: "https://trimmed.example/jobs/9" }, { id: 52, job_url: "https://boards.example/jobs/untracked-other" }];
+    const at = (open) => JSON.stringify(m.openTarget(open, hits, rows, m.normalizeJobUrl));
+    return [
+      at("https://www.linkedin.com/jobs/view/4460000001"),
+      at("  https://boards.example/jobs/77  "),
+      at("https://www.comeet.com/jobs/acme/A1.001/dev/B1.011"),
+      at("https://boards.example/jobs/untracked/"),
+      at("https://trimmed.example/jobs/9/"),
+      at("https://nowhere.example/jobs/1"),
+      JSON.stringify(m.openTarget("https://trimmed.example/jobs/9", null, rows, m.normalizeJobUrl)),
+      [m.postingLink("https://jobs.example/1"), m.postingLink(" HTTP://Jobs.example/2 "), m.postingLink("javascript:alert(1)"),
+        m.postingLink("data:text/html,x"), m.postingLink("/jobs"), m.postingLink("")].map(String).join(","),
+    ].join(" | ");
+  };
+  const WANT70 = [
+    '{"kind":"job","id":34}', '{"kind":"hit","id":12}', '{"kind":"hit","id":12}', '{"kind":"hit","id":13}',
+    '{"kind":"job","id":51}', '{"kind":"missing"}', '{"kind":"job","id":51}',
+    "https://jobs.example/1,HTTP://Jobs.example/2,null,null,null,null",
+  ].join(" | ");
+  for (const [label, mutated] of [
+    ["a resolver that ignores the row History names", openSrc.replace("hit?.app_id ?? rows", "rows")],
+    ["a resolver that forgets the other boards", openSrc.replace(" || (h.also_on ?? []).some((a) => same(a.url))", "")],
+    ["a permissive posting link", openSrc.replace("return /^https?:\\/\\//i.test(open.trim()) ? open.trim() : null;", "return open.trim() || null;")],
+  ]) {
+    if (mutated === openSrc) throw new Error(`the probe could not plant "${label}"`);
+    if (run70(mutated) === WANT70) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+  const real70 = run70(openSrc);
+  if (real70 !== WANT70)
+    fail(
+      `check 70: lib/openJob.ts answers [${real70}] where [${WANT70}] is right: an alert email's job opens its page when ` +
+        "it is tracked (the row History names, else the tracker's), its History row when it is not, says so when " +
+        "neither, and links a posting only when it is http(s) (PLAN 31.4/6)",
+    );
+
+  const real = {
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    cards: decomment(read("pages/jobs/cards.tsx")),
+    tracker: decomment(read("pages/TrackerPage.tsx")),
+    popup: fs.existsSync(EXT_DIR) ? fs.readFileSync(path.join(EXT_DIR, "popup.js"), "utf8") : null,
+  };
+  const read70 = ({ jobs, cards, tracker, popup }) => {
+    const out = [];
+    if (!/searchParams\.get\("open"\)/.test(jobs) || !/openTarget\(openParam,/.test(jobs))
+      out.push("the Jobs page does not resolve `?open=` through openTarget");
+    if (!/nav\(`\/applications\/\$\{target\.id\}`, \{ replace: true \}\)/.test(jobs))
+      out.push("an alert email's tracked job does not open its page");
+    if (!/opened=\{hit\.id === openedHit\}/.test(jobs)) out.push("the History row an email opened is not ringed");
+    if (!/postingLink\(openMissing\)/.test(jobs) || /href=\{openMissing\}/.test(jobs))
+      out.push("the notice links the parameter without postingLink");
+    if (!/nav\(rowId \? `\/applications\/\$\{rowId\}` : "\/tracker"\)/.test(cards))
+      out.push("the search card's saved icon does not open the job's page");
+    if (!/nav\(`\/applications\/\$\{hit\.app_id\}`\)/.test(cards)) out.push("a History row's saved icon does not open the job's page");
+    if (!/nav\(`\/tools\/follow-up\?app=\$\{n\.id\}`/.test(tracker)) out.push("the tracker's nudge does not open the follow-up tool with its job");
+    if (popup !== null) {
+      if (!/\$\("dupLink"\)\.href = settings\.appUrl \+ "\/applications\/" \+ dup\.id/.test(popup))
+        out.push("the extension's duplicate warning does not open the job's page");
+      if (!/settings\.appUrl \+ "\/applications\/" \+ saved\.id/.test(popup)) out.push("the extension's saved link does not open the job's page");
+    }
+    return out;
+  };
+  const problems70 = read70(real);
+  const plant70 = (key, from, to, label) => {
+    if (real[key] === null) return;
+    const next = real[key].replace(from, to);
+    if (next === real[key]) throw new Error(`the probe could not plant ${label}`);
+    if (!read70({ ...real, [key]: next }).length) throw new Error(`the reader passes ${label}, so it cannot be trusted`);
+  };
+  plant70("jobs", "nav(`/applications/${target.id}`, { replace: true })", 'nav("/tracker", { replace: true })', "a job link sent to the tracker");
+  plant70("cards", 'nav(rowId ? `/applications/${rowId}` : "/tracker")', 'nav("/tracker")', "a saved icon sent to the tracker");
+  plant70("popup", '"/applications/" + dup.id', '"/tracker"', "an extension link sent to the tracker");
+  for (const p of problems70) fail(`check 70: ${p} (PLAN 31.4/6)`);
+
+  // (c) The emails, in Python: each job's link and each application's link.
+  const alertsPy = pySource("app/core/alerts.py", "check 70");
+  const nudgesPy = pySource("app/core/nudges.py", "check 70");
+  if (alertsPy !== null && nudgesPy !== null) {
+    const jobLink = /def _job_link\(m: JobMatch, app_url: str = ""\) -> str:[\s\S]*?\n(?=def )/.exec(alertsPy)?.[0] ?? "";
+    if (!jobLink) throw new Error("backend/app/core/alerts.py has no `_job_link` to read");
+    if (!/\/jobs\?open=\{urllib\.parse\.quote\(m\.url, safe=''\)\}/.test(jobLink))
+      fail("check 70: alerts._job_link does not link a job into the app as `/jobs?open=<posting, quoted whole>` (PLAN 31.4/6)");
+    if ((alertsPy.match(/_job_link\(m, app_url\)/g) || []).length < 2)
+      fail("check 70: the alert email's two bodies do not both link through `_job_link(m, app_url)` (PLAN 31.4/6)");
+    if (!/f"\{base\}\/applications\/\{it\.id\}"/.test(nudgesPy))
+      fail("check 70: nudges._application_link does not open `/applications/{id}` (PLAN 31.4/6)");
+  }
+} catch (e) {
+  fail(`job entry points check (check 70) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

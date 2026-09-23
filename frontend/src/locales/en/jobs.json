@@ -266,6 +266,7 @@
     "saveDone": "Saved — find it on the Tracker.",
     "saveFailed": "Couldn't save that job. Try again.",
     "savedGoTracker": "Saved · open Tracker",
+    "savedOpenJob": "Saved · open the job",
     "matchChip": "{{value}}% match",
     "moreActions": "More actions"
   },
@@ -348,6 +349,8 @@
     "clearError": "Could not clear history.",
     "deleteError": "Could not delete that entry.",
     "loadError": "Could not load your search history.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "openMissing": "That job from your email isn't in your history any more. It keeps your newest 100.",
+    "openPosting": "Open the posting"
   }
 }

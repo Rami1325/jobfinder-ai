@@ -5441,6 +5441,19 @@ check("SSE match frames (dicts) get stamped too", _frame["application_status"] =
       _frame["application_status"])
 check("dict frames follow also_on as well", _frame_cross["application_status"] == "saved",
       _frame_cross["application_status"])
+# PLAN 31.4/6: the stamp names the ROW too, so a card's saved icon opens the
+# job's own page; the same matching, the untouched posting naming none.
+check(
+    "31.4/6: a stamped result names its tracker row (also through also_on, in a frame too), an untouched one none",
+    _to_stamp[0].application_id == _applied_app.id
+    and _to_stamp[1].application_id == _saved_app.id
+    and _to_stamp[2].application_id == _saved_app.id
+    and _to_stamp[3].application_id is None
+    and _untouched[0].application_id is None
+    and _frame.get("application_id") == _applied_app.id
+    and _frame_cross.get("application_id") == _saved_app.id,
+    str([m.application_id for m in _to_stamp]),
+)
 
 # Hebrew must survive the DB round-trip byte-identical (UTF-8 through SQLite).
 _he_title = "מהנדס/ת נתונים — תל אביב"
@@ -5480,19 +5493,23 @@ check(
 # exact URL otherwise, empty for never-applied jobs.
 from app.db.history import application_statuses  # noqa: E402
 
-_db.add(Application(user_id=_admin_id, job_title="X", status="applied", job_url="https://www.linkedin.com/jobs/view/9912345678?tracking=1"))
-_db.add(Application(user_id=_admin_id, job_title="Y", status="offer", job_url="https://x/jobs/1"))
+_by_li = Application(user_id=_admin_id, job_title="X", status="applied", job_url="https://www.linkedin.com/jobs/view/9912345678?tracking=1")
+_by_url = Application(user_id=_admin_id, job_title="Y", status="offer", job_url="https://x/jobs/1")
+_db.add_all([_by_li, _by_url])
 _db.commit()
 _statuses = application_statuses(
     _db,
     ["https://il.linkedin.com/jobs/view/data-engineer-at-beta-9912345678", "https://x/jobs/1", "https://never/applied"],
     _admin_id,
 )
+# Each URL maps to its tracker row, status and id (PLAN 31.4/6), or to None.
+_st = lambda u: (_statuses.get(u).status, _statuses.get(u).id) if _statuses.get(u) else None  # noqa: E731
 check(
     "app status joined by linkedin id + exact url",
-    _statuses.get("https://il.linkedin.com/jobs/view/data-engineer-at-beta-9912345678") == "applied"
-    and _statuses.get("https://x/jobs/1") == "offer"
-    and _statuses.get("https://never/applied") == "",
+    _st("https://il.linkedin.com/jobs/view/data-engineer-at-beta-9912345678") == ("applied", _by_li.id)
+    and _st("https://x/jobs/1") == ("offer", _by_url.id)
+    and "https://never/applied" in _statuses
+    and _statuses["https://never/applied"] is None,
     str(_statuses),
 )
 
@@ -5659,6 +5676,20 @@ check("alert html omits manage link without APP_BASE_URL", "Manage alerts" not i
 check(
     "alert html adds manage link from APP_BASE_URL",
     'href="https://app.example/jobs"' in build_alert_email_html(_new, _AlertCtx(job_title="X"), app_url="https://app.example/"),
+)
+# PLAN 31.4/6: with an app URL each job's links open the job IN THE APP (the Jobs
+# page resolves `?open=` to the job's own page, or its History row until it is
+# tracked); without one they are the posting, as the checks above pin.
+_open_link = "https://app.example/jobs?open=https%3A%2F%2Falerts%2Fnew-1"
+_app_html = build_alert_email_html(_new, _AlertCtx(job_title="X"), app_url="https://app.example/")
+_app_text = build_alert_email(_new, _AlertCtx(job_title="X"), app_url="https://app.example/")[1]
+check(
+    "31.4/6: with an app URL both bodies link each job into the app (?open=<posting>), none to the board",
+    _app_html.count(f'href="{_open_link}"') == 2
+    and 'href="https://alerts/new-1"' not in _app_html
+    and f"  {_open_link}" in _app_text
+    and "  https://alerts/new-1" not in _app_text,
+    _app_text[-300:],
 )
 _html_evil = build_alert_email_html(
     [JobMatch(title='<script>alert("x")</script>', company="A&B", overall=50.0, url="https://alerts/e-1")],
@@ -6053,6 +6084,39 @@ check(
     "and a measured 0 is STORED as 0, not left unknown — the other half of the split",
     get_alert(_db, _admin_id).last_above_min == 0,
     str(get_alert(_db, _admin_id).last_above_min),
+)
+# PLAN 31.4/6, end to end: the run hands the configured app URL to BOTH bodies it
+# sends, so the plain-text part links into the app as the HTML part does.
+_link_sent: list[tuple[str, str, str]] = []
+
+
+def _link_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001
+    return JobSearchResult(
+        context=_AlertCtx(job_title="X"),
+        matches=[JobMatch(title="Link Role", company="L", overall=90.0, url="https://alerts/link-1")],
+        skipped=0,
+    )
+
+
+_prev_link_base = os.environ.get("APP_BASE_URL")
+os.environ["APP_BASE_URL"] = "https://app.example"
+get_settings.cache_clear()
+try:
+    run_alert(
+        _db, _admin_id, force=True, search_fn=_link_search,
+        send_fn=lambda to, subject, body, html=None: _link_sent.append((subject, body, html or "")),
+    )
+finally:
+    if _prev_link_base is None:
+        os.environ.pop("APP_BASE_URL", None)
+    else:
+        os.environ["APP_BASE_URL"] = _prev_link_base
+    get_settings.cache_clear()
+_link_want = "https://app.example/jobs?open=https%3A%2F%2Falerts%2Flink-1"
+check(
+    "31.4/6: an alert run links its job into the app in BOTH bodies it sends",
+    len(_link_sent) == 1 and _link_want in _link_sent[0][1] and f'href="{_link_want}"' in _link_sent[0][2],
+    str([s[1][-160:] for s in _link_sent]),
 )
 update_alert(_db, _admin_id, enabled=False, email="me@example.com", context=None, min_score=DEFAULT_MIN_SCORE)
 
@@ -9930,6 +9994,21 @@ check(
     "Eng &lt;b&gt;Lead&lt;/b&gt;" in build_nudge_email_html(_nudge_items)
     and "Tracker page" in build_nudge_email(_nudge_items)[1],
 )
+# PLAN 31.4/6: with an app URL each quiet application opens ITS job's page, where
+# the follow-up is one tap away; without one, its posting, as before.
+_nudge_linked = [_StaleApp(id=41, job_title="Backend Engineer", company="Acme", days_stale=9, job_url="https://jobs.example/41")]
+_n_html = build_nudge_email_html(_nudge_linked, "https://app.example/")
+_n_text = build_nudge_email(_nudge_linked, "https://app.example/")[1]
+check(
+    "31.4/6: with an app URL each quiet application in the nudge email opens its job's page in both bodies; "
+    "without one, its posting",
+    'href="https://app.example/applications/41"' in _n_html
+    and 'href="https://jobs.example/41"' not in _n_html
+    and "  https://app.example/applications/41" in _n_text
+    and "  https://jobs.example/41" not in _n_text
+    and 'href="https://jobs.example/41"' in build_nudge_email_html(_nudge_linked),
+    _n_text[-200:],
+)
 update_alert(_db4, _noga.id, enabled=False, email="noga@example.com", context=None, nudge_emails=False)
 update_alert(_db4, _omer.id, enabled=False, email="omer@example.com", context=None, nudge_emails=False)
 _db4.close()
@@ -10123,6 +10202,25 @@ try:
             and _stream_hit["top_matched"] == ["Python", "SQL"]
             and _stream_hit["top_gaps"] == ["Kubernetes"],
             str(_stream_hit)[:200],
+        )
+        # PLAN 31.4/6: a History row names the tracker row its posting is on, so
+        # it (and an alert email's link) can open the job's page; an untracked
+        # row names none.
+        _hist_row = _tc.post(
+            "/applications",
+            json={"job_title": _STREAM_MATCH.title, "company": "Stream Co", "job_url": _STREAM_MATCH.url, "status": "saved"},
+            headers=_ADMIN_H,
+        ).json()
+        _hist_after = {h["url"]: h for h in _tc.get("/jobs/history", headers=_ADMIN_H).json()["hits"]}
+        _hist_untracked = next((h for u, h in _hist_after.items() if u != _STREAM_MATCH.url and not h.get("app_status")), None)
+        check(
+            "31.4/6: a History row names its tracker row (status and id); an untracked row names none",
+            (_hist_after.get(_STREAM_MATCH.url) or {}).get("app_id") == _hist_row.get("id")
+            and (_hist_after.get(_STREAM_MATCH.url) or {}).get("app_status") == "saved"
+            and _hist_untracked is not None
+            and "app_id" in _hist_untracked
+            and _hist_untracked["app_id"] is None,
+            f"{(_hist_after.get(_STREAM_MATCH.url) or {}).get('app_id')} vs {_hist_row.get('id')}",
         )
 
         def _broken_stream_search(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
@@ -11494,6 +11592,12 @@ try:
         _pm_mailer.smtp_configured, _pm_mailer.send_email = _pm_real_smtp, _pm_real_send
         _pm_db.close()
     _pm_mail = " ".join(part for sent in _pm_sent for part in sent[1:])
+    # The German job's link as this configuration writes it: the posting itself,
+    # or the job in the app once an app URL is set (PLAN 31.4/6; a local .env
+    # sets one and CI does not), so the check names the job either way.
+    from app.core.alerts import _job_link as _pm_job_link  # noqa: E402
+
+    _pm_munich = _pm_job_link(JobMatch(url="https://pay.test/alert-munich"), get_settings().app_base_url)
     check(
         "pay market, the alert path: the real search emails the German job and not the Bulgarian one, and "
         "history records only the German one",
@@ -11503,8 +11607,8 @@ try:
         and _pm_run.emailed is True
         and _pm_run.total == 1
         and len(_pm_sent) == 1
-        and "https://pay.test/alert-munich" in _pm_sent[0][2]
-        and "https://pay.test/alert-munich" in _pm_sent[0][3]
+        and _pm_munich in _pm_sent[0][2]
+        and _pm_munich in _pm_sent[0][3]
         and "alert-sofia" not in _pm_mail
         and "Sofia" not in _pm_mail
         and _pm_hist == ["https://pay.test/alert-munich"],

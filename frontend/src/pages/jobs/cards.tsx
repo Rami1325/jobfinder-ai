@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { listKits, saveApplication } from "../../api/client";
 import { Badge, BorderGlow, Button, MoreMenu, useToast, type MoreItem } from "../../components/ui";
+import { cn } from "../../lib/cn";
 import { fitReason } from "../../lib/fitReason";
 import { useUses } from "../../lib/usesStore";
 import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
@@ -513,7 +514,18 @@ export function MatchChip({ value }: { value: number }) {
   );
 }
 
-export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStatus?: string }) {
+export function MatchCard({
+  m,
+  best,
+  appStatus,
+  appId,
+}: {
+  m: JobMatch;
+  best: boolean;
+  appStatus?: string;
+  /** The tracker row the posting is on, which the saved icon opens (PLAN 31.4/6). */
+  appId?: number | null;
+}) {
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
   const { t: tCommon } = useTranslation("common");
@@ -529,10 +541,12 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
   const [kitError, setKitError] = useState("");
   // The page's status map is rebuilt per SEARCH, not per click, so a freshly
   // saved job would keep showing "Save" until the next search without a local
-  // override. `justSaved` wins over `appStatus` for exactly that window.
-  const [justSaved, setJustSaved] = useState(false);
+  // override. The row just saved wins over `appStatus` for exactly that window,
+  // and its id is the job's page the saved icon opens.
+  const [savedId, setSavedId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
-  const status = justSaved ? "saved" : appStatus;
+  const status = savedId !== null ? "saved" : appStatus;
+  const rowId = savedId ?? appId ?? null;
   // Computed once and shared by the badge row and the note below it, so the
   // suppression rule and the drawn line can never disagree — see the badge row.
   const ghostShown = strongestGhostSignal(m.ghost);
@@ -540,18 +554,21 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
   async function saveForLater() {
     setSaving(true);
     try {
-      await saveApplication({
+      // The place and the date too, so the job's page can show them (PLAN 31.4).
+      const saved = await saveApplication({
         job_title: m.title,
         company: m.company,
         jd_text: m.jd_text,
         overall_score: m.overall,
         job_url: m.url || undefined,
         status: "saved",
+        location: m.location || undefined,
+        posted_at: m.posted_at || undefined,
       });
-      setJustSaved(true);
-      // With the next step, not only the news (PLAN 31.2/10).
+      setSavedId(saved.id);
+      // With the next step, not only the news (PLAN 31.2/10): the job's page.
       toast("success", t("card.saveDone"), {
-        action: { label: tCommon("actions.view"), onClick: () => nav("/tracker") },
+        action: { label: tCommon("actions.view"), onClick: () => nav(`/applications/${saved.id}`) },
       });
     } catch {
       toast("error", t("card.saveFailed"));
@@ -717,13 +734,14 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
             {t("card.tailor")}
           </Button>
           {status ? (
-            // NOT disabled: it is the only route to the tracker the toast just
-            // named, and a disabled button dispatches no click at all.
+            // NOT disabled: it is the only route to the job the toast just
+            // named, and a disabled button dispatches no click at all. It opens
+            // the job's own page (PLAN 31.4/6), the tracker when no row is named.
             <button
               type="button"
-              aria-label={t("card.savedGoTracker")}
-              title={t("card.savedGoTracker")}
-              onClick={() => nav("/tracker")}
+              aria-label={rowId ? t("card.savedOpenJob") : t("card.savedGoTracker")}
+              title={rowId ? t("card.savedOpenJob") : t("card.savedGoTracker")}
+              onClick={() => nav(rowId ? `/applications/${rowId}` : "/tracker")}
               className="grid min-h-8 w-9 place-items-center rounded-lg border border-mint/40 bg-mint/10 text-mint transition hover:bg-mint/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
             >
               <BookmarkCheck size={15} aria-hidden />
@@ -759,7 +777,17 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
   );
 }
 
-export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id: number) => void }) {
+export function HistoryRow({
+  hit,
+  onDelete,
+  opened = false,
+}: {
+  hit: JobSearchHit;
+  onDelete: (id: number) => void;
+  /** The job an alert email's link opened (PLAN 31.4/6): the row the page
+   * scrolls to, ringed so the reader sees which one it is. */
+  opened?: boolean;
+}) {
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
   // The backend hands the listing's own date back verbatim unless a board
@@ -805,6 +833,7 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
     { key: "remove", label: t("card.removeFromHistory"), Icon: Trash2, onClick: () => onDelete(hit.id) },
   ];
   return (
+    <div id={`hit-${hit.id}`} className={cn("scroll-mt-20 rounded-2xl", opened && "ring-2 ring-accent/70 ring-offset-2 ring-offset-bg")}>
     <JobResultCard>
       <CompanyAvatar company={hit.company} url={hit.url || undefined} logoUrl={hit.logo_url} />
       <div className="min-w-0 flex-1">
@@ -861,9 +890,23 @@ export function HistoryRow({ hit, onDelete }: { hit: JobSearchHit; onDelete: (id
           >
             {t("card.tailor")}
           </Button>
+          {/* A History row on the tracker opens its job's page, as a saved
+              search result does (PLAN 31.4/6). */}
+          {hit.app_id ? (
+            <button
+              type="button"
+              aria-label={t("card.savedOpenJob")}
+              title={t("card.savedOpenJob")}
+              onClick={() => nav(`/applications/${hit.app_id}`)}
+              className="grid min-h-8 w-9 place-items-center rounded-lg border border-mint/40 bg-mint/10 text-mint transition hover:bg-mint/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            >
+              <BookmarkCheck size={15} aria-hidden />
+            </button>
+          ) : null}
           <MoreMenu items={more} label={t("card.moreActions")} className="ms-auto" />
         </div>
       </div>
     </JobResultCard>
+    </div>
   );
 }

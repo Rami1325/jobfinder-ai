@@ -1521,6 +1521,9 @@ class JobMatch(BaseModel):
     # Carries the status rather than a bool so the card can say WHICH — "saved"
     # is a job to come back to, "applied" is one to stop re-reading.
     application_status: str = ""
+    # That tracker row's id, stamped with the status, so the card's saved icon
+    # opens the job's own page (PLAN 31.4/6); None when the posting is untracked.
+    application_id: Optional[int] = None
 
 
 class JobMatchResult(BaseModel):
@@ -1662,6 +1665,7 @@ class JobSearchHitOut(BaseModel):
     salary: Optional[SalaryInfo] = None  # extracted on read from the stored jd_text
     searched_at: str = ""
     app_status: str = ""  # tracker status if this job was saved/applied ("", saved, applied, interview, offer, rejected)
+    app_id: Optional[int] = None  # that tracker row's id, which the row opens (PLAN 31.4/6); None when untracked
 
 
 class JobSearchHistory(BaseModel):

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import {
@@ -39,6 +40,7 @@ import { apiErrorMessage } from "../lib/apiError";
 import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
 import { resumeLanguage } from "../lib/lang";
 import { onboardingRole } from "../lib/onboarding";
+import { openTarget, postingLink } from "../lib/openJob";
 import { useUses } from "../lib/usesStore";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
@@ -80,6 +82,7 @@ export default function JobsPage() {
   // tracker's To review, and each is reviewed, sent or deleted from its pages.
   const [mode, setMode] = useState<"search" | "manual" | "history">("search");
   const toast = useToast();
+  const nav = useNavigate();
   // A search and a ranking each use 1 (Phase 30 / B4); none left disables both.
   const searchUses = useUses("search");
 
@@ -176,6 +179,14 @@ export default function JobsPage() {
    * this as the fallback for a backend that predates the field. */
   const statusFor = (m: JobMatch) =>
     m.application_status || (m.url ? appStatusByUrl.get(normalizeJobUrl(m.url)) : undefined);
+  // The row the card's saved icon opens (PLAN 31.4/6): the server's, else the
+  // newest tracked row with the same URL.
+  const appIdByUrl = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of apps) if (a.job_url && !map.has(normalizeJobUrl(a.job_url))) map.set(normalizeJobUrl(a.job_url), a.id);
+    return map;
+  }, [apps]);
+  const idFor = (m: JobMatch) => m.application_id ?? (m.url ? appIdByUrl.get(normalizeJobUrl(m.url)) : undefined) ?? null;
 
   // "Hide applied": statuses that mean the user has already acted on the job.
   // `saved` is deliberately NOT one of them — saving is how you say "come back
@@ -210,6 +221,58 @@ export default function JobsPage() {
     if (mode === "history" && history === null && !historyLoading) loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
+
+  // AN ALERT EMAIL'S LINK (PLAN 31.4/6): `/jobs?open=<posting URL>` opens that job
+  // in the app. A tracked job opens its own page; an untracked one opens History
+  // with its row in view and ringed, where its fit, its reasons and Tailor are; a
+  // posting History no longer holds (it keeps the newest 100) says so. Read once
+  // and dropped, so Back or a reload never runs it again, and only ever COMPARED:
+  // the one link made from it is a plain http(s) posting link, in that last case.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openParam = searchParams.get("open");
+  const [openedHit, setOpenedHit] = useState<number | null>(null);
+  const [openMissing, setOpenMissing] = useState<string | null>(null);
+  useEffect(() => {
+    if (!openParam) return;
+    let live = true;
+    void (async () => {
+      const [rows, hits] = await Promise.all([
+        listApplications().catch(() => [] as ApplicationOut[]),
+        getJobHistory()
+          .then((h) => h.hits)
+          .catch(() => null),
+      ]);
+      if (!live) return;
+      const target = openTarget(openParam, hits, rows, normalizeJobUrl);
+      if (target.kind === "job") {
+        nav(`/applications/${target.id}`, { replace: true });
+        return;
+      }
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.delete("open");
+          return next;
+        },
+        { replace: true },
+      );
+      if (hits) setHistory(hits);
+      setMode("history");
+      setOpenedHit(target.kind === "hit" ? target.id : null);
+      // "Not in your history" only when History answered: a History that could
+      // not be read loads again on its tab, which says so itself.
+      setOpenMissing(target.kind === "missing" && hits !== null ? openParam : null);
+    })();
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openParam]);
+  // The opened row, brought into view once History has drawn it.
+  useEffect(() => {
+    if (openedHit !== null && mode === "history" && history)
+      document.getElementById(`hit-${openedHit}`)?.scrollIntoView({ block: "center" });
+  }, [openedHit, mode, history]);
 
   // PLAN 31.1/6: the row leaves at once and the server delete waits out the undo
   // window; Undo, or a failed delete, puts it back where it was.
@@ -685,7 +748,7 @@ export default function JobsPage() {
                     layout: { type: "spring", duration: 0.25, bounce: 0.15 },
                   }}
                 >
-                  <MatchCard m={m} best={i === 0} appStatus={statusFor(m)} />
+                  <MatchCard m={m} best={i === 0} appStatus={statusFor(m)} appId={idFor(m)} />
                 </motion.div>
               ))}
             </div>
@@ -834,7 +897,7 @@ export default function JobsPage() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25, ease: EASE, delay: Math.min(i, 12) * 0.04 }}
                   >
-                    <MatchCard m={m} best={m === bestMatch} appStatus={statusFor(m)} />
+                    <MatchCard m={m} best={m === bestMatch} appStatus={statusFor(m)} appId={idFor(m)} />
                   </motion.div>
                 ))}
                 {showRestricted &&
@@ -958,7 +1021,7 @@ export default function JobsPage() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25, ease: EASE, delay: Math.min(i, 12) * 0.04 }}
                   >
-                    <MatchCard m={m} best={i === 0} appStatus={statusFor(m)} />
+                    <MatchCard m={m} best={i === 0} appStatus={statusFor(m)} appId={idFor(m)} />
                   </motion.div>
                 ))}
               </motion.div>
@@ -969,6 +1032,24 @@ export default function JobsPage() {
 
       {mode === "history" && (
         <>
+          {openMissing && (
+            <Card className="text-sm text-ink-muted">
+              {t("history.openMissing")}
+              {postingLink(openMissing) && (
+                <>
+                  {" "}
+                  <a
+                    href={postingLink(openMissing) ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-accent hover:underline"
+                  >
+                    {t("history.openPosting")}
+                  </a>
+                </>
+              )}
+            </Card>
+          )}
           {historyLoading && (
             <div className="space-y-3">
               <Skeleton className="h-24 w-full" />
@@ -1049,7 +1130,7 @@ export default function JobsPage() {
                 )}
               </div>
               {(sortedHistory ?? []).map((hit) => (
-                <HistoryRow key={hit.id} hit={hit} onDelete={deleteHit} />
+                <HistoryRow key={hit.id} hit={hit} onDelete={deleteHit} opened={hit.id === openedHit} />
               ))}
             </motion.div>
           )}

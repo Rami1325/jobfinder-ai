@@ -1162,6 +1162,7 @@ def jobs_history(
 
     hits: list[JobSearchHitOut] = []
     for row in rows:
+        tracked = statuses.get(row.url)
         hits.append(
             JobSearchHitOut(
                 id=row.id,
@@ -1186,7 +1187,8 @@ def jobs_history(
                 ],
                 salary=extract_salary(row.jd_text or ""),
                 searched_at=row.searched_at.isoformat() if row.searched_at else "",
-                app_status=statuses.get(row.url, ""),
+                app_status=tracked.status if tracked else "",
+                app_id=tracked.id if tracked else None,
             )
         )
     return JobSearchHistory(hits=hits)

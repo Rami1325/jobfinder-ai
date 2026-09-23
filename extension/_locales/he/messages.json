@@ -154,8 +154,8 @@
   "successSaved": {
     "message": "נשמר! המשרה נוספה למעקב המועמדויות שלך."
   },
-  "linkOpenTracker": {
-    "message": "פתיחת לוח המעקב"
+  "linkOpenJob": {
+    "message": "פתיחת המשרה"
   },
   "linkOpenOptions": {
     "message": "פתיחת ההגדרות"

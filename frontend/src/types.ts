@@ -585,6 +585,8 @@ export interface JobMatch {
   // Tracker status when this posting is already in the tracker ("saved" |
   // "applied" | "interview" | "offer" | "rejected"); "" or absent when new.
   application_status?: string;
+  /** That tracker row's id, which the card's saved icon opens (PLAN 31.4/6). */
+  application_id?: number | null;
 }
 export interface AlsoOn {
   source: string;
@@ -776,6 +778,7 @@ export interface JobSearchHit {
   salary?: SalaryInfo | null; // extracted from the stored posting text on read
   searched_at: string;
   app_status: string; // tracker status if saved/applied: "", saved, applied, interview, offer, rejected
+  app_id?: number | null; // that tracker row's id, which the row opens (PLAN 31.4/6)
 }
 export interface JobSearchHistory {
   hits: JobSearchHit[];
