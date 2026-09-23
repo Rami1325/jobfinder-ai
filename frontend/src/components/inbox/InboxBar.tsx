@@ -43,7 +43,7 @@ type Mode = "manual" | "background" | "import";
 function HintRow({ label, onHide, children }: { label: string; onHide: () => void; children: ReactNode }) {
   return (
     <div className="flex items-center gap-2 rounded-xl2 border border-line bg-panel/60 py-1 pe-1 ps-3">
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/12 text-accent-soft">
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/10 text-accent-soft">
         <Inbox size={16} aria-hidden />
       </span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3">{children}</div>
@@ -310,7 +310,7 @@ export default function InboxBar({ apps, onChanged }: { apps: ApplicationOut[]; 
           <span
             className={cn(
               "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-              reauth ? "bg-warn/15 text-warn" : "bg-accent/12 text-accent-soft",
+              reauth ? "bg-warn/15 text-warn" : "bg-accent/10 text-accent-soft",
             )}
           >
             {reauth ? <AlertTriangle size={16} aria-hidden /> : <Inbox size={16} aria-hidden />}

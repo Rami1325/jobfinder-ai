@@ -493,7 +493,7 @@ export default function TrackerPage() {
           ternary on purpose — it has its own fetch and never reads `apps`. */}
       {nudges.length > 0 && (
         <Card className="flex items-start gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-warn/12 text-warn">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-warn/10 text-warn">
             <Clock size={18} />
           </span>
           <div className="min-w-0 flex-1">
@@ -561,7 +561,7 @@ export default function TrackerPage() {
         </div>
       ) : apps.length === 0 ? (
         <Card className="animate-fade-up py-12 text-center">
-          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/12 text-accent">
+          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent">
             <ClipboardList size={22} />
           </span>
           <p className="mt-4 text-sm font-semibold text-ink">{t("empty.title")}</p>

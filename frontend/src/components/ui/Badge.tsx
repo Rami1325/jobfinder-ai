@@ -9,7 +9,7 @@ const tones: Record<Tone, string> = {
   mint: "border-mint/50 bg-mint/15 text-mint",
   covered: "border-mint/50 bg-mint/15 text-mint",
   partial: "border-warn/50 bg-warn/15 text-warn",
-  missing: "border-danger/50 bg-danger/12 text-danger",
+  missing: "border-danger/50 bg-danger/10 text-danger",
   danger: "border-danger/50 bg-danger/15 text-danger",
 };
 

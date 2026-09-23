@@ -185,7 +185,7 @@ export default function LandingHeader({
         <div
           id={panelId}
           ref={panelRef}
-          className="lp-in border-b border-line bg-bg/97 backdrop-blur-xl lg:hidden"
+          className="lp-in border-b border-line bg-bg/95 backdrop-blur-xl lg:hidden"
         >
           <nav aria-label={tm("footer.navLabel")} className="mx-auto max-w-[1160px] px-5 pb-5 pt-1 sm:px-8">
             <ul className="flex flex-col">

@@ -11798,6 +11798,54 @@ try {
   fail(`job page check (check 65) could not run: ${e.message}`);
 }
 
+// ---- 66. every colour opacity is one Tailwind generates ----------------------- //
+// A colour's `/<n>` modifier is generated only for a step on the opacity scale
+// (0, 5, 10, … 100, plus any `opacity` the config extends), and an off-scale one
+// is NOT an error: the class is simply never written, so the element paints no
+// colour at all, in the browser, with a green build (the house rule against a
+// class assembled at runtime, in a different costume). Seven shipped that way,
+// found on 2026-09-23 while building the job page: `/12` on the missing-keyword
+// chip in Badge, MatchReport and the CV scan, on the inbox bar's and the
+// tracker's icon tiles, and `bg-bg/97` on the landing's phone menu, whose links
+// sat over the hero with no panel under them. Measured in the browser: each
+// computed to `rgba(0, 0, 0, 0)` while its `/10` or `/95` twin painted. Bracketed
+// values (`/[0.12]`) are arbitrary values and always generated, so they pass.
+try {
+  const cfg66 = fs.readFileSync(path.join(SRC, "..", "tailwind.config.js"), "utf8");
+  const extended = new Set();
+  const ext = /\bopacity:\s*\{([^}]*)\}/.exec(cfg66.replace(/@keyframes[\s\S]*?\}\s*\}/g, ""));
+  if (ext) for (const m of ext[1].matchAll(/["']?(\d+)["']?\s*:/g)) extended.add(Number(m[1]));
+  const onScale = (n) => (n % 5 === 0 && n <= 100) || extended.has(n);
+  const MOD = /(?<![\w-])((?:[a-z0-9-]+:)*(?:bg|text|border|ring|from|to|via|fill|stroke|outline|shadow|divide|placeholder|decoration|caret)-[a-z][a-z0-9-]*)\/(\d+)(?![\w./[])/g;
+  const offScale = (text) => [...text.matchAll(MOD)].filter((m) => !onScale(Number(m[2]))).map((m) => `${m[1]}/${m[2]}`);
+  const files66 = [];
+  const walk66 = (dir) => {
+    for (const e of fs.readdirSync(path.join(SRC, dir), { withFileTypes: true })) {
+      const rel = dir ? `${dir}/${e.name}` : e.name;
+      if (e.isDirectory()) walk66(rel);
+      else if (/\.(tsx?|css)$/.test(e.name)) files66.push(rel);
+    }
+  };
+  walk66("");
+  let seen66 = 0;
+  for (const rel of files66) {
+    const text = read(rel);
+    seen66 += [...text.matchAll(MOD)].length;
+    for (const cls of offScale(text))
+      fail(`check 66: ${rel} uses \`${cls}\`, an opacity step Tailwind never generates, so it paints nothing — use a step of 5, or \`/[0.xx]\``);
+  }
+  if (seen66 < 100) throw new Error(`read only ${seen66} colour opacity modifiers across ${files66.length} files; the reader is broken`);
+  // The reader in both directions: the shipped defects must be caught, and a
+  // fraction, a bracketed value and an on-scale step must not be.
+  const planted = offScale('className="bg-accent/12 hover:bg-bg/97 text-danger/8"');
+  if (planted.join(" ") !== "bg-accent/12 hover:bg-bg/97 text-danger/8")
+    throw new Error(`the reader missed a planted off-scale step (${JSON.stringify(planted)}), so it cannot be trusted`);
+  const quiet = offScale('className="w-1/2 translate-x-1/2 bg-accent/[0.12] bg-accent/15 border-line/60 aspect-[1/1.414]"');
+  if (quiet.length) throw new Error(`the reader flags valid classes (${quiet.join(", ")}), so it cannot be trusted`);
+} catch (e) {
+  fail(`Tailwind opacity check (check 66) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
