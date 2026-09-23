@@ -197,6 +197,9 @@ export default function InterviewPage() {
   const [mode, setMode] = useState<Mode>("questions");
   const [jdText, setJdText] = useState("");
   const [jd, setJd] = useState<JDModel | null>(null);
+  // The text the questions on screen were written for. The posting folds to one
+  // line only while the box still holds exactly that (PLAN 31.2/9).
+  const [analyzedFor, setAnalyzedFor] = useState("");
   const [questions, setQuestions] = useState<InterviewQuestion[]>([]);
   const [recruiter, setRecruiter] = useState<RecruiterScreenResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -215,6 +218,7 @@ export default function InterviewPage() {
       setJd(analyzed);
       const r = await interviewQuestions(master.resume, analyzed);
       setQuestions(r.questions);
+      setAnalyzedFor(jdText);
     } catch (e: any) {
       setError(apiErrorMessage(e, t("genericError")));
     } finally {
@@ -278,7 +282,15 @@ export default function InterviewPage() {
       <Card>
         <CardTitle>{t("jdTitle")}</CardTitle>
         <div className="mt-3">
-          <JDPaste value={jdText} onChange={setJdText} />
+          <JDPaste
+            value={jdText}
+            onChange={setJdText}
+            folded={
+              mode === "questions" && jd && questions.length > 0 && analyzedFor === jdText
+                ? { title: jd.job_title, company: jd.company }
+                : null
+            }
+          />
         </div>
         {mode === "mock" ? (
           <p className="mt-3 text-xs text-ink-faint">{t("mock.jdOptional")}</p>

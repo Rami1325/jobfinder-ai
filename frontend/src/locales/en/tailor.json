@@ -124,7 +124,9 @@
     "savedLoading": "Loading your saved jobs…",
     "savedNone": "No saved jobs yet — anything you track shows up here.",
     "savedEmpty": "That saved job has no description stored. Paste the text instead.",
-    "savedLoadError": "Couldn't load your saved jobs."
+    "savedLoadError": "Couldn't load your saved jobs.",
+    "edit": "Edit",
+    "thisJob": "This job"
   },
   "score": {
     "guard": "Facts invented",

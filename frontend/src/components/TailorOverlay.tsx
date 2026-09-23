@@ -164,7 +164,14 @@ export default function TailorOverlay({
     >
       <div className="space-y-4">
         <p className="text-sm text-ink-muted">{t("overlay.hint")}</p>
-        <JDPaste value={draft} onChange={setDraft} />
+        {/* Folded once the fit reading on screen belongs to this very text
+            (PLAN 31.2/9): the reading rendered under a 240 px box and needed a
+            scroll inside the dialog. */}
+        <JDPaste
+          value={draft}
+          onChange={setDraft}
+          folded={cached && fit ? { title: fit.jd.job_title, company: fit.jd.company } : null}
+        />
 
         {cached && fit && (
           <div className="space-y-3 rounded-xl border border-line bg-bg-soft/60 p-4">

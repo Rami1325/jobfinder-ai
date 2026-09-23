@@ -38,6 +38,7 @@ import { TEMPLATE_IDS } from "../lib/templateSpecs";
 import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
 import { sortApps, type ListSort } from "../lib/trackerSort";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { ApplicationDetail, ApplicationOut, StaleApplication } from "../types";
 
 // Column labels come from the "tracker" catalog via `status.<key>`.
@@ -169,22 +170,6 @@ function FlipStatusChip({ id, status }: { id: number; status: string }) {
       </motion.span>
     </span>
   );
-}
-
-/** Whether the five-column board fits: `md` and up. Below it the tracker is a
- * list (PLAN 31.2/7). Read live, because only ONE of the two may be mounted:
- * both render each card, and the board's `layoutId` glide and the split-flap's
- * pending flip each assume one copy of a card on the page. */
-function useBoardFits(): boolean {
-  const query = "(min-width: 768px)";
-  const [fits, setFits] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
-  useEffect(() => {
-    const m = window.matchMedia(query);
-    const on = () => setFits(m.matches);
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, []);
-  return fits;
 }
 
 /** One application, the same on the board and in the phone list. The status is
@@ -355,7 +340,11 @@ export default function TrackerPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
   const [tab, setTab] = useState<"board" | "analytics">("board");
-  const boardFits = useBoardFits();
+  // Whether the five-column board fits: `md` and up. Below it the tracker is a
+  // list (PLAN 31.2/7). Read live, because only ONE of the two may be mounted:
+  // both render each card, and the board's `layoutId` glide and the split-flap's
+  // pending flip each assume one copy of a card on the page.
+  const boardFits = useMediaQuery("(min-width: 768px)");
   // The phone list's status tab and order (PLAN 31.2/7). `null` = the first
   // status that has anything in it, so the list never opens on an empty tab
   // while another holds the user's applications.

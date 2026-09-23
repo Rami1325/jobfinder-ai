@@ -11242,6 +11242,46 @@ try {
   fail(`tracker list check (check 58) could not run: ${e.message}`);
 }
 
+// ---- 59. the saved-job sheet, and a posting that folds only when true -------- //
+// PLAN 31.2/9, 2026-09-23. "Use a job you saved" opened an inline list below the
+// fold on Interview; below lg it is a bottom sheet now. It also lives INSIDE the
+// tailor dialog, whose Modal closes on any Escape it hears on window, so the
+// sheet must take Escape in the CAPTURE phase and stop it there, or closing the
+// sheet also throws away a half-pasted posting (driven: the dialog stays open).
+// And the pasted posting folds to one line once a result for it is on screen
+// (the fit reading sat under a 240 px box), but ONLY while the box still holds
+// the text that was analysed: a fold over edited text would hide what the user
+// is about to send. Both callers are held to that gate. Probed on the real files.
+try {
+  const read59 = (paste, overlay, interview) => {
+    const out = [];
+    if (!/addEventListener\("keydown", onKey, true\)/.test(paste) || !/e\.stopPropagation\(\);\s*setPicking\(false\)/.test(paste))
+      out.push("JDPaste's sheet no longer takes Escape in the capture phase and stops it, so it closes the dialog around it too");
+    if (!/createPortal\([\s\S]*?role="dialog"[\s\S]*?document\.body/.test(paste)) out.push("JDPaste's saved-job sheet is not portalled");
+    if (!/folded=\{cached && fit \?/.test(overlay)) out.push("TailorOverlay folds the posting without the fit reading being for this very text (`cached`)");
+    if (!/analyzedFor === jdText\s*\?/.test(interview)) out.push("InterviewPage folds the posting without checking it is still the analysed text");
+    return out;
+  };
+  const paste = decomment(read("components/JDPaste.tsx"));
+  const overlay = decomment(read("components/TailorOverlay.tsx"));
+  const interview = decomment(read("pages/InterviewPage.tsx"));
+  const real = read59(paste, overlay, interview);
+  for (const [label, pa, ov, iv] of [
+    ["a bubbling Escape", paste.replace('addEventListener("keydown", onKey, true)', 'addEventListener("keydown", onKey)'), overlay, interview],
+    ["a fold on any fit", paste, overlay.replace("folded={cached && fit ?", "folded={fit ?"), interview],
+    ["a fold on any questions", paste, overlay, interview.replace("analyzedFor === jdText\n", "true\n")],
+  ]) {
+    if (pa === paste && ov === overlay && iv === interview) {
+      if (real.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!read59(pa, ov, iv).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of real) fail(`check 59: ${p} (PLAN 31.2/9)`);
+} catch (e) {
+  fail(`saved-job sheet check (check 59) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
