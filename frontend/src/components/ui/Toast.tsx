@@ -60,7 +60,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // Below lg the stack spans the width ABOVE the tab bar (PLAN 31.2/10): at
   // bottom-5 it sat on the tab bar, covering the tabs, with a long Hebrew
   // sentence wrapping in a corner. From lg it sits at the inline-end corner.
-  // Toasts spring in from the inline-end side either way.
+  // Toasts spring in from the inline-end side either way. `--bottom-bar` is the
+  // height of a page's own bar over the tab bar (the tailored draft's action
+  // bar, PLAN 31.2/2), set on <html> while it is up, so a toast never covers
+  // the buttons that raised it.
   // Re-evaluated on every push (each push re-renders), so language switches
   // are picked up. Under reduced motion framer drops the transform entirely.
   const fromEnd =
@@ -69,7 +72,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="pointer-events-none fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] end-4 start-4 z-[60] flex flex-col gap-2 lg:bottom-5 lg:end-5 lg:start-auto lg:items-end">
+      <div className="pointer-events-none fixed bottom-[calc(4.5rem+var(--bottom-bar,0px)+env(safe-area-inset-bottom))] end-4 start-4 z-[60] flex flex-col gap-2 lg:bottom-5 lg:end-5 lg:start-auto lg:items-end">
         <AnimatePresence>
           {items.map((t) => (
             <motion.div

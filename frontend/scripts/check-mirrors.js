@@ -11075,6 +11075,49 @@ try {
   fail(`one-row toolbar check (check 55) could not run: ${e.message}`);
 }
 
+// ---- 56. the draft's action bar: its height is cleared, twice (PLAN 31.2/2) //
+// Measured 2026-09-23 at 390 px: Download and the job's status sat about 6,580
+// px down a 7,168 px tailored page. They ride a bar on the tab bar now, and its
+// height is written in three places that must agree: `BAR_HEIGHT` (which the
+// page sets on <html> as `--bottom-bar` while the bar is up), the spacer that
+// lets the page's last lines scroll clear of it, and the toast stack's bottom,
+// which adds `var(--bottom-bar,0px)` so a toast never covers the buttons that
+// raised it. A height changed in one place leaves content, or a toast, under
+// the bar. Probed on the real files.
+try {
+  const read56 = (page, toast) => {
+    const out = [];
+    const h = /const BAR_HEIGHT = "([\d.]+)rem";/.exec(page);
+    if (!h) throw new Error('pages/TailorPage.tsx has no const BAR_HEIGHT = "<n>rem"');
+    if (!/<div\b[^>]*role="region"[^>]*className="fixed[^"]*bottom-\[calc\(3\.5rem\+env\(safe-area-inset-bottom\)\)\]/.test(page))
+      throw new Error("could not find the action bar (a fixed role=\"region\" on the 3.5rem tab bar)");
+    if (!/setProperty\("--bottom-bar", BAR_HEIGHT\)/.test(page)) out.push("the page no longer sets --bottom-bar from BAR_HEIGHT while the bar is up");
+    const spacer = /\{barUp && <div aria-hidden className="h-\[([\d.]+)rem\] lg:hidden" \/>\}/.exec(page);
+    if (!spacer) out.push("the page has no spacer under the bar, so its last lines stay behind it");
+    else if (spacer[1] !== h[1]) out.push(`the spacer is ${spacer[1]}rem and the bar ${h[1]}rem`);
+    if (!/bottom-\[calc\(4\.5rem\+var\(--bottom-bar,0px\)\+env\(safe-area-inset-bottom\)\)\]/.test(toast))
+      out.push("the toast stack does not add var(--bottom-bar,0px), so a toast covers the bar's buttons");
+    return out;
+  };
+  const page = decomment(read("pages/TailorPage.tsx"));
+  const toast = decomment(read("components/ui/Toast.tsx"));
+  const real = read56(page, toast);
+  for (const [label, pg, ts] of [
+    ["a taller bar, the same spacer", page.replace('const BAR_HEIGHT = "3.75rem";', 'const BAR_HEIGHT = "4.25rem";'), toast],
+    ["no spacer", page.replace('{barUp && <div aria-hidden className="h-[3.75rem] lg:hidden" />}', ""), toast],
+    ["toasts ignore the bar", page, toast.replace("var(--bottom-bar,0px)+", "")],
+  ]) {
+    if (pg === page && ts === toast) {
+      if (real.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!read56(pg, ts).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of real) fail(`check 56: ${p} (PLAN 31.2/2)`);
+} catch (e) {
+  fail(`action bar clearance check (check 56) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

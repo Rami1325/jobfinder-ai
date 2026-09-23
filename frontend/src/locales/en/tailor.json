@@ -624,5 +624,15 @@
     "body": "Edited {{when}} on this device, and never saved to your resume.",
     "keep": "Restore them",
     "discard": "Discard"
+  },
+  "bar": {
+    "label": "Your tailored resume",
+    "word": "Word",
+    "wordName": "Download Word",
+    "pdf": "PDF",
+    "pdfName": "Download PDF",
+    "save": "Save",
+    "saved": "Saved",
+    "markApplied": "Mark applied"
   }
 }

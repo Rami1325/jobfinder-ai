@@ -103,6 +103,10 @@ import type { FactsLedger, ResumeModel } from "../types";
 const ownsAnchor = (editAnchor: string, overrideAnchor: string, whole: boolean): boolean =>
   overrideAnchor === editAnchor || (whole && overrideAnchor.startsWith(`${editAnchor}.`));
 
+/** The tailored draft's action bar, one row of 42 px buttons and its padding
+ * (PLAN 31.2/2). The toast stack and the page's spacer read the same number. */
+const BAR_HEIGHT = "3.75rem";
+
 /** Where the one-time "tap to edit" hint remembers it was seen. Per device, and
  * kept through a sign-out: it teaches a gesture, not anything about an account. */
 const EDIT_HINT_KEY = "jf-edit-hint-v1";
@@ -1007,6 +1011,27 @@ export default function TailorPage() {
     toast("success", t("toasts.savedToTracker"), viewTracker);
   }
 
+  // A download from this draft, which is when "Mark applied" becomes the next
+  // step (PLAN 31.2/2). Page state: a new result starts again from "Save".
+  const [downloaded, setDownloaded] = useState(false);
+  useEffect(() => setDownloaded(false), [result]);
+  function downloadDraft(fmt: "docx" | "pdf") {
+    if (!effectiveResume) return;
+    setDownloaded(true);
+    void downloadResume(effectiveResume, fmt, resumeFilename(effectiveResume.contact.name, jd?.company ?? ""), template);
+  }
+  // The bar is up while a draft is; its height is what the toast stack and the
+  // page's last lines must clear below lg.
+  const barUp = !!result && !!effectiveResume && !loading;
+  useEffect(() => {
+    if (!barUp) return;
+    const root = document.documentElement;
+    root.style.setProperty("--bottom-bar", BAR_HEIGHT);
+    return () => {
+      root.style.removeProperty("--bottom-bar");
+    };
+  }, [barUp]);
+
   async function markApplied() {
     try {
       if (savedAppId !== null) {
@@ -1606,31 +1631,10 @@ export default function TailorPage() {
                     paid for and never governed the master document at all. The
                     note under the buttons still says what the .docx does. */}
                 <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <Button
-                    icon={<Download size={16} />}
-                    onClick={() =>
-                      downloadResume(
-                        effectiveResume,
-                        "docx",
-                        resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
-                        template,
-                      )
-                    }
-                  >
+                  <Button icon={<Download size={16} />} onClick={() => downloadDraft("docx")}>
                     {t("download.docx")}
                   </Button>
-                  <Button
-                    variant="secondary"
-                    icon={<Download size={16} />}
-                    onClick={() =>
-                      downloadResume(
-                        effectiveResume,
-                        "pdf",
-                        resumeFilename(effectiveResume.contact.name, jd?.company ?? ""),
-                        template,
-                      )
-                    }
-                  >
+                  <Button variant="secondary" icon={<Download size={16} />} onClick={() => downloadDraft("pdf")}>
                     {t("download.pdf")}
                   </Button>
                   <div className="flex-1" />
@@ -1721,6 +1725,55 @@ export default function TailorPage() {
           }}
         />
       )}
+
+      {/* THE LAST STEP, WHERE THE THUMB IS (PLAN 31.2/2). Download and the
+          job's status sat about 6,580 px down a 7,168 px page at 390 px. Below
+          lg this bar rides on the tab bar while a draft is up. The status is
+          the NEXT step, one at a time: Save, then (once saved) Saved, then
+          after a download or opening the posting "Mark applied", then
+          Applied. Only an action is the primary. The result card further down
+          keeps its buttons, for a desktop and for the notes beside them. */}
+      {barUp && (
+        <div
+          role="region"
+          aria-label={t("bar.label")}
+          className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-30 border-t border-line/70 bg-bg/95 px-4 py-2 backdrop-blur-xl lg:hidden"
+        >
+          <div className="mx-auto flex max-w-md items-center gap-2">
+            <Button
+              variant="secondary"
+              icon={<Download size={16} />}
+              aria-label={t("bar.wordName")}
+              onClick={() => downloadDraft("docx")}
+            >
+              {t("bar.word")}
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<Download size={16} />}
+              aria-label={t("bar.pdfName")}
+              onClick={() => downloadDraft("pdf")}
+            >
+              {t("bar.pdf")}
+            </Button>
+            <div className="ms-auto">
+              {applied ? (
+                <span className="text-sm font-semibold text-mint">{t("target.appliedBadge")}</span>
+              ) : downloaded || applyClicked ? (
+                <Button onClick={markApplied}>{t("bar.markApplied")}</Button>
+              ) : saved ? (
+                <span className="text-sm font-semibold text-mint">✓ {t("bar.saved")}</span>
+              ) : (
+                <Button icon={<Save size={16} />} aria-label={t("save.cta")} onClick={save}>
+                  {t("bar.save")}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* The bar's height again, so the page's last lines scroll clear of it. */}
+      {barUp && <div aria-hidden className="h-[3.75rem] lg:hidden" />}
 
       {resume && (
         <TailorOverlay
