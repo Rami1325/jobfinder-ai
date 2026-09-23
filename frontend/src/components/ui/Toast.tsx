@@ -57,7 +57,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
   const dismiss = useCallback((id: number) => setItems((prev) => prev.filter((t) => t.id !== id)), []);
 
-  // The stack sits at the inline-end edge, so toasts spring in from that side.
+  // Below lg the stack spans the width ABOVE the tab bar (PLAN 31.2/10): at
+  // bottom-5 it sat on the tab bar, covering the tabs, with a long Hebrew
+  // sentence wrapping in a corner. From lg it sits at the inline-end corner.
+  // Toasts spring in from the inline-end side either way.
   // Re-evaluated on every push (each push re-renders), so language switches
   // are picked up. Under reduced motion framer drops the transform entirely.
   const fromEnd =
@@ -66,7 +69,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="pointer-events-none fixed bottom-5 end-5 z-[60] flex flex-col gap-2">
+      <div className="pointer-events-none fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] end-4 start-4 z-[60] flex flex-col gap-2 lg:bottom-5 lg:end-5 lg:start-auto lg:items-end">
         <AnimatePresence>
           {items.map((t) => (
             <motion.div
@@ -81,7 +84,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 {icons[t.kind]}
                 {t.kind === "success" && !reduce && <SuccessSpark />}
               </span>
-              {t.message}
+              <span className="min-w-0 flex-1">{t.message}</span>
               {t.action && (
                 <button
                   type="button"

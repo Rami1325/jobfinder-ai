@@ -1,12 +1,16 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Moon, Sun } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
 import { useTheme } from "../hooks/useTheme";
 
-/** Sun/moon theme switch used in both the app and marketing headers. */
+/** Sun/moon theme switch used in both the app and marketing headers. Its name
+ * is the action, in the reader's language: it read "Switch to dark theme" in
+ * English under the Hebrew UI (found in the PLAN 31.2 shell pass). */
 export default function ThemeToggle({ className }: { className?: string }) {
+  const { t } = useTranslation();
   const { theme, toggle } = useTheme();
-  const label = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+  const label = t(theme === "dark" ? "theme.toLight" : "theme.toDark");
   return (
     <button
       type="button"

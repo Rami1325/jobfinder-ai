@@ -4924,7 +4924,8 @@ try {
   // Floors sit just under what each file carries, check 29's convention.
   const FILES = [
     ["components/UsesNote.tsx", 8, []],
-    ["layouts/AppLayout.tsx", 1, []],
+    // The account line and, since PLAN 31.2/8, the phone header's uses left.
+    ["layouts/AppLayout.tsx", 3, ["uses.headerLeft", "uses.headerNone"]],
     ["pages/jobs/AlertsCard.tsx", 3, []],
     ["components/OnboardingModal.tsx", 1, []],
     // The Settings plan card (C6).
@@ -10107,47 +10108,82 @@ try {
   fail(`History New-badge check (check 40) could not run: ${e.message}`);
 }
 
-// ---- 41. the page's last line clears the feedback pill ---------------------- //
+// ---- 41. the page's last line clears what floats at the bottom ------------- //
 // Found in the Phase 29 browser pass, fixed 2026-09-22. Below `lg` the feedback
-// pill floats at `bottom-[calc(4.25rem+env(safe-area-inset-bottom))]`, and
+// pill floated at `bottom-[calc(4.25rem+env(safe-area-inset-bottom))]`, and
 // `main` was padded `pb-24`: 6rem, under the pill's top edge (4.25rem + its own
 // ~2.4rem) by 10 px at 390x844 (measured with Playwright: the /app template note's
 // last line sat under it with the page scrolled to the end), and with no
 // safe-area inset at all, so on an iPhone the 34 px home indicator made it 44 px
-// that no scroll could bring out. The two numbers live in two files, so the
-// check reads both: main's base padding must carry the inset and be at least the
-// pill's offset plus its height.
+// that no scroll could bring out.
+//
+// Since PLAN 31.2/12 (owner decision 4, 2026-09-23) the pill is desktop-only and
+// "Send feedback" is a row in the account menu below lg, so on a phone what sits
+// at the bottom is the TAB BAR, 3.5rem (56 px at 390x664, measured in both
+// languages). The two numbers live in two files, so the check reads both, and
+// it reads the pill's own class to decide which one main must clear: a pill any
+// phone or tablet shows means its offset plus its height, as before; a pill
+// hidden below lg means the tab bar plus a rem. The inset is required either way.
 try {
   const PILL_REM = 2.5; // py-2.5 plus a 20 px line: 2.375rem, rounded up
+  const TABBAR_REM = 3.5;
   const pill = decomment(read("components/FeedbackButton.tsx"));
   const layout = decomment(read("layouts/AppLayout.tsx"));
-  const pillAt = /\bfixed\b[^"]*?\bbottom-\[calc\(([\d.]+)rem\+env\(safe-area-inset-bottom\)\)\]/.exec(pill);
-  if (!pillAt) throw new Error("components/FeedbackButton.tsx has no fixed bottom-[calc(<n>rem+env(safe-area-inset-bottom))]");
+  const pillClass = /className="([^"]*\bfixed\b[^"]*)"/.exec(pill);
+  if (!pillClass) throw new Error("components/FeedbackButton.tsx has no fixed element with a literal className");
+  // Hidden at the base and shown only from lg: no sm: or md: display class may
+  // bring it back on a tablet, where the tab bar still shows.
+  const desktopOnly = (cls) => {
+    const c = cls.split(/\s+/);
+    return (
+      c.includes("hidden") &&
+      c.some((x) => /^lg:(?:flex|inline-flex|block|inline-block|grid)$/.test(x)) &&
+      !c.some((x) => /^(?:sm|md):(?:flex|inline-flex|block|inline-block|grid)$/.test(x))
+    );
+  };
+  let needed;
+  let against;
+  if (desktopOnly(pillClass[1])) {
+    needed = TABBAR_REM + 1;
+    against = `the tab bar (${TABBAR_REM}rem + inset, and a rem to spare)`;
+  } else {
+    const at = /\bbottom-\[calc\(([\d.]+)rem\+env\(safe-area-inset-bottom\)\)\]/.exec(pillClass[1]);
+    if (!at)
+      throw new Error(
+        "the feedback pill shows below lg but has no bottom-[calc(<n>rem+env(safe-area-inset-bottom))] to measure",
+      );
+    needed = Number(at[1]) + PILL_REM;
+    against = `the feedback pill's top edge (${at[1]}rem + ${PILL_REM}rem + inset)`;
+  }
   const mainTag = /<main\b[\s\S]*?>/.exec(layout);
   if (!mainTag) throw new Error("layouts/AppLayout.tsx renders no <main>");
   // The base (unprefixed) bottom padding: `pb-…` not preceded by a `sm:`/`lg:` prefix.
-  const pad = /(?:^|[\s"'`(])pb-(\[calc\(([\d.]+)rem\+env\(safe-area-inset-bottom\)\)\]|(\d+))(?=[\s"'`)])/.exec(mainTag[0]);
+  const readPad = (tag) => /(?:^|[\s"'`(])pb-(\[calc\(([\d.]+)rem\+env\(safe-area-inset-bottom\)\)\]|(\d+))(?=[\s"'`)])/.exec(tag);
+  const pad = readPad(mainTag[0]);
   if (!pad) throw new Error("AppLayout's <main> has no base pb-… class");
-  const needed = Number(pillAt[1]) + PILL_REM;
   if (pad[3] !== undefined)
     fail(
-      `layouts/AppLayout.tsx: <main> is padded pb-${pad[3]}, with no safe-area inset, while the feedback pill sits ` +
-        `${pillAt[1]}rem PLUS the inset above the bottom: on an iPhone the page's last line stays under it. ` +
+      `layouts/AppLayout.tsx: <main> is padded pb-${pad[3]}, with no safe-area inset, while what floats at the ` +
+        `bottom sits above the inset: on an iPhone the page's last line stays under ${against}. ` +
         `Use pb-[calc(<at least ${needed}>rem+env(safe-area-inset-bottom))].`,
     );
   else if (Number(pad[2]) < needed)
     fail(
-      `layouts/AppLayout.tsx: <main>'s bottom padding (${pad[2]}rem + inset) is under the feedback pill's top edge ` +
-        `(${pillAt[1]}rem + ${PILL_REM}rem + inset), so the page's last line can never scroll out from under it.`,
+      `layouts/AppLayout.tsx: <main>'s bottom padding (${pad[2]}rem + inset) is under ${against}, so the ` +
+        "page's last line can never scroll out from under it.",
     );
-  // Both directions on the padding reader.
-  const readPad = (tag) => /(?:^|[\s"'`(])pb-(\[calc\(([\d.]+)rem\+env\(safe-area-inset-bottom\)\)\]|(\d+))(?=[\s"'`)])/.exec(tag);
+  // Both directions on both readers.
   if (readPad('<main className={cn("lg:pb-10 pt-8")}>') ||
       readPad('<main className={cn("pb-24 pt-8 lg:pb-10")}>')?.[3] !== "24" ||
       readPad('<main className={cn("pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-8")}>')?.[2] !== "7.5")
     fail("check 41's padding reader reads a prefixed lg:pb as the base padding, or misses a base one");
+  if (!desktopOnly("fixed bottom-4 end-4 z-40 hidden items-center lg:flex") ||
+      desktopOnly("fixed bottom-[calc(4.25rem+env(safe-area-inset-bottom))] end-4 z-40 flex lg:bottom-4") ||
+      desktopOnly("fixed bottom-4 end-4 hidden sm:flex lg:flex") ||
+      desktopOnly("fixed bottom-4 end-4 hidden"))
+    fail("check 41's pill reader cannot tell a desktop-only pill from one a phone or tablet shows");
 } catch (e) {
-  fail(`feedback pill clearance check (check 41) could not run: ${e.message}`);
+  fail(`bottom clearance check (check 41) could not run: ${e.message}`);
 }
 
 // ---- 42. a modal overlay takes focus, keeps it, and gives it back (EXECUTED) //
@@ -10881,6 +10917,90 @@ try {
   }
 } catch (e) {
   fail(`onboarding per account check (check 52) could not run: ${e.message}`);
+}
+
+// ---- 53. the phone header drops nothing it used to hold -------------------- //
+// PLAN 31.2/8 and /12, 2026-09-23. Below lg the header is the logo, the uses
+// left and the avatar, and the feedback pill is desktop-only. Everything that
+// left the phone's header or corner must still be reachable on a phone, or a
+// breakpoint quietly deletes a feature: the Menu → the More SHEET the tab bar
+// opens, which lists every other destination and is a real dialog (focus in,
+// Tab kept, Escape out); language and theme → rows in the account menu; and
+// feedback → an account-menu row that opens the same dialog the pill does.
+// Each requirement is in force only while its control IS hidden below lg, and
+// each "is it hidden" reading must parse one way or the other or the check
+// throws, since a detector that stopped matching would pass by never firing.
+// The reader is probed on the real file for every requirement in force.
+try {
+  const layout = decomment(read("layouts/AppLayout.tsx"));
+  const pillSrc = decomment(read("components/FeedbackButton.tsx"));
+  // Hidden at the base, shown from lg.
+  const lgOnly = (cls) => {
+    const c = cls.split(/\s+/);
+    return c.includes("hidden") && c.some((x) => /^lg:(?:flex|inline-flex|block|grid)$/.test(x));
+  };
+  if (!lgOnly("relative hidden shrink-0 lg:block") || lgOnly("relative shrink-0") || lgOnly("hidden") ||
+      !lgOnly("fixed bottom-4 end-4 z-40 hidden items-center lg:flex"))
+    throw new Error("the hidden-below-lg reader misreads its own samples");
+  const read53 = (src, pill) => {
+    const acct = fnSource(src, "function AccountMenu(");
+    const panel = fnSource(src, "function MenuPanel(");
+    const shell = fnSource(src, "export default function AppLayout(");
+    const out = [];
+    const menuCls = /<div\s+ref=\{menuRef\}\s+className="([^"]*)"/.exec(shell);
+    if (!menuCls) throw new Error("could not find the header Menu's wrapper (<div ref={menuRef} className=…>)");
+    const menuHidden = lgOnly(menuCls[1]);
+    if (menuHidden) {
+      if (!/onMore=\{toggleMore\}/.test(shell)) out.push("the tab bar's More does not open the More sheet");
+      if (!/<MenuPanel\s+sheet\b/.test(shell)) out.push("nothing renders the More sheet (<MenuPanel sheet …>)");
+      for (const list of ["moreNav", "toolsSubNav"])
+        if (!panel.includes(`${list}.map(`)) out.push(`the menu no longer lists ${list}`);
+      const guarded = /\{!sheet && \(([\s\S]*?)\n\s*\)\}/.exec(panel);
+      if (guarded && /(?:moreNav|toolsSubNav)\.map\(/.test(guarded[1]))
+        out.push("the More sheet hides the other destinations along with the tabs");
+      if (!/useDialogFocus\(\s*sheet\s*,/.test(panel)) out.push("the More sheet does not take and hand back focus");
+      if (!/e\.key === "Escape"\) setMoreOpen\(false\)/.test(shell)) out.push("Escape does not close the More sheet");
+    }
+    const toggles = /<div className="([^"]*)">\s*<LanguageSwitch \/>\s*<ThemeToggle \/>\s*<\/div>/.exec(shell);
+    const bare = /(?:<UsesLeft \/>|gap-2">)\s*<LanguageSwitch \/>/.test(shell);
+    if (!toggles && !bare) throw new Error("could not find the header's LanguageSwitch and ThemeToggle");
+    const togglesHidden = !!toggles && lgOnly(toggles[1]);
+    if (togglesHidden) {
+      if (!/setLanguage\(/.test(acct)) out.push("the account menu has no language row, and the header's switch is hidden below lg");
+      if (!/onClick=\{toggleTheme\}/.test(acct)) out.push("the account menu has no theme row, and the header's toggle is hidden below lg");
+    }
+    const pillCls = /className="([^"]*\bfixed\b[^"]*)"/.exec(pill);
+    if (!pillCls) throw new Error("components/FeedbackButton.tsx has no fixed element with a literal className");
+    const pillHidden = lgOnly(pillCls[1]);
+    if (pillHidden) {
+      if (!/onClick=\{onFeedback\}/.test(acct)) out.push("the account menu has no feedback row, and the pill is hidden below lg");
+      if (!/onFeedback=\{openFeedback\}/.test(shell) || !/setFeedbackOpen\(true\)/.test(shell))
+        out.push("the account menu's feedback row does not open the feedback dialog");
+      if (!/<FeedbackButton open=\{feedbackOpen\}/.test(shell))
+        out.push("the feedback dialog is not driven by the shell's feedbackOpen");
+    }
+    return { out, menuHidden, togglesHidden, pillHidden };
+  };
+  const real = read53(layout, pillSrc);
+  for (const [label, inForce, plant] of [
+    ["no language row", real.togglesHidden, (s) => s.replace(/onClick=\{\(\) => void setLanguage\([^}]*\}/, "")],
+    ["no theme row", real.togglesHidden, (s) => s.replace("onClick={toggleTheme}", "")],
+    ["no feedback row", real.pillHidden, (s) => s.replace("onClick={onFeedback}", "")],
+    ["More opens nothing", real.menuHidden, (s) => s.replace("onMore={toggleMore}", "onMore={() => {}}")],
+    ["no Escape", real.menuHidden, (s) => s.replace('e.key === "Escape") setMoreOpen(false)', 'e.key === "Esc") setMoreOpen(false)')],
+    ["the sheet hides the tools", real.menuHidden, (s) => s.replace("{!sheet && (", "{!sheet && (<>{toolsSubNav.map(() => null)}</>) && (")],
+  ]) {
+    if (!inForce) continue; // that control still shows below lg, so nothing is required of it
+    const src = plant(layout);
+    if (src === layout) {
+      if (real.out.length) continue; // the real file already lacks it; reported below
+      throw new Error(`the probe could not plant "${label}" into AppLayout`);
+    }
+    if (!read53(src, pillSrc).out.length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of real.out) fail(`check 53: layouts/AppLayout.tsx: ${p} (PLAN 31.2/8, /12)`);
+} catch (e) {
+  fail(`phone header check (check 53) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

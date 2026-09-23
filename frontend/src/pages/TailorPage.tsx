@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import { Wand2, Download, Save, BadgeCheck, Briefcase, ExternalLink, ArrowLeft, ScanEye, Target } from "lucide-react";
@@ -105,6 +105,8 @@ const ownsAnchor = (editAnchor: string, overrideAnchor: string, whole: boolean):
 
 export default function TailorPage() {
   const { t } = useTranslation("tailor");
+  const { t: tCommon } = useTranslation("common");
+  const navigate = useNavigate();
   const loc = useLocation() as {
     key: string;
     state?: { jdText?: string; jobUrl?: string; jobTitle?: string; company?: string };
@@ -948,12 +950,15 @@ export default function TailorPage() {
     };
   }
 
+  // A save's toast offers the next step, not only the news (PLAN 31.2/10).
+  const viewTracker = { action: { label: tCommon("actions.view"), onClick: () => navigate("/tracker") } };
+
   async function save() {
     if (!result || !jd) return;
     if (savedAppId !== null) {
       // Already created (by Save or "Yes, applied") — never double-create.
       setTailorState({ saved: true });
-      toast("success", t("toasts.alreadyInTracker"));
+      toast("success", t("toasts.alreadyInTracker"), viewTracker);
       return;
     }
     const app = await saveApplication({
@@ -968,7 +973,7 @@ export default function TailorPage() {
     });
     setTailorState({ savedAppId: app.id, saved: true });
     persistRejectedPhrases();
-    toast("success", t("toasts.savedToTracker"));
+    toast("success", t("toasts.savedToTracker"), viewTracker);
   }
 
   async function markApplied() {

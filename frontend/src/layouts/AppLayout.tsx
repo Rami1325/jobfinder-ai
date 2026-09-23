@@ -28,6 +28,10 @@ import {
   Settings,
   LogOut,
   User,
+  Languages,
+  MessageSquarePlus,
+  Moon,
+  Sun,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -40,6 +44,9 @@ import LanguageSwitch from "../components/LanguageSwitch";
 import OnboardingModal from "../components/OnboardingModal";
 import ThemeToggle from "../components/ThemeToggle";
 import { getAuthMe, markOnboarded, refreshUses } from "../api/client";
+import { setLanguage } from "../i18n";
+import { useTheme } from "../hooks/useTheme";
+import { useDialogFocus } from "../hooks/useDialogFocus";
 import { isOnboarded, markOnboardedHere, onboardingStep } from "../lib/onboarding";
 import { authRedirectUrl } from "../lib/safeNext";
 import { signOut } from "../lib/session";
@@ -192,13 +199,23 @@ function MenuPanel({
   searching,
   awaiting,
   onNavigate,
+  sheet = false,
 }: {
   searching: boolean;
   awaiting: number;
   onNavigate: () => void;
+  /** Below `lg`: the More sheet the tab bar opens, from the bottom where the
+   * thumb that opened it is (PLAN 31.2/8). It leaves out the three
+   * destinations the tab bar already shows. It used to be this same panel
+   * dropping from the TOP of the screen, far from that thumb, repeating them. */
+  sheet?: boolean;
 }) {
   const { t } = useTranslation();
   const { t: tTools } = useTranslation("tools");
+  const sheetRef = useRef<HTMLDivElement>(null);
+  // The sheet is modal: it takes focus, keeps Tab inside, and hands focus back
+  // to the More tab when it closes (check-mirrors 42's hook). The dropdown is not.
+  useDialogFocus(sheet, sheetRef);
 
   const spinner = searching ? (
     <Loader2
@@ -227,34 +244,12 @@ function MenuPanel({
       </span>
     ) : undefined;
 
-  return (
-    <LayoutGroup id="nav">
-      <motion.nav
-        id="app-menu-panel"
-        aria-label={t("nav.menu")}
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -8 }}
-        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-        className={cn(
-          // Below lg: a full-width sheet hung under the header, with its OWN
-          // scroller. `overscroll-contain` so reaching the end of the list does
-          // not hand the scroll to the page underneath — the sheet is fixed, so
-          // chaining would slide the document out from behind it while the menu
-          // sits still, which reads as a broken screen.
-          "fixed start-0 end-0 top-14 max-h-[calc(100dvh-3.5rem)] overflow-y-auto overscroll-contain",
-          "border-b border-line bg-bg-soft px-3 pt-4 shadow-panel",
-          "pb-[calc(1rem+env(safe-area-inset-bottom))]",
-          // lg+: the same component as an anchored dropdown card. `inset-auto`
-          // first so the sheet's start/end pinning is released before start-0
-          // re-anchors it under the Menu button.
-          "lg:absolute lg:inset-auto lg:start-0 lg:top-[calc(100%+0.5rem)]",
-          "lg:max-h-[calc(100dvh-5rem)] lg:w-[21rem] lg:rounded-2xl lg:border lg:pb-4",
-        )}
-      >
-        {/* Caps the column on tablets. No effect at 390px (max-w-md is wider
-            than the viewport), so the phone still gets a full-bleed sheet. */}
-        <div className="mx-auto w-full max-w-md lg:max-w-none">
+  const body = (
+    // Caps the column on tablets. No effect at 390px (max-w-md is wider than
+    // the viewport), so the phone still gets a full-bleed sheet.
+    <div className="mx-auto w-full max-w-md lg:max-w-none">
+      {!sheet && (
+        <>
           <SectionLabel className="px-3">{t("nav.primary")}</SectionLabel>
           <div className="mt-1.5 space-y-0.5">
             {primaryNav.map((item) => (
@@ -268,76 +263,137 @@ function MenuPanel({
               />
             ))}
           </div>
+        </>
+      )}
 
-          <SectionLabel className="mt-5 px-3">{t("nav.more")}</SectionLabel>
-          <div className="mt-1.5 space-y-0.5">
-            {moreNav.map((item) => (
-              <NavItem
-                key={item.to}
-                to={item.to}
-                icon={item.icon}
-                label={t(item.labelKey)}
-                onNavigate={onNavigate}
-              />
-            ))}
-            {/* `end`: /tools is the index card grid, so it must not stay lit
-                while one of the eight sub-tools below is the active route. */}
-            <NavItem
-              to="/tools"
-              end
-              icon={Wrench}
-              label={t("nav.tools")}
-              onNavigate={onNavigate}
-            />
-            <div className="ms-4 mt-0.5 space-y-0.5 border-s border-line/70 ps-2">
-              {toolsSubNav.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  onClick={onNavigate}
-                  className={({ isActive }) =>
-                    cn(
-                      "relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
-                      isActive
-                        ? "font-semibold text-ink"
-                        : "text-ink-muted hover:bg-panel-2/60 hover:text-ink",
-                    )
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      {isActive && (
-                        <motion.span
-                          layoutId="nav-pill"
-                          aria-hidden
-                          transition={{ type: "spring", stiffness: 550, damping: 45 }}
-                          className="absolute inset-0 rounded-lg bg-panel-2"
-                        >
-                          <span className="absolute inset-y-1.5 start-1 w-1 rounded-full bg-accent" />
-                        </motion.span>
-                      )}
-                      <item.icon size={15} className="relative shrink-0" />
-                      <span className="relative min-w-0 flex-1 truncate">
-                        {tTools(`cards.${item.key}.title`)}
-                      </span>
-                    </>
+      <SectionLabel className={cn("px-3", !sheet && "mt-5")}>{t("nav.more")}</SectionLabel>
+      <div className="mt-1.5 space-y-0.5">
+        {moreNav.map((item) => (
+          <NavItem
+            key={item.to}
+            to={item.to}
+            icon={item.icon}
+            label={t(item.labelKey)}
+            onNavigate={onNavigate}
+          />
+        ))}
+        {/* `end`: /tools is the index card grid, so it must not stay lit
+            while one of the eight sub-tools below is the active route. */}
+        <NavItem
+          to="/tools"
+          end
+          icon={Wrench}
+          label={t("nav.tools")}
+          onNavigate={onNavigate}
+        />
+        <div className="ms-4 mt-0.5 space-y-0.5 border-s border-line/70 ps-2">
+          {toolsSubNav.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  "relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
+                  isActive
+                    ? "font-semibold text-ink"
+                    : "text-ink-muted hover:bg-panel-2/60 hover:text-ink",
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <motion.span
+                      layoutId="nav-pill"
+                      aria-hidden
+                      transition={{ type: "spring", stiffness: 550, damping: 45 }}
+                      className="absolute inset-0 rounded-lg bg-panel-2"
+                    >
+                      <span className="absolute inset-y-1.5 start-1 w-1 rounded-full bg-accent" />
+                    </motion.span>
                   )}
-                </NavLink>
-              ))}
-            </div>
-          </div>
-
-          {/* The trust badge followed the nav out of the deleted rail. It says
-              what this product refuses to do, so it belongs where the whole
-              product is listed — and rendering t("nav.trust") from THIS file is
-              what keeps check-mirrors check 9 guarding the key. */}
-          <div className="mt-5 flex items-center gap-2 rounded-lg border border-mint/35 bg-mint/10 px-3 py-2 text-xs font-semibold text-mint">
-            <ShieldCheck size={15} className="shrink-0" />
-            {t("nav.trust")}
-          </div>
+                  <item.icon size={15} className="relative shrink-0" />
+                  <span className="relative min-w-0 flex-1 truncate">
+                    {tTools(`cards.${item.key}.title`)}
+                  </span>
+                </>
+              )}
+            </NavLink>
+          ))}
         </div>
+      </div>
+
+      {/* The trust badge followed the nav out of the deleted rail. It says
+          what this product refuses to do, so it belongs where the whole
+          product is listed — and rendering t("nav.trust") from THIS file is
+          what keeps check-mirrors check 9 guarding the key. */}
+      <div className="mt-5 flex items-center gap-2 rounded-lg border border-mint/35 bg-mint/10 px-3 py-2 text-xs font-semibold text-mint">
+        <ShieldCheck size={15} className="shrink-0" />
+        {t("nav.trust")}
+      </div>
+    </div>
+  );
+
+  if (sheet)
+    return (
+      <LayoutGroup id="nav">
+        {/* A dialog holding the nav, not a nav claiming to be a dialog. It sits
+            on the modal layer (z-50, like BlockEditSheet) OVER the tab bar, with
+            its own scroller; `overscroll-contain` keeps a drag that reaches the
+            end of the list from scrolling the page behind the backdrop. Only
+            transform and opacity move (house rule: never a height). */}
+        <motion.div
+          ref={sheetRef}
+          id="app-more-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("nav.more")}
+          tabIndex={-1}
+          initial={{ y: "100%" }}
+          animate={{ y: 0 }}
+          exit={{ y: "100%" }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="fixed inset-x-0 bottom-0 z-50 max-h-[85dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-line bg-bg-soft px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-2 shadow-panel focus:outline-none lg:hidden"
+        >
+          <div aria-hidden className="mx-auto mb-3 h-1 w-10 rounded-full bg-line" />
+          <nav aria-label={t("nav.menu")}>{body}</nav>
+        </motion.div>
+      </LayoutGroup>
+    );
+
+  return (
+    <LayoutGroup id="nav">
+      {/* lg and up only: the header's Menu is hidden below lg, where the tab
+          bar is the nav and More opens the sheet above. */}
+      <motion.nav
+        id="app-menu-panel"
+        aria-label={t("nav.menu")}
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+        className="absolute start-0 top-[calc(100%+0.5rem)] max-h-[calc(100dvh-5rem)] w-[21rem] overflow-y-auto overscroll-contain rounded-2xl border border-line bg-bg-soft px-3 pb-4 pt-4 shadow-panel"
+      >
+        {body}
       </motion.nav>
     </LayoutGroup>
+  );
+}
+
+/** This month's uses, in the phone header, which is the logo, this and the
+ * avatar (PLAN 31.2/8). Only a count this page knows: nothing for the admin, a
+ * plan with no monthly limit, or an /auth/me that could not be read, the
+ * account menu's rule (cost-and-quota.md). At lg the account menu's line says
+ * it. In AppLayout.tsx for check 9's reason; check-mirrors 32(d) reads it. */
+function UsesLeft() {
+  const { t } = useTranslation();
+  const uses = usesFor("", undefined, useUsesState());
+  if (!uses.limited || uses.remaining === null) return null;
+  return (
+    <span className="shrink-0 rounded-full border border-line px-2.5 py-1 text-xs font-semibold tabular-nums text-ink-muted lg:hidden">
+      {uses.remaining === 0 ? t("uses.headerNone") : t("uses.headerLeft", { count: uses.remaining })}
+    </span>
   );
 }
 
@@ -374,13 +430,17 @@ function AccountMenu({
   open,
   onToggle,
   onClose,
+  onFeedback,
 }: {
   me: Me | null;
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
+  onFeedback: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { theme, toggle: toggleTheme } = useTheme();
+  const isHebrew = (i18n.resolvedLanguage ?? "en").startsWith("he");
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   useDismiss(ref, open, onClose);
@@ -445,7 +505,9 @@ function AccountMenu({
                 no monthly limit, or an /auth/me that could not be read. It stays
                 in AppLayout.tsx, for check 9's reason. */}
             {uses.limited && (
-              <p className={cn("truncate px-3 pb-2 text-xs text-ink-muted", !me?.name && "pt-1.5")}>
+              // Wraps, never truncates: cut at 240px, the Hebrew sentence lost
+              // its count behind an ellipsis (PLAN 31.2 shell pass).
+              <p className={cn("px-3 pb-2 text-xs leading-snug text-ink-muted", !me?.name && "pt-1.5")}>
                 {t("uses.account", { count: uses.limit ?? 0, remaining: uses.remaining ?? 0 })}
               </p>
             )}
@@ -457,6 +519,42 @@ function AccountMenu({
               <Settings size={15} className="shrink-0" />
               {t("nav.settings")}
             </Link>
+            {/* Below lg the header keeps only the logo, the uses left and this
+                avatar (PLAN 31.2/8 and /12): the feedback pill, the language
+                switch and the theme toggle it dropped are these three rows. At
+                lg all three stay where they were, so the rows hide. The
+                language names itself, as the header switch does. */}
+            <div className="lg:hidden">
+              <button
+                type="button"
+                onClick={onFeedback}
+                className={cn(item, "text-ink-muted hover:bg-panel-2/60 hover:text-ink")}
+              >
+                <MessageSquarePlus size={15} className="shrink-0" />
+                {t("feedback.title")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void setLanguage(isHebrew ? "en" : "he")}
+                lang={isHebrew ? "en" : "he"}
+                className={cn(item, "text-ink-muted hover:bg-panel-2/60 hover:text-ink")}
+              >
+                <Languages size={15} className="shrink-0" />
+                {isHebrew ? "English" : "עברית"}
+              </button>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className={cn(item, "text-ink-muted hover:bg-panel-2/60 hover:text-ink")}
+              >
+                {theme === "dark" ? (
+                  <Sun size={15} className="shrink-0" />
+                ) : (
+                  <Moon size={15} className="shrink-0" />
+                )}
+                {t(theme === "dark" ? "theme.toLight" : "theme.toDark")}
+              </button>
+            </div>
             {/* "Close my account" lived here, in red, one tap from Settings
                 (PLAN 31.1/12). It is only in Settings' danger zone now, which
                 states each way out's cost before it is pressed
@@ -481,9 +579,10 @@ function AccountMenu({
 }
 
 /** Bottom tab bar — the primary navigation on phones. Always visible and
- * thumb-reachable. The three core destinations get a tab each; "More" opens the
- * SAME top menu panel the header does — three plus More is the four-item bar,
- * and there is still exactly one menu definition.
+ * thumb-reachable. The three core destinations get a tab each; "More" opens
+ * the More SHEET, `MenuPanel` drawn from the bottom without the three tabs it
+ * would repeat (PLAN 31.2/8) — three plus More is the four-item bar, and there
+ * is still exactly one menu definition.
  *
  * INVARIANT: `moreActive` (see the call site) must never be true while any
  * primaryNav NavLink is active. This function has no <LayoutGroup> of its own,
@@ -495,13 +594,13 @@ function AccountMenu({
 function MobileTabBar({
   searching,
   awaiting,
-  menuOpen,
+  moreOpen,
   moreActive,
   onMore,
 }: {
   searching: boolean;
   awaiting: number;
-  menuOpen: boolean;
+  moreOpen: boolean;
   moreActive: boolean;
   onMore: () => void;
 }) {
@@ -561,20 +660,16 @@ function MobileTabBar({
             elementFromPoint probe showing the panel's backdrop over this exact
             slot at 390px. True — and irrelevant to assistive tech, which
             reaches a control through the accessibility tree and ignores
-            z-order and pointer occlusion entirely. Nothing here is `inert`, so
-            a screen-reader user could always reach this button, be promised a
-            popup by aria-haspopup, and never be told whether it was open.
-            `data-dismiss-keep` is the other half: it makes this a real toggle
-            for an activation that dispatches pointer events at the element
-            (see useDismiss), instead of one that closes and reopens the panel
-            in the same gesture and appears to do nothing. */}
+            z-order and pointer occlusion entirely, so it says whether the
+            sheet it controls is open. The sheet is dismissed by its own
+            backdrop and Escape, never by useDismiss, so this needs no
+            `data-dismiss-keep` any more. */}
         <button
           type="button"
           onClick={onMore}
-          data-dismiss-keep
-          aria-haspopup="true"
-          aria-expanded={menuOpen}
-          aria-controls={menuOpen ? "app-menu-panel" : undefined}
+          aria-haspopup="dialog"
+          aria-expanded={moreOpen}
+          aria-controls={moreOpen ? "app-more-sheet" : undefined}
           className={tabCls(moreActive)}
         >
           {moreActive && (
@@ -734,22 +829,38 @@ export default function AppLayout() {
   // approveKit requires — a queued or failed kit is not something to review.
   const awaitingKits = kits?.filter((k) => k.status === "done").length ?? 0;
 
-  // Two popovers, one at a time — opening either closes the other, so the panel
-  // and the account card can never overlap at the top-end corner on a phone.
+  // Three popovers, one at a time — opening any closes the others: the Menu
+  // dropdown (lg and up), the account card, and the More sheet (below lg).
   const [menuOpen, setMenuOpen] = useState(false);
   const [acctOpen, setAcctOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  // The feedback dialog, opened by the desktop pill or by the account menu's
+  // row below lg (PLAN 31.2/12).
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const closeAll = useCallback(() => {
     setMenuOpen(false);
     setAcctOpen(false);
+    setMoreOpen(false);
   }, []);
   const toggleMenu = useCallback(() => {
     setAcctOpen(false);
+    setMoreOpen(false);
     setMenuOpen((v) => !v);
   }, []);
   const toggleAcct = useCallback(() => {
     setMenuOpen(false);
+    setMoreOpen(false);
     setAcctOpen((v) => !v);
   }, []);
+  const toggleMore = useCallback(() => {
+    setMenuOpen(false);
+    setAcctOpen(false);
+    setMoreOpen((v) => !v);
+  }, []);
+  const openFeedback = useCallback(() => {
+    closeAll();
+    setFeedbackOpen(true);
+  }, [closeAll]);
 
   // Close on route change. This is the BELT to the item handlers' braces: a
   // NavLink already calls onNavigate, but "Delete account" moves the hash only
@@ -761,6 +872,16 @@ export default function AppLayout() {
 
   const menuRef = useRef<HTMLDivElement>(null);
   useDismiss(menuRef, menuOpen, closeAll);
+  // The More sheet closes on Escape. useDialogFocus keeps Tab inside it but
+  // leaves Escape to the overlay, and the backdrop covers only the pointer.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMoreOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [moreOpen]);
 
   // Must stay disjoint from every primaryNav `to` — see the MobileTabBar
   // invariant. /settings is folded in here for exactly the reason /interview
@@ -795,9 +916,10 @@ export default function AppLayout() {
           header box instead of the viewport — the sheet would be clipped to a
           strip and its backdrop would cover nothing.
 
-          z-45, and both neighbours are the reason. ABOVE 40 because the menu
-          panel and its backdrop hang from this element's stacking context and
-          have to cover the z-30 tab bar and the z-40 feedback pill. BELOW 50
+          z-45, and both neighbours are the reason. ABOVE 40 because the Menu
+          dropdown hangs from this element's stacking context and has to cover
+          the z-40 feedback pill at lg (below lg there is no Menu and no pill;
+          the More sheet sits on the modal layer instead). BELOW 50
           because 50 is this app's modal layer (Modal, BlockEditSheet), and at
           z-50 the header painted OVER BlockEditSheet's scrim: opening an
           experience entry at 390px dimmed the whole page except a bright,
@@ -815,7 +937,9 @@ export default function AppLayout() {
             <Logo size={26} />
           </Link>
 
-          <div ref={menuRef} className="relative shrink-0">
+          {/* lg and up only (PLAN 31.2/8). Below lg the tab bar is the nav,
+              and its More opens the sheet from the bottom. */}
+          <div ref={menuRef} className="relative hidden shrink-0 lg:block">
             <button
               type="button"
               onClick={toggleMenu}
@@ -837,51 +961,22 @@ export default function AppLayout() {
               />
             </button>
 
+            {/* No backdrop: the card is small and anchored, so a dimmed page
+                would be theatre; the pointerdown-outside dismiss covers it. */}
             <AnimatePresence>
               {menuOpen && (
-                <>
-                  {/* Phone/tablet only. At lg the card is small and anchored, so
-                      a dimmed page would be theatre; the pointerdown-outside
-                      dismiss covers that breakpoint instead.
-
-                      `touch-none` is what actually holds the page still. The
-                      deleted drawer locked `document.body.style.overflow`; the
-                      panel's own `overscroll-contain` replaced it and does not
-                      cover this case at all — it only stops chaining OUT of
-                      the panel, and a drag that starts on this backdrop is not
-                      in the panel. So the document scrolled behind a
-                      stationary sheet. `touch-action: none` refuses the drag
-                      at source, with no body style to set, restore, and fight
-                      BlockEditSheet's own lock over — and no desktop
-                      scrollbar-width jump, since this element is lg:hidden. */}
-                  <motion.div
-                    onClick={closeAll}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.18 }}
-                    className="fixed bottom-0 end-0 start-0 top-14 touch-none bg-black/40 lg:hidden"
-                  />
-                  <MenuPanel
-                    searching={searching}
-                    awaiting={awaitingKits}
-                    onNavigate={closeAll}
-                  />
-                </>
+                <MenuPanel searching={searching} awaiting={awaitingKits} onNavigate={closeAll} />
               )}
             </AnimatePresence>
           </div>
 
-          {/* lg+ ONLY, and that is a width budget, not taste. This row cannot
-              wrap and every item in it is shrink-0: at 390px the logo (~118px),
-              Menu (~77px) and the utilities cluster (~112px) plus gaps come to
-              ~323px of the 358px inside the padding, and this spinner and its
-              gap spend 23px of the 35px left — so a 360px phone overflowed, and
-              below lg `body { overflow-x: clip }` means it CLIPS the account
-              avatar rather than scrolling to it. Nothing is lost: below lg the
-              bottom tab bar pulses a dot on the Jobs tab and the menu panel
-              spins on its Jobs row, and the tab bar is exactly the thing that
-              is hidden at lg. */}
+          {/* lg+ ONLY. It began as a width budget: with Menu, the language
+              switch and the theme toggle in this row, a spinner overflowed a
+              360px phone, and below lg `body { overflow-x: clip }` CLIPS the
+              account avatar rather than scrolling to it. The phone header is
+              now the logo, the uses left and the avatar (PLAN 31.2/8), and the
+              spinner stays out of it anyway: below lg the tab bar pulses a dot
+              on the Jobs tab, and the tab bar is exactly what is hidden at lg. */}
           {searching && (
             <Loader2
               size={15}
@@ -892,9 +987,19 @@ export default function AppLayout() {
           )}
 
           <div className="ms-auto flex shrink-0 items-center gap-2">
-            <LanguageSwitch />
-            <ThemeToggle />
-            <AccountMenu me={me} open={acctOpen} onToggle={toggleAcct} onClose={closeAll} />
+            <UsesLeft />
+            {/* Below lg these two are rows in the account menu. */}
+            <div className="hidden items-center gap-2 lg:flex">
+              <LanguageSwitch />
+              <ThemeToggle />
+            </div>
+            <AccountMenu
+              me={me}
+              open={acctOpen}
+              onToggle={toggleAcct}
+              onClose={closeAll}
+              onFeedback={openFeedback}
+            />
           </div>
         </div>
       </header>
@@ -910,15 +1015,16 @@ export default function AppLayout() {
           a centered `main` can only reach the window edge through a 100vw
           bleed, and 100vw counts the Windows scrollbar.
 
-          Below `lg` the bottom padding must clear the FEEDBACK PILL, not only
-          the tab bar: the pill's top edge is 4.25rem + its own ~2.4rem above
-          the viewport's bottom, plus the safe-area inset. `pb-24` (6rem, no
-          inset) left the last line under the pill by 10 px at 390 px, and by
-          the whole 34 px home-indicator inset more on an iPhone, where no
-          scroll could bring it out. Measured with Playwright at 390x844. */}
+          Below `lg` the bottom padding must clear the TAB BAR (3.5rem) plus
+          the safe-area inset, with a rem to spare. It used to clear the
+          feedback pill, 4.25rem + its own ~2.4rem up, but the pill is
+          desktop-only since PLAN 31.2/12. The inset is not optional: `pb-24`
+          (6rem, no inset) left the last line under the pill by 10 px at
+          390 px, and on an iPhone the 34 px home indicator took more that no
+          scroll could bring out. check-mirrors 41 reads both files. */}
       <main
         className={cn(
-          "pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-8 lg:pb-10",
+          "pb-[calc(4.5rem+env(safe-area-inset-bottom))] pt-8 lg:pb-10",
           !docRoute && "mx-auto max-w-6xl px-4 lg:px-8",
         )}
       >
@@ -941,12 +1047,35 @@ export default function AppLayout() {
       <MobileTabBar
         searching={searching}
         awaiting={awaitingKits}
-        menuOpen={menuOpen}
+        moreOpen={moreOpen}
         moreActive={moreActive}
-        onMore={toggleMenu}
+        onMore={toggleMore}
       />
 
-      <FeedbackButton />
+      <AnimatePresence>
+        {moreOpen && (
+          <>
+            {/* `touch-none` is what holds the page still: `overscroll-contain`
+                on the sheet stops a scroll chaining OUT of it, and a drag that
+                starts on this backdrop is not in it, so the document used to
+                scroll behind a stationary panel. `touch-action: none` refuses
+                that drag at source, with no body style to set, restore, and
+                fight BlockEditSheet's own lock over. */}
+            <motion.div
+              aria-hidden
+              onClick={() => setMoreOpen(false)}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="fixed inset-0 z-50 touch-none bg-black/40 lg:hidden"
+            />
+            <MenuPanel sheet searching={searching} awaiting={awaitingKits} onNavigate={closeAll} />
+          </>
+        )}
+      </AnimatePresence>
+
+      <FeedbackButton open={feedbackOpen} onOpenChange={setFeedbackOpen} />
       <OnboardingModal open={onboardOpen} onClose={() => setOnboardOpen(false)} />
     </div>
   );

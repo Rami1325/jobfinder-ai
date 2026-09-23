@@ -532,6 +532,7 @@ export function JobResultCard({ children }: { children: ReactNode }) {
 export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; appStatus?: string }) {
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
+  const { t: tCommon } = useTranslation("common");
   const toast = useToast();
   const { batching, kits } = useSyncExternalStore(subscribeKits, getKitsState);
   // Opening a job's existing kit is free and a new one uses 1 (Phase 30 / C4), so
@@ -564,7 +565,10 @@ export function MatchCard({ m, best, appStatus }: { m: JobMatch; best: boolean; 
         status: "saved",
       });
       setJustSaved(true);
-      toast("success", t("card.saveDone"));
+      // With the next step, not only the news (PLAN 31.2/10).
+      toast("success", t("card.saveDone"), {
+        action: { label: tCommon("actions.view"), onClick: () => nav("/tracker") },
+      });
     } catch {
       toast("error", t("card.saveFailed"));
     } finally {

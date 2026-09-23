@@ -47,7 +47,8 @@
     "back": "Back",
     "save": "Save",
     "download": "Download",
-    "retry": "Try again"
+    "retry": "Try again",
+    "view": "View"
   },
   "resumeUpload": {
     "drop": "Drop your resume, or click to choose",
@@ -165,7 +166,10 @@
       "fit_check": "Fit checks",
       "rewrites": "Bullet rewrites",
       "job_alert": "Job alert emails"
-    }
+    },
+    "headerLeft_one": "{{count}} use left",
+    "headerLeft_other": "{{count}} uses left",
+    "headerNone": "No uses left"
   },
   "placeholder": {
     "body": "This section is being built. Check back shortly."
@@ -209,5 +213,9 @@
     "contextTranscript": "Your CV and this practice session are too long together for the AI to read in one go, so your last answer was not sent. End the session for your scorecard, or trim the oldest roles in your CV and start again.",
     "contextSession": "Your CV and this practice session are too long together for the AI to score in one go. Trim the oldest roles in your CV, then start a new session.",
     "truncated": "The AI ran out of room before finishing. Try again, or shorten your CV a little first."
+  },
+  "theme": {
+    "toDark": "Switch to dark mode",
+    "toLight": "Switch to light mode"
   }
 }
