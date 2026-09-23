@@ -24621,6 +24621,94 @@ try:
             and _snap32(_ft_uid32).by_feature == {"fit_check": 0, "tailor": 2},
             f"{_ft_again32.status_code}/{_hdr32(_ft_again32)} {_shape32(_events32(_ft_uid32))}",
         )
+
+        # --- 31.3/2 the tailor as a stream: its real stages, /tailor's charge, the same refusals ----------------------
+        from app.core.tailor import TAILOR_STAGES as _STAGES313  # noqa: E402
+        from app.models import TailorResult as _TR313  # noqa: E402
+
+        def _stream313(headers, jd_json):  # noqa: ANN001
+            resp = _c32c.post("/tailor/stream", json={"resume": _R32, "jd": jd_json}, headers=headers)
+            return resp, _sse_events(resp.text)
+
+        def _stream_down313(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("model unavailable")
+
+        def _stream_too_big313(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise InputTooLarge("resume", 300, 256)
+
+        _st_uid313, _ST313_H = _mint32(_c32c, "Tailor Stream")
+        _st_ok313, _st_fr313 = _stream313(_ST313_H, _JDJ32)
+        _st_stages313 = [d.get("stage") for n, d in _st_fr313 if n == "progress"]
+        _st_res313 = [d for n, d in _st_fr313 if n == "result"]
+        check(
+            "31.3/2 tailor stream: a 200 event-stream whose uses header is set before the first frame (9), one progress "
+            "frame per stage in the pipeline's own order (TAILOR_STAGES, five of them), then ONE result, last, that "
+            "validates as a TailorResult; the use is kept (+1, used 1 == SUM(delta))",
+            _st_ok313.status_code == 200 and "text/event-stream" in _st_ok313.headers.get("content-type", "")
+            and _hdr32(_st_ok313) == "9"
+            and _st_stages313 == list(_STAGES313) and len(_STAGES313) == 5
+            and len(_st_res313) == 1 and _st_fr313[-1][0] == "result"
+            and _TR313.model_validate(_st_res313[0]).tailored_resume is not None
+            and _shape32(_events32(_st_uid313)) == [("tailor", 1, 0, "")]
+            and _pool32(f"u:{_st_uid313}", _P_THIS32) == (1, 1),
+            f"{_st_ok313.status_code}/{_hdr32(_st_ok313)} stages={_st_stages313} results={len(_st_res313)} "
+            f"{_shape32(_events32(_st_uid313))}",
+        )
+        _routes32.tailor_resume = _stream_down313
+        try:
+            _st_bad313, _st_badfr313 = _stream313(_ST313_H, _JDJ32)
+        finally:
+            _routes32.tailor_resume = _real_tailor32b
+        _routes32.tailor_resume = _stream_too_big313
+        try:
+            _st_big313, _st_bigfr313 = _stream313(_ST313_H, _JDJ32)
+        finally:
+            _routes32.tailor_resume = _real_tailor32b
+        _st_badE313 = [d for n, d in _st_badfr313 if n == "error"]
+        _st_bigE313 = [d for n, d in _st_bigfr313 if n == "error"]
+        _st_ev313 = _events32(_st_uid313)
+        check(
+            "31.3/2 tailor stream: a tailor that fails is ONE error frame (502) after the 200, and one that is too big "
+            "is ONE error frame carrying the plain 413's own status and detail (input_too_large, kind resume, 300 of "
+            "256 KB); each is charged +1 and given back (marked refunded, answered by its -1 refund), used back to 1 "
+            "== SUM(delta)",
+            _st_bad313.status_code == 200 and len(_st_badE313) == 1 and _st_badE313[0].get("status") == 502
+            and "model unavailable" in str(_st_badE313[0].get("detail"))
+            and _st_big313.status_code == 200 and len(_st_bigE313) == 1 and _st_bigE313[0].get("status") == 413
+            and _st_bigE313[0].get("detail")
+            == {"code": "input_too_large", "kind": "resume", "size_kb": 300, "cap_kb": 256}
+            and len(_st_ev313) == 5
+            and _refunded32(_st_ev313[1:3], "tailor") and _refunded32(_st_ev313[3:5], "tailor")
+            and _pool32(f"u:{_st_uid313}", _P_THIS32) == (1, 1),
+            f"{_st_badE313} {_st_bigE313} {_shape32(_st_ev313)}",
+        )
+        _sr_uid313, _SR313_H = _mint32(_c32c, "Fit Then Stream")
+        _sr_ok313, _sr_fr313 = _stream313(_SR313_H, _fit_jd32(_fit_call32(_SR313_H)))
+        _sr_rows313 = _passes32(_sr_uid313)
+        _sr_ride313 = f"ride:{_sr_rows313[0].id}" if _sr_rows313 else "ride:none"
+        _sx_uid313, _SX313_H = _mint32(_c32c, "Fit Then Failed Stream")
+        _sx_jd313 = _fit_jd32(_fit_call32(_SX313_H))
+        _routes32.tailor_resume = _stream_down313
+        try:
+            _sx_bad313, _sx_fr313 = _stream313(_SX313_H, _sx_jd313)
+        finally:
+            _routes32.tailor_resume = _real_tailor32b
+        check(
+            "31.3/2 tailor stream after a fit check of the same JD rides it like /tailor: the ledger reclassifies the "
+            "fit (fit_check -1, tailor +1, both ride:<pass id>), used stays 1 and the ride is spent (1 of 1); a covered "
+            "stream that FAILS gives the ride back (0 of 1) and writes nothing past the fit check",
+            _sr_ok313.status_code == 200 and _sr_fr313 and _sr_fr313[-1][0] == "result"
+            and _shape32(_events32(_sr_uid313))
+            == [("fit_check", 1, 0, ""), ("fit_check", -1, 0, _sr_ride313), ("tailor", 1, 0, _sr_ride313)]
+            and _pool32(f"u:{_sr_uid313}", _P_THIS32) == (1, 1)
+            and [(r.calls, r.max_calls) for r in _sr_rows313] == [(1, 1)]
+            and [n for n, _ in _sx_fr313] == ["error"]
+            and _shape32(_events32(_sx_uid313)) == [("fit_check", 1, 0, "")]
+            and [(r.calls, r.max_calls) for r in _passes32(_sx_uid313)] == [(0, 1)],
+            f"{_shape32(_events32(_sr_uid313))} {[(r.calls, r.max_calls) for r in _sr_rows313]} "
+            f"{[n for n, _ in _sx_fr313]} {_shape32(_events32(_sx_uid313))} "
+            f"{[(r.calls, r.max_calls) for r in _passes32(_sx_uid313)]}",
+        )
         _fd_uid32, _FD32_H = _mint32(_c32c, "Fit Another Job")
         _fd_fit32 = _fit_call32(_FD32_H)
         _fd_jd32 = _fit_jd32(_fd_fit32)
@@ -25807,6 +25895,7 @@ finally:
 # A route added without a class fails 32.13(a); a route whose source stops matching its class fails 32.13(b).
 _ROUTE_COST = {
     ("POST", "/tailor"): "charged:tailor",
+    ("POST", "/tailor/stream"): "charged:tailor",
     ("POST", "/jobs/fit"): "charged:fit_check",
     ("POST", "/kits/batch"): "charged:tailor",
     ("POST", "/jobs/search"): "charged:search",
@@ -26178,8 +26267,9 @@ _ride_routes32 = sorted(
     if {name for module, name in _reach32(route.endpoint) if module == _q32.__name__} & _RIDE_FNS32
 )
 check(
-    "32.13(b) only /jobs/fit and /tailor reach the fit-ride functions (open, claim, release, settle)",
-    _ride_routes32 == [("POST", "/jobs/fit"), ("POST", "/tailor")],
+    "32.13(b) only /jobs/fit, /tailor and its stream (PLAN 31.3/2) reach the fit-ride functions (open, claim, "
+    "release, settle)",
+    _ride_routes32 == [("POST", "/jobs/fit"), ("POST", "/tailor"), ("POST", "/tailor/stream")],
     str(_ride_routes32),
 )
 
@@ -26314,6 +26404,7 @@ def _kit_owner32(name, *, done=False):  # noqa: ANN001
 
 _CHARGED_DRIVES32 = [
     (("POST", "/tailor"), False, _call32("POST", "/tailor", json={"resume": _R32, "jd": _JDJ32})),
+    (("POST", "/tailor/stream"), False, _call32("POST", "/tailor/stream", json={"resume": _R32, "jd": _JDJ32})),
     (("POST", "/jobs/fit"), False, _call32("POST", "/jobs/fit", json={"resume": _R32, "jd_text": _FIT_TEXT32})),
     (("POST", "/kits/batch"), False, _call32("POST", "/kits/batch", json={"jobs": [_kit_job32("sweep-batch", 1)]})),
     (("POST", "/jobs/search"), False,

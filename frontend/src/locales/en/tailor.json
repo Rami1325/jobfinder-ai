@@ -650,5 +650,15 @@
     "saving": "Saving to your tracker…",
     "failed": "Not saved to your tracker.",
     "retry": "Try again"
+  },
+  "progress": {
+    "title": "Tailoring your resume for this job",
+    "stages": {
+      "plan": "Planning the story",
+      "rewrite": "Rewriting it for this job",
+      "facts": "Checking the facts",
+      "voice": "Making it sound like you",
+      "rescore": "Keywords and the score"
+    }
   }
 }

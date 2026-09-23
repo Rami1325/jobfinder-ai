@@ -8,7 +8,7 @@ import {
   saveApplication,
   saveApplicationDraft,
   saveMasterResume,
-  tailor,
+  tailorStream,
   type ResumeTemplate,
 } from "../api/client";
 import { resetMasterCache } from "../hooks/useMasterResume";
@@ -16,6 +16,7 @@ import { apiErrorMessage } from "../lib/apiError";
 import { clearDraft, writeDraft } from "../lib/draft";
 import { resumeLanguage } from "../lib/lang";
 import type { Overrides } from "../lib/resumeOverrides";
+import type { TailorStage } from "../lib/tailorStages";
 import type {
   ApplicationDraft,
   FactsLedger,
@@ -85,6 +86,9 @@ export type TailorState = {
    */
   clearedOverrides: Overrides | null;
   loading: boolean;
+  /** The pipeline stages the running tailor has REPORTED, in order (PLAN
+   * 31.3/2): what the page's progress may say, and all it may say. */
+  tailorStages: TailorStage[];
   error: string;
   /** The job's tracker row this review's draft is saved on (PLAN 31.3/4), and
    * the trimmed posting text it was saved for. A re-tailor of that same text
@@ -162,6 +166,7 @@ let state: TailorState = {
   tailorOverrides: {},
   clearedOverrides: null,
   loading: false,
+  tailorStages: [],
   error: "",
   savedAppId: null,
   savedFor: null,
@@ -280,6 +285,8 @@ export function startTailor(): void {
   if (!keepRow) newDraftRow();
   setTailorState({
     loading: true,
+    // What THIS run has reported so far: nothing yet.
+    tailorStages: [],
     error: "",
     result: null,
     tailoredFrom: resume,
@@ -357,7 +364,11 @@ export function startTailor(): void {
         /* older backend or no paired master — keep the loaded resume */
       }
     }
-    const r = await tailor(useResume, analyzed);
+    // Streamed (PLAN 31.3/2): each stage lands in the store as the pipeline
+    // starts it, and only while this is still the run on screen.
+    const r = await tailorStream(useResume, analyzed, (stage) => {
+      if (id === seq) setTailorState({ tailorStages: [...state.tailorStages, stage] });
+    });
     if (id === seq)
       setTailorState({
         loading: false,
@@ -571,6 +582,7 @@ export function adoptMaster(m: MasterResume): void {
     editUndo: [],
     editError: "",
     loading: false,
+    tailorStages: [],
     error: "",
     result: null,
     tailoredFrom: null,

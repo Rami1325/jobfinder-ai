@@ -5,6 +5,7 @@ import { resetMasterCache } from "../hooks/useMasterResume";
 import { noteDraftOwner } from "../lib/draft";
 import { inclusionFrom, noteMonthlyLimit, noteUsesHeaders, setUsage, usageIfSameUser } from "../lib/usesStore";
 import { tabAccount } from "../lib/accountWatch";
+import { isTailorStage, type TailorStage } from "../lib/tailorStages";
 import type {
   AlertRunResult,
   AlertSettings,
@@ -468,6 +469,100 @@ export async function searchJobsStream(
     throw connectionDropped();
   }
   invalidateData("history"); // the backend records every search into history
+  return out.result;
+}
+
+/**
+ * The tailor, streamed (PLAN 31.3/2): `onStage` hears each pipeline stage as the
+ * server STARTS it, and the promise resolves to the same TailorResult `tailor`
+ * returns. The charge is /tailor's, decided before the stream opens, so a
+ * monthly or daily refusal is a plain HTTP error here, carrying the uses
+ * headers; a failure after that rides the stream as an error frame whose
+ * status and detail are what a plain response would carry (a size refusal's
+ * 413 included), so `apiErrorMessage` reads either one. The parse is
+ * `searchJobsStream`'s, the same server framing.
+ */
+export async function tailorStream(
+  resume: ResumeModel,
+  jd: JDModel,
+  onStage: (stage: TailorStage) => void,
+  signal?: AbortSignal,
+): Promise<TailorResult> {
+  const code = localStorage.getItem(ACCESS_CODE_KEY);
+  const resp = await fetch(`${api.defaults.baseURL}/tailor/stream`, {
+    method: "POST",
+    // The axios instance's headers: a session-authenticated spend without
+    // CSRF_HEADER is a 403 `csrf`.
+    headers: {
+      "Content-Type": "application/json",
+      ...CSRF_HEADER,
+      ...(code ? { "X-App-Key": code } : {}),
+    },
+    body: JSON.stringify({ resume, jd }),
+    signal,
+  });
+  noteUsesHeaders(resp.headers);
+  const isSse = (resp.headers.get("content-type") || "").includes("text/event-stream");
+  if (!resp.ok || !isSse || !resp.body) {
+    let detail: unknown;
+    try {
+      detail = ((await resp.json()) as { detail?: unknown })?.detail;
+    } catch {
+      /* non-JSON body */
+    }
+    onRejected(resp.status, "/tailor/stream", detail, Boolean(code));
+    throw { response: { status: resp.status, data: { detail } } };
+  }
+
+  const out: {
+    result: TailorResult | null;
+    error: { detail?: unknown; status?: number } | null;
+  } = { result: null, error: null };
+  let event = "";
+  let data = "";
+  const dispatch = () => {
+    if (data) {
+      if (event === "progress") {
+        const stage = (JSON.parse(data) as { stage?: unknown }).stage;
+        if (isTailorStage(stage)) onStage(stage);
+      } else if (event === "result") out.result = JSON.parse(data) as TailorResult;
+      else if (event === "error") out.error = JSON.parse(data);
+    }
+    event = "";
+    data = "";
+  };
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    let chunk: Awaited<ReturnType<typeof reader.read>>;
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      throw connectionDropped();
+    }
+    const { done, value } = chunk;
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).replace(/\r$/, "");
+      buffer = buffer.slice(nl + 1);
+      if (line.startsWith("event: ")) event = line.slice("event: ".length);
+      else if (line.startsWith("data: ")) data += line.slice("data: ".length);
+      else if (line === "") dispatch();
+    }
+  }
+  if (out.error) {
+    // The server gave the use (or the ride) back on its worker, where no header
+    // can carry the count, so this tab's own account asks again: the search
+    // stream's rule, through refreshUses, never getAuthMe.
+    const account = tabAccount();
+    if (account !== null) void refreshUses(account);
+    throw { response: { status: out.error.status ?? 502, data: { detail: out.error.detail } } };
+  }
+  if (!out.result) throw connectionDropped();
   return out.result;
 }
 

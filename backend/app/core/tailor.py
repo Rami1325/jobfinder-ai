@@ -2,6 +2,7 @@
 rescore (the humanization-spec pipeline)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 
@@ -39,6 +40,17 @@ from app.render.pdf_renderer import page_count
 from app.render.templates import DEFAULT_TEMPLATE
 
 
+# The pipeline's stages, in the order it reaches them (PLAN 31.3/2). `progress`
+# is told each one AS IT STARTS, so a page can say what is happening now and
+# never what it guesses: plan (the score before ∥ the positioning plan), rewrite
+# (the TAILOR call), facts (invented roles cut, the page budget, the fabrication
+# guard), voice (the audit and, when it finds tells, the humanizer), rescore (the
+# keyword floor, the skills shortlist, the Arabic and numerals passes, and the
+# score after). `frontend/src/lib/tailorStages.ts` mirrors this tuple and
+# check-mirrors 64 holds the two equal.
+TAILOR_STAGES = ("plan", "rewrite", "facts", "voice", "rescore")
+
+
 def tailor_resume(
     resume: ResumeModel,
     jd: JDModel,
@@ -46,12 +58,20 @@ def tailor_resume(
     avoid_phrases: list[str] | None = None,
     template: str = DEFAULT_TEMPLATE,
     hide_arabic_in_israel: bool = False,
+    progress: Callable[[str], None] | None = None,
 ) -> TailorResult:
     """`avoid_phrases`: wording this user rejected in past reviews (§26
     feedback loop) — injected into the tailor prompt as a hard avoid-list.
     `template`: which resume template the page budget measures against.
     `hide_arabic_in_israel`: the user's opt-in preference (spec 07 / R1) —
-    see the omission stage near the end."""
+    see the omission stage near the end. `progress`: told each of
+    `TAILOR_STAGES` as the pipeline starts it (the stream route's frames); the
+    plain route and the kit drain pass nothing and nothing changes for them."""
+
+    def _stage(name: str) -> None:
+        if progress is not None:
+            progress(name)
+
     if ledger is None:
         ledger = build_facts_ledger(resume)
 
@@ -82,6 +102,7 @@ def tailor_resume(
     # Exceptions still propagate on `.result()`, so a failing `score_resume`
     # fails the tailor exactly as it did serially, and `plan_cv`'s own
     # best-effort `None` is unchanged.
+    _stage("plan")
     with ThreadPoolExecutor(max_workers=2) as pool:
         _score_before = pool.submit(copy_context().run, score_resume, resume, jd)
         # Stage 4 (positioning): decide the professional story before writing —
@@ -91,6 +112,7 @@ def tailor_resume(
         score_before = _score_before.result()
         plan = _plan.result()
 
+    _stage("rewrite")
     client = get_llm_client()
     data = client.complete_json(
         # Hebrew resume => tailor in Hebrew (note appended AFTER the Task tag).
@@ -134,6 +156,7 @@ def tailor_resume(
     changelog = [ChangeLogEntry.model_validate(c) for c in data.get("changelog", [])]
     covered = list(data.get("covered_keywords", []))
 
+    _stage("facts")
     # Structural repair first: "roles are protected, projects are droppable"
     # gives the model a way to rescue a project it likes — promote it into
     # experience, where nothing may remove it — and the output then claims
@@ -182,6 +205,7 @@ def tailor_resume(
     # confirms the voice actually improved — otherwise the tailored resume
     # stands. Voice polish is never allowed to cost truthfulness, and since
     # rewording can run long, it is not allowed to cost the page budget either.
+    _stage("voice")
     report = audit_voice(tailored, jd)
     if report.issues:
         revised = humanize_resume(tailored, report.issues, jd)
@@ -223,6 +247,7 @@ def tailor_resume(
     # cannot close it (a gate is a comparison, not a constraint). A guard placed
     # earlier would leave the restore un-guaranteed. Before `score_after`, so it
     # describes the resume that actually ships.
+    _stage("rescore")
     pre_restore = tailored
     tailored, _, attempted = preserve_keywords(resume, tailored, jd)
     # THE GUARD'S OWN `restored` LIST IS DROPPED ON THE FLOOR HERE, deliberately.

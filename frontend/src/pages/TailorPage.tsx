@@ -21,6 +21,7 @@ import DraftRestoreBar from "../components/DraftRestoreBar";
 import ChangeLog, { LeftOut } from "../components/ChangeLog";
 import DocumentPanel, { type DocView, type DrawerPane } from "../components/DocumentPanel";
 import DraftSummary from "../components/DraftSummary";
+import TailorProgress from "../components/TailorProgress";
 import TailorOverlay from "../components/TailorOverlay";
 import BlockEditSheet from "../components/BlockEditSheet";
 import ResumeEditBar from "../components/ResumeEditBar";
@@ -144,6 +145,7 @@ export default function TailorPage() {
     tailorOverrides,
     clearedOverrides,
     loading,
+    tailorStages,
     error,
     savedAppId,
     savedFor,
@@ -1644,7 +1646,10 @@ export default function TailorPage() {
             step two, the dialog with it and its Tailor. It replaced a three-tile
             score card whose third tile said the guard had not run yet. Only for
             the posting in `jdText`: the reading and its text are one thing. */}
-        {fit && !result && shown && checkedFor !== null && checkedFor === jdText.trim() && (
+        {/* While a tailor runs: its real stages, where the line it came from was. */}
+        {loading && <TailorProgress stages={tailorStages} />}
+
+        {fit && !result && !loading && shown && checkedFor !== null && checkedFor === jdText.trim() && (
           <button
             type="button"
             onClick={() => setTailorState({ overlayOpen: true })}
@@ -1818,13 +1823,6 @@ export default function TailorPage() {
               {t("upload.buildLink")}
             </button>
           </Card>
-        )}
-
-        {loading && (
-          <div className="space-y-4">
-            <Skeleton className="h-44 w-full" />
-            <Skeleton className="h-28 w-full" />
-          </div>
         )}
 
         <AnimatePresence>

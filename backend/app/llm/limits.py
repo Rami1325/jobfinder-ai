@@ -66,6 +66,15 @@ class InputTooLarge(Exception):
         self.cap_kb = cap_kb
         super().__init__(f"{kind} is {size_kb} KB; the limit is {cap_kb} KB")
 
+    # The status and the structured `detail` live on the refusal itself, so the
+    # two doors a refusal leaves by cannot describe it two ways: `main.py`'s
+    # handler for a plain response, and a stream's error frame, which is sent
+    # after the 200 header and so cannot use a handler (PLAN 31.3/2).
+    status = 413
+
+    def detail(self) -> dict:
+        return {"code": "input_too_large", "kind": self.kind, "size_kb": self.size_kb, "cap_kb": self.cap_kb}
+
 
 class ContextWindowExceeded(Exception):
     """The model refused the request because the prompt did not fit.
@@ -88,6 +97,16 @@ class ContextWindowExceeded(Exception):
         self.kind = kind
         super().__init__(message)
 
+    # See `InputTooLarge.detail`. A kind only when a route set one, so every
+    # other route's detail is exactly what it was.
+    status = 413
+
+    def detail(self) -> dict:
+        detail = {"code": "context_exceeded"}
+        if self.kind:
+            detail["kind"] = self.kind
+        return detail
+
 
 class OutputTruncated(Exception):
     """The model stopped because it hit the output cap (`finish_reason ==
@@ -102,6 +121,12 @@ class OutputTruncated(Exception):
     strictly worse than the token-limit error it replaced, because it reads as
     our bug rather than a limit. For `complete_text` (the cover letter) there is
     no parse error at all: the letter just silently ends mid-sentence."""
+
+    # See `InputTooLarge.detail`.
+    status = 503
+
+    def detail(self) -> dict:
+        return {"code": "output_truncated"}
 
 
 # Whitespace to back off to, so a cut never lands mid-word. `free_scan.py`

@@ -11352,6 +11352,8 @@ try {
         getMasterResume: async () => null,
         saveMasterResume: async () => ({ resume: R61, label: "" }),
         tailor: async () => ({ tailored_resume: R61, fabrication_flags: [], score_after: { overall: 50 } }),
+        // The store tailors over the stream since PLAN 31.3/2.
+        tailorStream: async () => ({ tailored_resume: R61, fabrication_flags: [], score_after: { overall: 50 } }),
         saveApplication: async (p) => {
           const id = nextId++;
           calls.push(`POST:${id}:${p.jd_text}`);
@@ -11616,6 +11618,91 @@ try {
   for (const p of real63) fail(`check 63: ${p} (PLAN 31.3/1)`);
 } catch (e) {
   fail(`one-way-in check (check 63) could not run: ${e.message}`);
+}
+
+// ---- 64. the tailor's progress is the pipeline's own report (EXECUTED) ------- //
+// PLAN 31.3/2. A tailor takes about 20 s, and the page showed two grey skeletons
+// for all of it, below the document. It shows the five stages the pipeline
+// reports over `POST /tailor/stream` now, and the house rule is the one
+// `ScanPanel` keeps for the boards: never animate progress that is not being
+// measured. (a) ONE list of stages: `lib/tailorStages.ts` must equal
+// `TAILOR_STAGES` in backend/app/core/tailor.py, the order the pipeline calls
+// `progress` in (smoke drives the stream and checks the frames arrive in it).
+// (b) EXECUTES `stageStates`: a stage is active only once reported, done only
+// once a later one is, pending otherwise, and a stage name the page does not
+// know is ignored. (c) Every stage has a label in both locales. (d) The panel is
+// fed the store's reported list and reads no clock. Probed with the mirror
+// reordered, a state that guesses, and a timer in the panel.
+try {
+  const ts64 = read("lib/tailorStages.ts");
+  const tsList = (src) => {
+    const m = /export const TAILOR_STAGES = \[([^\]]*)\] as const;/.exec(src);
+    if (!m) throw new Error("could not find `export const TAILOR_STAGES = [...] as const;` in lib/tailorStages.ts");
+    return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+  };
+  const py64 = pySource("app/core/tailor.py", "check 64");
+  if (py64 !== null) {
+    const pm = /^TAILOR_STAGES = \(([^)]*)\)/m.exec(py64);
+    if (!pm) throw new Error("could not find `TAILOR_STAGES = (...)` in backend/app/core/tailor.py");
+    const pyList = [...pm[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+    const same = (a) => JSON.stringify(a) === JSON.stringify(pyList);
+    if (pyList.length < 5) throw new Error(`parsed only ${pyList.length} stages out of tailor.py`);
+    if (!same(tsList(ts64)))
+      fail(`check 64: lib/tailorStages.ts lists [${tsList(ts64)}] where the pipeline reports [${pyList}] (PLAN 31.3/2)`);
+    const reordered = ts64.replace(/\[([^\]]*)\] as const/, (_m, body) => `[${body.split(",").reverse().join(",")}] as const`);
+    if (reordered === ts64) throw new Error("the mirror probe could not plant a reordered list");
+    if (same(tsList(reordered))) throw new Error("the mirror reader passes a reordered list, so it cannot be trusted");
+  }
+
+  const run64 = (src) => {
+    const mod = runProbeBundle("tailor-stages", src);
+    if (typeof mod.stageStates !== "function") throw new Error("lib/tailorStages.ts does not export stageStates");
+    const out = [];
+    const want = (label, heard, expected) => {
+      const got = mod.stageStates(heard);
+      const shown = mod.TAILOR_STAGES.map((s) => got[s]).join(",");
+      if (shown !== expected) out.push(`${label}: [${shown}], not [${expected}]`);
+    };
+    want("nothing reported yet", [], "pending,pending,pending,pending,pending");
+    want("the plan started", ["plan"], "active,pending,pending,pending,pending");
+    want("the rewrite started", ["plan", "rewrite"], "done,active,pending,pending,pending");
+    want("every stage reported", ["plan", "rewrite", "facts", "voice", "rescore"], "done,done,done,done,active");
+    want("a stage this page does not know", ["plan", "polish"], "active,pending,pending,pending,pending");
+    return out;
+  };
+  const real64 = run64(ts64);
+  const guessing = ts64.replace('!known.includes(s) ? "pending"', '!known.includes(s) && !last ? "pending"');
+  if (guessing === ts64) {
+    if (!real64.length) throw new Error("the probe could not plant a state that guesses");
+  } else if (!run64(guessing).length) throw new Error("the run passes a stage marked done that never reported, so it cannot be trusted");
+  for (const p of real64) fail(`check 64: stageStates, ${p} (PLAN 31.3/2)`);
+
+  for (const loc of ["en", "he"]) {
+    const ns = JSON.parse(read(`locales/${loc}/tailor.json`));
+    if (!resolvesIn(ns, "progress.title")) fail(`check 64: locales/${loc}/tailor.json has no progress.title`);
+    for (const s of tsList(ts64))
+      if (!resolvesIn(ns, `progress.stages.${s}`))
+        fail(`check 64: locales/${loc}/tailor.json has no progress.stages.${s}, so the tailor's progress shows a raw key`);
+  }
+
+  const panel64 = decomment(read("components/TailorProgress.tsx"));
+  const page64 = decomment(read("pages/TailorPage.tsx"));
+  const read64d = (panel, pg) => {
+    const out = [];
+    if (!/\bstageStates\(stages\)/.test(panel)) out.push("TailorProgress does not derive its states from the reported stages (`stageStates(stages)`)");
+    if (/\b(?:setInterval|setTimeout|Date\.now|performance\.now|requestAnimationFrame)\b/.test(panel))
+      out.push("TailorProgress reads a clock, so it can move a stage the pipeline never reported");
+    if (!/<TailorProgress stages=\{tailorStages\} \/>/.test(pg)) out.push("TailorPage does not feed TailorProgress the store's reported stages");
+    return out;
+  };
+  const real64d = read64d(panel64, page64);
+  const timed = panel64.replace("const states = stageStates(stages);", "const states = stageStates(stages);\n  setInterval(() => {}, 1000);");
+  if (timed === panel64) {
+    if (!real64d.length) throw new Error("the probe could not plant a timer");
+  } else if (!read64d(timed, page64).length) throw new Error("the reader passes a timer in the panel, so it cannot be trusted");
+  for (const p of real64d) fail(`check 64: ${p} (PLAN 31.3/2)`);
+} catch (e) {
+  fail(`tailor progress check (check 64) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

@@ -359,6 +359,139 @@ def tailor(
     return result
 
 
+@router.post("/tailor/stream")
+def tailor_stream(
+    body: TailorRequest,
+    db: Session = Depends(get_db),
+    # current_user, NOT metered_user, for the search stream's reason: the model
+    # work happens after this returns, in a thread the dependency's tally cannot
+    # see. Metered explicitly below.
+    user: User = Depends(current_user),
+) -> StreamingResponse:
+    """The same tailor as POST /tailor, as an SSE stream (PLAN 31.3/2), so the page
+    shows the pipeline's REAL stages instead of guessing from elapsed time:
+    `progress` frames ({"stage": one of `TAILOR_STAGES`}, each sent as the
+    pipeline starts it), then exactly one terminal `result` (a TailorResult) or
+    `error` ({detail, status}).
+
+    The charge is /tailor's, decided BEFORE the stream starts, so a refusal is a
+    plain HTTP 429 carrying the uses header: the daily tailor cap first, then the
+    fit check's ride, or one reserved use. The work runs on a worker thread with
+    its own token tally, billed when the stream ends, a dropped client included.
+    A tailor that returns settles the ride or keeps the use; one that fails
+    releases the ride or gives the use back BEFORE its error frame is queued, on
+    a short-lived session of the worker's own (the search stream's order, so no
+    client reads "error" while the use is still spent). The error frame carries
+    the status and the detail a plain response would, a size refusal's own
+    `detail()` included, so the client reads one shape from either door."""
+    check_and_count(db, user, "tailor", get_settings().daily_tailor_cap)
+    now = quota.utc_now()
+    ride = quota.claim_fit_ride(db, user, ref=quota.jd_ref(body.jd), now=now)
+    # Everything the worker needs from the user, read while the session is open:
+    # after it closes the row is detached, and the pooled (Neon) connection is
+    # not pinned for the ~20 s the pipeline takes.
+    user_id = user.id
+    avoid = writing_prefs_core.avoid_phrases(user)
+    hide_arabic = resume_prefs_core.hide_arabic_in_israel(user)
+    # The use, reserved LAST, right before the session closes (the search
+    # stream's rule): nothing between here and the worker's start can fail and
+    # strand it.
+    charge = quota.reserve(db, user, "tailor", now=now) if ride is None else None
+    db.close()
+
+    events: queue.Queue = queue.Queue()
+    tally = TokenTally()
+
+    def _finish(ok: bool) -> None:
+        """Settle what paid for this tailor, on the worker's own short session: a
+        served tailor settles its ride (the user row reloaded here, since the
+        request's copy is detached) or keeps its use; a failed one releases the
+        ride or refunds the use. Wrapped whole, like the search's refund: a
+        settlement that fails must never stop the frame that follows it."""
+        try:
+            own = SessionLocal()
+            try:
+                if ride is not None:
+                    if ok:
+                        owner = own.get(User, user_id)
+                        if owner is not None:
+                            quota.settle_fit_ride(own, owner, ride, now=now)
+                    else:
+                        quota.release_fit_ride(own, ride)
+                elif not ok and charge is not None:
+                    charge.refund(own)
+            finally:
+                own.close()
+        except Exception:  # noqa: BLE001 - the frame still has to go out
+            logger.warning("tailor stream: settling the tailor's use did not complete", exc_info=True)
+
+    def _worker() -> None:
+        with bind(tally):
+            try:
+                result = tailor_resume(
+                    body.resume,
+                    body.jd,
+                    avoid_phrases=avoid,
+                    hide_arabic_in_israel=hide_arabic,
+                    progress=lambda stage: events.put(("progress", {"stage": stage})),
+                )
+            except _SIZE_ERRORS as e:
+                try:
+                    _finish(False)
+                finally:
+                    events.put(("error", {"detail": e.detail(), "status": e.status}))
+                return
+            except Exception as e:  # noqa: BLE001
+                try:
+                    _finish(False)
+                finally:
+                    events.put(("error", {"detail": f"LLM error while tailoring resume: {e}", "status": 502}))
+                return
+            _finish(True)
+            events.put(("result", result))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    def _record_tokens_now() -> None:
+        """Bill what the tailor spent. In a finally, so an abandoned stream (the
+        client left mid-tailor) still bills the tokens it burned by then."""
+        if not tally.calls:
+            return
+        try:
+            tok_db = SessionLocal()
+            try:
+                record_tokens(tok_db, user_id, tally.prompt, tally.completion)
+            finally:
+                tok_db.close()
+        except Exception:  # noqa: BLE001 - bookkeeping never breaks the stream
+            pass
+
+    def _stream():
+        try:
+            while True:
+                try:
+                    kind, payload = events.get(timeout=15)
+                except queue.Empty:
+                    yield ": keep-alive\n\n"  # a tailor sits 20 s in one model call; keep proxies awake
+                    continue
+                if kind == "progress":
+                    yield _sse_frame("progress", payload)
+                elif kind == "result":
+                    yield _sse_frame("result", payload.model_dump())
+                    return
+                else:
+                    yield _sse_frame("error", payload)
+                    return
+        finally:
+            _record_tokens_now()
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/profile/resume-prefs", response_model=ResumePrefs)
 def get_resume_prefs(user: User = Depends(current_user)) -> ResumePrefs:
     """The user's resume preferences (spec 07 / R1). Every switch OFF by default.

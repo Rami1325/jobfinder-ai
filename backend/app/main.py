@@ -55,17 +55,7 @@ if settings.sentry_dsn:
 # `apiErrorMessage` already knows how to read one.
 @app.exception_handler(InputTooLarge)
 async def _input_too_large(request: Request, exc: InputTooLarge) -> JSONResponse:
-    return JSONResponse(
-        status_code=413,
-        content={
-            "detail": {
-                "code": "input_too_large",
-                "kind": exc.kind,
-                "size_kb": exc.size_kb,
-                "cap_kb": exc.cap_kb,
-            }
-        },
-    )
+    return JSONResponse(status_code=exc.status, content={"detail": exc.detail()})
 
 
 @app.exception_handler(ContextWindowExceeded)
@@ -73,10 +63,7 @@ async def _context_exceeded(request: Request, exc: ContextWindowExceeded) -> JSO
     # Survived our caps and the model still refused it — the honest "your CV is
     # legitimately enormous" case. A mock-interview route adds a kind, because
     # there the transcript can be the larger part and the CV sentence is false.
-    detail = {"code": "context_exceeded"}
-    if exc.kind:
-        detail["kind"] = exc.kind
-    return JSONResponse(status_code=413, content={"detail": detail})
+    return JSONResponse(status_code=exc.status, content={"detail": exc.detail()})
 
 
 @app.exception_handler(OutputTruncated)
@@ -84,9 +71,7 @@ async def _output_truncated(request: Request, exc: OutputTruncated) -> JSONRespo
     # 503, not 413: nothing about the REQUEST was too big — the answer was. A
     # retry or a shorter resume is the action, and it is our ceiling that was
     # hit, so this one SHOULD stay visible in Sentry.
-    return JSONResponse(
-        status_code=503, content={"detail": {"code": "output_truncated"}}
-    )
+    return JSONResponse(status_code=exc.status, content={"detail": exc.detail()})
 
 
 @app.exception_handler(AuthError)
