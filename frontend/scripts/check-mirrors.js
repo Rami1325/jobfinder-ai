@@ -11179,6 +11179,69 @@ try {
   fail(`compact job row check (check 57) could not run: ${e.message}`);
 }
 
+// ---- 58. the tracker is a list on a phone, sorted honestly (EXECUTED) ------- //
+// PLAN 31.2/7, 2026-09-23. At 390 px five counters and two rings filled the first
+// screen and the board's first column started at y = 609 of 664; the columns
+// were swiped sideways, one per screen, each card carrying its status twice (a
+// chip and a full-width select). Below md it is status tabs over one list now
+// (the list at y = 290), and the rings are on Analytics. (a) EXECUTES
+// lib/trackerSort.ts: "Date applied" puts every dated row before every row with
+// no applied date (unknown is not early, the house rule), newest first on both
+// sides; "Match" orders by score; "Newest" by the day it was added. (b) Pins by
+// shape: ONE of board and list is mounted (`boardFits ? … : …`), because both
+// render each card and the board's layoutId glide and the split-flap's pending
+// flip each assume one copy; the status is one chip with a labelled native
+// select over it; no full-width select is left; and the rings are on Analytics,
+// not on the board. The shape reader is probed on the real file.
+try {
+  const ts = runProbeBundle("tracker-sort", `export * from "./lib/trackerSort";\n`);
+  if (typeof ts.sortApps !== "function") throw new Error("lib/trackerSort.ts exports no sortApps");
+  const app = (id, created, applied, score) => ({ id, created_at: created, applied_at: applied, overall_score: score });
+  const rows = [
+    app(1, "2026-09-01", null, 50),
+    app(2, "2026-09-05", "2026-09-06", 90),
+    app(3, "2026-09-10", null, 70),
+    app(4, "2026-08-20", "2026-09-08", 0),
+    app(5, "2026-09-02", undefined, 60),
+  ];
+  const ids = (by) => ts.sortApps(rows, by).map((r) => r.id).join(",");
+  for (const [by, want, why] of [
+    ["applied", "4,2,3,5,1", "every dated row before every undated one, newest applied first, then the undated newest-added first"],
+    ["match", "2,3,5,1,4", "by score, highest first"],
+    ["newest", "3,2,5,1,4", "by the day it was added, newest first"],
+  ])
+    if (ids(by) !== want) fail(`check 58: sortApps(…, "${by}") gives ${ids(by)}, not ${want} (${why})`);
+  if (rows.map((r) => r.id).join(",") !== "1,2,3,4,5") fail("check 58: sortApps sorted its input in place");
+
+  const read58 = (page, analytics) => {
+    const out = [];
+    if (!/\bboardFits \? \(/.test(page)) out.push("the board and the phone list are no longer one-or-the-other (`boardFits ? … : …`)");
+    if (!/<select\s+value=\{a\.status\}\s+aria-label=\{t\("statusLabel"\)\}/.test(page))
+      out.push("the status chip has no labelled select over it");
+    if (/<select[^>]*className="w-full[^"]*"/.test(page)) out.push("a full-width status select is back under the card");
+    if (/<ProgressRing\b/.test(page)) out.push("a ring is back on the board");
+    if ((analytics.match(/<ProgressRing\b/g) || []).length < 2) out.push("the response and interview rings are not on Analytics");
+    return out;
+  };
+  const page = decomment(read("pages/TrackerPage.tsx"));
+  const analytics = decomment(read("components/TrackerAnalytics.tsx"));
+  const real = read58(page, analytics);
+  for (const [label, pg, an] of [
+    ["both mounted", page.replace("boardFits ? (", "true ? ("), analytics],
+    ["an unlabelled chip", page.replace('aria-label={t("statusLabel")}\n', "\n"), analytics],
+    ["the rings gone from Analytics", page, analytics.replace(/<ProgressRing\b/g, "<Ring")],
+  ]) {
+    if (pg === page && an === analytics) {
+      if (real.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!read58(pg, an).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of real) fail(`check 58: ${p} (PLAN 31.2/7)`);
+} catch (e) {
+  fail(`tracker list check (check 58) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

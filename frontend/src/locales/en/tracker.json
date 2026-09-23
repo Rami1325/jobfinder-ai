@@ -253,5 +253,12 @@
         "low": "< 70"
       }
     }
+  },
+  "statusLabel": "Status",
+  "listSort": {
+    "label": "Sort",
+    "newest": "Newest",
+    "applied": "Date applied",
+    "match": "Match"
   }
 }

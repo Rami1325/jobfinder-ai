@@ -1,25 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
 import {
-  Award,
   BarChart3,
+  ChevronDown,
   ClipboardList,
   Clock,
   Download,
   ExternalLink,
   Eye,
   KanbanSquare,
-  Layers,
   Mail,
   MessageSquare,
-  MessagesSquare,
-  Send,
   Star,
   StickyNote,
   Trash2,
-  XCircle,
 } from "lucide-react";
 import {
   deleteApplication,
@@ -36,11 +32,12 @@ import TrackerAnalytics from "../components/TrackerAnalytics";
 import EmailTimeline from "../components/inbox/EmailTimeline";
 import InboxBar from "../components/inbox/InboxBar";
 import { AppliedBadge, CardDate, CardEmailBadge } from "../components/inbox/shared";
-import { Badge, Button, Card, CardTitle, CountUp, Modal, ProgressRing, Skeleton, useToast } from "../components/ui";
+import { Badge, Button, Card, CardTitle, CountUp, Modal, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
 import { TEMPLATE_IDS } from "../lib/templateSpecs";
 import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
+import { sortApps, type ListSort } from "../lib/trackerSort";
 import type { ApplicationDetail, ApplicationOut, StaleApplication } from "../types";
 
 // Column labels come from the "tracker" catalog via `status.<key>`.
@@ -174,6 +171,168 @@ function FlipStatusChip({ id, status }: { id: number; status: string }) {
   );
 }
 
+/** Whether the five-column board fits: `md` and up. Below it the tracker is a
+ * list (PLAN 31.2/7). Read live, because only ONE of the two may be mounted:
+ * both render each card, and the board's `layoutId` glide and the split-flap's
+ * pending flip each assume one copy of a card on the page. */
+function useBoardFits(): boolean {
+  const query = "(min-width: 768px)";
+  const [fits, setFits] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const on = () => setFits(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return fits;
+}
+
+/** One application, the same on the board and in the phone list. The status is
+ * ONE tappable chip (PLAN 31.2/7): the split-flap face shows it, and a native
+ * select lies over it, transparent, so a phone opens its own picker and a
+ * screen reader hears "Status, Applied". The full-width select that sat under
+ * every card, repeating the chip, is gone. */
+function AppCard({
+  a,
+  onStatus,
+  onView,
+  onDelete,
+  onRate,
+  onToggleInterviewed,
+}: {
+  a: ApplicationOut;
+  onStatus: (id: number, status: string) => void;
+  onView: (id: number) => void;
+  onDelete: (id: number) => void;
+  onRate: (a: ApplicationOut, n: number) => void;
+  onToggleInterviewed: (a: ApplicationOut) => void;
+}) {
+  const { t } = useTranslation("tracker");
+  const submitted = SUBMITTED.has(a.status || "saved");
+  return (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p dir="auto" className="truncate text-sm font-semibold text-ink">
+            {a.job_title || "—"}
+          </p>
+          <p dir="auto" className="truncate text-xs text-ink-muted">
+            {a.company || "—"}
+          </p>
+        </div>
+        {/* A row that was never scored stores 0.0, so an unconditional badge
+            printed "0%" — a fabricated measurement on every manually-created
+            row, and indistinguishable from a genuinely terrible match. Unknown
+            is a dash. */}
+        <span
+          className={cn(
+            "shrink-0 rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums",
+            !a.overall_score
+              ? "bg-panel-2 text-ink-faint"
+              : a.overall_score >= 80
+                ? "bg-mint/15 text-mint"
+                : a.overall_score >= 60
+                  ? "bg-warn/15 text-warn"
+                  : "bg-panel-2 text-ink-muted",
+          )}
+        >
+          {a.overall_score ? <CountUp to={Math.round(a.overall_score)} suffix="%" duration={0.6} /> : "—"}
+        </span>
+      </div>
+
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <Stars value={a.excitement || 0} onRate={(n) => onRate(a, n)} />
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          {/* The newest email's kind, only when it adds to the column (see
+              CardEmailBadge). Static: nothing inside a card may open over it,
+              and the eye button below already opens the timeline. */}
+          <CardEmailBadge app={a} />
+          {a.notes && (
+            <button
+              onClick={() => onView(a.id)}
+              title={t("notes.indicator")}
+              className="inline-flex items-center gap-1 rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors hover:border-accent/40 hover:text-ink"
+            >
+              <StickyNote size={11} />
+              {t("notes.chip")}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+        {/* "Applied <date>" when the date it was sent is known, else the day it
+            was added (I3). */}
+        <CardDate app={a} />
+        <div className="flex items-center gap-1.5">
+          <span className="relative inline-flex items-center gap-0.5">
+            <FlipStatusChip id={a.id} status={a.status || "saved"} />
+            <ChevronDown size={12} aria-hidden className="text-ink-faint" />
+            <select
+              value={a.status}
+              aria-label={t("statusLabel")}
+              onChange={(e) => onStatus(a.id, e.target.value)}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            >
+              {STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {t(`status.${s}`)}
+                </option>
+              ))}
+            </select>
+          </span>
+          {submitted && (
+            <button
+              onClick={() => onToggleInterviewed(a)}
+              title={t("interviewedToggle")}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                a.interviewed
+                  ? "border-mint/50 bg-mint/15 text-mint"
+                  : "border-line bg-panel-2 text-ink-faint hover:border-mint/40 hover:text-ink-muted",
+              )}
+            >
+              <MessageSquare size={11} />
+              {t("interviewed")}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center gap-1.5">
+        {a.job_url && (
+          <a
+            href={a.job_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={t("actions.openJob")}
+            aria-label={t("actions.openJob")}
+            className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-accent/50 hover:text-accent"
+          >
+            <ExternalLink size={15} />
+          </a>
+        )}
+        <button
+          onClick={() => onView(a.id)}
+          title={t("actions.view")}
+          aria-label={t("actions.view")}
+          className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-accent/50 hover:text-ink"
+        >
+          <Eye size={15} />
+        </button>
+        <button
+          onClick={() => onDelete(a.id)}
+          title={t("actions.delete")}
+          aria-label={t("actions.delete")}
+          className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-danger/50 hover:text-danger"
+        >
+          <Trash2 size={15} />
+        </button>
+      </div>
+    </>
+  );
+}
+
 // Module-level cache: the board's applications survive tab switches so revisits
 // render instantly instead of flashing the metrics skeleton. null = never loaded.
 let appsCache: ApplicationOut[] | null = null;
@@ -196,6 +355,12 @@ export default function TrackerPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [notesSaving, setNotesSaving] = useState(false);
   const [tab, setTab] = useState<"board" | "analytics">("board");
+  const boardFits = useBoardFits();
+  // The phone list's status tab and order (PLAN 31.2/7). `null` = the first
+  // status that has anything in it, so the list never opens on an empty tab
+  // while another holds the user's applications.
+  const [listStatus, setListStatus] = useState<string | null>(null);
+  const [listSort, setListSort] = useState<ListSort>("newest");
   // C2 — receiving-column pulse: set on every status change, keyed by `n` so a
   // repeat move into the same column re-fires the flash.
   const [pulse, setPulse] = useState<{ col: string; n: number } | null>(null);
@@ -352,13 +517,27 @@ export default function TrackerPage() {
     }
   }
 
-  const tiles: { label: string; value: number; icon: typeof Layers; iconCls: string }[] = [
-    { label: t("tiles.total"), value: metrics.total, icon: Layers, iconCls: "bg-accent/12 text-accent" },
-    { label: t("tiles.applied"), value: metrics.applied, icon: Send, iconCls: "bg-accent/12 text-accent" },
-    { label: t("tiles.interviews"), value: metrics.interviews, icon: MessagesSquare, iconCls: "bg-mint/12 text-mint" },
-    { label: t("tiles.offers"), value: metrics.offers, icon: Award, iconCls: "bg-mint/12 text-mint" },
-    { label: t("tiles.declined"), value: metrics.declined, icon: XCircle, iconCls: "bg-danger/12 text-danger" },
+  const tiles: { label: string; value: number }[] = [
+    { label: t("tiles.total"), value: metrics.total },
+    { label: t("tiles.applied"), value: metrics.applied },
+    { label: t("tiles.interviews"), value: metrics.interviews },
+    { label: t("tiles.offers"), value: metrics.offers },
+    { label: t("tiles.declined"), value: metrics.declined },
   ];
+
+  // The phone list (PLAN 31.2/7): the counts per status, the tab on show, and
+  // its applications in the chosen order.
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const s of STATUSES) c[s] = 0;
+    for (const a of apps) c[a.status || "saved"] = (c[a.status || "saved"] ?? 0) + 1;
+    return c;
+  }, [apps]);
+  const shownStatus = listStatus ?? STATUSES.find((s) => counts[s] > 0) ?? "saved";
+  const listed = useMemo(
+    () => sortApps(apps.filter((a) => (a.status || "saved") === shownStatus), listSort),
+    [apps, shownStatus, listSort],
+  );
 
   return (
     <div className="space-y-6">
@@ -394,69 +573,6 @@ export default function TrackerPage() {
       </div>
 
       {error && <p className="text-sm text-danger">{error}</p>}
-
-      {/* ── Metrics header ─────────────────────────────────────────────── */}
-      {loading ? (
-        <Skeleton className="h-36" />
-      ) : (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        >
-          <Card glow className="relative overflow-hidden p-0">
-            <div className="absolute inset-x-0 top-0 h-[2px] bg-accent-gradient" aria-hidden />
-            <div className="flex flex-col gap-6 p-5 sm:p-6 lg:flex-row lg:items-center">
-              <div className="grid flex-1 grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-5">
-                {tiles.map((tile, i) => (
-                  <motion.div
-                    key={tile.label}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.06 * i, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-                    className="flex items-center gap-3"
-                  >
-                    <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl", tile.iconCls)}>
-                      <tile.icon size={17} />
-                    </span>
-                    <div className="min-w-0">
-                      <div className="text-2xl font-bold leading-none tabular-nums text-ink">
-                        <CountUp to={tile.value} duration={0.9} />
-                      </div>
-                      <div className="mt-1 truncate text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-muted sm:tracking-[0.12em]">
-                        {tile.label}
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-              <div className="flex items-center justify-center gap-6 border-line lg:border-s lg:ps-6">
-                {/* `metrics.*Rate` is null until something has actually been
-                    sent, and ProgressRing draws "—" for null. The denominator
-                    rides along as the label so the rate stays checkable: "100%"
-                    over one application is a very different claim from "100%"
-                    over forty, and only the count says which. */}
-                <ProgressRing
-                  value={metrics.responseRate}
-                  size={104}
-                  stroke={9}
-                  tone="accent"
-                  label={metrics.applied > 0 ? t("ofApplied", { n: metrics.applied }) : undefined}
-                  sublabel={t("responseRate")}
-                />
-                <ProgressRing
-                  value={metrics.interviewRate}
-                  size={104}
-                  stroke={9}
-                  tone="mint"
-                  label={metrics.applied > 0 ? t("ofApplied", { n: metrics.applied }) : undefined}
-                  sublabel={t("interviewRate")}
-                />
-              </div>
-            </div>
-          </Card>
-        </motion.div>
-      )}
 
       {/* Stale-application nudges: time to follow up. Outside the `loading`
           ternary on purpose — it has its own fetch and never reads `apps`. */}
@@ -496,6 +612,24 @@ export default function TrackerPage() {
         </Card>
       )}
 
+      {/* The counters, on ONE line (PLAN 31.2/7). They were five tiles and two
+          rings in a card that filled a phone's first screen, with the board's
+          first column at y = 609 of 664; the rings are on Analytics now. */}
+      {loading ? (
+        <Skeleton className="h-6 w-2/3" />
+      ) : (
+        apps.length > 0 && (
+          <p className="text-sm text-ink-muted">
+            {tiles.map((tile, i) => (
+              <span key={tile.label} className="whitespace-nowrap">
+                {i > 0 && " · "}
+                <span className="font-semibold tabular-nums text-ink">{tile.value}</span> {tile.label}
+              </span>
+            ))}
+          </p>
+        )
+      )}
+
       {/* Gmail sync (Phase 29). Outside the `loading` ternary for the nudges
           strip's reason: its own fetch and its own failure, never the board's.
           It calls `refresh` only when a sync actually wrote something. */}
@@ -530,11 +664,12 @@ export default function TrackerPage() {
           </p>
         </Card>
       ) : (
-        <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-4 md:mx-0 md:grid md:snap-none md:overflow-visible md:px-0 md:pb-0 md:grid-cols-2 xl:grid-cols-5">
+        boardFits ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           {COLUMNS.map((col) => {
             const items = apps.filter((a) => (a.status || "saved") === col.key);
             return (
-              <div key={col.key} className="flex w-[82vw] max-w-[320px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl border border-line/60 bg-panel/40 md:w-auto md:max-w-none">
+              <div key={col.key} className="flex flex-col overflow-hidden rounded-2xl border border-line/60 bg-panel/40">
                 <div className={cn("h-[2px] w-full", col.bar)} aria-hidden />
                 <div className="relative flex items-center justify-between px-3 pb-1 pt-3">
                   {/* C2 — one accent flash on the column that just received a card */}
@@ -563,157 +698,119 @@ export default function TrackerPage() {
                     </p>
                   )}
                   <AnimatePresence initial={false}>
-                    {items.map((a) => {
-                      const submitted = SUBMITTED.has(a.status || "saved");
-                      return (
-                        <motion.div
-                          key={a.id}
-                          // C2 — shared layoutId: on a status change the card
-                          // GLIDES from its old column to the new one (the old
-                          // instance hands its position to this one) instead of
-                          // fading out/in. Select-driven board, so the spring
-                          // settle is the whole "drop" physics.
-                          layoutId={`tracker-card-${a.id}`}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.96 }}
-                          transition={{
-                            duration: 0.25,
-                            ease: [0.22, 1, 0.36, 1],
-                            layout: { type: "spring", duration: 0.25, bounce: 0.15 },
-                          }}
-                          className="group rounded-xl border border-line bg-gradient-to-b from-panel to-panel/70 p-3.5 shadow-card transition-all duration-200 hover:border-accent/40 hover:shadow-glow"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold text-ink">{a.job_title || "—"}</p>
-                              <p className="truncate text-xs text-ink-muted">{a.company || "—"}</p>
-                            </div>
-                            {/* A row that was never scored stores 0.0, so an
-                                unconditional badge printed "0%" — a fabricated
-                                measurement on every manually-created row, and
-                                indistinguishable from a genuinely terrible
-                                match. Unknown is a dash. */}
-                            <span
-                              className={cn(
-                                "shrink-0 rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums",
-                                !a.overall_score
-                                  ? "bg-panel-2 text-ink-faint"
-                                  : a.overall_score >= 80
-                                    ? "bg-mint/15 text-mint"
-                                    : a.overall_score >= 60
-                                      ? "bg-warn/15 text-warn"
-                                      : "bg-panel-2 text-ink-muted",
-                              )}
-                            >
-                              {a.overall_score ? (
-                                <CountUp to={Math.round(a.overall_score)} suffix="%" duration={0.6} />
-                              ) : (
-                                "—"
-                              )}
-                            </span>
-                          </div>
-
-                          <div className="mt-2 flex items-center justify-between gap-2">
-                            <Stars value={a.excitement || 0} onRate={(n) => rate(a, n)} />
-                            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-                              {/* The newest email's kind, only when it adds to the
-                                  column (see CardEmailBadge). Static: nothing
-                                  inside a card may open over it, and the eye
-                                  button below already opens the timeline. */}
-                              <CardEmailBadge app={a} />
-                              {a.notes && (
-                                <button
-                                  onClick={() => view(a.id)}
-                                  title={t("notes.indicator")}
-                                  className="inline-flex items-center gap-1 rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors hover:border-accent/40 hover:text-ink"
-                                >
-                                  <StickyNote size={11} />
-                                  {t("notes.chip")}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
-                            {/* "Applied <date>" when the date it was sent is
-                                known, else the day it was added (I3). */}
-                            <CardDate app={a} />
-                            <div className="flex items-center gap-1.5">
-                              <FlipStatusChip id={a.id} status={a.status || "saved"} />
-                              {submitted && (
-                                <button
-                                  onClick={() => toggleInterviewed(a)}
-                                  title={t("interviewedToggle")}
-                                  className={cn(
-                                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
-                                    a.interviewed
-                                      ? "border-mint/50 bg-mint/15 text-mint"
-                                      : "border-line bg-panel-2 text-ink-faint hover:border-mint/40 hover:text-ink-muted",
-                                  )}
-                                >
-                                  <MessageSquare size={11} />
-                                  {t("interviewed")}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Status select gets its own full-width row so the
-                              option text is never clipped in narrow columns;
-                              the actions sit below as an even icon bar. */}
-                          <div className="mt-3 space-y-2">
-                            <select
-                              value={a.status}
-                              onChange={(e) => changeStatus(a.id, e.target.value)}
-                              className="w-full cursor-pointer rounded-lg border border-line bg-bg-soft px-2.5 py-1.5 text-xs text-ink transition-colors hover:border-accent/40 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                            >
-                              {STATUSES.map((s) => (
-                                <option key={s} value={s}>
-                                  {t(`status.${s}`)}
-                                </option>
-                              ))}
-                            </select>
-                            <div className="flex items-center gap-1.5">
-                              {a.job_url && (
-                                <a
-                                  href={a.job_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  title={t("actions.openJob")}
-                                  aria-label={t("actions.openJob")}
-                                  className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-accent/50 hover:text-accent"
-                                >
-                                  <ExternalLink size={15} />
-                                </a>
-                              )}
-                              <button
-                                onClick={() => view(a.id)}
-                                title={t("actions.view")}
-                                aria-label={t("actions.view")}
-                                className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-accent/50 hover:text-ink"
-                              >
-                                <Eye size={15} />
-                              </button>
-                              <button
-                                onClick={() => remove(a.id)}
-                                title={t("actions.delete")}
-                                aria-label={t("actions.delete")}
-                                className="inline-flex min-h-9 flex-1 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-danger/50 hover:text-danger"
-                              >
-                                <Trash2 size={15} />
-                              </button>
-                            </div>
-                          </div>
-                        </motion.div>
-                      );
-                    })}
+                    {items.map((a) => (
+                      <motion.div
+                        key={a.id}
+                        // C2 — shared layoutId: on a status change the card
+                        // GLIDES from its old column to the new one (the old
+                        // instance hands its position to this one) instead of
+                        // fading out/in. The spring settle is the whole "drop".
+                        layoutId={`tracker-card-${a.id}`}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.96 }}
+                        transition={{
+                          duration: 0.25,
+                          ease: [0.22, 1, 0.36, 1],
+                          layout: { type: "spring", duration: 0.25, bounce: 0.15 },
+                        }}
+                        className="group rounded-xl border border-line bg-gradient-to-b from-panel to-panel/70 p-3.5 shadow-card transition-all duration-200 hover:border-accent/40 hover:shadow-glow"
+                      >
+                        <AppCard
+                          a={a}
+                          onStatus={changeStatus}
+                          onView={view}
+                          onDelete={remove}
+                          onRate={rate}
+                          onToggleInterviewed={toggleInterviewed}
+                        />
+                      </motion.div>
+                    ))}
                   </AnimatePresence>
                 </div>
               </div>
             );
           })}
         </div>
+        ) : (
+          // THE PHONE LIST (PLAN 31.2/7). Five columns swiped sideways put one
+          // column on a 390 px screen at a time; this is the same tracker as
+          // status tabs with their counts over one vertical list, and a sort
+          // that includes the date applied.
+          <div className="space-y-3">
+            <div role="tablist" aria-label={t("statusLabel")} className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1">
+              {COLUMNS.map((col) => (
+                <button
+                  key={col.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={shownStatus === col.key}
+                  onClick={() => setListStatus(col.key)}
+                  className={cn(
+                    "relative inline-flex min-h-9 shrink-0 items-center gap-1.5 overflow-hidden rounded-full border px-3 text-xs font-semibold transition-colors",
+                    shownStatus === col.key
+                      ? "border-accent bg-accent text-white"
+                      : "border-line bg-panel text-ink-muted hover:text-ink",
+                  )}
+                >
+                  {/* C2's flash, on the tab that just received a card. */}
+                  {pulse?.col === col.key && shownStatus !== col.key && (
+                    <motion.span
+                      key={pulse.n}
+                      aria-hidden
+                      className="pointer-events-none absolute inset-0 bg-accent/25"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: [0, 1, 0] }}
+                      transition={{ duration: 0.4, ease: "easeOut" }}
+                    />
+                  )}
+                  <span className={cn("h-1.5 w-1.5 rounded-full", shownStatus === col.key ? "bg-white" : col.dot)} aria-hidden />
+                  {t(`status.${col.key}`)}
+                  <span className="tabular-nums opacity-80">{counts[col.key]}</span>
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center justify-end gap-2 text-xs font-semibold text-ink-muted">
+              {t("listSort.label")}
+              <select
+                value={listSort}
+                onChange={(e) => setListSort(e.target.value as ListSort)}
+                className="cursor-pointer rounded-lg border border-line bg-bg-soft px-2 py-1 text-xs text-ink focus:border-accent/60 focus:outline-none"
+              >
+                <option value="newest">{t("listSort.newest")}</option>
+                <option value="applied">{t("listSort.applied")}</option>
+                <option value="match">{t("listSort.match")}</option>
+              </select>
+            </label>
+            {listed.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-line/70 px-3 py-6 text-center text-xs text-ink-faint">
+                {t("columnEmpty")}
+              </p>
+            ) : (
+              <AnimatePresence initial={false}>
+                {listed.map((a) => (
+                  <motion.div
+                    key={a.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.97 }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                    className="rounded-xl border border-line bg-gradient-to-b from-panel to-panel/70 p-3.5 shadow-card"
+                  >
+                    <AppCard
+                      a={a}
+                      onStatus={changeStatus}
+                      onView={view}
+                      onDelete={remove}
+                      onRate={rate}
+                      onToggleInterviewed={toggleInterviewed}
+                    />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            )}
+          </div>
+        )
       )}
 
       <Modal

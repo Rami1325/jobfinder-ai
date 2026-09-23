@@ -1,9 +1,9 @@
 import { useMemo } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
-import { Card, CardTitle, CountUp, SectionLabel, Sparkline } from "./ui";
+import { Card, CardTitle, CountUp, ProgressRing, SectionLabel, Sparkline } from "./ui";
 import { cn } from "../lib/cn";
-import { dateOfRecord, isInterviewed } from "../hooks/useTrackerMetrics";
+import { dateOfRecord, isInterviewed, useTrackerMetrics } from "../hooks/useTrackerMetrics";
 import type { ApplicationOut } from "../types";
 
 /** Statuses that mean the application was actually submitted (matches TrackerPage). */
@@ -85,6 +85,11 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
   const locale = i18n.language === "he" ? "he-IL" : "en-GB";
 
   const reduce = useReducedMotion();
+  // The two rates that sat on the board as rings, moved here (PLAN 31.2/7): on a
+  // phone they filled the first screen, with the board starting at y = 609 of
+  // 664. `null` until something was sent, which the ring draws as "—", and the
+  // denominator rides along so "100%" over one application reads as that.
+  const metrics = useTrackerMetrics(apps);
 
   const weekly = useMemo(() => {
     const thisWeek = weekStart(new Date());
@@ -252,6 +257,26 @@ export default function TrackerAnalytics({ apps }: { apps: ApplicationOut[] }) {
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="grid gap-4 lg:grid-cols-2"
     >
+      {/* ── The two rates (moved from the board, PLAN 31.2/7) ─── */}
+      <Card className="flex flex-wrap items-center justify-center gap-6 lg:col-span-2">
+        <ProgressRing
+          value={metrics.responseRate}
+          size={104}
+          stroke={9}
+          tone="accent"
+          label={metrics.applied > 0 ? t("ofApplied", { n: metrics.applied }) : undefined}
+          sublabel={t("responseRate")}
+        />
+        <ProgressRing
+          value={metrics.interviewRate}
+          size={104}
+          stroke={9}
+          tone="mint"
+          label={metrics.applied > 0 ? t("ofApplied", { n: metrics.applied }) : undefined}
+          sublabel={t("interviewRate")}
+        />
+      </Card>
+
       {/* ── Mission-control strip: live signal + per-week trends (C3) ─── */}
       <Card className="lg:col-span-2">
         <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
