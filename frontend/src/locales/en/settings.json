@@ -6,7 +6,10 @@
     "theme": "Theme",
     "themeHint": "Light or dark. Remembered on this device.",
     "language": "Language",
-    "languageHint": "English or Hebrew, across the whole app."
+    "languageHint": "English or Hebrew, across the whole app.",
+    "install": "On your home screen",
+    "installIos": "In Safari: Share, then Add to Home Screen. It then opens the app directly.",
+    "installOther": "In your browser's menu: Add to Home screen. It then opens the app directly."
   },
   "account": {
     "title": "Account",

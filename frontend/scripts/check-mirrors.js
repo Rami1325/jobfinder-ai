@@ -11003,6 +11003,27 @@ try {
   fail(`phone header check (check 53) could not run: ${e.message}`);
 }
 
+// ---- 54. an installed JobFinder opens the app, as the same app ------------- //
+// PLAN 31.2/11, found in the 2026-09-23 review: the manifest's `start_url` was
+// "/", so JobFinder added to a home screen opened on the marketing landing, one
+// tap away from the app it was installed for. It opens "/app", the canonical
+// document route (CLAUDE.md: never renamed, the extension depends on it). And
+// `id` stays "/": without one, the browser derives an installed app's identity
+// from `start_url`, so moving it would turn every copy already on a home screen
+// into a different app. The route itself must still be declared in App.tsx.
+try {
+  const manifestPath = path.join(HERE, "..", "public", "manifest.webmanifest");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  if (manifest.start_url !== "/app")
+    fail(`check 54: public/manifest.webmanifest start_url is ${JSON.stringify(manifest.start_url)}, not "/app": an installed JobFinder opens somewhere other than the app`);
+  if (manifest.id !== "/")
+    fail(`check 54: public/manifest.webmanifest id is ${JSON.stringify(manifest.id)}, not "/": every copy already installed (whose identity was "/") becomes a different app`);
+  if (!/<Route\s+path="\/app"/.test(read("App.tsx")))
+    fail('check 54: App.tsx declares no <Route path="/app">, which the manifest opens');
+} catch (e) {
+  fail(`installed app check (check 54) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

@@ -1,7 +1,8 @@
 {
   "name": "JobFinder — AI Resume Tailoring",
   "short_name": "JobFinder",
-  "start_url": "/",
+  "id": "/",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#0f1420",
   "theme_color": "#0f1420",

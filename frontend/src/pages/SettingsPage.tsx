@@ -56,14 +56,28 @@ const ACTION_HINT = "min-w-[12rem] flex-1 text-xs leading-relaxed text-ink-muted
  * `flex-wrap`, not a two-column grid — at 390px the Hebrew hints run to two
  * lines and a fixed grid crushes the control to nothing rather than letting it
  * drop to its own row. */
-function Row({ label, hint, children }: { label: string; hint: string; children: ReactNode }) {
+/** Which home-screen hint this device gets (PLAN 31.2/11), or null inside the
+ * installed app itself, where it would be advice to do what was already done.
+ * iPadOS reports itself as a Mac, so a touch Mac counts as iOS. */
+function installTarget(): "ios" | "other" | null {
+  if (typeof window === "undefined") return null;
+  const standalone =
+    window.matchMedia?.("(display-mode: standalone)").matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  if (standalone) return null;
+  const ios =
+    /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return ios ? "ios" : "other";
+}
+
+function Row({ label, hint, children }: { label: string; hint: string; children?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-ink">{label}</p>
         <p className="mt-0.5 text-xs leading-relaxed text-ink-muted">{hint}</p>
       </div>
-      <div className="shrink-0">{children}</div>
+      {children && <div className="shrink-0">{children}</div>}
     </div>
   );
 }
@@ -837,6 +851,8 @@ export default function SettingsPage() {
     }
   }
 
+  const [install] = useState(installTarget);
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
@@ -858,6 +874,18 @@ export default function SettingsPage() {
           <Row label={t("appearance.language")} hint={t("appearance.languageHint")}>
             <LanguageSwitch />
           </Row>
+          {/* PLAN 31.2/11: installed from here, JobFinder opens on /app (the
+              manifest's start_url; it opened on the landing). Phones only, and
+              never inside the installed app. The browser's own menu installs;
+              nothing on this page can, so it is a line, not a button. */}
+          {install && (
+            <div className="lg:hidden">
+              <Row
+                label={t("appearance.install")}
+                hint={install === "ios" ? t("appearance.installIos") : t("appearance.installOther")}
+              />
+            </div>
+          )}
         </div>
       </Card>
 
