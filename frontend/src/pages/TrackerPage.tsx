@@ -26,6 +26,7 @@ import { cn } from "../lib/cn";
 import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
 import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
 import { sortApps, type ListSort } from "../lib/trackerSort";
+import { followUpStage } from "../hooks/useJobContext";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { ApplicationOut, StaleApplication } from "../types";
 
@@ -44,13 +45,6 @@ const COLUMNS: {
 ];
 
 const STATUSES = COLUMNS.map((c) => c.key);
-
-// Which follow-up stage to pre-select when jumping to the follow-up writer.
-function followUpStage(status: string): string {
-  if (status === "interview") return "after an interview";
-  if (status === "offer") return "after an offer";
-  return "after applying";
-}
 
 /** 1-5 excitement stars (Teal pattern). Clicking the current rating clears it. */
 function Stars({ value, onRate }: { value: number; onRate: (n: number) => void }) {

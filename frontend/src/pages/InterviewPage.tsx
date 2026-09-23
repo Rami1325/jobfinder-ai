@@ -1,8 +1,8 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
-import { MessageSquareText, Sparkles, Lightbulb, ClipboardCheck, Mic, Wallet, Building2 } from "lucide-react";
+import { ArrowLeft, MessageSquareText, Sparkles, Lightbulb, ClipboardCheck, Mic, Wallet, Building2 } from "lucide-react";
 import {
   analyzeJD,
   interviewAnswer,
@@ -14,6 +14,7 @@ import JDPaste from "../components/JDPaste";
 import ResumeGate from "../components/ResumeGate";
 import UsesNote from "../components/UsesNote";
 import MockInterview from "./interview/MockInterview";
+import { useJobContext } from "../hooks/useJobContext";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
@@ -190,12 +191,25 @@ function QuestionCard({
   );
 }
 
+const MODES: readonly Mode[] = ["questions", "recruiter", "mock"];
+
 export default function InterviewPage() {
   const { t } = useTranslation("interview");
+  const { t: tTools } = useTranslation("tools");
   const nav = useNavigate();
   const { master, loading } = useMasterResume();
-  const [mode, setMode] = useState<Mode>("questions");
+  // Opened from a job's page (PLAN 31.4/3): `?app=` names the job, whose posting
+  // fills the box, and `?mode=` the tab it asked for (Mock interview has its own
+  // link there). Both survive a reload; Back returns to the job.
+  const ctx = useJobContext();
+  const job = ctx?.job ?? null;
+  const [params] = useSearchParams();
+  const asked = params.get("mode");
+  const [mode, setMode] = useState<Mode>(MODES.find((m) => m === asked) ?? "questions");
   const [jdText, setJdText] = useState("");
+  useEffect(() => {
+    if (job?.jd_text) setJdText((cur) => cur || job.jd_text);
+  }, [job]);
   const [jd, setJd] = useState<JDModel | null>(null);
   // The text the questions on screen were written for. The posting folds to one
   // line only while the box still holds exactly that (PLAN 31.2/9).
@@ -246,6 +260,14 @@ export default function InterviewPage() {
   return (
     <div className="space-y-6">
       <div>
+        {ctx && (
+          <Link
+            to={ctx.backTo}
+            className="mb-3 inline-flex min-h-9 items-center gap-1 text-xs text-ink-muted hover:text-ink"
+          >
+            <ArrowLeft size={13} className="rtl:-scale-x-100" /> {tTools("backToJob")}
+          </Link>
+        )}
         <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
           <MessageSquareText className="text-accent-soft" /> {t("title")}
         </h1>
@@ -269,8 +291,14 @@ export default function InterviewPage() {
         ))}
         <button
           onClick={() =>
-            nav("/tools/company-brief", {
-              state: { jdText, company: jd?.company, jobTitle: jd?.job_title },
+            // Still about the same job: `?app=` goes along, so the brief can
+            // return to the job's page as this one does.
+            nav(ctx ? `/tools/company-brief?app=${ctx.id}` : "/tools/company-brief", {
+              state: {
+                jdText,
+                company: jd?.company || job?.company,
+                jobTitle: jd?.job_title || job?.job_title,
+              },
             })
           }
           className="ms-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -16,6 +16,7 @@ import JDPaste from "../../components/JDPaste";
 import ResumeGate from "../../components/ResumeGate";
 import ToolShell from "../../components/ToolShell";
 import UsesNote from "../../components/UsesNote";
+import { useJobContext } from "../../hooks/useJobContext";
 import { useMasterResume } from "../../hooks/useMasterResume";
 import { apiErrorMessage } from "../../lib/apiError";
 import { useUses } from "../../lib/usesStore";
@@ -43,6 +44,17 @@ export default function CompanyBriefToolPage() {
   // Editable: the role drives the deterministic "hiring chain" targeting
   // (AI Engineer ⇒ CTO / Head of AI chips) as well as the reach-out message.
   const [jobTitle, setJobTitle] = useState(prefill?.jobTitle ?? "");
+  // Opened from a job's page (PLAN 31.4/3): its row fills every field the
+  // handoff left empty, and survives a reload, which navigation state does not.
+  const ctx = useJobContext();
+  const job = ctx?.job ?? null;
+  useEffect(() => {
+    if (!job) return;
+    setCompany((cur) => cur || job.company);
+    setUrl((cur) => cur || job.job_url);
+    setJdText((cur) => cur || job.jd_text);
+    setJobTitle((cur) => cur || job.job_title);
+  }, [job]);
   const [result, setResult] = useState<CompanyBriefResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
@@ -89,6 +101,7 @@ export default function CompanyBriefToolPage() {
       title={t("cards.brief.title")}
       subtitle={t("brief.subtitle")}
       icon={<Building2 className="text-accent-soft" />}
+      back={ctx?.backTo}
     >
       <Card>
         {jobTitle && (

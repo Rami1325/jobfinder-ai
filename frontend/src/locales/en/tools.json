@@ -2,6 +2,7 @@
   "title": "Tools",
   "sub": "Focused, single-purpose helpers for your search.",
   "back": "All tools",
+  "backToJob": "Back to the job",
   "cards": {
     "scan": {
       "title": "CV scan",

@@ -11846,6 +11846,73 @@ try {
   fail(`Tailwind opacity check (check 66) could not run: ${e.message}`);
 }
 
+// ---- 67. Prepare opens each tool with the job, and Back returns to it (PLAN 31.4/3) //
+// Every tool's Back said "All tools", and the posting it was opened with lived in
+// navigation state, gone after a reload. Now a job's page links each Prepare tool
+// with `?app=<id>`, and the tool reads the job through `useJobContext`, fills
+// ONLY the fields still empty (what the user typed, or a caller's state, wins:
+// `set…((cur) => cur || job.…)`), and returns to `/applications/<id>`. (a) Every
+// Prepare link on the job page carries the job's `app=` parameter. (b) Each of
+// the four tools calls `useJobContext()`, hands its Back to the job (ToolShell's
+// `back={ctx?.backTo}`, or Interview's own link to `ctx.backTo`), and writes a
+// field from the job only through `cur ||`. (c) ToolShell's Back falls back to
+// the tools list when no job was named. Probed red on the real files with a tool
+// that forgets its Back, a prefill that overwrites typed text, and a Prepare link
+// without the job.
+try {
+  const job67 = decomment(read("pages/JobPage.tsx"));
+  const shell67 = decomment(read("components/ToolShell.tsx"));
+  const TOOLS67 = [
+    ["pages/InterviewPage.tsx", "interview"],
+    ["pages/tools/CompanyBriefToolPage.tsx", "brief"],
+    ["pages/tools/OutreachToolPage.tsx", "outreach"],
+    ["pages/tools/FollowUpToolPage.tsx", "follow-up"],
+  ];
+  const tools67 = Object.fromEntries(TOOLS67.map(([rel]) => [rel, decomment(read(rel))]));
+
+  const read67 = (job, shell, tools) => {
+    const out = [];
+    // (a) the Prepare list is built from one `app=` string and every entry uses it.
+    const sect = /function PrepareSection[\s\S]*?\n\}/.exec(job);
+    if (!sect) throw new Error("could not find `function PrepareSection` in JobPage.tsx");
+    if (!/const app = `app=\$\{detail\.id\}`;/.test(sect[0])) out.push("(a) the Prepare list does not build the job's `app=` parameter");
+    const targets = [...sect[0].matchAll(/to: `(\/[^`?]+)\?\$\{app\}/g)].map((m) => m[1]);
+    if (targets.length < 5) out.push(`(a) ${targets.length} of the 5 Prepare links carry \`?\${app}\``);
+    // (b) each tool reads the job, returns to it, and fills only what is empty.
+    for (const [rel, name] of TOOLS67) {
+      const src = tools[rel];
+      if (!/\bconst ctx = useJobContext\(\);/.test(src)) out.push(`(b) ${name}: does not read the job (\`useJobContext()\`)`);
+      const back = /back=\{ctx\?\.backTo\}/.test(src) || /<Link\s+to=\{ctx\.backTo\}/.test(src);
+      if (!back) out.push(`(b) ${name}: its Back does not return to the job's page`);
+      const fills = [...src.matchAll(/set\w+\(\(cur\) => cur \|\| job\.\w+\)/g)].length;
+      if (fills < 1) out.push(`(b) ${name}: fills nothing from the job through \`(cur) => cur || job.…\``);
+      if (/set\w+\(job\.\w+\)/.test(src)) out.push(`(b) ${name}: writes a field straight from the job, over what the user typed`);
+    }
+    // (c)
+    if (!/to=\{back \?\? "\/tools"\}/.test(shell)) out.push("(c) ToolShell's Back does not fall back to the tools list");
+    return out;
+  };
+
+  const problems67 = read67(job67, shell67, tools67);
+  const probe67 = (label, job, shell, tools) => {
+    if (!read67(job, shell, tools).length) throw new Error(`the reader passes ${label}, so it cannot be trusted`);
+  };
+  const outreach = "pages/tools/OutreachToolPage.tsx";
+  const forgot = tools67[outreach].replace("back={ctx?.backTo}", "");
+  if (forgot === tools67[outreach]) throw new Error("the probe could not plant a tool that forgets its Back");
+  probe67("a tool that forgets its Back", job67, shell67, { ...tools67, [outreach]: forgot });
+  const brief = "pages/tools/CompanyBriefToolPage.tsx";
+  const clobber = tools67[brief].replace("setCompany((cur) => cur || job.company);", "setCompany(job.company);");
+  if (clobber === tools67[brief]) throw new Error("the probe could not plant a prefill that overwrites typed text");
+  probe67("a prefill that overwrites typed text", job67, shell67, { ...tools67, [brief]: clobber });
+  const bare = job67.replace("to: `/tools/outreach?${app}`", "to: `/tools/outreach`");
+  if (bare === job67) throw new Error("the probe could not plant a Prepare link without the job");
+  probe67("a Prepare link without the job", bare, shell67, tools67);
+  for (const p of problems67) fail(`check 67: ${p} (PLAN 31.4/3)`);
+} catch (e) {
+  fail(`Prepare check (check 67) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

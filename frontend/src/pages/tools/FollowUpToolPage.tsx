@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Mail, Copy, Sparkles } from "lucide-react";
 import { followUp } from "../../api/client";
 import ToolShell from "../../components/ToolShell";
 import UsesNote from "../../components/UsesNote";
+import { followUpStage, useJobContext } from "../../hooks/useJobContext";
 import { apiErrorMessage } from "../../lib/apiError";
 import { useUses } from "../../lib/usesStore";
 import { Button, Card, CardTitle, Skeleton, useToast } from "../../components/ui";
@@ -24,6 +25,19 @@ export default function FollowUpToolPage() {
   const [stage, setStage] = useState(
     prefill?.stage && STAGES.includes(prefill.stage) ? prefill.stage : STAGES[0],
   );
+  // Opened from a job's page (PLAN 31.4/3): its row fills the company and the
+  // role the handoff left empty, and, with no stage handed over, picks the one
+  // the job's status calls for. It survives a reload; navigation state does not.
+  const ctx = useJobContext();
+  const job = ctx?.job ?? null;
+  useEffect(() => {
+    if (!job) return;
+    setCompany((cur) => cur || job.company);
+    setRole((cur) => cur || job.job_title);
+    // Only while the stage is still the untouched default: one the user picked
+    // before the job arrived, or a handed-over one, wins.
+    if (!prefill?.stage) setStage((cur) => (cur === STAGES[0] ? followUpStage(job.status) : cur));
+  }, [job, prefill?.stage]);
   const [context, setContext] = useState("");
   const [result, setResult] = useState<FollowUpResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -55,6 +69,7 @@ export default function FollowUpToolPage() {
       title={t("cards.followup.title")}
       subtitle={t("followup.subtitle")}
       icon={<Mail className="text-accent-soft" />}
+      back={ctx?.backTo}
     >
       <Card>
         <div className="grid gap-3 sm:grid-cols-2">

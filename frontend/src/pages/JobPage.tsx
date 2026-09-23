@@ -32,6 +32,7 @@ import { formatDay, useLocaleTag } from "../components/inbox/shared";
 import UsesNote from "../components/UsesNote";
 import { Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
 import { usePageImages } from "../hooks/useFilePreview";
+import { followUpStage } from "../hooks/useJobContext";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { apiErrorMessage } from "../lib/apiError";
@@ -60,13 +61,6 @@ const STATUS_FACE: Record<string, string> = {
  * default, never a guess (PLAN 31.1/8). */
 function sentTemplate(template: string | undefined): ResumeTemplate | undefined {
   return (TEMPLATE_IDS as readonly string[]).includes(template ?? "") ? (template as ResumeTemplate) : undefined;
-}
-
-/** Which follow-up stage the follow-up writer should open on. */
-function followUpStage(status: string): string {
-  if (status === "interview") return "after an interview";
-  if (status === "offer") return "after an offer";
-  return "after applying";
 }
 
 function is404(e: unknown): boolean {

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Send, Copy, Sparkles, UserPlus, Mail, Users } from "lucide-react";
@@ -7,6 +7,7 @@ import JDPaste from "../../components/JDPaste";
 import ResumeGate from "../../components/ResumeGate";
 import ToolShell from "../../components/ToolShell";
 import UsesNote from "../../components/UsesNote";
+import { useJobContext } from "../../hooks/useJobContext";
 import { useMasterResume } from "../../hooks/useMasterResume";
 import { apiErrorMessage } from "../../lib/apiError";
 import { useUses } from "../../lib/usesStore";
@@ -25,9 +26,16 @@ export default function OutreachToolPage() {
   const { t } = useTranslation("tools");
   const { master, loading } = useMasterResume();
   const prefill = (useLocation().state as NavState) ?? null;
-  const company = prefill?.company ?? "";
-  const jobTitle = prefill?.jobTitle ?? "";
+  // Opened from a job's page (PLAN 31.4/3): its row fills what the handoff did
+  // not, and survives a reload, which navigation state does not.
+  const ctx = useJobContext();
+  const job = ctx?.job ?? null;
+  const company = prefill?.company || job?.company || "";
+  const jobTitle = prefill?.jobTitle || job?.job_title || "";
   const [jdText, setJdText] = useState(prefill?.jdText ?? "");
+  useEffect(() => {
+    if (job?.jd_text) setJdText((cur) => cur || job.jd_text);
+  }, [job]);
   const [contactName, setContactName] = useState("");
   const [role, setRole] = useState<string>(ROLES[0]);
   const [result, setResult] = useState<OutreachResult | null>(null);
@@ -74,6 +82,7 @@ export default function OutreachToolPage() {
       title={t("cards.outreach.title")}
       subtitle={t("outreach.subtitle")}
       icon={<Send className="text-accent-soft rtl:-scale-x-100" />}
+      back={ctx?.backTo}
     >
       <Card>
         {(company || jobTitle) && (
