@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Bell, X } from "lucide-react";
 import { getJobAlert, runJobAlert, searchContext, updateJobAlert } from "../../api/client";
-import { Button, Card, CardTitle, useToast } from "../../components/ui";
+import { Button, Card, CardTitle, useToast, WhyNote } from "../../components/ui";
 import UsesNote from "../../components/UsesNote";
 import { apiErrorMessage } from "../../lib/apiError";
 import { formatUsesDate, useUses } from "../../lib/usesStore";
@@ -229,13 +229,17 @@ export function CustomizeFields({
             />
             <span>
               {t("search.worldwide")}
-              <span className="block text-xs font-normal text-ink-muted">
-                {selectedSources.includes("linkedin")
-                  ? t("search.worldwideHint")
-                  : t("search.worldwideNeedsLinkedIn")}
-              </span>
+              {!selectedSources.includes("linkedin") && (
+                <span className="block text-xs font-normal text-ink-muted">{t("search.worldwideNeedsLinkedIn")}</span>
+              )}
             </span>
           </label>
+      )}
+      {/* One line, and which countries under "Why?" (PLAN 31.7): the list and
+          the rule were three lines under a checkbox. Outside the label, so the
+          button is not part of what toggles it. */}
+      {allowsRemote(ctx?.work_mode) && selectedSources.includes("linkedin") && (
+        <WhyNote className="ms-6 mt-0.5" line={t("search.worldwideLine")} why={t("search.worldwideWhy")} />
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-muted">

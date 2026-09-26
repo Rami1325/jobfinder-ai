@@ -39,8 +39,9 @@ export default function ToolsPage() {
             to={tool.to}
             className="block rounded-xl2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
           >
-            {/* Phones get a compact tappable row (icon · title · arrow);
-                the body copy and card layout appear from sm up. The flex
+            {/* Phones get a compact tappable row (icon · title and one line
+                of what the tool does · arrow; PLAN 31.7: a name alone did not
+                say it); the body copy and card layout appear from sm up. The flex
                 wrapper is ours — SpotlightCard's className lands on its
                 outer div, not around children. */}
             <TiltedCard caption={t(`cards.${tool.key}.title`)} className="h-full p-4 sm:p-6">
@@ -58,6 +59,7 @@ export default function ToolsPage() {
                   <h3 className="truncate text-[15px] font-semibold text-ink sm:whitespace-normal sm:text-lg">
                     {t(`cards.${tool.key}.title`)}
                   </h3>
+                  <p className="mt-0.5 truncate text-xs text-ink-muted sm:hidden">{t(`cards.${tool.key}.line`)}</p>
                   <p className="mt-2 hidden text-sm leading-relaxed text-ink-muted sm:block">
                     {t(`cards.${tool.key}.body`)}
                   </p>

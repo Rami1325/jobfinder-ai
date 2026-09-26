@@ -5311,8 +5311,9 @@ try {
     const tools = JSON.parse(read(`locales/${loc}/tools.json`));
     const missing = new Set();
     for (const r of nav) if (!resolvesIn(tools, `cards.${r.key}.title`)) missing.add(`cards.${r.key}.title`);
+    // `line` since PLAN 31.7: the one line a phone shows under each name.
     for (const r of cards)
-      for (const leaf of ["title", "body"])
+      for (const leaf of ["title", "body", "line"])
         if (!resolvesIn(tools, `cards.${r.key}.${leaf}`)) missing.add(`cards.${r.key}.${leaf}`);
     if (missing.size)
       fail(
@@ -12964,6 +12965,101 @@ try {
   }
 } catch (e) {
   fail(`history and add-controls check (check 78) could not run: ${e.message}`);
+}
+
+// ---- 79. one name per thing, and fewer words (PLAN 31.7) --------------------- //
+// The app called one number Fit, Search fit and Match, coverage Keyword match
+// and Keyword coverage, a kit a kit and a draft, and the resume a CV 45 times in
+// English; a cost note was a sentence and several notes were paragraphs. Pinned
+// here, each with a planted twin: (a) no "CV" in the app's English copy (the
+// landing is out of Phase 31's scope); (b) none of the retired names, and the
+// kept ones where they are; (c) "Uses 1 · N left"; (d) the template note and the
+// worldwide option as a line plus "Why?", with their keys; (e) the scan reads the
+// saved resume when no file is chosen; (f) a job row's Tailor is secondary, so
+// the Jobs page has one primary.
+try {
+  const APP_NS = ["common", "tailor", "tools", "scan", "auth", "jobs", "tracker", "settings", "interview"];
+  const strings = (loc, ns) => {
+    const p = path.join(SRC, "locales", loc, `${ns}.json`);
+    if (!fs.existsSync(p)) return [];
+    const out = [];
+    const walk = (o, pre) => {
+      for (const [k, v] of Object.entries(o)) {
+        const key = pre ? `${pre}.${k}` : k;
+        if (typeof v === "string") out.push([key, v]);
+        else if (v && typeof v === "object") walk(v, key);
+      }
+    };
+    walk(JSON.parse(fs.readFileSync(p, "utf8")), "");
+    return out;
+  };
+  const en = Object.fromEntries(APP_NS.map((ns) => [ns, strings("en", ns)]));
+  if (en.tailor.length < 200 || en.jobs.length < 200) throw new Error("read too few English strings");
+  // The privacy page's extension paragraphs describe the INSTALLED extension,
+  // whose buttons say "kit" (data-and-privacy.md holds that section to popup.js).
+  const EXEMPT = /^privacy\.extension\./;
+  const RETIRED = /\b(?:CVs?|Search fit|fit threshold|Keyword coverage|Keyword match|ATS coverage|Save for later|Save to tracker|Kits tab)\b/;
+  const read79 = (bundles) => {
+    const found = [];
+    for (const [ns, list] of Object.entries(bundles))
+      for (const [key, v] of list) if (!EXEMPT.test(key) && RETIRED.test(v)) found.push(`${ns}:${key} says "${RETIRED.exec(v)[0]}"`);
+    const at = (ns, key) => bundles[ns].find(([k]) => k === key)?.[1];
+    if (at("jobs", "card.save") !== "Save" || at("tailor", "save.cta") !== "Save") found.push("Save is not called Save");
+    if (at("tailor", "fit.coverage") !== "Keywords" || at("scan", "results.coverage") !== "Keywords") found.push("coverage is not called Keywords");
+    if (!/^Uses 1 · \{\{count\}\} left$/.test(at("common", "uses.note_other") ?? "")) found.push('the cost note is not "Uses 1 · N left"');
+    for (const [key, v] of bundles.common) if (/^uses\./.test(key) && /you have left this month/.test(v)) found.push(`common:${key} is the long cost sentence`);
+    return found;
+  };
+  for (const f of read79(en)) fail(`check 79: ${f} (PLAN 31.7)`);
+  const plantCopy = (ns, key, value, label) => {
+    const bundles = { ...en, [ns]: en[ns].map(([k, v]) => (k === key ? [k, value] : [k, v])) };
+    if (!en[ns].some(([k]) => k === key)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read79(bundles).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plantCopy("tailor", "doc.review.tool", "Check my CV", "a CV in English");
+  plantCopy("jobs", "sort.fit", "Search fit", "a retired name");
+  plantCopy("common", "uses.note_other", "This uses 1 of the {{count}} you have left this month.", "the long cost note");
+
+  // (d)-(f), in the files.
+  const panel = decomment(read("components/DocumentPanel.tsx"));
+  const alerts = decomment(read("pages/jobs/AlertsCard.tsx"));
+  const scan = decomment(read("pages/ScanPage.tsx"));
+  const cards = decomment(read("pages/jobs/cards.tsx"));
+  const readFiles = ({ panel: pn, alerts: al, scan: sc, cards: cd }) => {
+    const out = [];
+    const why = /<WhyNote\b[\s\S]*?line=\{t\("doc\.screen\.line"\)\}[\s\S]*?why=\{[\s\S]*?t\("doc\.screen\.note"\)[\s\S]*?doc\.screen\.icons[\s\S]*?doc\.screen\.footer[\s\S]*?doc\.screen\.twoColumn[\s\S]*?\/>/;
+    if (!why.test(pn)) out.push("the template note is not one line with its gated paragraph under Why?");
+    // `[\s{}]*`: a JSX comment between them decomments to an empty `{}`.
+    if (!/<\/label>\s*\)\}[\s{}]*allowsRemote\(ctx\?\.work_mode\) && selectedSources\.includes\("linkedin"\) && \(\s*<WhyNote\b/.test(al))
+      out.push("the worldwide option's Why? is not a sibling after its label");
+    if (!/const saved = !file && !!master;/.test(sc) || !/\(!!file \|\| saved\)/.test(sc)) out.push("the scan does not default to the saved resume");
+    if ((cd.match(/variant="secondary"\s*icon=\{<ArrowRight size=\{14\}/g) ?? []).length !== 2)
+      out.push("a job row's Tailor is not secondary, so the Jobs page shows a column of primaries");
+    return out;
+  };
+  const files = { panel, alerts, scan, cards };
+  for (const f of readFiles(files)) fail(`check 79: ${f} (PLAN 31.7)`);
+  const plantFile = (key, from, to, label) => {
+    if (!files[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!readFiles({ ...files, [key]: files[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plantFile("scan", "const saved = !file && !!master;", "const saved = false;", "a scan that asks for the file again");
+  plantFile("cards", 'variant="secondary"', 'variant="primary"', "a primary Tailor on every row");
+  for (const loc of ["en", "he"]) {
+    const common = JSON.parse(read(`locales/${loc}/common.json`));
+    const tailor = JSON.parse(read(`locales/${loc}/tailor.json`));
+    const jobs = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const [bundle, ns, key] of [
+      [common, "common", "why.show"],
+      [common, "common", "why.hide"],
+      [tailor, "tailor", "doc.screen.line"],
+      [jobs, "jobs", "search.worldwideLine"],
+      [jobs, "jobs", "search.worldwideWhy"],
+    ])
+      if (!resolvesIn(bundle, key)) fail(`check 79: locales/${loc}/${ns}.json is missing "${key}"`);
+  }
+} catch (e) {
+  fail(`names and words check (check 79) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

@@ -200,5 +200,9 @@
     "followUp": "Remind me if it goes quiet",
     "interview": "Moved to Interview",
     "practice": "Practice for this interview"
+  },
+  "why": {
+    "show": "Why?",
+    "hide": "Hide"
   }
 }

@@ -722,8 +722,11 @@ export function MatchCard({
           </p>
         )}
         <div className="mt-2 flex items-center gap-2">
+          {/* Secondary (PLAN 31.7, one primary per screen): a list of these
+              was a column of blue buttons under the page's own Search again. */}
           <Button
             size="sm"
+            variant="secondary"
             icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
             onClick={() =>
               nav("/app", {
@@ -883,8 +886,11 @@ export function HistoryRow({
           </p>
         )}
         <div className="mt-2 flex items-center gap-2">
+          {/* Secondary (PLAN 31.7, one primary per screen): a list of these
+              was a column of blue buttons under the page's own Search again. */}
           <Button
             size="sm"
+            variant="secondary"
             icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
             onClick={() =>
               nav("/app", {

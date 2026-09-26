@@ -6,30 +6,37 @@
   "cards": {
     "scan": {
       "title": "Resume scan",
+      "line": "Your resume's keywords against a job",
       "body": "See which of a job's keywords your resume already covers, in Hebrew or English."
     },
     "outreach": {
       "title": "Outreach Studio",
+      "line": "A message to a real person there",
       "body": "Skip the ATS black hole — a connection note, cold email, and referral ask to reach a real person."
     },
     "screening": {
       "title": "Screening answers",
+      "line": "Answers to application questions",
       "body": "Honest, resume-grounded answers to application questions like \"Why us?\" or \"Describe a time…\""
     },
     "xray": {
       "title": "ATS X-ray",
+      "line": "What an ATS reads from your file",
       "body": "See the exact text a parser pulls out of your rendered resume — and every fact that came back wrong."
     },
     "linkedin": {
       "title": "LinkedIn optimizer",
+      "line": "A sharper LinkedIn profile",
       "body": "A sharper headline, About, and bullets — drawn only from your real experience."
     },
     "followup": {
       "title": "Follow-up email writer",
+      "line": "A follow-up email after you apply",
       "body": "Concise, specific follow-up emails that don't read like a template."
     },
     "brief": {
       "title": "Company brief",
+      "line": "What to know about a company",
       "body": "What to know before you apply or interview — grounded in the company's own pages, with who to reach and a ready reach-out message."
     }
   },

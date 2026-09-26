@@ -487,6 +487,7 @@
       "failed": "Couldn't read the file back just now."
     },
     "screen": {
+      "line": "Drawn in the template you picked. A few things are the file's own.",
       "note": "This page is drawn in the template you picked — its colours, headings, header, entry layout and bullets. What it can't copy is the typeface: the file carries its own, so you get the same serif or sans here, not the exact letters.",
       "icons": "This one also draws small marks beside your contact details in the PDF; the page above leaves them out.",
       "twoColumn": "This template also prints as two columns, with a rail beside the main story. Which sections land in that rail is decided while the file is built, so the page above shows one column rather than guessing wrong.",

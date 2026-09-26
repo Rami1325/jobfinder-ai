@@ -25,7 +25,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { downloadResume, resumeFilename, reviewRewrites, type ResumeTemplate } from "../api/client";
 import { PDF_ONLY, TEMPLATE_SPECS } from "../lib/templateSpecs";
-import { Button, Card, CardTitle, MoreMenu, Skeleton, type MoreItem } from "./ui";
+import { Button, Card, CardTitle, MoreMenu, Skeleton, WhyNote, type MoreItem } from "./ui";
 import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
 import type { FactsLedger, ResumeModel, ReviewResult, ReviewRewrite } from "../types";
@@ -760,9 +760,15 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
               demote pass — a DOM guess would show sections in the rail that the
               real file moved out, which is a new lie in the same class as the
               one this note exists beneath.
-              A plain conditional <p>, never a reveal: it must not acquire a
-              motion wrapper, and nothing here animates a height. */}
-          <p className="mt-3 text-xs leading-relaxed text-ink-faint">
+              Since PLAN 31.7 it is ONE line with the paragraph under "Why?":
+              four lines at 12 px under the paper on a phone, read once. The
+              paragraph is revealed with no motion wrapper, and nothing here
+              animates a height. */}
+          <WhyNote
+            className="mt-3"
+            line={t("doc.screen.line")}
+            why={
+          <>
             {t("doc.screen.note")}
             {/* Each sentence appears only where it is TRUE of this template.
                 Six of the eleven draw no contact marks at all, and a note that
@@ -777,7 +783,9 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
                 sentence above it: eleven templates draw none. */}
             {spec.footerName && ` ${t("doc.screen.footer")}`}
             {PDF_ONLY(template) && ` ${t("doc.screen.twoColumn")}`}
-          </p>
+          </>
+            }
+          />
         </div>
 
         {view === "file" && (

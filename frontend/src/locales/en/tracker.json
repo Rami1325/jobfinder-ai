@@ -43,7 +43,7 @@
   },
   "empty": {
     "title": "No applications yet",
-    "body": "Find matching roles with <1>Jobs search</1>, or tailor a resume in <3>Tailor</3> and click “Save to tracker”."
+    "body": "Find matching roles with <1>Jobs search</1>, or tailor your resume in <3>Tailor</3>: each draft is saved here with its job."
   },
   "columnEmpty": "Nothing here yet",
   "interviewedToggle": "Did you interview for this job?",
