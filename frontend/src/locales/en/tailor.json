@@ -64,7 +64,7 @@
     "savedToTracker": "Saved with this job in your tracker",
     "markedApplied": "Marked as applied in your tracker",
     "trackerError": "Couldn't update your tracker. Check your connection and try again.",
-    "handoffFailed": "Couldn't load the saved job — it may have been deleted."
+    "handoffFailed": "Couldn't load that application — it may have been deleted."
   },
   "download": {
     "title": "Download tailored resume",
@@ -128,7 +128,7 @@
     "short": "PDF"
   },
   "save": {
-    "cta": "Save to tracker",
+    "cta": "Save",
     "saved": "✓ Saved to tracker",
     "saving": "Saving…"
   },
@@ -138,11 +138,11 @@
     "detected": "Detected a job link",
     "noText": "Couldn't read the description from that link (the site may require login or block bots). Paste the text instead.",
     "fetchError": "Could not fetch that link.",
-    "savedCta": "Use a job you saved",
-    "savedLoading": "Loading your saved jobs…",
-    "savedNone": "No saved jobs yet — anything you track shows up here.",
-    "savedEmpty": "That saved job has no description stored. Paste the text instead.",
-    "savedLoadError": "Couldn't load your saved jobs.",
+    "savedCta": "Use one of your applications",
+    "savedLoading": "Loading your applications…",
+    "savedNone": "No applications yet — any job you track shows up here.",
+    "savedEmpty": "That application has no posting stored. Paste the text instead.",
+    "savedLoadError": "Couldn't load your applications.",
     "edit": "Edit",
     "thisJob": "This job"
   },
@@ -166,7 +166,7 @@
     "positioning": "The story this resume tells:"
   },
   "report": {
-    "title": "Keyword match report",
+    "title": "Keywords",
     "summary": "{{missing}} of {{total}} key terms still missing. Only add terms that reflect real experience.",
     "clickHint": "Click any keyword to see where the job description mentions it. The count is verbatim mentions in the posting.",
     "matched": "Matched ({{count}})",
@@ -545,7 +545,7 @@
   },
   "fit": {
     "title": "How this resume matches the job",
-    "coverage": "Keyword coverage",
+    "coverage": "Keywords",
     "coverageSub": "{{covered}} of {{total}} key terms matched, {{partial}} partial",
     "coverageNote": "Recomputed from your resume as it stands right now — every change you accept or decline, and every word you type in yourself, is already in this number.",
     "recruiter": "Recruiter fit",

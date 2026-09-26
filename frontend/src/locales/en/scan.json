@@ -12,7 +12,7 @@
   "error": "Scan failed — try again.",
   "privacy": "Nothing is saved. The scan runs and forgets.",
   "results": {
-    "coverage": "Keyword match",
+    "coverage": "Keywords",
     "coverageHint": "Deterministic keyword coverage — the same ATS-gate score the tailor uses. No AI guesswork in this number.",
     "matched": "Matched ({{count}})",
     "partial": "Partial ({{count}})",

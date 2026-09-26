@@ -152,7 +152,7 @@ def above_min(matches: list[JobMatch], min_score: int) -> list[JobMatch]:
 
     Compared on `round(m.overall)`, which is the number the email prints and the
     number the app's fit ring shows — not on the raw float. A posting at 74.6
-    renders as "75% fit" everywhere the user can see it, so dropping it from a
+    renders as "75% match" everywhere the user can see it, so dropping it from a
     75%-bar email would have the History tab contradicting the email footer about
     the same job. One matcher, one answer, applied to the displayed value.
 
@@ -164,7 +164,7 @@ def above_min(matches: list[JobMatch], min_score: int) -> list[JobMatch]:
     `overall` is stored to one decimal (`round(0.5*cov + 0.5*fit, 1)`), so x.5
     is exactly reachable, e.g. coverage 80.0 with fit 69.0. The docstring above
     promised the email and the visible number agree; on that band they did not,
-    and the app painted "75% fit" in History under a footer saying the mail
+    and the app painted "75% match" in History under a footer saying the mail
     carried everything at 75% or above. `floor(x + 0.5)` is what JavaScript
     does, and the displayed value is the one both sides must round the same way.
     """
@@ -209,7 +209,7 @@ def _bar_note(min_score: int) -> str:
     """
     if min_score <= 0:
         return ""
-    return f"Only jobs at {min_score}% fit or above — the rest are in your search history."
+    return f"Only jobs at {min_score}% match or above — the rest are in your search history."
 
 
 # Strongest first: `certain` outranks `strong` outranks `weak`. An UNRECOGNISED
@@ -368,7 +368,7 @@ def build_alert_email(
         bits = [m.title or "Untitled role"]
         if m.company:
             bits.append(f"at {m.company}")
-        bits.append(f"— fit {round(m.overall)}%")
+        bits.append(f"— match {round(m.overall)}%")
         # The earliest date a board stated, and no chip when a `long_open`
         # ghost line is already the age chip — the HTML twin reads the SAME
         # function, so the two bodies cannot print different dates.
@@ -430,7 +430,7 @@ def _fit_pill(overall: float) -> str:
     return (
         f'<span style="display:inline-block;padding:5px 12px;border-radius:999px;'
         f"background:{bg};border:1px solid {border};color:{fg};"
-        f'font:600 13px {_EM_FONT};white-space:nowrap;">{pct}% fit</span>'
+        f'font:600 13px {_EM_FONT};white-space:nowrap;">{pct}% match</span>'
     )
 
 

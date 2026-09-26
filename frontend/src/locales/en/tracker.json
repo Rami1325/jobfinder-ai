@@ -114,7 +114,7 @@
       "generic": "The last sync ran into a problem. It tries again on the next sync."
     },
     "refusals": {
-      "changedSince": "This card was moved by hand after that email, so nothing was undone.",
+      "changedSince": "This application was moved by hand after that email, so nothing was undone.",
       "notUndoable": "That change can't be undone any more.",
       "notReview": "That email was already filed.",
       "applicationGone": "That application no longer exists. Choose another one.",
@@ -137,7 +137,7 @@
       "reviewHint": "We weren't sure where these belong, so nothing on your board changed.",
       "reviewEmpty": "Nothing needs your review.",
       "recentTitle": "Recent automatic updates",
-      "recentHint": "What emails changed on your board. Undo puts a card back the way it was.",
+      "recentHint": "What emails changed on your board. Undo puts an application back the way it was.",
       "recentEmpty": "No automatic updates yet.",
       "noCompany": "Company not detected",
       "add": "Add to tracker",

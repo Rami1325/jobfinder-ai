@@ -5668,9 +5668,9 @@ check("alert email is hebrew-safe", "מהנדס/ת תוכנה" in _body_he and "
 # manage-link only when an app url is configured
 _html = build_alert_email_html(_new, _AlertCtx(job_title="Backend Engineer", location="Tel Aviv"))
 check(
-    "alert html lists the job with link, fit pill, source badge",
+    "alert html lists the job with link, match pill, source badge",
     "Platform Engineer" in _html and 'href="https://alerts/new-1"' in _html
-    and "82% fit" in _html and "Drushim" in _html and "1 new job" in _html,
+    and "82% match" in _html and "Drushim" in _html and "1 new job" in _html,
 )
 check("alert html omits manage link without APP_BASE_URL", "Manage alerts" not in _html)
 check(
@@ -6011,12 +6011,12 @@ _bar_subj, _bar_body = build_alert_email(_bar_pool[:1], _AlertCtx(job_title="X")
 _bar_html = build_alert_email_html(_bar_pool[:1], _AlertCtx(job_title="X"), min_score=75)
 check(
     "alert email states the bar in both bodies",
-    "75% fit or above" in _bar_body and "75% fit or above" in _bar_html,
+    "75% match or above" in _bar_body and "75% match or above" in _bar_html,
 )
 check(
     "alert email says nothing about a bar when there is none",
-    "fit or above" not in build_alert_email(_bar_pool[:1], _AlertCtx(job_title="X"), 0)[1]
-    and "fit or above" not in build_alert_email_html(_bar_pool[:1], _AlertCtx(job_title="X")),
+    "match or above" not in build_alert_email(_bar_pool[:1], _AlertCtx(job_title="X"), 0)[1]
+    and "match or above" not in build_alert_email_html(_bar_pool[:1], _AlertCtx(job_title="X")),
 )
 check(
     "alert email footer names no held-back count",
