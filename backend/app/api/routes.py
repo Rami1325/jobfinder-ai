@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Resp
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.api.deps import admin_user, current_user, llm_user, metered_user
 from app.config import get_settings
@@ -1949,6 +1950,14 @@ def _master_rows(db: Session, user_id: int) -> list[SavedResume]:
     The ADD-COLUMN shim stamps pre-pairing rows "en"; a Hebrew master saved
     before the column existed would shadow the real English slot, so recompute
     the language from the stored resume whenever they disagree.
+
+    Two limits since PLAN 31.6/1. The relabel never moves `updated_at`: it is
+    the version an autosave's conflict check compares, and a read that bumped
+    it would refuse the next save of every open tab. And a row whose content now
+    reads as a language ANOTHER row already holds keeps its label, since the
+    detector changed (one Hebrew word no longer makes a resume Hebrew): two rows
+    claiming one slot would leave one of them unreachable. A save into it is
+    then asked about (`resume_slot`), never routed silently.
     """
     rows = db.execute(
         select(SavedResume)
@@ -1961,12 +1970,41 @@ def _master_rows(db: Session, user_id: int) -> list[SavedResume]:
             actual = resume_language(ResumeModel.model_validate_json(row.resume_json))
         except Exception:  # noqa: BLE001 - corrupt row; leave its language alone
             continue
-        if (row.language or "en") != actual:
-            row.language = actual
-            healed = True
+        if (row.language or "en") == actual:
+            continue
+        if any((other.language or "en") == actual for other in rows if other is not row):
+            continue
+        db.execute(
+            update(SavedResume)
+            .where(SavedResume.id == row.id)
+            .values(language=actual, updated_at=SavedResume.updated_at)
+        )
+        set_committed_value(row, "language", actual)
+        healed = True
     if healed:
         db.commit()
     return rows
+
+
+def _same_stamp(stored: datetime | None, sent: str) -> bool:
+    """Does the `updated_at` a client sent name this row's current version?
+
+    Both sides are compared as naive UTC to the microsecond: SQLite and Neon hand
+    the column back naive, and the client holds the `isoformat()` string this
+    module wrote. "" names "no saved resume here"."""
+    if not sent:
+        return stored is None
+    try:
+        parsed = datetime.fromisoformat(sent)
+    except ValueError:
+        raise HTTPException(422, "base_updated_at is not a timestamp.")
+    if stored is None:
+        return False
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    if stored.tzinfo is not None:
+        stored = stored.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed == stored
 
 
 @router.get("/profile/resume", response_model=MasterResumeOut | None)
@@ -2002,6 +2040,14 @@ def save_master_resume(
     user: User = Depends(current_user),
 ) -> MasterResumeOut:
     language = resume_language(body.resume)
+    # PLAN 31.6/1. The row is chosen by the resume's own language, so a document
+    # that now reads as the other language would be written over the person's
+    # OTHER resume. A client that says which slot it loaded is refused instead,
+    # and asks; one that does not (an upload, an older tab) is routed as before.
+    if body.slot is not None and body.slot != language:
+        raise HTTPException(
+            409, detail={"kind": "resume_slot", "slot": body.slot, "language": language}
+        )
     # A ledger-less save (the from-scratch builder, PLAN 15.3) derives the
     # facts ledger from the resume itself: the user typed these facts, so the
     # resume IS the source of truth the fabrication guard should protect.
@@ -2024,6 +2070,22 @@ def save_master_resume(
     stored_bytes = utf8_bytes(row.resume_json or "") if row is not None else 0
     if utf8_bytes(incoming) > stored_bytes:
         require_within(incoming, get_settings().max_resume_kb, "resume")
+    # Two tabs, or a phone and a laptop, were last-write-wins, which an autosave
+    # makes a quiet loss: the tab that saves last erases the other's typing.
+    # A save that names the version it was made from is refused when the server
+    # holds a newer one (PLAN 31.6/1), with that version's stamp, so the page
+    # can offer to load it. A save that names none is not checked.
+    if body.base_updated_at is not None:
+        held = row.updated_at if row is not None and (row.resume_json or "").strip() else None
+        if not _same_stamp(held, body.base_updated_at):
+            raise HTTPException(
+                409,
+                detail={
+                    "kind": "resume_stale",
+                    "language": language,
+                    "updated_at": held.isoformat() if held else "",
+                },
+            )
     if row is None:
         row = SavedResume(language=language, user_id=user.id)
         db.add(row)
@@ -2032,9 +2094,10 @@ def save_master_resume(
         # Best-effort: a failure here must never cost the user the save they
         # actually asked for — losing an undo point beats losing the resume.
         try:
-            resume_versions.snapshot(db, row, body.resume.model_dump_json())
+            resume_versions.snapshot(db, row, incoming, autosave=body.autosave)
         except Exception:  # noqa: BLE001
             pass
+    row.autosaved = body.autosave
     row.label = body.label
     row.resume_json = body.resume.model_dump_json()
     row.ledger_json = ledger.model_dump_json()
@@ -2163,6 +2226,7 @@ def restore_resume_version(
         db.add(current)
     else:
         resume_versions.snapshot(db, current, row.resume_json)
+    current.autosaved = False
     current.label = row.label
     current.resume_json = row.resume_json
     current.ledger_json = row.ledger_json

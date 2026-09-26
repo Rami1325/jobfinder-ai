@@ -537,6 +537,12 @@ class SavedResume(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    # Whether the content now in the row came from an autosave (PLAN 31.6/1).
+    # `resume_versions.snapshot` keeps the state an autosave overwrites only
+    # when it did NOT (an upload, a restore, a save the user asked for), or when
+    # the slot's newest restore point is older than its coalescing window, so a
+    # save a pause after every keystroke cannot push the uploaded original out.
+    autosaved: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 # --------------------------------------------------------------------------- #

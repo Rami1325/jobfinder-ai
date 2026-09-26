@@ -1,0 +1,756 @@
+{
+  "_about": "Constructed resumes for the proportional language detector (PLAN 31.6/1). The backend reads them in the smoke test and check-mirrors 76 runs lib/lang.ts over the same file, so the two detectors cannot disagree. Not production data: they were written to cover the Israeli shapes that broke the old rule (English titles and terms in a Hebrew resume, one Hebrew word in an English one).",
+  "cases": [
+    {
+      "name": "he: tech, English titles and skills",
+      "expect": "he",
+      "resume": {
+        "contact": {
+          "name": "נועה כהן",
+          "email": "noa@example.com",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "מפתחת Full Stack עם 5 שנות ניסיון בבניית מערכות ווב בקנה מידה גדול. אוהבת לעבוד בצוותים קטנים, להוביל פיצ'רים מקצה לקצה ולשפר ביצועים.",
+        "skills": [
+          "JavaScript",
+          "TypeScript",
+          "React",
+          "Node.js",
+          "Python",
+          "SQL",
+          "PostgreSQL",
+          "MongoDB",
+          "Docker",
+          "Kubernetes",
+          "AWS",
+          "Git",
+          "REST",
+          "GraphQL",
+          "Redis"
+        ],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "Wix",
+            "title": "Senior Full Stack Developer",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "פיתוח שירותי backend ב-Node.js ו-TypeScript עבור מיליוני משתמשים",
+              "הובלת מעבר מ-REST ל-GraphQL שקיצר את זמני הטעינה ב-30%",
+              "חניכת שלושה מפתחים חדשים בצוות"
+            ]
+          },
+          {
+            "company": "Monday.com",
+            "title": "Full Stack Developer",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "בניית רכיבי React לדשבורד האנליטיקה",
+              "כתיבת בדיקות אוטומטיות ב-Jest ו-Cypress",
+              "שיפור זמן ה-build ב-40% באמצעות Docker ו-caching"
+            ]
+          }
+        ],
+        "education": [
+          {
+            "institution": "אוניברסיטת תל אביב",
+            "degree": "תואר ראשון",
+            "field": "מדעי המחשב",
+            "start_date": "",
+            "end_date": "",
+            "details": ""
+          }
+        ],
+        "projects": [],
+        "certifications": [],
+        "military_service": [
+          {
+            "unit": "8200",
+            "role": "מפתחת תוכנה",
+            "rank": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "פיתוח כלים פנימיים ב-Python"
+            ]
+          }
+        ],
+        "languages": []
+      }
+    },
+    {
+      "name": "he: DevOps, term-heavy bullets",
+      "expect": "he",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "מהנדס DevOps עם ניסיון בתשתיות ענן ואוטומציה.",
+        "skills": [
+          "AWS",
+          "GCP",
+          "Terraform",
+          "Ansible",
+          "Kubernetes",
+          "Helm",
+          "ArgoCD",
+          "Jenkins",
+          "GitHub Actions",
+          "Prometheus",
+          "Grafana",
+          "ELK",
+          "Python",
+          "Bash",
+          "Linux",
+          "Docker",
+          "Istio",
+          "Vault",
+          "Kafka",
+          "Redis"
+        ],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "Check Point",
+            "title": "Senior DevOps Engineer",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "הקמת תשתית CI/CD עם Jenkins, GitHub Actions ו-ArgoCD על גבי Kubernetes (EKS)",
+              "ניהול סביבות AWS באמצעות Terraform ו-Helm",
+              "ניטור עם Prometheus ו-Grafana, והורדת זמני התגובה לתקלות ב-50%"
+            ]
+          },
+          {
+            "company": "Taboola",
+            "title": "DevOps Engineer",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "מיגרציה של 40 שירותים ל-Docker ו-Kubernetes",
+              "כתיבת סקריפטים ב-Python ו-Bash לאוטומציה של פריסות"
+            ]
+          }
+        ],
+        "education": [
+          {
+            "institution": "הטכניון",
+            "degree": "B.Sc",
+            "field": "הנדסת מערכות מידע",
+            "start_date": "",
+            "end_date": "",
+            "details": ""
+          }
+        ],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "he: sales and admin, all Hebrew",
+      "expect": "he",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "נציגת מכירות ושירות לקוחות עם יכולת עבודה בסביבה דינמית ותודעת שירות גבוהה.",
+        "skills": [
+          "עבודה בצוות",
+          "שירות לקוחות",
+          "Excel",
+          "Office"
+        ],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "סלקום",
+            "title": "נציגת מכירות",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "מכירת חבילות תקשורת ללקוחות פרטיים ועסקיים",
+              "עמידה ביעדי מכירות חודשיים",
+              "טיפול בפניות ותלונות לקוחות"
+            ]
+          }
+        ],
+        "education": [
+          {
+            "institution": "מכללת ספיר",
+            "degree": "תואר ראשון",
+            "field": "כלכלה וניהול",
+            "start_date": "",
+            "end_date": "",
+            "details": ""
+          }
+        ],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "he: the smoke test's short resume",
+      "expect": "he",
+      "resume": {
+        "contact": {
+          "name": "דנה לוי",
+          "email": "dana@example.com",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "מהנדסת נתונים עם ניסיון בעיבוד נתונים בענן.",
+        "skills": [
+          "Python",
+          "עיבוד נתונים",
+          "SQL"
+        ],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "חברת דוגמה",
+            "title": "מהנדסת נתונים",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "בניית צינורות נתונים ב-Python"
+            ]
+          }
+        ],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "he: a new page, one Hebrew line and English skills",
+      "expect": "he",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "סטודנטית שנה ג' למדעי המחשב, מחפשת משרת סטודנט.",
+        "skills": [
+          "Java",
+          "C++",
+          "Python",
+          "Excel"
+        ],
+        "skill_groups": [],
+        "experience": [],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "he: English headline and titles, Hebrew bullets",
+      "expect": "he",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "QA Automation Engineer",
+        "summary": "QA Automation Engineer עם ניסיון בבדיקות API ו-UI.",
+        "skills": [
+          "Selenium",
+          "Playwright",
+          "Python",
+          "Java",
+          "Postman",
+          "Jenkins",
+          "JIRA",
+          "SQL"
+        ],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "NICE",
+            "title": "QA Automation Engineer",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "כתיבת framework לבדיקות UI ב-Playwright",
+              "בדיקות API עם Postman ו-Python",
+              "עבודה במתודולוגיית Agile"
+            ]
+          },
+          {
+            "company": "Amdocs",
+            "title": "Manual QA",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "כתיבת STP ו-STD",
+              "ניהול באגים ב-JIRA"
+            ]
+          }
+        ],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "en: one Hebrew organisation in a bullet",
+      "expect": "en",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "Backend engineer with six years of experience building payment systems.",
+        "skills": [
+          "Go",
+          "Python",
+          "PostgreSQL",
+          "Kafka"
+        ],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "Stripe",
+            "title": "Backend Engineer",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "Built the settlement pipeline that moves $2B a month",
+              "Volunteered as a mentor at עמותת תפוח, teaching teenagers to code",
+              "Cut the reconciliation job from 4 hours to 20 minutes"
+            ]
+          }
+        ],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "en: Hebrew degree and military role pasted in",
+      "expect": "en",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "Product manager who ships B2B SaaS, from discovery to launch.",
+        "skills": [
+          "Roadmapping",
+          "SQL",
+          "Figma",
+          "A/B testing"
+        ],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "Fiverr",
+            "title": "Product Manager",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "Led the checkout redesign that lifted conversion by 12%",
+              "Ran 40 A/B tests a quarter with the growth team",
+              "Owned the pricing page and the plan comparison"
+            ]
+          }
+        ],
+        "education": [
+          {
+            "institution": "Tel Aviv University",
+            "degree": "B.A.",
+            "field": "כלכלה",
+            "start_date": "",
+            "end_date": "",
+            "details": ""
+          }
+        ],
+        "projects": [],
+        "certifications": [],
+        "military_service": [
+          {
+            "unit": "",
+            "role": "מפקדת צוות",
+            "rank": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": []
+          }
+        ],
+        "languages": []
+      }
+    },
+    {
+      "name": "en: one Hebrew word typed into the summary",
+      "expect": "en",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "Data analyst with a background in economics. בקיא in SQL, Python and dashboards.",
+        "skills": [
+          "SQL",
+          "Python",
+          "Tableau"
+        ],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "Playtika",
+            "title": "Data Analyst",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "Built the weekly retention dashboard used by 30 product managers",
+              "Automated the monthly KPI report in Python"
+            ]
+          }
+        ],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "en: English CV, Hebrew skills list",
+      "expect": "en",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "Operations manager with ten years in logistics.",
+        "skills": [
+          "ניהול צוות",
+          "לוגיסטיקה",
+          "Excel"
+        ],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "Zim",
+            "title": "Operations Manager",
+            "location": "",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "Managed a team of 25 across three warehouses",
+              "Reduced shipping delays by 18% with a new routing process",
+              "Negotiated carrier contracts worth $4M a year"
+            ]
+          }
+        ],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "en: an empty page",
+      "expect": "en",
+      "resume": {
+        "contact": {
+          "name": "",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "",
+        "skills": [],
+        "skill_groups": [],
+        "experience": [],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "en: a page begun with English skills",
+      "expect": "en",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "",
+        "skills": [
+          "Excel",
+          "SQL"
+        ],
+        "skill_groups": [],
+        "experience": [],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "he: a page begun with Hebrew skills",
+      "expect": "he",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "",
+        "skills": [
+          "ניהול צוות",
+          "שירות לקוחות",
+          "Excel"
+        ],
+        "skill_groups": [],
+        "experience": [],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "en: a Hebrew name and city do not count",
+      "expect": "en",
+      "resume": {
+        "contact": {
+          "name": "יוסי כהן",
+          "email": "",
+          "phone": "",
+          "location": "תל אביב",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "Support engineer who likes hard tickets.",
+        "skills": [],
+        "skill_groups": [],
+        "experience": [
+          {
+            "company": "אלביט",
+            "title": "Support Engineer",
+            "location": "חיפה",
+            "start_date": "",
+            "end_date": "",
+            "bullets": [
+              "Closed 400 tickets a quarter"
+            ]
+          }
+        ],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "he: short Hebrew prose beside a long English skills list (skills do not vote)",
+      "expect": "he",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "בוגר קורס פיתוח Full Stack, מחפש משרה ראשונה.",
+        "skills": [
+          "JavaScript",
+          "TypeScript",
+          "React",
+          "Redux",
+          "Next.js",
+          "Node.js",
+          "Express",
+          "NestJS",
+          "Python",
+          "Django",
+          "FastAPI",
+          "SQL",
+          "PostgreSQL",
+          "MySQL",
+          "MongoDB",
+          "Redis",
+          "Docker",
+          "Kubernetes",
+          "AWS",
+          "Azure",
+          "GCP",
+          "Git",
+          "GitHub Actions",
+          "Jenkins",
+          "Terraform",
+          "Linux",
+          "Bash",
+          "REST",
+          "GraphQL",
+          "gRPC",
+          "Kafka",
+          "RabbitMQ",
+          "Jest",
+          "Cypress",
+          "Playwright",
+          "Figma",
+          "Jira",
+          "Agile",
+          "Scrum",
+          "HTML",
+          "CSS",
+          "Tailwind"
+        ],
+        "skill_groups": [],
+        "experience": [],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "boundary: one word in five is Hebrew",
+      "expect": "he",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "שלום one two three four",
+        "skills": [],
+        "skill_groups": [],
+        "experience": [],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    },
+    {
+      "name": "boundary: one word in six is Hebrew",
+      "expect": "en",
+      "resume": {
+        "contact": {
+          "name": "Test",
+          "email": "",
+          "phone": "",
+          "location": "",
+          "linkedin": "",
+          "website": ""
+        },
+        "headline": "",
+        "summary": "שלום one two three four five",
+        "skills": [],
+        "skill_groups": [],
+        "experience": [],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "military_service": [],
+        "languages": []
+      }
+    }
+  ]
+}

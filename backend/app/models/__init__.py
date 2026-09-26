@@ -391,6 +391,20 @@ class MasterResumeIn(BaseModel):
     resume: ResumeModel
     ledger: Optional[FactsLedger] = None
     label: str = "My resume"
+    # PLAN 31.6/1, what an autosave needs from the server. Each is optional, and
+    # a save without them behaves exactly as before, so a tab left open across
+    # the deploy keeps working.
+    # The language slot this document was loaded from. When the resume now
+    # reads as the OTHER language, the save is refused (409, kind `resume_slot`)
+    # instead of landing on the other resume.
+    slot: Optional[Literal["en", "he"]] = None
+    # The `updated_at` this document was loaded or last saved at, "" for "no
+    # saved resume in this slot". Anything newer on the server is a save from
+    # another tab or device, refused (409, kind `resume_stale`) rather than
+    # overwritten.
+    base_updated_at: Optional[str] = Field(default=None, max_length=64)
+    # A save the user did not ask for: its restore points are coalesced.
+    autosave: bool = False
 
 
 class MasterResumeOut(BaseModel):

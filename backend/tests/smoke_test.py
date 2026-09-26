@@ -16179,6 +16179,255 @@ with TestClient(_fastapi_app) as _tc:
     )
 
 # ---------------------------------------------------------------------------
+# 27b. What an autosave needs (PLAN 31.6/1): the resume's language by share of
+# words, the slot a document was loaded from, the version it was made from,
+# and one restore point per half hour of autosaving.
+# ---------------------------------------------------------------------------
+from datetime import timedelta as _td316  # noqa: E402
+
+from sqlalchemy import update as _update316  # noqa: E402
+
+from app.core.lang import HEBREW_RE as _HEBREW_RE316  # noqa: E402
+from app.db.models import SavedResume as _SR316, SavedResumeVersion as _SRV316  # noqa: E402
+from app.db.resume_versions import COALESCE_WINDOW as _WINDOW316  # noqa: E402
+
+_cases316 = _json.loads(
+    (Path(__file__).parent / "fixtures" / "lang_cases.json").read_text(encoding="utf-8")
+)["cases"]
+_misread316 = [
+    c["name"] for c in _cases316 if resume_language(ResumeModel.model_validate(c["resume"])) != c["expect"]
+]
+check(
+    "31.6/1 language: every constructed case reads as its language — Hebrew resumes whose titles, "
+    "skills and terms are English, and English ones carrying one Hebrew word, organisation or pasted degree",
+    len(_cases316) >= 17 and {c["expect"] for c in _cases316} == {"en", "he"} and _misread316 == [],
+    f"{len(_cases316)} cases, misread: {_misread316}",
+)
+
+
+def _prose316(r: ResumeModel) -> str:
+    return " ".join(
+        [r.summary, " ".join(r.skills)]
+        + [t for e in r.experience for t in [e.title, *e.bullets]]
+        + [t for e in r.education for t in [e.degree, e.field, e.details]]
+        + [t for m in r.military_service for t in [m.role, *m.bullets]]
+    )
+
+
+_old_misread316 = [
+    c["name"] for c in _cases316
+    if c["expect"] == "en" and _HEBREW_RE316.search(_prose316(ResumeModel.model_validate(c["resume"])))
+]
+check(
+    "31.6/1 language: the cases are live — the rule this replaced, any Hebrew letter, misreads at least "
+    "four of the English ones",
+    len(_old_misread316) >= 4,
+    str(_old_misread316),
+)
+
+with TestClient(_fastapi_app) as _tc:
+
+    _ids316: dict[str, int] = {}
+
+    def _user316(name: str) -> dict:
+        made = _tc.post("/admin/users", json={"name": name}, headers=_ADMIN_H).json()
+        _ids316[made["invite_code"]] = made["id"]
+        return {"X-App-Key": made["invite_code"]}
+
+    def _rows316(h: dict) -> list:
+        """This account's saved_resumes rows, on a session of their own."""
+        return _db316.query(_SR316).filter(_SR316.user_id == _ids316[h["X-App-Key"]]).all()
+
+    def _put316(h: dict, r: ResumeModel, **extra):  # noqa: ANN202
+        return _tc.put("/profile/resume", json={"resume": r.model_dump(), "label": "M", **extra}, headers=h)
+
+    def _get316(h: dict, lang: str) -> dict | None:
+        return _tc.get("/profile/resume", params={"lang": lang}, headers=h).json()
+
+    def _en_versions316(h: dict) -> list[dict]:
+        return [v for v in _tc.get("/profile/resume/versions", headers=h).json()["versions"] if v["language"] == "en"]
+
+    _en316 = ResumeModel(
+        contact=Contact(name="Dana Levi"),
+        headline="Uploaded original",
+        summary="Backend engineer with six years of building payment systems.",
+        experience=[Experience(company="Acme", title="Backend Engineer", bullets=[
+            "Built the settlement pipeline", "Cut the nightly job from 4 hours to 20 minutes"])],
+    )
+    _he316 = ResumeModel(
+        contact=Contact(name="דנה לוי"),
+        summary="מהנדסת תוכנה עם ניסיון בפייתון ובבניית שירותים.",
+        experience=[Experience(company="אקמי", title="מהנדסת תוכנה", bullets=["פיתוח שירותים ב-Python"])],
+    )
+
+    def _variant316(base: ResumeModel, **fields) -> ResumeModel:
+        out = base.model_copy(deep=True)
+        for k, v in fields.items():
+            setattr(out, k, v)
+        return out
+
+    # The defect itself: one Hebrew word typed into the English master saved it
+    # over the person's Hebrew resume, and left the English one as it was.
+    _H1 = _user316("Slot Tester")
+    _put316(_H1, _en316)
+    _put316(_H1, _he316)
+    _typed316 = _variant316(_en316, summary=_en316.summary + " בקיא")
+    _r316 = _put316(_H1, _typed316)
+    check(
+        "31.6/1: one Hebrew word typed into the English resume saves into the ENGLISH slot, "
+        "and the Hebrew resume is untouched",
+        _r316.status_code == 200
+        and _r316.json()["language"] == "en"
+        and _get316(_H1, "en")["resume"]["summary"].endswith("בקיא")
+        and _get316(_H1, "he")["resume"]["summary"] == _he316.summary,
+        f"{_r316.status_code} {_r316.text[:120]}",
+    )
+
+    # The slot: a document that now reads as the other language is refused and
+    # named, not written over the other resume. Its twin is written.
+    _he_edit316 = _variant316(_he316, summary=_he316.summary + " ועוד")
+    _r316 = _put316(_H1, _he_edit316, slot="en")
+    check(
+        "31.6/1: a save whose resume now reads as the OTHER language than its slot is refused "
+        "(409 resume_slot, both languages named) and writes nothing",
+        _r316.status_code == 409
+        and _r316.json()["detail"] == {"kind": "resume_slot", "slot": "en", "language": "he"}
+        and _get316(_H1, "he")["resume"]["summary"] == _he316.summary
+        and _get316(_H1, "en")["resume"]["summary"].endswith("בקיא"),
+        f"{_r316.status_code} {_r316.text[:160]}",
+    )
+    check(
+        "31.6/1: …and the same save into its own slot is written (the false-positive twin)",
+        _put316(_H1, _he_edit316, slot="he").status_code == 200
+        and _get316(_H1, "he")["resume"]["summary"] == _he_edit316.summary,
+    )
+
+    # The version: a save made from an older one is another tab's loss.
+    _stamp316 = _get316(_H1, "en")["updated_at"]
+    _a316 = _put316(_H1, _variant316(_en316, headline="Tab A"), slot="en", base_updated_at=_stamp316)
+    _b316 = _put316(_H1, _variant316(_en316, headline="Tab B"), slot="en", base_updated_at=_stamp316)
+    check(
+        "31.6/1: a save made from the current version is written and hands back the new version; one "
+        "made from the version it replaced is refused (409 resume_stale) with the version the server "
+        "holds, and writes nothing",
+        _a316.status_code == 200
+        and _a316.json()["updated_at"] not in ("", _stamp316)
+        and _b316.status_code == 409
+        and _b316.json()["detail"] == {"kind": "resume_stale", "language": "en", "updated_at": _a316.json()["updated_at"]}
+        and _get316(_H1, "en")["resume"]["headline"] == "Tab A",
+        f"{_a316.status_code} {_b316.status_code} {_b316.text[:200]}",
+    )
+    _H2 = _user316("First Saver")
+    check(
+        '31.6/1: a save that names no version (an upload, a tab older than the deploy) is not checked; '
+        '"" means no saved resume in this slot, refused where one exists and written where none does; '
+        'a stamp that is not one is a 422',
+        _put316(_H1, _variant316(_en316, headline="Upload")).status_code == 200
+        and _put316(_H1, _en316, base_updated_at="").status_code == 409
+        and _put316(_H2, _en316, base_updated_at="").status_code == 200
+        and _put316(_H2, _en316, base_updated_at="yesterday").status_code == 422,
+    )
+
+    # A read that relabels a row never moves its version, and never makes two
+    # rows claim one slot: the detector changed under rows labelled by the old one.
+    _H3 = _user316("Legacy Rows")
+    _put316(_H3, _en316)
+    _put316(_H3, _he316)
+    _db316 = SessionLocal()
+    try:
+        # The old rule's label: an English resume carrying one Hebrew word was
+        # stored as the "he" row. Under the new detector it reads as English, as
+        # the "en" row beside it does.
+        (_he_row316,) = [r for r in _rows316(_H3) if r.language == "he"]
+        _he_row316.resume_json = _typed316.model_dump_json()
+        _db316.commit()
+    finally:
+        _db316.close()
+    _listed316 = _tc.get("/profile/resumes", headers=_H3).json()["resumes"]
+    _he_back316 = _get316(_H3, "he")
+    check(
+        "31.6/1: a row whose content now reads as a language another row holds keeps its label, so "
+        "two rows never claim one slot and neither becomes unreachable",
+        sorted(m["language"] for m in _listed316) == ["en", "he"]
+        and _he_back316 is not None
+        and _he_back316["resume"]["summary"].endswith("בקיא"),
+        str([(m["language"], m["resume"]["summary"][-12:]) for m in _listed316]),
+    )
+    _H4 = _user316("Relabel Clock")
+    _saved_at316 = _put316(_H4, _en316).json()["updated_at"]
+    _db316 = SessionLocal()
+    try:
+        (_row316,) = _rows316(_H4)
+        _db316.execute(_update316(_SR316).where(_SR316.id == _row316.id).values(language="he", updated_at=_SR316.updated_at))
+        _db316.commit()
+    finally:
+        _db316.close()
+    _before316 = _tc.get("/profile/resumes", headers=_H4).json()["resumes"]  # this read relabels
+    _after316 = _get316(_H4, "en")
+    check(
+        "31.6/1: relabelling a row on read never moves its updated_at — it is the version an autosave "
+        "compares, so a read that bumped it would refuse every open tab's next save",
+        len(_before316) == 1
+        and _before316[0]["language"] == "en"
+        and _after316 is not None
+        and _before316[0]["updated_at"] == _after316["updated_at"] == _saved_at316
+        and _put316(_H4, _variant316(_en316, headline="Still mine"), slot="en",
+                    base_updated_at=_saved_at316).status_code == 200,
+        f"saved {_saved_at316}, read {_before316[:1] and _before316[0]['updated_at']}",
+    )
+
+    # Restore points: the upload survives any amount of typing.
+    _H5 = _user316("Autosaver")
+    _put316(_H5, _en316)
+    _put316(_H5, _variant316(_en316, headline="The upload"))  # the file the person uploaded
+    _stamp316 = _get316(_H5, "en")["updated_at"]
+
+    def _auto316(headline: str) -> None:
+        global _stamp316
+        r = _put316(_H5, _variant316(_en316, headline=headline), slot="en",
+                    base_updated_at=_stamp316, autosave=True)
+        _stamp316 = r.json()["updated_at"] if r.status_code == 200 else _stamp316
+
+    for _i316 in range(25):
+        _auto316(f"Typing {_i316}")
+    _v316 = _en_versions316(_H5)
+    check(
+        "31.6/1: twenty-five autosaves add ONE restore point, the upload they overwrote first — before, "
+        "twenty-one evicted it",
+        [v["headline"] for v in _v316] == ["The upload", "Uploaded original"],
+        str([v["headline"] for v in _v316]),
+    )
+    _db316 = SessionLocal()
+    try:
+        # Every restore point of the slot, not only the newest: the window is
+        # read off the newest by time, and moving one row alone would make an
+        # older one the newest.
+        for _old316 in _db316.query(_SRV316).filter(_SRV316.id.in_([v["id"] for v in _v316])).all():
+            _old316.created_at = _old316.created_at - _WINDOW316 - _td316(minutes=1)
+        _db316.commit()
+    finally:
+        _db316.close()
+    _auto316("After the break")
+    _v316 = _en_versions316(_H5)
+    check(
+        "31.6/1: once the newest restore point is older than the window, the next autosave keeps the "
+        "state it overwrites",
+        [v["headline"] for v in _v316][:2] == ["Typing 24", "The upload"],
+        str([v["headline"] for v in _v316]),
+    )
+    _r316 = _put316(_H5, _variant316(_en316, headline="Asked for"), slot="en", base_updated_at=_stamp316)
+    _stamp316 = _r316.json()["updated_at"]
+    _auto316("Typing on it")
+    _auto316("Typing more")
+    _v316 = _en_versions316(_H5)
+    check(
+        "31.6/1: a save the user asked for is always a restore point, and so is its content when the "
+        "next autosave overwrites it, window or not (the false-positive twin of the coalescing)",
+        [v["headline"] for v in _v316][:3] == ["Asked for", "After the break", "Typing 24"],
+        str([v["headline"] for v in _v316]),
+    )
+
+# ---------------------------------------------------------------------------
 # 28. Accounts (Phase 29 / B1): email sign-in beside the invite codes.
 # The gate learned a second credential (a session cookie), CSRF and a
 # verification rule. Every pre-accounts check above still runs unchanged; these

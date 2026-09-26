@@ -13,6 +13,8 @@ All reads and writes are scoped to one user, same as `db.history`.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -21,6 +23,13 @@ from app.db.models import SavedResume, SavedResumeVersion
 # Newest kept per (user, language). An undo buffer, not an archive: these rows
 # hold a full resume each, and nobody is scrolling back past twenty saves.
 MAX_VERSIONS = 20
+
+# An autosave keeps at most one restore point per this much editing (PLAN
+# 31.6/1). Autosave writes a pause after every change, and a snapshot per write
+# would spend the twenty slots in a few minutes of typing, the uploaded
+# original first. Measured on nothing: a round number a person would call "a
+# while ago", which is what a restore point is for.
+COALESCE_WINDOW = timedelta(minutes=30)
 
 
 def list_versions(db: Session, user_id: int, language: str = "") -> list[SavedResumeVersion]:
@@ -41,7 +50,9 @@ def owned_version(db: Session, version_id: int, user_id: int) -> SavedResumeVers
     return row if row and row.user_id == user_id else None
 
 
-def snapshot(db: Session, row: SavedResume, incoming_json: str) -> SavedResumeVersion | None:
+def snapshot(
+    db: Session, row: SavedResume, incoming_json: str, *, autosave: bool = False
+) -> SavedResumeVersion | None:
     """Record `row`'s CURRENT content as a version. Call BEFORE overwriting it.
 
     Returns the new version, or None when there is nothing worth keeping:
@@ -54,6 +65,12 @@ def snapshot(db: Session, row: SavedResume, incoming_json: str) -> SavedResumeVe
     wrong — it lets an unchanged save through whenever the previous save did
     change something.
 
+    An AUTOSAVE over content that an autosave wrote is coalesced: no version
+    while the slot's newest one is younger than `COALESCE_WINDOW`. Content that
+    arrived any other way (an upload, a restore, a save the user asked for) is
+    always kept on its way out, so the first keystroke after an upload records
+    the upload itself, the restore point that matters most.
+
     Does not commit: the caller is mid-transaction on the same session, and
     committing here would split the snapshot from the write it exists to protect.
     """
@@ -62,6 +79,8 @@ def snapshot(db: Session, row: SavedResume, incoming_json: str) -> SavedResumeVe
     if row.resume_json == incoming_json:
         return None
     language = row.language or "en"
+    if autosave and row.autosaved and _newest_age(db, row.user_id, language) < COALESCE_WINDOW:
+        return None
 
     version = SavedResumeVersion(
         user_id=row.user_id,
@@ -74,6 +93,21 @@ def snapshot(db: Session, row: SavedResume, incoming_json: str) -> SavedResumeVe
     db.flush()  # need its id before trimming, and to order it against the rest
     _trim(db, row.user_id, language)
     return version
+
+
+def _newest_age(db: Session, user_id: int | None, language: str) -> timedelta:
+    """How long ago this slot's newest version was taken; forever when none."""
+    newest = db.execute(
+        select(SavedResumeVersion.created_at)
+        .where(SavedResumeVersion.user_id == user_id, SavedResumeVersion.language == language)
+        .order_by(SavedResumeVersion.created_at.desc(), SavedResumeVersion.id.desc())
+        .limit(1)
+    ).scalar()
+    if newest is None:
+        return timedelta.max
+    if newest.tzinfo is None:
+        newest = newest.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - newest
 
 
 def _trim(db: Session, user_id: int | None, language: str) -> None:

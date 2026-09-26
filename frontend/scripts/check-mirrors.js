@@ -12665,6 +12665,48 @@ try {
   fail(`next-step check (check 75) could not run: ${e.message}`);
 }
 
+// ---- 76. a resume's language is a share of its words, in both detectors (EXECUTED) //
+// PLAN 31.6/1. `resumeLanguage` said "he" for ANY Hebrew letter in the prose, so
+// one Hebrew word typed into an English resume turned the whole document RTL on
+// the paper, and on the server routed its save over the person's HEBREW resume.
+// Both detectors now say "he" when at least one prose word in five is Hebrew,
+// with skills voting only while there is no prose (they are English terms in
+// most Hebrew resumes). The backend's own cases, `tests/fixtures/lang_cases.json`,
+// are run through THIS file here and through `app/core/lang.py` in the smoke
+// test, so the paper and the file cannot disagree about a document's direction.
+// Four planted twins are probed every run: the old rule, skills voting, a
+// plain majority and a threshold of one in six each misread a case.
+try {
+  const casesText = pySource("tests/fixtures/lang_cases.json", "check 76");
+  if (casesText !== null) {
+    const cases = JSON.parse(casesText).cases;
+    if (!Array.isArray(cases) || cases.length < 17)
+      throw new Error(`read ${cases?.length} cases out of backend/tests/fixtures/lang_cases.json (expected at least 17)`);
+    const langSrc = read("lib/lang.ts");
+    const misread76 = (src) => {
+      const { resumeLanguage } = runProbeBundle("lang76", src);
+      return cases.filter((c) => resumeLanguage(c.resume) !== c.expect).map((c) => c.name);
+    };
+    for (const name of misread76(langSrc))
+      fail(`check 76: lib/lang.ts reads the case "${name}" as the other language; the paper would disagree with the file about its direction (PLAN 31.6/1)`);
+    const plant = (from, to, label) => {
+      if (!langSrc.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+      if (!misread76(langSrc.replace(from, to)).length) throw new Error(`the cases pass "${label}"`);
+    };
+    const verdict = 'return words && hebrew * HEBREW_SHARE_DEN >= words ? "he" : "en";';
+    plant(verdict, 'return hebrew ? "he" : "en";', "any Hebrew letter, the rule this replaced");
+    plant(verdict, 'return words && hebrew * 2 > words ? "he" : "en";', "a plain majority");
+    plant("const HEBREW_SHARE_DEN = 5;", "const HEBREW_SHARE_DEN = 6;", "a threshold of one word in six");
+    plant(
+      'const parts: string[] = [resume.summary ?? ""];',
+      'const parts: string[] = [resume.summary ?? "", (resume.skills ?? []).join(" ")];',
+      "skills voting beside the prose",
+    );
+  }
+} catch (e) {
+  fail(`resume-language check (check 76) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
