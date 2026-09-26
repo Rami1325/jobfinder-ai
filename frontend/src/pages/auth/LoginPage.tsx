@@ -39,8 +39,9 @@ import {
  * reason: the stores that outlive the router must not survive a change of who
  * is signed in.
  *
- * Continue with Google (Phase 30 F) sits under the form once /auth/me says this
- * server offers it. That answer is stored BEFORE the signed-in branches return,
+ * Continue with Google (Phase 30 F) sits ABOVE the form since PLAN 31.5/1, in a
+ * slot GoogleButton holds from the first paint, and fills once /auth/me says
+ * this server offers it. That answer is stored BEFORE the signed-in branches return,
  * because a signed-out visitor is exactly who the button is for. A sign-in
  * Google refused comes back here as `?google=<code>`: read once, taken out of
  * the address with `next` kept, and shown in the form's error slot. A cancel
@@ -56,7 +57,8 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
-  const [googleEnabled, setGoogleEnabled] = useState(false);
+  // null until /auth/me answers: GoogleButton holds its slot until then.
+  const [googleEnabled, setGoogleEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -70,7 +72,8 @@ export default function LoginPage() {
         else setPending(true);
       })
       .catch(() => {
-        /* the form still works; the server answers the submit, and Google stays hidden */
+        // The form still works; the server answers the submit. Google goes.
+        if (live) setGoogleEnabled(false);
       });
     return () => {
       live = false;
@@ -103,7 +106,7 @@ export default function LoginPage() {
       // second login into a page that is already unloading.
       window.location.assign(me.verified ? next : withNext("/verify", next));
     } catch (err) {
-      setError(loginErrorMessage(err, googleEnabled, t("errors.generic")));
+      setError(loginErrorMessage(err, googleEnabled === true, t("errors.generic")));
       setBusy(false);
     }
   }
@@ -118,6 +121,8 @@ export default function LoginPage() {
           </Link>
         </p>
       )}
+
+      <GoogleButton next={next} page="login" enabled={googleEnabled} />
 
       <form onSubmit={submit} noValidate>
         <div className="space-y-4">
@@ -148,8 +153,6 @@ export default function LoginPage() {
         </Button>
       </form>
 
-      {googleEnabled && <GoogleButton next={next} page="login" />}
-
       <p className="mt-3 flex flex-wrap items-center justify-center gap-x-1.5 text-sm text-ink-muted">
         {t("login.noAccount")}
         <Link to={withNext("/signup", next)} className={authLinkCls}>
@@ -159,7 +162,7 @@ export default function LoginPage() {
 
       {/* An invite code and a Google account are two different accounts, even on
           the same address, so a friend from the beta is told before tapping. */}
-      {googleEnabled && (
+      {googleEnabled === true && (
         <p className="mb-1 text-center text-xs leading-relaxed text-ink-muted">{t("login.inviteGoogle")}</p>
       )}
       <InviteCode next={next} />

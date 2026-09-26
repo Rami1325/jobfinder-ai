@@ -1015,7 +1015,8 @@ function adoptSession(): void {
 /** Creates the account and signs this browser in UNVERIFIED: every feature
  * route refuses it until the emailed code or link confirms the address. */
 export async function signup(payload: {
-  name: string;
+  /** Optional since PLAN 31.5/1: the page sends none, and the first resume save supplies it. */
+  name?: string;
   email: string;
   password: string;
   locale: string;

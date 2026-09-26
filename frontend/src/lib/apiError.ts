@@ -127,7 +127,6 @@ const AUTH_ERROR_KEYS: Record<string, string> = {
   invalid_credentials: "errors.invalidCredentials",
   email_taken: "errors.emailTaken",
   invalid_email: "errors.invalidEmail",
-  name_required: "errors.nameRequired",
   expired: "errors.expired",
   used: "errors.used",
   signup_closed: "errors.signupClosed",

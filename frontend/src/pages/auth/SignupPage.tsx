@@ -15,7 +15,6 @@ import {
   Field,
   FormError,
   PasswordInput,
-  authInputCls,
   authLinkCls,
   charCount,
   looksLikeEmail,
@@ -31,12 +30,16 @@ import {
  * clear, and the verify page reads `sentAt` from the router state to start its
  * resend countdown. A document load would drop that state.
  *
- * The client pre-checks (name, address shape, 8 characters) only save a round
+ * There is no Name field (PLAN 31.5/1): the resume carries the name, and the
+ * account takes it from the first master-resume save.
+ *
+ * The client pre-checks (address shape, 8 characters) only save a round
  * trip for the obvious cases, in the user's language. The server's answer
  * decides, and its codes arrive through the same translation table.
  *
- * Continue with Google (Phase 30 F) sits under the form, as on /login, and is
- * stored before the forwarding branch. A refusal comes back as `?google=<code>`,
+ * Continue with Google (Phase 30 F) comes first, above the form, as on /login,
+ * in a slot held from the first paint, and its answer is stored before the
+ * forwarding branch. A refusal comes back as `?google=<code>`,
  * read once with `next` kept: "sign-ups are paused" opens this page's own closed
  * card, a cancel shows nothing, and anything else goes in the error slot.
  */
@@ -45,14 +48,14 @@ export default function SignupPage() {
   const next = useNext();
   const navigate = useNavigate();
   const google = useTakeParam("google");
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [taken, setTaken] = useState(false);
   const [closed, setClosed] = useState(false);
-  const [googleEnabled, setGoogleEnabled] = useState(false);
+  // null until /auth/me answers: GoogleButton holds its slot until then.
+  const [googleEnabled, setGoogleEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -64,7 +67,8 @@ export default function SignupPage() {
         else if (me.signup_open === false) setClosed(true);
       })
       .catch(() => {
-        /* the form still works; the server answers the submit, and Google stays hidden */
+        // The form still works; the server answers the submit. Google goes.
+        if (live) setGoogleEnabled(false);
       });
     return () => {
       live = false;
@@ -81,10 +85,6 @@ export default function SignupPage() {
     e.preventDefault();
     if (busy) return;
     setTaken(false);
-    if (!name.trim()) {
-      setError(t("errors.nameRequired"));
-      return;
-    }
     if (!looksLikeEmail(email)) {
       setError(t("errors.invalidEmail"));
       return;
@@ -97,7 +97,6 @@ export default function SignupPage() {
     setError("");
     try {
       await signup({
-        name: name.trim(),
         email: email.trim(),
         password,
         // The verification mail is written in this language.
@@ -128,19 +127,10 @@ export default function SignupPage() {
 
   return (
     <AuthCard title={t("signup.title")} sub={t("signup.sub")}>
+      <GoogleButton next={next} page="signup" enabled={googleEnabled} />
+
       <form onSubmit={submit} noValidate>
         <div className="space-y-4">
-          <Field id="signup-name" label={t("fields.name")}>
-            <input
-              id="signup-name"
-              type="text"
-              autoComplete="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={busy}
-              className={authInputCls}
-            />
-          </Field>
           <Field id="signup-email" label={t("fields.email")}>
             <EmailInput id="signup-email" value={email} onChange={setEmail} disabled={busy} />
           </Field>
@@ -177,8 +167,6 @@ export default function SignupPage() {
           {t("signup.submit")}
         </Button>
       </form>
-
-      {googleEnabled && <GoogleButton next={next} page="signup" />}
 
       <p className="mt-3 flex flex-wrap items-center justify-center gap-x-1.5 text-sm text-ink-muted">
         {t("signup.haveAccount")}

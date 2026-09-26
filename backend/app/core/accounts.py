@@ -444,9 +444,10 @@ def signup(
     s = get_settings()
     if not signup_open():
         raise AuthError(403, "signup_closed")
+    # Optional since PLAN 31.5/1: the form no longer asks, because the resume
+    # carries the name, and the first master-resume save fills a blank one in
+    # (routes.save_master_resume). Every screen that shows it copes with "".
     name = (name or "").strip()[:255]
-    if not name:
-        raise AuthError(400, "name_required")
     email = normalize_email(email)
     if not valid_email(email):
         raise AuthError(400, "invalid_email")

@@ -1978,6 +1978,12 @@ def save_master_resume(
     row.label = body.label
     row.resume_json = body.resume.model_dump_json()
     row.ledger_json = ledger.model_dump_json()
+    # An account that signed up without a name takes the resume's (PLAN 31.5/1),
+    # and only then: a name the person typed, or Google sent, is never replaced.
+    # `users.name` is already cleared by `_wipe_user_rows`.
+    resume_name = (body.resume.contact.name or "").strip()[:255]
+    if resume_name and not (user.name or "").strip():
+        user.name = resume_name
     # "MOST RECENTLY UPDATED" HAS TO BE A TOTAL ORDER, AND THE CLOCK DOES NOT
     # GIVE ONE. `_master_rows` sorts on `updated_at` alone, and the column's
     # `onupdate` reads the system clock — which on Windows ticks about every

@@ -5764,7 +5764,7 @@ try {
   fail(`Google copy registration check could not run: ${e.message}`);
 }
 
-// ---- 32(l). Continue with Google: below the form, its result read once ------ //
+// ---- 32(l). Continue with Google: first, in a held slot, its result read once //
 // Wiring no node process can render, each a defect that compiles green:
 //   - Both pages read `?google=<code>` through ONE taker, `useTakeParam`, which
 //     removes that key and nothing else. A strip that rebuilt the query from
@@ -5774,9 +5774,18 @@ try {
 //   - LoginPage stores `google_enabled` BEFORE its `!me.authenticated` early
 //     return. After it, the button would exist only for visitors who are
 //     already signed in, i.e. for nobody /login shows a form to.
-//   - The button renders AFTER the form's submit button. /auth/me can answer
+//   - The button comes FIRST, above the form (PLAN 31.5/1: it is the one-tap
+//     way in), and its slot is held from the first paint. /auth/me can answer
 //     seconds into a cold start, and a button arriving above the form would move
-//     the email field out from under a tap already on its way.
+//     the email field out from under a tap already on its way. That is why it
+//     sat below the form until 31.5. So each page renders <GoogleButton
+//     ungated, fed a state that starts `null` (not known yet), and GoogleButton
+//     answers `null` with a placeholder of the button's own SLOT height and the
+//     "or" divider laid out but invisible. In an embedded browser the in-app
+//     note stands in for the button, and since it wraps by language (1 line in
+//     Hebrew, 3 in English at 390 px, measured) it holds its own box, laid out
+//     invisibly. It returns nothing only for `false` (the server does not offer
+//     it, or /auth/me failed), the one case where the form moves, once, upward.
 //   - GoogleNotice mounts after AppLayout's guard. In the spinner branch it would
 //     take `google=superseded` out of the address and then be unmounted, and the
 //     notice would never be seen.
@@ -5786,11 +5795,26 @@ try {
 // from exactly the people it works for.
 try {
   const TAKES_GOOGLE = /\buseTakeParam\(\s*"google"\s*\)/;
-  /** Is `<GoogleButton` after the first submit button? null when either is missing. */
-  const belowSubmit = (body) => {
-    const submit = body.indexOf('type="submit"');
+  /** Where the page puts `<GoogleButton`: "ok", "missing", "below" the form,
+   * "gated" behind a condition (so it arrives late), "unfed" (no `enabled=`),
+   * or "known" (its state does not start at null, so there is no unknown). */
+  const googleFirst = (body) => {
+    const form = body.indexOf("<form");
     const button = body.indexOf("<GoogleButton");
-    return submit === -1 || button === -1 ? null : button > submit;
+    if (form === -1 || button === -1) return "missing";
+    if (button > form) return "below";
+    if (/(?:&&|\?|:)\s*\(?$/.test(body.slice(0, button).replace(/\s+$/, ""))) return "gated";
+    const fed = /^<GoogleButton\b[^>]*?\benabled=\{\s*(\w+)\s*\}/.exec(body.slice(button));
+    if (!fed) return "unfed";
+    const starts = new RegExp(`\\[\\s*${fed[1]}\\s*,\\s*\\w+\\s*\\]\\s*=\\s*useState<boolean \\| null>\\(\\s*null\\s*\\)`);
+    return starts.test(body) ? "ok" : "known";
+  };
+  const WHY = {
+    missing: "renders no <GoogleButton above a <form: Continue with Google is not on the page, or there is no form to put it over.",
+    below: "renders Continue with Google BELOW its form; PLAN 31.5/1 puts the one-tap way in first.",
+    gated: "renders <GoogleButton behind a condition, so it arrives above the form after /auth/me answers and moves the form under a tap.",
+    unfed: "renders <GoogleButton with no enabled={…}, so the button cannot hold its slot while /auth/me is unanswered.",
+    known: "feeds <GoogleButton a state that does not start at useState<boolean | null>(null), so nothing holds the slot while /auth/me is unanswered.",
   };
   for (const [f, marker] of [
     ["pages/auth/LoginPage.tsx", "export default function LoginPage"],
@@ -5802,12 +5826,47 @@ try {
         `${f} does not read ?google= through useTakeParam("google"): a refused Google sign-in says nothing, ` +
           "or its flag is stripped by hand, where next is the thing that gets lost.",
       );
-    const below = belowSubmit(body);
-    if (below === null)
-      fail(`${f} renders no <GoogleButton, or has no submit button to put it under: Continue with Google is not on the page.`);
-    else if (!below)
-      fail(`${f} renders Continue with Google ABOVE its form's submit button; a late /auth/me would move the form under a tap.`);
+    const where = googleFirst(body);
+    if (where !== "ok") fail(`${f} ${WHY[where]}`);
   }
+
+  /** Does GoogleButton hold its slot while `enabled` is null? "ok", or what gives way. */
+  const slotHeld = (body) => {
+    const early = [...body.matchAll(/if\s*\(([^)]*)\)\s*return\s+null\b/g)].map((m) => m[1].replace(/\s+/g, ""));
+    if (early.some((c) => c !== "enabled===false")) return "collapses";
+    if (!/enabled\s*===\s*null\s*\?\s*\(?\s*<Skeleton\b[^>]*\bclassName=\{\s*SLOT\s*\}/.test(body)) return "no placeholder";
+    // In an embedded browser the note stands in for the button, and it wraps
+    // differently per language, so it holds its OWN box, invisibly, until known.
+    if (!/<InAppBrowserNote\b[^>]*\bpending=\{\s*enabled\s*===\s*null\s*\}/.test(body)) return "in-app note arrives late";
+    // Not `[^>]*`: the button's `icon={<GoogleMark />}` closes a tag inside it.
+    if (!/<Button\b(?:(?!<\/Button>)[\s\S])*?\bclassName=\{\s*cn\(\s*SLOT\b/.test(body)) return "button off the slot";
+    // The divider: laid out in every state but `false`, invisible while null,
+    // and not itself behind a condition.
+    const divider = body.search(
+      /<div\s+className=\{\s*cn\([^)]*enabled\s*===\s*null\s*&&\s*"invisible"\s*\)\s*\}\s*>\s*<span[^>]*\/>\s*\{t\("google\.or"\)\}/,
+    );
+    if (divider === -1 || /(?:&&|\?|:)\s*\(?$/.test(body.slice(0, divider).replace(/\s+$/, "")))
+      return "divider arrives late";
+    return "ok";
+  };
+  const gbSrc = decomment(read("pages/auth/GoogleButton.tsx"));
+  const held = slotHeld(fnSource(gbSrc, "export default function GoogleButton"));
+  if (held !== "ok")
+    fail(
+      `pages/auth/GoogleButton.tsx does not hold its slot while /auth/me is unanswered (${held}): the button or ` +
+        "its divider would arrive above the form and move it under a tap.",
+    );
+  if (!/\bconst SLOT = "min-h-\[44px\]"/.test(gbSrc))
+    fail('pages/auth/GoogleButton.tsx has no SLOT = "min-h-[44px]", the one height its placeholder and its button share.');
+  const noteHides = (body) => /^\s*return\s*\(\s*<div\s+className=\{\s*cn\(\s*pending\s*&&\s*"invisible"\s*\)\s*\}\s*>/m.test(body);
+  if (!noteHides(fnSource(gbSrc, "function InAppBrowserNote")))
+    fail(
+      "pages/auth/GoogleButton.tsx's InAppBrowserNote does not wrap itself in cn(pending && \"invisible\"), so in an " +
+        "embedded browser the note is on show, or missing, before /auth/me says Google is offered at all.",
+    );
+  if (!noteHides('function InAppBrowserNote() {\n  return (\n    <div className={cn(pending && "invisible")}>\n') ||
+      noteHides('function InAppBrowserNote() {\n  return (\n    <div>\n'))
+    fail("check 32(l)'s note detector cannot tell a note that hides while pending from one that does not");
 
   /** Is `google_enabled` read before `!me.authenticated` in the /auth/me answer? */
   const enabledFirst = (body) => {
@@ -5907,10 +5966,42 @@ try {
     fail(`chromeIntentUrl builds ${JSON.stringify(intent)}; it must open this page, its query included, in Chrome (spec F2)`);
 
   // Both directions on the three source detectors.
+  const STATE = "const [googleEnabled, setGoogleEnabled] = useState<boolean | null>(null);\n";
   const FORM = '<form><Button type="submit">Log in</Button></form>';
-  const BUTTON = '{googleEnabled && <GoogleButton next={next} page="login" />}';
-  if (belowSubmit(FORM + BUTTON) !== true || belowSubmit(BUTTON + FORM) !== false)
-    fail("check 32(l)'s placement detector cannot tell a button below the form from one above it");
+  const BUTTON = '<GoogleButton next={next} page="login" enabled={googleEnabled} />\n';
+  for (const [label, src, want] of [
+    ["first, ungated, fed a null start", STATE + BUTTON + FORM, "ok"],
+    ["below the form", STATE + FORM + BUTTON, "below"],
+    ["behind googleEnabled &&", STATE + "{googleEnabled && " + BUTTON + "}" + FORM, "gated"],
+    ["behind a multi-line && (", STATE + "{googleEnabled === true && (\n  " + BUTTON + ")}" + FORM, "gated"],
+    ["with no enabled prop", STATE + '<GoogleButton next={next} page="login" />' + FORM, "unfed"],
+    ["over a state that starts false", STATE.replace("useState<boolean | null>(null)", "useState(false)") + BUTTON + FORM, "known"],
+    ["on a page with no button", STATE + FORM, "missing"],
+  ])
+    if (googleFirst(src) !== want)
+      fail(`check 32(l)'s placement detector reads a button ${label} as ${googleFirst(src)}, not ${want}`);
+  const GB_OK = [
+    "  if (enabled === false) return null;",
+    "  async function start() {\n    if (busy) return;\n  }",
+    "  return (\n    <div>\n      {isInAppBrowser(userAgent) ? (\n        <InAppBrowserNote android={android} pending={enabled === null} />\n" +
+      "      ) : enabled === null ? (\n        <Skeleton className={SLOT} />\n      ) : (",
+    '        <Button type="button" onClick={start} className={cn(SLOT, "w-full")}>x</Button>\n      )}',
+    '      <div className={cn("my-4 flex", enabled === null && "invisible")}>\n        <span aria-hidden className="h-px" />\n        {t("google.or")}',
+    "      </div>\n    </div>\n  );",
+  ].join("\n");
+  for (const [label, src, want] of [
+    ["the shipped shape", GB_OK, "ok"],
+    ["one that is gone until known", GB_OK.replace("enabled === false", "!enabled"), "collapses"],
+    ["one that is gone while null", GB_OK.replace("if (enabled === false) return null;", "if (enabled === false) return null;\n  if (enabled === null) return null;"), "collapses"],
+    ["a null state that renders nothing", GB_OK.replace("<Skeleton className={SLOT} />", "null"), "no placeholder"],
+    ["a placeholder of another height", GB_OK.replace("<Skeleton className={SLOT} />", '<Skeleton className="h-8" />'), "no placeholder"],
+    ["a button off the slot's height", GB_OK.replace('className={cn(SLOT, "w-full")}', 'className="w-full"'), "button off the slot"],
+    ["an in-app note shown before the answer", GB_OK.replace(" pending={enabled === null}", ""), "in-app note arrives late"],
+    ["a divider only once known", GB_OK.replace(', enabled === null && "invisible"', ""), "divider arrives late"],
+    ["a divider behind enabled &&", GB_OK.replace('      <div className={cn("my-4', '      {enabled && <div className={cn("my-4'), "divider arrives late"],
+  ])
+    if (slotHeld(src) !== want)
+      fail(`check 32(l)'s slot detector reads ${label} as ${slotHeld(src)}, not ${want}`);
   const ANSWER_OK = "getAuthMe().then((me) => {\n  if (!live) return;\n  setGoogleEnabled(me.google_enabled === true);\n  if (!me.authenticated) return;\n});";
   const ANSWER_BAD = "getAuthMe().then((me) => {\n  if (!live || !me.authenticated) return;\n  setGoogleEnabled(me.google_enabled === true);\n});";
   if (enabledFirst(ANSWER_OK) !== true || enabledFirst(ANSWER_BAD) !== false)

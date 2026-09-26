@@ -17170,20 +17170,50 @@ try:
         _reset_auth_throttles28()
         _ac.cookies.clear()
         _v28 = [
-            _ac.post("/auth/signup", json={"name": "  ", "email": "v@example.com", "password": "fine passphrase"}, headers=_XRW),
             _ac.post("/auth/signup", json={"name": "Val", "email": "not-an-address", "password": "fine passphrase"}, headers=_XRW),
             _ac.post("/auth/signup", json={"name": "Val", "email": "v@example.com", "password": "short"}, headers=_XRW),
             _ac.post("/auth/signup", json={"name": "Val", "email": "v@example.com", "password": "password123"}, headers=_XRW),
         ]
         check(
-            "signup: name, address and password are refused with codes the page translates — never raw English",
-            [r.status_code for r in _v28] == [400, 400, 400, 400]
+            "signup: address and password are refused with codes the page translates — never raw English",
+            [r.status_code for r in _v28] == [400, 400, 400]
             and [_detail28(r) for r in _v28] == [
-                {"code": "name_required"}, {"code": "invalid_email"},
+                {"code": "invalid_email"},
                 {"code": "weak_password", "reason": "too_short"}, {"code": "weak_password", "reason": "too_common"},
             ]
             and _login_row28("v@example.com") is None,
             str([_detail28(r) for r in _v28]),
+        )
+
+        # PLAN 31.5/1: the form no longer asks for a name, because the resume has
+        # it. A blank one is not refused, and the first master save names the
+        # account; the false-positive half is that a name the account already
+        # has is never replaced by a later resume's.
+        _reset_auth_throttles28()
+        _ac.cookies.clear()
+        _nn28 = _ac.post("/auth/signup", json={"name": "  ", "email": "noname@example.com", "password": "fine passphrase"},
+                         headers=_XRW)
+        _nn28_v = _ac.post("/auth/verify", json={"code": _last_mail28("noname@example.com", "code")}, headers=_XRW)
+        _nn28_name0 = (_j28(_ac.get("/auth/me")).get("user") or {}).get("name")
+
+        def _nn28_save(person):  # noqa: ANN001
+            body = resume.model_dump()
+            body["contact"] = {**body["contact"], "name": person}
+            return _ac.put("/profile/resume", json={"resume": body, "label": ""}, headers=_XRW).status_code
+
+        _nn28_s1 = _nn28_save("  Noa Blank ")
+        _nn28_name1 = (_j28(_ac.get("/auth/me")).get("user") or {}).get("name")
+        _nn28_s2 = _nn28_save("Someone Else")
+        _nn28_name2 = (_j28(_ac.get("/auth/me")).get("user") or {}).get("name")
+        _ac.cookies.clear()
+        check(
+            "31.5/1: a signup with no name is created, and the first resume save gives the account the resume's "
+            "name — a later resume never replaces a name the account has",
+            _nn28.status_code == 200 and _nn28_v.status_code == 200
+            and _nn28_name0 == "" and _nn28_s1 == 200 and _nn28_name1 == "Noa Blank"
+            and _nn28_s2 == 200 and _nn28_name2 == "Noa Blank",
+            f"signup {_nn28.status_code} verify {_nn28_v.status_code} names {[_nn28_name0, _nn28_name1, _nn28_name2]} "
+            f"saves {[_nn28_s1, _nn28_s2]}",
         )
         os.environ["SIGNUP_MODE"] = "closed"
         get_settings.cache_clear()

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { startGoogleSignIn } from "../../api/client";
-import { Button } from "../../components/ui";
+import { Button, Skeleton } from "../../components/ui";
 import i18n from "../../i18n";
 import { apiErrorMessage } from "../../lib/apiError";
 import { cn } from "../../lib/cn";
@@ -9,12 +9,17 @@ import { chromeIntentUrl, isAndroid, isInAppBrowser } from "../../lib/inAppBrows
 import { FormError, authInputCls, authLinkCls } from "./shared";
 
 /**
- * Continue with Google, under the email form on /login and /signup (Phase 30 F1).
+ * Continue with Google, ABOVE the email form on /login and /signup (Phase 30 F1,
+ * moved first in PLAN 31.5/1: it is the one-tap way in, with no code to wait for).
  *
- * The page renders it only once /auth/me says this server offers it, and BELOW
- * the form's submit button. That answer can arrive seconds into a cold start,
- * and a button landing above the form would move the email field out from
- * under a tap already on its way (check-mirrors 32(l)).
+ * `enabled` is /auth/me's `google_enabled`, and `null` until that answer comes.
+ * It can come seconds into a cold start, and a button arriving above the form
+ * then would move the email field out from under a tap already on its way. So
+ * the page renders this from its first paint and the slot is held while the
+ * answer is unknown: a placeholder the button's height, and the "or" divider
+ * laid out but invisible, so the answer moves nothing (check-mirrors 32(l)).
+ * Only a server that does not offer Google (or an /auth/me that failed) takes
+ * the slot away, and the form then moves up once.
  *
  * A tap starts the flow on the server and sends the whole document to Google.
  * `startGoogleSignIn` forgets the stored invite code and both caches first,
@@ -25,15 +30,23 @@ import { FormError, authInputCls, authLinkCls } from "./shared";
  *
  * Inside an app's embedded browser Google refuses to sign anyone in, so the
  * button is replaced by one line saying where it works (lib/inAppBrowser.ts).
- * The email form above keeps working either way.
+ * The email form below keeps working either way.
  */
-export default function GoogleButton({ next, page }: { next: string; page: "login" | "signup" }) {
+export default function GoogleButton({
+  next,
+  page,
+  enabled,
+}: {
+  next: string;
+  page: "login" | "signup";
+  enabled: boolean | null;
+}) {
   const { t } = useTranslation("auth");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const userAgent = navigator.userAgent;
 
-  if (isInAppBrowser(userAgent)) return <InAppBrowserNote android={isAndroid(userAgent)} />;
+  if (enabled === false) return null;
 
   async function start() {
     if (busy) return;
@@ -55,25 +68,41 @@ export default function GoogleButton({ next, page }: { next: string; page: "logi
 
   return (
     <div>
-      <div className="my-4 flex items-center gap-3 text-xs text-ink-muted">
+      {isInAppBrowser(userAgent) ? (
+        // Its own box, laid out invisibly until the answer: the line wraps
+        // differently in each language, so no fixed height could hold it.
+        <InAppBrowserNote android={isAndroid(userAgent)} pending={enabled === null} />
+      ) : enabled === null ? (
+        // The button's box, held until /auth/me answers. It claims nothing:
+        // no mark, no words, and hidden from a screen reader.
+        <Skeleton className={SLOT} />
+      ) : (
+        <Button
+          type="button"
+          variant="secondary"
+          loading={busy}
+          onClick={start}
+          icon={<GoogleMark />}
+          className={cn(SLOT, "w-full")}
+        >
+          {t("google.continue")}
+        </Button>
+      )}
+      <FormError message={error} />
+      {/* Laid out while the answer is unknown, so it moves nothing when it
+          appears; invisible, so it offers no alternative to a button that may
+          not exist. */}
+      <div className={cn("my-4 flex items-center gap-3 text-xs text-ink-muted", enabled === null && "invisible")}>
         <span aria-hidden className="h-px flex-1 bg-line" />
         {t("google.or")}
         <span aria-hidden className="h-px flex-1 bg-line" />
       </div>
-      <Button
-        type="button"
-        variant="secondary"
-        loading={busy}
-        onClick={start}
-        icon={<GoogleMark />}
-        className="min-h-[44px] w-full"
-      >
-        {t("google.continue")}
-      </Button>
-      <FormError message={error} />
     </div>
   );
 }
+
+/** The one height the placeholder and the button share. */
+const SLOT = "min-h-[44px]";
 
 /**
  * What stands in for the button inside an embedded browser: one line, a way to
@@ -82,8 +111,11 @@ export default function GoogleButton({ next, page }: { next: string; page: "logi
  *
  * When copying fails the link is shown in a field to copy by hand. The
  * clipboard is among the first things an embedded browser takes away.
+ *
+ * `pending` (no /auth/me answer yet) keeps its box and hides it: invisible
+ * content can be neither read nor tapped, so it offers nothing yet.
  */
-function InAppBrowserNote({ android }: { android: boolean }) {
+function InAppBrowserNote({ android, pending }: { android: boolean; pending: boolean }) {
   const { t } = useTranslation("auth");
   const [copy, setCopy] = useState<"idle" | "done" | "failed">("idle");
   const href = window.location.href;
@@ -93,7 +125,7 @@ function InAppBrowserNote({ android }: { android: boolean }) {
   }
 
   return (
-    <div className="mt-4 border-t border-line pt-3">
+    <div className={cn(pending && "invisible")}>
       <p className="flex flex-wrap items-center gap-x-3 text-sm leading-relaxed text-ink-muted">
         <span>{t("google.inApp")}</span>
         <button type="button" onClick={copyLink} className={authLinkCls}>
