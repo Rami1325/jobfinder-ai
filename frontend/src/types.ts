@@ -276,6 +276,22 @@ export interface ResumeUploadResponse {
   ledger: FactsLedger;
 }
 
+/** Each person's first steps, for the admin (PLAN 31.8; backend `FunnelOut`). */
+export interface FunnelPerson {
+  id: number;
+  name: string;
+  is_admin: boolean;
+  signed_up: string;
+  /** step -> ISO time of the first time it was reached; absent = not yet. */
+  steps: Record<string, string>;
+}
+
+export interface FunnelOut {
+  people: FunnelPerson[];
+  /** The steps in the order a person meets them, "signed_up" first. */
+  order: string[];
+}
+
 export interface MasterResume {
   resume: ResumeModel;
   ledger: FactsLedger | null;

@@ -37,6 +37,7 @@ import { withNext } from "../lib/safeNext";
 import { signOut } from "../lib/session";
 import { formatUsesDate } from "../lib/usesStore";
 import LanguageSwitch from "../components/LanguageSwitch";
+import FunnelCard from "../components/FunnelCard";
 import ThemeToggle from "../components/ThemeToggle";
 import InboxSettingsCard from "../components/inbox/InboxSettingsCard";
 import { useMasterResume } from "../hooks/useMasterResume";
@@ -967,6 +968,9 @@ export default function SettingsPage() {
           </Button>
         </div>
       </Card>
+
+      {/* Each person's first steps (PLAN 31.8), the admin's only. */}
+      {user?.is_admin && <FunnelCard />}
 
       {/* Hidden for the admin and plan "unlimited" (their limit is null), and
           while /auth/me is unread. */}

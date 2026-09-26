@@ -88,6 +88,18 @@ def touch_last_seen(db: Session, user: User) -> None:
         db.commit()
     except Exception:  # noqa: BLE001 - never fail a request over bookkeeping
         db.rollback()
+        return
+    # PLAN 31.8: "came back within 7 days", stamped here for the reason the
+    # line above is: only the gate sees every request. On the throttled path
+    # only, so it costs at most one INSERT per window, and `note` never raises.
+    from app.db import funnel
+
+    try:
+        created = user.created_at
+    except Exception:  # noqa: BLE001
+        return
+    if funnel.returned_now(created, now):
+        funnel.note(db, user.id, "returned", now)
 
 
 def new_invite_code() -> str:

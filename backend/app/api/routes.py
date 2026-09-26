@@ -84,7 +84,7 @@ from app.db.greenhouse import list_companies as list_greenhouse_companies
 from app.db.sightings import load_sightings, record_sightings
 from app.db.users import mint_user
 from app.db import applications as applications_db
-from app.db import resume_versions
+from app.db import funnel, resume_versions
 from app.db.history import (
     application_statuses,
     clear_search_hits,
@@ -98,6 +98,7 @@ from app.db.history import (
 from app.db.models import (
     Application,
     Feedback,
+    FunnelStep,
     JobAlert,
     JobSearchHit,
     MailConnection,
@@ -148,6 +149,8 @@ from app.models import (
     FactsLedger,
     FeedbackIn,
     FeedbackList,
+    FunnelOut,
+    FunnelPerson,
     FeedbackOut,
     FollowUpRequest,
     FollowUpResult,
@@ -358,13 +361,16 @@ def tailor(
     ride = quota.claim_fit_ride(db, user, ref=quota.jd_ref(body.jd), now=now)
     if ride is None:
         with quota.charged(db, user, "tailor", now=now):
-            return _tailor_or_502(body, user)
+            result = _tailor_or_502(body, user)
+        funnel.note(db, user.id, "tailored")  # PLAN 31.8, after the charge settled
+        return result
     try:
         result = _tailor_or_502(body, user)
     except BaseException:
         quota.release_fit_ride(db, ride)
         raise
     quota.settle_fit_ride(db, user, ride, now=now)
+    funnel.note(db, user.id, "tailored")
     return result
 
 
@@ -457,6 +463,7 @@ def tailor_stream(
                     events.put(("error", {"detail": f"LLM error while tailoring resume: {e}", "status": 502}))
                 return
             _finish(True)
+            funnel.note_apart(user_id, "tailored")  # PLAN 31.8
             events.put(("result", result))
 
     threading.Thread(target=_worker, daemon=True).start()
@@ -581,7 +588,15 @@ def cover_letter_pass(
 
 
 @router.post("/render")
-def render(body: RenderRequest):
+def render(
+    body: RenderRequest,
+    download: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """The Word or PDF file. Deterministic, uncapped and uncharged. `download`
+    is set by the download button alone (the previews call this route too), and
+    marks the first download (PLAN 31.8); it changes nothing in the file."""
     fmt = body.fmt.lower()
     if fmt == "pdf":
         content = render_pdf(body.resume, template=body.template)
@@ -593,6 +608,8 @@ def render(body: RenderRequest):
         filename = "resume.docx"
     else:
         raise HTTPException(400, "fmt must be 'docx' or 'pdf'.")
+    if download:
+        funnel.note(db, user.id, "downloaded")
     return StreamingResponse(
         io.BytesIO(content),
         media_type=media,
@@ -992,6 +1009,7 @@ def jobs_search(
         stamp_applied(result.matches, applied_status_map(db, user.id))
     except Exception:  # noqa: BLE001
         pass
+    funnel.note(db, user.id, "searched")  # PLAN 31.8
     return result
 
 
@@ -1143,6 +1161,7 @@ def jobs_search_stream(
                     hist_db.close()
             except Exception:  # noqa: BLE001
                 pass
+            funnel.note_apart(user_id, "searched")  # PLAN 31.8
             events.put(("result", result))
 
     threading.Thread(target=_worker, daemon=True).start()
@@ -2161,13 +2180,15 @@ def save_master_resume(
     row.updated_at = now
     db.commit()
     db.refresh(row)
-    return MasterResumeOut(
+    out = MasterResumeOut(
         resume=body.resume,
         ledger=ledger,
         label=row.label,
         language=row.language,
         updated_at=row.updated_at.isoformat() if row.updated_at else "",
     )
+    funnel.note(db, user.id, "uploaded")  # PLAN 31.8, after the save's own commit
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -2531,7 +2552,9 @@ def create_application(
                 existing.applied_at = now
         db.commit()
         db.refresh(existing)
-        return _to_out(existing, _email_kind(db, user.id, existing.id))
+        out = _to_out(existing, _email_kind(db, user.id, existing.id))
+        funnel.note(db, user.id, "application")  # PLAN 31.8: an application saved
+        return out
     review_json = _next_review({}, body.review) if body.tailored_resume is not None else ""
     app = Application(
         user_id=user.id,
@@ -2559,7 +2582,9 @@ def create_application(
     db.add(app)
     db.commit()
     db.refresh(app)
-    return _to_out(app)
+    out = _to_out(app)
+    funnel.note(db, user.id, "application")  # PLAN 31.8: an application saved
+    return out
 
 
 @router.patch("/applications/{app_id}", response_model=ApplicationOut)
@@ -2749,6 +2774,7 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
         inbox_events=_wipe(MailEvent),
         inbox_connections=_wipe(MailConnection),
         google_revoked=google_revoked,
+        steps=_wipe(FunnelStep),
     )
 
 
@@ -2880,6 +2906,29 @@ def admin_list_users(
     keys = {u.id: quota.key_for(u.id, logins[u.id].email if u.id in logins else None) for u in rows}
     uses = quota.used_by_keys(db, set(keys.values()), quota.period_of(quota.utc_now()))
     return UserList(users=[_user_out(u, logins.get(u.id), uses=uses.get(keys[u.id], 0)) for u in rows])
+
+
+@router.get("/admin/funnel", response_model=FunnelOut)
+def admin_funnel(db: Session = Depends(get_db), _admin: User = Depends(admin_user)) -> FunnelOut:
+    """Each account's first steps (PLAN 31.8): whether the first run helps.
+    Read-only, content-free, the admin's only."""
+    people = db.execute(select(User).order_by(User.id)).scalars().all()
+    reached: dict[int, dict[str, str]] = {}
+    for row in db.execute(select(FunnelStep)).scalars().all():
+        reached.setdefault(row.user_id, {})[row.step] = _utc_iso(row.at) or ""
+    return FunnelOut(
+        people=[
+            FunnelPerson(
+                id=u.id,
+                name=u.name or "",
+                is_admin=bool(u.is_admin),
+                signed_up=_utc_iso(u.created_at) or "",
+                steps=reached.get(u.id, {}),
+            )
+            for u in people
+        ],
+        order=["signed_up", *funnel.STEPS],
+    )
 
 
 @router.patch("/admin/users/{user_id}", response_model=UserOut)

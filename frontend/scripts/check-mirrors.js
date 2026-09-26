@@ -13066,6 +13066,54 @@ try {
   fail(`names and words check (check 79) could not run: ${e.message}`);
 }
 
+// ---- 80. the first steps: a download counts, a preview does not (PLAN 31.8) - //
+// The server records the first time each person reaches a step (`db/funnel.py`),
+// and the admin reads it in Settings. The client half pinned here: only the
+// download button's call carries `download=1` (the previews call the same
+// /render, and a preview counted as a download would make the number say
+// people downloaded who only looked); the list is mounted for the admin alone;
+// the privacy page says what is recorded; and every step label resolves in both
+// settings.json, one literal key per step. Planted twins are probed every run.
+try {
+  const read80 = ({ client, settings, card, privacy }) => {
+    const out = [];
+    const dl = /export async function downloadResume\([\s\S]*?\n\}/.exec(client);
+    const blob = /export async function renderResumeBlob\([\s\S]*?\n\}/.exec(client);
+    if (!dl || !blob) throw new Error("api/client.ts: downloadResume or renderResumeBlob not found");
+    if (!/api\.post\("\/render\?download=1"/.test(dl[0])) out.push("the download button's /render call does not mark a download");
+    if (/download=1/.test(blob[0])) out.push("the preview's /render call marks a download");
+    if (!/\{user\?\.is_admin && <FunnelCard \/>\}/.test(settings)) out.push("the first-steps list is not the admin's alone");
+    if (!/<li>\{t\("privacy\.store\.steps"\)\}<\/li>/.test(privacy)) out.push("the privacy page does not say the first steps are recorded");
+    if (!/getFunnel\(\)/.test(card)) out.push("the first-steps card does not read /admin/funnel");
+    return out;
+  };
+  const real = {
+    client: decomment(read("api/client.ts")),
+    settings: decomment(read("pages/SettingsPage.tsx")),
+    card: decomment(read("components/FunnelCard.tsx")),
+    privacy: decomment(read("pages/PrivacyPage.tsx")),
+  };
+  for (const p of read80(real)) fail(`check 80: ${p} (PLAN 31.8)`);
+  const plant = (key, from, to, label) => {
+    if (!real[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read80({ ...real, [key]: real[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("client", 'api.post("/render?download=1"', 'api.post("/render"', "a download that is not marked");
+  plant("settings", "{user?.is_admin && <FunnelCard />}", "<FunnelCard />", "the list shown to everyone");
+  plant("privacy", '<li>{t("privacy.store.steps")}</li>', "", "a privacy page that does not say so");
+
+  const keys = [...new Set([...real.card.matchAll(/\bt\("(funnel\.[\w.]+)"/g)].map((m) => m[1]))];
+  if (keys.length < 10) throw new Error(`read ${keys.length} funnel.* keys out of components/FunnelCard.tsx (expected at least 10)`);
+  for (const loc of ["en", "he"]) {
+    const settingsNs = JSON.parse(read(`locales/${loc}/settings.json`));
+    for (const key of keys) if (!resolvesIn(settingsNs, key)) fail(`check 80: locales/${loc}/settings.json is missing "${key}"`);
+    if (!resolvesIn(JSON.parse(read(`locales/${loc}/auth.json`)), "privacy.store.steps"))
+      fail(`check 80: locales/${loc}/auth.json is missing "privacy.store.steps"`);
+  }
+} catch (e) {
+  fail(`first-steps check (check 80) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

@@ -61,6 +61,7 @@ export default function PrivacyPage() {
             <li>{t("privacy.store.google")}</li>
             <li>{t("privacy.store.content")}</li>
             <li>{t("privacy.store.usage")}</li>
+            <li>{t("privacy.store.steps")}</li>
             <li>{t("privacy.store.security")}</li>
           </ul>
         </Block>

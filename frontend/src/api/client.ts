@@ -66,6 +66,7 @@ import type {
   ATSXrayResult,
   UsagePassOut,
   PageImagesResult,
+  FunnelOut,
 } from "../types";
 
 // In dev, requests go through the Vite proxy at /api -> http://localhost:8000.
@@ -251,7 +252,9 @@ export async function downloadResume(
   filename?: string,
   template: ResumeTemplate = "standard",
 ): Promise<void> {
-  const resp = await api.post("/render", { resume, fmt, template }, { responseType: "blob" });
+  // `download=1` marks the first download (PLAN 31.8); the previews call the
+  // same route without it, so a preview is never counted as one.
+  const resp = await api.post("/render?download=1", { resume, fmt, template }, { responseType: "blob" });
   const url = URL.createObjectURL(resp.data as Blob);
   const a = document.createElement("a");
   a.href = url;
@@ -1243,6 +1246,12 @@ export async function listResumeVersions(lang?: "en" | "he"): Promise<ResumeVers
     params: lang ? { lang } : undefined,
   });
   return data.versions;
+}
+
+/** Each person's first steps (PLAN 31.8). The admin's only. */
+export async function getFunnel(): Promise<FunnelOut> {
+  const { data } = await api.get<FunnelOut>("/admin/funnel");
+  return data;
 }
 
 export async function getResumeVersion(id: number): Promise<MasterResume> {

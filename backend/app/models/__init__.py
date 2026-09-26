@@ -680,6 +680,25 @@ class UserList(BaseModel):
     users: list[UserOut] = Field(default_factory=list)
 
 
+class FunnelPerson(BaseModel):
+    """One account's first steps (PLAN 31.8), for the admin list. Content-free:
+    a name to tell people apart, when they signed up, and when each step was
+    first reached (`db.funnel.STEPS`; a step not reached is absent)."""
+
+    id: int
+    name: str = ""
+    is_admin: bool = False
+    signed_up: str = ""
+    steps: dict[str, str] = Field(default_factory=dict)
+
+
+class FunnelOut(BaseModel):
+    people: list[FunnelPerson] = Field(default_factory=list)
+    # The step names in the order a person meets them, so the page never
+    # hard-codes a list the server can change.
+    order: list[str] = Field(default_factory=list)
+
+
 class FeedbackIn(BaseModel):
     page: str = ""
     text: str
@@ -726,6 +745,8 @@ class DeleteMyDataResult(BaseModel):
     # False with no connection, and False when the token could not be read —
     # never a claimed revoke that did not happen.
     google_revoked: bool = False
+    # PLAN 31.8: the first time this person reached each step (`db.funnel`).
+    steps: int = 0
 
 
 class MeOut(BaseModel):

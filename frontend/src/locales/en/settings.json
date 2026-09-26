@@ -127,5 +127,21 @@
     "closed": "Your account is closed.",
     "closeError": "Couldn't close your account. Please try again.",
     "closeAdminBlocked": "This is the admin account for this instance — closing it would lock everyone out, including you. Delete all my data does the same wipe."
+  },
+  "funnel": {
+    "title": "First steps",
+    "body": "The first time each person reached each step. Only the step and its date are recorded.",
+    "none": "No one yet.",
+    "admin": "admin",
+    "loadError": "Couldn't load the first steps.",
+    "steps": {
+      "signed_up": "Signed up",
+      "uploaded": "Uploaded",
+      "searched": "Searched",
+      "tailored": "Tailored",
+      "downloaded": "Downloaded",
+      "application": "Saved a job",
+      "returned": "Came back"
+    }
   }
 }

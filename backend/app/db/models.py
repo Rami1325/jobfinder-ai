@@ -889,3 +889,21 @@ class UsageFirst(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+
+
+class FunnelStep(Base):
+    """The first time a person reached one step of using the app (PLAN 31.8).
+
+    Content-free by construction: a user id, a step name (`db.funnel.STEPS`)
+    and the time. One row per (user, step), ever, the first time only. A NEW
+    table, so `create_all` makes it with its unique constraint. Both privacy
+    doors delete a person's rows: they describe what that person did.
+    """
+
+    __tablename__ = "funnel_steps"
+    __table_args__ = (UniqueConstraint("user_id", "step", name="uq_funnel_steps_user_step"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    step: Mapped[str] = mapped_column(String(16), nullable=False)
+    at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

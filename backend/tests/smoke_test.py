@@ -26271,6 +26271,117 @@ finally:
     _restore29(_prev32f_env)
 
 # ---------------------------------------------------------------------------
+# 31.8 The first time each person reached a step (PLAN 31.8): content-free, the
+# first time only, written where the step happens and never on a preview, shown
+# to the admin alone, and deleted by both privacy doors.
+# ---------------------------------------------------------------------------
+from app.db import funnel as _funnel318  # noqa: E402
+from app.db.models import FunnelStep as _FS318  # noqa: E402
+
+
+def _steps318(uid):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return {r.step: r.at for r in d.execute(_sel32(_FS318).where(_FS318.user_id == uid)).scalars().all()}
+    finally:
+        d.close()
+
+
+_prev318_env = _env29(DAILY_SEARCH_CAP="0", DAILY_TAILOR_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _c318:
+        _routes32.search_jobs = _search_none32f
+        try:
+            _f_uid318, _F318_H = _mint32(_c318, "Funnel Walker")
+            _f_start318 = _steps318(_f_uid318)
+            _c318.put("/profile/resume", json={"resume": _R32, "label": "F"}, headers=_F318_H)
+            _c318.post("/render", json={"resume": _R32, "fmt": "pdf"}, headers=_F318_H)  # a preview
+            _f_after_preview318 = set(_steps318(_f_uid318))
+            _c318.post("/render?download=1", json={"resume": _R32, "fmt": "docx"}, headers=_F318_H)
+            _c318.post("/jobs/search", json={"resume": _R32, "customize": None}, headers=_F318_H)
+            _c318.post("/tailor", json={"resume": _R32, "jd": _JDJ32}, headers=_F318_H)
+            _c318.post("/applications", json={"job_title": "T", "company": "C", "status": "saved"}, headers=_F318_H)
+            _f_first318 = _steps318(_f_uid318)
+            # Again, every one: the first time stays the first time.
+            _c318.put("/profile/resume", json={"resume": {**_R32, "summary": "Changed."}, "label": "F"}, headers=_F318_H)
+            _c318.post("/render?download=1", json={"resume": _R32, "fmt": "pdf"}, headers=_F318_H)
+            _c318.post("/applications", json={"job_title": "T2", "company": "C2", "status": "applied"}, headers=_F318_H)
+            _f_again318 = _steps318(_f_uid318)
+            # The streams write theirs on the worker, on a session of its own.
+            _s_uid318, _S318_H = _mint32(_c318, "Funnel Streamer")
+            _s_search318 = _c318.post("/jobs/search/stream", json={"resume": _R32, "customize": None}, headers=_S318_H)
+            _s_tailor318 = _c318.post("/tailor/stream", json={"resume": _R32, "jd": _JDJ32}, headers=_S318_H)
+            _s_steps318 = set(_steps318(_s_uid318))
+        finally:
+            _routes32.search_jobs = _real_search32f
+        _admin_funnel318 = _c318.get("/admin/funnel", headers=_ADMIN_H)
+        _friend_funnel318 = _c318.get("/admin/funnel", headers=_F318_H)
+        _wiped318 = _c318.delete("/profile/data", headers=_F318_H)
+        _f_after_wipe318 = _steps318(_f_uid318)
+    _people318 = {p["id"]: p for p in _admin_funnel318.json().get("people", [])} if _admin_funnel318.status_code == 200 else {}
+    check(
+        "31.8 each step is recorded the first time it happens and never again: a master saved, a DOWNLOAD (a "
+        "preview of the same route records nothing), a search, a tailor and an application; the second save, "
+        "download and application leave every first time as it was",
+        _f_start318 == {}
+        and _f_after_preview318 == {"uploaded"}
+        and set(_f_first318) == {"uploaded", "downloaded", "searched", "tailored", "application"}
+        and _f_again318 == _f_first318,
+        f"{sorted(_f_after_preview318)} {sorted(_f_first318)}",
+    )
+    check(
+        "31.8 the two streams record their step on the worker, after the result: a streamed search and a "
+        "streamed tailor each mark theirs",
+        _s_search318.status_code == 200 and "event: result" in _s_search318.text
+        and _s_tailor318.status_code == 200 and "event: result" in _s_tailor318.text
+        and _s_steps318 == {"searched", "tailored"},
+        f"{_s_search318.status_code} {_s_tailor318.status_code} {sorted(_s_steps318)}",
+    )
+    check(
+        "31.8 GET /admin/funnel is the admin's alone (a friend is refused) and names each person's signup and "
+        "first steps in order; the privacy wipe deletes that person's steps and says how many",
+        _admin_funnel318.status_code == 200
+        and _friend_funnel318.status_code in (401, 403)
+        and _admin_funnel318.json().get("order") == ["signed_up", *_funnel318.STEPS]
+        and set(_people318.get(_f_uid318, {}).get("steps", {})) == set(_f_first318)
+        and bool(_people318.get(_f_uid318, {}).get("signed_up"))
+        and _wiped318.status_code == 200 and _wiped318.json().get("steps") == len(_f_first318)
+        and _f_after_wipe318 == {},
+        f"{_admin_funnel318.status_code} {_friend_funnel318.status_code} {_wiped318.text[:120]}",
+    )
+finally:
+    _routes32.search_jobs = _real_search32f
+    _restore29(_prev318_env)
+
+# "Came back within 7 days": the gate's stamp, on the account's age. A request
+# inside the first day is not a return, one on day 3 is, one on day 9 is not.
+_now318 = _q32.utc_now()
+_r_ages318 = [
+    _funnel318.returned_now(_now318 - _td316(hours=2), _now318),
+    _funnel318.returned_now(_now318 - _td316(days=3), _now318),
+    _funnel318.returned_now(_now318 - _td316(days=9), _now318),
+    _funnel318.returned_now(None, _now318),
+]
+_r_d318 = SessionLocal()
+try:
+    _r_user318 = _r_d318.get(_U32, _mint32(TestClient(_fastapi_app), "Funnel Returner")[0])
+    _r_user318.created_at = (_now318 - _td316(days=3)).replace(tzinfo=None)
+    _r_user318.last_seen_at = None
+    _r_d318.commit()
+    from app.db.users import touch_last_seen as _touch318  # noqa: E402
+
+    _touch318(_r_d318, _r_user318)
+    _r_uid318 = _r_user318.id
+finally:
+    _r_d318.close()
+check(
+    "31.8 a request more than a day and less than a week after signing up records 'returned' in the gate's own "
+    "stamp; the first day and the ninth do not, and an unknown signup time is never a return",
+    _r_ages318 == [False, True, False, False] and set(_steps318(_r_uid318)) == {"returned"},
+    f"{_r_ages318} {sorted(_steps318(_r_uid318))}",
+)
+
+# ---------------------------------------------------------------------------
 # 31.5/4 "Not for me" (PLAN 31.5/4): a posting, a company or a word in a job
 # title, hidden before selection, COUNTED on every list that leaves one out, never
 # silent; deterministic; user content that both privacy doors clear. Each rule
@@ -27143,6 +27254,7 @@ _ROUTE_COST = {
     ("POST", "/admin/users"): "free",
     ("PATCH", "/admin/users/{user_id}"): "free",
     ("GET", "/admin/feedback"): "free",
+    ("GET", "/admin/funnel"): "free",  # PLAN 31.8: read-only, content-free, the admin's
     ("GET", "/health"): "free",
     ("GET", "/"): "free",
 }
@@ -27657,6 +27769,7 @@ try:
                  lambda s: _as32("PATCH", f"/admin/users/{_SW32['uid']}", _ADMIN_H, json={"name": "Sweep Free Routes"}),
                  statuses=(200,))
         _plain32(("GET", "/admin/feedback"), lambda s: _as32("GET", "/admin/feedback", _ADMIN_H), statuses=(200,))
+        _plain32(("GET", "/admin/funnel"), lambda s: _as32("GET", "/admin/funnel", _ADMIN_H), statuses=(200,))
         _plain32(("POST", "/feedback"),
                  lambda s: _as32("POST", "/feedback", _SW32["h"], json={"page": "/app", "text": "sweep"}),
                  statuses=(200,))
