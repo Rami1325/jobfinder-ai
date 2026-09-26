@@ -1109,6 +1109,8 @@ export interface UsageOut {
   by_feature: Record<string, number>; // this month's net uses per feature id
   /** The open interview and screening passes, newest per feature; {} with no limit. */
   passes: Record<string, UsagePassOut>;
+  /** The features whose next use is the pool's free first one (PLAN 31.5: "search"); [] with no limit. */
+  first_free: string[];
 }
 
 /** The 429 detail of the monthly free limit. `remaining` is the true count and

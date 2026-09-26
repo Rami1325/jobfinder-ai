@@ -787,6 +787,9 @@ class UsageOut(BaseModel):
     by_feature: dict[str, int] = Field(default_factory=dict)
     # the open interview and screening passes, newest per feature; always empty with no limit
     passes: dict[str, UsagePassOut] = Field(default_factory=dict)
+    # the features whose next use in this pool is free, its first ever (PLAN 31.5,
+    # owner decision 7: "search"); always empty with no limit
+    first_free: list[str] = Field(default_factory=list)
 
 
 class AuthMe(BaseModel):

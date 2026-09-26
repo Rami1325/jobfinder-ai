@@ -769,7 +769,8 @@ class MailEvent(Base):
 # and that is why neither privacy door touches them: a wipe or a close that
 # reset the pool would make "Delete my data", or closing and signing up again, a
 # free reset of the limit (the Phase 29 A7 rule). `quota.prune` deletes them once
-# they are older than the previous month.
+# they are older than the previous month. A fourth, `usage_firsts` (PLAN 31.5),
+# holds the same kind of values, is never wiped either, and is never pruned.
 # --------------------------------------------------------------------------- #
 class UsageMonth(Base):
     """How many uses one pool spent in one UTC month.
@@ -851,3 +852,30 @@ class UsagePass(Base):
     succeeded: Mapped[int] = mapped_column(Integer, default=0)
     failed: Mapped[int] = mapped_column(Integer, default=0)
     opener_failed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class UsageFirst(Base):
+    """A pool's first use of a feature whose first use is FREE (PLAN 31.5, owner
+    decision 7: the first search, so a new account reaches real matches with a
+    tap that costs nothing).
+
+    One row per (pool, feature), ever, and inserting it IS the decision: the
+    request whose INSERT lands gets the free use, and a concurrent one finds the
+    row and pays. Keyed by the same one-way `quota_key` as the months, so like
+    the other three usage tables neither privacy door wipes it, and unlike them
+    `quota.prune` never deletes it: closing the account and signing up again with
+    the same address must not win a second free search. A refund of that free
+    use deletes the row, so a search that failed is free again.
+    """
+
+    __tablename__ = "usage_firsts"
+    __table_args__ = (UniqueConstraint("quota_key", "feature", name="uq_usage_firsts_key_feature"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    quota_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    feature: Mapped[str] = mapped_column(String(24), default="")
+    # The user whose request took it. A plain column, for the reason UsageMonth's is.
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )

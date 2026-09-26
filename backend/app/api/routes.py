@@ -898,7 +898,8 @@ def jobs_search(
         cache = load_score_cache(db, user.id, rhash)
     except Exception:  # noqa: BLE001
         cache = {}
-    with quota.charged(db, user, "search"):
+    # The pool's first search is free (PLAN 31.5, owner decision 7).
+    with quota.charged(db, user, "search", first_free=True):
         try:
             result = search_jobs(
                 body.resume,
@@ -994,8 +995,10 @@ def jobs_search_stream(
     except Exception:  # noqa: BLE001
         applied_map = {}
     # The use, reserved LAST on this session and right before it closes: nothing
-    # between here and the worker's start can fail and strand it.
-    charge = quota.reserve(db, user, "search")
+    # between here and the worker's start can fail and strand it. The pool's
+    # first search is free (PLAN 31.5, owner decision 7), and a failed one is
+    # free again: the refund below deletes its marker.
+    charge = quota.reserve(db, user, "search", first_free=True)
     db.close()
 
     events: queue.Queue = queue.Queue()  # thread-safe: search workers notify from threads

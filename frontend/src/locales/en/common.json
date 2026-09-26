@@ -112,6 +112,8 @@
     "limitReachedBare": "You've used all your uses for this month.",
     "oneUse": "1 use",
     "outShort": "None left",
+    "firstSearch": "Free · your first search",
+    "firstSearchShort": "Free the first time",
     "note_one": "This uses your last use this month.",
     "note_other": "This uses 1 of the {{count}} you have left this month.",
     "out": "No uses left this month. More on {{date}}. Editing, the review, the X-ray and downloads stay free.",

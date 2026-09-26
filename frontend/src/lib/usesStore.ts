@@ -9,7 +9,7 @@
 //     device spend uses whose headers never reach this page. It writes only
 //     when the answer is the account the guard saw (`usageIfSameUser`), and
 //     at most once a minute (`shouldRefreshUses`);
-//   - the X-Uses-Remaining and X-Uses-Pass headers on any API response, read by
+//   - the X-Uses-Remaining, X-Uses-Pass and X-Uses-First-Free headers on any API response, read by
 //     the axios interceptor and by the search stream's own fetch;
 //   - a 429 `monthly_limit`, from the shared `onRejected` both paths reach.
 //
@@ -28,6 +28,8 @@ import type { UsageOut } from "../types";
 /** The response headers the backend's `uses_meter` middleware sets. */
 export const USES_REMAINING_HEADER = "X-Uses-Remaining";
 export const USES_PASS_HEADER = "X-Uses-Pass";
+/** `<feature>;0` once the pool's free first use was taken, `;1` once a refund gave it back (PLAN 31.5). */
+export const USES_FIRST_FREE_HEADER = "X-Uses-First-Free";
 
 /** An open session pass: interview practice or screening answers. `deadline` is
  * `Date.now()` on arrival plus the seconds the server said were left. The server
@@ -46,6 +48,9 @@ export interface UsesState {
   /** "YYYY-MM-DD", the 1st of the next UTC month; "" when unknown. */
   resetsOn: string;
   passes: Record<string, UsesPass>;
+  /** The features whose next use is the pool's free first one (PLAN 31.5, owner
+   * decision 7: "search"). Absent means none, as an older backend says nothing. */
+  firstFree?: string[];
 }
 
 /** One feature's reading of the store: what a note says and whether its control is out. */
@@ -62,7 +67,10 @@ export interface UsesView {
   pass: UsesPass | null;
   /** The call rides a pass or a per-posting inclusion, and uses nothing. */
   covered: boolean;
-  /** No use left and nothing covers the call: the ONE reason to disable a control. */
+  /** The call is this pool's free first use of the feature (the first search),
+   * so it uses nothing either, at 0 left too. */
+  free: boolean;
+  /** No use left and nothing covers or frees the call: the ONE reason to disable a control. */
   out: boolean;
 }
 
@@ -75,6 +83,7 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 const MAX_DELAY_MS = 2_147_483_647;
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const PASS_HEADER = /^([a-z][a-z_]*);(\d{1,9});(\d{1,9})$/;
+const FIRST_FREE_HEADER = /^([a-z][a-z_]*);([01])$/;
 
 export function getUsesState(): UsesState | null {
   return state;
@@ -187,6 +196,10 @@ export function setUsage(usage: UsageOut | null | undefined): void {
     remaining: limit === null ? null : count(usage.remaining),
     resetsOn: dateOnly(usage.resets_on),
     passes,
+    firstFree:
+      limit !== null && Array.isArray(usage.first_free)
+        ? usage.first_free.filter((f): f is string => typeof f === "string")
+        : [],
   });
 }
 
@@ -199,7 +212,8 @@ export function noteUsesHeaders(source: unknown): void {
   if (!state || state.limit === null) return;
   const remaining = count(headerValue(source, USES_REMAINING_HEADER));
   const pass = PASS_HEADER.exec((headerValue(source, USES_PASS_HEADER) ?? "").trim());
-  if (remaining === null && !pass) return;
+  const first = FIRST_FREE_HEADER.exec((headerValue(source, USES_FIRST_FREE_HEADER) ?? "").trim());
+  if (remaining === null && !pass && !first) return;
   const now = Date.now();
   let next: UsesState = state;
   if (remaining !== null) {
@@ -215,6 +229,11 @@ export function noteUsesHeaders(source: unknown): void {
       passes[feature] = { callsLeft: Number(calls), deadline: now + Number(seconds) * 1000 };
     else delete passes[feature];
     next = { ...next, passes };
+  }
+  if (first) {
+    const [, feature, free] = first;
+    const rest = (next.firstFree ?? []).filter((f) => f !== feature);
+    next = { ...next, firstFree: free === "1" ? [...rest, feature] : rest };
   }
   commit(next);
 }
@@ -242,6 +261,8 @@ export function noteMonthlyLimit(detail: unknown): void {
     remaining: remaining ?? state.remaining,
     resetsOn: resetsOn || state.resetsOn,
     passes,
+    // A refused feature had no free first use left, whatever this page thought.
+    firstFree: (state.firstFree ?? []).filter((f) => f !== d.feature),
   });
 }
 
@@ -303,12 +324,22 @@ export function resetUses(): void {
  * cannot know: the fit check's `tailor_included_until` for Tailor, and for a
  * cover letter's next change the deadline `inclusionFrom` took on arrival. While
  * it is in the future it covers the call. */
-export function usesFor(feature: string, includedUntil?: string, from: UsesState | null = state): UsesView {
+/** `offersFirstFree`: the control is one the server serves free when the pool's
+ * first use is open, the backend's `first_free=True` (the Jobs page's search and
+ * the first-run sheet's). Default false, so a control the server always charges
+ * (Run now on an alert is a search too) never reads as free. */
+export function usesFor(
+  feature: string,
+  includedUntil?: string,
+  from: UsesState | null = state,
+  offersFirstFree = false,
+): UsesView {
   const now = Date.now();
   const limited = !!from && from.limit !== null && from.remaining !== null && !monthOver(from.resetsOn, now);
   const pass = from?.passes[feature] ?? null;
   const until = instant(includedUntil);
   const covered = (!!pass && pass.callsLeft > 0 && pass.deadline > now) || (until !== null && until > now);
+  const free = offersFirstFree && limited && !covered && !!from?.firstFree?.includes(feature);
   const remaining = limited && from ? from.remaining : null;
   return {
     limited,
@@ -317,7 +348,8 @@ export function usesFor(feature: string, includedUntil?: string, from: UsesState
     resetsOn: from?.resetsOn ?? "",
     pass,
     covered,
-    out: limited && !covered && remaining === 0,
+    free,
+    out: limited && !covered && !free && remaining === 0,
   };
 }
 
@@ -334,7 +366,7 @@ export function useUsesState(): UsesState | null {
 /** `usesFor`, re-rendered whenever the store changes, and once more when an
  * `includedUntil` the caller passed runs out: the store's own timer knows only
  * the passes it holds. */
-export function useUses(feature: string, includedUntil?: string): UsesView {
+export function useUses(feature: string, includedUntil?: string, offersFirstFree = false): UsesView {
   const from = useUsesState();
   const [, rerender] = useState(0);
   const until = instant(includedUntil);
@@ -345,7 +377,7 @@ export function useUses(feature: string, includedUntil?: string): UsesView {
     const id = setTimeout(() => rerender((n) => n + 1), delay);
     return () => clearTimeout(id);
   }, [until]);
-  return usesFor(feature, includedUntil, from);
+  return usesFor(feature, includedUntil, from, offersFirstFree);
 }
 
 function utcDay(ymd: string, monthShift: number): Date | null {

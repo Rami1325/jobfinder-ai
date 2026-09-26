@@ -52,6 +52,7 @@ export default function FirstRunSheet({ open, pages, review, onChoose, onClose }
   // what the FIRST tap spends: the tailor dialog starts with the fit check,
   // whose one use covers the tailor after it.
   const steps: { id: FirstStep; icon: LucideIcon; feature: string; title: string; desc: string }[] = [
+    // The search is the one choice the server can serve free: the pool's first search (PLAN 31.5).
     { id: "jobs", icon: Briefcase, feature: "search", title: t("firstRun.jobs.title"), desc: t("firstRun.jobs.desc") },
     {
       id: "tailor",
@@ -117,11 +118,13 @@ function Choice({
   onClick: () => void;
 }) {
   const { t: tc } = useTranslation();
-  const uses = useUses(feature);
+  // Only the search is served free on a pool's first time, as on the Jobs page.
+  const uses = useUses(feature, undefined, feature === "search");
   // Nothing when no limit is known, and nothing when an open session already
   // covers the tap: "1 use" there would be a cost the tap does not have.
   let cost: ReactNode = null;
-  if (uses.limited && !uses.covered) cost = uses.out ? tc("uses.outShort") : tc("uses.oneUse");
+  if (uses.free) cost = tc("uses.firstSearchShort");
+  else if (uses.limited && !uses.covered) cost = uses.out ? tc("uses.outShort") : tc("uses.oneUse");
   return (
     <button
       type="button"
@@ -138,7 +141,9 @@ function Choice({
         <span className="block text-sm font-semibold text-ink">{title}</span>
         <span className="block text-xs leading-snug text-ink-muted">{desc}</span>
       </span>
-      {cost && <span className="shrink-0 text-xs tabular-nums text-ink-faint">{cost}</span>}
+      {/* Capped, so a long cost ("Free the first time" in Hebrew) wraps rather
+          than squeezing the choice's own title onto a second line. */}
+      {cost && <span className="max-w-[5.5rem] shrink-0 text-end text-xs leading-tight tabular-nums text-ink-faint">{cost}</span>}
       <ChevronRight size={16} aria-hidden className="shrink-0 text-ink-faint rtl:-scale-x-100" />
     </button>
   );

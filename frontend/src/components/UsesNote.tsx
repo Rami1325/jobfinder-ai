@@ -27,6 +27,10 @@ interface Props {
    * mock interview's Send and End): it says nothing while the session covers it,
    * and its caller never disables it mid-session. */
   inSession?: boolean;
+  /** The server serves this control free while the pool's first use of the
+   * feature is open (PLAN 31.5: the Jobs page's search). Never on a control it
+   * always charges, such as an alert's Run now. */
+  firstFree?: boolean;
   className?: string;
 }
 
@@ -63,11 +67,12 @@ export default function UsesNote({
   covered,
   atZero,
   inSession,
+  firstFree = false,
   className,
 }: Props) {
   const { t } = useTranslation();
   const { i18n } = useTranslation();
-  const uses = useUses(feature, includedUntil);
+  const uses = useUses(feature, includedUntil, firstFree);
   if (!uses.limited) return null;
 
   const lang = i18n.language;
@@ -90,6 +95,9 @@ export default function UsesNote({
         time: formatUsesTime(uses.pass.deadline, lang),
       });
     else if (feature === "tailor") text = t("uses.includedFit");
+  } else if (uses.free && feature === "search") {
+    // The pool's first search, which the server serves without a use.
+    text = t("uses.firstSearch");
   } else if (children !== undefined) {
     text = children;
   } else if (feature === "interview") {
@@ -105,7 +113,7 @@ export default function UsesNote({
 
   // Warning ink at two or fewer left, and at none; never on a covered call,
   // which spends nothing whatever the count.
-  const low = !uses.covered && uses.remaining !== null && uses.remaining <= 2;
+  const low = !uses.covered && !uses.free && uses.remaining !== null && uses.remaining <= 2;
   return (
     <p className={cn("text-xs leading-relaxed", low ? "text-warn" : "text-ink-faint", className)}>{text}</p>
   );

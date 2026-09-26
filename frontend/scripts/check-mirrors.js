@@ -12335,6 +12335,97 @@ try {
   fail(`job entry points check (check 70) could not run: ${e.message}`);
 }
 
+// ---- 71. the first search is free, and only where the server serves it free (EXECUTED) //
+// PLAN 31.5, owner decision 7. The pool's first search is served without a use
+// by the two search routes (`first_free=True`), and by nothing else: an alert's
+// Run now is a search too and is always charged. /auth/me lists the pool's open
+// firsts (`UsageOut.first_free`), and a search that takes or gives one back says
+// so in `X-Uses-First-Free: search;0|1`. Wrong in one direction, the note says
+// "Uses 1" over a free search, the smaller lie; in the other, it says "Free"
+// over a charged one, or enables a Run now at 0 left that the server refuses.
+// (a) EXECUTES lib/usesStore.ts: free only for a caller that opts in, not out at
+//     0 left while free, both header values, a monthly_limit refusal ending it,
+//     an older backend that sends no field, and the admin (no limit) never free.
+// (b) The header name the store reads is the one main.py writes, the store's
+//     field is the one UsageOut serves, and the backend's FIRST_FREE is "search".
+// (c) The Jobs page opts its search in (useUses and both notes), the first-run
+//     sheet opts in its search choice alone, and the alerts card's Run now never
+//     does: no `firstFree` on its note and no third argument to its useUses.
+try {
+  const us = runProbeBundle("uses-first-free", `export * from "./lib/usesStore";\n`);
+  for (const name of ["setUsage", "noteUsesHeaders", "noteMonthlyLimit", "usesFor", "resetUses"])
+    if (typeof us[name] !== "function") throw new Error(`lib/usesStore.ts does not export ${name}`);
+  if (us.USES_FIRST_FREE_HEADER !== "X-Uses-First-Free")
+    fail(`check 71: lib/usesStore.ts reads the first-free header as ${JSON.stringify(us.USES_FIRST_FREE_HEADER)}`);
+  const usage = (over = {}) => ({
+    plan: "free", limit: 10, used: 10, remaining: 0, resets_on: "2099-01-01",
+    by_feature: {}, passes: {}, first_free: ["search"], ...over,
+  });
+  const view = (optIn) => us.usesFor("search", undefined, undefined, optIn);
+  try {
+    us.setUsage(usage());
+    const opted = view(true);
+    const plain = view(false);
+    if (!(opted.free === true && opted.out === false))
+      fail(`check 71: an open first search at 0 left reads free=${opted.free} out=${opted.out} for the Jobs page; it must be free and not out`);
+    if (!(plain.free === false && plain.out === true))
+      fail(`check 71: a control that never offers the free search (Run now) reads free=${plain.free} out=${plain.out} at 0 left; it must be charged and out`);
+    if (us.usesFor("tailor", undefined, undefined, true).free !== false)
+      fail("check 71: a feature the pool lists no first for reads as free");
+    us.noteUsesHeaders({ "x-uses-first-free": "search;0" });
+    if (view(true).free !== false || view(true).out !== true)
+      fail("check 71: after `X-Uses-First-Free: search;0` the search still reads free");
+    us.noteUsesHeaders({ "x-uses-first-free": "search;1" });
+    if (view(true).free !== true)
+      fail("check 71: after `X-Uses-First-Free: search;1` (a refund) the search does not read free again");
+    us.noteUsesHeaders({ "x-uses-first-free": "search;x" });
+    if (view(true).free !== true) fail("check 71: a malformed first-free header changed the store");
+    us.noteMonthlyLimit({ code: "monthly_limit", feature: "search", plan: "free", limit: 10, used: 10, remaining: 0, resets_on: "2099-01-01" });
+    if (view(true).free !== false)
+      fail("check 71: a monthly_limit refusal of a search leaves the page calling the search free");
+    us.setUsage(usage({ first_free: undefined }));
+    if (view(true).free !== false) fail("check 71: an answer with no first_free (an older backend) reads as free");
+    us.setUsage(usage({ limit: null, remaining: null, first_free: ["search"] }));
+    if (view(true).free !== false) fail("check 71: an account with no monthly limit reads as having a free search");
+  } finally {
+    us.resetUses();
+  }
+
+  // (b) the cross-lane names.
+  const mainPy = pySource("app/main.py", "check 71");
+  if (mainPy !== null && !/response\.headers\["X-Uses-First-Free"\]\s*=/.test(mainPy))
+    fail('check 71: backend/app/main.py writes no response.headers["X-Uses-First-Free"], which the store reads');
+  const quotaPy = pySource("app/core/quota.py", "check 71");
+  if (quotaPy !== null && !/^FIRST_FREE = \("search",\)/m.test(quotaPy))
+    fail('check 71: backend/app/core/quota.py\'s FIRST_FREE is not ("search",), the one feature the UI calls free');
+  if (!/\n\s*first_free:\s*string\[\];/.test(decomment(read("types.ts"))))
+    fail("check 71: types.ts UsageOut carries no `first_free: string[]`");
+
+  // (c) who opts in.
+  const optInProblems = (jobs, sheet, alerts) => {
+    const out = [];
+    if (!/useUses\(\s*"search"\s*,\s*undefined\s*,\s*true\s*\)/.test(jobs)) out.push("the Jobs page's search does not opt in");
+    const jobNotes = [...jobs.matchAll(/<UsesNote\b[^>]*\bfeature="search"[^>]*>/g)].map((m) => m[0]);
+    if (!jobNotes.length || jobNotes.some((n) => !/\bfirstFree\b/.test(n))) out.push("a Jobs page search note does not pass firstFree");
+    if (!/useUses\(\s*feature\s*,\s*undefined\s*,\s*feature\s*===\s*"search"\s*\)/.test(sheet)) out.push("the first-run sheet does not opt in its search choice alone");
+    const alertNotes = [...alerts.matchAll(/<UsesNote\b[^>]*\bfeature="search"[^>]*>/g)].map((m) => m[0]);
+    if (!alertNotes.length) out.push("the alerts card has no search note to read");
+    if (alertNotes.some((n) => /\bfirstFree\b/.test(n))) out.push("Run now's note claims the free first search");
+    if (/useUses\(\s*"search"\s*,[^)]*,/.test(alerts)) out.push("the alerts card's useUses opts in");
+    return out;
+  };
+  const jobsSrc = decomment(read("pages/JobsPage.tsx"));
+  const sheetSrc = decomment(read("components/FirstRunSheet.tsx"));
+  const alertsSrc = decomment(read("pages/jobs/AlertsCard.tsx"));
+  for (const p of optInProblems(jobsSrc, sheetSrc, alertsSrc)) fail(`check 71: ${p}`);
+  // Both directions on the reader.
+  if (optInProblems(jobsSrc, sheetSrc, alertsSrc.replace('<UsesNote feature="search"', '<UsesNote feature="search" firstFree')).length !== 1 ||
+      optInProblems(jobsSrc.replace('useUses("search", undefined, true)', 'useUses("search")'), sheetSrc, alertsSrc).length !== 1)
+    fail("check 71's opt-in reader cannot tell a charged Run now or an unopted Jobs search from the shipped shape");
+} catch (e) {
+  fail(`free first search check (check 71) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

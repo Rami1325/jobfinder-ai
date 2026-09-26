@@ -52,7 +52,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.core.sessions import hkey
-from app.db.models import UsageEvent, UsageMonth, UsagePass, User, UserLogin
+from app.db.models import UsageEvent, UsageFirst, UsageMonth, UsagePass, User, UserLogin
 from app.models import JDModel, UsageOut, UsagePassOut
 
 logger = logging.getLogger(__name__)
@@ -88,11 +88,17 @@ PLANS = (FREE, UNLIMITED)
 # travels on its own response (`changes_left`, `expires_in_s`) instead, and a page
 # that remounted reads it back through `posting_pass` (POST /cover-letter/pass).
 LISTED_PASSES = ("interview", "screening")
+# The features whose FIRST use per pool is free, ever (PLAN 31.5, owner decision
+# 7: the first search, so a new account reaches real matches with a tap that
+# costs nothing). A caller opts in with `first_free=True`; Run now on an alert is
+# a search too and does not.
+FIRST_FREE = ("search",)
 _GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
 
 _MONTHS = UsageMonth.__table__
 _EVENTS = UsageEvent.__table__
 _PASSES = UsagePass.__table__
+_FIRSTS = UsageFirst.__table__
 
 
 # --- the clock ------------------------------------------------------------------------
@@ -270,6 +276,7 @@ class UsesHolder:
     user_id: int | None
     remaining: int | None = None
     pass_: tuple | None = None  # (feature, calls_left, expires_in_s)
+    first_free: tuple | None = None  # (feature, still free: bool)
 
 
 _holder: ContextVar[UsesHolder | None] = ContextVar("quota_uses_holder", default=None)
@@ -304,6 +311,14 @@ def _note_remaining(db: Session, user_id: int, key: str, period: str, limit: int
         holder.remaining = max(0, limit - _used(db, key, period))
 
 
+def _note_first_free(user_id: int, feature: str, free: bool) -> None:
+    """Say on this response whether the feature's first use is still free: it just
+    was taken (False), or a refund gave it back (True)."""
+    holder = _bound(user_id)
+    if holder is not None:
+        holder.first_free = (feature, bool(free))
+
+
 def _note_pass(user_id: int, feature: str, ref: str, calls_left: int, expires_in_s: int) -> None:
     if ref:
         return  # a per-posting pass is exposed on its own response, never in the feature-keyed header
@@ -321,6 +336,29 @@ def _month_upsert(dialect: str, key: str, period: str, user_id: int | None, now:
     if dialect == "sqlite":
         return sqlite.insert(_MONTHS).values(**values).on_conflict_do_nothing(index_elements=["quota_key", "period"])
     raise ValueError(f"no month upsert for the {dialect!r} dialect (the app runs on sqlite and postgresql)")
+
+
+def _first_insert(dialect: str, key: str, feature: str, user_id: int | None, now: datetime):  # noqa: ANN202
+    """INSERT … ON CONFLICT (quota_key, feature) DO NOTHING: the rowcount is the
+    decision, so of two concurrent first searches exactly one is free."""
+    values = dict(quota_key=key, feature=feature, user_id=user_id, created_at=naive_utc(now))
+    if dialect == "postgresql":
+        return postgresql.insert(_FIRSTS).values(**values).on_conflict_do_nothing(index_elements=["quota_key", "feature"])
+    if dialect == "sqlite":
+        return sqlite.insert(_FIRSTS).values(**values).on_conflict_do_nothing(index_elements=["quota_key", "feature"])
+    raise ValueError(f"no first-free insert for the {dialect!r} dialect (the app runs on sqlite and postgresql)")
+
+
+def first_free_open(db: Session, user: User, feature: str) -> bool:
+    """Whether this user's pool still has `feature`'s free first use. False for an
+    exempt caller (nothing is counted, so nothing is free either) and for any
+    feature outside FIRST_FREE."""
+    if feature not in FIRST_FREE or limit_for(user) is None:
+        return False
+    key = quota_key(db, user)
+    return db.execute(
+        select(_FIRSTS.c.id).where(_FIRSTS.c.quota_key == key, _FIRSTS.c.feature == feature).limit(1)
+    ).first() is None
 
 
 def _month_take(key: str, period: str, n: int, limit: int, now: datetime):  # noqa: ANN202
@@ -473,17 +511,33 @@ class Charge:
     period: str
     n: int
     event_id: int | None
+    # The pool's first-free marker this charge took instead of a use (PLAN 31.5).
+    first_free_id: int | None = None
 
     def refund(self, db: Session) -> bool:
         """Give the use back. False when there is nothing to give (an exempt caller)
-        or it was already given back."""
+        or it was already given back. A free first use is given back by deleting
+        its marker, so the next one is free again."""
+        if self.first_free_id is not None:
+            gone = db.execute(delete(_FIRSTS).where(_FIRSTS.c.id == self.first_free_id)).rowcount
+            db.commit()
+            if gone == 1:
+                _note_first_free(self.user_id, self.feature, True)
+            return gone == 1
         if self.event_id is None:
             return False
         return refund_units(db, self.event_id, self.n, ref=f"refund:{self.event_id}")
 
 
 def reserve(
-    db: Session, user: User, feature: str, n: int = 1, *, now: datetime | None = None, ref: str = ""
+    db: Session,
+    user: User,
+    feature: str,
+    n: int = 1,
+    *,
+    now: datetime | None = None,
+    ref: str = "",
+    first_free: bool = False,
 ) -> Charge:
     """Take `n` uses from the user's pool, or raise 429 `monthly_limit`.
 
@@ -492,6 +546,12 @@ def reserve(
     upserted and committed, the conditional take decides, and the +n event is
     written in the same transaction as the take, so `SUM(delta) == used` holds
     at every commit.
+
+    `first_free` (a caller that offers it: the two search routes) takes the
+    pool's free first use of a FIRST_FREE feature instead, when it has one: the
+    marker's INSERT is the decision, nothing is taken from the month, no event is
+    written, and the charge carries the marker for its refund. It is free at 0
+    uses left too, because it spends none.
     """
     moment = _clock(now)
     if feature not in FEATURES:
@@ -502,6 +562,19 @@ def reserve(
         return Charge(user_id=user_id, quota_key="", feature=feature, period=period, n=max(0, n), event_id=None)
     key = quota_key(db, user)
     _maybe_prune(db)
+    if first_free and feature in FIRST_FREE and n == 1:
+        if db.execute(_first_insert(_dialect(db), key, feature, user_id, moment)).rowcount == 1:
+            db.commit()
+            marker = db.execute(
+                select(_FIRSTS.c.id).where(_FIRSTS.c.quota_key == key, _FIRSTS.c.feature == feature)
+            ).scalar_one()
+            _note_remaining(db, user_id, key, period, limit)
+            _note_first_free(user_id, feature, False)
+            return Charge(
+                user_id=user_id, quota_key=key, feature=feature, period=period, n=0, event_id=None,
+                first_free_id=int(marker),
+            )
+        db.rollback()  # the pool had it already: an ordinary charge follows
     db.execute(_month_upsert(_dialect(db), key, period, user_id, moment))
     db.commit()
     if db.execute(_month_take(key, period, n, limit, moment)).rowcount != 1:
@@ -573,14 +646,23 @@ def refund_units(
 
 
 @contextmanager
-def charged(db: Session, user: User, feature: str, n: int = 1, *, now: datetime | None = None) -> Iterator[Charge]:
+def charged(
+    db: Session,
+    user: User,
+    feature: str,
+    n: int = 1,
+    *,
+    now: datetime | None = None,
+    first_free: bool = False,
+) -> Iterator[Charge]:
     """Reserve, run the block, and give the use back if the block raises.
 
     Every failure is refunded for now (OD-3), whether the error is ours or the
-    model's. The block sits OUTSIDE a route's `try/except -> 502`, or the 429 this
-    raises would be re-wrapped as a 502.
+    model's, and a free first use comes back the same way. The block sits
+    OUTSIDE a route's `try/except -> 502`, or the 429 this raises would be
+    re-wrapped as a 502.
     """
-    charge = reserve(db, user, feature, n, now=now)
+    charge = reserve(db, user, feature, n, now=now, first_free=first_free)
     try:
         yield charge
     except BaseException:
@@ -1008,6 +1090,11 @@ def snapshot(db: Session, user: User, now: datetime | None = None) -> UsageOut:
             .group_by(_EVENTS.c.feature)
         ).all()
     }
+    taken = (
+        set()
+        if limit is None
+        else {str(f) for f in db.execute(select(_FIRSTS.c.feature).where(_FIRSTS.c.quota_key == key)).scalars()}
+    )
     return UsageOut(
         plan=plan,
         limit=limit,
@@ -1016,4 +1103,5 @@ def snapshot(db: Session, user: User, now: datetime | None = None) -> UsageOut:
         resets_on=resets_on(moment).isoformat(),
         by_feature=by_feature,
         passes={} if limit is None else _open_passes(db, user_id, moment),
+        first_free=[] if limit is None else [f for f in FIRST_FREE if f not in taken],
     )

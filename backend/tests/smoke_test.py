@@ -22008,6 +22008,7 @@ from app.core import accounts as _acc32, quota as _q32, review_rewrites as _rr32
 from app.db import database as _dbm32  # noqa: E402
 from app.db.database import get_db as _get_db32  # noqa: E402
 from app.db.models import UsageEvent as _UE32, UsageMonth as _UM32, UsagePass as _UP32  # noqa: E402
+from app.db.models import UsageFirst as _UF32  # noqa: E402
 from app.db.models import User as _U32, UserLogin as _UL32  # noqa: E402
 from app.db.users import new_invite_code as _new_code32  # noqa: E402
 
@@ -22037,10 +22038,23 @@ _P_PREVM32 = _period32(_pmy32, _pmm32)
 _MSTART32 = _dt32(_real32.year, _real32.month, 1, tzinfo=_UTC32)  # 00:00Z on the 1st of this month
 
 
-def _mint32(client, name, email=""):  # noqa: ANN001
-    """A plan-free friend, minted the way the admin mints one (POST /admin/users)."""
+def _mint32(client, name, email="", first_free_spent=True):  # noqa: ANN001
+    """A plan-free friend, minted the way the admin mints one (POST /admin/users).
+
+    Section 32 pins the ORDINARY charge, so a friend's free first search (PLAN
+    31.5, owner decision 7) is spent at mint by writing its pool's marker, and a
+    search below is the charged kind. 32.21 mints with `first_free_spent=False`
+    and pins the free first search itself."""
     body = _j28(client.post("/admin/users", json={"name": name, "email": email}, headers=_ADMIN_H))
-    return body.get("id"), {"X-App-Key": body.get("invite_code", "")}
+    uid = body.get("id")
+    if first_free_spent and uid is not None:
+        d = SessionLocal()
+        try:
+            d.add(_UF32(quota_key=_q32.quota_key(d, d.get(_U32, uid)), feature="search", user_id=uid))
+            d.commit()
+        finally:
+            d.close()
+    return uid, {"X-App-Key": body.get("invite_code", "")}
 
 
 def _reserve32(uid, feature="tailor", n=1, now=None):  # noqa: ANN001
@@ -22337,10 +22351,11 @@ try:
         # --- 32.10 Wipe, close, and whose pool it is ------------------------------------------
         _wipe_names32 = _named32(_routes32._wipe_user_rows)
         _close_names32 = _named32(_routes32.close_my_account)
-        _QUOTA_MODELS32 = {"UsageMonth", "UsageEvent", "UsagePass"}
+        _QUOTA_MODELS32 = {"UsageMonth", "UsageEvent", "UsagePass", "UsageFirst"}
         check(
-            "32.10 AST: _wipe_user_rows and close_my_account name none of UsageMonth / UsageEvent / UsagePass — a wipe "
-            "that reset the pool would make 'Delete my data' a free reset — and the walker is live: it sees TailorKit "
+            "32.10 AST: _wipe_user_rows and close_my_account name none of UsageMonth / UsageEvent / UsagePass / "
+            "UsageFirst — a wipe that reset the pool, or its free first search (PLAN 31.5), would make 'Delete my "
+            "data' a free reset — and the walker is live: it sees TailorKit "
             "and UsageLog in the wipe and purge_on_close in the close",
             not (_wipe_names32 & _QUOTA_MODELS32) and not (_close_names32 & _QUOTA_MODELS32)
             and {"TailorKit", "UsageLog"} <= _wipe_names32 and "purge_on_close" in _close_names32,
@@ -22681,7 +22696,7 @@ try:
             and _j28(_me32).get("usage") == {
                 "plan": "free", "limit": 10, "used": 3, "remaining": 7,
                 "resets_on": _q32.resets_on(_me_now32).isoformat(),
-                "by_feature": {"tailor": 2, "search": 1}, "passes": {},
+                "by_feature": {"tailor": 2, "search": 1}, "passes": {}, "first_free": [],
             }
             and "x-uses-remaining" not in _me32.headers and "x-uses-pass" not in _me32.headers,
             _me32.text[:300],
@@ -25804,6 +25819,161 @@ finally:
     _q32._open_pass = _real_open_pass32c
     _q32.utc_now = _real_utc_now32c
     _restore29(_prev32c_env)
+
+# ---------------------------------------------------------------------------
+# 32.21 The first search is free, once per POOL (PLAN 31.5, owner decision 7). A
+# new account reaches real matches with a tap that costs nothing. The marker's
+# INSERT is the decision, so it is keyed by the pool (the person), never wiped by
+# either privacy door and never pruned; a refund deletes it, so a failed search is
+# free again. Every other friend in section 32 is minted with it spent; these are
+# minted with it open, and each catch sits beside its twin.
+# ---------------------------------------------------------------------------
+def _search_none32f(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+    return _JSRes32(matches=[])
+
+
+def _search_fails32f(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+    raise ValueError("no boards answered")
+
+
+def _free_of32(client, headers):  # noqa: ANN001
+    """/auth/me's usage: (first_free, used), or None when no usage came back."""
+    usage = _j28(client.get("/auth/me", headers=headers)).get("usage")
+    return None if not isinstance(usage, dict) else (usage.get("first_free"), usage.get("used"))
+
+
+def _markers32(key):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return d.execute(_sel32(_UF32.feature).where(_UF32.quota_key == key)).scalars().all()
+    finally:
+        d.close()
+
+
+_real_search32f = _routes32.search_jobs
+_prev32f_env = _env29(DAILY_SEARCH_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _c32f:
+        _SEARCH32F = {"resume": _R32, "customize": None}
+        _routes32.search_jobs = _search_none32f
+        try:
+            _ff_uid32, _FF32_H = _mint32(_c32f, "First Search Free", first_free_spent=False)
+            _ff_before32 = _free_of32(_c32f, _FF32_H)
+            _ff_first32 = _c32f.post("/jobs/search", json=_SEARCH32F, headers=_FF32_H)
+            _ff_after32 = _free_of32(_c32f, _FF32_H)
+            _ff_second32 = _c32f.post("/jobs/search", json=_SEARCH32F, headers=_FF32_H)
+            _ff_events32 = _events32(_ff_uid32)
+            # At 0 uses left the first search is still free, since it spends none; the next is refused.
+            _fz_uid32, _FZ32_H = _mint32(_c32f, "First Search At Zero", first_free_spent=False)
+            _fill32(_fz_uid32, 10, "tailor")
+            _fz_first32 = _c32f.post("/jobs/search", json=_SEARCH32F, headers=_FZ32_H)
+            _fz_second32 = _c32f.post("/jobs/search", json=_SEARCH32F, headers=_FZ32_H)
+            # The admin is exempt: nothing is counted, so nothing is free and no marker is written.
+            _fa_before32 = _markers32(_key32(_admin_row_id))
+            _fa_me32 = _j28(_c32f.get("/auth/me", headers=_ADMIN_H)).get("usage") or {}
+            _fa_search32 = _c32f.post("/jobs/search", json=_SEARCH32F, headers=_ADMIN_H)
+            _fa_after32 = _markers32(_key32(_admin_row_id))
+        finally:
+            _routes32.search_jobs = _real_search32f
+        check(
+            "32.21 the first search is free: a fresh pool's /auth/me lists first_free ['search']; that search answers "
+            "200 with NO ledger event, X-Uses-Remaining still 10 and X-Uses-First-Free search;0; /auth/me then lists "
+            "none and used 0 — and the second search is the ordinary charge, one +1 event and header 9, with no "
+            "first-free header",
+            _ff_before32 == (["search"], 0)
+            and _ff_first32.status_code == 200 and _hdr32(_ff_first32) == "10"
+            and _ff_first32.headers.get("x-uses-first-free") == "search;0"
+            and _ff_after32 == ([], 0)
+            and _ff_second32.status_code == 200 and _hdr32(_ff_second32) == "9"
+            and "x-uses-first-free" not in _ff_second32.headers
+            and _shape32(_ff_events32) == [("search", 1, 0, "")],
+            f"before={_ff_before32} first={_ff_first32.status_code}/{_hdr32(_ff_first32)}/"
+            f"{_ff_first32.headers.get('x-uses-first-free')} after={_ff_after32} "
+            f"second={_ff_second32.status_code}/{_hdr32(_ff_second32)} events={_shape32(_ff_events32)}",
+        )
+        check(
+            "32.21 at 0 uses left the first search is still free (it spends none) and answers 200, while the search "
+            "after it is the plain HTTP 429 monthly_limit — and the exempt admin lists no first_free, writes no "
+            "marker, and searches as always",
+            _fz_first32.status_code == 200 and _hdr32(_fz_first32) == "0"
+            and _fz_second32.status_code == 429 and (_detail28(_fz_second32) or {}).get("code") == "monthly_limit"
+            and _fa_me32.get("first_free") == [] and _fa_search32.status_code == 200
+            and _fa_before32 == _fa_after32 == [],
+            f"zero={_fz_first32.status_code}/{_hdr32(_fz_first32)} then={_fz_second32.status_code} "
+            f"admin={_fa_me32.get('first_free')} {_fa_search32.status_code} markers {_fa_before32}->{_fa_after32}",
+        )
+
+        # The stream: a failed first search gives the free one back (its marker deleted), and the next is free.
+        _fs_uid32, _FS32_H = _mint32(_c32f, "First Stream Free", first_free_spent=False)
+        _routes32.search_jobs = _search_fails32f
+        try:
+            _fs_fail32 = _c32f.post("/jobs/search/stream", json=_SEARCH32F, headers=_FS32_H)
+        finally:
+            _routes32.search_jobs = _real_search32f
+        _fs_mid32 = _free_of32(_c32f, _FS32_H)
+        _routes32.search_jobs = _search_none32f
+        try:
+            _fs_ok32 = _c32f.post("/jobs/search/stream", json=_SEARCH32F, headers=_FS32_H)
+        finally:
+            _routes32.search_jobs = _real_search32f
+        _fs_end32 = _free_of32(_c32f, _FS32_H)
+        check(
+            "32.21 stream: a first search that fails (a user-facing 400 frame) is taken before the stream starts "
+            "(search;0 on the 200 that carries it) and given back BEFORE its error frame, its marker deleted, so "
+            "/auth/me lists first_free ['search'] again — and the next search is the free one: a result frame, "
+            "used 0, and no ledger event at all",
+            _fs_fail32.status_code == 200 and _fs_fail32.headers.get("x-uses-first-free") == "search;0"
+            and "event: error" in _fs_fail32.text
+            and _fs_mid32 == (["search"], 0)
+            and _fs_ok32.status_code == 200 and "event: result" in _fs_ok32.text
+            and _fs_end32 == ([], 0) and _events32(_fs_uid32) == [],
+            f"fail={_fs_fail32.status_code}/{_fs_fail32.headers.get('x-uses-first-free')} mid={_fs_mid32} "
+            f"ok={_fs_ok32.status_code} end={_fs_end32} events={_shape32(_events32(_fs_uid32))}",
+        )
+
+        # The POOL, not the account: an alias on the same canonical address shares the marker, a stranger does not.
+        _fp_a32 = _email_user32("dana.levi.free32@gmail.com")
+        _fp_b32 = _email_user32("danalevifree32+jobs@gmail.com")
+        _fp_c32 = _email_user32("someone.else.free32@gmail.com")
+        # A raise in here fails THIS check, never the suite (whose top level has no try).
+        _fp_open_b_before32 = _fp_charge32 = _fp_open_b32 = _fp_open_c32 = _fp_b_charge32 = None
+        _fp_after_prune32 = _fp_month_gone32 = _fp_not_first32 = None
+        _fp_error32 = ""
+        _fpd32 = SessionLocal()
+        try:
+            _fp_open_b_before32 = _q32.first_free_open(_fpd32, _fpd32.get(_U32, _fp_b32), "search")
+            _fp_charge32 = _q32.reserve(_fpd32, _fpd32.get(_U32, _fp_a32), "search", first_free=True)
+            _fp_open_b32 = _q32.first_free_open(_fpd32, _fpd32.get(_U32, _fp_b32), "search")
+            _fp_open_c32 = _q32.first_free_open(_fpd32, _fpd32.get(_U32, _fp_c32), "search")
+            _fp_b_charge32 = _q32.reserve(_fpd32, _fpd32.get(_U32, _fp_b32), "search", first_free=True)
+            # Housekeeping never deletes a marker, however old: a 2020 marker survives the prune that deletes a
+            # 2020 month row of the same probe pool (the live twin), on the real clock, so no current row is touched.
+            _fpd32.add(_UF32(quota_key="u:prune-probe32", feature="search", created_at=_dt32(2020, 1, 1)))
+            _fpd32.add(_UM32(quota_key="u:prune-probe32", period="2020-01", used=1))
+            _fpd32.commit()
+            _q32.prune(_fpd32, _q32.utc_now())
+            _fp_after_prune32 = _markers32("u:prune-probe32")
+            _fp_month_gone32 = _pool32("u:prune-probe32", "2020-01")
+            _fp_not_first32 = _q32.first_free_open(_fpd32, _fpd32.get(_U32, _fp_a32), "tailor")
+        except Exception as _fp_exc32:  # noqa: BLE001 - reported by the check below
+            _fp_error32 = f"{type(_fp_exc32).__name__}: {_fp_exc32}"
+        finally:
+            _fpd32.close()
+        check(
+            "32.21 the free first search belongs to the POOL: taken by dana.levi@, it is gone for the alias "
+            "danalevi+jobs@ on the same canonical address (whose search then charges an ordinary use) and still open "
+            "for a stranger; prune keeps a 2020 marker while it deletes the 2020 month row beside it; and a feature outside FIRST_FREE is never free",
+            not _fp_error32 and _fp_open_b_before32 is True
+            and _fp_charge32.first_free_id is not None and _fp_charge32.event_id is None and _fp_charge32.n == 0
+            and _fp_open_b32 is False and _fp_open_c32 is True
+            and _fp_b_charge32.first_free_id is None and _fp_b_charge32.event_id is not None
+            and _fp_after_prune32 == ["search"] and _fp_month_gone32 == (None, 0) and _fp_not_first32 is False,
+            f"error={_fp_error32!r} b_before={_fp_open_b_before32} a={_fp_charge32} b_after={_fp_open_b32} c={_fp_open_c32} "
+            f"b_charge={_fp_b_charge32} pruned={_fp_after_prune32} month={_fp_month_gone32} tailor={_fp_not_first32}",
+        )
+finally:
+    _routes32.search_jobs = _real_search32f
+    _restore29(_prev32f_env)
 
 # ---------------------------------------------------------------------------
 # 32 (continued). Job alerts (Phase 30 / B6), then route coverage (32.13). A

@@ -83,7 +83,8 @@ export default function JobsPage() {
   const toast = useToast();
   const nav = useNavigate();
   // A search and a ranking each use 1 (Phase 30 / B4); none left disables both.
-  const searchUses = useUses("search");
+  // This page's search is served free while the pool's first one is open (PLAN 31.5).
+  const searchUses = useUses("search", undefined, true);
 
   // -- Resume upload state (Jobs is the front door: upload lives here too) --
   const [showReplace, setShowReplace] = useState(false);
@@ -684,7 +685,7 @@ export default function JobsPage() {
                   its jobs are in History and its use is kept (Phase 30 / C3). */}
               {dropped && <span className="text-sm text-warn">{t("search.connectionDropped")}</span>}
             </div>
-            <UsesNote feature="search" className="mt-2" />
+            <UsesNote feature="search" firstFree className="mt-2" />
           </Card>
           )}
 
@@ -994,7 +995,7 @@ export default function JobsPage() {
               <span className="text-xs text-ink-muted">{t("manual.maxListings", { max: MAX_MATCH_LISTINGS })}</span>
             )}
             {error && <span className="text-sm text-danger">{error}</span>}
-            <UsesNote feature="search" className="w-full" />
+            <UsesNote feature="search" firstFree className="w-full" />
           </Card>
 
           {running && (

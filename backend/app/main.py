@@ -163,7 +163,8 @@ async def uses_meter(request: Request, call_next):
     bound HERE, and the headers come from it once the route has answered:
     `X-Uses-Remaining: <int>`, and for an interview or screening pass
     `X-Uses-Pass: <feature>;<calls_left>;<expires_in_s>` (`;0;0` once the pass
-    was deleted or closed). A middleware for the reason `llm_metering` gives: a
+    was deleted or closed), and `X-Uses-First-Free: <feature>;<0|1>` when a
+    free first use was taken or given back (PLAN 31.5). A middleware for the reason `llm_metering` gives: a
     ContextVar cannot be bound inside a FastAPI yield dependency.
 
     Declared ABOVE `access_gate`, so it runs INSIDE the gate and
@@ -180,6 +181,11 @@ async def uses_meter(request: Request, call_next):
     if holder.pass_ is not None:
         feature, calls_left, expires_in_s = holder.pass_
         response.headers["X-Uses-Pass"] = f"{feature};{calls_left};{expires_in_s}"
+    if holder.first_free is not None:
+        # `search;0` once the free first search is taken, `search;1` once a
+        # refund gave it back (PLAN 31.5).
+        feature, free = holder.first_free
+        response.headers["X-Uses-First-Free"] = f"{feature};{1 if free else 0}"
     return response
 
 
