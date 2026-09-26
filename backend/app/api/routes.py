@@ -1636,29 +1636,53 @@ def greenhouse_add_company(
 # --------------------------------------------------------------------------- #
 @router.post("/tools/scan", response_model=FreeScanResult)
 async def tools_scan(
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
     jd_text: str = Form(""),
+    lang: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> FreeScanResult:
-    """Score a resume file against a job description.
+    """Score a resume against a job description: an uploaded file, or with none
+    the person's SAVED resume (PLAN 31.7), which asked for the same file again.
+    The saved one is the newest master, or the `lang` slot's, rendered as the
+    Word file in the default design and read back with our own parser, so it is
+    scanned the way a file of it would be. Word, not the PDF: the PDF's text
+    layer is in VISUAL order for Hebrew (`rendering.md`, the x-ray's two forms),
+    so every Hebrew keyword would read as missing; the Word file stores it in
+    logical order, and the scan compares words.
 
-    In order: an empty JD is a 400 that costs nothing; the daily scan cap counts
-    the attempt and is never refunded; then one monthly use wraps the read, the
-    parse and the scan, so a refused upload (413), an unreadable file (400) or a
-    file with no text (422) gives the use back.
+    In order: an empty JD, or no file and no saved resume, is a 400 that costs
+    nothing; the daily scan cap counts the attempt and is never refunded; then
+    one monthly use wraps the read, the parse and the scan, so a refused upload
+    (413), an unreadable file (400) or a file with no text (422) gives the use
+    back.
     """
     if not jd_text.strip():
         raise HTTPException(400, "Paste the job description text.")
+    master = None
+    if file is None:
+        master = next(
+            (
+                m
+                for row in _master_rows(db, user.id)
+                if (not lang or (row.language or "en") == lang) and (m := _row_to_master(row))
+            ),
+            None,
+        )
+        if master is None:
+            raise HTTPException(400, "Upload a resume, or save one first.")
     check_and_count(db, user, "scan", get_settings().daily_scan_cap)
     with quota.charged(db, user, "scan"):
-        data = await _read_capped(file)
-        if not data:
-            raise HTTPException(400, "Empty file.")
-        try:
-            raw = extract_text(file.filename or "", data)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
+        if master is not None:
+            raw = extract_text("resume.docx", render_docx(master.resume, template="standard"))
+        else:
+            data = await _read_capped(file)
+            if not data:
+                raise HTTPException(400, "Empty file.")
+            try:
+                raw = extract_text(file.filename or "", data)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
         if not raw.strip():
             raise HTTPException(422, "Could not extract any text from the file.")
         return free_scan(raw, jd_text)

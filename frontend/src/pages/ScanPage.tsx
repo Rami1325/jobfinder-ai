@@ -22,6 +22,7 @@ import { Button, Card, CardTitle, ProgressRing, SectionLabel } from "../componen
 import { apiErrorMessage } from "../lib/apiError";
 import { cn } from "../lib/cn";
 import { useUses } from "../lib/usesStore";
+import { useMasterResume } from "../hooks/useMasterResume";
 
 const chipTone: Record<string, string> = {
   covered: "border-mint/50 bg-mint/15 text-mint",
@@ -42,6 +43,10 @@ const groupMeta = {
  * file the server refuses or cannot read gives the use back), and /scan
  * redirects to sign-up. The chrome it had as a public page, the marketing footer
  * and the "no signup" kicker, is gone; it wears the tools' own shell instead.
+ *
+ * It scans the SAVED resume by default (PLAN 31.7): it asked a signed-in person
+ * for the file the app already holds. A file dropped or picked still wins, for
+ * checking one that is not the master, and "Use my saved resume" goes back.
  */
 export default function ScanPage() {
   const { t } = useTranslation("scan");
@@ -52,18 +57,22 @@ export default function ScanPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<FreeScanResult | null>(null);
+  // The newest saved master, scanned when no file is chosen.
+  const { master } = useMasterResume();
+  const saved = !file && !!master;
 
   // With no uses left the scan is disabled (Phase 30 / C4). A file the server
   // refuses or cannot read gives its use back there, so the note stays true.
   const uses = useUses("scan");
-  const canScan = !!file && jd.trim().length > 0 && !loading && !uses.out;
+  const canScan = (!!file || saved) && jd.trim().length > 0 && !loading && !uses.out;
 
   async function scan() {
-    if (!file || !canScan) return;
+    if (!canScan) return;
     setLoading(true);
     setError("");
     try {
-      const res = await scanResume(file, jd);
+      const lang = master?.language === "he" ? "he" : master ? "en" : undefined;
+      const res = await scanResume(file, jd, file ? undefined : lang);
       setResult(res);
     } catch (e) {
       setResult(null);
@@ -102,7 +111,16 @@ export default function ScanPage() {
               drag ? "border-accent bg-accent/5" : file ? "border-mint/50 bg-mint/5" : "border-line hover:border-accent/50",
             )}
           >
-            {file ? (
+            {saved ? (
+              <>
+                <FileCheck2 className="mb-2 text-mint" />
+                <span className="text-sm text-ink" dir="auto">
+                  {master?.label || t("saved.title")}
+                </span>
+                <span className="mt-1 text-xs text-ink-muted">{t("saved.title")}</span>
+                <span className="mt-2 text-xs font-semibold text-accent-soft">{t("saved.other")}</span>
+              </>
+            ) : file ? (
               <>
                 <FileCheck2 className="mb-2 text-mint" />
                 <span className="text-sm text-ink">{file.name}</span>
@@ -126,6 +144,18 @@ export default function ScanPage() {
               if (f) setFile(f);
             }}
           />
+          {file && master && (
+            <button
+              type="button"
+              onClick={() => {
+                setFile(null);
+                if (inputRef.current) inputRef.current.value = "";
+              }}
+              className="mt-2 text-xs font-semibold text-accent-soft hover:underline"
+            >
+              {t("saved.back")}
+            </button>
+          )}
         </Card>
 
         {/* JD paste */}

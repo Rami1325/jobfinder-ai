@@ -23716,7 +23716,9 @@ try:
         _v_bad32 = (
             _c32b.post("/tailor", json={"resume": _R32, "jd": "not a job"}, headers=_V32_H),
             _c32b.post("/cover-letter", json={"resume": _R32}, headers=_V32_H),
-            _c32b.post("/tools/scan", data={"jd_text": "Python developer."}, headers=_V32_H),
+            # Since PLAN 31.7 a scan with NO file scans the saved resume, so the
+            # malformed body is a file field that is not a file.
+            _c32b.post("/tools/scan", data={"jd_text": "Python developer.", "file": "not a file"}, headers=_V32_H),
         )
         _v_after32 = _events32(_v_uid32)
         _v_ok_tailor32 = _c32b.post("/tailor", json={"resume": _R32, "jd": _JDJ32}, headers=_V32_H)
@@ -23727,7 +23729,7 @@ try:
         _v_ok_cover32 = _c32b.post("/cover-letter", json={"resume": _R32, "jd": _JDJ32}, headers=_V32_H)
         _v_cover_ref32 = _q32.jd_ref(_JD32.model_validate(_JDJ32))
         check(
-            "32.4 a 422 never charges: a malformed /tailor, a /cover-letter with no job and a /tools/scan with no file "
+            "32.4 a 422 never charges: a malformed /tailor, a /cover-letter with no job and a /tools/scan whose file is not one "
             "are refused before the handler with no event and no header — on a user whose limit reads 10 and whose "
             "valid tailor, scan and cover letter right after DO write +1 each, the cover letter under its posting's "
             "own ref",
@@ -24480,7 +24482,7 @@ try:
         _vz_env32 = _env29(DAILY_SCAN_CAP="5", DAILY_JD_ANALYZE_CAP="5")
         try:
             _vz_uid32, _VZ32_H = _mint32(_c32b, "Validation Counters")
-            _vz_scan32 = _c32b.post("/tools/scan", data=_JD_TEXT32, headers=_VZ32_H)
+            _vz_scan32 = _c32b.post("/tools/scan", data={**_JD_TEXT32, "file": "not a file"}, headers=_VZ32_H)
             _vz_jd32 = _c32b.post("/jd/analyze", json={}, headers=_VZ32_H)
             _vz_mid32 = (_ul32(_vz_uid32), _events32(_vz_uid32))
             _vz_ok_scan32 = _c32b.post("/tools/scan", files={"file": _CV_FILE32}, data=_JD_TEXT32, headers=_VZ32_H)
@@ -24488,7 +24490,7 @@ try:
         finally:
             _restore29(_vz_env32)
         check(
-            "32.18 a body-validation 422 increments neither counter: a scan with no file and a JD analysis with no "
+            "32.18 a body-validation 422 increments neither counter: a scan whose file is not one and a JD analysis with no "
             "text leave no daily row and no ledger event — while the same user's valid calls move both (scan 1 with "
             "a +1 scan event, jd_analyze 1)",
             _vz_scan32.status_code == 422 and _vz_jd32.status_code == 422
@@ -24497,6 +24499,50 @@ try:
             and _ul32(_vz_uid32) == {"scan": 1, "jd_analyze": 1}
             and _shape32(_events32(_vz_uid32)) == [("scan", 1, 0, "")],
             f"{_vz_scan32.status_code} {_vz_jd32.status_code} {_vz_mid32} {_ul32(_vz_uid32)}",
+        )
+
+        # PLAN 31.7: the scan asked for the file the person had already saved.
+        # With no file it scans the saved resume (the newest, or the `lang`
+        # slot), charged exactly like a file, and with nothing saved it is a
+        # 400 that moves no counter, like the empty job description.
+        _sv_uid32, _SV32_H = _mint32(_c32b, "Saved Scanner")
+        _sv_none32 = _c32b.post("/tools/scan", data=_JD_TEXT32, headers=_SV32_H)
+        _sv_mid32 = (_ul32(_sv_uid32), _events32(_sv_uid32))
+        _sv_en32 = ResumeModel(
+            contact=Contact(name="Dana Levi"),
+            summary="Backend engineer who writes Python and SQL services.",
+            experience=[Experience(company="Acme", title="Python Engineer", bullets=["Built SQL reporting APIs"])],
+        )
+        _sv_he32 = ResumeModel(
+            contact=Contact(name="דנה לוי"),
+            summary="מהנדסת נתונים עם ניסיון בעיבוד נתונים בענן.",
+            experience=[Experience(company="אקמי", title="מהנדסת נתונים", bullets=["בניית צינורות נתונים"])],
+        )
+        _c32b.put("/profile/resume", json={"resume": _sv_en32.model_dump(), "label": "EN"}, headers=_SV32_H)
+        _c32b.put("/profile/resume", json={"resume": _sv_he32.model_dump(), "label": "HE"}, headers=_SV32_H)
+        _sv_en_scan32 = _c32b.post("/tools/scan", data={**_JD_TEXT32, "lang": "en"}, headers=_SV32_H)
+        _sv_he_scan32 = _c32b.post(
+            "/tools/scan", data={"jd_text": "דרושה מהנדסת נתונים עם ניסיון בעיבוד נתונים", "lang": "he"}, headers=_SV32_H
+        )
+        _sv_cov32 = lambda r: {k["keyword"]: k["status"] for k in r.json().get("keywords", [])}  # noqa: E731
+        check(
+            "31.7 the scan reads the SAVED resume when no file is sent: the lang slot asked for, its words covered "
+            "(Python and SQL in the English one, the Hebrew one's own words in Hebrew), each a +1 scan use like a "
+            "file; with nothing saved it is a 400 that writes no daily row and no ledger event",
+            _sv_none32.status_code == 400
+            and _sv_mid32 == ({}, [])
+            and _sv_en_scan32.status_code == 200
+            and _sv_cov32(_sv_en_scan32).get("python") == "covered"
+            and _sv_he_scan32.status_code == 200
+            # A Hebrew word the resume carries, covered: the PDF's text layer is in
+            # visual order for Hebrew, and read from it this was "missing".
+            and _sv_cov32(_sv_he_scan32).get("מהנדסת") == "covered"
+            and "python" not in _sv_cov32(_sv_he_scan32)
+            and _ul32(_sv_uid32) == {"scan": 2}
+            and _shape32(_events32(_sv_uid32)) == [("scan", 1, 0, ""), ("scan", 1, 0, "")],
+            f"{_sv_none32.status_code} {_sv_mid32} {_sv_en_scan32.status_code} {_sv_cov32(_sv_en_scan32) if _sv_en_scan32.status_code == 200 else _sv_en_scan32.text[:100]} "
+            f"{_sv_he_scan32.status_code} {_sv_cov32(_sv_he_scan32) if _sv_he_scan32.status_code == 200 else ''} "
+            f"{_ul32(_sv_uid32)} {_shape32(_events32(_sv_uid32))}",
         )
 
         # --- 32.19 Registry writes are admin-only (B4.8) ----------------------------------------------------------

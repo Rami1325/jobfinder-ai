@@ -734,9 +734,12 @@ export async function clearJobHistory(): Promise<void> {
  * feature. Deterministic, nothing stored server-side. It uses 1 of the month's
  * uses and has its own daily cap; a file the server refuses or cannot read gives
  * the use back. It was the public, anonymous `/public/scan` until Phase 30. */
-export async function scanResume(file: File, jdText: string): Promise<FreeScanResult> {
+/** The resume scan. With no file it scans the SAVED resume, the `lang` slot's
+ * or the newest (PLAN 31.7), charged exactly like a file. */
+export async function scanResume(file: File | null, jdText: string, lang?: string): Promise<FreeScanResult> {
   const form = new FormData();
-  form.append("file", file);
+  if (file) form.append("file", file);
+  else if (lang) form.append("lang", lang);
   form.append("jd_text", jdText);
   const { data } = await api.post<FreeScanResult>("/tools/scan", form);
   return data;
