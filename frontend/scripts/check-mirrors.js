@@ -12693,9 +12693,13 @@ try {
   // `.vercelignore` keeps `backend/tests` out of the Vercel upload (it holds no
   // runtime code), so there `backend/` is present and the fixture is not: that
   // is this build's shape, like `backend/` absent, and it degrades the same way.
-  // The first deploy of this check went red on it (dpl_8Sry4…). A `backend/tests`
-  // that IS here without the file is a moved file, and `pySource` fails it.
-  const testsAbsent = fs.existsSync(BACKEND_DIR) && !fs.existsSync(path.join(BACKEND_DIR, "tests"));
+  // The first deploy of this check went red on it (dpl_8Sry4…), and so did the
+  // second (dpl_FiDnk…): Vercel removes an ignored path's FILES and leaves its
+  // folders, so `backend/tests` exists there, empty. The suite's own file is the
+  // signal: no `smoke_test.py`, no tests in this build. A `backend/tests` that
+  // holds the suite without this file is a moved file, and `pySource` fails it.
+  const testsAbsent =
+    fs.existsSync(BACKEND_DIR) && !fs.existsSync(path.join(BACKEND_DIR, "tests", "smoke_test.py"));
   if (testsAbsent && !pySkips.has("check 76")) {
     console.warn(
       "\n  ! check 76 DEGRADED: backend/tests is not in this build (.vercelignore), so\n" +
