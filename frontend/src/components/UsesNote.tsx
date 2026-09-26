@@ -13,7 +13,8 @@ interface Props {
    * call uses nothing. */
   includedUntil?: string;
   /** The sentence while the control has uses left and nothing covers it. Default:
-   * the feature's own sentence, or "This uses 1 of the N you have left this month." */
+   * the feature's own sentence, or "Uses 1 · N left" (PLAN 31.7 shortened it from
+   * "This uses 1 of the N you have left this month."). */
   children?: ReactNode;
   /** The sentence while the call is covered. Default: the feature's own, or none. */
   covered?: ReactNode;
