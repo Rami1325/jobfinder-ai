@@ -12689,7 +12689,21 @@ try {
 // Four planted twins are probed every run: the old rule, skills voting, a
 // plain majority and a threshold of one in six each misread a case.
 try {
-  const casesText = pySource("tests/fixtures/lang_cases.json", "check 76");
+  // `.vercelignore` keeps `backend/tests` out of the Vercel upload (it holds no
+  // runtime code), so there `backend/` is present and the fixture is not: that
+  // is this build's shape, like `backend/` absent, and it degrades the same way.
+  // The first deploy of this check went red on it (dpl_8Sry4…). A `backend/tests`
+  // that IS here without the file is a moved file, and `pySource` fails it.
+  const testsAbsent = fs.existsSync(BACKEND_DIR) && !fs.existsSync(path.join(BACKEND_DIR, "tests"));
+  if (testsAbsent && !pySkips.has("check 76")) {
+    console.warn(
+      "\n  ! check 76 DEGRADED: backend/tests is not in this build (.vercelignore), so\n" +
+        "    backend/tests/fixtures/lang_cases.json was NOT read and lib/lang.ts was not run over it.\n" +
+        "    CI (.github/workflows/ci.yml) checks the whole repo out, so it runs there.\n",
+    );
+    pySkips.add("check 76");
+  }
+  const casesText = testsAbsent ? null : pySource("tests/fixtures/lang_cases.json", "check 76");
   if (casesText !== null) {
     const cases = JSON.parse(casesText).cases;
     if (!Array.isArray(cases) || cases.length < 17)
@@ -12961,7 +12975,7 @@ if (problems.length) {
 console.log(
   `mirrors ok — ${sectionKeys.length} edit sections, en/he parity across all namespaces` +
     (templateSkip ? ` — but the template specs were NOT compared (${templateSkip})` : "") +
-    (pySkips.size ? ` — and ${[...pySkips].join(", ")} read NO Python (backend/ is not in this build)` : "") +
+    (pySkips.size ? ` — and ${[...pySkips].join(", ")} read NO Python (backend/, or backend/tests, is not in this build)` : "") +
     (agentsSkip ? ` — and AGENTS.md was NOT compared with CLAUDE.md (${agentsSkip})` : "") +
     (extensionSkip ? ` — and the extension was NOT checked (${extensionSkip})` : ""),
 );
