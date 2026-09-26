@@ -8,7 +8,7 @@
     "tracker": "Tracker",
     "primary": "Main",
     "more": "More",
-    "trust": "Checked against your CV",
+    "trust": "Checked against your resume",
     "searching": "Searching…",
     "kitsAwaiting_one": "1 draft to review",
     "kitsAwaiting_other": "{{count}} drafts to review",
@@ -23,7 +23,7 @@
     "features": "Features",
     "faq": "FAQ",
     "openApp": "Open app",
-    "freeScan": "CV scan",
+    "freeScan": "Resume scan",
     "logIn": "Log in",
     "signUp": "Sign up"
   },
@@ -32,7 +32,7 @@
     "app": "App",
     "how": "How it works",
     "faq": "FAQ",
-    "freeScan": "CV scan",
+    "freeScan": "Resume scan",
     "privacy": "Privacy"
   },
   "loading": "Loading…",
@@ -103,7 +103,7 @@
     "upload": "Daily limit reached — you've uploaded {{cap}} resumes today. Try again tomorrow.",
     "jdAnalyze": "Daily limit reached — {{cap}} job descriptions were read today. Try again tomorrow.",
     "searchContext": "Daily limit reached — you've asked for search suggestions {{cap}} times today. Try again tomorrow.",
-    "scan": "Daily limit reached — you've run all {{cap}} CV scans for today. Try again tomorrow.",
+    "scan": "Daily limit reached — you've run all {{cap}} resume scans for today. Try again tomorrow.",
     "fetch": "Daily limit reached — you've opened {{cap}} job links for today. Try again tomorrow.",
     "generic": "Daily limit reached — you've used your {{cap}} for today. Try again tomorrow."
   },
@@ -156,7 +156,7 @@
       "tailor": "Tailored jobs",
       "search": "Job searches",
       "company_brief": "Company briefs",
-      "scan": "CV scans",
+      "scan": "Resume scans",
       "interview": "Interview practice",
       "cover_letter": "Cover letters",
       "linkedin": "LinkedIn profiles",
@@ -177,7 +177,7 @@
     "body": "This section is being built. Check back shortly."
   },
   "sizeLimit": {
-    "resume": "That CV is too large to process ({{size}} KB; the limit is {{cap}} KB). It was NOT saved. Remove images or split it, then upload again.",
+    "resume": "That resume is too large to process ({{size}} KB; the limit is {{cap}} KB). It was NOT saved. Remove images or split it, then upload again.",
     "jd": "That job description is too long ({{size}} KB; the limit is {{cap}} KB). Paste just the role and requirements.",
     "transcript": "This practice session is full ({{size}} KB; the limit is {{cap}} KB), so your last answer was not sent. End the session to get your scorecard.",
     "session": "This practice session is too long to score ({{size}} KB; the limit is {{cap}} KB). Start over to practice again.",
@@ -186,10 +186,10 @@
     "note": "That note is too long ({{size}} KB; the limit is {{cap}} KB). Shorten it and try again.",
     "page": "That page text is too long ({{size}} KB; the limit is {{cap}} KB). Paste just the About, team or careers part.",
     "generic": "That is too large to process ({{size}} KB; the limit is {{cap}} KB). Nothing was changed.",
-    "context": "Your CV is too long for the AI to read in one go. Trim the oldest roles and try again — nothing was changed.",
-    "contextTranscript": "Your CV and this practice session are too long together for the AI to read in one go, so your last answer was not sent. End the session for your scorecard, or trim the oldest roles in your CV and start again.",
-    "contextSession": "Your CV and this practice session are too long together for the AI to score in one go. Trim the oldest roles in your CV, then start a new session.",
-    "truncated": "The AI ran out of room before finishing. Try again, or shorten your CV a little first."
+    "context": "Your resume is too long for the AI to read in one go. Trim the oldest roles and try again — nothing was changed.",
+    "contextTranscript": "Your resume and this practice session are too long together for the AI to read in one go, so your last answer was not sent. End the session for your scorecard, or trim the oldest roles in your resume and start again.",
+    "contextSession": "Your resume and this practice session are too long together for the AI to score in one go. Trim the oldest roles in your resume, then start a new session.",
+    "truncated": "The AI ran out of room before finishing. Try again, or shorten your resume a little first."
   },
   "theme": {
     "toDark": "Switch to dark mode",

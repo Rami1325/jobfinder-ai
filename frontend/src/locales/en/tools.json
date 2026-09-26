@@ -5,7 +5,7 @@
   "backToJob": "Back to the job",
   "cards": {
     "scan": {
-      "title": "CV scan",
+      "title": "Resume scan",
       "body": "See which of a job's keywords your resume already covers, in Hebrew or English."
     },
     "outreach": {
@@ -18,7 +18,7 @@
     },
     "xray": {
       "title": "ATS X-ray",
-      "body": "See the exact text a parser pulls out of your rendered CV — and every fact that came back wrong."
+      "body": "See the exact text a parser pulls out of your rendered resume — and every fact that came back wrong."
     },
     "linkedin": {
       "title": "LinkedIn optimizer",

@@ -77,11 +77,11 @@
     "templates": {
       "standard": {
         "name": "Standard",
-        "desc": "The default. Centred header, ruled section headings, one dense column — the plain professional CV, on US Letter."
+        "desc": "The default. Centred header, ruled section headings, one dense column — the plain professional resume, on US Letter."
       },
       "classic": {
         "name": "Classic",
-        "desc": "The CV Israeli recruiters expect, with every fact exactly where they look."
+        "desc": "The resume Israeli recruiters expect, with every fact exactly where they look."
       },
       "modern": {
         "name": "Modern",
@@ -213,23 +213,23 @@
       "removed": "Will stay in your resume"
     },
     "aiNotes": "The AI's own change notes",
-    "flagResolved": "Resolved — not on your CV",
-    "resolvedBody": "Nothing flagged is on your CV any more.",
-    "showInDoc": "Show this on the CV",
+    "flagResolved": "Resolved — not on your resume",
+    "resolvedBody": "Nothing flagged is on your resume any more.",
+    "showInDoc": "Show this on the resume",
     "mark": {
       "changed": "The AI's wording",
       "restored": "Your original wording",
       "yours": "Your wording"
     },
     "yours": "Yours",
-    "yoursNote": "You rewrote this yourself. Neither wording below is on your CV any more.",
+    "yoursNote": "You rewrote this yourself. Neither wording below is on your resume any more.",
     "yoursHere": "You rewrote this line yourself.",
     "useAi": "Use the AI's wording",
     "useOriginal": "Use my original",
     "dontAdd": "Don't add this line",
     "yoursDiscard": "Both of these replace what you typed.",
     "yoursHidden": "Your wording isn't in this version — a declined change removed the line it was on.",
-    "yoursRemoved": "You deleted this line from this application's CV.",
+    "yoursRemoved": "You deleted this line from this application's resume.",
     "yoursDeleted": "You deleted this",
     "yoursRestore": "Put the line back",
     "toCheck": "To check",
@@ -312,9 +312,9 @@
   },
   "curation": {
     "title": "Left out of this version",
-    "count_one": "1 thing from your resume isn't in this CV",
-    "count_other": "{{count}} things from your resume aren't in this CV",
-    "complete": "This is everything from your resume that isn't in this CV.",
+    "count_one": "1 thing from your resume isn't in this version",
+    "count_other": "{{count}} things from your resume aren't in this version",
+    "complete": "This is everything from your resume that isn't in this version.",
     "ambiguity": "We can show you what's missing, not always who cut it — the AI curates for the job, and the page budget cuts what doesn't fit. Where the page budget recorded the cut, it says so.",
     "byBudget": "Cut to fit the page limit",
     "byPlan": "The plan for this job didn't select it",
@@ -324,7 +324,7 @@
     "restoreAll": "Restore all",
     "restoredNote_one": "1 restored — it's in your download",
     "restoredNote_other": "{{count}} restored — they're in your download",
-    "allRestored": "Everything is back in your CV"
+    "allRestored": "Everything is back in this version"
   },
   "additions": {
     "skillsNote": "Skills aren't fabrication-checked: the AI may adopt the job's wording for something you already have. Read these and drop anything you can't back up."
@@ -342,7 +342,7 @@
   },
   "doc": {
     "review": {
-      "tool": "Check my CV",
+      "tool": "Check my resume",
       "title": "Resume review",
       "counts": "{{fix}} to fix · {{consider}} to consider · {{clean}} clean",
       "groupBad": "To fix",
@@ -356,22 +356,22 @@
       "needsJob": "Tailor for a job to also check which of your skills it asks for.",
       "upTo": "up to {{pct}}%",
       "why": "Why this matters",
-      "showInDoc": "Show on the CV",
+      "showInDoc": "Show on the resume",
       "close": "Close",
       "nothingRan": "Nothing could be checked yet",
       "eachWorth": "each fix ≈ {{pct}}%",
       "checks": {
         "contact-email": {
           "label": "No email address",
-          "how": "Add the email address you actually read — an application system with no way to reply to you drops the CV before a person sees it."
+          "how": "Add the email address you actually read — an application system with no way to reply to you drops the resume before a person sees it."
         },
         "contact-phone": {
           "label": "No phone number",
-          "how": "Add the mobile number you answer — recruiters here call before they email, and a CV they cannot phone waits."
+          "how": "Add the mobile number you answer — recruiters here call before they email, and a resume they cannot phone waits."
         },
         "contact-linkedin": {
           "label": "No LinkedIn link",
-          "how": "Paste your LinkedIn profile URL — it is the first thing a recruiter opens after the CV, and leaving it out makes them search your name and guess."
+          "how": "Paste your LinkedIn profile URL — it is the first thing a recruiter opens after the resume, and leaving it out makes them search your name and guess."
         },
         "headline": {
           "label": "No target-title line",
@@ -387,7 +387,7 @@
         },
         "no-experience": {
           "label": "No experience section",
-          "how": "Add at least one role, project or military position with dates and a few bullets — a CV with no experience section is filtered out before a person reads it."
+          "how": "Add at least one role, project or military position with dates and a few bullets — a resume with no experience section is filtered out before a person reads it."
         },
         "dates-missing": {
           "label": "Role has no dates",
@@ -431,11 +431,11 @@
         },
         "pronoun": {
           "label": "Written in first person",
-          "how": "Drop the \"I\" and \"my\" and start on the verb — CV bullets are written without pronouns, and the reader already knows the page is about you."
+          "how": "Drop the \"I\" and \"my\" and start on the verb — resume bullets are written without pronouns, and the reader already knows the page is about you."
         },
         "acronym": {
           "label": "Acronym never spelled out",
-          "how": "Write it once as {{pair}} and use the short form after that — a keyword filter searches for one spelling and your CV carries only the other."
+          "how": "Write it once as {{pair}} and use the short form after that — a keyword filter searches for one spelling and your resume carries only the other."
         },
         "entry-empty": {
           "label": "Role with no bullets",
@@ -443,7 +443,7 @@
         },
         "edu-placeholder": {
           "label": "Template text instead of a school",
-          "how": "Replace it with the real institution name — this text came from a template and it is printing on your CV as though it were where you studied."
+          "how": "Replace it with the real institution name — this text came from a template and it is printing on your resume as though it were where you studied."
         },
         "duplicate-entry": {
           "label": "Credential printed twice",
@@ -514,8 +514,8 @@
     "openDifferent": "Tailor for a different job",
     "retailor": "Tailor for this job instead",
     "replaces": "This starts again from your master resume. The review on screen is replaced; your saved master is not changed.",
-    "replacesEdited_one": "This starts again from your master resume — and deletes the 1 line you typed onto this CV. It did not reach your tracker, so there is no way to get it back. Your saved master is not changed either way.",
-    "replacesEdited_other": "This starts again from your master resume — and deletes the {{count}} lines you typed onto this CV. They did not reach your tracker, so there is no way to get them back. Your saved master is not changed either way.",
+    "replacesEdited_one": "This starts again from your master resume — and deletes the 1 line you typed onto this version. It did not reach your tracker, so there is no way to get it back. Your saved master is not changed either way.",
+    "replacesEdited_other": "This starts again from your master resume — and deletes the {{count}} lines you typed onto this version. They did not reach your tracker, so there is no way to get them back. Your saved master is not changed either way.",
     "replacesSaved_one": "This starts again from your master resume and replaces the draft saved with this job, with the 1 line you typed. Your saved master is not changed.",
     "replacesSaved_other": "This starts again from your master resume and replaces the draft saved with this job, with the {{count}} lines you typed. Your saved master is not changed.",
     "replacesKept": "This starts again from your master resume. The draft on screen stays saved with its job in your tracker, and your saved master is not changed.",
@@ -530,24 +530,24 @@
     "close": "Close",
     "needsJd": "Paste a job description first.",
     "failed": "Couldn't read that posting just now.",
-    "topMissing": "Most-wanted terms your CV doesn't say yet",
+    "topMissing": "Most-wanted terms your resume doesn't say yet",
     "topPartial": "Close — but not in the posting's own words",
     "tailorIncluded": "Tailor my resume — included"
   },
   "discard": {
     "cta": "Back to my resume",
     "title": "Close this review and edit your master resume again",
-    "edited_one": "Leaving takes the 1 line you typed onto this CV with it. Your master resume is unchanged either way.",
-    "edited_other": "Leaving takes the {{count}} lines you typed onto this CV with it. Your master resume is unchanged either way.",
+    "edited_one": "Leaving takes the 1 line you typed onto this version with it. Your master resume is unchanged either way.",
+    "edited_other": "Leaving takes the {{count}} lines you typed onto this version with it. Your master resume is unchanged either way.",
     "confirm_one": "Discard my 1 edit and leave",
     "confirm_other": "Discard my {{count}} edits and leave",
     "keep": "Stay here"
   },
   "fit": {
-    "title": "How this CV matches the job",
+    "title": "How this resume matches the job",
     "coverage": "Keyword coverage",
     "coverageSub": "{{covered}} of {{total}} key terms matched, {{partial}} partial",
-    "coverageNote": "Recomputed from your CV as it stands right now — every change you accept or decline, and every word you type in yourself, is already in this number.",
+    "coverageNote": "Recomputed from your resume as it stands right now — every change you accept or decline, and every word you type in yourself, is already in this number.",
     "recruiter": "Recruiter fit",
     "asOf": "One AI reading, taken {{time}}. It doesn't move as you edit: a second reading costs another model call, and part of any difference between two readings is sampling noise rather than progress.",
     "notMeasured": "Not measured yet",
@@ -562,15 +562,15 @@
   },
   "edit": {
     "hint": "Tap anything on your resume to edit it.",
-    "tailoredHint": "Type anywhere to change this application's CV. Your master resume is untouched.",
+    "tailoredHint": "Type anywhere to change this application's resume. Your master resume is untouched.",
     "tailoredNoAdd": "To add something new, edit your master resume and tailor again.",
-    "tailoredNoBlankEntry": "Emptying every field would leave a blank entry on the CV, not remove it — and it would print that way. To take a whole role, project, degree or service out, edit your master resume and tailor again.",
+    "tailoredNoBlankEntry": "Emptying every field would leave a blank entry on the resume, not remove it — and it would print that way. To take a whole role, project, degree or service out, edit your master resume and tailor again.",
     "yours_one": "1 edit of your own",
     "yours_other": "{{count}} edits of your own",
     "yoursClear": "Clear my edits",
     "yoursRestoreCleared_one": "Put back the 1 edit I cleared",
     "yoursRestoreCleared_other": "Put back the {{count}} edits I cleared",
-    "yoursOn": "On your CV",
+    "yoursOn": "On your resume",
     "yoursOff": "Not in this version",
     "yoursDeletedLine": "You deleted this",
     "yoursUndoOne": "Undo my edit",
@@ -635,7 +635,7 @@
       "bullet": "Bullet"
     },
     "apply": "Apply",
-    "addTitle": "Add to your CV",
+    "addTitle": "Add to your resume",
     "addBullet": "Add a line",
     "addSkill": "Add skill",
     "addSkillPlaceholder": "New skill",
