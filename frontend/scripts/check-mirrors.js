@@ -4933,7 +4933,8 @@ try {
     // The account line and, since PLAN 31.2/8, the phone header's uses left.
     ["layouts/AppLayout.tsx", 3, ["uses.headerLeft", "uses.headerNone"]],
     ["pages/jobs/AlertsCard.tsx", 3, []],
-    ["components/OnboardingModal.tsx", 1, []],
+    // The first-run sheet (PLAN 31.5/2): each choice's cost and the account's count.
+    ["components/FirstRunSheet.tsx", 2, ["uses.oneUse", "uses.account"]],
     // The Settings plan card (C6).
     ["pages/SettingsPage.tsx", 5, []],
     // `uses.batchCap` by name: the cap is what keeps a batch from asking for
@@ -5059,7 +5060,7 @@ try {
       "check-32d-probe.tsx",
       0,
       'const { t } = useTranslation("jobs");\nconst { t: tCommon } = useTranslation();\n' +
-        't("uses.limitReached");\ntCommon("uses.limitReached");\ntCommon("uses.onboarding", { count: 3 });\n',
+        't("uses.limitReached");\ntCommon("uses.limitReached");\ntCommon("uses.account", { count: 3, remaining: 2 });\n',
     ),
   );
   if (probeProblems.length !== 1 || !probeProblems[0].includes('binding to "jobs"'))
@@ -5068,10 +5069,10 @@ try {
         `one: ${JSON.stringify(probeProblems)}`,
     );
   for (const [loc, form] of [["en", "other"], ["he", "two"], ["he", "other"]])
-    if (!keyProblems(withoutForm(common[loc], "uses.onboarding", form), "uses.onboarding", loc, SURFACE).length)
-      fail(`check 32(d) passes a ${loc} uses.onboarding with no _${form} form`);
-  if (keyProblems(common.en, "uses.onboarding", "en").length || keyProblems(common.he, "uses.onboarding", "he").length)
-    fail("check 32(d) refuses the real uses.onboarding plural sets, which are complete in both locales");
+    if (!keyProblems(withoutForm(common[loc], "uses.account", form), "uses.account", loc, SURFACE).length)
+      fail(`check 32(d) passes a ${loc} uses.account with no _${form} form`);
+  if (keyProblems(common.en, "uses.account", "en").length || keyProblems(common.he, "uses.account", "he").length)
+    fail("check 32(d) refuses the real uses.account plural sets, which are complete in both locales");
   const apiProbe = new RegExp(API_CALL.source);
   const okProbe = apiProbe.exec('i18n.t("uses.limitReached", { ns: "common", month, date })');
   if (!okProbe || okProbe[1] !== "uses.limitReached" || okProbe[2] !== "common")
@@ -5549,50 +5550,49 @@ try {
   fail(`no-auto-search check could not run: ${e.message}`);
 }
 
-// ---- 32(i). onboarding follows the page it opens on (EXECUTED) ------------- //
+// ---- 32(i). no first-run dialog steers a new account off its page ---------- //
 // A1 carries a destination through sign-up (the landing's scan button lands on
-// /tools/scan), and the first-visit modal then preselected "Find matching jobs"
-// and sent everyone to /jobs on its primary button, undoing A1 on every route
-// and leading straight to the auto-search 32(h) removes. The choice now follows
-// the page: /app is tailor, /jobs is jobs, /interview is interview, and anything
-// else chooses nothing.
+// /tools/scan). The first-visit modal preselected "Find matching jobs" and sent
+// everyone to /jobs on its primary button, undoing A1 on every route (C7). Since
+// PLAN 31.5/2 there is no modal at all: the first run is the upload. What is
+// left to pin is that nothing takes its place in the shell, where it would meet
+// a new account on whatever page it came to. The one first-run surface, the
+// "What first?" sheet, is mounted by /app alone, over its own upload card
+// (check 52), so an account that signed up for the scan lands on the scan.
 try {
-  const ob = runProbeBundle("onboarding", `export * from "./lib/onboarding";\n`);
-  if (typeof ob.onboardingOptionFor !== "function") {
-    fail("lib/onboarding.ts exports no onboardingOptionFor, so the first-visit modal cannot follow the page it opens on");
-  } else {
-    for (const [pathname, want] of [
-      ["/app", "tailor"],
-      ["/jobs", "jobs"],
-      ["/interview", "interview"],
-      ["/tools/scan", null],
-      ["/tools/xray", null],
-      // A prefix is not the page.
-      ["/jobsearch", null],
-      ["/interviews", null],
-      ["/", null],
-    ]) {
-      const got = ob.onboardingOptionFor(pathname);
-      if (got !== want)
-        fail(`onboardingOptionFor(${JSON.stringify(pathname)}) is ${JSON.stringify(got)}, not ${JSON.stringify(want)}.`);
-    }
-  }
-  const modal = decomment(read("components/OnboardingModal.tsx"));
-  const CONSTANT = /\buseState\s*(?:<[^;\n]*?>)?\(\s*["'](?:jobs|tailor|interview)["']\s*\)/;
-  if (!/\bonboardingOptionFor\(/.test(modal))
-    fail("components/OnboardingModal.tsx does not call onboardingOptionFor(, so its choice cannot follow the page it opens on.");
-  if (CONSTANT.test(modal))
+  const shellProblems = (src) => {
+    const out = [];
+    if (/\b(?:OnboardingModal|FirstRunSheet)\b/.test(src)) out.push("mounts a first-run dialog");
+    if (/from\s+["'][^"']*\/onboarding["']/.test(src)) out.push("imports a first-run module");
+    return out;
+  };
+  const found = shellProblems(decomment(read("layouts/AppLayout.tsx")));
+  if (found.length)
     fail(
-      "components/OnboardingModal.tsx seeds its choice with a constant option again, so every new user is " +
-        "steered to that page whatever page they came to.",
+      `layouts/AppLayout.tsx ${found.join(" and ")}: a new account would meet it on whatever page it came to ` +
+        "(C7), before any upload.",
     );
-  // Both directions on the detector, on the shape that shipped.
-  if (!CONSTANT.test('useState<(typeof HELP_OPTIONS)[number]["id"]>("jobs")'))
-    fail("check 32(i) cannot see the shipped constant seed");
-  if (CONSTANT.test("useState<OnboardingOption | null>(() => onboardingOptionFor(pathname))"))
-    fail("check 32(i) fires on a seed derived from the page");
+  const walkSrc = (dir) =>
+    fs.readdirSync(dir ? path.join(SRC, ...dir.split("/")) : SRC, { withFileTypes: true }).flatMap((d) => {
+      const rel = dir ? `${dir}/${d.name}` : d.name;
+      if (d.isDirectory()) return d.name === "locales" ? [] : walkSrc(rel);
+      return /\.tsx?$/.test(d.name) ? [rel] : [];
+    });
+  const files = walkSrc("");
+  if (files.length < 100) throw new Error(`walked only ${files.length} source files under src/ — the tree moved`);
+  const mounts = files.filter((f) => /<FirstRunSheet\b/.test(decomment(read(f))));
+  if (mounts.join() !== "pages/TailorPage.tsx")
+    fail(
+      `the first-run sheet is mounted by ${JSON.stringify(mounts)}, not by pages/TailorPage.tsx alone: it belongs ` +
+        "over /app's upload card, and anywhere else it steers a new account off the page it came to.",
+    );
+  // Both directions on the detector.
+  if (!shellProblems("<OnboardingModal open={x} onClose={y} />").length ||
+      !shellProblems('import { onboardingStep } from "../lib/onboarding";').length ||
+      shellProblems('import { signOut } from "../lib/session";\n<GoogleNotice email="" />').length)
+    fail("check 32(i)'s shell detector cannot tell a first-run dialog in the shell from the shell's own parts");
 } catch (e) {
-  fail(`onboarding probe could not run: ${e.message}`);
+  fail(`first-run placement check (32(i)) could not run: ${e.message}`);
 }
 
 // ---- 32(j). the monthly-uses contract matches the backend's models --------- //
@@ -5718,10 +5718,10 @@ try {
 // while a raw `google.superseded` rendered at the top of the app. So both Google
 // files are held to that table here, each with a floor that guards something.
 //
-// It also resolves the three Phase 30 keys that sit outside every other scrape:
-// /verify's other-account card (`verify.otherAccount*`, D), onboarding's
-// `onboarding.continue` (C7), and the failed-login sentence
-// `errors.invalidCredentialsGoogle` (F3).
+// It also resolves the Phase 30 keys that sit outside every other scrape:
+// /verify's other-account card (`verify.otherAccount*`, D) and the failed-login
+// sentence `errors.invalidCredentialsGoogle` (F3). Onboarding's
+// `onboarding.continue` (C7) left with the first-run questions (PLAN 31.5/2).
 try {
   const MUST = [
     ["pages/auth/GoogleButton.tsx", 2],
@@ -5749,10 +5749,6 @@ try {
         "literally (expected at least 6): the other-account card's copy moved into a shape nothing resolves.",
     );
   needs.push(...other);
-  const cont = boundCalls("components/OnboardingModal.tsx", 1).filter(([, , key]) => key === "onboarding.continue");
-  if (!cont.length)
-    fail("components/OnboardingModal.tsx no longer reads onboarding.continue literally, so nothing resolves its button label.");
-  needs.push(...cont);
   if (!/"errors\.invalidCredentialsGoogle"/.test(decomment(read("lib/apiError.ts"))))
     fail("lib/apiError.ts does not carry the literal \"errors.invalidCredentialsGoogle\", so check 29's error scrape cannot see it.");
   needs.push(["lib/apiError.ts", "auth", "errors.invalidCredentialsGoogle"]);
@@ -10883,136 +10879,118 @@ try {
   fail(`undo window check (check 51) could not run: ${e.message}`);
 }
 
-// ---- 52. onboarding is asked once per ACCOUNT (EXECUTED) ------------------- //
-// PLAN 31.1/11, found in the 2026-09-23 review. The first-run questions were
-// remembered in this browser's localStorage alone, which sign-out clears, so an
-// account holding a resume and five applications was asked again on every new
-// device and after every sign-out. The account now keeps the record (POST
-// /profile/onboarded, read back as /auth/me's `onboarded`), and the shell opens
-// the modal only once that answer is in. (a) EXECUTES lib/onboarding.ts:
-// onboardingStep over every pair of answers, and markOnboardedHere against a
-// fake localStorage, which must keep a stored role. (b) Pins the wiring by
-// shape: the modal starts closed, the guard hands the account's answer to
-// onboardingStep and runs each step, nothing else opens it, the modal's finish
-// tells the account, and the client and both AuthUser mirrors agree with the
-// route and the field the backend serves. The shell reader is probed each run.
+// ---- 52. the first run is the upload, then one sheet (PLAN 31.5/2) --------- //
+// It replaced 31.1/11's "asked once per ACCOUNT": the first-run questions,
+// their device record and POST /profile/onboarded are deleted, since the role
+// they asked for is on the resume. A new account lands on /app's upload card,
+// and once the resume is read ONE sheet says what the app found and asks what
+// to do first. Pinned by shape on TailorPage and the sheet:
+//   (a) the sheet opens only from the upload card: `firstRun` starts false, its
+//       one `setFirstRun(true)` is inside `onFirstParsed`, the upload card's
+//       ResumeUpload is handed `onFirstParsed`, and Replace is NOT, so an
+//       account that already had a resume never sees it and no record is kept;
+//   (b) "Find jobs" searches only from its tap: every `startJobSearch(` in the
+//       page is inside `onFirstStep`, and `onFirstStep` is only the sheet's
+//       `onChoose` (32(h)'s rule: no search nobody tapped);
+//   (c) one page count for two displays: the page's single PageBadge is handed
+//       `measured={pageReading}` and the sheet reads `pageReading`, so a change
+//       renders the file once, PageBadge's one-mount rule;
+//   (d) every literal t("firstRun.*") the sheet reads, through its "tailor"
+//       binding, resolves in BOTH tailor.json files (check 8 is parity-only, so
+//       a key missing from both is green and renders raw), and it reads no
+//       template-literal key, which nothing here could resolve.
+// The (a) and (b) detectors are probed both ways on synthetic twins every run.
 try {
-  const ob = runProbeBundle("onboarding-account", `export * from "./lib/onboarding";\n`);
-  for (const name of ["onboardingStep", "markOnboardedHere", "isOnboarded", "saveOnboarding", "onboardingRole"])
-    if (typeof ob[name] !== "function") throw new Error(`lib/onboarding.ts does not export ${name}`);
-  for (const [account, here, want, why] of [
-    [true, false, "adopt", "answered on another device, so this one must not ask"],
-    [true, true, "none", "both have answered"],
-    [false, false, "ask", "a new account on a new device"],
-    [false, true, "report", "this device answered before the account kept a record"],
-    [undefined, false, "ask", "an older backend or no account, and this device has not answered"],
-    [undefined, true, "none", "an older backend or no account, and this device has answered"],
-  ]) {
-    const got = ob.onboardingStep(account, here);
-    if (got !== want)
-      fail(`check 52: onboardingStep(${account}, ${here}) is ${JSON.stringify(got)}, not "${want}" (${why})`);
-  }
-  const store = new Map();
-  const fake = {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => void store.set(k, String(v)),
-    removeItem: (k) => void store.delete(k),
-  };
-  const had = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-  Object.defineProperty(globalThis, "localStorage", { value: fake, configurable: true, writable: true });
-  try {
-    if (ob.isOnboarded()) throw new Error("the fake localStorage did not take: an empty store reads as onboarded");
-    ob.markOnboardedHere();
-    if (!ob.isOnboarded())
-      fail("check 52: after markOnboardedHere this device still reads as not onboarded, so it would ask again");
-    store.clear();
-    ob.saveOnboarding({ role: "Product manager" });
-    ob.markOnboardedHere();
-    if (ob.onboardingRole() !== "Product manager")
-      fail("check 52: markOnboardedHere overwrote the stored role, which prefills the job search and alerts");
-  } finally {
-    if (had) Object.defineProperty(globalThis, "localStorage", had);
-    else delete globalThis.localStorage;
-  }
-
-  // (b) the shell. The seed must be a plain `false`; each step must run its action.
-  const SEED = /const \[onboardOpen, setOnboardOpen\] = useState(?:<[^>]*>)?\(([^;]*)\);/;
-  const ARMS = [
-    ["ask", /case\s+"ask"\s*:\s*setOnboardOpen\(\s*true\s*\)\s*;\s*break\s*;/],
-    ["adopt", /case\s+"adopt"\s*:\s*markOnboardedHere\(\s*\)\s*;\s*break\s*;/],
-    ["report", /case\s+"report"\s*:\s*void\s+markOnboarded\(\s*\)\s*\.catch\(/],
-  ];
-  const shellProblems = (src) => {
+  const firstRunProblems = (src) => {
     const out = [];
-    const seed = src.match(SEED);
-    if (!seed) return ["has no `const [onboardOpen, setOnboardOpen] = useState(…)`"];
-    if (seed[1].trim() !== "false")
-      out.push(
-        `opens onboarding at mount (useState(${seed[1].trim()})), before /auth/me says whether the ACCOUNT ` +
-          "answered: a returning account on a new device sees the questions flash",
-      );
-    if (!/switch\s*\(\s*onboardingStep\(\s*account\s*,\s*isOnboarded\(\)\s*\)\s*\)/.test(src))
-      out.push("does not decide with onboardingStep(account, isOnboarded())");
-    for (const [step, arm] of ARMS) if (!arm.test(src)) out.push(`does not run the "${step}" step's action`);
-    if (!/\bonboard\(\s*a\.user\?\.onboarded\s*\)/.test(src))
-      out.push("does not hand /auth/me's `onboarded` to the decision");
-    if (!/\.catch\(\(\)\s*=>\s*\{[^}]*\bonboard\(\s*undefined\s*\)/.test(src))
-      out.push("does not let this device decide when the guard fails open");
-    const opens = (src.match(/setOnboardOpen\(\s*true\s*\)/g) || []).length;
-    if (opens !== 1) out.push(`opens the modal from ${opens} places, not only the "ask" step`);
+    if (!/\[\s*firstRun\s*,\s*setFirstRun\s*\]\s*=\s*useState\(\s*false\s*\)/.test(src))
+      out.push("`firstRun` does not start false");
+    const opens = [...src.matchAll(/setFirstRun\(\s*true\s*\)/g)].length;
+    let inside = 0;
+    try {
+      inside = [...fnSource(src, "async function onFirstParsed(").matchAll(/setFirstRun\(\s*true\s*\)/g)].length;
+    } catch {
+      inside = 0;
+    }
+    if (opens !== 1 || inside !== 1) out.push("the sheet opens from somewhere other than onFirstParsed alone");
+    if (!/<ResumeUpload\s+onParsed=\{\s*onFirstParsed\s*\}/.test(src))
+      out.push("the upload card does not hand ResumeUpload onFirstParsed");
+    if (/onReplace=\{[^}]*\bonFirstParsed\b/.test(src)) out.push("Replace opens the first-run sheet");
     return out;
   };
-  const shell = decomment(read("layouts/AppLayout.tsx"));
-  for (const [label, planted] of [
-    ["a device-only seed", shell.replace(SEED, "const [onboardOpen, setOnboardOpen] = useState(() => !isOnboarded());")],
-    ["swapped arms", shell.replace(/case\s+"ask"\s*:/, 'case "PLANTED":').replace(/case\s+"adopt"\s*:/, 'case "ask":')],
-    [
-      "a second opener",
-      shell.replace(
-        /(\n\s*useEffect\(\(\) => \{\n\s*let live = true;)/,
-        "\n  useEffect(() => { if (!isOnboarded()) setOnboardOpen(true); }, []);$1",
-      ),
-    ],
-  ]) {
-    // Nothing to plant because the file already has the defect: the real check
-    // below reports it. Nothing to plant on a CLEAN file means the anchor moved.
-    if (planted === shell) {
-      if (shellProblems(shell).length) continue;
-      throw new Error(`the probe could not plant ${label} into AppLayout`);
+  const searchProblems = (src) => {
+    const out = [];
+    const calls = [...src.matchAll(/\bstartJobSearch\(/g)].length;
+    let inStep = 0;
+    try {
+      inStep = [...fnSource(src, "function onFirstStep(").matchAll(/\bstartJobSearch\(/g)].length;
+    } catch {
+      inStep = 0;
     }
-    if (!shellProblems(planted).length) throw new Error(`the shell reader passes ${label}, so it cannot be trusted`);
-  }
-  for (const p of shellProblems(shell)) fail(`check 52: layouts/AppLayout.tsx ${p} (PLAN 31.1/11)`);
-
-  const modal = decomment(read("components/OnboardingModal.tsx"));
-  if (!/\bmarkOnboarded\(\s*\)/.test(fnSource(modal, "function finish(")))
-    fail(
-      "check 52: OnboardingModal's finish() does not call markOnboarded(), so the account never learns and " +
-        "every new device asks again",
-    );
-  const client = decomment(read("api/client.ts"));
-  if (!/\bapi\.post\(\s*["'`]\/profile\/onboarded["'`]\s*\)/.test(fnSource(client, "export async function markOnboarded(")))
-    fail('check 52: api/client.ts markOnboarded does not POST "/profile/onboarded"');
-  const block = (src, head) => {
-    const at = src.indexOf(head);
-    if (at === -1) throw new Error(`could not find \`${head}\``);
-    const end = src.indexOf("\n}", at);
-    return src.slice(at, end === -1 ? undefined : end);
+    if (calls !== inStep) out.push("a search starts outside onFirstStep, on no tap");
+    if (!/onChoose=\{\s*onFirstStep\s*\}/.test(src)) out.push("onFirstStep is not the sheet's onChoose");
+    if ([...src.matchAll(/\bonFirstStep\b/g)].length !== 2) out.push("onFirstStep is used somewhere other than the sheet");
+    return out;
   };
-  if (!/\n\s*onboarded\?:\s*boolean;/.test(block(decomment(read("types.ts")), "export interface AuthUser {")))
-    fail("check 52: types.ts AuthUser carries no `onboarded?: boolean`, so the shell cannot read the account's answer");
-  const routes = pySource("app/api/routes.py", "check 52");
-  if (routes !== null && !/^@router\.post\(\s*"\/profile\/onboarded"/m.test(routes))
-    fail('check 52: backend/app/api/routes.py mounts no POST "/profile/onboarded", which markOnboarded calls');
-  const models = pySource("app/models/__init__.py", "check 52");
-  if (models !== null) {
-    const m = models.match(/^class AuthUser\(BaseModel\):\n((?:[ \t]+.*\n|[ \t]*\n)+)/m);
-    if (!m) throw new Error("could not find class AuthUser in backend/app/models/__init__.py");
-    if (!/^\s+onboarded:\s*bool\b/m.test(m[1]))
-      fail("check 52: the backend's AuthUser serves no `onboarded: bool`, so every device falls back to its own record");
+
+  const page = decomment(read("pages/TailorPage.tsx"));
+  for (const p of [...firstRunProblems(page), ...searchProblems(page)]) fail(`check 52: pages/TailorPage.tsx: ${p}`);
+
+  // (c) one measurement, two displays.
+  const badges = [...page.matchAll(/<PageBadge\b[^>]*>/g)].map((m) => m[0]);
+  if (badges.length !== 1 || !/\bmeasured=\{\s*pageReading\s*\}/.test(badges[0] ?? ""))
+    fail(
+      `check 52: pages/TailorPage.tsx mounts ${badges.length} PageBadge(s), and its one badge must be handed ` +
+        "measured={pageReading}, or the page count is rendered twice for one number.",
+    );
+  if (!/\bconst\s+pageReading\s*=\s*usePageCount\(/.test(page) || !/\bpages=\{\s*pageReading\.data\?\.pages\b/.test(page))
+    fail("check 52: the first-run sheet's page count is not the page's own `pageReading`.");
+
+  // (d) the sheet's copy, in both locales, through its tailor binding.
+  const sheet = decomment(read("components/FirstRunSheet.tsx"));
+  if (!/const\s*\{\s*t\s*\}\s*=\s*useTranslation\(\s*"tailor"\s*\)/.test(sheet))
+    throw new Error('components/FirstRunSheet.tsx no longer binds t to "tailor"; this check reads that binding');
+  if (/\bt\(\s*`/.test(sheet))
+    fail("check 52: components/FirstRunSheet.tsx reads a template-literal key, which no check resolves; write each one out.");
+  const keys = [...new Set([...sheet.matchAll(/\bt\(\s*"((?:firstRun|pages)\.[\w.]+)"/g)].map((m) => m[1]))];
+  if (keys.filter((k) => k.startsWith("firstRun.")).length < 9)
+    throw new Error(`read only ${keys.length} firstRun.* keys out of components/FirstRunSheet.tsx (expected at least 9)`);
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/tailor.json`));
+    for (const key of keys)
+      if (!resolvesIn(bundle, key))
+        fail(`check 52: locales/${loc}/tailor.json is missing "${key}" (read by the first-run sheet); it would render raw.`);
   }
+
+  // Both directions on (a) and (b), on the shape that ships.
+  const GOOD = [
+    "const [firstRun, setFirstRun] = useState(false);",
+    "  async function onFirstParsed(r, l) {",
+    "    await onParsed(r, l);",
+    "    setFirstRun(true);",
+    "  }",
+    "",
+    "  function onFirstStep(step) {",
+    "    setFirstRun(false);",
+    '    if (step === "jobs") startJobSearch(shown, null);',
+    "  }",
+    "<ResumeUpload onParsed={onFirstParsed} />",
+    "<DocumentPanel onReplace={isMaster ? onParsed : undefined} />",
+    "<FirstRunSheet open={firstRun} onChoose={onFirstStep} />",
+  ].join("\n");
+  if (firstRunProblems(GOOD).length || searchProblems(GOOD).length)
+    fail(`check 52's detectors refuse the shape that ships: ${[...firstRunProblems(GOOD), ...searchProblems(GOOD)]}`);
+  for (const [label, src, which] of [
+    ["a sheet open at mount", GOOD.replace("useState(false)", "useState(true)"), firstRunProblems],
+    ["a sheet opened by an effect too", `${GOOD}\nuseEffect(() => setFirstRun(true), []);`, firstRunProblems],
+    ["Replace opening it", GOOD.replace("isMaster ? onParsed", "isMaster ? onFirstParsed"), firstRunProblems],
+    ["an upload card that never opens it", GOOD.replace("onParsed={onFirstParsed}", "onParsed={onParsed}"), firstRunProblems],
+    ["a search on mount", `${GOOD}\nuseEffect(() => startJobSearch(shown, null), []);`, searchProblems],
+    ["the step handed to a second control", `${GOOD}\n<Button onClick={() => onFirstStep("jobs")} />`, searchProblems],
+  ])
+    if (!which(src).length) fail(`check 52's detectors pass ${label}`);
 } catch (e) {
-  fail(`onboarding per account check (check 52) could not run: ${e.message}`);
+  fail(`first-run check (check 52) could not run: ${e.message}`);
 }
 
 // ---- 53. the phone header drops nothing it used to hold -------------------- //

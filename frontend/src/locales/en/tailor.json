@@ -18,10 +18,28 @@
     "notYet": "Not yet"
   },
   "upload": {
-    "title": "1 · Your resume",
+    "title": "Your resume",
     "buildLink": "No resume yet? Build one from scratch →",
     "loading": "Loading your resume…",
     "loadFailed": "Couldn't load your saved resume."
+  },
+  "firstRun": {
+    "title": "Your resume is in",
+    "review": "{{fix}} to fix · {{consider}} to consider",
+    "ask": "What first?",
+    "jobs": {
+      "title": "Find jobs that fit",
+      "desc": "Five job boards, ranked by fit to this resume"
+    },
+    "tailor": {
+      "title": "Tailor it for a job you have",
+      "desc": "Paste the posting, see the fit, then tailor"
+    },
+    "interview": {
+      "title": "Practice an interview",
+      "desc": "Likely questions, and feedback on your answers"
+    },
+    "later": "I'll look over my resume first"
   },
   "jd": {
     "title": "2 · Target job description",
@@ -30,7 +48,6 @@
   "run": {
     "cta": "Tailor my resume",
     "loading": "Tailoring…",
-    "uploadFirst": "Upload a resume to begin.",
     "pasteJd": "Paste a job description.",
     "keepsRunning": "Keeps running if you switch tabs — come back anytime."
   },

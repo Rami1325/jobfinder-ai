@@ -7,7 +7,6 @@ import { getJobAlert, runJobAlert, searchContext, updateJobAlert } from "../../a
 import { Button, Card, CardTitle, useToast } from "../../components/ui";
 import UsesNote from "../../components/UsesNote";
 import { apiErrorMessage } from "../../lib/apiError";
-import { onboardingRole } from "../../lib/onboarding";
 import { formatUsesDate, useUses } from "../../lib/usesStore";
 import type { AlertSettings, ResumeModel, SearchContext } from "../../types";
 import {
@@ -363,10 +362,9 @@ export function AlertsCard({
         return;
       }
       setPrefilling(true);
-      const role = onboardingRole();
       searchContext(resume)
-        .then((c) => setCtx(role ? { ...c, job_title: role } : c))
-        .catch(() => setCtx({ job_title: role, location: "", work_mode: "any", limit: 10 }))
+        .then((c) => setCtx(c))
+        .catch(() => setCtx({ job_title: "", location: "", work_mode: "any", limit: 10 }))
         .finally(() => setPrefilling(false));
     }
   }

@@ -1059,10 +1059,6 @@ export interface AuthUser {
   google_linked: boolean;
   /** "" = invite code / admin (grandfathered as verified); "email" or "google" = self-service. */
   signup_source: string;
-  /** The first-run questions are done for this ACCOUNT (PLAN 31.1/11), so no
-   * device asks again. Optional: an older backend omits it, and the shell then
-   * falls back to this device's own record. */
-  onboarded?: boolean;
 }
 
 /** GET /auth/me: who this browser is, and whether that account may use the app.

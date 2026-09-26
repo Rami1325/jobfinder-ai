@@ -840,8 +840,8 @@ export default function SettingsPage() {
       localStorage.removeItem(ACCESS_CODE_KEY);
       toast("success", t("danger.closed"));
       // Then the ONE sign-out, once the toast has been seen. It forgets this
-      // device's account-scoped state (the resume draft, the onboarding
-      // answers, both caches) and ends in a document load to the landing, so
+      // device's account-scoped state (the resume draft, an old onboarding
+      // role, both caches) and ends in a document load to the landing, so
       // a closed account leaves nothing behind for the next person to sign in.
       setTimeout(() => void signOut("/"), 800);
       return true;

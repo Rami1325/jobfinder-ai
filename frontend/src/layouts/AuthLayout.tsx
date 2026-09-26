@@ -8,8 +8,7 @@ import ThemeToggle from "../components/ThemeToggle";
  * The shell for /login, /signup, /verify, /forgot and /reset.
  *
  * OUTSIDE AppLayout, and that is the point. AppLayout runs the auth guard,
- * loads the kits and mounts the onboarding modal, the feedback pill and the tab
- * bar. Every one of those assumes an account the app can already serve, and
+ * loads the kits and mounts the feedback pill and the tab bar. Every one of those assumes an account the app can already serve, and
  * the visitor on these pages is by definition not one yet.
  *
  * The APP's tokens (`bg-bg`, `text-ink` from `:root`), not a marketing scope:

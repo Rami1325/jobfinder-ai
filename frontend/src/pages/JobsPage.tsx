@@ -39,7 +39,6 @@ import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
 import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
 import { resumeLanguage } from "../lib/lang";
-import { onboardingRole } from "../lib/onboarding";
 import { openTarget, postingLink } from "../lib/openJob";
 import { useUses } from "../lib/usesStore";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
@@ -320,21 +319,13 @@ export default function JobsPage() {
     }
   }
 
-  // The onboarding "target role" answer steers non-customized searches (blank
-  // SearchContext fields still mean "derive from the resume" on the backend).
-  function onboardingCtx(): SearchContext | null {
-    const role = onboardingRole();
-    return role ? { job_title: role, location: "", work_mode: "any", limit: 10 } : null;
-  }
-
   function toggleCustomize(checked: boolean) {
     setCustomOpen(checked);
     if (checked && !ctx && master?.resume && !prefilling) {
       setPrefilling(true);
-      const role = onboardingRole();
       searchContext(master.resume)
-        .then((c) => setCtx(role ? { ...c, job_title: role } : c))
-        .catch(() => setCtx({ job_title: role, location: "", work_mode: "any", limit: 10 }))
+        .then((c) => setCtx(c))
+        .catch(() => setCtx({ job_title: "", location: "", work_mode: "any", limit: 10 }))
         .finally(() => setPrefilling(false));
     }
   }
@@ -348,7 +339,9 @@ export default function JobsPage() {
 
   function runSearch() {
     if (!master?.resume || searching || limitInvalid) return;
-    const c = customOpen ? ctx : onboardingCtx();
+    // Not customized: null, and the backend derives the role, place and mode
+    // from the resume (SEARCH_CONTEXT, a daily count and no monthly use).
+    const c = customOpen ? ctx : null;
     setRequestedSources(c?.sources?.length ? [...c.sources] : [...SOURCE_IDS]);
     startJobSearch(master.resume, c);
     // Remember the picks a customized search ran with (or clear them when the
@@ -921,7 +914,7 @@ export default function JobsPage() {
 
           <AlertsCard
             resume={master.resume}
-            seedContext={() => (customOpen ? ctx : onboardingCtx())}
+            seedContext={() => (customOpen ? ctx : null)}
           />
         </>
       )}

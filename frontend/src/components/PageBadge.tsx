@@ -15,7 +15,9 @@ import type { ResumeTemplate } from "../api/client";
  *
  * MOUNT ONE AT A TIME. Each mount owns a `usePageCount`, and each of those is a
  * debounced server render; two live badges would double every measurement for
- * one number. The toolbar mounts it only while there is no tailor result, which
+ * one number. A page that shows the number twice measures ONCE and hands the
+ * reading in as `measured` (/app's toolbar and its first-run sheet, PLAN
+ * 31.5/2); the badge then runs no measurement of its own. The toolbar mounts it only while there is no tailor result, which
  * is precisely the gap — before Phase 22.10 the count first appeared inside the
  * review panel, i.e. only after you had already spent a tailor on a CV whose
  * length you could not see.
@@ -25,6 +27,7 @@ export default function PageBadge({
   template,
   enabled = true,
   compact = false,
+  measured,
   className,
 }: {
   resume: ResumeModel | null;
@@ -35,10 +38,13 @@ export default function PageBadge({
    * of a 358 px row on its own. The sentence stays for screen readers, and in
    * full from `lg`. */
   compact?: boolean;
+  /** A reading the page already holds, so this mount measures nothing. */
+  measured?: ReturnType<typeof usePageCount>;
   className?: string;
 }) {
   const { t } = useTranslation("tailor");
-  const pages = usePageCount(resume, template, enabled && !!resume);
+  const own = usePageCount(resume, template, enabled && !!resume && !measured);
+  const pages = measured ?? own;
 
   if (pages.failed && !pages.data)
     return <span className={cn("text-xs text-ink-faint", className)}>{t("pages.unavailable")}</span>;

@@ -110,8 +110,8 @@
   "uses": {
     "limitReached": "You've used all your uses for {{month}}. More on {{date}}.",
     "limitReachedBare": "You've used all your uses for this month.",
-    "onboarding_one": "Your free plan includes {{count}} use a month. Uploading your resume is free.",
-    "onboarding_other": "Your free plan includes {{count}} uses a month. Uploading your resume is free.",
+    "oneUse": "1 use",
+    "outShort": "None left",
     "note_one": "This uses your last use this month.",
     "note_other": "This uses 1 of the {{count}} you have left this month.",
     "out": "No uses left this month. More on {{date}}. Editing, the review, the X-ray and downloads stay free.",
@@ -173,31 +173,6 @@
   },
   "placeholder": {
     "body": "This section is being built. Check back shortly."
-  },
-  "onboarding": {
-    "title": "Welcome — let's point you the right way",
-    "sub": "Two quick questions. You can change everything later.",
-    "roleLabel": "What role are you looking for?",
-    "rolePlaceholder": "e.g. Backend Engineer",
-    "roleHint": "We'll prefill your job search with it.",
-    "helpLabel": "Where do you need help first?",
-    "help": {
-      "jobs": {
-        "title": "Find matching jobs",
-        "desc": "Israeli boards + LinkedIn, ranked by fit to your resume"
-      },
-      "tailor": {
-        "title": "Tailor my resume",
-        "desc": "Rewrite for a specific job — checked against your CV"
-      },
-      "interview": {
-        "title": "Prep for interviews",
-        "desc": "Likely questions and feedback on your answers"
-      }
-    },
-    "skip": "Skip",
-    "start": "Let's go",
-    "continue": "Continue"
   },
   "sizeLimit": {
     "resume": "That CV is too large to process ({{size}} KB; the limit is {{cap}} KB). It was NOT saved. Remove images or split it, then upload again.",

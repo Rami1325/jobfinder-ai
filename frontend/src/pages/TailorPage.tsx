@@ -17,6 +17,9 @@ import {
 } from "../api/client";
 import { isPdfOnlyTemplate } from "../components/TemplatePicker";
 import PageBadge from "../components/PageBadge";
+import FirstRunSheet, { type FirstStep } from "../components/FirstRunSheet";
+import { usePageCount } from "../hooks/usePageCount";
+import { startJobSearch } from "../state/jobSearchStore";
 import DocumentToolbar from "../components/DocumentToolbar";
 import DraftRestoreBar from "../components/DraftRestoreBar";
 import ChangeLog, { LeftOut } from "../components/ChangeLog";
@@ -30,7 +33,7 @@ import { useCoverage } from "../hooks/useCoverage";
 import { useReview } from "../hooks/useReview";
 import MatchReport from "../components/MatchReport";
 import ResumeUpload from "../components/ResumeUpload";
-import { flagsOf } from "../components/ReviewPanel";
+import { flagsOf, groupChecks } from "../components/ReviewPanel";
 import VoicePanel from "../components/VoicePanel";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { useUses } from "../lib/usesStore";
@@ -656,6 +659,21 @@ export default function TailorPage() {
    */
   const review = useReview(shown, jd);
 
+  /** The page count, measured ONCE for the two places that show it: the
+   * toolbar's badge and the first-run sheet (PageBadge's one-mount rule). Off
+   * while a tailor result is up, where the badge moves into the review. */
+  const pageReading = usePageCount(shown, template, !result && !!shown);
+
+  /** The first run (PLAN 31.5/2): opened by the upload card's handler alone,
+   * never by Replace, so it is shown once per first upload and needs no record. */
+  const [firstRun, setFirstRun] = useState(false);
+  const reviewCounts = useMemo(() => {
+    if (!review.data) return null;
+    const rows = groupChecks(review.data.findings);
+    const fix = rows.filter((r) => r.severity === "bad").length;
+    return { fix, consider: rows.length - fix };
+  }, [review.data]);
+
   /** Block path → the worst thing the review found there. Derived in
    * `ReviewPanel` beside the badge count, so the dots on the paper and the
    * number on the tool cannot be computed two different ways. */
@@ -983,7 +1001,7 @@ export default function TailorPage() {
     setFocusEdit({ id, nonce: Date.now() });
   }
 
-  async function onParsed(r: ResumeModel, l: FactsLedger) {
+  async function onParsed(r: ResumeModel, l: FactsLedger, quiet = false) {
     // ONE definition of "a new master arrived", shared with the Jobs page's
     // replace and restore paths. It used to be a hand-written reset here and
     // nothing at all there, which is precisely how the two drifted: this copy
@@ -995,7 +1013,7 @@ export default function TailorPage() {
       language: resumeLanguage(r),
       updated_at: new Date().toISOString(),
     });
-    const m = await persistMaster(r, l); // best-effort — null when the backend is unreachable
+    const m = await persistMaster(r, l, quiet); // best-effort — null when the backend is unreachable
     // resetMasterCache() is NOT optional here, and leaving it out is why a
     // freshly uploaded resume "didn't take": saveMasterResume calls
     // invalidateData("master","masters"), which clears the dataCache Map and
@@ -1009,6 +1027,30 @@ export default function TailorPage() {
       // Same reason as JobsPage: the hook only toasts on success, so a failed
       // save would leave the page showing a resume the server never stored.
       toast("error", t("common:masterResume.saveFailed"));
+    }
+  }
+
+  /** The upload card's handler: the same arrival as any other, then the
+   * first-run sheet. The card shows only after a fetch that ANSWERED with no
+   * resume (`masterLoad`), so this is a first upload by construction. */
+  async function onFirstParsed(r: ResumeModel, l: FactsLedger) {
+    // Quiet: the sheet says the resume is in, and the save's toast covered it.
+    await onParsed(r, l, true);
+    setFirstRun(true);
+  }
+
+  /** Each first choice opens a step that already exists. "Find jobs" starts
+   * the search on this tap (the search store outlives the page) and opens Jobs
+   * on it running: the context comes from the resume, never a typed role. */
+  function onFirstStep(step: FirstStep) {
+    setFirstRun(false);
+    if (step === "tailor") {
+      setTailorState({ overlayOpen: true });
+    } else if (step === "interview") {
+      navigate("/interview");
+    } else if (shown) {
+      startJobSearch(shown, null);
+      navigate("/jobs");
     }
   }
 
@@ -1563,7 +1605,9 @@ export default function TailorPage() {
                 tailor is paid for. `!result` because ChangeLog mounts the same
                 badge while a result is up, and two mounts would double every
                 server render. Compact below lg: the count and the target. */}
-            {!result && <PageBadge compact resume={shown} template={template} className="shrink-0" />}
+            {!result && (
+              <PageBadge compact resume={shown} template={template} measured={pageReading} className="shrink-0" />
+            )}
             {/* The number of changes IS the way to them: it was a "Review N
                 changes" link on a line of its own under the row. */}
             {result && edits.length > 0 && (
@@ -1624,14 +1668,17 @@ export default function TailorPage() {
                 Save is it and this goes quiet, an icon below sm. On a tailored
                 draft it is "a different job", from lg; below lg it is under the
                 tool row's "⋯", because the loudest thing on a draft belongs to
-                review and download, not to starting over. */}
+                review and download, not to starting over.
+                Not on a page with no resume (PLAN 31.5/2): a disabled button
+                over the upload card offered a step the page had not reached.
+                Kept while the resume is loading, where it holds its place. */}
+            {(resume || masterLoad === "loading") && (
             <Button
               size="sm"
               variant={result || editUndo.length > 0 ? "secondary" : "primary"}
               loading={loading}
               icon={<Wand2 size={15} />}
               disabled={!canRun}
-              title={!resume ? t("run.uploadFirst") : undefined}
               onClick={() => setTailorState({ overlayOpen: true })}
               className={cn("shrink-0", result && "hidden lg:inline-flex")}
             >
@@ -1648,6 +1695,7 @@ export default function TailorPage() {
                 </span>
               )}
             </Button>
+            )}
           </>
         }
         notes={
@@ -1860,7 +1908,7 @@ export default function TailorPage() {
           <Card>
             <CardTitle>{t("upload.title")}</CardTitle>
             <div className="mt-3">
-              <ResumeUpload onParsed={onParsed} />
+              <ResumeUpload onParsed={onFirstParsed} />
             </div>
             {/* The cold start, and it is now the SAME surface as everything else:
                 a blank page you type on. This replaced /builder — an 848-line
@@ -2049,6 +2097,14 @@ export default function TailorPage() {
       )}
       {/* The bar's height again, so the page's last lines scroll clear of it. */}
       {barUp && <div aria-hidden className="h-[3.75rem] lg:hidden" />}
+
+      <FirstRunSheet
+        open={firstRun}
+        pages={pageReading.data?.pages ?? null}
+        review={reviewCounts}
+        onChoose={onFirstStep}
+        onClose={() => setFirstRun(false)}
+      />
 
       {resume && (
         <TailorOverlay

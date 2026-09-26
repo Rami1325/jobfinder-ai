@@ -8,8 +8,8 @@
 >
 > **Read before touching** `app/main.py` (`access_gate`), `core/accounts.py`, `sessions.py`, `passwords.py`,
 > `auth_throttle.py`, `auth_email.py`, `sentry_scrub.py`, the sign-in half of `google_oauth.py`, `db/users.py`,
-> `api/auth_routes.py`, `pages/auth/**`, `lib/safeNext.ts`, `lib/verifyLink.ts`, `components/AccessGate.tsx`,
-> `lib/onboarding.ts` or `components/OnboardingModal.tsx`.
+> `api/auth_routes.py`, `pages/auth/**`, `lib/safeNext.ts`, `lib/verifyLink.ts` or `components/AccessGate.tsx`.
+> The first run after sign-up (the upload, then one sheet) is `document-editor.md`'s, *PLAN 31.5 — the first run*.
 > Phase 29 and Phase 30 were each split by department: this file keeps their accounts and sign-in halves,
 > `inbox.md` keeps Phase 29's Gmail half, `tailoring.md` its Arabic-preference and numerals half, and
 > `cost-and-quota.md` keeps Phase 30's monthly pool. What the two privacy doors wipe is in `data-and-privacy.md`.
@@ -115,6 +115,8 @@ and known-open list are in `cost-and-quota.md`.)*
 - Measured in a real browser (Playwright, one context, two pages, the gate on, two invite-code accounts): tab 1 on `/tracker` as Alice; tab 2 signs in as Bob; tab 1 reloads by itself and shows Bob (avatar "B"). Tab 2 signs out from Settings; tab 1 reloads onto `/login` while tab 2 lands on `/`, its own destination. Pinned by check-mirrors 45, which executes the module as two tabs and `readAuthMe`, and pins the wiring.
 
 ### The first-run questions are asked once per ACCOUNT (PLAN 31.1/11, 2026-09-23)
+
+> **SUPERSEDED 2026-09-26 by PLAN 31.5/2, and deleted.** The first run is the upload now: no modal opens before it, and once the resume is read `/app` asks "What first?" (`document-editor.md`, *PLAN 31.5 — the first run*). The target role these questions asked for is on the resume, and the search derives it (`SEARCH_CONTEXT`, a daily count and no monthly use). Gone with them: `components/OnboardingModal.tsx`, `lib/onboarding.ts`, `POST /profile/onboarded`, `AuthUser.onboarded` and the ORM's `users.onboarded_at`. **The column itself stays in production's table, unread and unwritten**, because the ADD-COLUMN shim only ever adds; neither privacy door ever cleared it. A device that kept the old record keeps `jf-onboarding-v1` (a role) in its storage, and `signOut` still clears that key (`forgetOnboardingRole`), since it is one person's answer. The record below is kept as it was, for the defects it describes.
 
 - **They were remembered in this browser's `localStorage` alone** (`jf-onboarding-v1`), and `signOut` clears that key (`clearOnboarding`: the stored role belongs to one person, and on a shared device it would prefill the next account's search). So an account holding a resume and five applications was asked again on every new device and after every sign-out. The modal also opened at MOUNT, before `/auth/me` had answered.
 - **The account keeps the record now: `users.onboarded_at`** (nullable, added by the ADD-COLUMN shim), stamped by `POST /profile/onboarded` (plain `current_user`, classed `free` in smoke 32.13, idempotent: the first stamp stays). `/auth/me` answers `AuthUser.onboarded`, which is true when the stamp is set OR the account already holds a master resume, so every account that used the app before the column existed reads as onboarded with no backfill. The resume lookup is best-effort and answers false on an error, because `/auth/me` must never 500 on bookkeeping.

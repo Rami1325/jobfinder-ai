@@ -70,8 +70,8 @@ export default function App() {
             <Route path="/privacy" element={<PrivacyPage />} />
           </Route>
           {/* The account pages, OUTSIDE the AppLayout group. That layout runs
-              the auth guard, loads the kits and mounts the onboarding modal,
-              and every one of those assumes an account the app can already
+              the auth guard, loads the kits and mounts the tab bar, and
+              every one of those assumes an account the app can already
               serve — a visitor on these pages is by definition not one yet.
               Every <Route> keeps `path` as its FIRST attribute: check-mirrors
               9 reads routes with exactly that shape. */}

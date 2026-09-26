@@ -20,15 +20,19 @@ export function masterResumeLabel(resume: ResumeModel): string {
  * name) and toast on success. Persistence is best-effort: returns the saved
  * MasterResume, or null if the backend call failed. Shared by TailorPage and
  * JobsPage so the save logic lives in one place.
+ *
+ * `quiet` skips the success toast for a caller that says it on screen itself:
+ * /app's first upload opens the first-run sheet, which a toast above the modal
+ * layer covered for its whole life (PLAN 31.5/2, seen at 390 px).
  */
 export function useSaveMasterResume() {
   const toast = useToast();
   const { t } = useTranslation();
   return useCallback(
-    async (resume: ResumeModel, ledger: FactsLedger): Promise<MasterResume | null> => {
+    async (resume: ResumeModel, ledger: FactsLedger, quiet = false): Promise<MasterResume | null> => {
       try {
         const m = await saveMasterResume({ resume, ledger, label: masterResumeLabel(resume) });
-        toast("success", t("masterResume.savedToast"));
+        if (!quiet) toast("success", t("masterResume.savedToast"));
         return m;
       } catch {
         return null; // best-effort — the caller can still use the parsed resume locally

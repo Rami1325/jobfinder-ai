@@ -75,16 +75,10 @@ class User(Base):
     # call: the ADD-COLUMN shim backfills it onto every existing row, the invite
     # codes included.
     plan: Mapped[str] = mapped_column(String(16), default="free")
-    # PLAN 31.1/11: when this account finished (or skipped) the first-run
-    # questions. They were remembered per DEVICE, in localStorage, and cleared on
-    # sign-out, so an account with five applications met "Welcome — three quick
-    # questions" again on every new browser and after every sign-out. NULL means
-    # not recorded, which is not "never onboarded": /auth/me also counts an
-    # account that already holds a master resume as onboarded. Not user content,
-    # so neither privacy door clears it. Migrates via the ADD-COLUMN shim.
-    onboarded_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, default=None
-    )
+    # `onboarded_at` (PLAN 31.1/11) left the model with the first-run questions
+    # in PLAN 31.5/2: the first run is the upload now, and nothing asks. The
+    # column the ADD-COLUMN shim made stays in production's table, unread and
+    # unwritten, since the shim only ever adds.
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

@@ -9074,13 +9074,6 @@ with TestClient(_fastapi_app) as _tc:
     _admin_apps = _tc.get("/applications", headers=_ADMIN_H).json()
     check("admin still sees own tracker rows", len(_admin_apps) >= 3, str(len(_admin_apps)))
 
-    # PLAN 31.1/11: the first-run questions are remembered per ACCOUNT. They lived
-    # in localStorage and were cleared on sign-out, so an account with a resume
-    # was asked again on every new browser. A friend with no resume and no record
-    # is not onboarded yet (the false-positive half: nothing may mark an account
-    # done that has done nothing).
-    _ob_before = (_tc.get("/auth/me", headers=_FRIEND_H).json().get("user") or {}).get("onboarded")
-
     # Friend writes their own data; the admin's view is unchanged.
     _resume_json = resume.model_dump()
     check(
@@ -9089,26 +9082,17 @@ with TestClient(_fastapi_app) as _tc:
             "/profile/resume", json={"resume": _resume_json, "label": "Noa CV"}, headers=_FRIEND_H
         ).status_code == 200,
     )
-    _ob_master = (_tc.get("/auth/me", headers=_FRIEND_H).json().get("user") or {}).get("onboarded")
-    _ob_new = _tc.post("/admin/users", json={"name": "Onboard Check"}, headers=_ADMIN_H).json()
-    _OB_H = {"X-App-Key": _ob_new.get("invite_code", "")}
-    _ob_fresh = (_tc.get("/auth/me", headers=_OB_H).json().get("user") or {}).get("onboarded")
-    _ob_mark = _tc.post("/profile/onboarded", headers=_OB_H)
-    _ob_after = (_tc.get("/auth/me", headers=_OB_H).json().get("user") or {}).get("onboarded")
-    _ob_again = _tc.post("/profile/onboarded", headers=_OB_H)
+    # PLAN 31.5/2: the first run is the upload, so the first-run questions and
+    # their per-account record (31.1/11) are gone. The route must be unmounted
+    # rather than left answering nothing, and /auth/me must not keep a flag no
+    # page reads (the gate 404s an unrouted path for a known caller).
+    _ob_me = _tc.get("/auth/me", headers=_FRIEND_H).json().get("user") or {}
+    _ob_post = _tc.post("/profile/onboarded", headers=_FRIEND_H)
     check(
-        "31.1/11: onboarding is per ACCOUNT — not onboarded with no resume and no record, onboarded once a "
-        "master resume exists (so no existing account is asked again), and POST /profile/onboarded records it, "
-        "idempotently",
-        _ob_before is False
-        and _ob_master is True
-        and _ob_fresh is False
-        and _ob_mark.status_code == 200
-        and _ob_after is True
-        and _ob_again.status_code == 200
-        and (_tc.get("/auth/me", headers=_OB_H).json().get("user") or {}).get("onboarded") is True,
-        f"before={_ob_before} master={_ob_master} fresh={_ob_fresh} mark={_ob_mark.status_code} "
-        f"after={_ob_after} again={_ob_again.status_code}",
+        "31.5/2: the first-run questions are gone — POST /profile/onboarded is unmounted and /auth/me's user "
+        "carries no onboarded flag, while it still names the account",
+        _ob_post.status_code == 404 and "onboarded" not in _ob_me and bool(_ob_me.get("id")),
+        f"post={_ob_post.status_code} user_keys={sorted(_ob_me)}",
     )
     check(
         "friend saves their own application",
@@ -26468,7 +26452,6 @@ _ROUTE_COST = {
     ("GET", "/auth/google/callback"): "free",
     # free: the profile, the tracker, search settings and history, the alerts card, the registries
     ("GET", "/profile/me"): "free",
-    ("POST", "/profile/onboarded"): "free",
     ("GET", "/profile/resume"): "free",
     ("PUT", "/profile/resume"): "free",
     ("GET", "/profile/resumes"): "free",
@@ -27032,7 +27015,6 @@ try:
                  lambda s: _as32("POST", "/feedback", _SW32["h"], json={"page": "/app", "text": "sweep"}),
                  statuses=(200,))
         _plain32(("GET", "/profile/me"), lambda s: _as32("GET", "/profile/me", _SW32["h"]), statuses=(200,))
-        _plain32(("POST", "/profile/onboarded"), lambda s: _as32("POST", "/profile/onboarded", _SW32["h"]), statuses=(200,))
         _plain32(("PUT", "/profile/resume"),
                  lambda s: _as32("PUT", "/profile/resume", _SW32["h"], json={"resume": _R32, "label": "Sweep32 CV"}),
                  statuses=(200,))

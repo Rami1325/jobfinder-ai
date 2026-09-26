@@ -12,9 +12,12 @@ interface ModalProps {
   title?: ReactNode;
   children: ReactNode;
   maxWidth?: string;
+  /** Below `sm`, rise from the bottom edge as a sheet, where the thumb is
+   * (PLAN 31.2/9's rule); from `sm` it is the centred dialog like any other. */
+  sheet?: boolean;
 }
 
-export default function Modal({ open, onClose, title, children, maxWidth = "max-w-3xl" }: ModalProps) {
+export default function Modal({ open, onClose, title, children, maxWidth = "max-w-3xl", sheet = false }: ModalProps) {
   const { t } = useTranslation("common");
   // Focus goes in on open, stays in on Tab, and returns to the opener on close.
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -34,7 +37,10 @@ export default function Modal({ open, onClose, title, children, maxWidth = "max-
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:p-8"
+          className={cn(
+            "fixed inset-0 z-50 flex justify-center overflow-y-auto bg-black/70 backdrop-blur-sm sm:items-start sm:p-8",
+            sheet ? "items-end p-0" : "items-start p-4",
+          )}
           onClick={onClose}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -52,6 +58,7 @@ export default function Modal({ open, onClose, title, children, maxWidth = "max-
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             className={cn(
               "w-full rounded-xl2 border border-line bg-panel p-6 shadow-panel outline-none",
+              sheet && "rounded-b-none pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:rounded-b-xl2 sm:pb-6",
               maxWidth,
             )}
           >

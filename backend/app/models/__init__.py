@@ -757,9 +757,6 @@ class AuthUser(BaseModel):
     has_password: bool = False
     google_linked: bool = False  # a Google sign-in is linked to this login (Phase 30 / E4)
     signup_source: str = ""  # "" = invite code / admin; "email" or "google" = self-service
-    # PLAN 31.1/11: the first-run questions are done for this ACCOUNT (recorded,
-    # or the account already holds a master resume), so no device asks again.
-    onboarded: bool = False
 
 
 class UsagePassOut(BaseModel):

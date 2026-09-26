@@ -4,7 +4,6 @@ import { ACCESS_CODE_KEY } from "./accessCode";
 import { clearDataCache } from "./dataCache";
 import { clearDraft } from "./draft";
 import { clearInboxHints } from "./inboxHint";
-import { clearOnboarding } from "./onboarding";
 import { announceAccount } from "./accountWatch";
 
 /**
@@ -28,8 +27,8 @@ import { announceAccount } from "./accountWatch";
  * expired session or a dropped connection must not strand someone who asked to
  * leave, and everything after it is local. The local half forgets the code, the
  * resume draft (lib/draft.ts: DraftRestoreBar would offer it to the next
- * account on this device as that account's own CV), the onboarding answers
- * (whose target role would prefill that account's search), and the Gmail-sync
+ * account on this device as that account's own CV), the target role an older
+ * first-run question stored (one person's answer, `forgetOnboardingRole`), and the Gmail-sync
  * hints that account hid on the tracker.
  *
  * It never touches this tab's session storage, and check-mirrors 30 pins that.
@@ -40,6 +39,19 @@ import { announceAccount } from "./accountWatch";
  * `destination` is followed as given, so it must already be a safe same-origin
  * path: "/" from the menu and Settings, `withNext("/login", next)` from /verify.
  */
+/** The first-run questions (PLAN 31.1) stored a target role here, and since
+ * PLAN 31.5/2 nothing reads it. It is still one person's answer on devices that
+ * kept it, so a sign-out keeps clearing it, as it did before. */
+const OLD_ONBOARDING_KEY = "jf-onboarding-v1";
+
+function forgetOnboardingRole(): void {
+  try {
+    localStorage.removeItem(OLD_ONBOARDING_KEY);
+  } catch {
+    /* storage unavailable — nothing was stored either */
+  }
+}
+
 export async function signOut(destination: string): Promise<void> {
   try {
     await logout();
@@ -48,7 +60,7 @@ export async function signOut(destination: string): Promise<void> {
   }
   localStorage.removeItem(ACCESS_CODE_KEY);
   clearDraft();
-  clearOnboarding();
+  forgetOnboardingRole();
   clearInboxHints();
   clearDataCache();
   resetMasterCache();
