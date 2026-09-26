@@ -1,6 +1,7 @@
 // Email-alert settings card + the shared Customize-search fields
 // (split out of JobsPage.tsx — PLAN 12.5d).
 import { useEffect, useId, useState, type Dispatch, type SetStateAction } from "react";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Bell, X } from "lucide-react";
 import { getJobAlert, runJobAlert, searchContext, updateJobAlert } from "../../api/client";
@@ -289,7 +290,9 @@ export function AlertsCard({
   resume,
   seedContext,
 }: {
-  resume: ResumeModel;
+  /** The master resume, which the alert's own customize panel derives from.
+   * Null in Settings before a resume exists: the panel then starts blank. */
+  resume: ResumeModel | null;
   seedContext: () => SearchContext | null;
 }) {
   const { t } = useTranslation("jobs");
@@ -359,6 +362,10 @@ export function AlertsCard({
       const seed = seedContext();
       if (seed) {
         setCtx(seed);
+        return;
+      }
+      if (!resume) {
+        setCtx({ job_title: "", location: "", work_mode: "any", limit: 10 });
         return;
       }
       setPrefilling(true);
@@ -565,5 +572,104 @@ export function AlertsCard({
         )}
       </div>
     </Card>
+  );
+}
+
+/** The email alert's ONE switch, for the Jobs page (PLAN 31.5/3). The full form
+ * (the address, the fit bar, the alert's own search, the reminders and Run now)
+ * lives in Settings, `#alerts`; the Jobs page keeps what a person reaches for
+ * beside their matches: on or off. The PUT sends the saved address, search and
+ * reminder choice back as they are and never the fit bar, whose absence the
+ * server reads as "leave it" (`AlertSettingsIn.min_score`). With no address
+ * saved there is nothing to switch on yet, so the switch is a link to the form
+ * where it is typed. Renders nothing until the alert has been read, and nothing
+ * for a backend without alerts, like the card. */
+export function AlertSwitch() {
+  const { t } = useTranslation("jobs");
+  const { t: tCommon, i18n } = useTranslation();
+  const toast = useToast();
+  const [settings, setSettings] = useState<AlertSettings | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const alertUses = useUses("job_alert");
+
+  useEffect(() => {
+    let live = true;
+    getJobAlert()
+      .then((s) => {
+        if (live) setSettings(s);
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Its row is HELD while the alert is read: it sits above the saved matches,
+  // and arriving late it pushed the first job down 18-44 px under the thumb
+  // (measured at 390 px). Only an alert that cannot be read gives the row up.
+  if (failed) return null;
+  if (!settings) return <div aria-hidden className="min-h-[44px]" />;
+  // The card's own paused rule, word for word: the server's reading, or a spent
+  // month the store knows of, and never while the count is unknown.
+  const paused =
+    alertUses.limited && (settings.paused_reason === "monthly_limit" || (settings.enabled && alertUses.out));
+  const pausedDate = paused ? formatUsesDate(settings.resumes_on || alertUses.resetsOn, i18n.language) : "";
+
+  async function toggle(next: boolean) {
+    if (!settings) return;
+    setSaving(true);
+    try {
+      setSettings(
+        await updateJobAlert({
+          enabled: next,
+          email: settings.email,
+          context: settings.context ?? null,
+          nudge_emails: !!settings.nudge_emails,
+        }),
+      );
+      toast("success", t("alerts.saved"));
+    } catch (e: any) {
+      toast("error", apiErrorMessage(e, t("alerts.saveError")));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const needsAddress = !settings.enabled && !settings.email.trim();
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {needsAddress ? (
+        <Link
+          to="/settings#alerts"
+          className="inline-flex min-h-[44px] items-center gap-1.5 text-sm font-medium text-accent-soft hover:underline"
+        >
+          <Bell size={14} aria-hidden /> {t("alerts.setUp")}
+        </Link>
+      ) : (
+        <>
+          <label className="flex min-h-[44px] cursor-pointer items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              checked={settings.enabled}
+              disabled={saving}
+              onChange={(e) => void toggle(e.target.checked)}
+              className="h-4 w-4 accent-accent"
+            />
+            {t("alerts.enable")}
+          </label>
+          <Link to="/settings#alerts" className="text-xs text-ink-muted hover:text-ink hover:underline">
+            {t("alerts.settingsLink")}
+          </Link>
+        </>
+      )}
+      {paused && (
+        <span className="text-xs text-warn">
+          {pausedDate ? tCommon("uses.alertPaused", { date: pausedDate }) : tCommon("uses.alertPausedBare")}
+        </span>
+      )}
+    </div>
   );
 }

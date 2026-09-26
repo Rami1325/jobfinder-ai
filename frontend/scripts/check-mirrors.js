@@ -12204,7 +12204,7 @@ try {
   };
   plant69("layout", ', drafts: true }', " }", "the count off the Tracker");
   plant69("layout", "live: true }", "live: true, drafts: true }", "the count back on Jobs");
-  plant69("jobs", 'key: "history"', 'key: "kits"', "a Kits tab back");
+  plant69("jobs", 'key: "manual"', 'key: "kits"', "a Kits tab back");
   plant69("tracker", "kitsToReview(kits)", "(kits ?? [])", "the tracker's own list");
   plant69("job", "if (!kit) return null;", "", "a send offered without send_kit");
   for (const p of problems69) fail(`check 69: ${p} (PLAN 31.4/5)`);
@@ -12424,6 +12424,68 @@ try {
     fail("check 71's opt-in reader cannot tell a charged Run now or an unopted Jobs search from the shipped shape");
 } catch (e) {
   fail(`free first search check (check 71) could not run: ${e.message}`);
+}
+
+// ---- 72. Jobs opens on your matches, and the alert form lives in Settings --- //
+// PLAN 31.5/3. A return visit to /jobs opened on an empty search form, the saved
+// matches were a tab away (History), and the whole alert form sat under the
+// search. Now: (a) the page's views are "matches" (the default) and "manual",
+// with no History tab, and the matches view renders the saved feed; (b) the
+// search card is folded while the feed is unknown or has rows, so a return
+// visit opens on jobs rather than folding the form under the thumb when the
+// feed lands; (c) the Jobs page mounts AlertSwitch and never AlertsCard, and
+// Settings mounts AlertsCard inside `id="alerts"`, which its hash effect
+// honours; (d) AlertSwitch's PUT sends the SAVED address, search and reminder
+// choice and never `min_score`: that field is full-replace for everything
+// else, and its absence is what the server reads as "leave the bar"
+// (`AlertSettingsIn.min_score`), so a switch that sent the picker's value would
+// reset a chosen bar. Each rule is probed with a planted twin every run.
+try {
+  const read72 = ({ jobs, settings, alerts }) => {
+    const out = [];
+    if (!/useState<"matches" \| "manual">\("matches"\)/.test(jobs)) out.push("the Jobs page does not open on its matches");
+    if (/key:\s*"history"/.test(jobs) || /mode === "history"/.test(jobs)) out.push("History is a tab again");
+    if (!/mode === "matches" && \([\s\S]*?\{renderFeed\(\)\}/.test(jobs)) out.push("the matches view does not render the saved feed");
+    if (!/const hasFeed = history === null \|\| history\.length > 0;/.test(jobs) ||
+        !/const searchFolded = \(!!searchResult \|\| hasFeed\) && !searching && !editSearch;/.test(jobs))
+      out.push("the search card is not folded over a feed that is unknown or has rows");
+    if (/<AlertsCard\b/.test(jobs)) out.push("the whole alert form is back on the Jobs page");
+    if (!/<AlertSwitch\s*\/>/.test(jobs)) out.push("the Jobs page has no alert switch");
+    if (!/<div id="alerts">\s*<AlertsCard\b/.test(settings)) out.push("Settings does not hold the alert form under id=\"alerts\"");
+    if (!/hash !== "#danger" && hash !== "#alerts"/.test(settings)) out.push("Settings does not scroll to #alerts");
+    let sw = "";
+    try {
+      sw = fnSource(alerts, "export function AlertSwitch(");
+    } catch {
+      out.push("AlertsCard.tsx exports no AlertSwitch");
+    }
+    const put = (sw.match(/updateJobAlert\(\{[\s\S]*?\}\)/) || [""])[0];
+    if (sw && !put) out.push("AlertSwitch does not save through updateJobAlert({ … })");
+    if (put && /\bmin_score\b/.test(put)) out.push("AlertSwitch sends min_score, which would reset a chosen fit bar");
+    if (put && !(/email: settings\.email/.test(put) && /context: settings\.context/.test(put) && /nudge_emails: !!settings\.nudge_emails/.test(put)))
+      out.push("AlertSwitch does not send the saved address, search and reminder choice back as they are");
+    return out;
+  };
+  const real = {
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    settings: decomment(read("pages/SettingsPage.tsx")),
+    alerts: decomment(read("pages/jobs/AlertsCard.tsx")),
+  };
+  for (const p of read72(real)) fail(`check 72: ${p} (PLAN 31.5/3)`);
+  const plant = (key, from, to, label) => {
+    if (!real[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read72({ ...real, [key]: real[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("jobs", 'useState<"matches" | "manual">("matches")', 'useState<"matches" | "manual">("manual")', "a page that opens on Paste / URL");
+  plant("jobs", '{ key: "manual", label: t("tabs.manual") },', '{ key: "manual", label: t("tabs.manual") },\n            { key: "history", label: "History" },', "a History tab back");
+  plant("jobs", "{renderFeed()}", "{null}", "a matches view without the feed");
+  plant("jobs", "const searchFolded = (!!searchResult || hasFeed) && !searching && !editSearch;", "const searchFolded = !!searchResult && !searching && !editSearch;", "the form unfolded over the feed");
+  plant("jobs", "<AlertSwitch />", "<AlertsCard resume={master.resume} seedContext={() => null} />", "the whole form back on Jobs");
+  plant("settings", '<div id="alerts">', "<div>", "the form without its #alerts target");
+  plant("alerts", "nudge_emails: !!settings.nudge_emails,", "nudge_emails: !!settings.nudge_emails,\n          min_score: 75,", "a switch that resets the fit bar");
+  plant("alerts", "email: settings.email,", 'email: "",', "a switch that drops the saved address");
+} catch (e) {
+  fail(`jobs-opens-on-matches check (check 72) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

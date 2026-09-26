@@ -39,10 +39,8 @@
     "saveError": "Couldn't save — try again."
   },
   "tabs": {
-    "search": "Job search",
-    "manual": "Paste / URL",
-    "history": "History",
-    "historyCount": "History ({{count}})"
+    "matches": "Your matches",
+    "manual": "Paste / URL"
   },
   "batch": {
     "title": "Tailor my top matches",
@@ -139,6 +137,7 @@
     "worldwideNeedsLinkedIn": "Runs on LinkedIn — check the LinkedIn board below to enable it.",
     "worldwideTag": "incl. worldwide",
     "cta": "Find jobs for me",
+    "again": "Search again",
     "cancel": "Cancel",
     "connectionDropped": "The connection dropped. If the search finishes, its jobs will be in History. Searching again uses another use.",
     "searchingManual": "Searching job listings and scoring each one against your resume — this can take a minute or two.",
@@ -299,7 +298,9 @@
     "customizeHint": "The daily alert always runs this exact search — edit and save to change it.",
     "autoNote": "The daily search is derived automatically from your resume. Customize it to pin exact keywords, location, or boards.",
     "unsaved": "Unsaved changes — save to apply them to the daily alert.",
-    "noSmtp": "Email alerts can't be sent right now. Runs still refresh your search history, but no email goes out."
+    "noSmtp": "Email alerts can't be sent right now. Runs still refresh your search history, but no email goes out.",
+    "setUp": "Email me new jobs",
+    "settingsLink": "Alert settings"
   },
   "posted": {
     "today": "today",
@@ -337,10 +338,8 @@
   },
   "history": {
     "deleted": "Removed from history",
-    "emptyTitle": "No saved searches yet",
-    "emptyBody": "Run a job search — every scraped job is saved here so you can apply later.",
-    "emptyCta": "Go to job search",
     "savedOf": "<0>{{count}}</0> of 100 saved",
+    "earlier": "Earlier matches",
     "searchedOn": "Searched {{date}}",
     "deleteAll": "Delete all {{count}}?",
     "clearAll": "Clear all",

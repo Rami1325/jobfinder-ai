@@ -52,7 +52,7 @@ import type {
   ResumeModel,
   SearchContext,
 } from "../types";
-import { AlertsCard, CustomizeFields } from "./jobs/AlertsCard";
+import { AlertSwitch, CustomizeFields } from "./jobs/AlertsCard";
 import { HistoryRow, MatchCard, RestrictedRow } from "./jobs/cards";
 import { BatchTailorCard, KIT_THRESHOLDS } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
@@ -79,7 +79,10 @@ export default function JobsPage() {
   const persistMaster = useSaveMasterResume();
   // No Kits tab since PLAN 31.4/5: a batch's drafts wait on their jobs in the
   // tracker's To review, and each is reviewed, sent or deleted from its pages.
-  const [mode, setMode] = useState<"search" | "manual" | "history">("search");
+  // No History tab since PLAN 31.5/3: the page OPENS on your matches, the saved
+  // ones newest first under the search, so a return visit starts with jobs,
+  // not an empty form. Paste / URL is the one other view.
+  const [mode, setMode] = useState<"matches" | "manual">("matches");
   const toast = useToast();
   const nav = useNavigate();
   // A search and a ranking each use 1 (Phase 30 / B4); none left disables both.
@@ -218,7 +221,7 @@ export default function JobsPage() {
   }
 
   useEffect(() => {
-    if (mode === "history" && history === null && !historyLoading) loadHistory();
+    if (mode === "matches" && history === null && !historyLoading) loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
@@ -257,7 +260,7 @@ export default function JobsPage() {
         { replace: true },
       );
       if (hits) setHistory(hits);
-      setMode("history");
+      setMode("matches");
       setOpenedHit(target.kind === "hit" ? target.id : null);
       // "Not in your history" only when History answered: a History that could
       // not be read loads again on its tab, which says so itself.
@@ -270,7 +273,7 @@ export default function JobsPage() {
   }, [openParam]);
   // The opened row, brought into view once History has drawn it.
   useEffect(() => {
-    if (openedHit !== null && mode === "history" && history)
+    if (openedHit !== null && mode === "matches" && history)
       document.getElementById(`hit-${openedHit}`)?.scrollIntoView({ block: "center" });
   }, [openedHit, mode, history]);
 
@@ -395,8 +398,8 @@ export default function JobsPage() {
     // clearing them read, correctly, as "replacing my resume deleted my search
     // settings". A stale job title is one field the user can see and edit; the
     // other six are not worth destroying to freshen it.
-    // The first upload lands on the search tab, beside its button, and that is all.
-    if (firstUpload) setMode("search");
+    // The first upload lands on the matches, beside the search button, and that is all.
+    if (firstUpload) setMode("matches");
   }
 
   // `/jobs/match` refuses more than MAX_MATCH_LISTINGS in one ranking (Phase 30 /
@@ -472,7 +475,12 @@ export default function JobsPage() {
   const searchedTitle = searched
     ? (searched.job_titles?.length ? searched.job_titles : [searched.job_title]).join(", ")
     : "";
-  const searchFolded = !!searchResult && !searching && !editSearch;
+  // Folded, too, while there are saved matches to open on (PLAN 31.5/3), and
+  // while History is still unknown, so a returning visit does not open on the
+  // whole form and then fold it under the thumb when the feed arrives. Only an
+  // account with nothing saved yet, or an Edit, opens it.
+  const hasFeed = history === null || history.length > 0;
+  const searchFolded = (!!searchResult || hasFeed) && !searching && !editSearch;
   // The one-line account of what was searched and what came back, said once:
   // on the folded card, or over the results while the card is open.
   const searchSummary =
@@ -522,6 +530,113 @@ export default function JobsPage() {
             : (a, b) => (b.posted_at || "").localeCompare(a.posted_at || ""),
         )
       : history;
+  /** The saved matches, newest first (PLAN 31.5/3). They are what the page OPENS
+   * on, under the folded search; History stopped being a tab of its own. With a
+   * search on screen they are the EARLIER ones, the rows its results do not
+   * already show, and during a search they wait, so the live results are the
+   * only list. An alert email's `?open=` lands here, its row ringed. With
+   * nothing saved there is nothing to say: the open search card is the way in. */
+  function renderFeed() {
+    if (searching) return null;
+    const shownUrls = searchResult ? new Set(searchResult.matches.map((m) => normalizeJobUrl(m.url || ""))) : null;
+    const rows = (sortedHistory ?? []).filter((h) => !shownUrls || !shownUrls.has(normalizeJobUrl(h.url || "")));
+    return (
+      <>
+          {openMissing && (
+            <Card className="text-sm text-ink-muted">
+              {t("history.openMissing")}
+              {postingLink(openMissing) && (
+                <>
+                  {" "}
+                  <a
+                    href={postingLink(openMissing) ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-accent hover:underline"
+                  >
+                    {t("history.openPosting")}
+                  </a>
+                </>
+              )}
+            </Card>
+          )}
+          {historyLoading && !searchResult && (
+            <div className="space-y-3">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          )}
+          {!historyLoading && historyError && (
+            <Card className="flex flex-wrap items-center gap-3">
+              <span className="text-sm text-danger">{historyError}</span>
+              <Button size="sm" variant="secondary" onClick={loadHistory}>
+                {t("history.retry")}
+              </Button>
+            </Card>
+          )}
+
+          {!historyLoading && !historyError && rows.length > 0 && (
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+              {/* ONE row at 390 px: the count, a compact sort, and Clear all as an
+                  icon below sm. As three wrapping controls they took two rows
+                  of the first screen, above the first job. */}
+              <div className="flex items-center gap-2">
+                <p className="min-w-0 flex-1 truncate text-sm text-ink-muted">
+                  {searchResult ? (
+                    t("history.earlier")
+                  ) : (
+                    <Trans
+                      t={t}
+                      i18nKey="history.savedOf"
+                      values={{ count: history?.length ?? 0 }}
+                      components={[<span key="0" className="font-semibold text-ink" />]}
+                    />
+                  )}
+                </p>
+                <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-ink-muted">
+                  <span className="sr-only sm:not-sr-only">{t("sort.label")}</span>
+                  <select
+                    value={historySort}
+                    onChange={(e) => setHistorySort(e.target.value as "searched" | "fit" | "date")}
+                    className="rounded-lg border border-line bg-bg-soft px-2 py-1.5 text-xs text-ink focus:border-accent/60 focus:outline-none"
+                  >
+                    <option value="searched">{t("sort.searched")}</option>
+                    <option value="fit">{t("sort.fit")}</option>
+                    <option value="date">{t("sort.date")}</option>
+                  </select>
+                </label>
+                {confirmClear ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-ink-muted">{t("history.deleteAll", { count: history?.length ?? 0 })}</span>
+                    <Button size="sm" variant="danger" loading={clearing} onClick={clearAll}>
+                      {t("history.confirmClear")}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirmClear(false)}>
+                      {t("common:actions.cancel")}
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<Trash2 size={14} />}
+                    onClick={() => setConfirmClear(true)}
+                    className="shrink-0"
+                  >
+                    <span className="sr-only sm:not-sr-only">{t("history.clearAll")}</span>
+                  </Button>
+                )}
+              </div>
+              {rows.map((hit) => (
+                <HistoryRow key={hit.id} hit={hit} onDelete={deleteHit} opened={hit.id === openedHit} />
+              ))}
+            </motion.div>
+          )}
+      </>
+    );
+  }
+
   // Streaming (PLAN 12.2): the store keeps per-job `match` frames sorted by
   // fit; the scoring-progress frames carry how many jobs will be scored in
   // total. Old backends send no match frames, so this stays empty and the
@@ -607,12 +722,8 @@ export default function JobsPage() {
       <div className="flex flex-wrap gap-2">
         {(
           [
-            { key: "search", label: t("tabs.search") },
+            { key: "matches", label: t("tabs.matches") },
             { key: "manual", label: t("tabs.manual") },
-            {
-              key: "history",
-              label: history ? t("tabs.historyCount", { count: history.length }) : t("tabs.history"),
-            },
           ] as const
         ).map((tab) => (
           <button
@@ -629,15 +740,39 @@ export default function JobsPage() {
         ))}
       </div>
 
-      {mode === "search" && (
+      {mode === "matches" && (
         <>
           {searchFolded ? (
-            <Card className="flex items-center gap-3 py-3">
-              <Search size={16} className="shrink-0 text-accent-soft" aria-hidden />
-              <p className="min-w-0 flex-1 truncate text-sm text-ink-muted">{searchSummary}</p>
-              <Button size="sm" variant="secondary" onClick={() => setEditSearch(true)}>
-                {t("search.edit")}
-              </Button>
+            // ONE line over the matches (PLAN 31.5/3): what was searched, or
+            // "Your latest matches", then Search again and the alert switch.
+            // The whole alert form is in Settings now (AlertSwitch links there).
+            <Card className="space-y-1 py-3">
+              {/* What was searched, once there is a search to name. Over the
+                  saved feed alone there is nothing to say that the rows under
+                  it do not, and the line cost the first screen a job row. */}
+              {searchSummary && (
+                <p className="flex min-w-0 items-center gap-2 text-sm text-ink-muted">
+                  <Search size={14} className="shrink-0 text-accent-soft" aria-hidden />
+                  <span className="min-w-0 truncate">{searchSummary}</span>
+                </p>
+              )}
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  icon={<Search size={14} />}
+                  disabled={prefilling || limitInvalid || searchUses.out}
+                  onClick={runSearch}
+                >
+                  {t("search.again")}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditSearch(true)}>
+                  {t("search.edit")}
+                </Button>
+              </div>
+              <AlertSwitch />
+              {searchError && <p className="text-sm text-danger">{searchError}</p>}
+              {dropped && <p className="text-sm text-warn">{t("search.connectionDropped")}</p>}
+              <UsesNote feature="search" firstFree />
             </Card>
           ) : (
           <Card>
@@ -686,6 +821,9 @@ export default function JobsPage() {
               {dropped && <span className="text-sm text-warn">{t("search.connectionDropped")}</span>}
             </div>
             <UsesNote feature="search" firstFree className="mt-2" />
+            <div className="mt-3">
+              <AlertSwitch />
+            </div>
           </Card>
           )}
 
@@ -913,10 +1051,7 @@ export default function JobsPage() {
             )}
           </AnimatePresence>
 
-          <AlertsCard
-            resume={master.resume}
-            seedContext={() => (customOpen ? ctx : null)}
-          />
+          {renderFeed()}
         </>
       )}
 
@@ -1021,113 +1156,6 @@ export default function JobsPage() {
               </motion.div>
             )}
           </AnimatePresence>
-        </>
-      )}
-
-      {mode === "history" && (
-        <>
-          {openMissing && (
-            <Card className="text-sm text-ink-muted">
-              {t("history.openMissing")}
-              {postingLink(openMissing) && (
-                <>
-                  {" "}
-                  <a
-                    href={postingLink(openMissing) ?? undefined}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-accent hover:underline"
-                  >
-                    {t("history.openPosting")}
-                  </a>
-                </>
-              )}
-            </Card>
-          )}
-          {historyLoading && (
-            <div className="space-y-3">
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-24 w-full" />
-            </div>
-          )}
-
-          {!historyLoading && historyError && (
-            <Card className="flex flex-wrap items-center gap-3">
-              <span className="text-sm text-danger">{historyError}</span>
-              <Button size="sm" variant="secondary" onClick={loadHistory}>
-                {t("history.retry")}
-              </Button>
-            </Card>
-          )}
-
-          {!historyLoading && !historyError && history && history.length === 0 && (
-            <Card>
-              <CardTitle>{t("history.emptyTitle")}</CardTitle>
-              <p className="mt-1 text-sm text-ink-muted">
-                {t("history.emptyBody")}
-              </p>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="mt-4"
-                icon={<Search size={14} />}
-                onClick={() => setMode("search")}
-              >
-                {t("history.emptyCta")}
-              </Button>
-            </Card>
-          )}
-
-          {!historyLoading && !historyError && history && history.length > 0 && (
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm text-ink-muted">
-                  <Trans
-                    t={t}
-                    i18nKey="history.savedOf"
-                    values={{ count: history.length }}
-                    components={[<span key="0" className="font-semibold text-ink" />]}
-                  />
-                </p>
-                <label className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
-                  {t("sort.label")}
-                  <select
-                    value={historySort}
-                    onChange={(e) => setHistorySort(e.target.value as "searched" | "fit" | "date")}
-                    className={inputCls}
-                  >
-                    <option value="searched">{t("sort.searched")}</option>
-                    <option value="fit">{t("sort.fit")}</option>
-                    <option value="date">{t("sort.date")}</option>
-                  </select>
-                </label>
-                {confirmClear ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-ink-muted">{t("history.deleteAll", { count: history.length })}</span>
-                    <Button size="sm" variant="danger" loading={clearing} onClick={clearAll}>
-                      {t("history.confirmClear")}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setConfirmClear(false)}>
-                      {t("common:actions.cancel")}
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon={<Trash2 size={14} />}
-                    onClick={() => setConfirmClear(true)}
-                  >
-                    {t("history.clearAll")}
-                  </Button>
-                )}
-              </div>
-              {(sortedHistory ?? []).map((hit) => (
-                <HistoryRow key={hit.id} hit={hit} onDelete={deleteHit} opened={hit.id === openedHit} />
-              ))}
-            </motion.div>
-          )}
         </>
       )}
 

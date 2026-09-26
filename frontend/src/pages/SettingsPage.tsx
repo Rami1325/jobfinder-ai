@@ -3,7 +3,6 @@ import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   BadgeCheck,
-  BellRing,
   Copy,
   Eye,
   EyeOff,
@@ -40,6 +39,8 @@ import { formatUsesDate } from "../lib/usesStore";
 import LanguageSwitch from "../components/LanguageSwitch";
 import ThemeToggle from "../components/ThemeToggle";
 import InboxSettingsCard from "../components/inbox/InboxSettingsCard";
+import { useMasterResume } from "../hooks/useMasterResume";
+import { AlertsCard } from "./jobs/AlertsCard";
 import { Badge, Button, Card, CardTitle, useToast } from "../components/ui";
 import { FormError, PasswordInput, charCount } from "./auth/shared";
 import type { AuthMe, UsageOut } from "../types";
@@ -729,6 +730,8 @@ export default function SettingsPage() {
   const toast = useToast();
   const [auth, setAuth] = useState<AuthMe | null>(null);
   const { hash, key } = useLocation();
+  // The alert's own customize panel derives from the master resume (PLAN 31.5/3).
+  const { master } = useMasterResume();
   // "Your extension key was replaced", kept on this device until the new key
   // has been looked at: a reset sets it on a page where Settings is not shown.
   const [keyRotated, setKeyRotated] = useState(keyRotatedNotice);
@@ -741,7 +744,8 @@ export default function SettingsPage() {
     setKeyRotated(false);
   };
 
-  /** Honour `#danger`, because nothing else does.
+  /** Honour `#danger` and `#alerts`, because nothing else does. `#alerts` is
+   * the Jobs page's way to the alert form (PLAN 31.5/3).
    *
    * `main.tsx` mounts a plain `<BrowserRouter>`: react-router never acts on a
    * hash, and `history.pushState` does not trigger the browser's own fragment
@@ -761,13 +765,32 @@ export default function SettingsPage() {
    * that shift where a 32px control would be pushed out from under the scroll.
    */
   useEffect(() => {
-    if (hash !== "#danger") return;
-    const el = document.getElementById("danger");
+    if (hash !== "#danger" && hash !== "#alerts") return;
+    const el = document.getElementById(hash.slice(1));
     if (!el) return;
-    el.scrollIntoView({
-      block: "start",
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" });
+    // THE CARDS ABOVE LOAD AFTER THIS RUNS (the account lines, the extension
+    // key, Gmail), and each one pushed the target back down: measured at 390 px,
+    // `#alerts` ended 619-658 px down the screen instead of at its top. So while
+    // the page settles, the target is put back whenever the page grows, until
+    // the reader scrolls themself or three seconds pass.
+    let reading = false;
+    const stop = () => {
+      reading = true;
+    };
+    const events = ["wheel", "touchmove", "keydown"] as const;
+    for (const e of events) window.addEventListener(e, stop, { passive: true });
+    const settle = new ResizeObserver(() => {
+      if (!reading) el.scrollIntoView({ block: "start" });
     });
+    settle.observe(document.body);
+    const done = window.setTimeout(() => settle.disconnect(), 3000);
+    return () => {
+      settle.disconnect();
+      window.clearTimeout(done);
+      for (const e of events) window.removeEventListener(e, stop);
+    };
   }, [hash, key]);
 
   // Best-effort: the identity lines and the account controls are niceties, so
@@ -965,21 +988,16 @@ export default function SettingsPage() {
           the tracker's Connect link target, scrolled to by the card itself. */}
       <InboxSettingsCard />
 
-      <Card>
-        <CardTitle className="flex items-center gap-2">
-          <BellRing size={16} className="text-accent-soft" /> {t("alerts.title")}
-        </CardTitle>
-        {/* A pointer, not a second copy of AlertsCard. Alerts are configured
-            against the search that produces them, and two places to set one
-            daily email is one place too many. */}
-        <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t("alerts.body")}</p>
-        <Link
-          to="/jobs"
-          className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-accent-soft hover:underline"
-        >
-          {t("alerts.cta")}
-        </Link>
-      </Card>
+      {/* The alert form lives HERE since PLAN 31.5/3, and the Jobs page keeps
+          only its switch (AlertSwitch), which links to `#alerts`. Before, this
+          was a pointer back to Jobs, where the whole form sat under the search
+          and pushed the matches down. ONE form, so it is still one place to
+          set the daily email. The wrapper always exists, because the card
+          renders nothing until the alert has been read and `#alerts` needs a
+          target the moment the page mounts. */}
+      <div id="alerts">
+        <AlertsCard resume={master?.resume ?? null} seedContext={() => null} />
+      </div>
 
       {/* id="danger" is a link target — the account menu jumps straight here,
           via the `#danger` effect above (react-router will not do it, and the

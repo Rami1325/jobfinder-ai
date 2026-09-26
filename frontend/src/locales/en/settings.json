@@ -117,11 +117,6 @@
     "saveError": "Couldn't save that. Please try again.",
     "loadError": "Couldn't load this setting. Reload the page to try again."
   },
-  "alerts": {
-    "title": "Job alerts",
-    "body": "Daily email alerts are set up on the Jobs page, next to your search.",
-    "cta": "Open Jobs"
-  },
   "danger": {
     "title": "Danger zone",
     "sub": "Both of these are permanent.",
