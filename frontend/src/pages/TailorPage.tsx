@@ -37,6 +37,7 @@ import ResumeUpload from "../components/ResumeUpload";
 import { flagsOf, groupChecks } from "../components/ReviewPanel";
 import VoicePanel from "../components/VoicePanel";
 import { resetMasterCache } from "../hooks/useMasterResume";
+import { VersionHistoryModal } from "../components/VersionHistory";
 import { useUses } from "../lib/usesStore";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
 import { blocksByEdit, flagStates, mergeForReview } from "../lib/resumeDiff";
@@ -69,6 +70,7 @@ import {
   discardTailorResult,
   flushDraftSave,
   flushMasterSave,
+  settleMaster,
   getTailorState,
   openSavedReview,
   restoreClearedOverrides,
@@ -235,6 +237,8 @@ export default function TailorPage() {
   // A draft written by a previous visit, once we have a master to judge it
   // against. Offered, never applied — see DraftRestoreBar.
   const [draft, setDraft] = useState<ResumeDraft | null>(null);
+  // The master's restore points, on the document (PLAN 31.6/3).
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // What the fetch below has found, because an empty store means two different
   // things. Until it answers, the store is empty for a person who HAS a resume,
@@ -1885,6 +1889,9 @@ export default function TailorPage() {
             // the empty state uses, so the cold start and the replacement are one
             // path.
             onReplace={isMaster ? onParsed : undefined}
+            // The master's history, on the same gate: a restore replaces the
+            // master, which a tailored draft on screen is not (PLAN 31.6/3).
+            onHistory={isMaster ? () => setHistoryOpen(true) : undefined}
             // On a draft, below lg, "Tailor for a different job" left the
             // toolbar's one row for the tool row's "⋯" (PLAN 31.2/1).
             moreItems={
@@ -2129,6 +2136,23 @@ export default function TailorPage() {
       )}
       {/* The bar's height again, so the page's last lines scroll clear of it. */}
       {barUp && <div aria-hidden className="h-[3.75rem] lg:hidden" />}
+
+      {/* A restore replaces the master, so it takes the one way in every
+          replacement takes: `adoptMaster` for the document (and through it the
+          drafts, the review and the autosave), `resetMasterCache` for the nine
+          pages that read the other cache. An edit still waiting to save is
+          sent first (`settleMaster`), so the state the restore replaces is the
+          one on screen, kept as a restore point of its own. */}
+      <VersionHistoryModal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        template={template}
+        beforeRestore={settleMaster}
+        onRestored={(m) => {
+          resetMasterCache();
+          adoptMaster(m);
+        }}
+      />
 
       <FirstRunSheet
         open={firstRun}

@@ -13,6 +13,7 @@ import {
   ScanEye,
   type LucideIcon,
   X,
+  History,
 } from "lucide-react";
 import ResumeView, { type BlockMark } from "./ResumeView";
 import ReviewPanel, { badCount } from "./ReviewPanel";
@@ -222,6 +223,9 @@ interface Props {
   onReplace?: (resume: ResumeModel, ledger: FactsLedger) => void;
   /** More entries for the phone row's "⋯" (PLAN 31.2/3), after Replace. */
   moreItems?: MoreItem[];
+  /** Open the master's version history (PLAN 31.6/3). Given only where the
+   * document is the master, the same gate as `onReplace`. */
+  onHistory?: () => void;
   /**
    * A tailored draft's review, as the drawer's second pane (PLAN 31.3/3): the
    * changes, the keywords, the voice check and what was left out, in the drawer
@@ -255,7 +259,7 @@ interface Props {
  * `display:none` node is a no-op.
  */
 const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
-  { resume, template, view, onView, onTemplate, company = "", marks, flags, review, reviewStale, reviewFailed, onJumpToBlock, onUseRewrite, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddNamed, onAddBullet, footNote, onReplace, moreItems, changes, pane: paneProp, onPane },
+  { resume, template, view, onView, onTemplate, company = "", marks, flags, review, reviewStale, reviewFailed, onJumpToBlock, onUseRewrite, activeBlock, activeNonce, onSelectBlock, onEditBlock, onInlineCommit, onAddSkill, onAdd, onAddNamed, onAddBullet, footNote, onReplace, moreItems, onHistory, changes, pane: paneProp, onPane },
   screenRef,
 ) {
   const { t } = useTranslation("tailor");
@@ -467,6 +471,9 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           },
         ]
       : []),
+    // The master's own history (PLAN 31.6/3), beside Replace for the same
+    // reason: the page that IS the resume offers everything done to it.
+    ...(onHistory ? [{ key: "history", Icon: History, label: t("doc.history.tool"), onClick: onHistory }] : []),
   ];
 
   // THE PHONE ROW LEADS WITH THE REVIEW. The row showed ~366 px of ~940, and in
@@ -485,6 +492,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
     ...(onReplace
       ? [{ key: "replace", label: t("doc.replace.tool"), Icon: FileUp, onClick: () => setReplaceOpen((o) => !o) }]
       : []),
+    ...(onHistory ? [{ key: "history", label: t("doc.history.tool"), Icon: History, onClick: onHistory }] : []),
     ...(moreItems ?? []),
   ];
 

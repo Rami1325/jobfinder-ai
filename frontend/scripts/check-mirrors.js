@@ -12877,6 +12877,81 @@ try {
   fail(`master autosave check (check 77) could not run: ${e.message}`);
 }
 
+// ---- 78. the history is on the document, and the add controls are quiet ----- //
+// PLAN 31.6/3 and /4. The master's version history opened only from a link on
+// the Jobs page, and restored a restore point nobody could see first. It is a
+// tool of the document now (the rail, and "⋯" on a phone), on the master only,
+// it SHOWS a version whole before Restore is offered, and a restore takes the
+// one way in every replacement takes: `adoptMaster` and `resetMasterCache`,
+// after the waiting autosave is sent (`settleMaster`), so the state replaced is
+// the one on screen. And on a phone every job carried a dashed "+ Add a line"
+// and every skill group a "+ Add skill"; below lg only the entry, or the Skills
+// section, being edited shows its control now, and an empty contact field is a
+// dashed "+ Phone" chip after the filled ones, not a label with a dot after it.
+// Four planted twins per half are probed every run.
+try {
+  const read78 = ({ panel, page, hist, jobs, view, css }) => {
+    const out = [];
+    if ((panel.match(/\.\.\.\(onHistory \? \[\{ key: "history"/g) ?? []).length !== 2)
+      out.push("the history is not one tool on the rail AND under the phone's ⋯, gated on onHistory");
+    if (!/onHistory=\{isMaster \? \(\) => setHistoryOpen\(true\) : undefined\}/.test(page))
+      out.push("the history is offered on a tailored draft, where a restore would replace a master that is not on screen");
+    const modal = /<VersionHistoryModal\b[\s\S]*?\/>/.exec(page);
+    if (!modal) out.push("TailorPage mounts no VersionHistoryModal");
+    else {
+      if (!/beforeRestore=\{settleMaster\}/.test(modal[0])) out.push("a restore does not send the waiting autosave first");
+      if (!/resetMasterCache\(\);\s*adoptMaster\(m\);/.test(modal[0]))
+        out.push("a restore does not reach both master caches and the document (resetMasterCache, adoptMaster)");
+    }
+    if (!/disabled=\{!shown\}/.test(hist)) out.push("Restore is offered before the version it restores is shown");
+    const preview = /<ResumeView\b[^>]*\/>/.exec(hist);
+    if (!preview) out.push("the history renders no ResumeView of the version");
+    else if (/on(?:EditBlock|InlineCommit|AddSkill|AddBullet|Add)\b/.test(preview[0])) out.push("the version preview can be edited");
+    if (/VersionHistoryModal/.test(jobs)) out.push("the Jobs page still carries its own version history");
+    for (const kind of ["exp", "proj", "mil"])
+      if (!view.includes(`!editingIn(\`@${kind}.\${i}\`) && "hidden lg:list-item"`))
+        out.push(`"+ Add a line" on @${kind} shows below lg whether or not its entry is being edited`);
+    if ((view.match(/!editingIn\("@skills"\) && "hidden lg:inline"/g) ?? []).length !== 2)
+      out.push('"+ Add skill" shows below lg while no skill is being edited');
+    if (!/onPointerDown=\{noteEditing\}/.test(view)) out.push("the paper does not remember the block the person reached for");
+    if (!/data-add=""/.test(view)) out.push("an empty contact field is not drawn as a \"+ Field\" chip");
+    if (!/\.sheet \[data-add\]\[data-ph\]:empty::before \{\s*content: "\+ " attr\(data-ph\);/.test(css))
+      out.push("styles.css draws no \"+\" before an empty contact field's label");
+    return out;
+  };
+  const real = {
+    panel: decomment(read("components/DocumentPanel.tsx")),
+    page: decomment(read("pages/TailorPage.tsx")),
+    hist: decomment(read("components/VersionHistory.tsx")),
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    view: decomment(read("components/ResumeView.tsx")),
+    css: read("styles.css"),
+  };
+  for (const p of read78(real)) fail(`check 78: ${p} (PLAN 31.6/3-4)`);
+  const plant = (key, from, to, label) => {
+    if (!real[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read78({ ...real, [key]: real[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("page", "onHistory={isMaster ? () => setHistoryOpen(true) : undefined}", "onHistory={() => setHistoryOpen(true)}", "the history on a draft");
+  plant("page", "resetMasterCache();\n          adoptMaster(m);", "adoptMaster(m);", "a restore that misses the other cache");
+  plant("hist", "disabled={!shown}", "", "Restore before the version is shown");
+  plant("view", '!editingIn(`@exp.${i}`) && "hidden lg:list-item"', "false", "every role's add control on a phone");
+  plant("view", 'data-add=""', "", "an empty contact field drawn as a label");
+
+  // The history's own words, in the namespace each binding names.
+  const histKeys = [...new Set([...real.hist.matchAll(/\bt\("(versions\.[\w.]+)"/g)].map((m) => m[1]))];
+  if (histKeys.length < 10) throw new Error(`read ${histKeys.length} versions.* keys out of components/VersionHistory.tsx (expected at least 10)`);
+  for (const loc of ["en", "he"]) {
+    const jobsNs = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const key of histKeys)
+      if (!resolvesIn(jobsNs, key)) fail(`check 78: locales/${loc}/jobs.json is missing "${key}"; the history would print the raw key`);
+    if (!resolvesIn(JSON.parse(read(`locales/${loc}/tailor.json`)), "doc.history.tool"))
+      fail(`check 78: locales/${loc}/tailor.json is missing "doc.history.tool"; the tool would print the raw key`);
+  }
+} catch (e) {
+  fail(`history and add-controls check (check 78) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

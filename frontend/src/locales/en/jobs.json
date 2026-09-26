@@ -12,18 +12,20 @@
     "he": "Hebrew"
   },
   "versions": {
-    "open": "Version history",
     "title": "Resume version history",
-    "body": "Every time your master resume is replaced, the previous one is kept here. Restoring brings it back — and the version you're on now is kept too, so you can always come back.",
-    "empty": "No earlier versions yet. One is saved the first time your resume is replaced.",
+    "body": "A restore point is kept each time your resume is replaced, and every half hour while you edit it. Restoring one brings it back, and the version you're on now is kept too, so you can always come back.",
+    "empty": "No earlier versions yet. One is kept the first time your resume is edited or replaced.",
     "untitled": "Untitled resume",
     "counts": "{{roles}} roles · {{projects}} projects",
-    "restore": "Restore",
-    "confirm": "Restore this one",
     "restored": "Resume restored.",
     "restoreError": "Couldn't restore that version.",
     "loadError": "Couldn't load your version history.",
-    "note": "The 20 most recent versions per language are kept."
+    "note": "The 20 most recent versions per language are kept.",
+    "view": "View",
+    "back": "All versions",
+    "until": "In use until {{when}}",
+    "restoreThis": "Restore this version",
+    "loadOneError": "Couldn't open that version."
   },
   "skillsEditor": {
     "open": "Add skills",

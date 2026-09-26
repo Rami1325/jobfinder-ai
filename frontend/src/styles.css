@@ -521,6 +521,13 @@ select {
   pointer-events: none;
 }
 
+/* An empty CONTACT field is an invitation, not a value (PLAN 31.6/4): it is
+   drawn last on the line as a dashed "+ Phone" chip, and the "+" is drawn here
+   for the same reason the label is, so there is nothing in it to commit. */
+.sheet [data-add][data-ph]:empty::before {
+  content: "+ " attr(data-ph);
+}
+
 /* The bullet's colour and size, from the template (TemplateSpec bullet_scale /
    bullet_accent), through two custom properties ResumeView sets on the sheet
    root. It lives here rather than in a class because ::marker cannot be styled

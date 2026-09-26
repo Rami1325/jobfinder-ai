@@ -503,6 +503,9 @@
       "tool": "Changes",
       "title": "Changes",
       "panes": "What the panel shows"
+    },
+    "history": {
+      "tool": "Version history"
     }
   },
   "overlay": {

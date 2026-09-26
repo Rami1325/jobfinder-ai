@@ -62,7 +62,6 @@ import { HiddenCount, HiddenManager, NotForMeNotice, type HiddenNotice } from ".
 import { NeedsYou } from "./jobs/NeedsYou";
 import { BatchTailorCard, KIT_THRESHOLDS } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
-import { VersionHistoryModal } from "./jobs/VersionHistory";
 import { SearchScanPanel } from "./jobs/ScanPanel";
 import {
   allowsRemote,
@@ -98,7 +97,6 @@ export default function JobsPage() {
   // -- Resume upload state (Jobs is the front door: upload lives here too) --
   const [showReplace, setShowReplace] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
-  const [showVersions, setShowVersions] = useState(false);
   const [sourceErrorsDismissed, setSourceErrorsDismissed] = useState(false);
 
   // -- History state --
@@ -799,14 +797,6 @@ export default function JobsPage() {
               {t("skillsEditor.open")}
             </button>
           )}
-          {masters.length > 0 && (
-            <button
-              onClick={() => setShowVersions(true)}
-              className="text-xs font-semibold text-accent-soft hover:underline"
-            >
-              {t("versions.open")}
-            </button>
-          )}
         </div>
       </div>
 
@@ -815,12 +805,6 @@ export default function JobsPage() {
         onClose={() => setShowSkills(false)}
         masters={masters}
         onSaved={setMaster}
-      />
-
-      <VersionHistoryModal
-        open={showVersions}
-        onClose={() => setShowVersions(false)}
-        onRestored={setMaster}
       />
 
       {/* NOT height-animated. This wedges: measured on a clean load, the panel

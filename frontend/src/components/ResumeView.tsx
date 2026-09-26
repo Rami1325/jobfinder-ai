@@ -713,6 +713,22 @@ export default function ResumeView({
   // The document is the editable MASTER. TailorPage passes both handlers
   // together (or neither), so either one answers the question.
   const editable = !!onInlineCommit || !!onEditBlock;
+  /** The block the person last tapped or typed in (PLAN 31.6/4). Below `lg`
+   * only THAT entry's "+ Add a line", and the Skills section's "+ Add skill"
+   * while a skill is being edited, are drawn: a phone read every section with
+   * its own add control under it, a dashed row after every job and every skill
+   * group. From `lg` they all stay, where there is room and a pointer that
+   * hovers. It is never cleared: a control that vanished the moment the caret
+   * left its line would vanish under the tap that was reaching for it. The
+   * foot-of-paper "Add to your CV" is untouched. */
+  const [editingAt, setEditingAt] = useState<string | null>(null);
+  const noteEditing = editable
+    ? (ev: React.SyntheticEvent) => {
+        const path = (ev.target as HTMLElement).closest?.<HTMLElement>("[data-block]")?.dataset.block;
+        if (path) setEditingAt((prev) => (prev === path ? prev : path));
+      }
+    : undefined;
+  const editingIn = (base: string) => !!editingAt && (editingAt === base || editingAt.startsWith(`${base}.`));
   /** Is there any prose to detect a language FROM? `resumeLanguage` returns
    * "en" for an empty resume exactly as it does for an English one, so a
    * from-scratch Hebrew CV would be typed into a left-to-right page. With
@@ -1322,14 +1338,14 @@ export default function ResumeView({
                     </span>
                   ))}
                   {onAddSkill && (
-                    <>
+                    <span className={cn(!editingIn("@skills") && "hidden lg:inline")}>
                       {items.length > 0 && " "}
                       <AddSkillChip
                         label={label || t("sections.skills")}
                         dir={paperDir}
                         onAdd={(text) => onAddSkill(label, text)}
                       />
-                    </>
+                    </span>
                   )}
                 </p>
               ) : (
@@ -1345,11 +1361,13 @@ export default function ResumeView({
                       — "Add a skill to " with nothing after it is worse than
                       slightly redundant. */}
                   {onAddSkill && (
-                    <AddSkillChip
-                      label={label || t("sections.skills")}
-                      dir={paperDir}
-                      onAdd={(text) => onAddSkill(label, text)}
-                    />
+                    <span className={cn(!editingIn("@skills") && "hidden lg:inline")}>
+                      <AddSkillChip
+                        label={label || t("sections.skills")}
+                        dir={paperDir}
+                        onAdd={(text) => onAddSkill(label, text)}
+                      />
+                    </span>
                   )}
                 </div>
               )}
@@ -1420,7 +1438,7 @@ export default function ResumeView({
                   </li>
                 ))}
                 {onAddBullet && (
-                  <li className="list-none">
+                  <li className={cn("list-none", !editingIn(`@exp.${i}`) && "hidden lg:list-item")}>
                     <button
                       type="button"
                       onClick={() => onAddBullet(`@exp.${i}`)}
@@ -1471,7 +1489,7 @@ export default function ResumeView({
                   </li>
                 ))}
                 {onAddBullet && (
-                  <li className="list-none">
+                  <li className={cn("list-none", !editingIn(`@proj.${i}`) && "hidden lg:list-item")}>
                     <button
                       type="button"
                       onClick={() => onAddBullet(`@proj.${i}`)}
@@ -1560,7 +1578,7 @@ export default function ResumeView({
                   </li>
                 ))}
                 {onAddBullet && (
-                  <li className="list-none">
+                  <li className={cn("list-none", !editingIn(`@mil.${i}`) && "hidden lg:list-item")}>
                     <button
                       type="button"
                       onClick={() => onAddBullet(`@mil.${i}`)}
@@ -1644,7 +1662,11 @@ export default function ResumeView({
       style={sheetVars}
       onClick={onClick}
       onKeyDown={onKeyDown}
-      onFocus={onFocus}
+      onPointerDown={noteEditing}
+      onFocus={(ev) => {
+        onFocus?.(ev);
+        noteEditing?.(ev);
+      }}
       onBlur={onBlur}
       onPaste={onPaste}
       className={cn(
@@ -1766,21 +1788,48 @@ export default function ResumeView({
             centred && "justify-center",
           )}
         >
-          {contactFields.map((k, i) => (
-            <span key={k} className="inline-flex min-w-0 items-baseline gap-1">
+          {/* PLAN 31.6/4: the EMPTY fields go last, as dashed "+ Phone" chips
+              with no separator between them. Drawn in place with a dot after
+              each, a blank contact line read as content, "Email · Phone ·
+              Location", five labels on the page that were not on the CV. The
+              "+" is CSS (`[data-add]`), so like every placeholder here it is
+              drawn, never stored. A field typed into moves to its place among
+              the filled ones on commit, which the edit caused. */}
+          {contactFields.map((k) => {
+            const filled = contactFields.filter((f) => (c[f] ?? "").trim());
+            const at = filled.indexOf(k);
+            return at === -1 ? null : (
+              <span key={k} className="inline-flex min-w-0 items-baseline gap-1">
+                <span
+                  {...blkProps(`@contact.${k}`, "block", "min-w-0 break-words")}
+                  data-ph={t(`edit.fields.${k}`)}
+                >
+                  {c[k]}
+                </span>
+                {at < filled.length - 1 && (
+                  <span aria-hidden="true" className="text-ink-faint">
+                    {sepGlyph}
+                  </span>
+                )}
+              </span>
+            );
+          })}
+          {contactFields
+            .filter((k) => !(c[k] ?? "").trim())
+            .map((k) => (
               <span
-                {...blkProps(`@contact.${k}`, "block", "min-w-0 break-words")}
+                key={k}
+                {...blkProps(
+                  `@contact.${k}`,
+                  "block",
+                  "min-w-0 break-words rounded-full border border-dashed border-line px-1.5",
+                )}
                 data-ph={t(`edit.fields.${k}`)}
+                data-add=""
               >
                 {c[k]}
               </span>
-              {i < contactFields.length - 1 && (
-                <span aria-hidden="true" className="text-ink-faint">
-                  {sepGlyph}
-                </span>
-              )}
-            </span>
-          ))}
+            ))}
         </div>
       ) : (
         contactBits.length > 0 && (
