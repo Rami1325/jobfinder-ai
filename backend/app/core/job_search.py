@@ -37,7 +37,7 @@ from app.core.ghost_signals import (
 )
 # The module, not the function: `_low_pay` calls `pay_market.high_pay_market`
 # through it, so a spy on the module attribute sees the real call path.
-from app.core import pay_market
+from app.core import hidden_jobs, pay_market
 from app.core.relevance import RELEVANT_MIN, title_relevance
 from app.core.salary import extract_salary
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
@@ -49,6 +49,7 @@ from app.models import (
     FilteredJob,
     GeoRestriction,
     GhostReport,
+    HiddenJobs,
     JobMatch,
     JobSearchResult,
     ResumeModel,
@@ -567,6 +568,30 @@ def _split_work_mode(
     return kept_tiers
 
 
+def _split_hidden(
+    tiers: list[dict[str, list[JobHit]]], hidden: HiddenJobs | None
+) -> tuple[list[dict[str, list[JobHit]]], int]:
+    """Every tier without the postings the user said "Not for me" to (PLAN
+    31.5/4), and how many went. `_split_work_mode`'s position and shape: before
+    selection, so a hidden posting takes no slot and costs no fetch or model
+    call, and the freed slot refills in the same single round. NOT silent: the
+    count rides the result as `hidden`, and the page says it with the list."""
+    if hidden_jobs.is_empty(hidden):
+        return tiers, 0
+    removed = 0
+    kept_tiers: list[dict[str, list[JobHit]]] = []
+    for tier in tiers:
+        kept: dict[str, list[JobHit]] = {}
+        for name, tier_hits in tier.items():
+            for hit in tier_hits:
+                if hidden_jobs.hidden_reason(hidden, url=hit.url, company=hit.company, title=hit.title):
+                    removed += 1
+                else:
+                    kept.setdefault(name, []).append(hit)
+        kept_tiers.append(kept)
+    return kept_tiers, removed
+
+
 def _stated_modes(hit: JobHit, text: str) -> list[str]:
     """The modes a KEPT posting states, in WORK_MODES order, for its card; [] when
     it says nothing, which the card leaves blank (unknown, never "on-site"). The
@@ -740,8 +765,12 @@ def search_jobs(
     progress: ProgressFn | None = None,
     cache: dict[str, CachedScore] | None = None,
     sightings_fn: SightingsFn | None = None,
+    hidden: HiddenJobs | None = None,
 ) -> JobSearchResult:
-    """`cache` maps URL-dedupe keys (`url.rstrip("/")` — same key as
+    """`hidden` is the user's "Not for me" set (PLAN 31.5/4), canonical, taken
+    out before selection (`_split_hidden`) and counted on the result.
+
+    `cache` maps URL-dedupe keys (`url.rstrip("/")` — same key as
     `_interleave_and_dedupe`) to fresh history rows; see CachedScore for the
     two reuse tiers. None/{} means every hit takes the full fetch+score path.
 
@@ -821,6 +850,9 @@ def search_jobs(
     tiered_count = sum(len(v) for tier in tiers for v in tier.values())
     tiers = _split_work_mode(tiers, ctx.work_mode)
     mode_removed = tiered_count - sum(len(v) for tier in tiers for v in tier.values())
+    # The user's own "Not for me" (PLAN 31.5/4), before the pay-market rows too:
+    # those describe postings the user would otherwise have been shown.
+    tiers, hidden_count = _split_hidden(tiers, hidden)
     # The pay-market filter (Phase 30 J) runs HERE, BEFORE selection, and the
     # position is the design. LinkedIn's "European Union" location returns
     # postings in every member state, and `_low_pay` needs only the card's
@@ -869,6 +901,19 @@ def search_jobs(
             filtered=market_rows,
             source_errors=source_errors,
             source_empty=source_empty,
+            hidden=hidden_count,
+        )
+    if not hits and hidden_count:
+        # Everything left was hidden by the user's own choices. "None posted in
+        # the last N days" would be false, and the page must be able to say how
+        # many it hid and offer them back, so this is a 200, like the rows above.
+        return JobSearchResult(
+            context=ctx,
+            matches=[],
+            skipped=0,
+            source_errors=source_errors,
+            source_empty=source_empty,
+            hidden=hidden_count,
         )
     if not hits and mode_removed:
         # Every posting left after the date and keyword tiers states a work mode the
@@ -1310,6 +1355,7 @@ def search_jobs(
             filtered=filtered,
             source_errors=source_errors,
             source_empty=source_empty,
+            hidden=hidden_count,
         )
 
     if not matches:
@@ -1332,4 +1378,5 @@ def search_jobs(
         filtered=filtered,
         source_errors=source_errors,
         source_empty=source_empty,
+        hidden=hidden_count,
     )

@@ -1605,6 +1605,52 @@ class SearchPrefs(BaseModel):
     context: Optional[SearchContext] = None
 
 
+class HiddenJobs(BaseModel):
+    """What the user said "Not for me" to (PLAN 31.5/4), GET/PUT /jobs/hidden:
+    postings by URL, companies, and words in a job title. Applied to every
+    search BEFORE selection by `app/core/hidden_jobs.py`; stored on the user row
+    (`users.hidden_jobs_json`), user content, cleared by both privacy doors. NOT
+    a `SearchContext` field, which is serialised into every saved alert (the
+    geo section's rule). Bounded per list and per entry, since a PUT replaces
+    the whole set and every search reads it."""
+
+    model_config = {"extra": "forbid"}
+
+    urls: list[str] = Field(default_factory=list, max_length=300)
+    companies: list[str] = Field(default_factory=list, max_length=200)
+    title_words: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("urls", "companies", "title_words")
+    @classmethod
+    def _bounded(cls, values: list[str], info) -> list[str]:  # noqa: ANN001
+        cap = {"urls": 300, "companies": 100, "title_words": 40}[info.field_name]
+        if any(len(v) > cap for v in values):
+            raise ValueError(f"each entry is at most {cap} characters")
+        return values
+
+
+class HiddenRow(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    url: str = Field(default="", max_length=2048)
+    company: str = Field(default="", max_length=300)
+    title: str = Field(default="", max_length=500)
+
+
+class HiddenWhichIn(BaseModel):
+    """POST /jobs/hidden/which (PLAN 31.5/4): the rows a page is showing, so the
+    SERVER says which the user's hides now cover. The page never re-derives it:
+    one matcher, one answer."""
+
+    model_config = {"extra": "forbid"}
+
+    rows: list[HiddenRow] = Field(default_factory=list, max_length=100)
+
+
+class HiddenWhichOut(BaseModel):
+    hidden: list[bool] = Field(default_factory=list)  # one per row, in order
+
+
 class SearchContextRequest(BaseModel):
     resume: ResumeModel
 
@@ -1638,6 +1684,10 @@ class JobSearchResult(BaseModel):
     # search raises instead, so a 200 always carries at least one match.
     source_errors: dict[str, str] = Field(default_factory=dict)
     source_empty: dict[str, str] = Field(default_factory=dict)
+    # How many postings the user's own "Not for me" hid before selection (PLAN
+    # 31.5/4). A count, said on the page, never folded into `skipped` or
+    # `filtered`: the user chose these, and the page offers the list back.
+    hidden: int = 0
 
 
 class JobSearchHitOut(BaseModel):
@@ -1670,6 +1720,8 @@ class JobSearchHitOut(BaseModel):
 
 class JobSearchHistory(BaseModel):
     hits: list[JobSearchHitOut] = Field(default_factory=list)
+    # Saved rows left out because the user hid them since (PLAN 31.5/4).
+    hidden: int = 0
 
 
 class JobFetchRequest(BaseModel):

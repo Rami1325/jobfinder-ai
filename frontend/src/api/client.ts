@@ -39,6 +39,7 @@ import type {
   JobMatch,
   JobMatchResult,
   JobSearchHistory,
+  HiddenJobs,
   JobSearchResult,
   KitBatchResult,
   KitDetail,
@@ -598,6 +599,28 @@ export async function getSearchPrefs(): Promise<SearchContext | null> {
 /** Persist the customize picks (or clear them with null) for the next visit. */
 export async function updateSearchPrefs(context: SearchContext | null): Promise<void> {
   await api.put("/jobs/search-prefs", { context });
+}
+
+/** The user's "Not for me" set (PLAN 31.5/4). Free, no model. */
+export async function getHiddenJobs(): Promise<HiddenJobs> {
+  const { data } = await api.get<HiddenJobs>("/jobs/hidden");
+  return data;
+}
+
+/** Replace the whole set; the server answers with it canonical. History reads
+ * it, so its cached copy is dropped. */
+export async function putHiddenJobs(hidden: HiddenJobs): Promise<HiddenJobs> {
+  const { data } = await api.put<HiddenJobs>("/jobs/hidden", hidden);
+  invalidateData("history");
+  return data;
+}
+
+/** Which of these rows the user's hides now cover, in order: the SERVER's
+ * answer, so the page never matches a company or a word itself. */
+export async function whichHidden(rows: { url: string; company: string; title: string }[]): Promise<boolean[]> {
+  if (!rows.length) return [];
+  const { data } = await api.post<{ hidden: boolean[] }>("/jobs/hidden/which", { rows: rows.slice(0, 100) });
+  return data.hidden;
 }
 
 // Batch auto-tailor kits (PLAN 8.1): enqueue high-fit jobs, then drain the

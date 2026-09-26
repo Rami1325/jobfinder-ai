@@ -12488,6 +12488,183 @@ try {
   fail(`jobs-opens-on-matches check (check 72) could not run: ${e.message}`);
 }
 
+// ---- 73. "Not for me": the server matches, the page says so (EXECUTED) ------ //
+// PLAN 31.5/4. A hidden posting, company or title word is matched by the SERVER
+// alone (app/core/hidden_jobs.py, smoke 31.5/4): the searches and History leave
+// them out and count them, and after "Also hide jobs from Acme" the page asks
+// POST /jobs/hidden/which about the results it holds instead of matching a company
+// itself, one matcher, one answer. (a) EXECUTES `titleWords`, the only thing the
+// page decides: which words of a title to OFFER (letters only, three characters or
+// more, no filler or bare numbers, first spelling kept, at most four, Hebrew too).
+// (b) Every literal hide.* and card.notForMe call resolves in both jobs.json files
+// with its full plural set, since a missing `_two` renders English on the Hebrew
+// page. (c) By shape: `gone` is set only from the row the user tapped and from
+// whichHidden's flags; Undo removes by the keys the server stored; both lists say
+// their count; and putHiddenJobs drops the cached History, which it filters.
+try {
+  const nf = runProbeBundle("not-for-me", `export { titleWords } from "./pages/jobs/NotForMe";\n`, {
+    "react-i18next": "export const useTranslation = () => ({ t: (k) => k });",
+    "../../components/ui": "export const Button = () => null; export const Modal = () => null;",
+    "lucide-react": "export const EyeOff = () => null; export const X = () => null;",
+  });
+  if (typeof nf.titleWords !== "function") throw new Error("pages/jobs/NotForMe.tsx exports no titleWords");
+  for (const [title, want] of [
+    ["Senior Java Developer", ["Senior", "Java", "Developer"]],
+    // "C#" is two characters and goes: the rule is three or more, whatever the script.
+    ["C# / .NET Engineer for the Platform team", ["NET", "Engineer", "Platform", "team"]],
+    ["Sales Manager – Sales EMEA", ["Sales", "Manager", "EMEA"]],
+    ["נציג/ת מכירות של החברה", ["נציג", "מכירות", "החברה"]],
+    ["QA 2 Team Lead 2026", ["Team", "Lead"]],
+    ["", []],
+  ]) {
+    const got = nf.titleWords(title);
+    if (JSON.stringify(got) !== JSON.stringify(want))
+      fail(`check 73: titleWords(${JSON.stringify(title)}) is ${JSON.stringify(got)}, not ${JSON.stringify(want)}`);
+  }
+
+  const files = ["pages/jobs/NotForMe.tsx", "pages/JobsPage.tsx", "pages/jobs/cards.tsx"];
+  const keys = new Set();
+  for (const f of files)
+    for (const m of decomment(read(f)).matchAll(/\bt\(\s*"((?:hide\.[\w.]+)|card\.notForMe)"/g)) keys.add(m[1]);
+  if (keys.size < 14) throw new Error(`read only ${keys.size} hide.* / card.notForMe keys (expected at least 14)`);
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const key of keys)
+      for (const problem of keyProblems(bundle, key, loc, "the Jobs page's Not for me"))
+        fail(`check 73: locales/${loc}/jobs.json ${problem}`);
+  }
+
+  const read73 = ({ jobs, client }) => {
+    const out = [];
+    const sets = [...jobs.matchAll(/\bsetGone\(([^;]*)\);/g)].map((m) => m[1].replace(/\s+/g, " "));
+    const fromTap = sets.filter((s) => /new Set\(g\)\.add\(key\)/.test(s)).length;
+    const fromServer = sets.filter((s) => /flags\[i\]/.test(s)).length;
+    if (!/\bwhichHidden\(/.test(jobs)) out.push("the page does not ask the server which rows the hides cover");
+    if (sets.length !== 2 || fromTap !== 1 || fromServer !== 1)
+      out.push("`gone` is set from something other than the tapped row and the server's flags");
+    const undo = (jobs.match(/async function undoNotice\(\)[\s\S]*?\n  \}\n/) || [""])[0];
+    if (!/u !== notice\.url_key/.test(undo) || !/c !== notice\.company_key/.test(undo) || !/notice\.word_keys\.includes\(w\)/.test(undo))
+      out.push("Undo does not remove exactly the keys the server stored");
+    if ((jobs.match(/<HiddenCount\b/g) || []).length < 2) out.push("a list that hides jobs does not say how many");
+    const put = (client.match(/export async function putHiddenJobs[\s\S]*?\n\}/) || [""])[0];
+    if (!/invalidateData\(\s*"history"\s*\)/.test(put)) out.push("putHiddenJobs leaves a stale History cached");
+    return out;
+  };
+  const real = { jobs: decomment(read("pages/JobsPage.tsx")), client: decomment(read("api/client.ts")) };
+  for (const p of read73(real)) fail(`check 73: ${p} (PLAN 31.5/4)`);
+  const plant = (key, from, to, label) => {
+    if (!real[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read73({ ...real, [key]: real[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("jobs", "setGone(new Set(rows.filter((_, i) => flags[i]).map((m) => normalizeJobUrl(m.url))));",
+    "setGone(new Set(rows.filter((m) => hidden?.companies.includes(m.company)).map((m) => normalizeJobUrl(m.url))));",
+    "a page that matches companies itself");
+  plant("jobs", "urls: base.urls.filter((u) => u !== notice.url_key),", "urls: base.urls.slice(0, -1),", "an Undo that guesses what to remove");
+  plant("jobs", "<HiddenCount\n", "<HiddenCountGone\n", "a list that hides without saying so");
+  plant("client", 'await api.put<HiddenJobs>("/jobs/hidden", hidden);\n  invalidateData("history");', 'await api.put<HiddenJobs>("/jobs/hidden", hidden);', "a stale History after a hide");
+} catch (e) {
+  fail(`not-for-me check (check 73) could not run: ${e.message}`);
+}
+
+// ---- 74. "Needs you": each chip is a count the page read, one tap from it --- //
+// PLAN 31.5/5. At most three chips at the top of Jobs: drafts to review, gone
+// quiet, the resume's top fix. Each count must come from the reader its own
+// surface uses, or the strip and that surface disagree about one number: the
+// Tracker entry's `awaitingReview(kits)`, the tracker's `getStaleApplications()`,
+// and the review drawer's `badCount(review.data)`. Nothing renders when nothing
+// waits (`if (!chips.length) return null`), each chip opens what it counts (the
+// tracker's To review, the tracker, the document's review drawer, which /app
+// opens from `{ pane: "review" }`), and every literal needs.* key resolves in both
+// jobs.json files with its full plural set. Probed with planted twins every run.
+try {
+  const read74 = ({ strip, jobs, tailor }) => {
+    const out = [];
+    if (!/const drafts = awaitingReview\(kits\);/.test(strip)) out.push("the drafts chip does not count with awaitingReview(kits), the Tracker entry's reader");
+    if (!/getStaleApplications\(\)/.test(strip)) out.push("the quiet chip does not read the tracker's getStaleApplications()");
+    if (!/const fix = badCount\(review\.data\);/.test(strip)) out.push("the fix chip does not count with badCount(review.data), the drawer's own number");
+    if (!/if \(!chips\.length\) return null;/.test(strip)) out.push("the strip renders when nothing waits");
+    if (!/nav\("\/tracker", \{ state: \{ show: "review" \} \}\)/.test(strip)) out.push("the drafts chip does not open To review");
+    if (!/nav\("\/app", \{ state: \{ pane: "review" \} \}\)/.test(strip)) out.push("the fix chip does not open the review");
+    if (!/useState<DrawerPane \| null>\(\(\) => \(loc\.state\?\.pane === "review" \? "review" : null\)\)/.test(tailor))
+      out.push("/app does not open its review drawer from { pane: \"review\" }");
+    if (!/<NeedsYou resume=\{master\.resume\} \/>/.test(jobs)) out.push("the Jobs page does not mount the strip");
+    return out;
+  };
+  const real = {
+    strip: decomment(read("pages/jobs/NeedsYou.tsx")),
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    tailor: decomment(read("pages/TailorPage.tsx")),
+  };
+  for (const p of read74(real)) fail(`check 74: ${p} (PLAN 31.5/5)`);
+  const plant = (key, from, to, label) => {
+    if (!real[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read74({ ...real, [key]: real[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("strip", "const drafts = awaitingReview(kits);", "const drafts = (kits ?? []).length;", "a drafts count of every kit");
+  plant("strip", "const fix = badCount(review.data);", "const fix = review.data?.findings.length ?? 0;", "a fix count of every finding");
+  plant("strip", "if (!chips.length) return null;", "", "a strip shown with nothing in it");
+  plant("tailor", '(loc.state?.pane === "review" ? "review" : null)', "null", "a fix chip that lands on a closed drawer");
+
+  const keys = [...new Set([...real.strip.matchAll(/\bt\(\s*"(needs\.[\w.]+)"/g)].map((m) => m[1]))];
+  if (keys.length < 4) throw new Error(`read only ${keys.length} needs.* keys out of pages/jobs/NeedsYou.tsx (expected 4)`);
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const key of keys)
+      for (const problem of keyProblems(bundle, key, loc, "the Jobs page's needs-you strip"))
+        fail(`check 74: locales/${loc}/jobs.json ${problem}`);
+  }
+} catch (e) {
+  fail(`needs-you check (check 74) could not run: ${e.message}`);
+}
+
+// ---- 75. every finished step offers the next one ---------------------------- //
+// PLAN 31.5/6. A status change used to end in silence (the tracker's chip, the
+// job page's chip) or in a View (the document's Mark applied). `useNextStep` is
+// the ONE answer: Applied offers the reminder emails in Settings (`#alerts`),
+// Interview offers practice for that job (`/interview?app=<id>`, useJobContext),
+// each a link to something that exists. Pinned: the hook's two branches and
+// their destinations, all three places a status changes calling it (and the two
+// chips only on a real change), and its four literal keys in both common.json.
+try {
+  const read75 = ({ hook, tracker, job, tailor }) => {
+    const out = [];
+    if (!/status === "applied"[\s\S]*?nav\("\/settings#alerts"\)/.test(hook)) out.push("Applied does not offer the reminder in Settings");
+    if (!/status === "interview" && appId !== null[\s\S]*?nav\(`\/interview\?app=\$\{appId\}`\)/.test(hook))
+      out.push("Interview does not offer practice for that job");
+    if (!/if \(\(updated\.status \|\| status\) !== from\) nextStep\(updated\.status \|\| status, id\);/.test(tracker))
+      out.push("the tracker's status chip offers no next step, or offers one on no change");
+    if (!/else if \(status !== from\) nextStep\(status, detail\.id\);/.test(job))
+      out.push("the job page's status chip offers no next step, or offers one on no change");
+    if (!/nextStep\("applied", getTailorState\(\)\.savedAppId\)/.test(tailor)) out.push("the document's Mark applied offers no next step");
+    return out;
+  };
+  const real = {
+    hook: decomment(read("hooks/useNextStep.ts")),
+    tracker: decomment(read("pages/TrackerPage.tsx")),
+    job: decomment(read("pages/JobPage.tsx")),
+    tailor: decomment(read("pages/TailorPage.tsx")),
+  };
+  for (const p of read75(real)) fail(`check 75: ${p} (PLAN 31.5/6)`);
+  const plant = (key, from, to, label) => {
+    if (!real[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read75({ ...real, [key]: real[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("hook", 'nav("/settings#alerts")', 'nav("/settings")', "a reminder link that lands at the top of Settings");
+  plant("hook", "nav(`/interview?app=${appId}`)", 'nav("/interview")', "practice without the job");
+  plant("tracker", "if ((updated.status || status) !== from) nextStep(updated.status || status, id);", "", "a silent tracker chip");
+  plant("job", "else if (status !== from) nextStep(status, detail.id);", "", "a silent job page chip");
+
+  const keys = [...new Set([...real.hook.matchAll(/\bt\(\s*"(next\.[\w.]+)"/g)].map((m) => m[1]))];
+  if (keys.length !== 4) throw new Error(`read ${keys.length} next.* keys out of hooks/useNextStep.ts (expected 4)`);
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/common.json`));
+    for (const key of keys)
+      if (!resolvesIn(bundle, key)) fail(`check 75: locales/${loc}/common.json is missing "${key}"; the toast would print the raw key`);
+  }
+} catch (e) {
+  fail(`next-step check (check 75) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

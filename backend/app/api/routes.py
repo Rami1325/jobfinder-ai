@@ -22,6 +22,7 @@ from app.config import get_settings
 from app.core import accounts as accounts_core
 from app.core import alerts as alerts_core
 from app.core import auto_submit
+from app.core import hidden_jobs
 from app.core import inbox_apply
 from app.core import inbox_sync as inbox_sync_core
 from app.core import nudges as nudges_core
@@ -204,6 +205,9 @@ from app.models import (
     SearchContext,
     SearchContextRequest,
     SearchPrefs,
+    HiddenJobs,
+    HiddenWhichIn,
+    HiddenWhichOut,
     StaleApplicationList,
     TailorRequest,
     TailorResult,
@@ -879,6 +883,49 @@ def update_search_prefs(
     return body
 
 
+def _hidden_of(user: User) -> HiddenJobs | None:
+    """The user's stored "Not for me" set (PLAN 31.5/4), or None."""
+    return hidden_jobs.parse(user.hidden_jobs_json)
+
+
+def _hidden_kw(user: User) -> dict:
+    """`hidden=` for `search_jobs`, only when something is hidden."""
+    return hidden_jobs.search_kw(user.hidden_jobs_json)
+
+
+@router.get("/jobs/hidden", response_model=HiddenJobs)
+def get_hidden_jobs(user: User = Depends(current_user)) -> HiddenJobs:
+    """What this user said "Not for me" to (PLAN 31.5/4). `current_user`, like
+    the search prefs: it reads one column and reaches no model."""
+    return _hidden_of(user) or HiddenJobs()
+
+
+@router.put("/jobs/hidden", response_model=HiddenJobs)
+def update_hidden_jobs(
+    body: HiddenJobs, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> HiddenJobs:
+    """Replace the whole set (the page holds it), stored canonical: each entry
+    keyed as it is compared, blanks and duplicates dropped. Bounded by the model
+    (`extra="forbid"`, list and entry caps), so a PUT can never grow what every
+    search reads. An empty set clears the column."""
+    clean = hidden_jobs.canonical(body)
+    user.hidden_jobs_json = "" if hidden_jobs.is_empty(clean) else clean.model_dump_json()
+    db.commit()
+    return clean
+
+
+@router.post("/jobs/hidden/which", response_model=HiddenWhichOut)
+def which_hidden(body: HiddenWhichIn, user: User = Depends(current_user)) -> HiddenWhichOut:
+    """Which of the rows a page shows the user's hides now cover (PLAN 31.5/4),
+    in order: after "Also hide jobs from Acme" the Jobs page asks this about the
+    results it holds, rather than matching companies itself. Deterministic, no
+    model, bounded at 100 rows (`extra="forbid"`), and free."""
+    hidden = _hidden_of(user)
+    return HiddenWhichOut(
+        hidden=[bool(hidden_jobs.hidden_reason(hidden, url=r.url, company=r.company, title=r.title)) for r in body.rows]
+    )
+
+
 @router.post("/jobs/search", response_model=JobSearchResult)
 def jobs_search(
     body: JobSearchRequest,
@@ -921,6 +968,7 @@ def jobs_search(
                 # second try/except here would be a second owner of one policy, and
                 # the two would drift.
                 sightings_fn=partial(load_sightings, db),
+                **_hidden_kw(user),
             )
         except ValueError as e:  # user-facing scrape/search problems
             raise HTTPException(400, str(e))
@@ -994,6 +1042,8 @@ def jobs_search_stream(
         applied_map = applied_status_map(db, user_id)
     except Exception:  # noqa: BLE001
         applied_map = {}
+    # The user's "Not for me" set, read off the row before the session closes.
+    hidden_kw = _hidden_kw(user)
     # The use, reserved LAST on this session and right before it closes: nothing
     # between here and the worker's start can fail and strand it. The pool's
     # first search is free (PLAN 31.5, owner decision 7), and a failed one is
@@ -1057,6 +1107,7 @@ def jobs_search_stream(
                     # returned. See the non-stream route for what reversing it
                     # would cost.
                     sightings_fn=_sightings_fn,
+                    **hidden_kw,
                 )
             except ValueError as e:  # user-facing scrape/search problems
                 # The refund lands BEFORE the frame is queued, so no client can
@@ -1155,6 +1206,12 @@ def jobs_history(
     db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> JobSearchHistory:
     rows = list_search_hits(db, user.id)
+    # What the user hid since a row was saved is left out, and COUNTED (PLAN
+    # 31.5/4): the feed says how many it hid, never silently.
+    hidden = _hidden_of(user)
+    shown = [r for r in rows if not hidden_jobs.hidden_reason(hidden, url=r.url, company=r.company, title=r.title)]
+    hidden_count = len(rows) - len(shown)
+    rows = shown
     statuses = application_statuses(db, [row.url for row in rows], user.id)
 
     def _keyword_list(raw: str | None) -> list[str]:
@@ -1194,7 +1251,7 @@ def jobs_history(
                 app_id=tracked.id if tracked else None,
             )
         )
-    return JobSearchHistory(hits=hits)
+    return JobSearchHistory(hits=hits, hidden=hidden_count)
 
 
 @router.delete("/jobs/history/{hit_id}")
@@ -2565,6 +2622,9 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
     # `DeleteMyDataResult` is unchanged and both doors get this for free.
     user.search_prefs_json = ""
     user.writing_prefs_json = ""
+    # PLAN 31.5/4: the "Not for me" set names companies and the user's own
+    # choices about them. Same column-not-row rule.
+    user.hidden_jobs_json = ""
     # Spec 07 / R1: "leave Arabic off for jobs in Israel" implies the user's
     # ethnicity. Same column-not-row rule as the two above.
     user.resume_prefs_json = ""

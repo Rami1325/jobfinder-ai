@@ -285,7 +285,8 @@
     "savedGoTracker": "נשמרה · למעקב",
     "savedOpenJob": "נשמרה · למשרה",
     "matchChip": "התאמה {{value}}%",
-    "moreActions": "פעולות נוספות"
+    "moreActions": "פעולות נוספות",
+    "notForMe": "לא בשבילי"
   },
   "fit": {
     "strongOn": "חוזקות: {{skills}}",
@@ -374,5 +375,39 @@
     "retry": "נסו שוב",
     "openMissing": "המשרה מהמייל כבר לא בהיסטוריה שלכם. היא שומרת את 100 האחרונות.",
     "openPosting": "לפתיחת המשרה"
+  },
+  "hide": {
+    "done": "הוסתרה: {{title}}",
+    "also": "להסתיר גם",
+    "undo": "ביטול",
+    "alsoCompany": "משרות מ-{{company}}",
+    "alsoWord": "כותרות עם {{word}}",
+    "count_one": "משרה אחת הוסתרה על ידיכם",
+    "count_two": "שתי משרות הוסתרו על ידיכם",
+    "count_other": "{{count}} משרות הוסתרו על ידיכם",
+    "manage": "ניהול",
+    "title": "משרות מוסתרות",
+    "companies": "חברות",
+    "words": "מילים בכותרת",
+    "postings_one": "משרה אחת",
+    "postings_two": "שתי משרות",
+    "postings_other": "{{count}} משרות",
+    "showPostings": "להציג אותן שוב",
+    "none": "לא הוסתר דבר.",
+    "nextSearch": "השינויים יחולו בחיפוש הבא ובהתאמות השמורות שלכם.",
+    "unhide": "להציג שוב את {{value}}",
+    "saveError": "לא הצלחנו לשמור. נסו שוב."
+  },
+  "needs": {
+    "label": "מחכה לכם",
+    "drafts_one": "טיוטה אחת לבדיקה",
+    "drafts_two": "שתי טיוטות לבדיקה",
+    "drafts_other": "{{count}} טיוטות לבדיקה",
+    "quiet_one": "מועמדות אחת השתתקה",
+    "quiet_two": "שתי מועמדויות השתתקו",
+    "quiet_other": "{{count}} מועמדויות השתתקו",
+    "fix_one": "דבר אחד לתיקון בקורות החיים",
+    "fix_two": "שני דברים לתיקון בקורות החיים",
+    "fix_other": "{{count}} דברים לתיקון בקורות החיים"
   }
 }

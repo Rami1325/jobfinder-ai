@@ -25976,6 +25976,184 @@ finally:
     _restore29(_prev32f_env)
 
 # ---------------------------------------------------------------------------
+# 31.5/4 "Not for me" (PLAN 31.5/4): a posting, a company or a word in a job
+# title, hidden before selection, COUNTED on every list that leaves one out, never
+# silent; deterministic; user content that both privacy doors clear. Each rule
+# sits beside the case it must leave alone.
+# ---------------------------------------------------------------------------
+import ast as _hj_ast  # noqa: E402
+import inspect as _hj_inspect  # noqa: E402
+
+from app.core import alerts as _hj_alerts, hidden_jobs as _hj  # noqa: E402
+from app.models import HiddenJobs as _HJ, SearchContext as _SC_HJ  # noqa: E402
+
+_hj_set = _hj.canonical(
+    _HJ(urls=["https://Hide.test/jobs/1/", " "], companies=["Wix Ltd.", "wix"], title_words=["Java", "  מכירות ", "java"])
+)
+check(
+    "31.5/4 canonical: each entry is stored as it is compared (a URL trimmed, slash-less and case folded, a company "
+    "through the tracker's normaliser, a word case folded), and blanks and duplicates are dropped in order",
+    _hj_set == _HJ(urls=["https://hide.test/jobs/1"], companies=["wix"], title_words=["java", "מכירות"]),
+    str(_hj_set),
+)
+_HJ_CASES = [
+    ("https://hide.test/jobs/1", "", "", "url"),
+    ("HTTPS://HIDE.TEST/jobs/1/", "", "", "url"),
+    ("https://hide.test/jobs/12", "", "", ""),
+    ("", "WIX", "", "company"),
+    ("", "Wix Ltd", "", "company"),
+    ("", "Wixel", "", ""),
+    ("", "Wix Labs Partners", "", ""),
+    ("", "", "Senior Java Developer", "title"),
+    ("", "", "JavaScript Developer", ""),
+    ("", "", "נציג/ת למכירות", "title"),
+    ("", "", "Sales Engineer", ""),
+]
+_hj_got = [_hj.hidden_reason(_hj_set, url=u, company=c, title=t) for u, c, t, _w in _HJ_CASES]
+check(
+    "31.5/4 matcher: a posting by URL (case and slash aside, never a prefix of another id), a company only when EQUAL "
+    "after normalising (Wix hides 'WIX' and 'Wix Ltd', never 'Wixel' or 'Wix Labs Partners'), a Latin word only on a "
+    "word boundary (Java hides 'Senior Java Developer', never 'JavaScript Developer') and a Hebrew word as a bare "
+    "substring (מכירות hides 'נציג/ת למכירות'); nothing and an empty set hide nothing",
+    _hj_got == [w for *_x, w in _HJ_CASES]
+    and _hj.hidden_reason(None, url="https://hide.test/jobs/1", company="Wix", title="Java") == ""
+    and _hj.hidden_reason(_HJ(), url="https://hide.test/jobs/1", company="Wix", title="Java") == "",
+    str(list(zip([c[:3] for c in _HJ_CASES], _hj_got))),
+)
+_hj_imports = _pm_imported_modules(_hj_inspect.getsource(_hj))
+_hj_calls = [
+    n for n in _hj_ast.walk(_hj_ast.parse(_hj_inspect.getsource(_hj_alerts.run_alert)))
+    if isinstance(n, _hj_ast.Call) and getattr(n.func, "id", "") == "search_fn"
+]
+_hj_alert_kw = [
+    k for c in _hj_calls for k in c.keywords
+    if k.arg is None and isinstance(k.value, _hj_ast.Call) and getattr(k.value.func, "attr", "") == "search_kw"
+]
+check(
+    "31.5/4 AST: hidden_jobs imports EXACTLY __future__, re, the tracker's company normaliser and the models, so no "
+    "model, network or clock decides what a person is never shown; and run_alert's one search_fn call passes the "
+    "user's hides (**hidden_jobs.search_kw(...)), so a morning never emails a job the user hid",
+    _hj_imports == {"__future__", "re", "app.core.inbox_rules", "app.models"}
+    and len(_hj_calls) == 1 and len(_hj_alert_kw) == 1,
+    f"imports={sorted(_hj_imports)} calls={len(_hj_calls)} kw={len(_hj_alert_kw)}",
+)
+
+
+class _HideBoard:
+    name = "fake_hide"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source=self.name, title=t, company=c, description=f"Python and SQL work. {t} at {c}.", url=u)
+            for t, c, u in (
+                ("Python Developer", "Wix Ltd.", "https://hide.test/1"),
+                ("Python Developer", "Wixel", "https://hide.test/2"),
+                ("Senior Java Developer", "Acme", "https://hide.test/3"),
+                ("JavaScript Developer", "Beta", "https://hide.test/4"),
+                ("Python Developer", "Gamma", "https://hide.test/5/"),
+            )
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+_PROV["fake_hide"] = _HideBoard()
+_HIDE_CTX = _SC_HJ(
+    job_title="Developer", job_titles=["Developer"], location="", work_mode="any",
+    sources=["fake_hide"], max_age_days=0, limit=10,
+).model_dump(mode="json")
+_prev_hj_env = _env29(DAILY_SEARCH_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _chj:
+        _hj_uid, _HJ_H = _mint32(_chj, "Not For Me")
+        _hj_twin_uid, _HJ_TWIN_H = _mint32(_chj, "Hides Nothing")
+        _hj_empty = _chj.get("/jobs/hidden", headers=_HJ_H)
+        _hj_put = _chj.put(
+            "/jobs/hidden",
+            json={"urls": ["https://hide.test/5"], "companies": ["Wix"], "title_words": ["Java", "java"]},
+            headers=_HJ_H,
+        )
+        _hj_back = _chj.get("/jobs/hidden", headers=_HJ_H)
+        _hj_bad = [
+            _chj.put("/jobs/hidden", json={"urls": [], "extra": 1}, headers=_HJ_H),
+            _chj.put("/jobs/hidden", json={"title_words": ["x" * 41]}, headers=_HJ_H),
+            _chj.put("/jobs/hidden", json={"title_words": [f"w{i}" for i in range(101)]}, headers=_HJ_H),
+        ]
+        _hj_after_bad = _chj.get("/jobs/hidden", headers=_HJ_H)
+        _hj_which = _chj.post(
+            "/jobs/hidden/which",
+            json={"rows": [
+                {"url": "https://hide.test/5/", "company": "Gamma", "title": "Python Developer"},
+                {"url": "https://hide.test/2", "company": "Wixel", "title": "Python Developer"},
+                {"url": "https://x.test/9", "company": "Wix Ltd", "title": "Designer"},
+                {"url": "https://x.test/10", "company": "Other", "title": "Java Lead"},
+                {"url": "https://x.test/11", "company": "Other", "title": "JavaScript Lead"},
+            ]},
+            headers=_HJ_H,
+        )
+        _hj_which_twin = _chj.post(
+            "/jobs/hidden/which", json={"rows": [{"url": "https://hide.test/5", "company": "Wix", "title": "Java"}]},
+            headers=_HJ_TWIN_H,
+        )
+        _hj_which_big = _chj.post("/jobs/hidden/which", json={"rows": [{}] * 101}, headers=_HJ_H)
+        _hj_search = _chj.post("/jobs/search", json={"resume": _R32, "customize": _HIDE_CTX}, headers=_HJ_H)
+        _hj_twin_search = _chj.post("/jobs/search", json={"resume": _R32, "customize": _HIDE_CTX}, headers=_HJ_TWIN_H)
+        _hj_stream = _chj.post("/jobs/search/stream", json={"resume": _R32, "customize": _HIDE_CTX}, headers=_HJ_H)
+        # The twin's History holds all five; hiding one company since leaves it out, counted.
+        _hj_twin_hist0 = _j28(_chj.get("/jobs/history", headers=_HJ_TWIN_H))
+        _chj.put("/jobs/hidden", json={"companies": ["Beta"]}, headers=_HJ_TWIN_H)
+        _hj_twin_hist1 = _j28(_chj.get("/jobs/history", headers=_HJ_TWIN_H))
+        _hj_wipe = _chj.delete("/profile/data", headers=_HJ_TWIN_H)
+        _hj_after_wipe = _j28(_chj.get("/jobs/hidden", headers=_HJ_TWIN_H))
+finally:
+    _restore29(_prev_hj_env)
+    _PROV.pop("fake_hide", None)
+
+_hj_urls = sorted(m.get("url", "") for m in _j28(_hj_search).get("matches", []))
+_hj_twin_urls = sorted(m.get("url", "").rstrip("/") for m in _j28(_hj_twin_search).get("matches", []))
+check(
+    "31.5/4 routes: GET is the empty set for a user who hid nothing; PUT stores the canonical set and hands it back "
+    "(Wix normalised, 'Java' once); an unknown field, a 41-character word and a 101st word are 422s that change "
+    "nothing",
+    _hj_empty.status_code == 200 and _j28(_hj_empty) == {"urls": [], "companies": [], "title_words": []}
+    and _hj_put.status_code == 200
+    and _j28(_hj_back) == {"urls": ["https://hide.test/5"], "companies": ["wix"], "title_words": ["java"]}
+    and [r.status_code for r in _hj_bad] == [422, 422, 422]
+    and _j28(_hj_after_bad) == _j28(_hj_back),
+    f"{_j28(_hj_back)} bad={[r.status_code for r in _hj_bad]}",
+)
+check(
+    "31.5/4 which: the server says which of a page's rows the user's hides cover, in order (the posting, a company, a "
+    "title word — never Wixel or 'JavaScript'), the same rows are all shown for a user who hid nothing, and a 101st "
+    "row is a 422, so the page never matches companies itself",
+    _hj_which.status_code == 200 and _j28(_hj_which).get("hidden") == [True, False, True, True, False]
+    and _j28(_hj_which_twin).get("hidden") == [False] and _hj_which_big.status_code == 422,
+    f"{_j28(_hj_which)} twin={_j28(_hj_which_twin)} big={_hj_which_big.status_code}",
+)
+check(
+    "31.5/4 search: a posting, a company and a title word the user hid are taken out BEFORE selection and counted "
+    "(hidden 3), leaving Wixel and 'JavaScript Developer' ranked; the same search by a user who hid nothing ranks "
+    "all five with hidden 0; and the stream's result carries the same count",
+    _hj_search.status_code == 200 and _hj_urls == ["https://hide.test/2", "https://hide.test/4"]
+    and _j28(_hj_search).get("hidden") == 3
+    and _hj_twin_search.status_code == 200 and len(_hj_twin_urls) == 5 and _j28(_hj_twin_search).get("hidden") == 0
+    and _hj_stream.status_code == 200 and '"hidden":3' in _hj_stream.text.replace(" ", ""),
+    f"hid={_hj_urls} {_j28(_hj_search).get('hidden')} twin={len(_hj_twin_urls)} {_j28(_hj_twin_search).get('hidden')}",
+)
+check(
+    "31.5/4 History: a saved row the user hid since is left out and COUNTED (4 shown, hidden 1), beside the same "
+    "History before the hide (5 shown, hidden 0); and 'Delete all my data' clears the hides with the rest",
+    len(_hj_twin_hist0.get("hits", [])) == 5 and _hj_twin_hist0.get("hidden") == 0
+    and len(_hj_twin_hist1.get("hits", [])) == 4 and _hj_twin_hist1.get("hidden") == 1
+    and "Beta" not in {h.get("company") for h in _hj_twin_hist1.get("hits", [])}
+    and _hj_wipe.status_code == 200
+    and _hj_after_wipe == {"urls": [], "companies": [], "title_words": []},
+    f"before={len(_hj_twin_hist0.get('hits', []))}/{_hj_twin_hist0.get('hidden')} "
+    f"after={len(_hj_twin_hist1.get('hits', []))}/{_hj_twin_hist1.get('hidden')} wipe={_hj_wipe.status_code}",
+)
+
+# ---------------------------------------------------------------------------
 # 32 (continued). Job alerts (Phase 30 / B6), then route coverage (32.13). A
 # scheduled morning costs a free user one use and keeps it only when it emails
 # jobs; at zero the morning is skipped and the alerts card reads paused until the
@@ -26641,6 +26819,9 @@ _ROUTE_COST = {
     ("POST", "/feedback"): "free",
     ("GET", "/jobs/search-prefs"): "free",
     ("PUT", "/jobs/search-prefs"): "free",
+    ("GET", "/jobs/hidden"): "free",
+    ("PUT", "/jobs/hidden"): "free",
+    ("POST", "/jobs/hidden/which"): "free",
     ("GET", "/jobs/history"): "free",
     ("DELETE", "/jobs/history"): "free",
     ("DELETE", "/jobs/history/{hit_id}"): "free",
@@ -27248,6 +27429,11 @@ try:
                  statuses=(200,))
         _plain32(("PUT", "/jobs/search-prefs"),
                  lambda s: _as32("PUT", "/jobs/search-prefs", _SW32["h"], json={"context": None}), statuses=(200,))
+        _plain32(("GET", "/jobs/hidden"), lambda s: _as32("GET", "/jobs/hidden", _SW32["h"]), statuses=(200,))
+        _plain32(("PUT", "/jobs/hidden"),
+                 lambda s: _as32("PUT", "/jobs/hidden", _SW32["h"], json={"title_words": []}), statuses=(200,))
+        _plain32(("POST", "/jobs/hidden/which"),
+                 lambda s: _as32("POST", "/jobs/hidden/which", _SW32["h"], json={"rows": []}), statuses=(200,))
         _plain32(("GET", "/jobs/history"), lambda s: _as32("GET", "/jobs/history", _SW32["h"]), statuses=(200,))
 
         def _history_hit32():

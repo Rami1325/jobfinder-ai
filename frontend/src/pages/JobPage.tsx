@@ -41,6 +41,7 @@ import { TEMPLATE_IDS } from "../lib/templateSpecs";
 import { useUses } from "../lib/usesStore";
 import { sendKitApplication } from "../state/kitsStore";
 import { getTailorState } from "../state/tailorStore";
+import { useNextStep } from "../hooks/useNextStep";
 import type { ApplicationDetail, ApplicationOut, JDModel } from "../types";
 import { postedAgo } from "./jobs/shared";
 
@@ -228,6 +229,7 @@ function JobBody({
   const { t: tJobs } = useTranslation("jobs");
   const toast = useToast();
   const nav = useNavigate();
+  const nextStep = useNextStep();
 
   // A PATCH answers with the list shape; the fields it can change are copied
   // onto the detail, and nothing else is guessed.
@@ -258,7 +260,11 @@ function JobBody({
   );
 
   async function setStatus(status: string) {
+    const from = detail.status;
     if (!(await patch({ status }))) toast("error", t("job.statusError"));
+    // The step after it (PLAN 31.5/6): a reminder once applied, practice once
+    // it is an interview. Only a real change.
+    else if (status !== from) nextStep(status, detail.id);
   }
 
   async function rate(n: number) {

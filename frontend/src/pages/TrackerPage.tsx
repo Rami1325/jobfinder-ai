@@ -32,6 +32,7 @@ import { useTrackerMetrics, SUBMITTED } from "../hooks/useTrackerMetrics";
 import { sortApps, type ListSort } from "../lib/trackerSort";
 import { followUpStage } from "../hooks/useJobContext";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useNextStep } from "../hooks/useNextStep";
 import { getKitsState, resumeKitQueue, subscribeKits } from "../state/kitsStore";
 import type { ApplicationOut, KitOut, StaleApplication } from "../types";
 
@@ -385,6 +386,8 @@ export default function TrackerPage() {
   const { t } = useTranslation("tracker");
   const { t: tCommon } = useTranslation();
   const nav = useNavigate();
+  // The step after a status change (PLAN 31.5/6).
+  const nextStep = useNextStep();
   const loc = useLocation();
   const [apps, setApps] = useState<ApplicationOut[]>(appsCache ?? []);
   // Only the first load shows the skeleton; later visits render the cache and
@@ -467,6 +470,7 @@ export default function TrackerPage() {
     pendingFlips.set(id, from);
     setApps((prev) => prev.map((a) => (a.id === id ? updated : a)));
     setPulse({ col: updated.status || status, n: Date.now() });
+    if ((updated.status || status) !== from) nextStep(updated.status || status, id);
   }
 
   async function toggleInterviewed(a: ApplicationOut) {

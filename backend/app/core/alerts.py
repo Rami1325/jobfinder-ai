@@ -52,7 +52,7 @@ from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.core import mailer, quota
+from app.core import hidden_jobs, mailer, quota
 from app.core.job_search import resume_hash, search_jobs
 from app.db.history import load_score_cache, record_search_hits
 from app.db.models import JobAlert, JobSearchHit, SavedResume, User
@@ -777,8 +777,15 @@ def run_alert(
             # three equivalent ones. A daily alert run is a daily sample of the market,
             # which is what turns `first_seen_at` from "the day someone happened to
             # search" into a real lower bound on a posting's age, within weeks of deploy.
+            # The user's "Not for me" set (PLAN 31.5/4): a morning never emails a job
+            # the user hid, and a hidden posting takes no slot in it either.
+            owner = db.get(User, user_id)
             result = search_fn(
-                resume, alert_context(row), cache=cache, sightings_fn=partial(load_sightings, db)
+                resume,
+                alert_context(row),
+                cache=cache,
+                sightings_fn=partial(load_sightings, db),
+                **hidden_jobs.search_kw(owner.hidden_jobs_json if owner else ""),
             )
             new = split_new_matches(db, result.matches, user_id)
             record_search_hits(db, result.matches, user_id, resume_hash=master_hash)

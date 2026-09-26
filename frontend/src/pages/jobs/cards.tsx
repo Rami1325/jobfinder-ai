@@ -8,6 +8,7 @@ import {
   Banknote,
   Building2,
   ExternalLink,
+  EyeOff,
   Ghost,
   Globe,
   Laptop,
@@ -519,12 +520,15 @@ export function MatchCard({
   best,
   appStatus,
   appId,
+  onNotForMe,
 }: {
   m: JobMatch;
   best: boolean;
   appStatus?: string;
   /** The tracker row the posting is on, which the saved icon opens (PLAN 31.4/6). */
   appId?: number | null;
+  /** "Not for me" (PLAN 31.5/4): the page hides the row and offers more. */
+  onNotForMe?: () => void;
 }) {
   const nav = useNavigate();
   const { t } = useTranslation("jobs");
@@ -641,6 +645,7 @@ export function MatchCard({
           { key: "share", label: t("card.shareWhatsApp"), Icon: MessageCircle, href: whatsAppHref(m.title, m.company, m.url, t) },
         ]
       : []),
+    ...(onNotForMe ? [{ key: "notForMe", label: t("card.notForMe"), Icon: EyeOff, onClick: onNotForMe }] : []),
   ];
 
   return (
@@ -781,9 +786,12 @@ export function HistoryRow({
   hit,
   onDelete,
   opened = false,
+  onNotForMe,
 }: {
   hit: JobSearchHit;
   onDelete: (id: number) => void;
+  /** "Not for me" (PLAN 31.5/4): the page hides the row and offers more. */
+  onNotForMe?: () => void;
   /** The job an alert email's link opened (PLAN 31.4/6): the row the page
    * scrolls to, ringed so the reader sees which one it is. */
   opened?: boolean;
@@ -830,6 +838,7 @@ export function HistoryRow({
           },
         ]
       : []),
+    ...(onNotForMe ? [{ key: "notForMe", label: t("card.notForMe"), Icon: EyeOff, onClick: onNotForMe }] : []),
     { key: "remove", label: t("card.removeFromHistory"), Icon: Trash2, onClick: () => onDelete(hit.id) },
   ];
   return (

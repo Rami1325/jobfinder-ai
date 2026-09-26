@@ -31,6 +31,7 @@ import BlockEditSheet from "../components/BlockEditSheet";
 import ResumeEditBar from "../components/ResumeEditBar";
 import { useCoverage } from "../hooks/useCoverage";
 import { useReview } from "../hooks/useReview";
+import { useNextStep } from "../hooks/useNextStep";
 import MatchReport from "../components/MatchReport";
 import ResumeUpload from "../components/ResumeUpload";
 import { flagsOf, groupChecks } from "../components/ReviewPanel";
@@ -129,7 +130,7 @@ export default function TailorPage() {
   const navigate = useNavigate();
   const loc = useLocation() as {
     key: string;
-    state?: { jdText?: string; jobUrl?: string; jobTitle?: string; company?: string };
+    state?: { jdText?: string; jobUrl?: string; jobTitle?: string; company?: string; pane?: string };
   };
   // Consume a handed-over target job (Jobs page → "Tailor to this") before the
   // first snapshot below, so the page never flashes the previous job's state.
@@ -172,6 +173,8 @@ export default function TailorPage() {
     company,
   } = useSyncExternalStore(subscribeTailor, getTailorState);
   const toast = useToast();
+  // The step after Mark applied (PLAN 31.5/6).
+  const nextStep = useNextStep();
   // The design (visual only — every option is ATS-safe). In the store since
   // PLAN 31.3/4: the draft saved with its job records it, and page state went
   // back to "standard" on every remount.
@@ -811,7 +814,9 @@ export default function TailorPage() {
   // DocumentPanel, because a draft's changes open from three places the panel
   // does not own: the toolbar's "N changes", the summary over the paper, and a
   // changed block tapped on the paper.
-  const [pane, setPane] = useState<DrawerPane | null>(null);
+  // Jobs' "needs you" chip for the resume's top fix arrives with `{ pane:
+  // "review" }` (PLAN 31.5/5), and the drawer opens on the review it counted.
+  const [pane, setPane] = useState<DrawerPane | null>(() => (loc.state?.pane === "review" ? "review" : null));
   // Ephemeral, per session: the enumeration of the user's own edits is an answer
   // to a question they just asked, not a preference to remember. It needs no
   // reset either — the list is gated on `overrideCount`, so clearing the edits
@@ -1219,7 +1224,9 @@ export default function TailorPage() {
       }
       setTailorState({ applied: true });
       persistRejectedPhrases();
-      toast("success", t("toasts.markedApplied"), viewTracker);
+      // The next step, not a View (PLAN 31.5/6): the draft's bar already says
+      // Applied, and the reminder is what follows sending it.
+      if (!nextStep("applied", getTailorState().savedAppId)) toast("success", t("toasts.markedApplied"), viewTracker);
     } catch {
       toast("error", t("toasts.trackerError"));
     }

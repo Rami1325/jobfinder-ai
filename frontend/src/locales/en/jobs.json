@@ -267,7 +267,8 @@
     "savedGoTracker": "Saved · open Tracker",
     "savedOpenJob": "Saved · open the job",
     "matchChip": "{{value}}% match",
-    "moreActions": "More actions"
+    "moreActions": "More actions",
+    "notForMe": "Not for me"
   },
   "fit": {
     "strongOn": "Strong on {{skills}}",
@@ -351,5 +352,34 @@
     "retry": "Retry",
     "openMissing": "That job from your email isn't in your history any more. It keeps your newest 100.",
     "openPosting": "Open the posting"
+  },
+  "hide": {
+    "done": "Hidden: {{title}}",
+    "also": "Also hide",
+    "undo": "Undo",
+    "alsoCompany": "Jobs from {{company}}",
+    "alsoWord": "Titles with “{{word}}”",
+    "count_one": "{{count}} job hidden by you",
+    "count_other": "{{count}} jobs hidden by you",
+    "manage": "Manage",
+    "title": "Hidden jobs",
+    "companies": "Companies",
+    "words": "Words in a title",
+    "postings_one": "{{count}} posting",
+    "postings_other": "{{count}} postings",
+    "showPostings": "Show them again",
+    "none": "Nothing hidden.",
+    "nextSearch": "Changes apply to your next search and to your saved matches.",
+    "unhide": "Show {{value}} again",
+    "saveError": "Couldn't save that. Try again."
+  },
+  "needs": {
+    "label": "Waiting on you",
+    "drafts_one": "{{count}} draft to review",
+    "drafts_other": "{{count}} drafts to review",
+    "quiet_one": "{{count}} application gone quiet",
+    "quiet_other": "{{count}} applications gone quiet",
+    "fix_one": "{{count}} thing to fix on your resume",
+    "fix_other": "{{count}} things to fix on your resume"
   }
 }

@@ -754,6 +754,16 @@ export interface JobSearchResult {
   filtered?: FilteredJob[];
   source_errors?: Record<string, string>; // provider id → error when a source actually failed; absent on older backends
   source_empty?: Record<string, string>; // provider id → note when a source worked but matched nothing; absent on older backends
+  /** How many postings the user's own "Not for me" hid before selection (PLAN 31.5/4). */
+  hidden?: number;
+}
+/** What the user said "Not for me" to (PLAN 31.5/4), GET/PUT /jobs/hidden. The
+ * server stores it canonical and does ALL the matching; the page never
+ * re-derives which posting a hide covers (POST /jobs/hidden/which answers). */
+export interface HiddenJobs {
+  urls: string[];
+  companies: string[];
+  title_words: string[];
 }
 export interface JobSearchHit {
   id: number;
@@ -782,6 +792,8 @@ export interface JobSearchHit {
 }
 export interface JobSearchHistory {
   hits: JobSearchHit[];
+  /** Saved rows left out because the user hid them since (PLAN 31.5/4). */
+  hidden?: number;
 }
 
 /** Batch auto-tailor kits (PLAN 8.1): high-fit search results queued for a

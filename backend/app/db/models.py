@@ -28,6 +28,10 @@ class User(Base):
     # the Jobs page prefills the panel on the next visit. Migrates onto
     # pre-existing tables via the ADD-COLUMN shim in database.py.
     search_prefs_json: Mapped[str] = mapped_column(Text, default="")
+    # PLAN 31.5/4: the user's "Not for me" set (app.models.HiddenJobs as JSON,
+    # "" = none). User content: `_wipe_user_rows` clears it, like the prefs above.
+    # Migrates via the ADD-COLUMN shim.
+    hidden_jobs_json: Mapped[str] = mapped_column(Text, default="")
     # Writing-profile feedback loop (CV humanization spec §26): JSON list of
     # phrases this user rejected in the per-bullet review, fed to the TAILOR
     # prompt as an avoid-list. Learned only from explicit user decisions.

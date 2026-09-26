@@ -21,12 +21,15 @@ import {
   clearJobHistory,
   deleteJobHistoryItem,
   fetchJob,
+  getHiddenJobs,
   getJobHistory,
   getSearchPrefs,
   listApplications,
   matchJobs,
+  putHiddenJobs,
   searchContext,
   updateSearchPrefs,
+  whichHidden,
 } from "../api/client";
 import ResumeUpload from "../components/ResumeUpload";
 import {
@@ -47,6 +50,7 @@ import UsesNote from "../components/UsesNote";
 import type {
   ApplicationOut,
   FactsLedger,
+  HiddenJobs,
   JobMatch,
   JobSearchHit,
   ResumeModel,
@@ -54,6 +58,8 @@ import type {
 } from "../types";
 import { AlertSwitch, CustomizeFields } from "./jobs/AlertsCard";
 import { HistoryRow, MatchCard, RestrictedRow } from "./jobs/cards";
+import { HiddenCount, HiddenManager, NotForMeNotice, type HiddenNotice } from "./jobs/NotForMe";
+import { NeedsYou } from "./jobs/NeedsYou";
 import { BatchTailorCard, KIT_THRESHOLDS } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
 import { VersionHistoryModal } from "./jobs/VersionHistory";
@@ -101,6 +107,22 @@ export default function JobsPage() {
   const [historyError, setHistoryError] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
+
+  // -- "Not for me" (PLAN 31.5/4) --
+  // The SERVER holds the set and does every match (app/core/hidden_jobs.py):
+  // searches and History leave hidden postings out and say how many. This page
+  // keeps the set to edit it, the rows of THIS view the server says are now
+  // covered (`gone`, by URL), and the notice a hidden row leaves behind.
+  const [hidden, setHidden] = useState<HiddenJobs | null>(null);
+  const [historyHidden, setHistoryHidden] = useState(0);
+  const [gone, setGone] = useState<Set<string>>(() => new Set());
+  const [notice, setNotice] = useState<HiddenNotice | null>(null);
+  const [hideManager, setHideManager] = useState(false);
+  useEffect(() => {
+    getHiddenJobs()
+      .then(setHidden)
+      .catch(() => {}); // an older backend: nothing hidden, and no control offers it
+  }, []);
 
   // -- Find on LinkedIn state --
   const [customOpen, setCustomOpen] = useState(false);
@@ -205,7 +227,8 @@ export default function JobsPage() {
     const s = statusFor(m);
     return !!s && s !== "saved";
   };
-  const visible = (list: JobMatch[]) => (hideApplied ? list.filter((m) => !isDone(m)) : list);
+  const visible = (list: JobMatch[]) =>
+    (hideApplied ? list.filter((m) => !isDone(m)) : list).filter((m) => !m.url || !gone.has(normalizeJobUrl(m.url)));
 
   async function loadHistory() {
     setHistoryLoading(true);
@@ -213,6 +236,7 @@ export default function JobsPage() {
     try {
       const h = await getJobHistory();
       setHistory(h.hits);
+      setHistoryHidden(h.hidden ?? 0);
     } catch (e: any) {
       setHistoryError(apiErrorMessage(e, t("history.loadError")));
     } finally {
@@ -276,6 +300,92 @@ export default function JobsPage() {
     if (openedHit !== null && mode === "matches" && history)
       document.getElementById(`hit-${openedHit}`)?.scrollIntoView({ block: "center" });
   }, [openedHit, mode, history]);
+
+  const NOTHING_HIDDEN: HiddenJobs = { urls: [], companies: [], title_words: [] };
+
+  /** Save the whole set; the server answers with it canonical. Null on failure,
+   * which puts the set back and says so. */
+  async function saveHidden(next: HiddenJobs): Promise<HiddenJobs | null> {
+    const before = hidden;
+    setHidden(next);
+    try {
+      const saved = await putHiddenJobs(next);
+      setHidden(saved);
+      return saved;
+    } catch (e: any) {
+      setHidden(before);
+      toast("error", apiErrorMessage(e, t("hide.saveError")));
+      return null;
+    }
+  }
+
+  /** Which of this view's results the hides now cover, asked of the SERVER, so a
+   * company or a word is never matched here; then History, which the server
+   * filters and counts itself. */
+  async function syncHidden() {
+    const rows = searchResult?.matches.filter((m) => m.url) ?? [];
+    if (rows.length) {
+      try {
+        const flags = await whichHidden(rows.map((m) => ({ url: m.url, company: m.company, title: m.title })));
+        setGone(new Set(rows.filter((_, i) => flags[i]).map((m) => normalizeJobUrl(m.url))));
+      } catch {
+        /* the next search applies them anyway */
+      }
+    }
+    void loadHistory();
+  }
+
+  /** "Not for me" on a row: gone at once, saved, and a notice offering more. */
+  async function notForMe(row: { url: string; title: string; company: string }) {
+    if (!row.url) return;
+    const base = hidden ?? NOTHING_HIDDEN;
+    const key = normalizeJobUrl(row.url);
+    setGone((g) => new Set(g).add(key));
+    setHistory((p) => (p ? p.filter((h) => normalizeJobUrl(h.url) !== key) : p));
+    const saved = await saveHidden({ ...base, urls: [...base.urls, row.url] });
+    if (!saved) {
+      setNotice(null);
+      void syncHidden();
+      return;
+    }
+    const urlKey = saved.urls.find((u) => !base.urls.includes(u)) ?? "";
+    setNotice({ title: row.title, company: row.company, url_key: urlKey, company_key: "", word_keys: [] });
+    void syncHidden();
+  }
+
+  async function hideNoticeCompany() {
+    if (!notice?.company) return;
+    const base = hidden ?? NOTHING_HIDDEN;
+    const saved = await saveHidden({ ...base, companies: [...base.companies, notice.company] });
+    if (!saved) return;
+    const companyKey = saved.companies.find((c) => !base.companies.includes(c)) ?? "";
+    setNotice((n) => (n ? { ...n, company_key: companyKey || "-" } : n));
+    void syncHidden();
+  }
+
+  async function hideNoticeWord(word: string) {
+    if (!notice) return;
+    const base = hidden ?? NOTHING_HIDDEN;
+    const saved = await saveHidden({ ...base, title_words: [...base.title_words, word] });
+    if (!saved) return;
+    const wordKey = saved.title_words.find((w) => !base.title_words.includes(w)) ?? word.toLocaleLowerCase();
+    setNotice((n) => (n ? { ...n, word_keys: [...n.word_keys, wordKey] } : n));
+    void syncHidden();
+  }
+
+  /** Undo takes back exactly what this notice added, by the server's own keys. */
+  async function undoNotice() {
+    if (!notice) return;
+    const base = hidden ?? NOTHING_HIDDEN;
+    const saved = await saveHidden({
+      urls: base.urls.filter((u) => u !== notice.url_key),
+      companies: base.companies.filter((c) => c !== notice.company_key),
+      title_words: base.title_words.filter((w) => !notice.word_keys.includes(w)),
+    });
+    if (!saved) return;
+    setNotice(null);
+    void syncHidden();
+  }
 
   // PLAN 31.1/6: the row leaves at once and the server delete waits out the undo
   // window; Undo, or a failed delete, puts it back where it was.
@@ -576,6 +686,10 @@ export default function JobsPage() {
             </Card>
           )}
 
+          {!searchResult && !historyLoading && !historyError && (
+            <HiddenCount count={historyHidden} onManage={() => setHideManager(true)} />
+          )}
+
           {!historyLoading && !historyError && rows.length > 0 && (
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
               {/* ONE row at 390 px: the count, a compact sort, and Clear all as an
@@ -629,7 +743,13 @@ export default function JobsPage() {
                 )}
               </div>
               {rows.map((hit) => (
-                <HistoryRow key={hit.id} hit={hit} onDelete={deleteHit} opened={hit.id === openedHit} />
+                <HistoryRow
+                  key={hit.id}
+                  hit={hit}
+                  onDelete={deleteHit}
+                  opened={hit.id === openedHit}
+                  onNotForMe={hit.url ? () => void notForMe(hit) : undefined}
+                />
               ))}
             </motion.div>
           )}
@@ -742,6 +862,9 @@ export default function JobsPage() {
 
       {mode === "matches" && (
         <>
+          {/* What is waiting on the person, at the top (PLAN 31.5/5): nothing when
+              nothing, and each chip one tap from what it counts. */}
+          <NeedsYou resume={master.resume} />
           {searchFolded ? (
             // ONE line over the matches (PLAN 31.5/3): what was searched, or
             // "Your latest matches", then Search again and the alert switch.
@@ -825,6 +948,16 @@ export default function JobsPage() {
               <AlertSwitch />
             </div>
           </Card>
+          )}
+
+          {notice && (
+            <NotForMeNotice
+              notice={notice}
+              onHideCompany={() => void hideNoticeCompany()}
+              onHideWord={(w) => void hideNoticeWord(w)}
+              onUndo={() => void undoNotice()}
+              onDismiss={() => setNotice(null)}
+            />
           )}
 
           {/* The per-board progress is the best loading state in the app, and
@@ -955,6 +1088,15 @@ export default function JobsPage() {
                     </label>
                   </div>
                 </div>
+                {/* Never silent (PLAN 31.5/4): what the server left out before
+                    selection, plus the rows hidden in this view since. */}
+                <HiddenCount
+                  count={
+                    (searchResult.hidden ?? 0) +
+                    searchResult.matches.filter((m) => m.url && gone.has(normalizeJobUrl(m.url))).length
+                  }
+                  onManage={() => setHideManager(true)}
+                />
                 {(searchResult.filtered?.length ?? 0) > 0 &&
                   (() => {
                     // Counted per reason, by name, in `filteredSummary`
@@ -1029,7 +1171,13 @@ export default function JobsPage() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25, ease: EASE, delay: Math.min(i, 12) * 0.04 }}
                   >
-                    <MatchCard m={m} best={m === bestMatch} appStatus={statusFor(m)} appId={idFor(m)} />
+                    <MatchCard
+                      m={m}
+                      best={m === bestMatch}
+                      appStatus={statusFor(m)}
+                      appId={idFor(m)}
+                      onNotForMe={m.url ? () => void notForMe(m) : undefined}
+                    />
                   </motion.div>
                 ))}
                 {showRestricted &&
@@ -1159,6 +1307,16 @@ export default function JobsPage() {
         </>
       )}
 
+      <HiddenManager
+        open={hideManager}
+        hidden={hidden}
+        onChange={(next) => {
+          void saveHidden(next).then((saved) => {
+            if (saved) void syncHidden();
+          });
+        }}
+        onClose={() => setHideManager(false)}
+      />
     </div>
   );
 }
