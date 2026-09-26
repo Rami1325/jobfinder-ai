@@ -68,6 +68,7 @@ import {
   clearBlockOverride,
   discardTailorResult,
   flushDraftSave,
+  flushMasterSave,
   getTailorState,
   openSavedReview,
   restoreClearedOverrides,
@@ -163,10 +164,10 @@ export default function TailorPage() {
     fitScoredAt,
     scoredAt,
     overlayOpen,
-    savedResume,
     editUndo,
-    editSaving,
     editError,
+    masterSave,
+    masterConflict,
     template,
     jobUrl,
     jobTitle,
@@ -265,6 +266,10 @@ export default function TailorPage() {
             savedResume: m.resume, // the dirty baseline is the SERVER's copy
             ledger: m.ledger ?? null,
             masterLabel: m.label,
+            // What an autosave names (PLAN 31.6/2): the version this document
+            // was made from, and the language slot it came out of.
+            masterStamp: m.updated_at,
+            masterSlot: m.language === "he" ? "he" : "en",
           });
           // Only now can a draft be judged: the language rule needs the
           // master's language, and "differs" needs something to differ FROM.
@@ -282,9 +287,9 @@ export default function TailorPage() {
     loadMaster();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** Restore as a normal unsaved edit: the master goes on the undo stack, so
-   * ResumeEditBar immediately offers the same Undo and Save as any other edit
-   * and there is no way to be stuck with content you did not want. */
+  /** Restore as a normal edit: the master goes on the undo stack and the edit
+   * saves itself like any other (PLAN 31.6/2), so Undo takes it back and there
+   * is no way to be stuck with content you did not want. */
   function keepDraft() {
     const base = getTailorState().resume;
     if (base && draft) applyBlockEdit(draftOver(base, draft));
@@ -545,9 +550,8 @@ export default function TailorPage() {
   }
 
   /** Begin with a blank page rather than a wizard. No label and no
-   * `savedResume`: nothing has been saved, so the edit bar correctly shows
-   * nothing to save until the first keystroke, and the 22.11 draft starts
-   * mirroring from that first edit. */
+   * `savedResume`: nothing has been saved, so the edit bar shows nothing until
+   * the first keystroke, which the autosave then writes as the first master. */
   function startFromScratch() {
     setTailorState({
       resume: {
@@ -567,6 +571,11 @@ export default function TailorPage() {
       ledger: null,
       masterLabel: "",
       editUndo: [],
+      // Nothing saved yet: the first autosave expects no resume on the server.
+      masterStamp: "",
+      masterSlot: null,
+      masterSave: "idle",
+      masterConflict: null,
     });
   }
 
@@ -927,12 +936,21 @@ export default function TailorPage() {
    */
   useEffect(() => {
     const hidden = () => {
-      if (document.visibilityState === "hidden") flushDraftSave();
+      if (document.visibilityState !== "hidden") return;
+      flushDraftSave();
+      flushMasterSave();
     };
     document.addEventListener("visibilitychange", hidden);
     return () => document.removeEventListener("visibilitychange", hidden);
   }, []);
-  const unsent = !!result && (draftSave === "saving" || draftSave === "failed");
+  // The master's own edits too, since it saves itself (PLAN 31.6/2): one
+  // waiting out the pause, on the wire, failed, or refused and waiting for an
+  // answer. The local draft still holds it, but the warning costs nothing here.
+  const unsent =
+    (!!result && (draftSave === "saving" || draftSave === "failed")) ||
+    masterSave === "saving" ||
+    masterSave === "failed" ||
+    masterSave === "conflict";
   // Lines typed on the draft that did not reach the job's row: the one case in
   // which leaving the review loses words (PLAN 31.3/4). "saving" is not it: the
   // exit sends a waiting change first, and a note that flickered for a second
@@ -942,6 +960,7 @@ export default function TailorPage() {
     if (!unsent) return;
     const warn = (e: BeforeUnloadEvent) => {
       flushDraftSave();
+      flushMasterSave();
       e.preventDefault();
       // Still required by Chrome and Safari to show the prompt at all, despite
       // being deprecated in the spec; `preventDefault()` alone is Firefox-only.
@@ -1016,8 +1035,12 @@ export default function TailorPage() {
       ledger: l,
       label: masterResumeLabel(r),
       language: resumeLanguage(r),
-      updated_at: new Date().toISOString(),
+      updated_at: "",
     });
+    // The version is the save's answer, never the clock's: until it comes an
+    // autosave names none (null), because a made-up one would be refused as a
+    // save made from a version the server never held (PLAN 31.6/2).
+    setTailorState({ masterStamp: null });
     const m = await persistMaster(r, l, quiet); // best-effort — null when the backend is unreachable
     // resetMasterCache() is NOT optional here, and leaving it out is why a
     // freshly uploaded resume "didn't take": saveMasterResume calls
@@ -1027,7 +1050,11 @@ export default function TailorPage() {
     // SENDING the resume this upload just replaced — until a full page reload.
     if (m) {
       resetMasterCache();
-      setTailorState({ masterLabel: m.label });
+      setTailorState({
+        masterLabel: m.label,
+        masterStamp: m.updated_at,
+        masterSlot: m.language === "he" ? "he" : "en",
+      });
     } else {
       // Same reason as JobsPage: the hook only toasts on success, so a failed
       // save would leave the page showing a resume the server never stored.
@@ -1663,16 +1690,14 @@ export default function TailorPage() {
                 while a result is up. */}
             {isMaster && shown && (
               <ResumeEditBar
-                resume={shown}
-                savedResume={savedResume}
-                masterLabel={masterLabel}
-                unsaved={editUndo.length}
-                saving={editSaving}
+                save={masterSave}
+                conflict={masterConflict}
                 error={editError}
+                canUndo={editUndo.length > 0}
               />
             )}
-            {/* ONE primary per row (PLAN 31.7): while there is work to save,
-                Save is it and this goes quiet, an icon below sm. On a tailored
+            {/* ONE primary per row (PLAN 31.7). The master saves itself since
+                PLAN 31.6/2, so no Save competes with this on it. On a tailored
                 draft it is "a different job", from lg; below lg it is under the
                 tool row's "⋯", because the loudest thing on a draft belongs to
                 review and download, not to starting over.
@@ -1682,7 +1707,7 @@ export default function TailorPage() {
             {(resume || masterLoad === "loading") && (
             <Button
               size="sm"
-              variant={result || editUndo.length > 0 ? "secondary" : "primary"}
+              variant={result ? "secondary" : "primary"}
               loading={loading}
               icon={<Wand2 size={15} />}
               disabled={!canRun}
@@ -1692,7 +1717,7 @@ export default function TailorPage() {
               {result ? (
                 t("overlay.openDifferent")
               ) : (
-                <span className={editUndo.length > 0 ? "sr-only sm:not-sr-only" : undefined}>
+                <span>
                   {/* The job title earns its place on a wide screen and costs the
                       row on a 390px one, where the target card above names it. */}
                   <span className="sm:hidden">{t("overlay.open")}</span>

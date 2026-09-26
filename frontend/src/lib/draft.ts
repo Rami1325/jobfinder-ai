@@ -121,12 +121,12 @@ export function readDraft(): ResumeDraft | null {
  * Should this draft be offered against the master that just loaded?
  *
  * THE LANGUAGE RULE IS NOT COSMETIC. There is one master row per language, and
- * `PUT /profile/resume` picks the row by DETECTED language and carries no id —
- * so restoring a Hebrew draft on top of the English master and pressing Save
- * writes over the *Hebrew* CV and leaves the one on screen untouched. That is
- * the same hazard `ResumeEditBar` guards at save time; this refuses to create
- * it in the first place. A mismatched draft is KEPT, not deleted: the user may
- * simply be looking at the other language slot right now.
+ * `PUT /profile/resume` picks the row by DETECTED language — so restoring a
+ * Hebrew draft on top of the English master would save it over the *Hebrew*
+ * CV. Since PLAN 31.6/1 the server refuses that save (`resume_slot`) and the
+ * page asks; this refuses to create the question in the first place. A
+ * mismatched draft is KEPT, not deleted: the user may simply be looking at the
+ * other language slot right now.
  */
 export function offerDraft(draft: ResumeDraft | null, master: ResumeModel): boolean {
   if (!draft) return false;

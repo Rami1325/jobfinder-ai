@@ -16,9 +16,11 @@ interface Props {
  * document for a stored copy means a user who opens their CV sees text they
  * did not put there on this visit and cannot tell where it came from; the
  * document surface has to be trustworthy at a glance. Restoring is one tap,
- * and it lands as a normal unsaved edit — `ResumeEditBar` then shows the same
- * Undo and Save it shows for anything else, so there is no new state to learn
- * and no way to be stuck with content you did not want.
+ * and it lands as a normal edit — it saves itself like any other (PLAN 31.6/2)
+ * and Undo takes it back, so there is no new state to learn and no way to be
+ * stuck with content you did not want. Since the master saves itself, this bar
+ * appears only for an edit whose save never landed: a tab closed inside the
+ * pause, no network, a refusal left unanswered.
  */
 export default function DraftRestoreBar({ savedAt, onKeep, onDiscard }: Props) {
   const { t, i18n } = useTranslation("tailor");

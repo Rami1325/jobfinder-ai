@@ -13,8 +13,10 @@ import {
 } from "../api/client";
 import { resetMasterCache } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
-import { clearDraft, writeDraft } from "../lib/draft";
+import { invalidateData } from "../lib/dataCache";
+import { clearDraft, sameResume, writeDraft } from "../lib/draft";
 import { resumeLanguage } from "../lib/lang";
+import { masterResumeLabel } from "../lib/masterLabel";
 import type { Overrides } from "../lib/resumeOverrides";
 import type { TailorStage } from "../lib/tailorStages";
 import { TEMPLATE_IDS } from "../lib/templateSpecs";
@@ -139,11 +141,24 @@ export type TailorState = {
   // flat skills union, and a local baseline it cannot match leaves the document
   // reading dirty forever.
   savedResume: ResumeModel | null;
-  /** Previous states, newest last. Local undo; the server versions are the
-   * undo of last resort and are only written on an explicit save. */
+  /** Previous states, newest last. Local undo, kept across autosaves: undoing
+   * is an edit like any other, and it is saved the same way. The server's
+   * restore points are the undo of last resort. */
   editUndo: ResumeModel[];
-  editSaving: boolean;
+  /** Why the last autosave failed, "" for the fallback sentence. */
   editError: string;
+  // --- the master saves itself (PLAN 31.6/2) ----------------------------- //
+  /** The version of the master the document was made from: the `updated_at`
+   * the server handed out for it, "" when nothing is saved yet (a page begun
+   * from scratch), null when it is not known (an upload whose save has not
+   * answered), which the server does not check. */
+  masterStamp: string | null;
+  /** The language slot the document was loaded from, null when none is. */
+  masterSlot: "he" | "en" | null;
+  masterSave: MasterSave;
+  /** Why the server refused the last autosave, when it did: a newer version
+   * saved elsewhere, or a resume that now reads as the other language. */
+  masterConflict: MasterConflict | null;
   /** The design the document is drawn, previewed and downloaded in. Here, not
    * in the page, since PLAN 31.3/4: the draft saved with its job records it, so
    * a page that forgot it on a remount would re-save the job's draft as
@@ -183,8 +198,11 @@ let state: TailorState = {
   overlayOpen: false,
   savedResume: null,
   editUndo: [],
-  editSaving: false,
   editError: "",
+  masterStamp: null,
+  masterSlot: null,
+  masterSave: "idle",
+  masterConflict: null,
   template: "standard",
 };
 
@@ -634,6 +652,10 @@ export function restoreClearedOverrides(): void {
 export function adoptMaster(m: MasterResume): void {
   seq++; // cancel an in-flight tailor — it is about the resume that just went
   newDraftRow();
+  // An autosave of the resume being replaced must not land after it: the new
+  // one is already on the server, and the old document's waiting change is
+  // about a file the person just chose to replace.
+  newMasterEpoch();
   setTailorState({
     resume: m.resume,
     // The dirty baseline is the incoming copy, never the document on screen:
@@ -643,6 +665,10 @@ export function adoptMaster(m: MasterResume): void {
     masterLabel: m.label,
     editUndo: [],
     editError: "",
+    masterStamp: m.updated_at ?? null,
+    masterSlot: m.language === "he" || m.language === "en" ? m.language : null,
+    masterSave: "idle",
+    masterConflict: null,
     loading: false,
     tailorStages: [],
     error: "",
@@ -704,7 +730,10 @@ export function applyBlockEdit(next: ResumeModel): void {
   // Mirror to this device. HERE rather than at the call sites so a future edit
   // path cannot forget it — this function is the single writer of `resume`
   // during editing, which is the same reason the invalidation above lives here.
+  // The mirror is what a save that never landed leaves behind: the pause, a
+  // closed tab, no network. The draft-restore bar offers it on the next visit.
   writeDraft(next);
+  scheduleMasterSave();
 }
 
 export function undoBlockEdit(): void {
@@ -713,58 +742,191 @@ export function undoBlockEdit(): void {
   const back = stack[stack.length - 1];
   setTailorState({ resume: back, editUndo: stack.slice(0, -1), editError: "" });
   // Undo has to move the draft too, or closing the tab restores the very edit
-  // the user just took back. Undoing to the bottom of the stack means the
-  // document matches the saved master again, so there is nothing to restore.
-  if (stack.length === 1) clearDraft();
-  else writeDraft(back);
+  // the user just took back.
+  writeDraft(back);
+  scheduleMasterSave();
 }
 
-/** True when the document on screen differs from the last saved state. */
-export function hasUnsavedEdits(): boolean {
-  return state.editUndo.length > 0;
+// --------------------------------------------------------------------------- //
+// The master saves itself (PLAN 31.6/2)
+// --------------------------------------------------------------------------- //
+//
+// A Save button stood here until the three backend fixes it waited on landed
+// (31.6/1, `data-and-privacy.md`): restore points coalesced per half hour, a
+// save refused when the resume now reads as the other language's slot, and a
+// save refused when another tab or device saved a newer version. Every edit
+// and undo now saves a pause later, carrying the slot and the version the
+// document was made from, and the page says Saving, Saved, or what went wrong.
+
+/** Where the master's autosave stands. `saving` covers a change waiting out the
+ * pause as well as one on the wire: either way the server does not have it. */
+export type MasterSave = "idle" | "saving" | "saved" | "failed" | "conflict";
+
+export type MasterConflict =
+  | { kind: "stale"; updatedAt: string }
+  | { kind: "slot"; language: "he" | "en" };
+
+/** The pause after the last edit before the master is written: a commit is
+ * already one edit (a block, on blur), so this only gathers a run of them. */
+const MASTER_PAUSE_MS = 1200;
+
+// Every save carries the epoch it was made in, and `adoptMaster` moves it: an
+// answer about the resume that was just replaced changes nothing on screen.
+let masterEpoch = 0;
+let masterTimer: ReturnType<typeof setTimeout> | null = null;
+// One save at a time, in order, each reading the document and the version
+// when it RUNS, so a burst sent behind a slow save goes as one request made
+// from the version that save handed back.
+let masterChain: Promise<unknown> = Promise.resolve();
+let masterPending = 0;
+
+function newMasterEpoch(): void {
+  masterEpoch++;
+  if (masterTimer !== null) clearTimeout(masterTimer);
+  masterTimer = null;
+}
+
+/** An edit was made: save it a pause from now. A refusal as STALE waits for the
+ * person's answer instead, since every save made from that version would be
+ * refused the same way; one for the SLOT does not, because undoing the change
+ * that crossed into the other language is itself an answer. */
+function scheduleMasterSave(): void {
+  if (state.masterConflict?.kind === "stale") return;
+  if (masterTimer !== null) clearTimeout(masterTimer);
+  masterTimer = setTimeout(flushMasterSave, MASTER_PAUSE_MS);
+  if (state.masterSave !== "saving") setTailorState({ masterSave: "saving" });
+}
+
+/** Send the edit waiting out the pause, now: when the page is hidden or closing. */
+export function flushMasterSave(): void {
+  if (masterTimer === null) return;
+  clearTimeout(masterTimer);
+  masterTimer = null;
+  void enqueueMasterSave(masterEpoch, false);
+}
+
+function enqueueMasterSave(epoch: number, asked: boolean): Promise<void> {
+  masterPending++;
+  const run = masterChain.then(() => runMasterSave(epoch, asked));
+  masterChain = run.catch(() => undefined);
+  return run.finally(() => {
+    masterPending--;
+  });
 }
 
 /**
- * Persist the edited master. Explicit, never automatic.
+ * One save of the document as it stands. No `ledger` is sent: the backend
+ * rebuilds it from the resume, which is what we want, because the user typed
+ * these facts. Passing the LOADED ledger through would store facts describing
+ * the PRE-edit resume, and the fabrication guard reads the stored ledger, so a
+ * corrected employer would read as an invention forever.
  *
- * Deliberately NOT `useSaveMasterResume`: that hook's bare `catch {}` makes a
- * 401, a 502 and being offline indistinguishable, and returns null. It is fine
- * for its documented best-effort use — persisting a freshly parsed resume — and
- * exactly wrong behind a Save button, where the user is relying on the result.
- *
- * No `ledger` is sent. The backend rebuilds it from the resume when none is
- * given, which is what we want: the user typed these facts, so the resume IS
- * the source of truth. Passing the LOADED ledger through would store facts
- * describing the PRE-edit resume, and the fabrication guard reads the stored
- * ledger — a corrected employer would then read as an invention forever.
+ * `asked` is a save the person chose (Keep mine, Save as my other resume): it
+ * is always a restore point, never coalesced.
  */
-export async function commitResumeEdits(label: string, fallbackError: string): Promise<boolean> {
-  const resume = state.resume;
-  if (!resume || state.editSaving) return false;
-  setTailorState({ editSaving: true, editError: "" });
-  try {
-    const saved = await saveMasterResume({ resume, label });
-    setTailorState({
-      // Seed BOTH from the server's copy, never from the local object.
-      resume: saved.resume,
-      savedResume: saved.resume,
-      masterLabel: saved.label,
-      editUndo: [],
-      editSaving: false,
-      editError: "",
-    });
-    // The draft has served its purpose the moment the server has the content.
-    // Leaving it would offer to "restore" the resume the user just saved.
+async function runMasterSave(epoch: number, asked: boolean): Promise<void> {
+  if (epoch !== masterEpoch) return;
+  const sent = state.resume;
+  if (!sent) return;
+  const settled = () => masterTimer === null && masterPending <= 1;
+  if (state.savedResume && sameResume(sent, state.savedResume) && !asked) {
+    if (settled()) setTailorState({ masterSave: "saved", editError: "" });
     clearDraft();
+    return;
+  }
+  try {
+    const saved = await saveMasterResume({
+      resume: sent,
+      label: state.masterLabel || masterResumeLabel(sent),
+      ...(state.masterSlot ? { slot: state.masterSlot } : {}),
+      ...(state.masterStamp !== null ? { base_updated_at: state.masterStamp } : {}),
+      autosave: !asked,
+    });
+    if (epoch !== masterEpoch) return;
+    // Adopt the server's copy only while the document is still the one sent:
+    // the model validator can add to the flat skills union, and a baseline the
+    // document can never match would save it forever. A change made while this
+    // was on the wire keeps the screen, and its own save follows.
+    const current = state.resume === sent;
+    setTailorState({
+      ...(current ? { resume: saved.resume } : {}),
+      savedResume: saved.resume,
+      masterStamp: saved.updated_at,
+      masterSlot: saved.language === "he" ? "he" : "en",
+      masterLabel: saved.label,
+      masterConflict: null,
+      editError: "",
+      ...(settled() ? { masterSave: "saved" as const } : {}),
+    });
+    // The server has it: a draft left here would offer to "restore" it.
+    if (current) clearDraft();
     // `invalidateData` cannot reach useMasterResume's module-level cache, and
-    // nine pages read the master from it — an X-ray run right after an edit
+    // nine pages read the master from it, so an X-ray run right after an edit
     // would otherwise scan the resume that was just replaced.
     resetMasterCache();
-    return true;
   } catch (e: unknown) {
-    setTailorState({ editSaving: false, editError: apiErrorMessage(e, fallbackError) });
-    return false;
+    if (epoch !== masterEpoch) return;
+    const res = (e as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
+    const detail = (res?.status === 409 ? res.data?.detail : null) as
+      | { kind?: string; updated_at?: string; language?: string }
+      | null;
+    if (detail?.kind === "resume_stale")
+      setTailorState({ masterSave: "conflict", masterConflict: { kind: "stale", updatedAt: detail.updated_at ?? "" } });
+    else if (detail?.kind === "resume_slot")
+      setTailorState({
+        masterSave: "conflict",
+        masterConflict: { kind: "slot", language: detail.language === "he" ? "he" : "en" },
+      });
+    else setTailorState({ masterSave: "failed", editError: apiErrorMessage(e, "") });
   }
+}
+
+/** Try again after a failure, at once. */
+export function retryMasterSave(): Promise<void> {
+  if (masterTimer !== null) clearTimeout(masterTimer);
+  masterTimer = null;
+  setTailorState({ masterSave: "saving" });
+  return enqueueMasterSave(masterEpoch, false);
+}
+
+/**
+ * The person's answer to a refused save.
+ * - `keep`: this tab's resume replaces the newer version saved elsewhere, which
+ *   the server keeps as a restore point (an asked-for save is never coalesced).
+ * - `load`: the newer version replaces this tab's document; its edits since
+ *   stay in this tab's undo only until the document is replaced, which is the
+ *   choice the button names.
+ * - `switch`: save the resume into the slot of the language it now reads as,
+ *   in place of the resume there (kept as a restore point too).
+ */
+export async function resolveMasterConflict(choice: "keep" | "load" | "switch"): Promise<void> {
+  const conflict = state.masterConflict;
+  if (!conflict) return;
+  if (choice === "load") {
+    // The copy this tab cached is the version being replaced, not the newer one.
+    invalidateData("master");
+    const m = await getMasterResume(state.masterSlot ?? undefined);
+    if (m) adoptMaster(m);
+    return;
+  }
+  if (choice === "keep" && conflict.kind === "stale") {
+    setTailorState({ masterStamp: conflict.updatedAt, masterConflict: null, masterSave: "saving" });
+  } else if (choice === "switch" && conflict.kind === "slot") {
+    // The other slot's version is not known here, and replacing it is exactly
+    // what the person just chose, so the save names none.
+    setTailorState({ masterSlot: conflict.language, masterStamp: null, masterConflict: null, masterSave: "saving" });
+  } else return;
+  if (masterTimer !== null) clearTimeout(masterTimer);
+  masterTimer = null;
+  await enqueueMasterSave(masterEpoch, true);
+}
+
+/** Every save sent and answered. For the checks, and for a caller that must
+ * know the server has the document before it moves on. */
+export async function settleMaster(): Promise<MasterSave> {
+  flushMasterSave();
+  await masterChain;
+  return state.masterSave;
 }
 
 // --------------------------------------------------------------------------- //

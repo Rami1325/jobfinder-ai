@@ -1259,6 +1259,14 @@ export async function saveMasterResume(payload: {
   resume: ResumeModel;
   ledger?: FactsLedger | null;
   label?: string;
+  /** PLAN 31.6/1. The slot the document was loaded from: a resume that now
+   * reads as the other language is refused (409 `resume_slot`). */
+  slot?: "he" | "en";
+  /** The version it was made from ("" for none saved): a newer one on the
+   * server is refused (409 `resume_stale`). Left out, nothing is checked. */
+  base_updated_at?: string;
+  /** A save the person did not ask for, whose restore points are coalesced. */
+  autosave?: boolean;
 }): Promise<MasterResume> {
   const { data } = await api.put<MasterResume>("/profile/resume", payload);
   invalidateData("master", "masters");

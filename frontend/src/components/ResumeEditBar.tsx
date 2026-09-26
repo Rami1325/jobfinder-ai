@@ -1,148 +1,135 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Save, Undo2 } from "lucide-react";
-import { Button, useToast } from "./ui";
-import { commitResumeEdits, undoBlockEdit } from "../state/tailorStore";
-import { masterResumeLabel } from "../hooks/useSaveMasterResume";
-import { resumeLanguage } from "../lib/lang";
-import type { ResumeModel } from "../types";
+import { AlertTriangle, Check, Loader2, Undo2 } from "lucide-react";
+import { Button } from "./ui";
+import {
+  resolveMasterConflict,
+  retryMasterSave,
+  undoBlockEdit,
+  type MasterConflict,
+  type MasterSave,
+} from "../state/tailorStore";
 
 interface Props {
-  resume: ResumeModel;
-  /** The last saved state, for the language-flip guard. */
-  savedResume: ResumeModel | null;
-  masterLabel: string;
-  unsaved: number;
-  saving: boolean;
+  save: MasterSave;
+  conflict: MasterConflict | null;
+  /** Why the last save failed; "" for the fallback sentence. */
   error: string;
+  canUndo: boolean;
 }
 
 /**
- * Explicit save, not autosave — and that is a decision with three concrete
- * reasons, all of which are live bugs waiting behind an autosave:
+ * Where the master's autosave stands, and Undo (PLAN 31.6/2).
  *
- *   1. The server keeps 20 versions per (user, language) and snapshots on every
- *      changed PUT. Twenty-one autosaves is three minutes of typing, and it has
- *      by then evicted the uploaded original and every restore point that meant
- *      anything.
- *   2. `PUT /profile/resume` picks the row by DETECTED language and carries no
- *      id. One Hebrew word typed into an English resume saves over the Hebrew
- *      one and leaves the row you were editing untouched.
- *   3. There is no conflict check at any layer, so two tabs are last-write-wins.
- *
- * Until those are fixed on the backend, a Save button is the honest interface.
- * (2) is guarded here, client-side, because it is the one that destroys the
- * other document rather than just this one.
+ * There was a Save button here, with an unsaved-changes count, until the three
+ * backend fixes it waited on landed (31.6/1): every edit now saves a pause
+ * later, and this says Saving… or Saved. What it may NOT do is say Saved about
+ * a save the server refused, so each refusal has its own panel and stays on
+ * screen until it is answered:
+ *   - a failure (the network, the server) offers Try again;
+ *   - STALE: another tab or device saved a newer version since this document
+ *     was opened. Load that version, or keep this one (the other is kept as a
+ *     restore point);
+ *   - SLOT: the resume now reads as the other language, and saving it would
+ *     replace the resume in that language's slot. Nothing is saved until the
+ *     person undoes the change or says to save it there.
  *
  * SHAPE: a FRAGMENT, not a bar. Every child is a flex item of the document
- * toolbar's own wrapping row — the cluster rides at the end beside the verbs,
- * and the panels that must not be missed are `w-full` siblings that break onto
- * their own line of that same row. That is what keeps the save failure on
- * screen: it is chrome over the document, not a toast, because "your work is
- * not saved" must not disappear while the work is still not saved.
+ * toolbar's own wrapping row, and the panels are `w-full` siblings that break
+ * onto their own line of it. That is what keeps a refusal on screen: it is
+ * chrome over the document, not a toast, because "your work is not saved" must
+ * not disappear while the work is still not saved.
  */
-export default function ResumeEditBar({ resume, savedResume, masterLabel, unsaved, saving, error }: Props) {
+export default function ResumeEditBar({ save, conflict, error, canUndo }: Props) {
   const { t } = useTranslation("tailor");
-  const toast = useToast();
-  const [confirmLang, setConfirmLang] = useState<"he" | "en" | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  async function run() {
-    const ok = await commitResumeEdits(
-      masterLabel || masterResumeLabel(resume),
-      t("edit.saveErrorFallback"),
-    );
-    setConfirmLang(null);
-    if (ok) toast("success", t("edit.saved"));
-    // The failure is NOT a toast — see the shape note above.
-  }
+  // Nothing edited on this visit and nothing broken: nothing here, so the
+  // toolbar keeps its one row at rest (PLAN 31.2/1).
+  if (save === "idle" && !canUndo) return null;
 
-  function save() {
-    const now = resumeLanguage(resume);
-    if (savedResume && now !== resumeLanguage(savedResume)) {
-      setConfirmLang(now);
-      return;
-    }
-    void run();
-  }
-
-  // Nothing to save and nothing broken: nothing here. The "tap anything to
-  // edit" hint this slot used to show on every visit cost the toolbar a whole
-  // row over the paper; it is a one-time line above the paper now, in
-  // TailorPage (PLAN 31.2/1).
-  if (unsaved === 0 && !error) return null;
-
-  const unsavedLabel = t("edit.unsaved", { count: unsaved });
-  // "Unsaved" is only half the truth — the other half is WHERE the work is
-  // until you save it. The device note is inline from `md`, and folded into
-  // the count's accessible name below that, so the fact never depends on a
-  // tooltip a touch screen cannot show.
-  const pending = `${unsavedLabel}. ${t("edit.local")}`;
+  const answer = (choice: "keep" | "load" | "switch") => {
+    setBusy(true);
+    void resolveMasterConflict(choice).finally(() => setBusy(false));
+  };
+  const langName = conflict?.kind === "slot" && conflict.language === "he" ? t("langSwitch.name.he") : t("langSwitch.name.en");
+  const status =
+    save === "saving"
+      ? { icon: <Loader2 size={14} className="animate-spin" aria-hidden />, text: t("edit.saving") }
+      : save === "saved"
+        ? { icon: <Check size={14} className="text-mint" aria-hidden />, text: t("edit.autoSaved") }
+        : save === "idle"
+          ? null
+          : { icon: <AlertTriangle size={14} className="text-danger" aria-hidden />, text: t("edit.notSaved") };
 
   return (
     <>
-      {/* One flex item, so the three controls stay glued and wrap as a unit.
-          Width budget at 390px: 26px count + 38px Undo + 76px Save + gaps is
-          ~156px, which leaves the Tailor button beside it on a single tall row
-          instead of a second one. */}
-      <span className="inline-flex items-center gap-2">
-        {/* Below sm the sentence is what would cost that row, so the number
-            carries it and the sentence stays the tooltip and the accessible
-            name. Above sm there is room to just say it. */}
-        <span
-          title={pending}
-          className="inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-accent/40 bg-accent/10 px-1.5 text-xs font-semibold tabular-nums text-ink sm:hidden"
-        >
-          <span aria-hidden>{unsaved}</span>
-          <span className="sr-only">{pending}</span>
-        </span>
-        <span title={pending} className="hidden text-xs font-semibold text-ink sm:inline">
-          {unsavedLabel}
-        </span>
-        <span className="hidden text-xs text-ink-faint md:inline">{t("edit.local")}</span>
-        <Button
-          size="sm"
-          variant="ghost"
-          icon={<Undo2 size={14} />}
-          disabled={unsaved === 0 || saving}
-          onClick={undoBlockEdit}
-          aria-label={t("edit.undo")}
-          title={t("edit.undo")}
-        />
-        {/* "Save", not "Save resume": the label sits inches from the CV and
-            next to its own unsaved count, and the long form is what pushes the
-            cluster onto its own row on a phone. The full wording stays as the
-            tooltip rather than as an aria-label, so the accessible name still
-            contains the visible one. */}
-        <Button size="sm" loading={saving} icon={<Save size={14} />} onClick={save} title={t("edit.save")}>
-          {saving ? t("edit.saving") : t("edit.saveShort")}
-        </Button>
+      {/* One flex item, so the status and Undo wrap as a unit. Below sm the
+          icon carries the status and the words are its accessible name; from
+          sm there is room to say it. */}
+      <span className="inline-flex shrink-0 items-center gap-1">
+        {status && (
+          <span title={status.text} className="inline-flex items-center gap-1 text-xs text-ink-muted">
+            {status.icon}
+            <span className="sr-only sm:not-sr-only">{status.text}</span>
+          </span>
+        )}
+        {canUndo && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Undo2 size={14} />}
+            onClick={undoBlockEdit}
+            aria-label={t("edit.undo")}
+            title={t("edit.undo")}
+          />
+        )}
       </span>
 
-      {/* `order-last` for the same reason the hint carries it — see above. */}
-      {(error || confirmLang) && (
-        <div className="order-last w-full">
-          {error && (
+      {(save === "failed" || save === "conflict") && (
+        // `order-last` so it breaks onto its own line under the row.
+        <div role="alert" className="order-last w-full">
+          {save === "failed" && (
             <div className="flex flex-wrap items-center gap-2 text-sm text-danger">
               <AlertTriangle size={15} className="shrink-0" />
-              <span className="min-w-0">{error}</span>
-              <button type="button" onClick={save} className="font-medium underline underline-offset-2">
+              <span className="min-w-0">{error || t("edit.saveErrorFallback")}</span>
+              <button
+                type="button"
+                onClick={() => void retryMasterSave()}
+                className="font-medium underline underline-offset-2"
+              >
                 {t("edit.retry")}
               </button>
             </div>
           )}
 
-          {confirmLang && (
-            <div className="mt-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2">
-              <p className="text-sm font-semibold text-ink">{t("edit.langWarnTitle")}</p>
-              <p className="mt-0.5 text-xs text-ink-muted">
-                {t("edit.langWarnBody", { lang: t(`langSwitch.name.${confirmLang}`) })}
-              </p>
+          {conflict?.kind === "stale" && (
+            <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2">
+              <p className="text-sm font-semibold text-ink">{t("edit.staleTitle")}</p>
+              <p className="mt-0.5 text-xs text-ink-muted">{t("edit.staleBody")}</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setConfirmLang(null)}>
-                  {t("edit.cancel")}
+                <Button size="sm" variant="secondary" disabled={busy} onClick={() => answer("load")}>
+                  {t("edit.staleLoad")}
                 </Button>
-                <Button size="sm" variant="danger" onClick={run}>
-                  {t("edit.langWarnConfirm")}
+                <Button size="sm" disabled={busy} onClick={() => answer("keep")}>
+                  {t("edit.staleKeep")}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {conflict?.kind === "slot" && (
+            <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2">
+              <p className="text-sm font-semibold text-ink">{t("edit.langWarnTitle")}</p>
+              <p className="mt-0.5 text-xs text-ink-muted">{t("edit.langWarnAuto", { lang: langName })}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {canUndo && (
+                  <Button size="sm" variant="secondary" icon={<Undo2 size={14} />} disabled={busy} onClick={undoBlockEdit}>
+                    {t("edit.undo")}
+                  </Button>
+                )}
+                <Button size="sm" variant="danger" disabled={busy} onClick={() => answer("switch")}>
+                  {t("edit.langWarnSwitch", { lang: langName })}
                 </Button>
               </div>
             </div>

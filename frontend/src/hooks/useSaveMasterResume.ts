@@ -2,18 +2,12 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { saveMasterResume } from "../api/client";
 import { useToast } from "../components/ui";
-import { resumeLanguage } from "../lib/lang";
+import { masterResumeLabel } from "../lib/masterLabel";
 import type { FactsLedger, MasterResume, ResumeModel } from "../types";
 
-/** Human-readable label for a saved master resume, derived from the contact
- * name, in the resume's own language (labels are stored, not translated). */
-export function masterResumeLabel(resume: ResumeModel): string {
-  const name = resume.contact.name;
-  if (resumeLanguage(resume) === "he") {
-    return name ? `קורות החיים של ${name}` : "קורות החיים שלי";
-  }
-  return name ? `${name}'s resume` : "My resume";
-}
+// In lib/ since PLAN 31.6/2, where the store's autosave can reach it; kept
+// exported from here for the pages that already import it from this hook.
+export { masterResumeLabel };
 
 /**
  * Persist a freshly parsed resume as the master resume (label from the contact

@@ -662,12 +662,18 @@ try {
 // decision here instead of quietly going stale. Same shape as check 12; `tsc`
 // sees none of it, because every key is correctly typed and correctly optional.
 try {
-  // The six keys that identify the MASTER RESUME. `adoptMaster` clears them
+  // The keys that identify the MASTER RESUME. `adoptMaster` clears them
   // because the file itself was replaced; `startTailor` must NOT, because
   // tailoring never writes the master (Phase 22: master ⇒ edit, tailored ⇒
   // review). Everything else adoptMaster clears is a statement about a finished
-  // run, and startTailor owes it exactly the same treatment.
-  const MASTER_ONLY = ["resume", "savedResume", "ledger", "masterLabel", "editUndo", "editError"];
+  // run, and startTailor owes it exactly the same treatment. The last four are
+  // the master's autosave (PLAN 31.6/2): the version and slot the document was
+  // made from, and how its save stands. A tailor that reset them would make the
+  // next edit's save name no version, or forget a refusal still unanswered.
+  const MASTER_ONLY = [
+    "resume", "savedResume", "ledger", "masterLabel", "editUndo", "editError",
+    "masterStamp", "masterSlot", "masterSave", "masterConflict",
+  ];
   const adopted = resetKeys("adoptMaster", "adoptMaster");
   const started = resetKeys("startTailor", "startTailor");
   if (adopted.length < 12) throw new Error(`parsed only ${adopted.length} adoptMaster reset fields`);
@@ -11119,7 +11125,7 @@ try {
     if (!toolbar) throw new Error("could not find TailorPage's <DocumentToolbar … />");
     if (/t\("edit\.hint"\)/.test(toolbar[0])) out.push("the \"tap to edit\" hint is back inside the toolbar, a row on every visit");
     if (!/!hintSeen\s*&&[\s\S]{0,400}?t\("edit\.hint"\)/.test(page)) out.push("the \"tap to edit\" hint is no longer shown once per device (`!hintSeen`)");
-    if (!/if \(unsaved === 0 && !error\) return null;/.test(editBar)) out.push("ResumeEditBar renders something at rest, which costs the toolbar a row");
+    if (!/if \(save === "idle" && !canUndo\) return null;/.test(editBar)) out.push("ResumeEditBar renders something at rest, which costs the toolbar a row");
     if (/className=\{cn\("shrink-0", result && "hidden lg:inline-flex"\)\}/.test(toolbar[0])) {
       // On the SAME condition that hides the button (`result`), so a ⋯ entry
       // gated on anything else, or switched off, is no way back to it.
@@ -11135,7 +11141,7 @@ try {
   for (const [label, b, pg, e] of [
     ["a title that does not yield", bar.replace("min-w-0 flex-1 basis-0 truncate", "min-w-0 truncate"), page, editBar],
     ["no ⋯ for a different job", bar, page.replace('label: t("overlay.openDifferent"),', 'label: t("overlay.open"),'), editBar],
-    ["a save cluster that shows at rest", bar, page, editBar.replace("if (unsaved === 0 && !error) return null;", "if (unsaved === 0 && !error) return <p />;")],
+    ["a save cluster that shows at rest", bar, page, editBar.replace('if (save === "idle" && !canUndo) return null;', 'if (save === "idle" && !canUndo) return <p />;')],
     ["a ⋯ entry switched off", bar, page.replace(/moreItems=\{\s*result && canRun/, "moreItems={\n              false && canRun"), editBar],
   ]) {
     if (b === bar && pg === page && e === editBar) {
@@ -11442,8 +11448,11 @@ try {
       },
       "../hooks/useMasterResume": { resetMasterCache: () => {} },
       "../lib/apiError": { apiErrorMessage: (_e, f) => f },
-      "../lib/draft": { clearDraft: () => {}, writeDraft: () => {} },
+      "../lib/draft": { clearDraft: () => {}, writeDraft: () => {}, sameResume: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
       "../lib/lang": { resumeLanguage: () => "en" },
+      // PLAN 31.6/2: the master's autosave.
+      "../lib/dataCache": { invalidateData: () => {} },
+      "../lib/masterLabel": { masterResumeLabel: () => "Probe's resume" },
       // PLAN 31.4/4: `openSavedReview` keeps a restored template only when this build knows it.
       "../lib/templateSpecs": { TEMPLATE_IDS: ["standard", "classic", "executive", "modern"] },
     });
@@ -12042,8 +12051,11 @@ try {
       },
       "../hooks/useMasterResume": { resetMasterCache: () => {} },
       "../lib/apiError": { apiErrorMessage: (_e, f) => f },
-      "../lib/draft": { clearDraft: () => {}, writeDraft: () => {} },
+      "../lib/draft": { clearDraft: () => {}, writeDraft: () => {}, sameResume: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
       "../lib/lang": { resumeLanguage: () => "en" },
+      // PLAN 31.6/2: the master's autosave.
+      "../lib/dataCache": { invalidateData: () => {} },
+      "../lib/masterLabel": { masterResumeLabel: () => "Probe's resume" },
       "../lib/templateSpecs": { TEMPLATE_IDS: ["standard", "classic", "executive", "modern"] },
     });
     for (const name of ["syncDraft", "settleDraft", "startTailor", "setTargetJob", "openSavedReview", "setTailorState", "getTailorState"])
@@ -12705,6 +12717,164 @@ try {
   }
 } catch (e) {
   fail(`resume-language check (check 76) could not run: ${e.message}`);
+}
+
+// ---- 77. the master saves itself, and says so only when it did (EXECUTED) --- //
+// PLAN 31.6/2. The Save button, its unsaved count and the explicit commit went:
+// every edit and undo saves a pause later, carrying the slot the document came
+// from and the version it was made from, so the server can refuse a save that
+// would land on the other language's resume or over another tab's (31.6/1). The
+// defects pinned are the ones an autosave makes quietly: a save that names no
+// version (two tabs are last-write-wins again), an answer about a REPLACED
+// resume landing after the replacement, a refused save retried after every
+// keystroke, a server copy adopted over a line typed while the save was on the
+// wire, and a Keep mine or a Save as my other resume that is coalesced like an
+// autosave. (a) EXECUTES the real store with the save recorded; (b) pins the
+// page: the loader and an upload record the version the server handed out
+// (never the clock's), a hidden page sends the waiting edit, and the bar says
+// Saved only about a save that answered. Probed with the store's source and the
+// page's mutated.
+try {
+  const storeSrc = read("state/tailorStore.ts");
+  const R77 = (summary) => ({ contact: { name: "Probe" }, summary, experience: [], education: [], skills: [] });
+  const masterRun = async (src) => {
+    const calls = [];
+    let version = 0;
+    let refuse = null; // the next save's 409 detail, once
+    let gate = null; // a save held on the wire until released
+    const st = runProbeBundle("master-autosave", src, {
+      "../api/client": {
+        analyzeJD: async () => ({ language: "en" }),
+        getMasterResume: async () => null,
+        saveApplication: async () => ({ id: 1 }),
+        saveApplicationDraft: async () => ({ id: 1 }),
+        tailorStream: async () => null,
+        saveMasterResume: async (p) => {
+          calls.push(`PUT:${p.resume.summary}:${p.slot ?? "-"}:${p.base_updated_at ?? "-"}:${p.autosave ? "auto" : "asked"}`);
+          if (gate) await gate;
+          if (refuse) {
+            const detail = refuse;
+            refuse = null;
+            throw { response: { status: 409, data: { detail } } };
+          }
+          version++;
+          return { resume: p.resume, ledger: null, label: "L", language: p.slot ?? "en", updated_at: `v${version}` };
+        },
+      },
+      "../hooks/useMasterResume": { resetMasterCache: () => {} },
+      "../lib/apiError": { apiErrorMessage: (_e, f) => f },
+      "../lib/draft": { clearDraft: () => {}, writeDraft: () => {}, sameResume: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
+      "../lib/lang": { resumeLanguage: () => "en" },
+      "../lib/dataCache": { invalidateData: () => {} },
+      "../lib/masterLabel": { masterResumeLabel: () => "Probe's resume" },
+      "../lib/templateSpecs": { TEMPLATE_IDS: ["standard"] },
+    });
+    for (const name of ["applyBlockEdit", "undoBlockEdit", "settleMaster", "flushMasterSave", "resolveMasterConflict", "adoptMaster", "setTailorState", "getTailorState"])
+      if (typeof st[name] !== "function") throw new Error(`state/tailorStore.ts does not export ${name}`);
+    const seen = [];
+    const note = (label) => {
+      const s = st.getTailorState();
+      seen.push(`${label}=${s.masterSave}${s.masterConflict ? `/${s.masterConflict.kind}` : ""}`);
+    };
+    st.setTailorState({ resume: R77("r0"), savedResume: R77("r0"), masterStamp: "v0", masterSlot: "en" });
+    st.applyBlockEdit(R77("r1"));
+    note("waiting"); // saving: the pause has not run out
+    st.applyBlockEdit(R77("r2")); // a burst: one save
+    await st.settleMaster();
+    note("burst");
+    st.undoBlockEdit(); // undo is an edit, saved like one
+    await st.settleMaster();
+    st.applyBlockEdit(R77("r1")); // the same document again: nothing to send
+    await st.settleMaster();
+    refuse = { kind: "resume_stale", updated_at: "vX" };
+    st.applyBlockEdit(R77("r3"));
+    await st.settleMaster();
+    note("stale");
+    st.applyBlockEdit(R77("r4")); // refused as stale: waits for the answer
+    await st.settleMaster();
+    await st.resolveMasterConflict("keep");
+    note("kept");
+    refuse = { kind: "resume_slot", slot: "en", language: "he" };
+    st.applyBlockEdit(R77("r5"));
+    await st.settleMaster();
+    note("slot");
+    await st.resolveMasterConflict("switch");
+    st.applyBlockEdit(R77("r6")); // waiting when the master is replaced
+    st.adoptMaster({ resume: R77("w0"), ledger: null, label: "L", language: "en", updated_at: "w0" });
+    await st.settleMaster();
+    note("replaced");
+    let release = () => {};
+    gate = new Promise((r) => (release = r));
+    st.applyBlockEdit(R77("r8"));
+    st.flushMasterSave(); // on the wire...
+    await new Promise((r) => setTimeout(r, 0)); // ...and read: the request has left
+    st.applyBlockEdit(R77("r9")); // ...while a line is typed
+    gate = null;
+    release();
+    await st.settleMaster();
+    await st.settleMaster();
+    return `${calls.join(" ")} | ${seen.join(" ")} | screen=${st.getTailorState().resume.summary}`;
+  };
+  const WANT77 =
+    "PUT:r2:en:v0:auto PUT:r1:en:v1:auto PUT:r3:en:v2:auto PUT:r4:en:vX:asked PUT:r5:en:v3:auto PUT:r5:he:-:asked " +
+    "PUT:r8:en:w0:auto PUT:r9:en:v5:auto" +
+    " | waiting=saving burst=saved stale=conflict/stale kept=saved slot=conflict/slot replaced=idle | screen=r9";
+  const real = await masterRun(storeSrc);
+  for (const [label, mutated] of [
+    ["a save that names no version", storeSrc.replace("...(state.masterStamp !== null ? { base_updated_at: state.masterStamp } : {}),", "")],
+    ["a replaced master's waiting edit still sent", storeSrc.replace(/(export function adoptMaster\(m: MasterResume\): void \{[\s\S]*?)newMasterEpoch\(\);/, "$1")],
+    ["a stale refusal retried on the next edit", storeSrc.replace('if (state.masterConflict?.kind === "stale") return;', "")],
+    ["the server copy adopted over a line typed meanwhile", storeSrc.replace("...(current ? { resume: saved.resume } : {}),", "resume: saved.resume,")],
+    ["Keep mine coalesced like an autosave", storeSrc.replace("autosave: !asked,", "autosave: true,")],
+  ]) {
+    if (mutated === storeSrc) {
+      if (real !== WANT77) continue; // the real store already fails; reported below
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if ((await masterRun(mutated)) === WANT77) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+  if (real !== WANT77)
+    fail(
+      `check 77: the master's autosave ran [${real}] where [${WANT77}] is right. Each edit and undo is saved a pause ` +
+        "later naming its slot and version, a burst is one save, an unchanged document sends nothing, a stale refusal " +
+        "waits for the person's answer, an asked-for save is never coalesced, a replaced master's waiting edit is " +
+        "dropped, and a line typed during a save survives its answer (PLAN 31.6/2)",
+    );
+
+  const read77 = (pg, bar) => {
+    const out = [];
+    // The loader's own lines, beside its baseline: the upload's save writes the
+    // same two after it, and a reader matching either would pass without one.
+    if (!/savedResume: m\.resume,[\s\S]{0,300}?masterStamp: m\.updated_at,\s*masterSlot: m\.language === "he" \? "he" : "en",/.test(pg))
+      out.push("the master's loader does not record the version and slot it loaded, so an autosave names none");
+    if (/adoptMaster\(\{[^}]*updated_at: new Date\(\)/.test(pg))
+      out.push("an upload hands adoptMaster a clock time as its version, which the first autosave is refused over");
+    if (!/setTailorState\(\{\s*masterLabel: m\.label,\s*masterStamp: m\.updated_at,/.test(pg))
+      out.push("an upload's save does not record the version the server handed out");
+    if (!/document\.visibilityState !== "hidden"\) return;\s*flushDraftSave\(\);\s*flushMasterSave\(\);/.test(pg))
+      out.push("a hidden page does not send the master's waiting edit (iOS discards a background tab)");
+    const saved = bar.split('t("edit.autoSaved")').length - 1;
+    if (saved !== 1 || !/save === "saved"\s*\?\s*\{[\s\S]{0,160}?t\("edit\.autoSaved"\)/.test(bar))
+      out.push("the edit bar says Saved other than once, behind `save === \"saved\"`, so it can call a refused save saved");
+    return out;
+  };
+  const page77 = decomment(read("pages/TailorPage.tsx"));
+  const bar77 = decomment(read("components/ResumeEditBar.tsx"));
+  const realPage = read77(page77, bar77);
+  for (const [label, pg, bar] of [
+    ["a loader that forgets the version", page77.replace("masterStamp: m.updated_at,\n            masterSlot", "masterSlot"), bar77],
+    ["a hidden page that keeps the edit", page77.replace("flushDraftSave();\n      flushMasterSave();", "flushDraftSave();"), bar77],
+    ["Saved said while saving", page77, bar77.replace('save === "saved"\n        ? { icon', 'save !== "failed"\n        ? { icon')],
+  ]) {
+    if (pg === page77 && bar === bar77) {
+      if (realPage.length) continue;
+      throw new Error(`the probe could not plant "${label}"`);
+    }
+    if (!read77(pg, bar).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  }
+  for (const p of realPage) fail(`check 77: ${p} (PLAN 31.6/2)`);
+} catch (e) {
+  fail(`master autosave check (check 77) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //
