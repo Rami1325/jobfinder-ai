@@ -1184,8 +1184,13 @@ class ApplicationKit(BaseModel):
 
 
 # The kinds of competition line a board states, in the one order the frontend
-# mirrors (`Applicants.kind`; check-mirrors 87 reads this tuple).
-APPLICANTS_KINDS: tuple[str, ...] = ("early", "over", "count")
+# mirrors (`Applicants.kind`). check-mirrors 87 reads this tuple with a LINE
+# grammar: keep it one quoted entry per line.
+APPLICANTS_KINDS: tuple[str, ...] = (
+    "early",
+    "over",
+    "count",
+)
 
 
 class Applicants(BaseModel):
@@ -1200,13 +1205,16 @@ class Applicants(BaseModel):
 
     `kind` says which sentence it was: "early" (fewer than `n` so far, the
     board's "Be among the first n"), "over" (more than `n`, the board's cap),
-    "count" (exactly `n`). `read_at` is the instant of the fetch that read it
-    (naive UTC ISO with "Z"), because the number only means something NOW: a
-    reading older than `job_search.APPLICANTS_FRESH_S` is never shown, anywhere
-    (`job_search.current_applicants`, the one rule)."""
+    "count" (exactly `n`). `source` is the board that stated it ("linkedin"),
+    so every surface names the board the READING names, never its own context,
+    and a reading that names none is never shown. `read_at` is the instant of
+    the fetch that read it (naive UTC ISO with "Z"), because the number only
+    means something NOW: a reading older than `job_search.APPLICANTS_FRESH_S`
+    is never shown, anywhere (`job_search.current_applicants`, the one rule)."""
 
     kind: str = ""  # early | over | count
     n: int = 0
+    source: str = ""  # the board that stated it (a PROVIDERS name)
     read_at: str = ""
 
 

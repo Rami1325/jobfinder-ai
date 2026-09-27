@@ -473,7 +473,7 @@ def linkedin_applicants(html: str) -> Applicants | None:
     for kind, pattern in _APPLICANTS_SENTENCES:
         hit = pattern.match(words)
         if hit:
-            return Applicants(kind=kind, n=int(hit.group(1)))
+            return Applicants(kind=kind, n=int(hit.group(1)), source="linkedin")
     return None
 
 

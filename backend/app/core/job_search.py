@@ -311,9 +311,10 @@ def current_applicants(reading: Applicants | None, now: datetime) -> Applicants 
     never compares a date.
 
     None for no reading, for an unknown `kind` (a newer writer's word this
-    build cannot say), for a `read_at` that does not parse (unknown is never
-    current), and for a stamp further in the future than the clock slack."""
-    if reading is None or reading.kind not in APPLICANTS_KINDS:
+    build cannot say), for a reading that names no board (a number nobody can
+    attribute), for a `read_at` that does not parse (unknown is never current),
+    and for a stamp further in the future than the clock slack."""
+    if reading is None or reading.kind not in APPLICANTS_KINDS or not reading.source:
         return None
     read = _posted_datetime(reading.read_at)
     if read is None:

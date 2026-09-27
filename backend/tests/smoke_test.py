@@ -29639,10 +29639,10 @@ check(
     "32 competition: the board's words in both shapes — '131 applicants' (span) through every trap, 'Over 200 "
     "applicants' (figure), and 'Be among the first 25 applicants' on the open and closed pages, whose closure read "
     "is unchanged; read_at is left for the search to stamp",
-    _ap_fx["count"] == _Ap(kind="count", n=131)
-    and _ap_fx["over"] == _Ap(kind="over", n=200)
-    and _ap_fx["open"] == _Ap(kind="early", n=25)
-    and _ap_fx["closed"] == _Ap(kind="early", n=25)
+    _ap_fx["count"] == _Ap(kind="count", n=131, source="linkedin")
+    and _ap_fx["over"] == _Ap(kind="over", n=200, source="linkedin")
+    and _ap_fx["open"] == _Ap(kind="early", n=25, source="linkedin")
+    and _ap_fx["closed"] == _Ap(kind="early", n=25, source="linkedin")
     and _gh_closed(_GH_CLOSED_HTML) == "No longer accepting applications"
     and _gh_closed(_AP_COUNT_HTML) == "" and _gh_closed(_AP_OVER_HTML) == ""
     and all(a is not None and a.read_at == "" for a in _ap_fx.values()),
@@ -29689,10 +29689,10 @@ _ap_he = {
 check(
     "32 competition: LinkedIn's Hebrew captions read the same three ways ('להיות בין 25 הראשונים מועמדים', "
     "'מעל 200 מועמדים', '131 מועמדים'), through bidi marks, and other Hebrew words read nothing",
-    _ap_he["early"] == _Ap(kind="early", n=25)
-    and _ap_he["over"] == _Ap(kind="over", n=200)
-    and _ap_he["count"] == _Ap(kind="count", n=131)
-    and _ap_he["marks"] == _Ap(kind="count", n=131)
+    _ap_he["early"] == _Ap(kind="early", n=25, source="linkedin")
+    and _ap_he["over"] == _Ap(kind="over", n=200, source="linkedin")
+    and _ap_he["count"] == _Ap(kind="count", n=131, source="linkedin")
+    and _ap_he["marks"] == _Ap(kind="count", n=131, source="linkedin")
     and _ap_he["other"] is None,
     str(_ap_he),
 )
@@ -29730,7 +29730,7 @@ check(
     "32 competition: fetch_description reads the line from the page it already fetched — one request, the same "
     "description string, the closure read beside it; a 404 is closed with no line, and a 429 reads neither",
     _ap_calls_ok == ["https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4405646663"]
-    and _ap_hits["ok"].applicants == _Ap(kind="count", n=131)
+    and _ap_hits["ok"].applicants == _Ap(kind="count", n=131, source="linkedin")
     and _ap_text_ok == _lp_mod._description_from_html(_AP_COUNT_HTML)
     and _ap_text_ok.startswith("Senior Software Engineer, Control — WEKA") and "WEKA is architecting" in _ap_text_ok
     and _ap_hits["ok"].closed == ""
@@ -29745,7 +29745,7 @@ _ap_t0 = _ap_now().replace(microsecond=0)
 
 
 def _ap_at(seconds_ago: float, kind: str = "count") -> _Ap:
-    return _Ap(kind=kind, n=131, read_at=_ap_stamp(_ap_t0 - _gh_td(seconds=seconds_ago)))
+    return _Ap(kind=kind, n=131, source="linkedin", read_at=_ap_stamp(_ap_t0 - _gh_td(seconds=seconds_ago)))
 
 
 _ap_rule = {
@@ -29755,16 +29755,17 @@ _ap_rule = {
     "3 days": _ap_current(_ap_at(3 * 86400), _ap_t0) is None,
     "4 min ahead": _ap_current(_ap_at(-240), _ap_t0) is not None,
     "an hour ahead": _ap_current(_ap_at(-3600), _ap_t0) is None,
-    "junk stamp": _ap_current(_Ap(kind="count", n=131, read_at="yesterday"), _ap_t0) is None,
-    "no stamp": _ap_current(_Ap(kind="count", n=131), _ap_t0) is None,
+    "junk stamp": _ap_current(_Ap(kind="count", n=131, source="linkedin", read_at="yesterday"), _ap_t0) is None,
+    "no stamp": _ap_current(_Ap(kind="count", n=131, source="linkedin"), _ap_t0) is None,
     "unknown kind": _ap_current(_ap_at(0, kind="about"), _ap_t0) is None,
+    "no board": _ap_current(_ap_at(0).model_copy(update={"source": ""}), _ap_t0) is None,
     "none": _ap_current(None, _ap_t0) is None,
     "stamp round-trips": _gh_parse_date(_ap_stamp(_ap_t0)) == _ap_t0 and _ap_stamp(_ap_t0).endswith("Z"),
 }
 check(
     "32 competition: current_applicants is the one rule — a reading under a day old is shown, a day or older is "
-    "not, a stamp up to 5 minutes ahead is ours and one an hour ahead is not, and a junk or missing stamp or an "
-    "unknown kind is never current",
+    "not, a stamp up to 5 minutes ahead is ours and one an hour ahead is not, and a junk or missing stamp, an "
+    "unknown kind or a reading that names no board is never current",
     all(_ap_rule.values()),
     str({k: v for k, v in _ap_rule.items() if not v}),
 )

@@ -449,6 +449,9 @@ export interface ApplicationDetail {
   /** PLAN 31.4/4: the review behind the draft is stored whole, so the document
    * can open it again (`getApplicationReview`). */
   has_review?: boolean;
+  /** Phase 32: the board's competition line, when this user's search history
+   * holds a CURRENT reading of the posting; the page never fetches one. */
+  applicants?: Applicants | null;
 }
 
 /** GET /inbox/status: whether this account can use Gmail sync, and how the
@@ -603,6 +606,20 @@ export interface JobMatch {
   application_status?: string;
   /** That tracker row's id, which the card's saved icon opens (PLAN 31.4/6). */
   application_id?: number | null;
+  /** The board's own competition line (Phase 32), sent only while CURRENT (the
+   * server's `current_applicants`, a day); null or absent otherwise. */
+  applicants?: Applicants | null;
+}
+/** The BOARD's own competition line, read literally from the page the search
+ * fetched ("131 applicants"): LinkedIn only, since no other board states one.
+ * `kind` is a plain string for `GeoRestriction`'s reason: a newer backend's
+ * word must not break the build, and `applicantsText` draws nothing for it.
+ * `read_at` is the server's to judge; the page never compares it. */
+export interface Applicants {
+  kind: string; // early (fewer than n) | over (more than n) | count (exactly n)
+  n: number;
+  source: string; // the board that stated it ("linkedin"), which the line names
+  read_at: string;
 }
 export interface AlsoOn {
   source: string;
@@ -802,6 +819,8 @@ export interface JobSearchHit {
   logo_url?: string; // company logo from the board; empty/absent when it has none
   also_on?: AlsoOn[]; // the same posting on other boards (cross-board dedupe)
   salary?: SalaryInfo | null; // extracted from the stored posting text on read
+  /** The board's competition line as History holds it, sent only while current. */
+  applicants?: Applicants | null;
   searched_at: string;
   app_status: string; // tracker status if saved/applied: "", saved, applied, interview, offer, rejected
   app_id?: number | null; // that tracker row's id, which the row opens (PLAN 31.4/6)

@@ -43,7 +43,7 @@ import { sendKitApplication } from "../state/kitsStore";
 import { getTailorState } from "../state/tailorStore";
 import { useNextStep } from "../hooks/useNextStep";
 import type { ApplicationDetail, ApplicationOut, JDModel } from "../types";
-import { postedAgo } from "./jobs/shared";
+import { applicantsText, postedAgo } from "./jobs/shared";
 
 /** The tracker's statuses in board order, as the backend stores them. The board
  * (`TrackerPage`'s COLUMNS) lists the same five. */
@@ -272,7 +272,11 @@ function JobBody({
   }
 
   const posted = detail.posted_at ? postedAgo(detail.posted_at, tJobs) : "";
-  const meta = [detail.company, detail.location, posted && t("job.posted", { when: posted })].filter(Boolean);
+  // The board's competition line (Phase 32), from the search history's current
+  // reading of this posting; the page never fetches one, and the server sends
+  // none once it is a day old.
+  const competition = applicantsText(detail.applicants, tJobs);
+  const meta = [detail.company, detail.location, posted && t("job.posted", { when: posted }), competition].filter(Boolean);
 
   return (
     <div className="space-y-5">

@@ -13114,6 +13114,199 @@ try {
   fail(`first-steps check (check 80) could not run: ${e.message}`);
 }
 
+// ---- 87. the board's competition line says what the board said (EXECUTED) --- //
+// Phase 32. LinkedIn's guest page states how many people applied, and the server
+// reads it (`providers.linkedin.linkedin_applicants`) into `Applicants {kind, n,
+// source, read_at}`. `applicantsText` in pages/jobs/shared.ts is the ONE wording
+// every surface uses. EXECUTED with a recording `t`, for every kind the backend
+// can send (`APPLICANTS_KINDS`, read out of app/models, degraded without backend/):
+// each kind asks its OWN literal key, passes the number the board stated and the
+// board's name; an unknown kind, no reading, a reading that names no board and a
+// number that is not a whole count say NOTHING, since `t()` on a missing key
+// renders the key and a number with no board is a claim we cannot attribute.
+// Every key it asks resolves in both jobs.json files with its full plural set
+// (`keyProblems`), and every form of it prints `{{board}}` and the number it was
+// handed: a Hebrew sentence that dropped `{{board}}` would call LinkedIn's count
+// everyone's. Six planted twins are judged every run and must each go red.
+try {
+  const RECORD = (key, opts) => `${key}|${JSON.stringify(opts ?? {})}`;
+  const judge87 = (fn, bundles, kinds) => {
+    const out = [];
+    const asked = new Map(); // kind -> [key, opts]
+    for (const [kind, n] of kinds.map((k, i) => [k, [25, 200, 131][i] ?? 7])) {
+      const text = fn({ kind, n, source: "linkedin", read_at: "2026-09-27T10:00:00Z" }, RECORD);
+      if (!text) {
+        out.push(`says nothing for the backend's kind "${kind}"`);
+        continue;
+      }
+      const [key, raw] = [text.slice(0, text.indexOf("|")), text.slice(text.indexOf("|") + 1)];
+      const opts = JSON.parse(raw);
+      if (!/^card\.applicants\w*$/.test(key)) out.push(`asks "${key}" for "${kind}", not a card.applicants* key`);
+      if (opts.board !== "LinkedIn") out.push(`does not name the board for "${kind}" (board: ${JSON.stringify(opts.board)})`);
+      if (opts.n !== n && opts.count !== n) out.push(`does not pass the board's number for "${kind}"`);
+      asked.set(kind, [key, opts]);
+    }
+    const keys = [...asked.values()].map(([k]) => k);
+    if (new Set(keys).size !== keys.length) out.push(`two kinds share one sentence (${keys.join(", ")})`);
+    for (const [label, reading] of [
+      ["an unknown kind", { kind: "about", n: 3, source: "linkedin", read_at: "" }],
+      ["no reading", null],
+      ["an absent reading", undefined],
+      ["a reading that names no board", { kind: "count", n: 131, source: "", read_at: "" }],
+      ["a fractional number", { kind: "count", n: 1.5, source: "linkedin", read_at: "" }],
+      ["a negative number", { kind: "over", n: -1, source: "linkedin", read_at: "" }],
+    ])
+      if (fn(reading, RECORD)) out.push(`says something for ${label}`);
+    for (const [loc, b] of Object.entries(bundles))
+      for (const [kind, [key, opts]] of asked) {
+        for (const problem of keyProblems(b, key, loc, "a job card's competition line")) out.push(`${loc}: ${problem}`);
+        const parts = key.split(".");
+        const leaf = parts.pop();
+        const parent = parts.reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), b) || {};
+        const forms = Object.entries(parent).filter(([k]) => k === leaf || k.startsWith(`${leaf}_`));
+        const num = "count" in opts ? "{{count}}" : "{{n}}";
+        for (const [k, v] of forms) {
+          if (!String(v).includes("{{board}}")) out.push(`${loc} ${parts.join(".")}.${k} does not name the board`);
+          // Hebrew "one" is written in words ("מועמד אחד"), as English "1" need not be.
+          if (!String(v).includes(num) && !(k.endsWith("_one") && "count" in opts))
+            out.push(`${loc} ${parts.join(".")}.${k} does not print the number (${num}) for "${kind}"`);
+        }
+      }
+    return out;
+  };
+
+  const shared87 = runProbeBundle("competition-line", `export { applicantsText } from "./pages/jobs/shared";\n`);
+  if (typeof shared87.applicantsText !== "function") throw new Error("pages/jobs/shared.ts exports no applicantsText");
+  const models87 = pySource("app/models/__init__.py", "check 87");
+  const kinds87 = models87 === null ? ["early", "over", "count"] : pyTuple(models87, "APPLICANTS_KINDS", "app/models/__init__.py");
+  if (kinds87.length < 3) throw new Error(`read only ${kinds87.length} APPLICANTS_KINDS (expected at least 3)`);
+  const bundles87 = { en: JSON.parse(read("locales/en/jobs.json")), he: JSON.parse(read("locales/he/jobs.json")) };
+  for (const p of judge87(shared87.applicantsText, bundles87, kinds87)) fail(`check 87: applicantsText ${p} (Phase 32)`);
+
+  // The judge's own directions: the real function passes (above); each twin fails.
+  const realFn = shared87.applicantsText;
+  const twins = [
+    ["a raw key for a kind it does not know", (a, t) => (a && a.source ? (["early", "over", "count"].includes(a.kind) ? realFn(a, t) : t(`card.applicants.${a.kind}`, { n: a.n, board: "LinkedIn" })) : "")],
+    ["no board named", (a, t) => realFn(a, (k, o) => t(k, { ...o, board: undefined }))],
+    ["a number with no board behind it", (a, t) => realFn(a && { ...a, source: a.source || "linkedin" }, t)],
+    ["two kinds on one sentence", (a, t) => realFn(a && a.kind === "over" ? { ...a, kind: "count" } : a, t)],
+  ];
+  for (const [label, fn] of twins)
+    if (!judge87(fn, bundles87, kinds87).length) throw new Error(`the judge passes a twin with ${label}`);
+  const heNoTwo = { ...bundles87, he: withoutForm(bundles87.he, "card.applicantsCount", "two") };
+  if (!judge87(realFn, heNoTwo, kinds87).length) throw new Error("the judge passes a Hebrew count with no _two form");
+  const heNoBoard = JSON.parse(JSON.stringify(bundles87.he));
+  heNoBoard.card.applicantsOver = "מעל {{n}} מועמדים";
+  if (!judge87(realFn, { ...bundles87, he: heNoBoard }, kinds87).length)
+    throw new Error("the judge passes a Hebrew sentence that dropped {{board}}");
+} catch (e) {
+  fail(`competition-line wording check (check 87) could not run: ${e.message}`);
+}
+
+// ---- 88. the line rides every surface that holds a reading; the server judges its age //
+// Phase 32. (a) The search row draws `<CompetitionLine applicants={m.applicants} />`
+// and the History row `<CompetitionLine applicants={hit.applicants} />` INSIDE their
+// badge rows (the `empty:hidden` row beside New / Older): a LinkedIn posting fresh
+// enough to carry a reading usually carries New, so it rides a row the card
+// already has, where a line of its own costs every card a row and a phone its
+// third job (job-search.md records the measurements); `CompetitionLine` words it
+// through `applicantsText`, and the job's page puts `applicantsText(detail.applicants, …)`
+// in its meta line.
+// (b) No file under src/ reads `read_at`: the server hands a reading back only
+// while it is current (`job_search.current_applicants`, a day), and a device clock
+// judging it would call a week-old "Under 25" current on a phone set a week slow.
+// (c) The field is on both mirrors: `applicants` on types.ts's JobMatch,
+// JobSearchHit and ApplicationDetail and on the backend's JobMatch, JobSearchHitOut
+// and ApplicationDetail, with the same four fields on Applicants (a renamed field
+// compiles green and reads undefined). Five planted twins are probed every run.
+try {
+  const read88 = ({ cards, jobPage, shared, types, models, srcFiles }) => {
+    const out = [];
+    const card = fnSource(cards, "export function MatchCard");
+    const row = fnSource(cards, "export function HistoryRow");
+    const line = fnSource(cards, "export function CompetitionLine");
+    const badgeRow = (fn) => {
+      const open = fn.indexOf('<div className="mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">');
+      return open === -1 ? "" : fn.slice(open, fn.indexOf("</div>", open));
+    };
+    if (!/<CompetitionLine\s+applicants=\{\s*m\.applicants\s*\}\s*\/>/.test(badgeRow(card)))
+      out.push("the search row does not draw <CompetitionLine applicants={m.applicants} /> inside its badge row");
+    if (!/<CompetitionLine\s+applicants=\{\s*hit\.applicants\s*\}\s*\/>/.test(badgeRow(row)))
+      out.push("the History row does not draw <CompetitionLine applicants={hit.applicants} /> inside its badge row");
+    if (!/applicantsText\(\s*applicants\s*,\s*t\s*\)/.test(line)) out.push("CompetitionLine words the line itself, not through applicantsText");
+    if (!/applicantsText\(\s*detail\.applicants\s*,\s*tJobs\s*\)/.test(jobPage)) out.push("the job's page does not say its posting's competition line");
+    if (!/export function applicantsText\(/.test(shared)) out.push("pages/jobs/shared.ts has no applicantsText");
+    for (const [f, src] of srcFiles)
+      if (f !== "types.ts" && /\bread_at\b/.test(src)) out.push(`${f} reads read_at: the server judges a reading's age, never the page`);
+    for (const iface of ["JobMatch", "JobSearchHit", "ApplicationDetail"]) {
+      const block = blockAfter(types, `export interface ${iface} `, `${iface} in types.ts`);
+      if (!topLevelKeys(block).includes("applicants")) out.push(`types.ts: ${iface} has no applicants`);
+    }
+    const ap = blockAfter(types, "export interface Applicants ", "Applicants in types.ts");
+    for (const k of ["kind", "n", "source", "read_at"]) if (!topLevelKeys(ap).includes(k)) out.push(`types.ts: Applicants has no ${k}`);
+    if (models !== null) {
+      const cls = (name) => {
+        const m = new RegExp(`class ${name}\\(BaseModel\\):([\\s\\S]*?)\\n(?=class |\\S)`).exec(models);
+        if (!m) throw new Error(`could not find class ${name} in backend/app/models/__init__.py`);
+        return m[1];
+      };
+      for (const name of ["JobMatch", "JobSearchHitOut", "ApplicationDetail"])
+        if (!/^\s+applicants:\s*Optional\[Applicants\]/m.test(cls(name))) out.push(`backend ${name} has no applicants: Optional[Applicants]`);
+      const body = cls("Applicants");
+      for (const k of ["kind", "n", "source", "read_at"])
+        if (!new RegExp(`^\\s+${k}:\\s*(?:str|int)\\b`, "m").test(body)) out.push(`backend Applicants has no ${k}`);
+    }
+    return out;
+  };
+  const walk = (dir, rel = "") =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+      d.isDirectory()
+        ? d.name === "locales" ? [] : walk(path.join(dir, d.name), `${rel}${d.name}/`)
+        : /\.(ts|tsx)$/.test(d.name) ? [[`${rel}${d.name}`, decomment(fs.readFileSync(path.join(dir, d.name), "utf8"))]] : [],
+    );
+  const srcFiles = walk(SRC);
+  if (srcFiles.length < 100) throw new Error(`walked only ${srcFiles.length} .ts/.tsx files under src/ (expected at least 100)`);
+  const modelsRaw = pySource("app/models/__init__.py", "check 88");
+  const real = {
+    cards: decomment(read("pages/jobs/cards.tsx")),
+    jobPage: decomment(read("pages/JobPage.tsx")),
+    shared: decomment(read("pages/jobs/shared.ts")),
+    types: read("types.ts"),
+    models: modelsRaw === null ? null : modelsRaw.replace(/\r\n/g, "\n"),
+    srcFiles,
+  };
+  for (const p of read88(real)) fail(`check 88: ${p} (Phase 32)`);
+  const plant = (key, from, to, label) => {
+    if (!(key === "srcFiles" || real[key].includes(from))) throw new Error(`the probe could not plant "${label}"`);
+    const planted = key === "srcFiles" ? [...real.srcFiles, ["pages/jobs/cards.tsx", from]] : real[key].replace(from, to);
+    if (!read88({ ...real, [key]: planted }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("cards", "<CompetitionLine applicants={hit.applicants} />", "", "a History row without the line");
+  {
+    // The first placement tried, moved into the "Searched …" line: it wrapped on
+    // 8 of 12 fresh rows at 390 px in English, 16 px each.
+    const from = "          <CompetitionLine applicants={hit.applicants} />\n";
+    const searched = '<p className="mt-1 text-xs text-ink-faint">\n';
+    if (!real.cards.includes(from) || !real.cards.includes(searched)) throw new Error('the probe could not plant "the Searched line"');
+    const moved = real.cards.replace(from, "").replace(searched, `${searched}<CompetitionLine applicants={hit.applicants} />\n`);
+    if (!read88({ ...real, cards: moved }).length) throw new Error('the reader passes "a History row with the line in its Searched line"');
+  }
+  {
+    // Moved, not deleted: a line of its own under the meta line is the layout
+    // that costs every card a row and a phone its third job.
+    const from = "          <CompetitionLine applicants={m.applicants} />\n";
+    const own = "<GeoNote geo={m.geo_restriction} />";
+    if (!real.cards.includes(from) || !real.cards.includes(own)) throw new Error('the probe could not plant "a line of its own"');
+    const moved = real.cards.replace(from, "").replace(own, `<p><CompetitionLine applicants={m.applicants} /></p>\n${own}`);
+    if (!read88({ ...real, cards: moved }).length) throw new Error('the reader passes "a search row with the line on a row of its own"');
+  }
+  plant("jobPage", "applicantsText(detail.applicants, tJobs)", '""', "a job's page without the line");
+  plant("srcFiles", "const fresh = Date.now() - Date.parse(a.read_at) < 86_400_000;", "", "a page that judges the age itself");
+  plant("types", "  applicants?: Applicants | null;\n  searched_at: string;", "  searched_at: string;", "a mirror without the field");
+} catch (e) {
+  fail(`competition-line surfaces check (check 88) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
