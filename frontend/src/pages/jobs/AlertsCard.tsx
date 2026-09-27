@@ -8,6 +8,7 @@ import {
   addPushDevice,
   getJobAlert,
   getPushDevices,
+  getWhatsApp,
   runJobAlert,
   searchContext,
   updateJobAlert,
@@ -17,8 +18,8 @@ import UsesNote from "../../components/UsesNote";
 import { apiErrorMessage } from "../../lib/apiError";
 import { currentSubscription, type PushSub } from "../../lib/push";
 import { formatUsesDate, useUses } from "../../lib/usesStore";
-import type { AlertSettings, PushDevices, ResumeModel, SearchContext } from "../../types";
-import { PushRow, pushLang } from "./AlertChannels";
+import type { AlertSettings, PushDevices, ResumeModel, SearchContext, WhatsAppStatus } from "../../types";
+import { PushRow, WhatsAppRow, pushLang } from "./AlertChannels";
 import {
   allowsRemote,
   contextKey,
@@ -336,16 +337,20 @@ export function AlertsCard({
   // server without push (or an older one) answers null and draws no row.
   const [push, setPush] = useState<PushDevices | null>(null);
   const [pushHere, setPushHere] = useState<PushSub | null>(null);
+  // PLAN 32, part 2: WhatsApp, drawn only when the server offers it to this account.
+  const [wa, setWa] = useState<WhatsAppStatus | null>(null);
 
   useEffect(() => {
     Promise.all([
       getJobAlert(),
       getPushDevices().catch(() => null),
       currentSubscription(),
+      getWhatsApp().catch(() => null),
     ])
-      .then(([s, devices, here]) => {
+      .then(([s, devices, here, whats]) => {
         setPush(devices?.configured ? devices : null);
         setPushHere(here);
+        setWa(whats?.available ? whats : null);
         // Keep a device's notifications in the language the app is in now
         // (only for a device the server already holds: after "Delete all my
         // data" this browser's old subscription must not quietly come back).
@@ -546,6 +551,7 @@ export function AlertsCard({
           }}
         />
       )}
+      {wa && <WhatsAppRow status={wa} onChange={(next) => setWa(next.available ? next : null)} />}
 
       {/* The fit bar. Its own row rather than a sixth control in the row above:
           at 390px that row already wraps to three lines, and this is a sentence

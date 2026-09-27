@@ -37,6 +37,12 @@ This was the `app/db/` entry of `CLAUDE.md`'s backend package layout.
   page says a device's notification address is kept and that the browser's push service delivers the notifications,
   encrypted (`privacy.store.push`, both locales). Rows also go when the user turns the device off, when the push
   service answers 404/410, and after five failures in a row (`notifications.md`). smoke 34c pins both doors.
+- **`whatsapp_contacts` holds at most one row per user: the WhatsApp number** (E.164, personal data), its template
+  language, when the explicit opt-in was ticked, when the number was proven by the code WhatsApp delivered, the code's
+  HMAC with its expiry and wrong tries (never the code), the last delivery and the last failure reason. A NEW table
+  with a unique constraint on `user_id`. Both privacy doors delete it (reported as `whatsapp`), "Stop and remove"
+  deletes it, and the privacy page says the number goes to WhatsApp (Meta) with each alert (`privacy.store.whatsapp`).
+  `users.whatsapp_enabled` is the admin's grant, not content, and neither door clears it. smoke 35b pins both doors.
 
 ### The master resume's rows
 

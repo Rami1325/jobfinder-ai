@@ -65,9 +65,15 @@ for _p29_var in (
     # test keys, so a developer .env holding the real VAPID pair can never make
     # this suite sign anything with it.
     "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT",
+    # PLAN 32: WhatsApp stays OFF the same way, so a real Meta token in .env is never read here.
+    "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_TEMPLATE_NAME", "WHATSAPP_CODE_TEMPLATE_NAME",
 ):
     os.environ[_p29_var] = ""
 os.environ["DAILY_PUSH_TEST_CAP"] = "10"
+os.environ["DAILY_WHATSAPP_CAP"] = "5"
+os.environ["WHATSAPP_ACCESS"] = "allowlist"
+os.environ["WHATSAPP_TEMPLATE_LANGS"] = "en,he"
+os.environ["WHATSAPP_API_VERSION"] = "v26.0"
 # Phase 30 (monthly uses): the pool and the four new daily caps, each set to its
 # documented default EXPLICITLY, so a developer .env holding FREE_MONTHLY_USES=0
 # cannot switch section 32's limit off from outside this file. A check that is not
@@ -27260,6 +27266,13 @@ _ROUTE_COST = {
     ("POST", "/push/devices"): "free",
     ("DELETE", "/push/devices"): "free",
     ("POST", "/push/test"): "net_capped:push_test",
+    # PLAN 32, WhatsApp: no model and no use, but a code and a test are each a message Meta bills the owner for,
+    # so both carry the `whatsapp` daily cap; reading, typing the code back and removing the number are free.
+    ("GET", "/whatsapp"): "free",
+    ("POST", "/whatsapp/code"): "net_capped:whatsapp",
+    ("POST", "/whatsapp/verify"): "free",
+    ("POST", "/whatsapp/test"): "net_capped:whatsapp",
+    ("DELETE", "/whatsapp"): "free",
     # free: admin, and the app itself
     ("GET", "/admin/users"): "free",
     ("POST", "/admin/users"): "free",
@@ -27727,13 +27740,38 @@ def _sweep_push32(method, url, headers, body, timeout):  # noqa: ANN001
     return 201
 
 
+# PLAN 32, WhatsApp: the sweep's Meta. It records each message and answers as the Cloud API does.
+from app.core import whatsapp as _wa32s  # noqa: E402
+import json as _json32s  # noqa: E402
+
+_real_wa_transport32 = _wa32s._transport
+_sweep_wa32: list[dict] = []
+
+
+def _sweep_meta32(method, url, headers, body, timeout):  # noqa: ANN001
+    _sweep_wa32.append(_json32s.loads(body.decode("utf-8")))
+    return 200, b'{"messaging_product": "whatsapp", "messages": [{"id": "wamid.sweep32"}]}'
+
+
+def _sweep_wa_code32():  # noqa: ANN202
+    """The code the sweep's last message carried (the authentication template's body parameter)."""
+    for msg in reversed(_sweep_wa32):
+        comps = (msg.get("template") or {}).get("components") or []
+        if comps and comps[0].get("parameters"):
+            return comps[0]["parameters"][0].get("text", "")
+    return ""
+
+
 _prev32e_env = _env29(FREE_MONTHLY_USES="10", DAILY_LLM_CAP="0", DAILY_TAILOR_CAP="0", DAILY_SEARCH_CAP="0",
                       CRON_SECRET="smoke-cron-32", INBOX_FAKE_PROVIDER="true", APP_BASE_URL="https://app.jobfinder.test",
                       VAPID_PUBLIC_KEY=_VAPID_PUB32, VAPID_PRIVATE_KEY=_VAPID_PRIV32,
-                      VAPID_SUBJECT="mailto:smoke32@example.com")
+                      VAPID_SUBJECT="mailto:smoke32@example.com",
+                      WHATSAPP_TOKEN="smoke32-meta-token", WHATSAPP_PHONE_NUMBER_ID="100000000000032",
+                      WHATSAPP_TEMPLATE_NAME="job_digest", WHATSAPP_CODE_TEMPLATE_NAME="jobfinder_code")
 _ae28._resolve_sender = lambda: _capture_auth_mail28
 _go29._transport = _offline_google32
 _wp32s._transport = _sweep_push32
+_wa32s._transport = _sweep_meta32
 _arm_tripwire32()
 try:
     with TestClient(_fastapi_app) as _c32e:
@@ -27989,6 +28027,21 @@ try:
                  lambda s: _as32("DELETE", "/push/devices", _SW32["h"], json={"endpoint": _SWEEP_SUB32["endpoint"]}),
                  statuses=(200,))
 
+        # WhatsApp (PLAN 32): the admin grants the friend, who saves a number, types the code back, tests, removes.
+        def _wa_granted32():
+            _as32("PATCH", f"/admin/users/{_SW32['uid']}", _ADMIN_H, json={"whatsapp_enabled": True})
+            return {}
+
+        _plain32(("GET", "/whatsapp"), lambda s: _as32("GET", "/whatsapp", _SW32["h"]), setup=_wa_granted32,
+                 statuses=(200,))
+        _plain32(("POST", "/whatsapp/code"), lambda s: _as32("POST", "/whatsapp/code", _SW32["h"], json={
+            "phone": "050-123-4032", "opt_in": True, "lang": "en"}))
+        _plain32(("POST", "/whatsapp/verify"),
+                 lambda s: _as32("POST", "/whatsapp/verify", _SW32["h"], json={"code": _sweep_wa_code32()}),
+                 statuses=(200,))
+        _plain32(("POST", "/whatsapp/test"), lambda s: _as32("POST", "/whatsapp/test", _SW32["h"]))
+        _plain32(("DELETE", "/whatsapp"), lambda s: _as32("DELETE", "/whatsapp", _SW32["h"]), statuses=(200,))
+
         # The inbox: the demo mailbox, then everything that reads or changes what it found.
         _plain32(("GET", "/inbox/status"), lambda s: _as32("GET", "/inbox/status", _SW32["h"]), statuses=(200,))
         _plain32(("POST", "/inbox/google/start"),
@@ -28088,6 +28141,7 @@ finally:
     _ae28._resolve_sender = _real_resolve_sender28
     _go29._transport = _real_transport32
     _wp32s._transport = _real_push_transport32
+    _wa32s._transport = _real_wa_transport32
     _unpatch32()
     _disarm_tripwire32()
     _restore29(_prev32e_env)
@@ -30263,6 +30317,348 @@ check(
     "own endpoint, and nothing in section 32 or 34 reached a real push service (the transport is put back)",
     _sweep_pushes32 == [_SWEEP_SUB32["endpoint"]] and _wp34._transport is None,
     f"{_sweep_pushes32} transport={_wp34._transport}",
+)
+
+# =====================================================================================================================
+# 35. WhatsApp alerts (PLAN 32, part 2): off by default, the admin's grant, a proven number, and the Meta door
+# =====================================================================================================================
+# Every message is billed to the OWNER by Meta, so three switches must all be on, and nothing here reaches Meta:
+# `whatsapp._transport` records each request and answers as the Cloud API does, or with the error a check scripts.
+from app.core import whatsapp as _wa35  # noqa: E402
+from app.db.models import WhatsAppContact as _WAC35  # noqa: E402
+
+_meta35: list[tuple[str, dict, dict]] = []
+_meta_answer35 = [(200, {"messaging_product": "whatsapp", "messages": [{"id": "wamid.smoke35"}]})]
+_real_wa_transport35 = _wa35._transport
+
+
+def _meta_fake35(method, url, headers, body, timeout):  # noqa: ANN001
+    _meta35.append((url, dict(headers), _json34.loads(body.decode("utf-8"))))
+    status, data = _meta_answer35[0]
+    return status, _json34.dumps(data).encode("utf-8")
+
+
+def _meta_error35(code):  # noqa: ANN001
+    return (400, {"error": {"message": "(#%d) refused" % code, "type": "OAuthException", "code": code}})
+
+
+def _code_of35(msg):  # noqa: ANN001
+    comps = (msg.get("template") or {}).get("components") or []
+    return comps[0]["parameters"][0]["text"] if comps and comps[0].get("parameters") else ""
+
+
+def _contact35(uid):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        c = d.execute(_sel32(_WAC35).where(_WAC35.user_id == uid)).scalars().first()
+        return None if c is None else {"phone": c.phone, "lang": c.lang, "opted": c.opted_in_at is not None,
+                                       "verified": c.verified_at is not None, "hash": c.code_hash,
+                                       "error": c.last_error, "sent": c.last_sent_at is not None}
+    finally:
+        d.close()
+
+
+# --- 35a. The pure parts: the switches, the numbers, the door -------------------------------------------------------
+_PHONES35 = {
+    "050-123-4567": "+972501234567",  # the Israeli local way
+    "+972 50 123 4567": "+972501234567",
+    "+972-050-1234567": "+972501234567",  # the trunk 0 kept after the country code
+    "00972501234567": "+972501234567",
+    "‎+972 (50) 123.4567‏": "+972501234567",  # bidi marks a Hebrew keyboard adds
+    "+1 415 555 0100": "+14155550100",
+    "12345": "", "+0501234567": "", "abc": "", "": "", "+97250123456789012": "",
+}
+_phone_bad35 = {raw: (_wa35.normalize_phone(raw), want) for raw, want in _PHONES35.items()
+                if _wa35.normalize_phone(raw) != want}
+check(
+    "35a numbers: an Israeli number typed the local way, with spaces, dashes, parentheses, a kept trunk 0, a 00 prefix "
+    "or the invisible bidi marks a Hebrew keyboard adds reads as the same +972 E.164 number; a US number stays itself; "
+    "and too short, a leading +0, letters, empty and too long read as no number (the false-positive half)",
+    _phone_bad35 == {},
+    str(_phone_bad35),
+)
+_prev35_env = _env29(WHATSAPP_TOKEN="", WHATSAPP_PHONE_NUMBER_ID="", WHATSAPP_TEMPLATE_NAME="",
+                     WHATSAPP_CODE_TEMPLATE_NAME="", WHATSAPP_ACCESS="allowlist", DAILY_WHATSAPP_CAP="5")
+try:
+    _cfg_off35 = _wa35.configured()
+    _full35 = dict(WHATSAPP_TOKEN="smoke35-token", WHATSAPP_PHONE_NUMBER_ID="100000000000035",
+                   WHATSAPP_TEMPLATE_NAME="job_digest", WHATSAPP_CODE_TEMPLATE_NAME="jobfinder_code")
+    _cfg_missing35 = []
+    for _k35 in _full35:
+        _p35 = _env29(**{**_full35, _k35: ""})
+        _cfg_missing35.append(_wa35.configured())
+        _restore29(_p35)
+    _p35 = _env29(**_full35, WHATSAPP_API_VERSION="v26.0/../../me")
+    _cfg_badver35 = _wa35.configured()
+    _restore29(_p35)
+    _p35 = _env29(**{**_full35, "WHATSAPP_PHONE_NUMBER_ID": "123/../me"})
+    _cfg_badid35 = _wa35.configured()
+    _restore29(_p35)
+    _p35 = _env29(**_full35)
+    _cfg_on35 = _wa35.configured()
+    _url35 = _wa35._messages_url(get_settings())
+    _restore29(_p35)
+finally:
+    _restore29(_prev35_env)
+check(
+    "35a off by default: with nothing set WhatsApp is not configured, and it stays off while ANY one of the token, "
+    "the phone number id, the digest template or the code template is missing, or when the API version or the phone "
+    "number id is not the plain shape the URL may carry; all four set is on, and the URL is exactly "
+    "https://graph.facebook.com/v26.0/<id>/messages",
+    _cfg_off35 is False and _cfg_missing35 == [False] * 4 and _cfg_badver35 is False and _cfg_badid35 is False
+    and _cfg_on35 is True and _url35 == "https://graph.facebook.com/v26.0/100000000000035/messages",
+    f"off={_cfg_off35} missing={_cfg_missing35} badver={_cfg_badver35} badid={_cfg_badid35} on={_cfg_on35} {_url35}",
+)
+_door_bad35 = []
+for _u35 in ("https://graph.facebook.com.evil.com/v26.0/1/messages", "http://graph.facebook.com/v26.0/1/messages",
+             "https://169.254.169.254/latest/meta-data/", "https://user@graph.facebook.com/v26.0/1/messages",
+             "https://graph.facebook.com:8443/v26.0/1/messages"):
+    _wa35._transport = _meta_fake35
+    try:
+        _wa35._http(_u35, {}, "t")
+        _door_bad35.append(_u35)
+    except ValueError:
+        pass
+    finally:
+        _wa35._transport = _real_wa_transport35
+_door_ok35 = None
+_wa35._transport = _meta_fake35
+try:
+    _door_ok35 = _wa35._http("https://graph.facebook.com/v26.0/100000000000035/messages", {"x": 1}, "tok")
+finally:
+    _wa35._transport = _real_wa_transport35
+_wa_src35 = _insp34.getsource(_wa35)
+_http_callers35 = sorted({
+    fn.name for fn in _ast34.walk(_ast34.parse(_wa_src35)) if isinstance(fn, _ast34.FunctionDef)
+    for node in _ast34.walk(fn) if isinstance(node, _ast34.Call)
+    and isinstance(node.func, _ast34.Name) and node.func.id == "_http"
+})
+check(
+    "35a the WhatsApp door: `_http` refuses a lookalike host, http, cloud metadata, userinfo and another port before "
+    "the transport is reached, and passes graph.facebook.com with a Bearer token; in whatsapp.py the network is opened "
+    "only inside `_http` (the same AST reader as the push door's) and `_http` is called only by `_send`",
+    _door_bad35 == [] and _door_ok35 is not None and _door_ok35[0] == 200
+    and _meta35[-1][1].get("Authorization") == "Bearer tok"
+    and _net_calls_outside34(_wa_src35, {"_http"}) == [] and _http_callers35 == ["_send"],
+    f"passed={_door_bad35} ok={_door_ok35} outside={_net_calls_outside34(_wa_src35, {'_http'})} "
+    f"callers={_http_callers35}",
+)
+_meta35.clear()
+_line_en35 = _al32.whatsapp_best_line(_pm_many34, "en")
+_line_he35 = _al32.whatsapp_best_line([_pm1_34], "he")
+check(
+    "35a the digest's {{top_job}} names the best job above the bar by the number the app shows (Data Engineer at "
+    "Gamma, 90; a 74.5 is 75 in Hebrew too), and the two variables are sent NAMED (job_count, top_job)",
+    _line_en35 == "Data Engineer at Gamma (90% match)" and _line_he35 == "Backend Engineer · Acme · התאמה 75%"
+    and [p.get("parameter_name") for p in _wa35.digest_params(3, _line_en35)[0]["parameters"]]
+    == ["job_count", "top_job"],
+    f"{_line_en35} | {_line_he35}",
+)
+
+# --- 35b. The routes, the code, the morning, the charge and the wipe ------------------------------------------------
+_prev35b_env = _env29(WHATSAPP_TOKEN="", WHATSAPP_PHONE_NUMBER_ID="", WHATSAPP_TEMPLATE_NAME="",
+                      WHATSAPP_CODE_TEMPLATE_NAME="", WHATSAPP_ACCESS="allowlist", DAILY_WHATSAPP_CAP="5",
+                      APP_BASE_URL=_PB34)
+_wa35._transport = _meta_fake35
+_arm_tripwire32()
+try:
+    with TestClient(_fastapi_app) as _c35:
+        _w_uid35, _W35_H = _alert_user32(_c35, "WhatsApp Owner 35", email="wa.owner35@example.com")
+        _off_get35 = _c35.get("/whatsapp", headers=_W35_H)
+        _off_code35 = _c35.post("/whatsapp/code", json={"phone": "050-123-4035", "opt_in": True, "lang": "he"},
+                                headers=_W35_H)
+        _p35on = _env29(WHATSAPP_TOKEN="smoke35-token", WHATSAPP_PHONE_NUMBER_ID="100000000000035",
+                        WHATSAPP_TEMPLATE_NAME="job_digest", WHATSAPP_CODE_TEMPLATE_NAME="jobfinder_code")
+        _nogrant_get35 = _c35.get("/whatsapp", headers=_W35_H)
+        _nogrant_code35 = _c35.post("/whatsapp/code", json={"phone": "050-123-4035", "opt_in": True, "lang": "he"},
+                                    headers=_W35_H)
+        check(
+            "35b off unless configured AND granted: with WhatsApp unset the status is available=false and a code is a "
+            "404 whatsapp_unconfigured; configured but not granted by the admin it is still available=false, and a "
+            "code is a 403 whatsapp_not_allowed — neither sends anything to Meta nor stores a number",
+            _off_get35.json().get("available") is False and _off_code35.status_code == 404
+            and _j28(_off_code35).get("detail") == {"code": "whatsapp_unconfigured"}
+            and _nogrant_get35.json().get("available") is False and _nogrant_code35.status_code == 403
+            and _j28(_nogrant_code35).get("detail") == {"code": "whatsapp_not_allowed"}
+            and _meta35 == [] and _contact35(_w_uid35) is None,
+            f"{_off_get35.text[:80]} {_off_code35.text[:80]} {_nogrant_get35.text[:80]} {_nogrant_code35.text[:80]}",
+        )
+        _grant35 = _c35.patch(f"/admin/users/{_w_uid35}", json={"whatsapp_enabled": True}, headers=_ADMIN_H)
+        _granted_get35 = _c35.get("/whatsapp", headers=_W35_H)
+        _no_opt35 = _c35.post("/whatsapp/code", json={"phone": "050-123-4035", "opt_in": False, "lang": "he"},
+                              headers=_W35_H)
+        _bad_phone35 = _c35.post("/whatsapp/code", json={"phone": "12345", "opt_in": True, "lang": "he"},
+                                 headers=_W35_H)
+        _code35 = _c35.post("/whatsapp/code", json={"phone": "050-123-4035", "opt_in": True, "lang": "he"},
+                            headers=_W35_H)
+        _code_msg35 = _meta35[-1][2] if _meta35 else {}
+        _sent_code35 = _code_of35(_code_msg35)
+        _before_verify35 = _contact35(_w_uid35)
+        check(
+            "35b the admin's grant (PATCH whatsapp_enabled, echoed in UserOut) makes it available; no opt-in is a 400 "
+            "whatsapp_opt_in and a number that is not one a 400 whatsapp_phone, neither sending; then ONE message "
+            "carries a six-digit code to +972501234035 in the AUTHENTICATION template, in Hebrew, the code in the "
+            "body and in the copy-code button — and the row stores the number and the opt-in, not verified, and "
+            "the code only as an HMAC",
+            _grant35.status_code == 200 and _grant35.json().get("whatsapp_enabled") is True
+            and _granted_get35.json() == {"available": True, "phone": "", "opted_in": False, "verified": False,
+                                          "code_pending": False, "last_sent_at": "", "last_error": ""}
+            and _no_opt35.status_code == 400 and _j28(_no_opt35).get("detail") == {"code": "whatsapp_opt_in"}
+            and _bad_phone35.status_code == 400 and _j28(_bad_phone35).get("detail") == {"code": "whatsapp_phone"}
+            and _code35.status_code == 200 and len(_meta35) == 1
+            and _code_msg35.get("to") == "972501234035"
+            and (_code_msg35.get("template") or {}).get("name") == "jobfinder_code"
+            and (_code_msg35.get("template") or {}).get("language") == {"code": "he"}
+            and len(_sent_code35) == 6 and _sent_code35.isdigit()
+            and (_code_msg35["template"]["components"][1]["parameters"][0]["text"] == _sent_code35)
+            and _before_verify35 is not None and _before_verify35["phone"] == "+972501234035"
+            and _before_verify35["opted"] and not _before_verify35["verified"]
+            and _before_verify35["hash"] and _sent_code35 not in _before_verify35["hash"]
+            and (_code35.json().get("status") or {}).get("code_pending") is True,
+            f"{_grant35.text[:80]} {_code35.text[:120]} msg={_code_msg35} row={_before_verify35}",
+        )
+        _wrong35 = _c35.post("/whatsapp/verify", json={"code": "000000" if _sent_code35 != "000000" else "111111"},
+                             headers=_W35_H)
+        _right35 = _c35.post("/whatsapp/verify", json={"code": _sent_code35}, headers=_W35_H)
+        _again35 = _c35.post("/whatsapp/verify", json={"code": _sent_code35}, headers=_W35_H)
+        check(
+            "35b the code: a wrong one is a 400 whatsapp_code 'wrong' with 4 tries left and leaves the number unproven; "
+            "the right one verifies it; the same code a second time is spent ('expired')",
+            _wrong35.status_code == 400
+            and _j28(_wrong35).get("detail") == {"code": "whatsapp_code", "result": "wrong", "attempts_left": 4}
+            and _right35.status_code == 200 and _right35.json().get("verified") is True
+            and _again35.status_code == 400 and (_j28(_again35).get("detail") or {}).get("result") == "expired",
+            f"{_wrong35.text[:120]} {_right35.text[:120]} {_again35.text[:120]}",
+        )
+        _meta35.clear()
+        _test35 = _c35.post("/whatsapp/test", headers=_W35_H)
+        _test_msg35 = _meta35[-1][2] if _meta35 else {}
+        _test_params35 = ((_test_msg35.get("template") or {}).get("components") or [{}])[0].get("parameters") or []
+        check(
+            "35b 'Send a test message' sends the DIGEST template once (job_digest, Hebrew), with the two named "
+            "variables filled with sample values, and records the delivery on the row",
+            _test35.status_code == 200 and _test35.json().get("sent") is True and len(_meta35) == 1
+            and (_test_msg35.get("template") or {}).get("name") == "job_digest"
+            and [p.get("parameter_name") for p in _test_params35] == ["job_count", "top_job"]
+            and "(ניסיון)" in (_test_params35[1].get("text") if len(_test_params35) > 1 else "")
+            and (_contact35(_w_uid35) or {}).get("sent") is True,
+            f"{_test35.text[:120]} msg={_test_msg35}",
+        )
+
+        # The morning: to the proven number, in its language, and a WhatsApp message keeps the use like an email.
+        _meta35.clear()
+        _mo35, _mo_err35 = _run_alert32(_w_uid35, force=True, send_fn=None,
+                                        search_fn=_AlertSearch32(_alert_matches32("wa35-morning", 91, 50)))
+        _mo_msg35 = _meta35[-1][2] if _meta35 else {}
+        _mo_params35 = ((_mo_msg35.get("template") or {}).get("components") or [{}])[0].get("parameters") or []
+        _mo_events35 = _events32(_w_uid35)
+        check(
+            "35b a morning with one job above the bar and NO email (no SMTP) sends the digest to the proven number "
+            "— job_count 1, top_job naming that job in Hebrew with its 91 — says whatsapped, and KEEPS its one "
+            "job_alert use: a WhatsApp message is a message sent, where a notification alone is not",
+            _mo_err35 is None and _mo35 is not None and _mo35.whatsapped is True and not _mo35.emailed
+            and len(_meta35) == 1 and [p.get("text") for p in _mo_params35]
+            == ["1", "Alert32 wa35-morning 0 · AlertCo32 · התאמה 91%"]
+            and [(f, d, r) for _i, f, d, r, _ref in _mo_events35 if f == "job_alert"][-1:] == [("job_alert", 1, 0)],
+            f"run={_mo35} err={_mo_err35} params={_mo_params35} events={_shape32(_mo_events35)[-2:]}",
+        )
+        _meta35.clear()
+        _below35, _ = _run_alert32(_w_uid35, force=True, send_fn=None,
+                                   search_fn=_AlertSearch32(_alert_matches32("wa35-below", 60)))
+        _below_calls35 = len(_meta35)
+        _below_last35 = max((e[0] for e in _events32(_w_uid35)), default=0)
+        _revoke35 =_c35.patch(f"/admin/users/{_w_uid35}", json={"whatsapp_enabled": False}, headers=_ADMIN_H)
+        _revoked35, _ = _run_alert32(_w_uid35, force=True, send_fn=None,
+                                     search_fn=_AlertSearch32(_alert_matches32("wa35-revoked", 95)))
+        _revoked_calls35 = len(_meta35) - _below_calls35
+        _revoked_events35 = _events32(_w_uid35)
+        _c35.patch(f"/admin/users/{_w_uid35}", json={"whatsapp_enabled": True}, headers=_ADMIN_H)
+        check(
+            "35b nothing is sent when the email's rule says there is no news (every new job below the bar), nor once the "
+            "admin takes the grant away — that morning, with no email either, gives its use back",
+            _below35 is not None and _below35.whatsapped is False and _below_calls35 == 0
+            and _revoke35.status_code == 200 and _revoked35 is not None and _revoked35.whatsapped is False
+            and _revoked_calls35 == 0 and _refunded32([e for e in _revoked_events35 if e[0] > _below_last35],
+                                                      "job_alert"),
+            f"below={_below35} revoked={_revoked35} calls={_below_calls35},{_revoked_calls35} "
+            f"events={_shape32(_revoked_events35)[-3:]}",
+        )
+        _meta_answer35[:] = [_meta_error35(131050)]
+        _stopped35, _ = _run_alert32(_w_uid35, force=True, send_fn=None,
+                                     search_fn=_AlertSearch32(_alert_matches32("wa35-stopped", 92)))
+        _meta_answer35[:] = [(200, {"messaging_product": "whatsapp", "messages": [{"id": "wamid.smoke35"}]})]
+        _after_stop35 = _contact35(_w_uid35)
+        _meta35.clear()
+        _next35, _ = _run_alert32(_w_uid35, force=True, send_fn=None,
+                                  search_fn=_AlertSearch32(_alert_matches32("wa35-next", 93)))
+        check(
+            "35b the person stopped the messages inside WhatsApp (Meta's 131050): the morning is not whatsapped and "
+            "gives its use back, the number is no longer opted in or proven (last_error opted_out), and the next "
+            "morning sends NOTHING to it",
+            _stopped35 is not None and _stopped35.whatsapped is False
+            and _after_stop35 is not None and not _after_stop35["opted"] and not _after_stop35["verified"]
+            and _after_stop35["error"] == "opted_out" and _next35 is not None and _next35.whatsapped is False
+            and _meta35 == [],
+            f"stopped={_stopped35} row={_after_stop35} next={_next35} calls={len(_meta35)}",
+        )
+        _meta_answer35[:] = [_meta_error35(131026)]
+        _fail35 = _c35.post("/whatsapp/code", json={"phone": "+1 415 555 0135", "opt_in": True, "lang": "en"},
+                            headers=_W35_H)
+        _meta_answer35[:] = [(200, {"messaging_product": "whatsapp", "messages": [{"id": "wamid.smoke35"}]})]
+        _after_fail35 = _contact35(_w_uid35)
+        check(
+            "35b a number that is not on WhatsApp (Meta's 131026) is a 502 whatsapp_failed with reason "
+            "not_on_whatsapp, and leaves no code pending for it and the new number unproven",
+            _fail35.status_code == 502
+            and _j28(_fail35).get("detail") == {"code": "whatsapp_failed", "reason": "not_on_whatsapp"}
+            and _after_fail35 is not None and _after_fail35["phone"] == "+14155550135" and not _after_fail35["hash"]
+            and not _after_fail35["verified"] and _after_fail35["error"] == "not_on_whatsapp",
+            f"{_fail35.text[:120]} row={_after_fail35}",
+        )
+        _p35cap = _env29(DAILY_WHATSAPP_CAP="2")
+        try:
+            _cap_uid35, _CAP35_H = _alert_user32(_c35, "WhatsApp Capped 35", email="wa.cap35@example.com")
+            _c35.patch(f"/admin/users/{_cap_uid35}", json={"whatsapp_enabled": True}, headers=_ADMIN_H)
+            _meta35.clear()
+            _caps35 = [_c35.post("/whatsapp/code", json={"phone": "050-123-4036", "opt_in": True, "lang": "en"},
+                                 headers=_CAP35_H) for _ in range(3)]
+            _cap_calls35 = len(_meta35)
+        finally:
+            _restore29(_p35cap)
+        check(
+            "35b each code costs the owner a message, so the daily `whatsapp` cap bounds them: under a cap of 2 the "
+            "third code is a 429 daily_limit that sends nothing, and the monthly pool is untouched",
+            [r.status_code for r in _caps35] == [200, 200, 429]
+            and _j28(_caps35[2]).get("detail") == {"code": "daily_limit", "action": "whatsapp", "cap": 2}
+            and _cap_calls35 == 2 and _events32(_cap_uid35) == [],
+            f"{[r.status_code for r in _caps35]} calls={_cap_calls35} events={_events32(_cap_uid35)}",
+        )
+        _k_uid35, _K35_H = _alert_user32(_c35, "WhatsApp Close 35", email="wa.close35@example.com")
+        _c35.patch(f"/admin/users/{_k_uid35}", json={"whatsapp_enabled": True}, headers=_ADMIN_H)
+        _c35.post("/whatsapp/code", json={"phone": "050-123-4037", "opt_in": True, "lang": "en"}, headers=_K35_H)
+        _remove35 = _c35.request("DELETE", "/whatsapp", headers=_CAP35_H)
+        _wipe35 = _c35.request("DELETE", "/profile/data", headers=_W35_H)
+        _close35 = _c35.request("DELETE", "/profile/account", headers=_K35_H)
+        check(
+            "35b the number goes: 'remove' deletes it, 'Delete all my data' reports whatsapp=1 and leaves none, and "
+            "'Close my account' reports whatsapp=1 and leaves none (a phone number is personal data)",
+            _remove35.status_code == 200 and _contact35(_cap_uid35) is None
+            and _wipe35.status_code == 200 and _wipe35.json().get("whatsapp") == 1 and _contact35(_w_uid35) is None
+            and _close35.status_code == 200 and (_close35.json().get("data") or {}).get("whatsapp") == 1
+            and _contact35(_k_uid35) is None,
+            f"{_remove35.text[:80]} {_wipe35.text[:160]} {_close35.text[:120]}",
+        )
+        _restore29(_p35on)
+finally:
+    _wa35._transport = _real_wa_transport35
+    _disarm_tripwire32()
+    _restore29(_prev35b_env)
+check(
+    "35 the sweep's WhatsApp rows reached only the sweep's Meta — a code and a test for the sweep friend — and every "
+    "transport is put back",
+    [(m.get("template") or {}).get("name") for m in _sweep_wa32] == ["jobfinder_code", "job_digest"]
+    and _wa35._transport is None,
+    f"{[(m.get('template') or {}).get('name') for m in _sweep_wa32]} transport={_wa35._transport}",
 )
 
 _reached_end = True

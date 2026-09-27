@@ -40,9 +40,13 @@ WEB PUSH (PLAN 32). A morning with jobs to report also notifies every device
 the owner turned on (`webpush.notify_user`), with the email's own content
 decision: the same above-the-bar list, its count and its best match, nothing
 more. It runs after the run's bookkeeping is committed and can neither raise
-nor charge: pushing costs the owner nothing, so a use is still kept only when
-the EMAIL went out, and a morning that only pushed gives it back like any
-morning that mailed nothing.
+nor charge: pushing costs the owner nothing, so a morning that only pushed
+gives its use back like any morning that mailed nothing.
+
+WHATSAPP (PLAN 32, part 2). The same list also goes, as the owner's approved
+digest template, to a verified, opted-in WhatsApp number of an account the
+admin granted it to (`whatsapp.available`). A WhatsApp message is a message
+SENT, so a morning keeps its use when it emailed OR WhatsApped jobs.
 """
 from __future__ import annotations
 
@@ -60,7 +64,7 @@ from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.core import hidden_jobs, mailer, quota, webpush
+from app.core import hidden_jobs, mailer, quota, webpush, whatsapp
 from app.core.job_search import resume_hash, search_jobs
 from app.db.history import load_score_cache, record_search_hits
 from app.db.models import JobAlert, JobSearchHit, SavedResume, User
@@ -689,6 +693,38 @@ def _push_morning(db: Session, user_id: int, worth: list[JobMatch], push_fn: obj
         return 0
 
 
+def whatsapp_best_line(worth: list[JobMatch], lang: str) -> str:
+    """The digest template's {{top_job}}: the best job above the bar by the
+    number the app shows. Pure; the same choice as the notification's."""
+    top = max(worth, key=lambda m: m.overall)
+    pct = displayed_score(top.overall)
+    what = _clip(top.title, _PUSH_TITLE_MAX) or ("משרה" if lang == "he" else "A job")
+    where = _clip(top.company, _PUSH_COMPANY_MAX)
+    if lang == "he":
+        return f"{what} · {where} · התאמה {pct}%" if where else f"{what} · התאמה {pct}%"
+    return f"{what} at {where} ({pct}% match)" if where else f"{what} ({pct}% match)"
+
+
+def _whatsapp_morning(db: Session, user_id: int, worth: list[JobMatch]) -> bool:
+    """Send the morning's digest to the owner's WhatsApp number when all three
+    switches are on (the server, the admin's grant, a verified opted-in number).
+    True when Meta accepted it. Never raises; the contact's bookkeeping is kept
+    only when the caller commits."""
+    try:
+        owner = db.get(User, user_id)
+        if owner is None or not whatsapp.available(owner):
+            return False
+        contact = whatsapp.contact_of(db, user_id)
+        if not whatsapp.ready(contact):
+            return False
+        result = whatsapp.send_digest(contact, len(worth), whatsapp_best_line(worth, contact.lang or "en"))
+        whatsapp.record_send(contact, result)
+        return result.ok
+    except Exception as exc:  # noqa: BLE001 - a WhatsApp failure may never fail the morning
+        logger.warning("alert run: the WhatsApp digest did not complete (%s)", type(exc).__name__)
+        return False
+
+
 def _master_resume(db: Session, user_id: int) -> ResumeModel | None:
     for row in db.execute(
         select(SavedResume)
@@ -793,7 +829,8 @@ def run_alert(
 
     - With `charge=None` (the cron, and every direct call) the run reserves one
       `job_alert` use once it knows it will search, after the enabled and
-      master-resume checks, and KEEPS it only if the morning emailed jobs.
+      master-resume checks, and KEEPS it only if the morning emailed (or,
+      PLAN 32, WhatsApped) jobs; a notification alone never keeps it.
       Nothing above the bar, zero matches, a blank address, no SMTP, a failed
       send or a raise all give it back. With no use left the morning does not
       run: `last_skip` is set, `last_run_at` is left alone and the result says
@@ -840,6 +877,7 @@ def run_alert(
             return AlertRunResult(user_id=user_id, ran=False, error=f"Could not start the run: {exc}"[:500])
 
     emailed = False
+    whatsapped = False
     try:
         try:
             # PLAN 12.4: the daily cron re-surfaces mostly the SAME postings every
@@ -923,10 +961,16 @@ def run_alert(
                 emailed = True
             except Exception as e:  # noqa: BLE001
                 email_error = f"Email failed: {e}"
+        # PLAN 32: the same list to the owner's verified WhatsApp number, when
+        # the admin granted it. Meta bills each one to the owner.
+        if worth:
+            whatsapped = _whatsapp_morning(db, user_id, worth)
 
-        # A morning keeps its use only if it emailed jobs. Run now keeps its use
-        # here whatever the email did: its search completed and History holds it.
-        if own_use and not (emailed and worth):
+        # A morning keeps its use only if it SENT jobs: by email or by WhatsApp,
+        # each a message that reached the person. A notification never keeps it
+        # (PLAN 32: pushing costs nothing). Run now keeps its use here whatever
+        # was sent: its search completed and History holds it.
+        if own_use and not ((emailed or whatsapped) and worth):
             _give_back(db, charge)
         row.last_run_at = datetime.now(timezone.utc)
         row.last_new_count = len(new)
@@ -949,16 +993,17 @@ def run_alert(
             emailed=emailed,
             error=email_error,
             pushed=pushed,
+            whatsapped=whatsapped,
         )
     except Exception as e:  # noqa: BLE001 - never raise: one user's failure must not stop the cron
         # Anything after the reserve: roll back, give the morning's use back unless
-        # it already emailed jobs, and report. Run now's use stays spent here,
+        # it already sent jobs, and report. Run now's use stays spent here,
         # because its search had completed before anything could raise.
         try:
             db.rollback()
         except Exception:  # noqa: BLE001
             pass
-        if own_use and not emailed:
+        if own_use and not (emailed or whatsapped):
             _give_back(db, charge)
         message = (str(e) or type(e).__name__)[:500]
         _record_error(db, row, message, stamp_run=True, clear_skip=own_use)

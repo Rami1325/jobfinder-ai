@@ -25,7 +25,9 @@ type LimitAction =
   | "scan"
   | "fetch"
   // PLAN 32: "Send a test notification", one POST to a push service per tap.
-  | "push_test";
+  | "push_test"
+  // PLAN 32: WhatsApp codes and test messages, each billed to the owner.
+  | "whatsapp";
 
 interface DailyLimitDetail {
   code: "daily_limit";
@@ -48,6 +50,7 @@ const LIMIT_KEYS: Record<LimitAction, string> = {
   scan: "dailyLimit.scan",
   fetch: "dailyLimit.fetch",
   push_test: "dailyLimit.pushTest",
+  whatsapp: "dailyLimit.whatsapp",
 };
 
 // Prompt-size limits (backend app/llm/limits.py). Same structured-detail shape

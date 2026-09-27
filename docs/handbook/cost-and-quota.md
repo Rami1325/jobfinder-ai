@@ -130,6 +130,17 @@ the `MAX_NEXT` / `GOOGLE_FAIL_PER_IP` knobs — is in `accounts-and-auth.md`.)*
   /push/test` reaches no model but is one real POST to a push service per tap, so it is `net_capped:push_test` with
   its own daily cap (`DAILY_PUSH_TEST_CAP`, 10; admins exempt; `dailyLimit.pushTest` says it), counted only once the
   device is found to be the caller's. `docs/handbook/notifications.md` has the rest.
+- **WhatsApp costs the owner real money, so the ADMIN chooses who gets it** (PLAN 32, part 2, 2026-09-28). Meta bills
+  every delivered template message to the owner: in Israel $0.0353 for the digest (a saved-search digest is MARKETING
+  by Meta's own example) and $0.0053 for a code, about $21 a month for 20 people. Decided with the owner's rule in
+  mind: (1) access is admin-granted per account, `users.whatsapp_enabled` through `PATCH /admin/users/{id}` like
+  `inbox_enabled` (`WHATSAPP_ACCESS=all` opens it to everyone); (2) a WhatsApp message IS a message sent, so a
+  morning keeps its one `job_alert` use when it emailed OR WhatsApped jobs, and gives it back when it sent neither
+  (a push never counts); (3) no WhatsApp route charges a monthly use, since none reaches a model, but a code and a
+  test message each cost the owner a message, so both carry the `whatsapp` daily cap (`DAILY_WHATSAPP_CAP`, 5;
+  `net_capped:whatsapp` in 32.13). Charging a monthly use per WhatsApp message was rejected: it would make a person
+  the owner chose to pay for spend their own free uses on the owner's decision. smoke 35 pins the kept use on a
+  WhatsApp-only morning and the refund once the grant is taken away.
 
 ### The first search is free, once per POOL (PLAN 31.5, owner decision 7, 2026-09-26)
 

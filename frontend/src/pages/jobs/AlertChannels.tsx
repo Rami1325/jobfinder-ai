@@ -4,12 +4,21 @@
 // nothing below it moves when these arrive.
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Smartphone } from "lucide-react";
-import { addPushDevice, removePushDevice, testPushDevice } from "../../api/client";
+import { MessageCircle, Smartphone } from "lucide-react";
+import {
+  addPushDevice,
+  removePushDevice,
+  removeWhatsApp,
+  sendWhatsAppCode,
+  testPushDevice,
+  testWhatsApp,
+  verifyWhatsApp,
+} from "../../api/client";
 import { Button, useToast } from "../../components/ui";
 import { apiErrorCode, apiErrorMessage } from "../../lib/apiError";
 import { PushError, pushPermission, pushSupport, turnOffHere, turnOn, type PushSub } from "../../lib/push";
-import type { PushDevices } from "../../types";
+import type { PushDevices, WhatsAppStatus } from "../../types";
+import { inputCls } from "./shared";
 
 /** The app's language as a device's notifications are written in it. */
 export function pushLang(language: string): "he" | "en" {
@@ -163,6 +172,220 @@ export function PushRow({
           )}
           {others > 0 && <p className="text-xs text-ink-faint">{t("alerts.push.otherDevices", { count: others })}</p>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** The reasons `whatsapp.SendResult` can carry; anything else reads "failed". */
+const WA_REASONS = ["not_on_whatsapp", "opted_out", "rate_limited", "template", "payment", "token", "network", "failed"];
+
+/**
+ * "Also send on WhatsApp" (PLAN 32, part 2). Drawn only when the server offers
+ * it to this account (`status.available`: WhatsApp configured AND the admin's
+ * grant), because every message is billed to the owner. Three states, each one
+ * screen of a phone: a number with the explicit opt-in (the checkbox names
+ * JobFinder, the channel and the way out, Meta's opt-in rule), then the code
+ * WhatsApp delivered, then the number in use with a test and a way to stop. A
+ * refusal is said in the row, in the reader's language, never as a raw code.
+ */
+export function WhatsAppRow({
+  status,
+  onChange,
+}: {
+  status: WhatsAppStatus;
+  onChange: (status: WhatsAppStatus) => void;
+}) {
+  const { t, i18n } = useTranslation("jobs");
+  const toast = useToast();
+  const phoneId = useId();
+  const codeId = useId();
+  const [phone, setPhone] = useState("");
+  const [optIn, setOptIn] = useState(false);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [note, setNote] = useState("");
+
+  function say(e: unknown): void {
+    const errCode = apiErrorCode(e);
+    const detail = (e as { response?: { data?: { detail?: Record<string, unknown> } } })?.response?.data?.detail ?? {};
+    if (errCode === "whatsapp_phone") setNote(t("alerts.whatsapp.errPhone"));
+    else if (errCode === "whatsapp_opt_in") setNote(t("alerts.whatsapp.errOptIn"));
+    else if (errCode === "whatsapp_not_allowed") setNote(t("alerts.whatsapp.errNotAllowed"));
+    else if (errCode === "whatsapp_code") {
+      const result = detail.result;
+      if (result === "wrong") setNote(t("alerts.whatsapp.errWrong", { count: Number(detail.attempts_left) || 0 }));
+      else if (result === "locked") setNote(t("alerts.whatsapp.errLocked"));
+      else setNote(t("alerts.whatsapp.errExpired"));
+    } else if (errCode === "whatsapp_failed") {
+      const reason = typeof detail.reason === "string" && WA_REASONS.includes(detail.reason) ? detail.reason : "failed";
+      setNote(t(`alerts.whatsapp.reason.${reason}`));
+    } else setNote(apiErrorMessage(e, t("alerts.whatsapp.error")));
+  }
+
+  async function run(work: () => Promise<void>) {
+    setBusy(true);
+    setNote("");
+    try {
+      await work();
+    } catch (e) {
+      say(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const askCode = (number: string) =>
+    run(async () => {
+      const out = await sendWhatsAppCode({ phone: number, opt_in: optIn || status.opted_in, lang: pushLang(i18n.language) });
+      onChange(out.status);
+      setEditing(false);
+      setCode("");
+    });
+
+  const pending = status.code_pending && !status.verified && !editing;
+  const live = status.verified && status.opted_in && !editing;
+  const lastError = status.last_error && WA_REASONS.includes(status.last_error) ? status.last_error : "";
+
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <p className="flex items-center gap-1.5 text-sm font-medium text-ink">
+        <MessageCircle size={14} aria-hidden className="shrink-0 text-accent-soft" />
+        {t("alerts.whatsapp.label")}
+      </p>
+      <p className="mt-0.5 text-xs leading-relaxed text-ink-muted">{t("alerts.whatsapp.hint")}</p>
+
+      {live ? (
+        <>
+          {/* The number is an LTR run inside a Hebrew sentence: FSI…PDI isolate it. */}
+          <p className="mt-2 text-sm text-ink">{t("alerts.whatsapp.on", { phone: "⁨" + status.phone + "⁩" })}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={busy}
+              className="min-h-11"
+              onClick={() =>
+                void run(async () => {
+                  const out = await testWhatsApp();
+                  onChange(out.status);
+                  toast("success", t("alerts.whatsapp.testSent"));
+                })
+              }
+            >
+              {t("alerts.whatsapp.test")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              className="min-h-11"
+              onClick={() =>
+                void run(async () => {
+                  onChange(await removeWhatsApp());
+                  setPhone("");
+                  setOptIn(false);
+                  toast("success", t("alerts.whatsapp.removed"));
+                })
+              }
+            >
+              {t("alerts.whatsapp.remove")}
+            </Button>
+          </div>
+        </>
+      ) : pending ? (
+        <form
+          className="mt-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(async () => {
+              onChange(await verifyWhatsApp(code));
+              toast("success", t("alerts.whatsapp.verified"));
+            });
+          }}
+        >
+          <p className="text-sm text-ink">{t("alerts.whatsapp.codeSent", { phone: "⁨" + status.phone + "⁩" })}</p>
+          <label htmlFor={codeId} className="mt-2 block text-xs font-semibold text-ink-muted">
+            {t("alerts.whatsapp.code")}
+          </label>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <input
+              id={codeId}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              dir="ltr"
+              className={`${inputCls} min-h-11 w-32 text-center tracking-widest`}
+            />
+            <Button size="sm" type="submit" loading={busy} disabled={code.length !== 6} className="min-h-11">
+              {t("alerts.whatsapp.confirm")}
+            </Button>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-4">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void askCode(status.phone)}
+              className="min-h-11 text-xs font-semibold text-accent-soft hover:underline disabled:opacity-50"
+            >
+              {t("alerts.whatsapp.newCode")}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setEditing(true);
+                setPhone(status.phone);
+              }}
+              className="min-h-11 text-xs font-semibold text-accent-soft hover:underline disabled:opacity-50"
+            >
+              {t("alerts.whatsapp.changeNumber")}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <form
+          className="mt-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void askCode(phone);
+          }}
+        >
+          <label htmlFor={phoneId} className="block text-xs font-semibold text-ink-muted">
+            {t("alerts.whatsapp.phone")}
+          </label>
+          <input
+            id={phoneId}
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder={t("alerts.whatsapp.phonePlaceholder")}
+            inputMode="tel"
+            autoComplete="tel"
+            dir="ltr"
+            className={`${inputCls} mt-1 min-h-11 w-full max-w-xs`}
+          />
+          {/* The whole sentence is the checkbox's hit target, 44 px at least. */}
+          <label className="mt-1 flex min-h-11 cursor-pointer items-start gap-2 py-2 text-xs leading-relaxed text-ink">
+            <input
+              type="checkbox"
+              checked={optIn}
+              onChange={(e) => setOptIn(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+            />
+            <span>{t("alerts.whatsapp.optIn")}</span>
+          </label>
+          <Button size="sm" type="submit" loading={busy} disabled={!optIn || !phone.trim()} className="mt-2 min-h-11">
+            {t("alerts.whatsapp.sendCode")}
+          </Button>
+        </form>
+      )}
+      {(note || lastError) && (
+        <p role="status" className="mt-1 text-xs leading-relaxed text-warn">
+          {note || t(`alerts.whatsapp.reason.${lastError}`)}
+        </p>
       )}
     </div>
   );

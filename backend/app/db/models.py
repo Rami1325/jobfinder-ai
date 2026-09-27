@@ -72,6 +72,10 @@ class User(Base):
     # users, so an account nobody added must not be offered a button Google's
     # own consent page will refuse.
     inbox_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # PLAN 32: whether the admin let this account get the morning alert on
+    # WhatsApp, which the owner pays Meta for per message. The shim backfills
+    # False, so nobody is sent anything until the admin chooses them.
+    whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Phase 30 / B2: "free" is limited to FREE_MONTHLY_USES a month
     # (app/core/quota.py); "unlimited" has no monthly limit, though the daily caps
     # still apply. The admin is exempt whatever this says, and an unknown value
@@ -942,3 +946,36 @@ class PushSubscription(Base):
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     # Consecutive failures other than 404/410 (which delete at once).
     failure_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class WhatsAppContact(Base):
+    """The number one user asked to get the morning alert at on WhatsApp (PLAN
+    32, app/core/whatsapp.py). At most one per user.
+
+    `phone` is personal data (E.164). `opted_in_at` is when the person ticked
+    the explicit opt-in; `verified_at` is when they typed back the code WhatsApp
+    delivered to that number. A digest goes only to a row holding both. The code
+    itself is never stored, only its HMAC, with its expiry and wrong tries.
+
+    A NEW table, so `create_all` makes it with its unique constraint. Both
+    privacy doors delete a user's row (`routes._wipe_user_rows`).
+    """
+
+    __tablename__ = "whatsapp_contacts"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_whatsapp_contacts_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    phone: Mapped[str] = mapped_column(String(20), default="")
+    # "en" | "he": the language version of the templates this person gets.
+    lang: Mapped[str] = mapped_column(String(8), default="en")
+    opted_in_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    code_hash: Mapped[str] = mapped_column(String(64), default="")
+    code_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    code_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    # NULL = nothing delivered yet, never "it failed".
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # A short reason code from the last send that failed ("" = none).
+    last_error: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

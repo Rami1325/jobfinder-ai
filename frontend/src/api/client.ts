@@ -70,6 +70,8 @@ import type {
   PushDevice,
   PushDevices,
   PushTestResult,
+  WhatsAppSendOut,
+  WhatsAppStatus,
 } from "../types";
 
 // In dev, requests go through the Vite proxy at /api -> http://localhost:8000.
@@ -742,6 +744,32 @@ export async function removePushDevice(endpoint: string): Promise<{ removed: num
 
 export async function testPushDevice(endpoint: string): Promise<PushTestResult> {
   const { data } = await api.post<PushTestResult>("/push/test", { endpoint });
+  return data;
+}
+
+// WhatsApp alerts (PLAN 32). Never cached, like the devices.
+export async function getWhatsApp(): Promise<WhatsAppStatus> {
+  const { data } = await api.get<WhatsAppStatus>("/whatsapp");
+  return data;
+}
+
+export async function sendWhatsAppCode(payload: { phone: string; opt_in: boolean; lang: string }): Promise<WhatsAppSendOut> {
+  const { data } = await api.post<WhatsAppSendOut>("/whatsapp/code", payload);
+  return data;
+}
+
+export async function verifyWhatsApp(code: string): Promise<WhatsAppStatus> {
+  const { data } = await api.post<WhatsAppStatus>("/whatsapp/verify", { code });
+  return data;
+}
+
+export async function testWhatsApp(): Promise<WhatsAppSendOut> {
+  const { data } = await api.post<WhatsAppSendOut>("/whatsapp/test");
+  return data;
+}
+
+export async function removeWhatsApp(): Promise<WhatsAppStatus> {
+  const { data } = await api.delete<WhatsAppStatus>("/whatsapp");
   return data;
 }
 

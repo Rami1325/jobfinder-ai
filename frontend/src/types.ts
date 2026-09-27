@@ -760,6 +760,24 @@ export interface AlertRunResult {
   skipped_reason?: string;
   // PLAN 32: devices the run's notification reached. Absent on older backends.
   pushed?: number;
+  // PLAN 32: the digest went to the owner's verified WhatsApp number.
+  whatsapped?: boolean;
+}
+/** GET /whatsapp (PLAN 32; backend `WhatsAppStatusOut`). `available` false = the
+ * server has no WhatsApp set up or the admin has not granted this account, and
+ * the page draws nothing. */
+export interface WhatsAppStatus {
+  available: boolean;
+  phone: string;
+  opted_in: boolean;
+  verified: boolean;
+  code_pending: boolean;
+  last_sent_at: string;
+  last_error: string;
+}
+export interface WhatsAppSendOut {
+  sent: boolean;
+  status: WhatsAppStatus;
 }
 /** One device the morning alert is pushed to (PLAN 32; backend `PushDeviceOut`). */
 export interface PushDevice {
@@ -1089,6 +1107,8 @@ export interface UserOut {
   login_email: string;
   verified: boolean;
   inbox_enabled: boolean;
+  /** PLAN 32: may this account get alerts on WhatsApp (the owner pays per message). */
+  whatsapp_enabled?: boolean;
   plan: string; // "free" | "unlimited"
   /** What this account's pool spent this UTC month. */
   uses_this_month: number;

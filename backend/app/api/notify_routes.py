@@ -1,5 +1,11 @@
 """The alert channels beside the email (PLAN 32): web push, a thin door onto
-app/core/webpush.py.
+app/core/webpush.py, and WhatsApp, onto app/core/whatsapp.py.
+
+WhatsApp routes: nothing here charges a monthly use (no model is reached), but
+each code and each test is a message Meta bills to the owner, so both carry the
+`whatsapp` daily cap (`net_capped:whatsapp` in smoke 32.13) and both need the
+admin's grant (`whatsapp.available`). Reading the status, typing the code back
+and removing the number are free, and removing works whatever the switches say.
 
 Rules every route here keeps:
 
@@ -27,11 +33,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
 from app.config import get_settings
-from app.core import webpush
+from app.core import webpush, whatsapp
 from app.core.sessions import as_utc
 from app.core.usage import check_and_count
 from app.db.database import get_db
-from app.db.models import PushSubscription, User
+from app.db.models import PushSubscription, User, WhatsAppContact
 from app.models import (
     PushDeviceOut,
     PushDevicesOut,
@@ -39,6 +45,10 @@ from app.models import (
     PushRemoved,
     PushSubscribeIn,
     PushTestResult,
+    WhatsAppCodeIn,
+    WhatsAppSendOut,
+    WhatsAppStatusOut,
+    WhatsAppVerifyIn,
 )
 
 router = APIRouter()
@@ -182,3 +192,131 @@ def push_test(
     webpush.record_result(db, row, status)
     db.commit()
     return PushTestResult(status="gone" if status == "refused" else status)
+
+
+# --- WhatsApp (PLAN 32, part 2) ---------------------------------------------------
+def _wa_status(db: Session, user: User) -> WhatsAppStatusOut:
+    if not whatsapp.available(user):
+        return WhatsAppStatusOut(available=False)
+    c = whatsapp.contact_of(db, user.id)
+    if c is None:
+        return WhatsAppStatusOut(available=True)
+    expires = as_utc(c.code_expires_at)
+    return WhatsAppStatusOut(
+        available=True,
+        phone=c.phone or "",
+        opted_in=c.opted_in_at is not None,
+        verified=c.verified_at is not None,
+        code_pending=bool(c.code_hash) and expires is not None and expires > datetime.now(timezone.utc),
+        last_sent_at=_iso(c.last_sent_at),
+        last_error=c.last_error or "",
+    )
+
+
+def _require_whatsapp(user: User) -> None:
+    if not whatsapp.configured():
+        raise HTTPException(404, detail={"code": "whatsapp_unconfigured"})
+    if not whatsapp.allowed(user):
+        raise HTTPException(403, detail={"code": "whatsapp_not_allowed"})
+
+
+def _send_failed(result: whatsapp.SendResult) -> HTTPException:
+    return HTTPException(502, detail={"code": "whatsapp_failed", "reason": result.reason})
+
+
+@router.get("/whatsapp", response_model=WhatsAppStatusOut)
+def whatsapp_status(
+    response: Response, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> WhatsAppStatusOut:
+    """Whether WhatsApp alerts are offered to this account, and its number's state."""
+    response.headers["Cache-Control"] = "no-store"
+    return _wa_status(db, user)
+
+
+@router.post("/whatsapp/code", response_model=WhatsAppSendOut)
+def whatsapp_code(
+    body: WhatsAppCodeIn, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> WhatsAppSendOut:
+    """Save the number with the explicit opt-in and send it a verification code
+    through WhatsApp itself. A new number starts unverified. A message the owner
+    pays for, so the daily `whatsapp` cap comes first."""
+    _require_whatsapp(user)
+    if not body.opt_in:
+        raise HTTPException(400, detail={"code": "whatsapp_opt_in"})
+    phone = whatsapp.normalize_phone(body.phone)
+    if not phone:
+        raise HTTPException(400, detail={"code": "whatsapp_phone"})
+    check_and_count(db, user, "whatsapp", get_settings().daily_whatsapp_cap)
+    c = whatsapp.contact_of(db, user.id)
+    if c is None:
+        c = WhatsAppContact(user_id=user.id, phone=phone)
+        db.add(c)
+    elif c.phone != phone:
+        c.phone = phone
+        c.verified_at = None
+        c.last_sent_at = None
+        c.last_error = ""
+    c.lang = _lang(body.lang)
+    c.opted_in_at = datetime.now(timezone.utc)
+    code = whatsapp.new_code(c)
+    result = whatsapp.send_code(c, code)
+    if not result.ok:
+        # Nothing reached the number, so no code is pending for it.
+        c.code_hash = ""
+        c.code_expires_at = None
+        c.last_error = result.reason
+        db.commit()
+        raise _send_failed(result)
+    db.commit()
+    return WhatsAppSendOut(sent=True, status=_wa_status(db, user))
+
+
+@router.post("/whatsapp/verify", response_model=WhatsAppStatusOut)
+def whatsapp_verify(
+    body: WhatsAppVerifyIn, db: Session = Depends(get_db), user: User = Depends(current_user)
+) -> WhatsAppStatusOut:
+    """Type back the code WhatsApp delivered: the number is then proven, and the
+    mornings go to it. Five wrong tries spend the code."""
+    _require_whatsapp(user)
+    c = whatsapp.contact_of(db, user.id)
+    if c is None:
+        raise HTTPException(400, detail={"code": "whatsapp_code", "result": "expired", "attempts_left": 0})
+    outcome = whatsapp.check_code(c, body.code)
+    db.commit()
+    if outcome != "ok":
+        left = max(0, whatsapp.CODE_ATTEMPTS - int(c.code_attempts or 0)) if outcome == "wrong" else 0
+        raise HTTPException(400, detail={"code": "whatsapp_code", "result": outcome, "attempts_left": left})
+    return _wa_status(db, user)
+
+
+@router.post("/whatsapp/test", response_model=WhatsAppSendOut)
+def whatsapp_test(db: Session = Depends(get_db), user: User = Depends(current_user)) -> WhatsAppSendOut:
+    """"Send a test message": the digest template once, with sample values, to
+    the verified number. Billed like a morning, so capped like a code."""
+    _require_whatsapp(user)
+    c = whatsapp.contact_of(db, user.id)
+    if not whatsapp.ready(c):
+        raise HTTPException(400, detail={"code": "whatsapp_unverified"})
+    check_and_count(db, user, "whatsapp", get_settings().daily_whatsapp_cap)
+    sample = (
+        "(ניסיון) Backend Engineer · Acme · התאמה 86%" if (c.lang or "en") == "he"
+        else "(test) Backend Engineer at Acme (86% match)"
+    )
+    result = whatsapp.send_digest(c, 1, sample)
+    whatsapp.record_send(c, result)
+    db.commit()
+    if not result.ok:
+        raise _send_failed(result)
+    return WhatsAppSendOut(sent=True, status=_wa_status(db, user))
+
+
+@router.delete("/whatsapp", response_model=WhatsAppStatusOut)
+def whatsapp_remove(db: Session = Depends(get_db), user: User = Depends(current_user)) -> WhatsAppStatusOut:
+    """Stop WhatsApp alerts and forget the number. Works whatever the switches
+    say: a person can always take their number back."""
+    c = whatsapp.contact_of(db, user.id)
+    if c is not None:
+        db.delete(c)
+        db.commit()
+    return _wa_status(db, user)
+

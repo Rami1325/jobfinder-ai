@@ -13219,7 +13219,7 @@ try {
     if (/requestPermission|serviceWorker\.register/.test(outsideTurnOn)) out.push("lib/push.ts asks or registers outside turnOn");
     for (const [file, text] of others)
       if (/requestPermission|serviceWorker\.register/.test(text)) out.push(`${file} asks for permission or registers the worker, which only turnOn may`);
-    if (!/Promise\.all\(\[\s*getJobAlert\(\),\s*getPushDevices\(\)[^\]]*currentSubscription\(\),?\s*\]\)/.test(cardSrc))
+    if (!/Promise\.all\(\[\s*getJobAlert\(\),\s*getPushDevices\(\)[^\]]*currentSubscription\(\),[^\]]*\]\)/.test(cardSrc))
       out.push("the alerts card does not read the push devices and this browser's subscription together with the alert, so the card would move when they land");
     return out;
   };
@@ -13284,6 +13284,98 @@ try {
     fail("check 91: lib/apiError.ts's LIMIT_KEYS does not name push_test, so its daily cap reads the generic line (PLAN 32)");
 } catch (e) {
   fail(`web push check (check 91) could not run: ${e.message}`);
+}
+
+// ---- 92. WhatsApp alerts: opt-in first, every refusal said (PLAN 32, part 2) -- //
+// Every WhatsApp message is billed to the owner, and Meta requires an explicit
+// opt-in that names the business. What `tsc` cannot see:
+//   (a) the row is read in the alerts card's one Promise.all and drawn only when
+//       the server says `available` (configured AND the admin's grant);
+//   (b) "Send code" is disabled until the opt-in box is ticked, and the request
+//       carries `opt_in`; the opt-in sentence names JobFinder and WhatsApp in both
+//       locales;
+//   (c) every send-failure reason the backend's whatsapp.py can return is one the
+//       row knows (WA_REASONS) and has a sentence in both jobs.json; every
+//       `alerts.whatsapp.*` key resolves, the wrong-code count with its plural
+//       set; the `whatsapp` daily cap has its own sentence;
+//   (d) the client's /whatsapp calls are routes notify_routes.py mounts, and the
+//       privacy page says the number goes to WhatsApp (Meta).
+// Planted twins are probed every run.
+try {
+  const card = decomment(read("pages/jobs/AlertsCard.tsx")).replace(/\r\n/g, "\n");
+  const row = decomment(read("pages/jobs/AlertChannels.tsx")).replace(/\r\n/g, "\n");
+  const waPy = pySource("app/core/whatsapp.py", "check 92");
+  const backendReasons = waPy === null ? null : (() => {
+    const table = /_REASONS = \{([\s\S]*?)\n\}/.exec(waPy);
+    if (!table) throw new Error("backend/app/core/whatsapp.py has no readable _REASONS table");
+    const found = new Set([...table[1].matchAll(/:\s*"([a-z_]+)"/g)].map((m) => m[1]));
+    for (const m of waPy.matchAll(/SendResult\(False, "([a-z_]+)"/g)) found.add(m[1]);
+    if (found.size < 6) throw new Error(`read ${found.size} send-failure reasons out of whatsapp.py (expected at least 6)`);
+    return found;
+  })();
+  const read92 = (cardSrc, rowSrc) => {
+    const out = [];
+    if (!/Promise\.all\(\[[^\]]*getWhatsApp\(\)\.catch\(\(\) => null\)[^\]]*\]\)/.test(cardSrc))
+      out.push("the alerts card does not read WhatsApp in its one Promise.all, so the card would move when it lands");
+    if (!/setWa\(whats\?\.available \? whats : null\)/.test(cardSrc) || !/\{wa && <WhatsAppRow /.test(cardSrc))
+      out.push("the WhatsApp row is drawn without the server's `available` (configured and granted)");
+    const submit = /<Button[^>]*type="submit"[^>]*disabled=\{([^}]*)\}[^>]*>\s*\{t\("alerts\.whatsapp\.sendCode"\)\}/.exec(rowSrc);
+    if (!submit || !/!optIn/.test(submit[1])) out.push("Send code is not disabled until the opt-in box is ticked");
+    if (!/sendWhatsAppCode\(\{[^}]*opt_in:/.test(rowSrc)) out.push("the code request does not carry opt_in");
+    const reasons = /const WA_REASONS = \[([^\]]*)\]/.exec(rowSrc);
+    if (!reasons) throw new Error("pages/jobs/AlertChannels.tsx has no WA_REASONS list");
+    const known = new Set([...reasons[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]));
+    if (backendReasons) for (const r of backendReasons) if (!known.has(r)) out.push(`the backend can send reason "${r}", which the row does not know`);
+    return { out, known };
+  };
+  const real = read92(card, row);
+  for (const p of real.out) fail(`check 92: ${p} (PLAN 32)`);
+  const plant = (which, from, to, label) => {
+    const src = which === "card" ? card : row;
+    if (!src.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    const res = which === "card" ? read92(card.replace(from, to), row) : read92(card, row.replace(from, to));
+    if (!res.out.length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("row", "disabled={!optIn || !phone.trim()}", "disabled={!phone.trim()}", "a code sent without the opt-in");
+  plant("card", "setWa(whats?.available ? whats : null)", "setWa(whats)", "a row drawn for an account not granted");
+  if (backendReasons) plant("row", '"opted_out", ', "", "a reason the row does not know");
+
+  const keys = new Set([...row.matchAll(/\bt\("(alerts\.whatsapp\.[\w.]+)"/g)].map((m) => m[1]));
+  if (keys.size < 18) throw new Error(`read ${keys.size} alerts.whatsapp.* keys out of pages/jobs/AlertChannels.tsx (expected at least 18)`);
+  if (!/t\(`alerts\.whatsapp\.reason\.\$\{/.test(row)) throw new Error("the row no longer says a reason by its key, so the reasons below are unread");
+  for (const r of real.known) keys.add(`alerts.whatsapp.reason.${r}`);
+  const plural = { en: ["one", "other"], he: ["one", "two", "other"] };
+  for (const loc of ["en", "he"]) {
+    const jobs = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const key of keys) {
+      if (key === "alerts.whatsapp.errWrong") {
+        for (const form of plural[loc])
+          if (typeof jobs.alerts?.whatsapp?.[`errWrong_${form}`] !== "string")
+            fail(`check 92: locales/${loc}/jobs.json is missing "alerts.whatsapp.errWrong_${form}" (PLAN 32)`);
+      } else if (!resolvesIn(jobs, key)) fail(`check 92: locales/${loc}/jobs.json is missing "${key}" (PLAN 32)`);
+    }
+    if (!/JobFinder/.test(jobs.alerts?.whatsapp?.optIn ?? "") || !/WhatsApp|וואטסאפ/.test(jobs.alerts?.whatsapp?.optIn ?? ""))
+      fail(`check 92: locales/${loc}/jobs.json's opt-in sentence does not name JobFinder and WhatsApp (Meta's opt-in rule) (PLAN 32)`);
+    if (!resolvesIn(JSON.parse(read(`locales/${loc}/common.json`)), "dailyLimit.whatsapp"))
+      fail(`check 92: locales/${loc}/common.json is missing "dailyLimit.whatsapp" (PLAN 32)`);
+    if (!/Meta/.test(JSON.parse(read(`locales/${loc}/auth.json`)).privacy?.store?.whatsapp ?? ""))
+      fail(`check 92: locales/${loc}/auth.json's privacy.store.whatsapp does not say the number goes to WhatsApp (Meta) (PLAN 32)`);
+  }
+  if (!/<li>\{t\("privacy\.store\.whatsapp"\)\}<\/li>/.test(decomment(read("pages/PrivacyPage.tsx"))))
+    fail("check 92: the privacy page does not mention the WhatsApp number (privacy.store.whatsapp) (PLAN 32)");
+  if (!/whatsapp: "dailyLimit\.whatsapp"/.test(decomment(read("lib/apiError.ts"))))
+    fail("check 92: lib/apiError.ts's LIMIT_KEYS does not name whatsapp, so its daily cap reads the generic line (PLAN 32)");
+
+  const client = decomment(read("api/client.ts"));
+  const calls = [...client.matchAll(/api\.(get|post|delete)<[^>]*>\("(\/whatsapp[\w/-]*)"/g)].map((m) => `${m[1].toUpperCase()} ${m[2]}`);
+  if (calls.length < 5) throw new Error(`read ${calls.length} /whatsapp calls out of api/client.ts (expected 5)`);
+  const routesPy = pySource("app/api/notify_routes.py", "check 92");
+  if (routesPy !== null) {
+    const mounted = new Set([...routesPy.matchAll(/@router\.(get|post|delete)\("(\/whatsapp[\w/-]*)"/g)].map((m) => `${m[1].toUpperCase()} ${m[2]}`));
+    for (const c of calls) if (!mounted.has(c)) fail(`check 92: api/client.ts calls ${c}, which notify_routes.py does not mount (PLAN 32)`);
+  }
+} catch (e) {
+  fail(`WhatsApp check (check 92) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

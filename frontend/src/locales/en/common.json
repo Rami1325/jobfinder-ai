@@ -106,6 +106,7 @@
     "scan": "Daily limit reached — you've run all {{cap}} resume scans for today. Try again tomorrow.",
     "fetch": "Daily limit reached — you've opened {{cap}} job links for today. Try again tomorrow.",
     "pushTest": "Daily limit reached — you've sent {{cap}} test notifications today. Try again tomorrow.",
+    "whatsapp": "Daily limit reached — {{cap}} WhatsApp codes and test messages were sent today. Try again tomorrow.",
     "generic": "Daily limit reached — you've used your {{cap}} for today. Try again tomorrow."
   },
   "uses": {

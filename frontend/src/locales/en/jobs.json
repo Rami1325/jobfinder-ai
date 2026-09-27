@@ -322,6 +322,43 @@
       "error": "Couldn't change notifications. Try again.",
       "otherDevices_one": "Also on 1 other device.",
       "otherDevices_other": "Also on {{count}} other devices."
+    },
+    "whatsapp": {
+      "label": "Also send on WhatsApp",
+      "hint": "The morning's jobs as a WhatsApp message.",
+      "phone": "Your WhatsApp number",
+      "phonePlaceholder": "050-123-4567",
+      "optIn": "Send my job alerts from JobFinder to this number on WhatsApp. I can turn it off here at any time.",
+      "sendCode": "Send code",
+      "codeSent": "We sent a code to {{phone}} on WhatsApp.",
+      "code": "Code from WhatsApp",
+      "confirm": "Confirm",
+      "newCode": "Send a new code",
+      "changeNumber": "Change number",
+      "on": "Alerts also go to {{phone}} on WhatsApp.",
+      "test": "Send a test message",
+      "testSent": "Test message sent. It should arrive in a few seconds.",
+      "remove": "Stop and remove",
+      "removed": "WhatsApp alerts are off and the number is removed.",
+      "verified": "Number confirmed. Your morning alerts will also go there.",
+      "errPhone": "That doesn't look like a phone number. Write it with its area code, like 050-123-4567.",
+      "errOptIn": "Tick the box to agree to WhatsApp messages first.",
+      "errWrong_one": "That code isn't right. 1 try left.",
+      "errWrong_other": "That code isn't right. {{count}} tries left.",
+      "errExpired": "That code has expired. Send a new one.",
+      "errLocked": "Too many wrong codes. Send a new one.",
+      "errNotAllowed": "WhatsApp alerts aren't on for your account.",
+      "error": "Couldn't change WhatsApp alerts. Try again.",
+      "reason": {
+        "not_on_whatsapp": "WhatsApp couldn't deliver to this number. Check that it has WhatsApp.",
+        "opted_out": "You stopped these messages in WhatsApp. Send a code again to turn them back on.",
+        "rate_limited": "WhatsApp is limiting messages right now. Try again tomorrow.",
+        "template": "WhatsApp alerts aren't set up correctly yet. Try again later.",
+        "payment": "WhatsApp alerts are paused on our side. Try again later.",
+        "token": "WhatsApp alerts are paused on our side. Try again later.",
+        "network": "Couldn't reach WhatsApp. Try again.",
+        "failed": "WhatsApp didn't take the message. Try again later."
+      }
     }
   },
   "posted": {
