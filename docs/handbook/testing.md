@@ -157,3 +157,40 @@ The build command, the fail-loudly rule and the probe-it-in-both-directions rule
 - Probed red on the committed 0.3 `popup.js` before the fix: the first scenario sent 5 screening requests after a `monthly_limit` refusal and ended `ok`, while both all-200 twins stayed green. After the fix, 22 defects planted one at a time into the real files (locale, popup, layout, client, store) each turned it red.
 - **The review found three plants that the first version passed green**: the visibility test flipped, the throttle stamp deleted, and `refreshUses` writing whatever `/auth/me` said. It also found a fill injection that threw leaving a green line over empty boxes. Each is now red when planted into the real files. The false-positive plant (amber whenever fewer answers were written than drafted) is red as well.
 - **The second review found two more that passed green in every zone the check ever ran in**: `timeZone: "UTC"` deleted from both formatters (red only on a host set to a western zone), and the month's language read from `@@ui_locale` or `navigator.language` instead of the `uiLang` message (the stub's `@@ui_locale` always equalled the bundle). Both are now red on any host zone, and so is the mirror image of the first (the two dates built with `new Date(y, m, d)`, red in the eastern zone only). The clean files stay green on hosts set to UTC, Asia/Jerusalem, America/Los_Angeles, Pacific/Kiritimati and America/Sao_Paulo.
+
+### check-mirrors 89 and 90 — answering out loud (Phase 32, 2026-09-27)
+
+The mic on the interview page's answer boxes (`interview.md`, *Answer out loud*). Neither can be seen by `tsc`: a box
+without its mic, a send that leaves it listening and a `fetch` in the mic's files all compile.
+
+- **89 reads the wiring.** Every `<textarea>` on `pages/InterviewPage.tsx` and under `pages/interview/` (read with a
+  brace-aware tag reader; a floor of two, the practice box and the mock chat, and a textarea with children or a
+  value it cannot read throws) must be bound to a `useDictation({ value, onChange })` on its own value and setter,
+  carry `readOnly={<d>.listening}`, be the first child of a `relative` wrapper with `<ListeningBadge dictation={<d>} />`
+  right after it, and have the button and the note drawn. Every function that sends an answer (`interviewFeedback(`,
+  `sendMockAnswer(`; a floor of two) must call `<d>.cancel();` before the send. `lib/dictation.ts`,
+  `hooks/useDictation.ts` and `components/Dictation.tsx` may use no `fetch`, XHR, WebSocket, EventSource,
+  `sendBeacon`, axios, dynamic import or raw audio capture, and import only from a short list; `api/client.ts` may
+  name no speech route. Every `t("dictate.…")` the component reads and a `dictate.note.<kind>` for every
+  `DictationNote` kind (each also rendered by the note component) resolve in both `interview.json`; `MAX_ANSWER_KB`
+  equals `config.py`'s `max_answer_kb` default and `prompts.py` still caps an answer and a candidate turn with it (a
+  degraded skip without `backend/`); and `privacy.ai.voice` in both `auth.json` says the browser's own speech service
+  hears the voice and it never reaches JobFinder, and the privacy page renders it. Eight planted twins are probed
+  every run: a box that takes typing while the mic writes, a practice box with no button, Get feedback sent with the
+  mic on, a new box with no mic, a badge off its box, a `fetch` in the hook, the API client imported, raw audio
+  recorded.
+- **90 EXECUTES `createDictation`** (bundled with its real `lib/lang.ts`) against a scripted recognizer: words after
+  the typed text with one space (and none after a line break), guessed and settled words in order, a tap-off whose
+  last words land and that opens nothing more, a box the page emptied never written again, a cancel, the cap in UTF-8
+  bytes (600 Hebrew letters pass a 1 KB cap, 600 English letters do not) and the default cap at exactly 16 KB, a box
+  at the cap not opening the mic, a note for each recognizer error, a session that ended by itself after hearing words
+  reopening (with the language read again) and one that heard nothing stopping, Chrome on Android's zero-confidence
+  repeats, feature detection, and the language (a Hebrew question, an English one, one Hebrew word in an English
+  question, no words). Eight planted twins of the file must each go red: words written over the typed text, a cap
+  counted in letters, the page-changed guard removed, the reopen removed, a reopen after a tap-off, the question's
+  language ignored, any Hebrew letter making a question Hebrew, and `continuous = false`.
+- Probed red with 13 plants in the real files (a box without `readOnly`, the chat's send without its cancel, the
+  chat without its note, a hook bound to another value, the API client in the component, a `fetch` in the hook, the
+  cap off by one, a note kind with no sentence, a Hebrew privacy sentence that sends the voice to JobFinder, the
+  privacy page without it, words written over the typed text, Android's repeats kept, a blocked mic with no note of
+  its own), each restored.
