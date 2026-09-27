@@ -2,7 +2,7 @@
 // JobsPage.tsx — PLAN 12.5d). No JSX here.
 import type { TFunction } from "i18next";
 import { textLanguage } from "../../lib/lang";
-import type { JobMatch, JobSearchResult, KitJobIn, SearchContext, SearchQueryReading } from "../../types";
+import type { Applicants, JobMatch, JobSearchResult, KitJobIn, SearchContext, SearchQueryReading } from "../../types";
 
 // House ease curve — shared by the scan ticker flips and JobsPage's tab/card motion.
 export const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -91,6 +91,33 @@ export function postedAgo(iso: string, t: TFunction<"jobs">): string {
   if (days < 7) return t("posted.days", { count: days });
   if (days < 30) return t("posted.weeks", { count: Math.floor(days / 7) });
   return t("posted.months", { count: Math.floor(days / 30) });
+}
+
+/** The board's own competition line in the app's words (Phase 32): "131
+ * applicants on LinkedIn", or "" when there is nothing to say. ONE function for
+ * every surface (the search row, the History row, a job's page), so no two of
+ * them can word the same reading differently.
+ *
+ * It judges no freshness: the server sends a reading only while it is current
+ * (`job_search.current_applicants`, a day), so there is no date here to compare
+ * on a device clock that may be wrong. It names the board the READING names
+ * (`source`), never the page's context, and says nothing for a reading that
+ * names none. A `kind` this build has no sentence for draws nothing, because
+ * `t()` on a missing key renders the key. Each key is a plain literal call, so
+ * check-mirrors 87 resolves it in both locales. */
+export function applicantsText(a: Applicants | null | undefined, t: TFunction<"jobs">): string {
+  if (!a || !a.source || !Number.isInteger(a.n) || a.n < 0) return "";
+  const board = sourceLabel(a.source);
+  switch (a.kind) {
+    case "early":
+      return t("card.applicantsEarly", { n: a.n, board });
+    case "over":
+      return t("card.applicantsOver", { n: a.n, board });
+    case "count":
+      return t("card.applicantsCount", { count: a.n, board });
+    default:
+      return "";
+  }
 }
 
 // Job-board hosts whose favicon is the board's logo, not the company's — those

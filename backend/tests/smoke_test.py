@@ -30428,6 +30428,359 @@ finally:
     _nl_js.get_llm_client = _nl_real_client
     _restore29(_nl_prev_env)
 
+# ---------------------------------------------------------------------------
+# Phase 32: the board's own competition line ("131 applicants") on a job card.
+# LinkedIn's guest page states it in the top card (12 of 12 live pages on
+# 2026-09-27); `linkedin_applicants` reads it from the page `fetch_description`
+# already fetched, `job_search.current_applicants` is the one rule for showing
+# it (a day), and History and a job's page hand back only a current reading.
+# ---------------------------------------------------------------------------
+import urllib.error as _ap_urlerr  # noqa: E402
+
+from app.core.job_search import (  # noqa: E402
+    APPLICANTS_FRESH_S as _AP_FRESH_S,
+    applicants_read_at as _ap_stamp,
+    current_applicants as _ap_current,
+    utc_now as _ap_now,
+)
+from app.core.providers.linkedin import linkedin_applicants as _ap_read  # noqa: E402
+from app.db.history import record_search_hits as _ap_record  # noqa: E402
+from app.db.models import JobSearchHit as _ApHitRow  # noqa: E402
+from app.models import Applicants as _Ap, JobMatch as _ApMatch  # noqa: E402
+
+_AP_COUNT_HTML = (_GH_FIXTURES / "linkedin_job_applicants_count.html").read_text(encoding="utf-8")
+_AP_OVER_HTML = (_GH_FIXTURES / "linkedin_job_applicants_over.html").read_text(encoding="utf-8")
+_AP_HE_HTML = (_GH_FIXTURES / "linkedin_job_applicants_he.html").read_text(encoding="utf-8")
+_AP_REAL_CAPTION = (
+    '<span class="num-applicants__caption topcard__flavor--metadata topcard__flavor--bullet">\n'
+    "          131 applicants\n"
+    "        </span>"
+)
+_ap_count_uncommented = _GH_COMMENT_RE.sub("", _AP_COUNT_HTML)
+# The traps are asserted PRESENT first, anchored on their own markup (14c-2's
+# rule): a fixture someone trimmed would otherwise let the false-positive half
+# pass by never firing.
+check(
+    "32 competition: the count fixture still carries its four traps and the real caption once — the EEO "
+    "'applicants', the body sentence, a commented caption BEFORE the real one, and a caption-classed span in the body",
+    "employees and applicants for employment" in _AP_COUNT_HTML
+    and "Over 200 applicants applied to this team last year." in _AP_COUNT_HTML
+    and _AP_COUNT_HTML.index('<figcaption class="num-applicants__caption">Over 200 applicants</figcaption>')
+    < _AP_COUNT_HTML.index(_AP_REAL_CAPTION)
+    and '<figcaption class="num-applicants__caption">Over 200' not in _ap_count_uncommented
+    and '<span class="num-applicants__caption">Be among the first 25 applicants</span>' in _AP_COUNT_HTML
+    and _AP_COUNT_HTML.count(_AP_REAL_CAPTION) == 1,
+)
+_ap_fx = {
+    "count": _ap_read(_AP_COUNT_HTML),
+    "over": _ap_read(_AP_OVER_HTML),
+    "open": _ap_read(_GH_OPEN_HTML),
+    "closed": _ap_read(_GH_CLOSED_HTML),
+}
+check(
+    "32 competition: the board's words in both shapes — '131 applicants' (span) through every trap, 'Over 200 "
+    "applicants' (figure), and 'Be among the first 25 applicants' on the open and closed pages, whose closure read "
+    "is unchanged; read_at is left for the search to stamp",
+    _ap_fx["count"] == _Ap(kind="count", n=131, source="linkedin")
+    and _ap_fx["over"] == _Ap(kind="over", n=200, source="linkedin")
+    and _ap_fx["open"] == _Ap(kind="early", n=25, source="linkedin")
+    and _ap_fx["closed"] == _Ap(kind="early", n=25, source="linkedin")
+    and _gh_closed(_GH_CLOSED_HTML) == "No longer accepting applications"
+    and _gh_closed(_AP_COUNT_HTML) == "" and _gh_closed(_AP_OVER_HTML) == ""
+    and all(a is not None and a.read_at == "" for a in _ap_fx.values()),
+    str(_ap_fx),
+)
+# THE FALSE-POSITIVE HALF: with the real caption taken out, the page still says
+# "applicants" four ways, and none of them is the board's line.
+_ap_no_caption = _AP_COUNT_HTML.replace(_AP_REAL_CAPTION, "")
+_ap_neg = {
+    "caption removed": _ap_read(_ap_no_caption),
+    "empty": _ap_read(""),
+    "login wall": _ap_read("<html><body>Sign in to see who has already applied. 200 applicants</body></html>"),
+    "other words": _ap_read('<span class="num-applicants__caption">Actively reviewing applicants</span>'),
+    "grouped number": _ap_read('<span class="num-applicants__caption">1,204 applicants</span>'),
+    "near-miss class": _ap_read('<span class="num-applicants__caption-x">131 applicants</span>'),
+    "no class, words only": _ap_read("<p>Over 200 applicants</p>"),
+}
+check(
+    "32 competition: the false-positive half — the count page with its real caption taken out reads NOTHING (the "
+    "body's words, the body's caption-classed span and the commented caption are all ignored), and so do an empty "
+    "page, a login wall, a caption in other words, a grouped number and a near-miss class",
+    all(v is None for v in _ap_neg.values()),
+    str({k: v for k, v in _ap_neg.items() if v is not None}),
+)
+# Hebrew: the fixture page, plus the other two captions captured verbatim the
+# same day from the same pages asked in he-IL. The app asks in English; these
+# are read in case that ever changes, and a bidi mark around the number (seen in
+# LinkedIn's Hebrew posted-ago text) must not hide one.
+_ap_he = {
+    "early": _ap_read(_AP_HE_HTML),
+    "over": _ap_read(
+        '<figure class="num-applicants__figure topcard__flavor--metadata topcard__flavor--bullet">\n'
+        '          <span class="num-applicants__icon num-applicants__icon--notify-pebble lazy-load"></span>\n'
+        '          <figcaption class="num-applicants__caption">\n            מעל 200 מועמדים\n'
+        "          </figcaption>\n        </figure>"
+    ),
+    "count": _ap_read(
+        '<span class="num-applicants__caption topcard__flavor--metadata topcard__flavor--bullet">\n'
+        "          131 מועמדים\n        </span>"
+    ),
+    "marks": _ap_read('<span class="num-applicants__caption">‏131‏ מועמדים</span>'),
+    "other": _ap_read('<span class="num-applicants__caption">בודקים מועמדים באופן פעיל</span>'),
+}
+check(
+    "32 competition: LinkedIn's Hebrew captions read the same three ways ('להיות בין 25 הראשונים מועמדים', "
+    "'מעל 200 מועמדים', '131 מועמדים'), through bidi marks, and other Hebrew words read nothing",
+    _ap_he["early"] == _Ap(kind="early", n=25, source="linkedin")
+    and _ap_he["over"] == _Ap(kind="over", n=200, source="linkedin")
+    and _ap_he["count"] == _Ap(kind="count", n=131, source="linkedin")
+    and _ap_he["marks"] == _Ap(kind="count", n=131, source="linkedin")
+    and _ap_he["other"] is None,
+    str(_ap_he),
+)
+
+# It rides the fetch that already happens: ONE request per posting, the same
+# description string as before, and nothing read from a failed fetch.
+_ap_real_get = _lp_mod._http_get
+_ap_calls: list[str] = []
+
+
+def _ap_get_ok(url, timeout=15):  # noqa: ANN001
+    _ap_calls.append(url)
+    return _AP_COUNT_HTML
+
+
+def _ap_get_status(code):  # noqa: ANN001
+    def _get(url, timeout=15):  # noqa: ANN001
+        _ap_calls.append(url)
+        raise _ap_urlerr.HTTPError(url, code, "status", {}, None)  # type: ignore[arg-type]
+    return _get
+
+
+_ap_hits = {k: _FanHit(source="linkedin", url="https://il.linkedin.com/jobs/view/4405646663") for k in ("ok", "404", "429")}
+try:
+    _lp_mod._http_get = _ap_get_ok
+    _ap_text_ok = _lp_mod.LinkedInProvider().fetch_description(_ap_hits["ok"])
+    _ap_calls_ok = list(_ap_calls)
+    _lp_mod._http_get = _ap_get_status(404)
+    _ap_text_404 = _lp_mod.LinkedInProvider().fetch_description(_ap_hits["404"])
+    _lp_mod._http_get = _ap_get_status(429)
+    _ap_text_429 = _lp_mod.LinkedInProvider().fetch_description(_ap_hits["429"])
+finally:
+    _lp_mod._http_get = _ap_real_get
+check(
+    "32 competition: fetch_description reads the line from the page it already fetched — one request, the same "
+    "description string, the closure read beside it; a 404 is closed with no line, and a 429 reads neither",
+    _ap_calls_ok == ["https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4405646663"]
+    and _ap_hits["ok"].applicants == _Ap(kind="count", n=131, source="linkedin")
+    and _ap_text_ok == _lp_mod._description_from_html(_AP_COUNT_HTML)
+    and _ap_text_ok.startswith("Senior Software Engineer, Control — WEKA") and "WEKA is architecting" in _ap_text_ok
+    and _ap_hits["ok"].closed == ""
+    and _ap_hits["404"].closed == "HTTP 404" and _ap_hits["404"].applicants is None and _ap_text_404 == ""
+    and _ap_hits["429"].closed == "" and _ap_hits["429"].applicants is None and _ap_text_429 == ""
+    and len(_ap_calls) == 3 and _lp_mod._http_get is _ap_real_get,
+    f"calls={_ap_calls} ok={_ap_hits['ok'].applicants} 404={_ap_hits['404'].closed!r}",
+)
+
+# THE ONE RULE for showing it: under a day old at `now`, else nothing.
+_ap_t0 = _ap_now().replace(microsecond=0)
+
+
+def _ap_at(seconds_ago: float, kind: str = "count") -> _Ap:
+    return _Ap(kind=kind, n=131, source="linkedin", read_at=_ap_stamp(_ap_t0 - _gh_td(seconds=seconds_ago)))
+
+
+_ap_rule = {
+    "now": _ap_current(_ap_at(0), _ap_t0) is not None,
+    "23h59m": _ap_current(_ap_at(_AP_FRESH_S - 60), _ap_t0) is not None,
+    "a day": _ap_current(_ap_at(_AP_FRESH_S), _ap_t0) is None,
+    "3 days": _ap_current(_ap_at(3 * 86400), _ap_t0) is None,
+    "4 min ahead": _ap_current(_ap_at(-240), _ap_t0) is not None,
+    "an hour ahead": _ap_current(_ap_at(-3600), _ap_t0) is None,
+    "junk stamp": _ap_current(_Ap(kind="count", n=131, source="linkedin", read_at="yesterday"), _ap_t0) is None,
+    "no stamp": _ap_current(_Ap(kind="count", n=131, source="linkedin"), _ap_t0) is None,
+    "unknown kind": _ap_current(_ap_at(0, kind="about"), _ap_t0) is None,
+    "no board": _ap_current(_ap_at(0).model_copy(update={"source": ""}), _ap_t0) is None,
+    "none": _ap_current(None, _ap_t0) is None,
+    "stamp round-trips": _gh_parse_date(_ap_stamp(_ap_t0)) == _ap_t0 and _ap_stamp(_ap_t0).endswith("Z"),
+}
+check(
+    "32 competition: current_applicants is the one rule — a reading under a day old is shown, a day or older is "
+    "not, a stamp up to 5 minutes ahead is ours and one an hour ahead is not, and a junk or missing stamp, an "
+    "unknown kind or a reading that names no board is never current",
+    all(_ap_rule.values()),
+    str({k: v for k, v in _ap_rule.items() if not v}),
+)
+
+
+# End to end through the search: the posting whose page was fetched carries the
+# line, stamped with the run's clock; one whose page said nothing, and one from
+# a board that inlines its text (never fetched), carry none.
+class _ApBoard:
+    name = "fake_ap"
+
+    def __init__(self) -> None:
+        self.fetched: list[str] = []
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source=self.name, title=f"Python Developer {s}", company=f"ApCo {s}", description="",
+                    url=f"https://ap.test/{s}")
+            for s in ("seen", "silent", "cached", "old", "other")
+        ] + [
+            _FanHit(source=self.name, title="Python Developer inline", company="ApCo inline",
+                    description="Python and SQL work on a distributed backend.", url="https://ap.test/inline")
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        slug = hit.url.rsplit("/", 1)[-1]
+        self.fetched.append(slug)
+        if slug == "seen":
+            hit.applicants = _ap_read(_AP_COUNT_HTML)
+        return "Python and SQL work on a distributed backend."
+
+
+def _ap_cached(slug: str, reading: _Ap | None, full: bool = True):  # noqa: ANN202
+    return _GeoCached(
+        jd_text="Python and SQL work on a distributed backend.", overall=80.0, keyword_coverage=70.0,
+        fit_score=90.0, top_matched=("Python",), top_gaps=(), title=f"Python Developer {slug}",
+        company=f"ApCo {slug}", location="", posted_at="", logo_url="", is_full_match=full, applicants=reading,
+    )
+
+
+_ap_board = _ApBoard()
+_PROV["fake_ap"] = _ap_board
+try:
+    _ap_before = _ap_now()
+    _ap_res = _fan_search(
+        resume,
+        _AlertCtx(job_title="Python Developer", sources=["fake_ap"], max_age_days=0, limit=10),
+        cache={
+            "https://ap.test/cached": _ap_cached("cached", _ap_at(2 * 3600)),
+            "https://ap.test/old": _ap_cached("old", _ap_at(2 * 86400)),
+            "https://ap.test/other": _ap_cached("other", _ap_at(3600, kind="early"), full=False),
+        },
+    )
+finally:
+    _PROV.pop("fake_ap", None)
+_ap_by = {m.url.rsplit("/", 1)[-1]: m for m in _ap_res.matches}
+_ap_seen = _ap_by.get("seen")
+_ap_seen_at = _gh_parse_date(_ap_seen.applicants.read_at) if _ap_seen and _ap_seen.applicants else None
+check(
+    "32 competition: through the search, the fetched posting carries the board's line stamped with the run's own "
+    "clock; a page that said nothing and a board that inlines its text carry none",
+    _ap_seen is not None and _ap_seen.applicants is not None
+    and (_ap_seen.applicants.kind, _ap_seen.applicants.n) == ("count", 131)
+    and _ap_seen_at is not None
+    and _ap_before.replace(microsecond=0) - _gh_td(seconds=1) <= _ap_seen_at <= _ap_now()
+    and "silent" in _ap_by and _ap_by["silent"].applicants is None
+    and "inline" in _ap_by and _ap_by["inline"].applicants is None
+    and sorted(_ap_board.fetched) == ["seen", "silent"],
+    f"fetched={_ap_board.fetched} by={ {k: m.applicants for k, m in _ap_by.items()} }",
+)
+check(
+    "32 competition: a CACHED posting is rebuilt with no fetch and keeps its stored reading while it is current "
+    "(both cache tiers), and a stored reading two days old is left off the card, never shown as today's",
+    "cached" in _ap_by and _ap_by["cached"].applicants == _ap_at(2 * 3600)
+    and "other" in _ap_by and _ap_by["other"].applicants == _ap_at(3600, kind="early")
+    and "old" in _ap_by and _ap_by["old"].applicants is None
+    and not {"cached", "old", "other"} & set(_ap_board.fetched),
+    f"cached={_ap_by.get('cached') and _ap_by['cached'].applicants} old={_ap_by.get('old') and _ap_by['old'].applicants}",
+)
+
+# History and a job's page: stored as read, replaced by a newer reading, never
+# cleared by a search that read none, and handed back only while current.
+_AP_URL = "https://www.linkedin.com/jobs/view/4405646663"
+_AP_STALE_URL = "https://www.linkedin.com/jobs/view/4408239691"
+_prev_ap_env = _env29(DAILY_SEARCH_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _cap32:
+        _ap_uid, _AP_H = _mint32(_cap32, "Competition Line")
+        _ap_twin_uid, _AP_TWIN_H = _mint32(_cap32, "Competition Twin")
+
+        def _ap_rows() -> dict:
+            d = SessionLocal()
+            try:
+                return {
+                    r.url: r.applicants_json
+                    for r in d.query(_ApHitRow).filter(_ApHitRow.user_id == _ap_uid).all()
+                }
+            finally:
+                d.close()
+
+        def _ap_rec(url: str, reading: _Ap | None, uid: int | None = None) -> None:
+            d = SessionLocal()
+            try:
+                _ap_record(d, [_ApMatch(title="Senior Software Engineer, Control", company="WEKA", url=url,
+                                        jd_text="Python.", applicants=reading)], uid or _ap_uid)
+            finally:
+                d.close()
+
+        _ap_first = _ap_at(3600)
+        _ap_rec(_AP_URL, _ap_first)
+        _ap_after_first = _ap_rows().get(_AP_URL)
+        _ap_rec(_AP_URL, None)  # a search that read no line
+        _ap_after_none = _ap_rows().get(_AP_URL)
+        _ap_newer = _ap_at(60, kind="over")
+        _ap_rec(_AP_URL, _ap_newer)
+        _ap_after_newer = _ap_rows().get(_AP_URL)
+        _ap_rec(_AP_STALE_URL, _ap_at(2 * 86400))
+        _ap_hist = {h["url"]: h for h in _j28(_cap32.get("/jobs/history", headers=_AP_H)).get("hits", [])}
+        # A job's page: the tracker row stores the posting in another URL shape
+        # (regional host, slug, tracking query), matched by the LinkedIn id.
+        _ap_app = _j28(_cap32.post(
+            "/applications",
+            json={"job_title": "Senior Software Engineer, Control", "company": "WEKA", "status": "saved",
+                  "job_url": "https://il.linkedin.com/jobs/view/senior-software-engineer-control-at-weka-4405646663?trk=x"},
+            headers=_AP_H,
+        ))
+        _ap_app_stale = _j28(_cap32.post(
+            "/applications",
+            json={"job_title": "Big Data Analyst", "company": "Similarweb", "status": "saved", "job_url": _AP_STALE_URL},
+            headers=_AP_H,
+        ))
+        _ap_app_none = _j28(_cap32.post(
+            "/applications",
+            json={"job_title": "Elsewhere", "company": "X", "status": "saved", "job_url": "https://www.linkedin.com/jobs/view/4000000001"},
+            headers=_AP_H,
+        ))
+        _ap_app_twin = _j28(_cap32.post(
+            "/applications",
+            json={"job_title": "Senior Software Engineer, Control", "company": "WEKA", "status": "saved", "job_url": _AP_URL},
+            headers=_AP_TWIN_H,
+        ))
+        _ap_detail = {
+            k: _j28(_cap32.get(f"/applications/{app.get('id')}", headers=h))
+            for k, app, h in (
+                ("fresh", _ap_app, _AP_H), ("stale", _ap_app_stale, _AP_H),
+                ("none", _ap_app_none, _AP_H), ("twin", _ap_app_twin, _AP_TWIN_H),
+            )
+        }
+finally:
+    _restore29(_prev_ap_env)
+check(
+    "32 competition: History stores the reading as read, a search that read none leaves it alone, and a newer "
+    "reading replaces it",
+    _ap_after_first == _ap_first.model_dump_json()
+    and _ap_after_none == _ap_first.model_dump_json()
+    and _ap_after_newer == _ap_newer.model_dump_json(),
+    f"{_ap_after_first} / {_ap_after_none} / {_ap_after_newer}",
+)
+check(
+    "32 competition: GET /jobs/history hands a reading back only while it is current (the two-day-old row's is "
+    "null, and its row is still there); a job's page carries its posting's current reading from History, matched "
+    "across URL shapes, and none when the reading is stale, when History never read one, or for another account",
+    (_ap_hist.get(_AP_URL) or {}).get("applicants") == _ap_newer.model_dump()
+    and _AP_STALE_URL in _ap_hist and "applicants" in _ap_hist[_AP_STALE_URL]
+    and _ap_hist[_AP_STALE_URL]["applicants"] is None
+    and _ap_detail["fresh"].get("applicants") == _ap_newer.model_dump()
+    and "applicants" in _ap_detail["stale"] and _ap_detail["stale"]["applicants"] is None
+    and "applicants" in _ap_detail["none"] and _ap_detail["none"]["applicants"] is None
+    and "applicants" in _ap_detail["twin"] and _ap_detail["twin"]["applicants"] is None,
+    f"hist={ {u: h.get('applicants') for u, h in _ap_hist.items()} } "
+    f"detail={ {k: d.get('applicants', 'MISSING') for k, d in _ap_detail.items()} }",
+)
+
 _reached_end = True
 print(f"\n{_ran} checks ran.")
 print("ALL PASSED" if not failures else f"FAILURES: {failures}")

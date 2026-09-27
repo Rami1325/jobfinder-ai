@@ -227,6 +227,13 @@ class JobSearchHit(Base):
     logo_url: Mapped[str] = mapped_column(String(1000), default="")  # company logo; "" when none
     # PLAN 15.1: the same posting on other boards, [{"source","url"}] JSON
     also_on_json: Mapped[str] = mapped_column(Text, default="[]")
+    # Phase 32: the board's own competition line, `Applicants` as JSON
+    # ({"kind", "n", "read_at"}), as the last fetch that read one left it. ""
+    # means none was ever read (every other board, rows from before the column,
+    # a posting never fetched). Replaced by a newer reading, never cleared by a
+    # search that read none, and never shown once it is a day old
+    # (`job_search.current_applicants`): the row keeps a stale one harmlessly.
+    applicants_json: Mapped[str] = mapped_column(Text, default="")
     # sha256 of the resume the scores were computed against (PLAN 12.4) — lets a
     # re-search tell "same resume, reuse the scores" from "different resume,
     # rescore". "" on pre-12.4 rows (never treated as a full-reuse match).

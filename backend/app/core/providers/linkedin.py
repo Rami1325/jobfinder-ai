@@ -8,9 +8,16 @@ page, only as many pages as the result count needs, three at most), and the
 login-wall detection. Search cards carry no description, so hits are returned
 with `description=""` and the posting text is fetched per-hit on demand.
 
-`parse_search_results` and `linkedin_closed_marker` are pure functions pinned by
-the offline smoke test — if LinkedIn changes its markup, fix it here and keep
-the fixtures green (`tests/fixtures/linkedin_job_{open,closed}.html`).
+`parse_search_results`, `linkedin_closed_marker` and `linkedin_applicants` are
+pure functions pinned by the offline smoke test — if LinkedIn changes its
+markup, fix it here and keep the fixtures green
+(`tests/fixtures/linkedin_job_{open,closed}.html`,
+`tests/fixtures/linkedin_job_applicants_{count,over,he}.html`).
+
+THE COMPETITION LINE (Phase 32) is the same kind of read as closure: the guest
+page's top card states how many people applied, in the board's own words, and
+`fetch_description` reads it from the page it already fetched. See
+`linkedin_applicants`.
 
 CLOSURE (PLAN 28.2) is a LinkedIn-only concern, and that is checked rather than
 assumed. Drushim's search API drops expired rows before we ever see them
@@ -42,7 +49,7 @@ from app.core.job_match import (
     _looks_like_login_wall,
 )
 from app.core.providers.base import JobHit, NoResultsError
-from app.models import SearchContext, work_modes
+from app.models import Applicants, SearchContext, work_modes
 
 _SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 # The same unauthenticated detail endpoint `job_match._extract_linkedin` uses.
@@ -292,6 +299,16 @@ def _visible(fragment: str) -> str:
     return _WS_RE.sub(" ", _html.unescape(_TAG_RE.sub(" ", fragment))).strip()[:RAW_MAX]
 
 
+def _chrome(html: str) -> str:
+    """The page CHROME: HTML comments and the description container removed.
+
+    ONE definition for both top-card reads, the closure banner and the
+    competition line, because both answer the same question ("what does the
+    BOARD print about this posting, as opposed to what the posting's own body
+    says?") and two copies of the scoping rule could disagree about one page."""
+    return _DESCRIPTION_SECTION_RE.sub(" ", _COMMENT_RE.sub(" ", html))
+
+
 def linkedin_closed_marker(html: str) -> str:
     """The posting's own closed-state text, or "" if the page never says so.
 
@@ -344,11 +361,14 @@ def linkedin_closed_marker(html: str) -> str:
     English-normalised chrome (`LinkedInProvider.search` stamps `language="en"`
     for exactly that reason), so a Hebrew pattern here could never fire. The
     same reasoning `geo_restriction` records for its absent Hebrew restriction
-    rules.
+    rules. (Measured 2026-09-27: the chrome is English because `_http_get`
+    asks in English; the same pages asked with he-IL answer in Hebrew. The
+    competition line below reads its captured Hebrew captions for that reason;
+    no closed page has been captured in Hebrew, so this read has none.)
     """
     if not html:
         return ""
-    chrome = _DESCRIPTION_SECTION_RE.sub(" ", _COMMENT_RE.sub(" ", html))
+    chrome = _chrome(html)
     m = _CLOSED_CAPTION_RE.search(chrome)
     if m:
         text = _visible(m.group(1))
@@ -367,6 +387,94 @@ def linkedin_closed_marker(html: str) -> str:
     lo = chrome.rfind(">", 0, m.start()) + 1
     hi = chrome.find("<", m.end())
     return _visible(chrome[lo : hi if hi >= 0 else len(chrome)]) or _visible(m.group(0))
+
+
+# --------------------------------------------------------------------------- #
+# The competition line — the board's own applicant count (Phase 32)
+# --------------------------------------------------------------------------- #
+# MEASURED 2026-09-27, not assumed: 12 guest pages fetched through `_http_get`
+# (three queries: Software Engineer / Israel, Data Analyst / Tel Aviv, DevOps
+# Engineer / United States) and all 12 carried the line, in the top card, beside
+# the posted-ago text, in one of two shapes:
+#
+#     <span class="num-applicants__caption topcard__flavor--metadata topcard__flavor--bullet">
+#       131 applicants
+#     </span>
+#
+#     <figure class="num-applicants__figure topcard__flavor--metadata topcard__flavor--bullet">
+#       <span class="num-applicants__icon num-applicants__icon--clock lazy-load"></span>
+#       <figcaption class="num-applicants__caption">
+#         Be among the first 25 applicants
+#       </figcaption>
+#     </figure>
+#
+# (and the same figure with `--notify-pebble` and "Over 200 applicants"). 7 of
+# the 12 were a count (39 to 154), 4 "Be among the first 25", 1 "Over 200".
+#
+# The CLASS is the anchor, never the tag and never the word "applicants": the
+# EEO paragraph of most US postings says "qualified applicants", and a body can
+# say "we received over 200 applicants last round". It is read on the chrome
+# (`_chrome`), like the closure banner, so neither a commented-out caption nor
+# the description can mint one.
+_APPLICANTS_CAPTION_RE = re.compile(
+    r'(?is)<(figcaption|span)\b[^>]*\bclass="(?:[^"]*\s)?num-applicants__caption(?:\s[^"]*)?"[^>]*>(.*?)</\1\s*>'
+)
+# Bidi marks LinkedIn puts around numbers in its Hebrew chrome (seen in the
+# posted-ago text, "לפני ‏23‏ ‏שעות‏"): removed before the words are read.
+_BIDI_MARKS_RE = re.compile("[‎‏؜‪-‮⁦-⁩]")
+# The board's sentences, EXACTLY, and nothing else: a caption in words this
+# table does not hold is None, never a guessed number. English is what the app
+# is served (`job_match._http_get` always sends Accept-Language en-US). The
+# Hebrew three were captured the same day by asking the same pages with he-IL:
+# LinkedIn answers the header, not the address (the English pages came to an
+# Israeli address), so they are read here in case the request's language ever
+# changes, and they are pinned on the captured captions.
+_APPLICANTS_SENTENCES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("early", re.compile(r"(?i)^be among the first (\d{1,4}) applicants?$")),
+    ("over", re.compile(r"(?i)^over (\d{1,4}) applicants?$")),
+    ("count", re.compile(r"(?i)^(\d{1,4}) applicants?$")),
+    ("early", re.compile(r"^להיות בין (\d{1,4}) הראשונים מועמדים$")),
+    ("over", re.compile(r"^מעל (\d{1,4}) מועמדים$")),
+    ("count", re.compile(r"^(\d{1,4}) מועמדים$")),
+)
+
+
+def linkedin_applicants(html: str) -> Applicants | None:
+    """The board's own competition line, or None if the page does not state one.
+
+    Pure function over the FULL guest page HTML — no network, no model, no
+    clock. `read_at` is left "": the caller stamps the instant of the fetch
+    (`job_search._build_match`), because only it holds the search's clock.
+
+    None means NOT STATED OR NOT READ, never "no applicants": a page we could
+    not fetch, a markup change, a caption in unfamiliar words and a board that
+    prints nothing all return None alike, and nothing downstream may show a
+    number for it. The first caption in the chrome is the one read; the guest
+    page has exactly one (checked on all 12).
+
+    FALSE POSITIVES, each pinned beside the catch in the smoke fixtures:
+
+    - **"applicants" in the body.** The EEO paragraph ("qualified applicants
+      will receive consideration") and ad copy ("over 200 applicants applied
+      last year") are the description, which the chrome excludes.
+    - **A commented-out caption.** Nothing a reader sees; comments go first.
+    - **The closed banner beside it.** A closed page keeps its caption above
+      the banner; the closure read is separate and wins (the posting is
+      filtered before it is ever shown).
+    - **Another caption word.** "Actively reviewing applicants" (the logged-in
+      surface's wording) inside the same class is not a number: None.
+    """
+    if not html:
+        return None
+    m = _APPLICANTS_CAPTION_RE.search(_chrome(html))
+    if not m:
+        return None
+    words = _BIDI_MARKS_RE.sub("", _visible(m.group(2)))
+    for kind, pattern in _APPLICANTS_SENTENCES:
+        hit = pattern.match(words)
+        if hit:
+            return Applicants(kind=kind, n=int(hit.group(1)), source="linkedin")
+    return None
 
 
 def _description_from_html(html: str) -> str:
@@ -458,6 +566,10 @@ class LinkedInProvider:
         # closure we only recorded when the body happened to parse would be
         # silently disabled by the next markup change to the body container.
         hit.closed = linkedin_closed_marker(html)
+        # The competition line rides the SAME response, for the same reason:
+        # it lives in the top card, which the description slice discards. No
+        # second request, ever: this board is the one that rate-limits us.
+        hit.applicants = linkedin_applicants(html)
         text = _description_from_html(html)
         if not text or _looks_like_login_wall(text):
             return ""

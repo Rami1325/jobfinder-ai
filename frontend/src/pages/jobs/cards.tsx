@@ -17,6 +17,7 @@ import {
   BookmarkCheck,
   Send,
   Trash2,
+  Users,
   Wand2,
 } from "lucide-react";
 import { listKits, saveApplication } from "../../api/client";
@@ -26,6 +27,7 @@ import { fitReason } from "../../lib/fitReason";
 import { useUses } from "../../lib/usesStore";
 import { getKitsState, startKitBatch, subscribeKits } from "../../state/kitsStore";
 import type {
+  Applicants,
   FilteredJob,
   GeoRestriction,
   GhostReport,
@@ -35,6 +37,7 @@ import type {
 } from "../../types";
 import type { AlsoOn } from "../../types";
 import {
+  applicantsText,
   avatarTone,
   companyDomain,
   isNewPosting,
@@ -157,6 +160,32 @@ export function StaleBadge({
         ? t("card.olderFirstPosted", { when: postedAgo(shown, t) })
         : t("card.older", { when: postedAgo(shown, t) })}
     </Badge>
+  );
+}
+
+/** The board's own competition line (Phase 32): "131 applicants on LinkedIn".
+ *
+ * Quiet on purpose: text, never a badge, at 12 px beside the age badges on both
+ * rows, so on a fresh posting (which carries New) it rides a row the card
+ * already has and a phone still shows three jobs a screen (job-search.md). Mint
+ * for "early", the one reading that says hurry; muted for a count. It says the
+ * board's name because the number is the board's, one board's, not a count of
+ * everyone who applied anywhere. Nothing at all when `applicantsText` has
+ * nothing to say (no reading, one the server found stale, an unknown kind). */
+export function CompetitionLine({ applicants }: { applicants?: Applicants | null }) {
+  const { t } = useTranslation("jobs");
+  const text = applicantsText(applicants, t);
+  if (!text) return null;
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 text-xs",
+        applicants?.kind === "early" ? "text-mint" : "text-ink-muted",
+      )}
+    >
+      <Users size={12} aria-hidden className="shrink-0" />
+      {text}
+    </span>
   );
 }
 
@@ -702,6 +731,10 @@ export function MatchCard({
           {ghostShown?.kind !== "long_open" && (
             <StaleBadge stale={m.stale} postedAt={m.posted_at} firstPostedAt={m.first_posted_at} />
           )}
+          {/* Beside the age, in this row rather than a line of its own: a
+              LinkedIn posting fresh enough to carry a reading usually carries
+              "New" too, so it mostly costs no height (Phase 32). */}
+          <CompetitionLine applicants={m.applicants} />
           {m.salary?.raw && (
             <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
               {m.salary.raw}
@@ -863,6 +896,8 @@ export function HistoryRow({
         </p>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">
           <NewBadge postedAt={firstPosted} />
+          {/* The search row's place, for its reason (Phase 32). */}
+          <CompetitionLine applicants={hit.applicants} />
           {hit.salary?.raw && (
             <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
               {hit.salary.raw}

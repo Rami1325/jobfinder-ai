@@ -1183,6 +1183,41 @@ class ApplicationKit(BaseModel):
     status: str
 
 
+# The kinds of competition line a board states, in the one order the frontend
+# mirrors (`Applicants.kind`). check-mirrors 87 reads this tuple with a LINE
+# grammar: keep it one quoted entry per line.
+APPLICANTS_KINDS: tuple[str, ...] = (
+    "early",
+    "over",
+    "count",
+)
+
+
+class Applicants(BaseModel):
+    """The BOARD's own competition line for a posting, read literally (Phase 32).
+
+    LinkedIn's guest job page prints it in the top card ("Be among the first 25
+    applicants", "131 applicants", "Over 200 applicants"); the page is the one
+    `LinkedInProvider.fetch_description` already fetches, and
+    `providers.linkedin.linkedin_applicants` reads it there, deterministically.
+    No other registered board states a number (checked live 2026-09-27), so
+    this is None on every other board, which is unknown, never zero.
+
+    `kind` says which sentence it was: "early" (fewer than `n` so far, the
+    board's "Be among the first n"), "over" (more than `n`, the board's cap),
+    "count" (exactly `n`). `source` is the board that stated it ("linkedin"),
+    so every surface names the board the READING names, never its own context,
+    and a reading that names none is never shown. `read_at` is the instant of
+    the fetch that read it (naive UTC ISO with "Z"), because the number only
+    means something NOW: a reading older than `job_search.APPLICANTS_FRESH_S`
+    is never shown, anywhere (`job_search.current_applicants`, the one rule)."""
+
+    kind: str = ""  # early | over | count
+    n: int = 0
+    source: str = ""  # the board that stated it (a PROVIDERS name)
+    read_at: str = ""
+
+
 class ApplicationDetail(BaseModel):
     id: int
     job_title: str
@@ -1232,6 +1267,11 @@ class ApplicationDetail(BaseModel):
     # document can open it again (`GET /applications/{id}/review`). Kept out of
     # this answer on purpose: every page that reads a job would carry it.
     has_review: bool = False
+    # Phase 32: the board's competition line for this posting, when the user's
+    # search history holds a CURRENT reading of it (same posting, read within
+    # `job_search.APPLICANTS_FRESH_S`). The row itself never stores it, and
+    # viewing the page never fetches the posting to get one.
+    applicants: Optional[Applicants] = None
 
 
 class StaleApplication(BaseModel):
@@ -1551,6 +1591,11 @@ class JobMatch(BaseModel):
     # only: a relisted role is older even when its relist is fresh). The UI
     # shows an "Older" badge and the alert email an "Older posting" chip.
     stale: bool = False
+    # The board's own competition line (see Applicants), read at the fetch this
+    # search already made, or carried from the history row a cached posting was
+    # rebuilt from; None when the board states none, when the posting was not
+    # fetched, and when the reading is older than a day.
+    applicants: Optional[Applicants] = None
     # Tracker status when this posting is already in the user's tracker
     # ("saved" | "applied" | "interview" | "offer" | "rejected"), else "".
     # Carries the status rather than a bool so the card can say WHICH — "saved"
@@ -1780,6 +1825,10 @@ class JobSearchHitOut(BaseModel):
     logo_url: str = ""  # company logo from the board; empty when it has none
     also_on: list[AlsoOn] = Field(default_factory=list)  # this posting on other boards
     salary: Optional[SalaryInfo] = None  # extracted on read from the stored jd_text
+    # The board's competition line as stored, handed back only while CURRENT
+    # (`job_search.current_applicants`, measured on this request's clock); None
+    # for a reading older than a day, which the row keeps until a fetch replaces it.
+    applicants: Optional[Applicants] = None
     searched_at: str = ""
     app_status: str = ""  # tracker status if this job was saved/applied ("", saved, applied, interview, offer, rejected)
     app_id: Optional[int] = None  # that tracker row's id, which the row opens (PLAN 31.4/6); None when untracked
