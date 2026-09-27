@@ -30,7 +30,11 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(HERE, "..", "src");
-const read = (p) => fs.readFileSync(path.join(SRC, p), "utf8");
+// Line endings are normalised on read: git stores LF, but a Windows checkout with
+// core.autocrlf writes CRLF, and a planted string written with "\n" then never
+// matched (checks 58, 59, 68, 73, 77, 78 and 89 failed on such a checkout, green
+// in CI). What a check reads is the text, not the platform's line terminator.
+const read = (p) => fs.readFileSync(path.join(SRC, p), "utf8").replace(/\r\n/g, "\n");
 
 const problems = [];
 const fail = (msg) => problems.push(msg);
