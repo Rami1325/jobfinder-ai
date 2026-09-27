@@ -83,6 +83,7 @@ export default function PrivacyPage() {
 
         <Block title={t("privacy.ai.title")}>
           <p>{t("privacy.ai.tools")}</p>
+          <p>{t("privacy.ai.voice")}</p>
           <p>{t("privacy.ai.mail")}</p>
         </Block>
 

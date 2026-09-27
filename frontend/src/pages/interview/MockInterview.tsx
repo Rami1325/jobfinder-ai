@@ -16,7 +16,9 @@ import {
   takeReturnedAnswer,
 } from "../../state/mockInterviewStore";
 import { Button, Card, CardTitle, ProgressRing } from "../../components/ui";
+import { DictateButton, DictationNote, ListeningBadge } from "../../components/Dictation";
 import UsesNote from "../../components/UsesNote";
+import { useDictation } from "../../hooks/useDictation";
 import { useUses } from "../../lib/usesStore";
 import type { ResumeModel } from "../../types";
 
@@ -57,8 +59,23 @@ export default function MockInterview({
 
   const answered = turns.some((x) => x.role === "candidate");
 
+  // The answer can be spoken (docs/handbook/interview.md), in the language of
+  // the interviewer's last question; the words land in the draft after what was
+  // typed, and Send stays the only thing that sends them.
+  let question: string | null = null;
+  for (let i = turns.length - 1; i >= 0 && question === null; i--)
+    if (turns[i].role === "interviewer") question = turns[i].text;
+  const dictation = useDictation({
+    value: draft,
+    onChange: setDraft,
+    question,
+    disabled: sending || ending || !!scorecard,
+  });
+
   function submit() {
     if (!draft.trim() || sending || ending || full || scorecard) return;
+    // What is sent is what the box shows: no word may land after it.
+    dictation.cancel();
     sendMockAnswer(draft);
     setDraft("");
   }
@@ -120,21 +137,26 @@ export default function MockInterview({
           <>
             {done && <p className="mt-3 text-xs text-mint">{t("mock.doneNote")}</p>}
             <div className="mt-3 flex items-end gap-2">
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    submit();
-                  }
-                }}
-                placeholder={t("mock.placeholder")}
-                dir="auto"
-                rows={2}
-                disabled={sending || ending}
-                className="min-h-[3rem] flex-1 resize-y rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50"
-              />
+              <div className="relative min-w-0 flex-1">
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      submit();
+                    }
+                  }}
+                  readOnly={dictation.listening}
+                  placeholder={t("mock.placeholder")}
+                  dir="auto"
+                  rows={2}
+                  disabled={sending || ending}
+                  className="block min-h-[3rem] w-full resize-y rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50"
+                />
+                <ListeningBadge dictation={dictation} />
+              </div>
+              <DictateButton dictation={dictation} />
               <Button
                 size="sm"
                 icon={<Send size={14} />}
@@ -144,6 +166,7 @@ export default function MockInterview({
                 {t("mock.send")}
               </Button>
             </div>
+            <DictationNote dictation={dictation} className="mt-2" />
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <Button
                 size="sm"
