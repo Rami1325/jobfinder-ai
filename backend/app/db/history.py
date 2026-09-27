@@ -17,7 +17,7 @@ from app.core.job_match import _linkedin_job_id
 from app.core.job_search import CachedScore
 from app.db.models import Application, JobSearchHit
 from app.db.sightings import _replaces as _earlier_board_date
-from app.models import JobMatch
+from app.models import Applicants, JobMatch
 
 MAX_HISTORY = 100  # newest rows kept per user; older ones are trimmed on every record
 CACHE_TTL_DAYS = 7  # history rows older than this are never reused (postings change/expire)
@@ -63,6 +63,12 @@ def record_search_hits(
         row.source = m.source
         row.logo_url = m.logo_url
         row.also_on_json = json.dumps([a.model_dump() for a in m.also_on])
+        # Replaced when this search carries a reading, and LEFT ALONE when it
+        # carries none: a search that could not read the line (a cached rebuild,
+        # a markup change) says nothing about the count, and the stored reading
+        # stops being shown on its own once it is a day old.
+        if m.applicants is not None and m.applicants.read_at:
+            row.applicants_json = m.applicants.model_dump_json()
         row.resume_hash = resume_hash
         row.searched_at = now
     db.flush()
@@ -133,8 +139,37 @@ def load_score_cache(
             posted_at=row.posted_at or "",
             logo_url=row.logo_url or "",
             is_full_match=bool(row.resume_hash) and row.resume_hash == current_resume_hash,
+            applicants=applicants_of(row.applicants_json),
         )
     return cache
+
+
+def applicants_of(raw: str | None) -> Applicants | None:
+    """A row's stored competition line (Phase 32), or None for "" and for
+    anything that no longer parses (unknown, never a number). Not filtered for
+    currency here: every reader passes it through
+    `job_search.current_applicants` with its own clock."""
+    if not raw:
+        return None
+    try:
+        return Applicants.model_validate_json(raw)
+    except Exception:  # noqa: BLE001 - tolerate a corrupt or legacy value
+        return None
+
+
+def applicants_for_url(db: Session, user_id: int, url: str) -> Applicants | None:
+    """The competition line this user's search history holds for the posting at
+    `url`, for a job's own page (Phase 32): the newest history row of the same
+    posting, matched the way the tracker and History already match each other
+    (`_url_key`: the LinkedIn id across hosts and slugs, else the bare URL).
+    Read-only, one small query (at most MAX_HISTORY rows), no fetch."""
+    key = _url_key(url or "")
+    if not key:
+        return None
+    for row in list_search_hits(db, user_id):
+        if row.url and _url_key(row.url) == key:
+            return applicants_of(row.applicants_json)
+    return None
 
 
 def _json_list(raw: str | None) -> list[str]:

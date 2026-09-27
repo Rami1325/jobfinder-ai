@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from app.models import SearchContext
+from app.models import Applicants, SearchContext
 
 
 class NoResultsError(ValueError):
@@ -92,6 +92,14 @@ class JobHit:
     # LinkedIn-only by construction (PLAN 28.2): the one registered board whose
     # search index is stale by design. Set by providers, never by the fan-out.
     closed: str = ""
+    # The board's own competition line ("131 applicants"), read by
+    # `fetch_description` from the page it fetched (Phase 32), with `read_at`
+    # left "" for `job_search` to stamp. None means NOT STATED OR NOT READ,
+    # never zero: LinkedIn is the only registered board that states one
+    # (checked live 2026-09-27; Drushim, Comeet, Greenhouse and JobMaster print
+    # no count), and a hit whose page was never fetched in this search is None
+    # too. Set by providers, never by the fan-out.
+    applicants: Applicants | None = None
 
 
 @runtime_checkable

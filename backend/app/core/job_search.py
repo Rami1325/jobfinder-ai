@@ -45,7 +45,9 @@ from app.core.work_mode import REMOTE, WorkModeReading, read_work_mode
 from app.llm import prompts
 from app.llm.client import get_llm_client
 from app.models import (
+    APPLICANTS_KINDS,
     AlsoOn,
+    Applicants,
     FilteredJob,
     GeoRestriction,
     GhostReport,
@@ -121,6 +123,10 @@ class CachedScore:
     posted_at: str
     logo_url: str
     is_full_match: bool
+    # The board's competition line as the row stored it (Phase 32), with its
+    # `read_at`, so a posting rebuilt from the row without a fetch can still
+    # show it while it is current. None when the row holds none.
+    applicants: Applicants | None = None
 
 
 # What our own search history remembers about the postings in THIS run, looked
@@ -274,6 +280,48 @@ def posted_within(posted_at: str, max_age_days: int, now: datetime) -> bool:
     if board_date_is_day(posted_at):
         return dt.date() >= cutoff.date()  # the day overlaps the window
     return dt >= cutoff  # an instant: to the minute, as before
+
+
+# How long the board's competition line stays showable after the fetch that
+# read it (Phase 32). A count only ever means "now": it climbs every day, and
+# "Be among the first 25" is the first thing to go false. A DAY, because the
+# alert mornings re-search daily and a cached posting (PLAN 12.4) is rebuilt
+# without a fetch for up to `history.CACHE_TTL_DAYS`, so without this bound a
+# week-old "Under 25 applicants" would ride a card as if it were today's. Not
+# measured: a round number for "today's reading", written down as such.
+APPLICANTS_FRESH_S = 24 * 3600
+# Our own clocks, across serverless instances, can disagree by a little; a
+# reading stamped a few seconds "in the future" by another instance is still
+# today's. Anything further ahead is not a reading we made, and is dropped.
+_APPLICANTS_CLOCK_SLACK_S = 300
+
+
+def applicants_read_at(now: datetime) -> str:
+    """The `Applicants.read_at` stamp for a reading taken at `now` (naive UTC,
+    `utc_now`'s frame): ISO to the second with "Z", which `parse_board_date`,
+    the one parser, reads back as the same instant."""
+    return now.replace(microsecond=0).isoformat() + "Z"
+
+
+def current_applicants(reading: Applicants | None, now: datetime) -> Applicants | None:
+    """THE rule for showing the board's competition line: the reading, while it
+    is under `APPLICANTS_FRESH_S` old at `now`, else None. Every surface reads
+    it through here (a search's matches, History, a job's page), so no page can
+    show a number another page has already called stale, and the frontend
+    never compares a date.
+
+    None for no reading, for an unknown `kind` (a newer writer's word this
+    build cannot say), for a `read_at` that does not parse (unknown is never
+    current), and for a stamp further in the future than the clock slack."""
+    if reading is None or reading.kind not in APPLICANTS_KINDS:
+        return None
+    read = _posted_datetime(reading.read_at)
+    if read is None:
+        return None
+    age = (now - read).total_seconds()
+    if -_APPLICANTS_CLOCK_SLACK_S <= age < APPLICANTS_FRESH_S:
+        return reading
+    return None
 
 
 def freshest_first(hits: list[JobHit], max_age_days: int, now: datetime | None = None) -> list[JobHit]:
@@ -1051,6 +1099,23 @@ def search_jobs(
                     }
                 )
 
+    def _applicants_for(hit: JobHit, cached: CachedScore | None) -> Applicants | None:
+        """The board's competition line for this posting (Phase 32): what THIS
+        search's own fetch read, stamped with the run's one instant, else what
+        the history row it was rebuilt from holds; then the one currency rule.
+
+        Called in BOTH `_build_match` branches, and in the fetching one only
+        AFTER the text is in hand, because `fetch_description` is what fills
+        `hit.applicants`. The cached branch never fetches (PLAN 12.4), so it can
+        only carry a stored reading, and `current_applicants` drops that one
+        once it is a day old: the known gap is a missing line, never a stale
+        number shown as today's."""
+        if hit.applicants is not None:
+            reading = hit.applicants.model_copy(update={"read_at": applicants_read_at(now)})
+        else:
+            reading = cached.applicants if cached is not None else None
+        return current_applicants(reading, now)
+
     def _build_match(
         hit: JobHit,
     ) -> tuple[
@@ -1150,6 +1215,7 @@ def search_jobs(
                 geo_restriction=geo,
                 ghost=ghost,
                 stale=stale,
+                applicants=_applicants_for(hit, cached),
             )
         else:
             # Tier 2: a fresh row for a DIFFERENT resume still spares the
@@ -1203,6 +1269,7 @@ def search_jobs(
                     geo_restriction=geo,
                     ghost=ghost,
                     stale=stale,
+                    applicants=_applicants_for(hit, cached),
                 )
         return match, geo, ghost, mode
 

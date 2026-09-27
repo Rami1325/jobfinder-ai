@@ -66,7 +66,13 @@ from app.core.scorer import analyze_and_score, keyword_analysis
 from app.core.job_match import MAX_MATCH_LISTINGS, fetch_job_text, match_jobs
 from app.core.outreach import generate_outreach
 from app.core.screening import answer_screening_question
-from app.core.job_search import derive_search_context, resume_hash, search_jobs
+from app.core.job_search import (
+    current_applicants,
+    derive_search_context,
+    resume_hash,
+    search_jobs,
+    utc_now as _search_utc_now,
+)
 from app.core import kits as kits_core
 from app.core.lang import resume_language
 from app.core.linkedin import optimize_linkedin
@@ -86,6 +92,8 @@ from app.db.users import mint_user
 from app.db import applications as applications_db
 from app.db import funnel, resume_versions
 from app.db.history import (
+    applicants_for_url,
+    applicants_of,
     application_statuses,
     clear_search_hits,
     delete_search_hit,
@@ -1233,6 +1241,9 @@ def jobs_history(
     hidden_count = len(rows) - len(shown)
     rows = shown
     statuses = application_statuses(db, [row.url for row in rows], user.id)
+    # One clock for every row's competition line (Phase 32): a reading is handed
+    # back only while it is current, by the one rule the search itself uses.
+    now = _search_utc_now()
 
     def _keyword_list(raw: str | None) -> list[str]:
         try:
@@ -1266,6 +1277,7 @@ def jobs_history(
                     if isinstance(a, dict)
                 ],
                 salary=extract_salary(row.jd_text or ""),
+                applicants=current_applicants(applicants_of(row.applicants_json), now),
                 searched_at=row.searched_at.isoformat() if row.searched_at else "",
                 app_status=tracked.status if tracked else "",
                 app_id=tracked.id if tracked else None,
@@ -2435,6 +2447,14 @@ def get_application(
     mailbox = (conn.email_address or "") if conn is not None and conn.provider == "gmail" else ""
     kit = applications_db.pending_kit(db, user.id, app.job_url)
     send = applications_db.sendable_kit(db, user.id, app)
+    # The board's competition line, only when the user's own search history
+    # holds a CURRENT reading of this posting (Phase 32). Viewing the page never
+    # fetches the posting to get one.
+    applicants = (
+        current_applicants(applicants_for_url(db, user.id, app.job_url), _search_utc_now())
+        if app.job_url
+        else None
+    )
     return ApplicationDetail(
         id=app.id,
         job_title=app.job_title,
@@ -2465,6 +2485,7 @@ def get_application(
         pending_kit=ApplicationKit(id=kit.id, status=kit.status) if kit is not None else None,
         send_kit=ApplicationKit(id=send.id, status=send.status) if send is not None else None,
         has_review=_review_whole(_stored_review(app)),
+        applicants=applicants,
     )
 
 

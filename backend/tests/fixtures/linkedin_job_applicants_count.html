@@ -1,0 +1,91 @@
+<!-- Trimmed https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4405646663 response
+     (fetched 2026-09-27 through job_match._http_get, the app's own request, Accept-Language
+     en-US). The top card is verbatim: the competition line in its SPAN shape,
+     "131 applicants", the shape 7 of the 12 pages measured that day carried (39 to 154).
+
+     THE FALSE-POSITIVE HALF. Four traps sit in this file and `linkedin_applicants` must
+     read "131 applicants" through all of them, never one of them; with the real caption
+     taken out (the smoke test does that to a copy) it must read NOTHING:
+
+       1. the posting's own EEO sentence ("employees and applicants for employment"), real,
+          from this page's description;
+       2. a PLANTED sentence in the description, "Over 200 applicants applied to this team
+          last year.", the words without the class;
+       3. a PLANTED commented-out caption in the chrome, BEFORE the real one, saying
+          "Over 200 applicants": invisible to a reader, and first in the file;
+       4. a PLANTED caption-classed span inside the description, "Be among the first 25
+          applicants". LinkedIn's sanitiser strips attributes from a posting body, so this
+          cannot come from a real posting; it pins that the read is scoped to the chrome
+          anyway, as the closure banner's is. -->
+<div class="top-card-layout__entity-info-container flex flex-wrap papabear:flex-nowrap">
+            <div class="top-card-layout__entity-info flex-grow flex-shrink-0 basis-0 babybear:flex-none babybear:w-full babybear:flex-none babybear:w-full">
+          <a href="https://il.linkedin.com/jobs/view/senior-software-engineer-control-at-weka-4405646663?trk=public_jobs_topcard-title" data-tracking-control-name="public_jobs_topcard-title" class="topcard__link" data-tracking-will-navigate>
+            <h2 class="top-card-layout__title font-sans text-lg papabear:text-xl font-bold leading-open text-color-text mb-0 topcard__title">Senior Software Engineer, Control</h2>
+          </a>
+<!---->
+<!---->
+                <h4 class="top-card-layout__second-subline font-sans text-sm leading-open text-color-text-low-emphasis mt-0.5">
+        <div class="topcard__flavor-row">
+          <span class="topcard__flavor">
+              <a class="topcard__org-name-link topcard__flavor--black-link" data-tracking-control-name="public_jobs_topcard-org-name" data-tracking-will-navigate href="https://www.linkedin.com/company/weka-io?trk=public_jobs_topcard-org-name" rel="noopener" target="_blank">
+                WEKA
+              </a>
+          </span>
+            <span class="topcard__flavor topcard__flavor--bullet">
+              Tel Aviv-Yafo, Tel Aviv District, Israel
+            </span>
+        </div>
+        <div class="topcard__flavor-row">
+        <!-- trap 3: a caption as it would appear, commented out. A reader sees nothing.
+        <figure class="num-applicants__figure topcard__flavor--metadata topcard__flavor--bullet">
+          <figcaption class="num-applicants__caption">Over 200 applicants</figcaption>
+        </figure>
+        -->
+        <span class="posted-time-ago__text topcard__flavor--metadata">
+      6 days ago
+        </span>
+        <span class="num-applicants__caption topcard__flavor--metadata topcard__flavor--bullet">
+          131 applicants
+        </span>
+        </div>
+      <a href="https://www.linkedin.com/login?session_redirect=https%3A%2F%2Fwww%2Elinkedin%2Ecom%2Fsearch%2Fresults%2Fpeople%2F%3FfacetCurrentCompany%3D9334204&amp;emailAddress=&amp;fromSignIn=&amp;trk=public_jobs_see-who-was-hired_people-search-link_face-pile-cta" target="_self" data-tracking-control-name="full-link" data-tracking-will-navigate class="face-pile flex !no-underline see-who-was-hired">
+      <div class="face-pile__images-container self-start flex-shrink-0 mr-1 leading-[1]">
+      <img class="inline-block relative hue-web-entity__image
+          rounded-[50%]
+          w-4 h-4
+           face-pile__image border-1 border-solid border-color-transparent -ml-2 first:ml-0" data-delayed-url="https://static.licdn.com/aero-v1/sc/h/1r5y4gyavxb048v7fvnl06mjs" data-ghost-classes="bg-color-entity-ghost-background" data-ghost-url="https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2" alt>
+      <img class="inline-block relative hue-web-entity__image
+          rounded-[50%]
+          w-4 h-4
+           face-pile__image border-1 border-solid border-color-transparent -ml-2 first:ml-0" data-delayed-url="https://static.licdn.com/aero-v1/sc/h/bzm35e3651eojcpnxxuyvpjpo" data-ghost-classes="bg-color-entity-ghost-background" data-ghost-url="https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2" alt>
+      <img class="inline-block relative hue-web-entity__image
+          rounded-[50%]
+          w-4 h-4
+           face-pile__image border-1 border-solid border-color-transparent -ml-2 first:ml-0" data-delayed-url="https://static.licdn.com/aero-v1/sc/h/224mq0thanhnrp5hhso7l1k9p" data-ghost-classes="bg-color-entity-ghost-background" data-ghost-url="https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2" alt>
+      </div>
+        <div class="face-pile__text-container self-center">
+          <p class="face-pile__text font-sans text-sm
+              link-styled hover:underline">
+            See who WEKA has hired for this role
+          </p>
+<!---->        </div>
+      </a>
+<!---->
+                </h4>
+  </div>
+</div>
+
+<div class="decorated-job-posting__details">
+  <section class="core-section-container my-3 description">
+    <div class="core-section-container__content break-words">
+      <div class="description__text description__text--rich">
+        <section class="show-more-less-html" data-max-lines="5">
+          <div class="show-more-less-html__markup show-more-less-html__markup--clamp-after-5
+              relative overflow-hidden">
+            WEKA is architecting a new approach to the enterprise data stack built for the age of reasoning.<br><br>Over 200 applicants applied to this team last year.<br><br><span class="num-applicants__caption">Be among the first 25 applicants</span><br><br>We provide equal opportunities to all employees and applicants for employment without regard to race, color, religion, age, sex, national origin, disability status, genetics, protected veteran status, sexual orientation, gender identity or expression, or any other characteristic protected by federal, state or local laws.
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+</div>
