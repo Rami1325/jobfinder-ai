@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
@@ -1544,15 +1544,31 @@ def kits_reject(
     return kits_core.kit_out(row)
 
 
+def _send_refusal(status: int, e: auto_submit.SubmitRefused) -> JSONResponse:
+    """A refused send: the code the job's page translates, the values its
+    sentence names, and the English sentence as `detail`, kept a STRING so a tab
+    loaded before the codes existed still shows it (its `apiErrorMessage` prints
+    a string detail as it is and would print nothing useful for an object)."""
+    return JSONResponse(
+        status_code=status, content={"detail": str(e), "code": e.code, "params": e.params}
+    )
+
+
 @router.post("/kits/{kit_id}/submit", response_model=KitOut)
 def kits_submit(
     kit_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
-) -> KitOut:
+) -> KitOut | JSONResponse:
     """True auto-submit (PLAN 8.4): send an approved, guard-clean Comeet kit's
     application through Comeet's public apply API. Every guardrail lives in
     `auto_submit.submit_kit`; the daily cap is charged only when a real send
-    is about to happen."""
-    row = _owned_kit(db, kit_id, user)
+    is about to happen. A refusal answers `{detail, code, params}`, the code one
+    of `auto_submit.REFUSAL_CODES` (smoke-pinned); the daily cap's 429 keeps its
+    own `daily_limit` detail, which the page already translates."""
+    row = db.get(TailorKit, kit_id)
+    if not row or row.user_id != user.id:
+        return _send_refusal(
+            404, auto_submit.SubmitRefused("kit_not_found", "Kit not found.")
+        )
     settings = get_settings()
     try:
         row = auto_submit.submit_kit(
@@ -1561,7 +1577,9 @@ def kits_submit(
             row,
             charge=lambda: check_and_count(db, user, "submit", settings.daily_submit_cap),
         )
-    except ValueError as e:  # refused by a guardrail / declined upstream
+    except auto_submit.SubmitRefused as e:  # refused by a guardrail / declined upstream
+        return _send_refusal(400, e)
+    except ValueError as e:  # anything else the send path raised: the old contract
         raise HTTPException(400, str(e))
     return kits_core.kit_out(row)
 

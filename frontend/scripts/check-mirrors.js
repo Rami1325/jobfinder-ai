@@ -13114,6 +13114,178 @@ try {
   fail(`first-steps check (check 80) could not run: ${e.message}`);
 }
 
+// ---- 81. every refusal of the Comeet send has a sentence in both locales (EXECUTED) //
+// Found in PLAN 31.4/5, fixed 2026-09-27. A refused send (a job's page, PLAN
+// 8.4) toasted the server's English sentence, on the Hebrew page too. The server
+// now answers `{detail, code, params}`, `code` one of `auto_submit.REFUSAL_CODES`
+// (smoke pins that every refusal path raises one), and `lib/sendRefusal.ts` maps
+// the code to a `tracker` sentence. Held here, each way round:
+// (a) REFUSAL_CODES is read out of the backend (one quoted entry per line), and
+//     every code has a row in SEND_REFUSAL_KEYS and no row names a code the server
+//     never sends;
+// (b) every row, and the fallback, resolves in BOTH tracker.json files, and the
+//     en and he sentences of a code name the same {{placeholders}}, each one a
+//     value the backend's `SubmitRefused(<code>, …, name=…)` sends, or the toast
+//     prints "{{company}}";
+// (c) EXECUTED: `sendRefusal` reads the code and the string/number params of a
+//     refusal and nothing else (the daily cap's object detail, a network error,
+//     a 5xx body), and `sendRefusalKey` answers an unknown code and `constructor`
+//     with the fallback, never a function every object inherits;
+// (d) the job page's send reads its refusal through the two.
+// It degrades only when backend/ is absent, and then runs (b)-(d) over the
+// table's own codes. Planted twins are probed every run.
+try {
+  const table81 = read("lib/sendRefusal.ts");
+  const run81 = (src) => runProbeBundle("send-refusal", src);
+  const m81 = run81(table81);
+  const rows = Object.keys(m81.SEND_REFUSAL_KEYS || {});
+  if (rows.length < 10) throw new Error(`lib/sendRefusal.ts: read only ${rows.length} rows of SEND_REFUSAL_KEYS (expected at least 10)`);
+
+  // (a) the backend's codes, and what each one's sentence may name.
+  const asPy = pySource("app/core/auto_submit.py", "check 81");
+  const routesPy = pySource("app/api/routes.py", "check 81");
+  let codes = rows;
+  const paramsOf = new Map(); // code -> Set(kwarg names), from every SubmitRefused(...) call
+  if (asPy !== null && routesPy !== null) {
+    codes = pyTuple(asPy, "REFUSAL_CODES", "backend/app/core/auto_submit.py");
+    if (codes.length < 10) throw new Error(`backend/app/core/auto_submit.py: REFUSAL_CODES has only ${codes.length} codes`);
+    // A string-aware call reader: the sentences hold parentheses of their own.
+    const calls = (src) => {
+      const out = [];
+      for (let at = src.indexOf("SubmitRefused("); at !== -1; at = src.indexOf("SubmitRefused(", at + 1)) {
+        if (/class\s+$/.test(src.slice(Math.max(0, at - 6), at))) continue; // the class statement itself
+        let i = at + "SubmitRefused(".length;
+        let depth = 1;
+        let text = "";
+        while (i < src.length && depth > 0) {
+          const c = src[i];
+          if (c === '"' || c === "'") {
+            const q = c;
+            text += '""';
+            i++;
+            while (i < src.length && src[i] !== q) i += src[i] === "\\" ? 2 : 1;
+            i++;
+            continue;
+          }
+          if (c === "(") depth++;
+          else if (c === ")") depth--;
+          if (depth > 0) text += c;
+          i++;
+        }
+        if (depth !== 0) throw new Error("an unclosed SubmitRefused( call in the backend");
+        const code = /^\s*"(\w*)"/.exec(src.slice(at + "SubmitRefused(".length));
+        if (!code) throw new Error(`a SubmitRefused( call whose code is not a literal: ${src.slice(at, at + 60)}`);
+        const kw = new Set([...text.matchAll(/(?<![=!<>])\b([a-z_]\w*)\s*=(?!=)/g)].map((k) => k[1]));
+        out.push([code[1], kw]);
+      }
+      return out;
+    };
+    const found = [...calls(asPy), ...calls(routesPy)];
+    // A floor, so a reader that finds nothing fails loudly (every code being
+    // RAISED somewhere is the smoke test's pin, not this one's).
+    if (found.length < 10) throw new Error(`read only ${found.length} SubmitRefused( calls out of the backend (expected at least 10)`);
+    for (const [code, kw] of found) {
+      if (!paramsOf.has(code)) paramsOf.set(code, new Set());
+      for (const k of kw) paramsOf.get(code).add(k);
+    }
+  }
+  const missingRow = codes.filter((c) => !rows.includes(c));
+  const deadRow = rows.filter((r) => !codes.includes(r));
+  for (const c of missingRow)
+    fail(`check 81: the send refuses with code "${c}" and lib/sendRefusal.ts has no sentence for it, so the page says only that it failed (PLAN 31.4/5)`);
+  for (const r of deadRow) fail(`check 81: lib/sendRefusal.ts has a sentence for "${r}", a code auto_submit.REFUSAL_CODES does not list`);
+
+  // (b) both locales, and the same placeholders, each one the backend sends.
+  const holes = (s) => new Set([...String(s).matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((h) => h[1]));
+  const at81 = (bundle, key) => key.split(".").reduce((o, k) => (o == null ? o : o[k]), bundle);
+  const read81b = (en, he) => {
+    const out = [];
+    for (const key of [...rows.map((r) => m81.SEND_REFUSAL_KEYS[r]), m81.SEND_REFUSAL_FALLBACK]) {
+      for (const [loc, b] of [["en", en], ["he", he]]) if (!resolvesIn(b, key)) out.push(`locales/${loc}/tracker.json is missing "${key}"`);
+    }
+    for (const code of rows) {
+      const key = m81.SEND_REFUSAL_KEYS[code];
+      const [e, h] = [holes(at81(en, key)), holes(at81(he, key))];
+      if ([...e].some((x) => !h.has(x)) || [...h].some((x) => !e.has(x)))
+        out.push(`"${key}" names {{${[...e].join(", ")}}} in English and {{${[...h].join(", ")}}} in Hebrew`);
+      if (paramsOf.size)
+        for (const x of new Set([...e, ...h]))
+          if (!paramsOf.get(code)?.has(x)) out.push(`"${key}" names {{${x}}}, which the backend's SubmitRefused("${code}", …) never sends`);
+    }
+    return out;
+  };
+  const en81 = JSON.parse(read("locales/en/tracker.json"));
+  const he81 = JSON.parse(read("locales/he/tracker.json"));
+  for (const p of read81b(en81, he81)) fail(`check 81: ${p} (PLAN 31.4/5)`);
+  {
+    const broken = JSON.parse(JSON.stringify(he81));
+    broken.job.send.refused.recaptcha = "בדיקת בוטים.";
+    if (!read81b(en81, broken).length) throw new Error('the reader passes a Hebrew "recaptcha" sentence that drops {{company}}');
+    const unsent = JSON.parse(JSON.stringify(en81));
+    unsent.job.send.refused.already_sent = "Already sent to {{company}}.";
+    const unsentHe = JSON.parse(JSON.stringify(he81));
+    unsentHe.job.send.refused.already_sent = "נשלחה אל {{company}}.";
+    if (paramsOf.size && !read81b(unsent, unsentHe).length)
+      throw new Error("the reader passes a sentence naming {{company}} for a code the backend sends no company with");
+  }
+
+  // (c) the reader and the key, executed.
+  const run81c = (m) => {
+    const got = [
+      JSON.stringify(m.sendRefusal({ response: { data: { detail: "x", code: "recaptcha", params: { company: "Acme", status: 423, extra: { a: 1 } } } } })),
+      JSON.stringify(m.sendRefusal({ response: { data: { detail: { code: "daily_limit", action: "submit", cap: 1 } } } })),
+      JSON.stringify(m.sendRefusal(new Error("Network Error"))),
+      JSON.stringify(m.sendRefusal({ response: { data: "Internal Server Error" } })),
+      JSON.stringify(m.sendRefusal({ response: { data: { detail: "Kit not found.", code: "kit_not_found" } } })),
+      m.sendRefusalKey("recaptcha"),
+      String(m.sendRefusalKey("constructor")),
+      m.sendRefusalKey("a_code_from_a_newer_server"),
+    ];
+    return got.join(" | ");
+  };
+  const WANT81 = [
+    '{"code":"recaptcha","params":{"company":"Acme","status":423}}',
+    "null",
+    "null",
+    "null",
+    '{"code":"kit_not_found","params":{}}',
+    "job.send.refused.recaptcha",
+    "job.send.error",
+    "job.send.error",
+  ].join(" | ");
+  const real81c = run81c(m81);
+  if (real81c !== WANT81)
+    fail(`check 81: lib/sendRefusal.ts answers [${real81c}] where [${WANT81}] is right (PLAN 31.4/5)`);
+  for (const [label, from, to] of [
+    ["a key lookup that answers `constructor`", "Object.prototype.hasOwnProperty.call(SEND_REFUSAL_KEYS, code) ? SEND_REFUSAL_KEYS[code] : SEND_REFUSAL_FALLBACK", "SEND_REFUSAL_KEYS[code] ?? SEND_REFUSAL_FALLBACK"],
+    ["a reader that keeps any param", 'if (typeof v === "string" || typeof v === "number") params[k] = v;', "params[k] = v as string;"],
+  ]) {
+    if (!table81.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (run81c(run81(table81.replace(from, to))) === WANT81) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+  {
+    const lessTable = table81.replace(/^\s*kit_flagged: "job\.send\.refused\.kit_flagged",\n/m, "");
+    if (lessTable === table81) throw new Error('the probe could not plant "a table without kit_flagged"');
+    const lessRows = Object.keys(run81(lessTable).SEND_REFUSAL_KEYS);
+    if (codes.every((c) => lessRows.includes(c))) throw new Error('the comparison passes "a table without kit_flagged"');
+  }
+
+  // (d) the job page's send reads its refusal through the two.
+  const read81d = (page) => {
+    const send = fnSource(page, "function SendSection(");
+    return /const refusal = sendRefusal\(e\);/.test(send) &&
+      /refusal \? t\(sendRefusalKey\(refusal\.code\), refusal\.params\) : apiErrorMessage\(e, t\("job\.send\.error"\)\)/.test(send)
+      ? []
+      : ["the job page's send does not read a refusal through sendRefusal and sendRefusalKey, so a Hebrew page shows the server's English"];
+  };
+  const page81 = decomment(read("pages/JobPage.tsx"));
+  for (const p of read81d(page81)) fail(`check 81: ${p} (PLAN 31.4/5)`);
+  const planted81 = page81.replace("const refusal = sendRefusal(e);", "const refusal = null;");
+  if (planted81 === page81 || !read81d(planted81).length) throw new Error('the reader passes "a send that ignores the code"');
+} catch (e) {
+  fail(`send refusal check (check 81) could not run: ${e.message}`);
+}
+
 // ---- 82. a tracker card's controls stay inside the card, at 44 px ---------- //
 // Found in PLAN 31.4/5, fixed 2026-09-27. On the board's five columns (from xl)
 // a card is 179 px wide, and its third row held the date beside a group of two

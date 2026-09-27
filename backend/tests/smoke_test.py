@@ -13367,6 +13367,7 @@ try:
             and _r.json()["submit_note"] == "https://apply.example/q/1",
             _r.text[:200],
         )
+        _rc_served = _r.json()
         _url, _body, _ct = _sent_apps[-1]
         check(
             "the wire call hits the position's apply endpoint with the page token",
@@ -13409,6 +13410,7 @@ try:
             and _r.json()["detail"] == {"code": "daily_limit", "action": "submit", "cap": 1},
             _r.text[:150],
         )
+        _rc_cap = _r.json()
         # PLAN 31.4/5: the kit's flags were read at approval, but the send takes the
         # row's draft as it is NOW. A line typed on the job's draft stores an
         # unknown count (31.3/4), and unknown is never clean: the page stops
@@ -13445,6 +13447,31 @@ try:
             "refused submits never reached the network (exactly one real send)",
             len(_sent_apps) == 1,
             str(len(_sent_apps)),
+        )
+        # PLAN 31.4/5's open item, fixed 2026-09-27: what a tab reads from a refused
+        # send. The English sentence stays a STRING `detail` (a tab loaded before the
+        # codes existed prints it, as it always did) beside a `code` from
+        # REFUSAL_CODES and the `params` its translated sentence names; a draft
+        # deleted meanwhile is a coded 404, not "Kit not found." for every language.
+        # The false-positive half: the daily cap's 429 keeps its own `daily_limit`
+        # detail with no refusal code beside it, and a served send carries none.
+        _rc_twice = _tc.post(f"/kits/{_sk1['id']}/submit", headers=_SUB_H)
+        _rc_gone = _tc.post("/kits/987654/submit", headers=_SUB_H)
+        check(
+            "31.4/5 send refusals: a refusal answers {detail: the English sentence, code, params}, and a deleted draft "
+            "a coded 404 — while the daily cap's 429 and a served send carry no refusal code",
+            _rc_twice.status_code == 400
+            and isinstance(_rc_twice.json().get("detail"), str)
+            and "already" in _rc_twice.json()["detail"].lower()
+            and _rc_twice.json().get("code") == "already_sent"
+            and _rc_twice.json().get("params") == {}
+            and _rc_gone.status_code == 404
+            and _rc_gone.json().get("code") == "kit_not_found"
+            and isinstance(_rc_gone.json().get("detail"), str)
+            and "code" not in _rc_cap
+            and _rc_cap.get("detail", {}).get("code") == "daily_limit"
+            and "code" not in _rc_served,
+            f"{_rc_twice.text[:160]} | {_rc_gone.text[:120]} | {_rc_cap} | {sorted(_rc_served)[:4]}",
         )
 
     # Function-level guardrails that the HTTP flow above can't reach: flagged
@@ -13500,6 +13527,152 @@ try:
         "guardrail refusals left no extra network sends",
         len(_sent_apps) == 1,
         str(len(_sent_apps)),
+    )
+
+    # PLAN 31.4/5's open item, fixed 2026-09-27: the send's refusals reached the
+    # Hebrew job page as the server's English sentences. Each is a SubmitRefused
+    # now, whose code the page translates (check-mirrors 81 holds every code in
+    # REFUSAL_CODES to a sentence in both locales). EVERY path is driven here, from
+    # the first guardrail to Comeet's three failures, each through the real
+    # function with only its seam replaced; a path that still raised a bare
+    # ValueError (the old contract) fails its own row.
+    import urllib.error as _rc_uerr  # noqa: E402
+
+    from app.core.providers import comeet as _rc_comeet  # noqa: E402
+    from app.db.models import Application as _RcApp  # noqa: E402
+
+    _rc_nameless = resume.model_copy(deep=True)
+    _rc_nameless.contact.name = ""
+
+    def _rc_app(resume_json: str, flags: int | None = 0) -> int:
+        row = _RcApp(user_id=_sub_row.id, job_title="Refused send", tailored_resume_json=resume_json,
+                     fabrication_flag_count=flags)
+        _dbs.add(row)
+        _dbs.commit()
+        return row.id
+
+    def _rc_kit(i: int, **kw) -> _TKit:  # noqa: ANN003
+        fields = dict(user_id=_sub_row.id, status="approved", source="comeet", flag_count=0,
+                      company=f"RefusalCo{i}",
+                      url=f"https://www.comeet.com/jobs/refusal{i}/AB.{i:03X}/dev/CD.{i:03X}")
+        fields.update(kw)
+        row = _TKit(**fields)
+        _dbs.add(row)
+        _dbs.commit()
+        return row
+
+    def _rc_send(kit: _TKit, post=None) -> None:  # noqa: ANN001
+        _asub.submit_kit(_dbs, _sub_row, kit, post_fn=post, recaptcha_fn=lambda url: False)
+
+    def _rc_http(code: int):  # noqa: ANN202
+        def post(url: str, body: bytes, ct: str) -> str:
+            raise _rc_uerr.HTTPError(url, code, "refused", {}, None)  # type: ignore[arg-type]
+        return post
+
+    def _rc_down(url: str, body: bytes, ct: str) -> str:
+        raise OSError("network down")
+
+    def _rc_no_careers_page() -> None:
+        real_scrape = _rc_comeet._scrape_token
+        _rc_comeet._scrape_token = lambda url: (_ for _ in ()).throw(RuntimeError("careers page down"))
+        try:
+            _real_token(_dbs, _asub.parse_comeet_position_url(
+                "https://www.comeet.com/jobs/nowhere-rc/EF.001/dev/EF.002"))
+        finally:
+            _rc_comeet._scrape_token = real_scrape
+
+    _rc_clean = resume.model_dump_json()
+    _RC_CASES = [
+        ("already_sent", lambda: _asub.submit_kit(_dbs, _sub_row, _rc_kit(1, status="submitted"))),
+        ("not_approved", lambda: _asub.submit_kit(_dbs, _sub_row, _rc_kit(2, status="done"))),
+        ("kit_flagged", lambda: _asub.submit_kit(_dbs, _sub_row, _rc_kit(3, flag_count=2))),
+        ("not_comeet", lambda: _asub.submit_kit(_dbs, _sub_row, _rc_kit(4, source="linkedin"))),
+        ("not_comeet_url", lambda: _asub.submit_kit(_dbs, _sub_row, _rc_kit(5, url="https://www.linkedin.com/jobs/view/1"))),
+        ("recaptcha", lambda: _asub.submit_kit(_dbs, _sub_row, _rc_kit(6), recaptcha_fn=lambda url: True)),
+        ("company_already_sent", lambda: _rc_send(_rc_kit(7, company="SubCo1"))),
+        ("application_missing", lambda: _rc_send(_rc_kit(8, application_id=None))),
+        ("draft_changed", lambda: _rc_send(_rc_kit(9, application_id=_rc_app(_rc_clean, flags=None)))),
+        ("resume_unreadable", lambda: _rc_send(_rc_kit(10, application_id=_rc_app("{not a resume")))),
+        ("contact_missing", lambda: _rc_send(_rc_kit(11, application_id=_rc_app(_rc_nameless.model_dump_json())))),
+        ("careers_unreachable", _rc_no_careers_page),
+        ("comeet_locked", lambda: _rc_send(_rc_kit(13, application_id=_rc_app(_rc_clean)), _rc_http(423))),
+        ("comeet_declined", lambda: _rc_send(_rc_kit(14, application_id=_rc_app(_rc_clean)), _rc_http(500))),
+        ("comeet_unreachable", lambda: _rc_send(_rc_kit(15, application_id=_rc_app(_rc_clean)), _rc_down)),
+    ]
+    _rc_got: dict[str, str] = {}
+    _rc_params: dict[str, dict] = {}
+    for _rc_want, _rc_call in _RC_CASES:
+        try:
+            _rc_call()
+            _rc_got[_rc_want] = "no refusal"
+        except _asub.SubmitRefused as _e:
+            _rc_got[_rc_want] = _e.code if _e.code in _asub.REFUSAL_CODES and str(_e).strip() else f"bad {_e.code!r}"
+            _rc_params[_rc_want] = dict(_e.params)
+        except Exception as _e:  # noqa: BLE001 - a bare ValueError is the defect this pins
+            _rc_got[_rc_want] = f"{type(_e).__name__} with no code: {str(_e)[:60]}"
+    check(
+        "31.4/5 send refusals (fixed 2026-09-27): EVERY refusal path answers a code from REFUSAL_CODES beside its "
+        "English sentence — all 15, from the first guardrail to Comeet's lock, decline and silence — and the "
+        "sentences that name a company or a status carry it",
+        len(_RC_CASES) == 15
+        and all(_rc_got.get(code) == code for code, _ in _RC_CASES)
+        and _rc_params.get("recaptcha") == {"company": "RefusalCo6"}
+        and _rc_params.get("company_already_sent") == {"company": "SubCo1"}
+        and _rc_params.get("careers_unreachable") == {"company": "nowhere-rc"}
+        and _rc_params.get("comeet_locked") == {"company": "RefusalCo13"}
+        and _rc_params.get("comeet_declined") == {"status": 500}
+        and len(_sent_apps) == 1,
+        str({k: v for k, v in _rc_got.items() if v != k}) + f" params={_rc_params} sends={len(_sent_apps)}",
+    )
+
+    # …and none is left out: every `raise` in the send path (submit_kit and
+    # _resolve_token) raises SubmitRefused with a literal code from the set, every
+    # code in the set is raised somewhere (auto_submit.py, or routes.py's coded
+    # 404), and the set holds no duplicate. Read through the AST, and the reader
+    # is probed on the real source with one refusal turned back into a bare
+    # ValueError (the false-positive half: parse_comeet_position_url's own
+    # ValueError, outside the send path and wrapped by it, is not flagged).
+    import ast as _rc_ast  # noqa: E402
+    from pathlib import Path as _RcPath  # noqa: E402
+
+    _rc_src = _RcPath(_asub.__file__).read_text(encoding="utf-8")
+    _rc_routes = (_RcPath(_asub.__file__).parent.parent / "api" / "routes.py").read_text(encoding="utf-8")
+
+    def _rc_is_refused(call: _rc_ast.AST) -> bool:
+        if not isinstance(call, _rc_ast.Call):
+            return False
+        f = call.func
+        return (isinstance(f, _rc_ast.Name) and f.id == "SubmitRefused") or (
+            isinstance(f, _rc_ast.Attribute) and f.attr == "SubmitRefused")
+
+    def _rc_code(call: _rc_ast.Call) -> str | None:
+        a = call.args[0] if call.args else None
+        return a.value if isinstance(a, _rc_ast.Constant) and isinstance(a.value, str) else None
+
+    def _rc_scan(src: str) -> tuple[list[str], set[str]]:
+        bad: list[str] = []
+        tree = _rc_ast.parse(src)
+        for fn in tree.body:
+            if isinstance(fn, _rc_ast.FunctionDef) and fn.name in ("submit_kit", "_resolve_token"):
+                for node in _rc_ast.walk(fn):
+                    if isinstance(node, _rc_ast.Raise) and node.exc is not None:
+                        if not _rc_is_refused(node.exc) or _rc_code(node.exc) not in _asub.REFUSAL_CODES:
+                            bad.append(f"{fn.name}:{node.lineno}")
+        raised = {_rc_code(n) for n in _rc_ast.walk(tree) if _rc_is_refused(n)}
+        return bad, raised
+
+    _rc_bad, _rc_raised = _rc_scan(_rc_src)
+    _rc_raised |= {_rc_code(n) for n in _rc_ast.walk(_rc_ast.parse(_rc_routes)) if _rc_is_refused(n)}
+    _rc_planted = _rc_src.replace('raise SubmitRefused("already_sent", ', "raise ValueError(", 1)
+    check(
+        "31.4/5 send refusals: every raise in the send path names a code from REFUSAL_CODES, every code is raised "
+        "somewhere, none twice — and the reader catches a refusal turned back into a bare ValueError",
+        not _rc_bad
+        and _rc_raised == set(_asub.REFUSAL_CODES)
+        and len(_asub.REFUSAL_CODES) == len(set(_asub.REFUSAL_CODES)) == 16
+        and _rc_planted != _rc_src
+        and bool(_rc_scan(_rc_planted)[0]),
+        f"bad={_rc_bad} unraised={set(_asub.REFUSAL_CODES) - _rc_raised} unknown={_rc_raised - set(_asub.REFUSAL_CODES)}",
     )
     _dbs.close()
 finally:
