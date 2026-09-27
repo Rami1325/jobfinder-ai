@@ -5859,11 +5859,13 @@ check(
 # `search_fn(resume, context, cache=..., sightings_fn=...)`, and a `**_` would
 # absorb a RENAMED kwarg silently — the fake would keep passing while the real
 # `search_jobs` stopped receiving the market memory and `long_open`/`reposted`
-# went permanently quiet. Spelled out, a rename goes red here first.
+# went permanently quiet. Spelled out, a rename goes red here first. So is
+# `applied` (Phase 32): the searches and a morning pass it for a user whose
+# tracker holds an application, which the admin's does by now.
 _alert_sfn: list = []  # what the cron actually handed the search, per call
 
 
-def _canned_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001 - matches search_jobs' shape
+def _canned_search(resume, ctx, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001 - matches search_jobs' shape
     _alert_sfn.append(sightings_fn)
     return JobSearchResult(
         context=_AlertCtx(job_title="Backend Engineer", location="Tel Aviv"),
@@ -5890,7 +5892,7 @@ check("alert re-run: nothing new (hits now in history)", _run2.new_count == 0, s
 _seen_ctx: list = []
 
 
-def _recording_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001 - matches search_jobs' shape
+def _recording_search(resume, ctx, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001 - matches search_jobs' shape
     _seen_ctx.append(ctx)
     _alert_sfn.append(sightings_fn)
     return JobSearchResult(context=_AlertCtx(job_title="X"), matches=[], skipped=0)
@@ -5927,7 +5929,7 @@ check("alert run respects the toggle", run_alert(_db, _admin_id, search_fn=_cann
 check("alert run with force ignores the toggle", run_alert(_db, _admin_id, force=True, search_fn=_canned_search).ran is True)
 
 
-def _broken_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001
+def _broken_search(resume, ctx, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
     raise ValueError("boards are down")
 
 
@@ -6027,7 +6029,7 @@ check(
 # End to end: the bar filters the EMAIL, never the history. Every match is still
 # recorded — that is what the History tab shows and what load_score_cache reuses,
 # so dropping below-bar rows would make the cron re-score them every morning.
-def _bar_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001 - matches search_jobs' shape
+def _bar_search(resume, ctx, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001 - matches search_jobs' shape
     return JobSearchResult(context=_AlertCtx(job_title="X"), matches=_bar_pool, skipped=0)
 
 
@@ -6070,7 +6072,7 @@ check(
 _low = [JobMatch(title="Low", company="F", overall=30.0, url="https://bar/low-1")]
 
 
-def _low_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001
+def _low_search(resume, ctx, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
     return JobSearchResult(context=_AlertCtx(job_title="X"), matches=_low, skipped=0)
 
 
@@ -6090,7 +6092,7 @@ check(
 _link_sent: list[tuple[str, str, str]] = []
 
 
-def _link_search(resume, ctx, cache=None, sightings_fn=None):  # noqa: ANN001
+def _link_search(resume, ctx, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
     return JobSearchResult(
         context=_AlertCtx(job_title="X"),
         matches=[JobMatch(title="Link Role", company="L", overall=90.0, url="https://alerts/link-1")],
@@ -10115,7 +10117,7 @@ _STREAM_MATCH = JobMatch(
 )
 
 
-def _fake_stream_search(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001 - matches search_jobs' shape
+def _fake_stream_search(resume, customize, progress=None, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001 - matches search_jobs' shape
     progress({"stage": "boards", "source": "linkedin", "index": 1, "total": 1})
     progress({"stage": "scoring", "index": 1, "total": 1, "title": _STREAM_MATCH.title, "company": "StreamCo"})
     progress({"stage": "match", "index": 1, "total": 1, "match": _STREAM_MATCH.model_dump()})
@@ -10207,7 +10209,7 @@ try:
             f"{(_hist_after.get(_STREAM_MATCH.url) or {}).get('app_id')} vs {_hist_row.get('id')}",
         )
 
-        def _broken_stream_search(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+        def _broken_stream_search(resume, customize, progress=None, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
             raise ValueError("boards are down")
 
         _routes_mod.search_jobs = _broken_stream_search
@@ -23386,7 +23388,7 @@ _prev32b_env = _env29(DAILY_LLM_CAP="0", DAILY_TAILOR_CAP="0", DAILY_SEARCH_CAP=
 try:
     with TestClient(_fastapi_app) as _c32b:
         # --- 32.3 / 32.12 The plainly charged routes: one use each, and the header says what is left --------------
-        def _zero_search32(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+        def _zero_search32(resume, customize, progress=None, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
             return _JSRes32(matches=[])
 
         _routes32.search_jobs = _zero_search32
@@ -23589,10 +23591,10 @@ try:
         )
 
         # --- 32.3 The search stream (B4.2) ------------------------------------------------------------------------
-        def _search_400_32(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+        def _search_400_32(resume, customize, progress=None, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
             raise ValueError("boards are down")
 
-        def _search_502_32(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+        def _search_502_32(resume, customize, progress=None, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
             raise RuntimeError("the scoring pool crashed")
 
         _st_body32 = {"resume": _R32, "customize": None}
@@ -23674,7 +23676,7 @@ try:
                             url="https://stream32.test/never-read", source="linkedin")
         _nr_written32 = _thr32.Event()
 
-        def _nr_search32(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+        def _nr_search32(resume, customize, progress=None, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
             return _JSRes32(matches=[_NR_MATCH32])
 
         def _nr_record32(*args, **kwargs):  # noqa: ANN002, ANN003
@@ -26123,11 +26125,11 @@ finally:
 # free again. Every other friend in section 32 is minted with it spent; these are
 # minted with it open, and each catch sits beside its twin.
 # ---------------------------------------------------------------------------
-def _search_none32f(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+def _search_none32f(resume, customize, progress=None, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
     return _JSRes32(matches=[])
 
 
-def _search_fails32f(resume, customize, progress=None, cache=None, sightings_fn=None):  # noqa: ANN001
+def _search_fails32f(resume, customize, progress=None, cache=None, sightings_fn=None, applied=None):  # noqa: ANN001
     raise ValueError("no boards answered")
 
 
@@ -26557,6 +26559,290 @@ check(
     and _hj_after_wipe == {"urls": [], "companies": [], "title_words": []},
     f"before={len(_hj_twin_hist0.get('hits', []))}/{_hj_twin_hist0.get('hidden')} "
     f"after={len(_hj_twin_hist1.get('hits', []))}/{_hj_twin_hist1.get('hidden')} wipe={_hj_wipe.status_code}",
+)
+
+# ---------------------------------------------------------------------------
+# Phase 32 "Applied jobs never come back". A posting the tracker holds at applied,
+# interview, offer or rejected is left out of every search, History and the alert
+# mornings, BEFORE selection (so a search still fills to its limit), and COUNTED
+# as jobs; a saved one is not. Matched by the tracker's address key or by the
+# exact role (title + company, normalised), never by a title alone or a near
+# title. Deterministic. Each catch sits beside the case it must leave alone.
+# ---------------------------------------------------------------------------
+from app.core import applied_jobs as _aj, posting_keys as _pk  # noqa: E402
+from app.core.alerts import _job_link as _aj_job_link  # noqa: E402
+from app.db import history as _aj_hist  # noqa: E402
+
+_AJ_ROWS = [
+    ("https://www.linkedin.com/jobs/view/4012345678/", "applied", "QA Engineer", "Acme Ltd"),
+    ("", "interview", "מהנדס/ת  בדיקות", 'אלביט מערכות בע"מ'),  # a Gmail card: no address
+    ("https://www.jobmaster.co.il/jobs/checknum.asp?key=111", "rejected", "Data Analyst", "JM Co"),
+    ("https://offer.test/9", "offer", "", ""),  # an address and nothing else
+    ("https://saved.test/1", "saved", "Saved Role", "SavedCo"),  # saved: never left out
+    ("https://blank.test/1", "", "Blank Role", "BlankCo"),  # a blank status reads as saved
+]
+_aj_set = _aj.from_rows(_AJ_ROWS)
+_AJ_CATCH = [  # (address, title, company, other boards, why)
+    ("https://il.linkedin.com/jobs/view/qa-engineer-at-acme-4012345678?refId=x", "", "", (), "url"),
+    ("https://drushim.test/job/5/", "QA  Engineer!", "ACME, Ltd.", (), "role"),
+    ("https://jobmaster.test/x", "מהנדס/ת בדיקות", "אלביט מערכות", (), "role"),
+    ("https://offer.test/9/", "Anything", "Anyone", (), "url"),
+    ("https://x.test/other", "Other", "Other", ("https://www.jobmaster.co.il/jobs/checknum.asp?key=111",), "url"),
+]
+_AJ_KEEP = [
+    ("https://drushim.test/job/6", "Senior QA Engineer", "Acme", ()),
+    ("https://drushim.test/job/7", "Backend Engineer", "Acme", ()),
+    ("https://drushim.test/job/8", "QA Engineer", "Other Co", ()),
+    ("https://drushim.test/job/9", "QA Engineer", "", ()),  # a title alone never matches
+    ("https://drushim.test/job/10", "מהנדס/ת בדיקות בכיר/ה", "אלביט מערכות", ()),
+    ("https://drushim.test/job/11", "מהנדס/ת בדיקות", "רפאל", ()),
+    ("https://saved.test/1", "Saved Role", "SavedCo", ()),
+    ("https://blank.test/1", "Blank Role", "BlankCo", ()),
+    ("https://www.jobmaster.co.il/jobs/checknum.asp?key=222", "Data Analyst II", "JM Co", ()),
+]
+
+
+def _aj_why(cases):  # noqa: ANN001, ANN202
+    return [_aj.applied_reason(_aj_set, url=c[0], title=c[1], company=c[2], also_on=c[3]) for c in cases]
+
+
+check(
+    "P32 applied matcher: a job applied to is caught by its address across LinkedIn's shapes and with a trailing "
+    "slash, through a posting's other boards, and by its exact role on another board (case, spaces, punctuation and "
+    "a legal suffix aside), a Hebrew role from a Gmail card with no address included",
+    _aj_why(_AJ_CATCH) == [c[4] for c in _AJ_CATCH],
+    str(list(zip([c[0] for c in _AJ_CATCH], _aj_why(_AJ_CATCH)))),
+)
+check(
+    "P32 applied matcher, the false positives: a different role at the same company (Senior QA Engineer, Backend "
+    "Engineer), the same title at another company, a title with no company, the Hebrew senior role and the Hebrew "
+    "role elsewhere, a SAVED row and a blank-status row, and another JobMaster posting are all shown; a tracker "
+    "with nothing applied leaves nothing out",
+    _aj_why(_AJ_KEEP) == [""] * len(_AJ_KEEP)
+    and _aj.from_rows([r for r in _AJ_ROWS if r[1] in ("saved", "")]) is None
+    and _aj.from_rows([]) is None
+    and _aj.applied_reason(None, url="https://offer.test/9", title="QA Engineer", company="Acme") == ""
+    and _aj.search_kw(None) == {} and set(_aj.search_kw(_aj_set)) == {"applied"},
+    str(list(zip([c[0] for c in _AJ_KEEP], _aj_why(_AJ_KEEP)))),
+)
+_aj_jm = [
+    JobMatch(title="Data Analyst", company="JM Co", url="https://www.jobmaster.co.il/jobs/checknum.asp?key=111&src=x"),
+    JobMatch(title="Designer", company="JM Two", url="https://www.jobmaster.co.il/jobs/checknum.asp?key=222"),
+]
+_aj_hist.stamp_applied(
+    _aj_jm, {_aj_hist._url_key("https://www.jobmaster.co.il/jobs/checknum.asp?key=111"): _aj_hist.Tracked("rejected", 7)}
+)
+check(
+    "P32 the tracker's address key keeps the parameter that NAMES a posting (JobMaster's key, Greenhouse's gh_jid) "
+    "and still drops tracking noise: one tracked JobMaster job used to stamp its status on EVERY JobMaster result, "
+    "and as the key of this filter would have left every JobMaster posting out",
+    _pk.url_key("https://www.jobmaster.co.il/jobs/checknum.asp?key=111&src=x")
+    == "https://www.jobmaster.co.il/jobs/checknum.asp?key=111"
+    and _pk.url_key("https://acme.test/careers/?gh_jid=55&utm_source=li") == "https://acme.test/careers?gh_jid=55"
+    and _pk.url_key("https://boards.example/jobs/77/?utm_source=x") == "https://boards.example/jobs/77"
+    and _aj_jm[0].application_status == "rejected" and _aj_jm[0].application_id == 7
+    and _aj_jm[1].application_status == "" and _aj_jm[1].application_id is None,
+    str([(m.url, m.application_status) for m in _aj_jm]),
+)
+_aj_imports = _pm_imported_modules(_hj_inspect.getsource(_aj))
+_pk_imports = _pm_imported_modules(_hj_inspect.getsource(_pk))
+_aj_alert_kw = [
+    k for c in _hj_calls for k in c.keywords
+    if k.arg is None and isinstance(k.value, _hj_ast.Call) and getattr(k.value.func, "id", "") == "applied_kw"
+]
+from app.core import job_match as _aj_jmatch, job_search as _aj_js  # noqa: E402
+
+check(
+    "P32 AST: applied_jobs imports EXACTLY __future__, dataclasses, typing and posting_keys, and posting_keys "
+    "EXACTLY __future__ and re, so no model, network or clock decides what a person is never shown; each key is ONE "
+    "function (the tracker's address key IS History's, the role key IS the search's twin fingerprint, the LinkedIn "
+    "id IS job_match's); and run_alert's one search_fn call passes **applied_kw(...)",
+    _aj_imports == {"__future__", "dataclasses", "typing", "app.core.posting_keys"}
+    and _pk_imports == {"__future__", "re"}
+    and _aj_hist._url_key is _pk.url_key and _aj_js.content_key is _pk.content_key
+    and _aj_jmatch._linkedin_job_id is _pk.linkedin_job_id
+    and len(_hj_calls) == 1 and len(_aj_alert_kw) == 1,
+    f"applied_jobs={sorted(_aj_imports)} posting_keys={sorted(_pk_imports)} kw={len(_aj_alert_kw)}",
+)
+
+# The routes and the morning, end to end over one fake board: nine postings, four
+# of them jobs the "Applied" user already applied to (an address, the same role on
+# the board under another address, a Hebrew Gmail card with no address, an offer by
+# address with a trailing slash), and one saved.
+_AJ_POOL = [
+    ("QA Engineer", "Acme", "https://apl.test/1"),
+    ("QA Engineer", "Acme Ltd.", "https://apl.test/2"),
+    ("Senior QA Engineer", "Acme", "https://apl.test/3"),
+    ("Backend Engineer", "Acme", "https://apl.test/4"),
+    ("QA Engineer", "Other Co", "https://apl.test/5"),
+    ("מהנדס/ת בדיקות", 'אלביט מערכות בע"מ', "https://apl.test/6"),
+    ("מהנדס/ת בדיקות בכיר/ה", "אלביט מערכות", "https://apl.test/7"),
+    ("Saved Engineer", "SavedCo", "https://apl.test/8"),
+    ("Offer Engineer", "OfferCo", "https://apl.test/9/"),
+]
+
+
+class _AppliedBoard:
+    name = "fake_applied"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source=self.name, title=t, company=c, description=f"Python and SQL work. {t} at {c}.", url=u)
+            for t, c, u in _AJ_POOL
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+def _aj_ctx(limit):  # noqa: ANN001, ANN202
+    return _SC_HJ(
+        job_title="Engineer", job_titles=["Engineer"], location="", work_mode="any",
+        sources=["fake_applied"], max_age_days=0, limit=limit,
+    )
+
+
+def _aj_track(uid):  # noqa: ANN001, ANN202
+    """The "Applied" user's tracker: three applications and one saved job."""
+    d = SessionLocal()
+    try:
+        d.add_all([
+            Application(user_id=uid, job_title="QA Engineer", company="Acme", job_url="https://apl.test/1", status="applied"),
+            Application(user_id=uid, job_title="מהנדס/ת בדיקות", company="אלביט מערכות", status="interview", source="email"),
+            Application(user_id=uid, job_url="https://apl.test/9", status="offer"),
+            Application(user_id=uid, job_title="Saved Engineer", company="SavedCo", job_url="https://apl.test/8"),
+        ])
+        d.commit()
+    finally:
+        d.close()
+
+
+def _aj_urls(body):  # noqa: ANN001, ANN202
+    return sorted(m.get("url", "") for m in body.get("matches", []))
+
+
+_PROV["fake_applied"] = _AppliedBoard()
+_prev_aj_env = _env29(DAILY_SEARCH_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _caj:
+        _aj_uid, _AJ_H = _mint32(_caj, "Applied Somewhere")
+        _aj_twin_uid, _AJ_TWIN_H = _mint32(_caj, "Applied Nowhere")
+        _aj_track(_aj_uid)
+        _aj_search = _j28(_caj.post(
+            "/jobs/search", json={"resume": _R32, "customize": _aj_ctx(10).model_dump(mode="json")}, headers=_AJ_H
+        ))
+        _aj_fill = _j28(_caj.post(
+            "/jobs/search", json={"resume": _R32, "customize": _aj_ctx(4).model_dump(mode="json")}, headers=_AJ_H
+        ))
+        _aj_stream = _caj.post(
+            "/jobs/search/stream", json={"resume": _R32, "customize": _aj_ctx(10).model_dump(mode="json")},
+            headers=_AJ_H,
+        )
+        _aj_twin_search = _j28(_caj.post(
+            "/jobs/search", json={"resume": _R32, "customize": _aj_ctx(10).model_dump(mode="json")},
+            headers=_AJ_TWIN_H,
+        ))
+        # History: the twin saved eight matches (the Acme twin folded into /1 as
+        # "Also on"). Then it applies: to /2 by its address alone, which is /1's
+        # other board; a Gmail card rejects "Backend Engineer" at Acme, no address;
+        # and /3 is saved, then marked applied in the tracker.
+        _aj_h0 = _j28(_caj.get("/jobs/history", headers=_AJ_TWIN_H))
+        _caj.post("/applications", json={"job_url": "https://apl.test/2", "status": "applied"}, headers=_AJ_TWIN_H)
+        _d_aj = SessionLocal()
+        try:
+            _d_aj.add(Application(
+                user_id=_aj_twin_uid, job_title="Backend Engineer", company="Acme", status="rejected", source="email",
+            ))
+            _d_aj.commit()
+        finally:
+            _d_aj.close()
+        _aj_saved3 = _j28(_caj.post(
+            "/applications",
+            json={"job_title": "Senior QA Engineer", "company": "Acme", "job_url": "https://apl.test/3"},
+            headers=_AJ_TWIN_H,
+        ))
+        _aj_h1 = _j28(_caj.get("/jobs/history", headers=_AJ_TWIN_H))
+        _caj.patch(f"/applications/{_aj_saved3.get('id')}", json={"status": "applied"}, headers=_AJ_TWIN_H)
+        _aj_h2 = _j28(_caj.get("/jobs/history", headers=_AJ_TWIN_H))
+finally:
+    _restore29(_prev_aj_env)
+
+_AJ_SHOWN = ["https://apl.test/3", "https://apl.test/4", "https://apl.test/5", "https://apl.test/7", "https://apl.test/8"]
+_aj_saved_row = next((m for m in _aj_search.get("matches", []) if m.get("url") == "https://apl.test/8"), {})
+check(
+    "P32 search: the jobs applied to (by address, by role on another address, a Hebrew Gmail card, an offer with a "
+    "trailing slash) are left out BEFORE selection and counted as 3 JOBS, the saved one is shown and marked saved, "
+    "and the same search by a user who applied nowhere ranks all of them with applied 0",
+    _aj_urls(_aj_search) == _AJ_SHOWN
+    and _aj_search.get("applied") == 3 and _aj_search.get("hidden") == 0
+    and _aj_saved_row.get("application_status") == "saved"
+    and _aj_twin_search.get("applied") == 0
+    and {"https://apl.test/1", "https://apl.test/6", "https://apl.test/9/"} <= set(_aj_urls(_aj_twin_search)),
+    f"shown={_aj_urls(_aj_search)} applied={_aj_search.get('applied')} twin={_aj_urls(_aj_twin_search)}",
+)
+check(
+    "P32 search fills to its limit: at 4 the four jobs kept are ranked (/3, /4, /5, /7), where filtering after "
+    "selection would have spent a slot on /1 (with its twin /2) and returned three",
+    _aj_urls(_aj_fill) == ["https://apl.test/3", "https://apl.test/4", "https://apl.test/5", "https://apl.test/7"]
+    and _aj_fill.get("applied") == 3,
+    f"{_aj_urls(_aj_fill)} applied={_aj_fill.get('applied')}",
+)
+_aj_stream_text = _aj_stream.text.replace(" ", "")
+check(
+    "P32 stream: the streamed search leaves the same jobs out (no frame names them) and its result says applied 3",
+    _aj_stream.status_code == 200 and '"applied":3' in _aj_stream_text
+    and not any(f'"{u}"' in _aj_stream_text for u in ("https://apl.test/1", "https://apl.test/2", "https://apl.test/6", "https://apl.test/9/"))
+    and '"https://apl.test/7"' in _aj_stream_text,
+    _aj_stream.text[-300:],
+)
+_aj_hurls = lambda h: sorted(r.get("url", "") for r in h.get("hits", []))  # noqa: E731
+_aj_h1_row3 = next((r for r in _aj_h1.get("hits", []) if r.get("url") == "https://apl.test/3"), {})
+check(
+    "P32 History: a saved match the user applied to since is left out and counted, through its other board's "
+    "address (/1 by /2) and by a Gmail card's role (/4); a saved tracker row stays shown and marked saved until it is "
+    "marked applied; beside the same History before any of it (8 shown, applied 0)",
+    len(_aj_h0.get("hits", [])) == 8 and _aj_h0.get("applied") == 0
+    and _aj_hurls(_aj_h1) == ["https://apl.test/3", "https://apl.test/5", "https://apl.test/6", "https://apl.test/7",
+                               "https://apl.test/8", "https://apl.test/9/"]
+    and _aj_h1.get("applied") == 2 and _aj_h1_row3.get("app_status") == "saved"
+    and "https://apl.test/3" not in _aj_hurls(_aj_h2) and _aj_h2.get("applied") == 3,
+    f"h0={len(_aj_h0.get('hits', []))}/{_aj_h0.get('applied')} h1={_aj_hurls(_aj_h1)}/{_aj_h1.get('applied')} "
+    f"h2={_aj_hurls(_aj_h2)}/{_aj_h2.get('applied')}",
+)
+
+# THE ALERT PATH, with the real `search_jobs`: a minted user whose alert is
+# DISABLED and run with force=True (so no later cron picks it up), the bar at 0,
+# four jobs a morning, and the same tracker as above.
+_aj_run, _aj_hist_urls, _aj_sent = None, [], []
+_aj_db = _pm_Session()
+_aj_real_smtp, _aj_real_send = _pm_mailer.smtp_configured, _pm_mailer.send_email
+try:
+    _aj_mid = _pm_mint(_aj_db, "Applied Mornings").id
+    _aj_db.add(_pm_SavedResume(
+        user_id=_aj_mid, label="Applied mornings master", language="en", resume_json=resume.model_dump_json(),
+    ))
+    _aj_db.commit()
+    _aj_track(_aj_mid)
+    _pm_update_alert(_aj_db, _aj_mid, enabled=False, email="applied.mornings@example.com", context=_aj_ctx(4), min_score=0)
+    _pm_mailer.smtp_configured = lambda: True
+    _pm_mailer.send_email = lambda to, subject, text, html="": _aj_sent.append((to, subject, text, html))
+    _aj_run = _pm_run_alert(_aj_db, _aj_mid, force=True, search_fn=_pm_js.search_jobs)
+    _aj_hist_urls = sorted(h.url for h in _pm_history(_aj_db, _aj_mid))
+finally:
+    _pm_mailer.smtp_configured, _pm_mailer.send_email = _aj_real_smtp, _aj_real_send
+    _aj_db.close()
+    _PROV.pop("fake_applied", None)
+_aj_mail = " ".join(part for sent in _aj_sent for part in sent[2:])
+_aj_link = lambda u: _aj_job_link(JobMatch(url=u), get_settings().app_base_url)  # noqa: E731
+check(
+    "P32 alert: the morning emails the four jobs kept (/3, /4, /5, /7) and none applied to, fills its four slots, "
+    "and records only those four in History",
+    _aj_run is not None and _aj_run.ran is True and _aj_run.error == "" and _aj_run.emailed is True
+    and _aj_run.total == 4 and len(_aj_sent) == 1
+    and all(_aj_link(u) in _aj_mail for u in ("https://apl.test/3", "https://apl.test/4", "https://apl.test/5", "https://apl.test/7"))
+    and not any(_aj_link(u) in _aj_mail for u in ("https://apl.test/1", "https://apl.test/2", "https://apl.test/6", "https://apl.test/9/"))
+    and _aj_hist_urls == ["https://apl.test/3", "https://apl.test/4", "https://apl.test/5", "https://apl.test/7"],
+    f"run={_aj_run} sent={len(_aj_sent)} history={_aj_hist_urls}",
 )
 
 # ---------------------------------------------------------------------------

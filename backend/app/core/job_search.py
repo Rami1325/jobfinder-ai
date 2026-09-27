@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -37,7 +36,9 @@ from app.core.ghost_signals import (
 )
 # The module, not the function: `_low_pay` calls `pay_market.high_pay_market`
 # through it, so a spy on the module attribute sees the real call path.
-from app.core import hidden_jobs, pay_market
+from app.core import applied_jobs, hidden_jobs, pay_market
+from app.core.applied_jobs import AppliedJobs
+from app.core.posting_keys import content_key
 from app.core.relevance import RELEVANT_MIN, title_relevance
 from app.core.salary import extract_salary
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
@@ -290,31 +291,11 @@ def freshest_first(hits: list[JobHit], max_age_days: int, now: datetime | None =
     return sorted(hits, key=lambda h: h.posted_at, reverse=True)
 
 
-# Cross-board duplicate detection (PLAN 15.1). Legal suffixes stripped from
-# company names so "Acme Ltd" (Drushim) matches "Acme" (LinkedIn); anything
-# fancier (similarity scoring) risks merging genuinely different roles, so the
-# fingerprint is exact title + company after normalization, or nothing.
-_CONTENT_NORM_RE = re.compile(r"\W+", re.UNICODE)
-# Hebrew acronyms write their quote INSIDE the word (בע"מ, ע"ר) — strip those
-# marks before word-splitting so the acronym survives as one token.
-_ACRONYM_MARKS_RE = re.compile(r"[\"'׳״]")
-_COMPANY_LEGAL = {"ltd", "limited", "inc", "llc", "corp", "gmbh", "בעמ"}
-
-
-def content_key(title: str, company: str) -> str:
-    """Fingerprint for 'same posting on another board': normalized title +
-    company. Returns "" (never merge) when either half is empty — merging on
-    title alone would collapse different companies' identical roles. Pure;
-    pinned by the smoke test."""
-    t_words = _CONTENT_NORM_RE.sub(" ", _ACRONYM_MARKS_RE.sub("", title.lower())).split()
-    c_words = [
-        w
-        for w in _CONTENT_NORM_RE.sub(" ", _ACRONYM_MARKS_RE.sub("", company.lower())).split()
-        if w not in _COMPANY_LEGAL
-    ]
-    if not t_words or not c_words:
-        return ""
-    return " ".join(t_words) + "|" + " ".join(c_words)
+# Cross-board duplicate detection (PLAN 15.1): `content_key(title, company)`,
+# exact title + company after normalization, or "" (never merge). It lives in
+# `posting_keys` since Phase 32, so the applied-jobs filter, a deterministic
+# module, matches a tracker row by the same fingerprint that folds a posting's
+# copies on other boards into one card here; imported above under its old name.
 
 
 def _interleave_into(
@@ -592,6 +573,34 @@ def _split_hidden(
     return kept_tiers, removed
 
 
+def _split_applied(
+    tiers: list[dict[str, list[JobHit]]], applied: AppliedJobs | None
+) -> tuple[list[dict[str, list[JobHit]]], int]:
+    """Every tier without the postings the user already applied to (Phase 32,
+    `app/core/applied_jobs.py`), and how many JOBS went. `_split_hidden`'s
+    position and shape, for its reasons: before selection, so an applied posting
+    takes no slot and costs no fetch or model call, and the freed slot refills in
+    this same round, so the search still fills to its limit. Counted by
+    `applied_jobs.job_key`, not by hit: before selection one posting is still
+    several hits (each keyword query that returned it, each board), and the page
+    says "N jobs you applied to are not shown"."""
+    if applied_jobs.is_empty(applied):
+        return tiers, 0
+    gone: set[str] = set()
+    kept_tiers: list[dict[str, list[JobHit]]] = []
+    for tier in tiers:
+        kept: dict[str, list[JobHit]] = {}
+        for name, tier_hits in tier.items():
+            for hit in tier_hits:
+                if applied_jobs.applied_reason(applied, url=hit.url, title=hit.title, company=hit.company):
+                    # Never "": a match by address has one, and a match by role has a role.
+                    gone.add(applied_jobs.job_key(hit.url, hit.title, hit.company))
+                else:
+                    kept.setdefault(name, []).append(hit)
+        kept_tiers.append(kept)
+    return kept_tiers, len(gone)
+
+
 def _stated_modes(hit: JobHit, text: str) -> list[str]:
     """The modes a KEPT posting states, in WORK_MODES order, for its card; [] when
     it says nothing, which the card leaves blank (unknown, never "on-site"). The
@@ -766,9 +775,14 @@ def search_jobs(
     cache: dict[str, CachedScore] | None = None,
     sightings_fn: SightingsFn | None = None,
     hidden: HiddenJobs | None = None,
+    applied: AppliedJobs | None = None,
 ) -> JobSearchResult:
     """`hidden` is the user's "Not for me" set (PLAN 31.5/4), canonical, taken
     out before selection (`_split_hidden`) and counted on the result.
+
+    `applied` is what the tracker says the user already applied to (Phase 32,
+    `history.applied_kw`), taken out right after it (`_split_applied`) and
+    counted on the result as `applied`.
 
     `cache` maps URL-dedupe keys (`url.rstrip("/")` — same key as
     `_interleave_and_dedupe`) to fresh history rows; see CachedScore for the
@@ -853,6 +867,9 @@ def search_jobs(
     # The user's own "Not for me" (PLAN 31.5/4), before the pay-market rows too:
     # those describe postings the user would otherwise have been shown.
     tiers, hidden_count = _split_hidden(tiers, hidden)
+    # The jobs the user already applied to (Phase 32), at the same position and
+    # for the same reasons: they take no slot, and the slot refills this round.
+    tiers, applied_count = _split_applied(tiers, applied)
     # The pay-market filter (Phase 30 J) runs HERE, BEFORE selection, and the
     # position is the design. LinkedIn's "European Union" location returns
     # postings in every member state, and `_low_pay` needs only the card's
@@ -902,11 +919,13 @@ def search_jobs(
             source_errors=source_errors,
             source_empty=source_empty,
             hidden=hidden_count,
+            applied=applied_count,
         )
-    if not hits and hidden_count:
-        # Everything left was hidden by the user's own choices. "None posted in
-        # the last N days" would be false, and the page must be able to say how
-        # many it hid and offer them back, so this is a 200, like the rows above.
+    if not hits and (hidden_count or applied_count):
+        # Everything left was hidden by the user's own choices, or was a job the
+        # user already applied to (Phase 32). "None posted in the last N days"
+        # would be false, and the page must be able to say how many it left out
+        # (and offer the hides back), so this is a 200, like the rows above.
         return JobSearchResult(
             context=ctx,
             matches=[],
@@ -914,6 +933,7 @@ def search_jobs(
             source_errors=source_errors,
             source_empty=source_empty,
             hidden=hidden_count,
+            applied=applied_count,
         )
     if not hits and mode_removed:
         # Every posting left after the date and keyword tiers states a work mode the
@@ -1356,6 +1376,7 @@ def search_jobs(
             source_errors=source_errors,
             source_empty=source_empty,
             hidden=hidden_count,
+            applied=applied_count,
         )
 
     if not matches:
@@ -1379,4 +1400,5 @@ def search_jobs(
         source_errors=source_errors,
         source_empty=source_empty,
         hidden=hidden_count,
+        applied=applied_count,
     )

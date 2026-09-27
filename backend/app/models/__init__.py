@@ -1723,6 +1723,11 @@ class JobSearchResult(BaseModel):
     # 31.5/4). A count, said on the page, never folded into `skipped` or
     # `filtered`: the user chose these, and the page offers the list back.
     hidden: int = 0
+    # How many JOBS the user already applied to were left out before selection
+    # (Phase 32, `app/core/applied_jobs.py`): the tracker holds them at applied,
+    # interview, offer or rejected. A count of jobs, not of board hits, said on
+    # the page and never folded into `skipped`, `filtered` or `hidden`.
+    applied: int = 0
 
 
 class JobSearchHitOut(BaseModel):
@@ -1757,6 +1762,8 @@ class JobSearchHistory(BaseModel):
     hits: list[JobSearchHitOut] = Field(default_factory=list)
     # Saved rows left out because the user hid them since (PLAN 31.5/4).
     hidden: int = 0
+    # Saved rows left out because the user has applied to them since (Phase 32).
+    applied: int = 0
 
 
 class JobFetchRequest(BaseModel):

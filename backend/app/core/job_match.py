@@ -14,6 +14,9 @@ from app.core.geo_restriction import detect_geo_restriction
 from app.core.jd_analyzer import analyze_jd
 from app.config import get_settings
 from app.core.net_guard import assert_fetchable, guarded_opener
+# Under its old name: `providers.linkedin` and the smoke test import it from here.
+# It lives in `posting_keys` now, a module a deterministic filter may import.
+from app.core.posting_keys import linkedin_job_id as _linkedin_job_id
 from app.llm.limits import clip_utf8
 from app.core.salary import extract_salary
 from app.core.scorer import score_resume, top_matched_and_gaps
@@ -155,20 +158,6 @@ def _http_get(url: str, timeout: float = 15) -> str:
 def _first_text(html: str, cls: str) -> str:
     m = re.search(r'class="[^"]*' + re.escape(cls) + r'[^"]*"[^>]*>(.*?)<', html, re.S)
     return _html.unescape(m.group(1).strip()) if m else ""
-
-
-def _linkedin_job_id(url: str) -> str:
-    """Pull the numeric posting id out of any LinkedIn job URL shape:
-    /jobs/view/<id>, /jobs/view/<slug>-<id>, ?currentJobId=<id>, or a guest api url."""
-    for pat in (
-        r"/jobs/view/(?:[^/?#]*?-)?(\d{6,})",
-        r"[?&]currentJobId=(\d{6,})",
-        r"/jobPosting/(\d{6,})",
-    ):
-        m = re.search(pat, url)
-        if m:
-            return m.group(1)
-    return ""
 
 
 def _extract_linkedin(url: str) -> str:

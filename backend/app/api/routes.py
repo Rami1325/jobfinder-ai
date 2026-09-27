@@ -22,6 +22,7 @@ from app.config import get_settings
 
 from app.core import accounts as accounts_core
 from app.core import alerts as alerts_core
+from app.core import applied_jobs
 from app.core import auto_submit
 from app.core import hidden_jobs
 from app.core import inbox_apply
@@ -87,6 +88,8 @@ from app.db import applications as applications_db
 from app.db import funnel, resume_versions
 from app.db.history import (
     application_statuses,
+    applied_jobs_of,
+    applied_kw,
     clear_search_hits,
     delete_search_hit,
     list_search_hits,
@@ -963,6 +966,9 @@ def jobs_search(
         cache = load_score_cache(db, user.id, rhash)
     except Exception:  # noqa: BLE001
         cache = {}
+    # The jobs this user already applied to (Phase 32), left out before
+    # selection. A tracker read, never a charge; it never raises.
+    applied = applied_kw(db, user.id)
     # The pool's first search is free (PLAN 31.5, owner decision 7).
     with quota.charged(db, user, "search", first_free=True):
         try:
@@ -987,6 +993,7 @@ def jobs_search(
                 # the two would drift.
                 sightings_fn=partial(load_sightings, db),
                 **_hidden_kw(user),
+                **applied,
             )
         except ValueError as e:  # user-facing scrape/search problems
             raise HTTPException(400, str(e))
@@ -1061,8 +1068,10 @@ def jobs_search_stream(
         applied_map = applied_status_map(db, user_id)
     except Exception:  # noqa: BLE001
         applied_map = {}
-    # The user's "Not for me" set, read off the row before the session closes.
+    # The user's "Not for me" set, read off the row before the session closes,
+    # and the jobs the tracker says they already applied to (Phase 32).
     hidden_kw = _hidden_kw(user)
+    applied = applied_kw(db, user_id)
     # The use, reserved LAST on this session and right before it closes: nothing
     # between here and the worker's start can fail and strand it. The pool's
     # first search is free (PLAN 31.5, owner decision 7), and a failed one is
@@ -1127,6 +1136,7 @@ def jobs_search_stream(
                     # would cost.
                     sightings_fn=_sightings_fn,
                     **hidden_kw,
+                    **applied,
                 )
             except ValueError as e:  # user-facing scrape/search problems
                 # The refund lands BEFORE the frame is queued, so no client can
@@ -1226,19 +1236,35 @@ def jobs_history(
     db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> JobSearchHistory:
     rows = list_search_hits(db, user.id)
-    # What the user hid since a row was saved is left out, and COUNTED (PLAN
-    # 31.5/4): the feed says how many it hid, never silently.
-    hidden = _hidden_of(user)
-    shown = [r for r in rows if not hidden_jobs.hidden_reason(hidden, url=r.url, company=r.company, title=r.title)]
-    hidden_count = len(rows) - len(shown)
-    rows = shown
-    statuses = application_statuses(db, [row.url for row in rows], user.id)
 
     def _keyword_list(raw: str | None) -> list[str]:
         try:
             return json.loads(raw) if raw else []
         except Exception:  # noqa: BLE001 - tolerate legacy/corrupt rows
             return []
+
+    # What the user hid since a row was saved is left out, and COUNTED (PLAN
+    # 31.5/4): the feed says how many it hid, never silently.
+    hidden = _hidden_of(user)
+    shown = [r for r in rows if not hidden_jobs.hidden_reason(hidden, url=r.url, company=r.company, title=r.title)]
+    hidden_count = len(rows) - len(shown)
+    # And what the user has applied to since (Phase 32), by the one matcher the
+    # searches use, its other boards included, and COUNTED the same way. A
+    # tracker that cannot be read leaves nothing out.
+    try:
+        applied = applied_jobs_of(db, user.id)
+    except Exception:  # noqa: BLE001 - show everything rather than fail the feed
+        db.rollback()
+        applied = None
+    rows, gone = [], set()
+    for r in shown:
+        also_on = [str(a.get("url", "")) for a in _keyword_list(r.also_on_json) if isinstance(a, dict)]
+        if applied_jobs.applied_reason(applied, url=r.url, title=r.title, company=r.company, also_on=also_on):
+            gone.add(applied_jobs.job_key(r.url, r.title, r.company))  # jobs, as the search counts them
+        else:
+            rows.append(r)
+    applied_count = len(gone)
+    statuses = application_statuses(db, [row.url for row in rows], user.id)
 
     hits: list[JobSearchHitOut] = []
     for row in rows:
@@ -1271,7 +1297,7 @@ def jobs_history(
                 app_id=tracked.id if tracked else None,
             )
         )
-    return JobSearchHistory(hits=hits, hidden=hidden_count)
+    return JobSearchHistory(hits=hits, hidden=hidden_count, applied=applied_count)
 
 
 @router.delete("/jobs/history/{hit_id}")
