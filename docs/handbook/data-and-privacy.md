@@ -25,6 +25,25 @@ This was the `app/db/` entry of `CLAUDE.md`'s backend package layout.
 - **The admin reads it** in Settings (`components/FunnelCard`, mounted for `is_admin` alone) through `GET /admin/funnel` (`admin_user`, read-only, classed `free` in 32.13 and driven in its sweep): each person's name, signup date and the date each step was first reached, a step not reached drawn faint, never a zero.
 - Smoke 31.8 (+4): each step once and never again, a preview recording nothing; the two streams recording theirs; the admin's alone and the wipe's count; "returned" on day 3 and not on the first day or the ninth. Each probed red with its defect planted (a preview counted, a stream's note missing, the wipe skipping the table, a return never recorded). check-mirrors 80 pins the client half.
 
+### The devices an alert is pushed to (PLAN 32, 2026-09-27)
+
+- **`push_subscriptions` holds one row per device that turned the morning alert on**: the user id, the push service's
+  endpoint for that browser, the two keys the message is encrypted to (`p256dh`, `auth`), the device's language, when
+  it was turned on, the last push that reached it (NULL = none yet, never "failed") and a consecutive-failure count.
+  A NEW table, so `create_all` makes it with its unique constraint on `endpoint_key` (a sha256 of the endpoint:
+  unique across users, because a browser holds one subscription and the account that turned it on last owns it).
+- **Both privacy doors delete a user's rows** (`_wipe_user_rows`, reported as `push_devices` in
+  `DeleteMyDataResult`): a wiped account's phone must stop receiving its alerts, not only forget them. The privacy
+  page says a device's notification address is kept and that the browser's push service delivers the notifications,
+  encrypted (`privacy.store.push`, both locales). Rows also go when the user turns the device off, when the push
+  service answers 404/410, and after five failures in a row (`notifications.md`). smoke 34c pins both doors.
+- **`whatsapp_contacts` holds at most one row per user: the WhatsApp number** (E.164, personal data), its template
+  language, when the explicit opt-in was ticked, when the number was proven by the code WhatsApp delivered, the code's
+  HMAC with its expiry and wrong tries (never the code), the last delivery and the last failure reason. A NEW table
+  with a unique constraint on `user_id`. Both privacy doors delete it (reported as `whatsapp`), "Stop and remove"
+  deletes it, and the privacy page says the number goes to WhatsApp (Meta) with each alert (`privacy.store.whatsapp`).
+  `users.whatsapp_enabled` is the admin's grant, not content, and neither door clears it. smoke 35b pins both doors.
+
 ### The master resume's rows
 
 - **"Most recently updated" must be a TOTAL order, and the clock does not give one.** `_master_rows` sorts on `updated_at` alone and the column's `onupdate` reads the system clock — which ticks about every **15.6 ms on Windows**, so three consecutive `datetime.now()` calls return the identical value. Two saves inside one tick tied, and SQLite was then free to return them in either order: `GET /profile/resume` with no `lang` answered with whichever it liked, and the paired he/en master the user had just written was not necessarily the one they got back. It surfaced as a smoke check that was red on one run and green on the next — the shape of thing this repo's own note says never to re-run away. **A tiebreak in the `ORDER BY` cannot fix it**: `id` is creation order and the row being written is usually the OLDER one (the save upserts by language), so `id DESC` breaks the tie deterministically *wrong*. `save_master_resume` stamps `updated_at` one microsecond past the newest row for that user instead, and the pin FORCES the tie rather than waiting for one.

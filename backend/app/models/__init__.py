@@ -504,6 +504,99 @@ class AlertRunResult(BaseModel):
     # because its owner had no use left (ran is False, error is empty); "" when
     # the run was not skipped.
     skipped_reason: str = ""
+    # PLAN 32: devices the morning's notification reached (web push). Pushing
+    # never keeps or spends a use.
+    pushed: int = 0
+    # PLAN 32: whether the digest went to the owner's verified WhatsApp number.
+    # A WhatsApp message is a message sent, so like the email it keeps the use.
+    whatsapped: bool = False
+
+
+# --------------------------------------------------------------------------- #
+# Web push (PLAN 32): the devices a user turned the morning alert on for.
+# --------------------------------------------------------------------------- #
+class PushKeys(BaseModel):
+    p256dh: str = Field(default="", max_length=256)
+    auth: str = Field(default="", max_length=64)
+
+
+class PushSubscribeIn(BaseModel):
+    """What `PushSubscription.toJSON()` gives the page, plus the page's language.
+    The endpoint is a caller-supplied URL: the route stores it only when
+    `webpush.push_endpoint_allowed` passes."""
+
+    endpoint: str = Field(default="", max_length=2048)
+    keys: PushKeys = Field(default_factory=PushKeys)
+    lang: str = Field(default="", max_length=8)
+
+
+class PushEndpointIn(BaseModel):
+    endpoint: str = Field(default="", max_length=2048)
+
+
+class PushDeviceOut(BaseModel):
+    id: int
+    # The browser's own endpoint, so a page can tell whether it is THIS device.
+    endpoint: str = ""
+    lang: str = "en"
+    created_at: str = ""
+    # "" = nothing has reached it yet (never "it failed").
+    last_success_at: str = ""
+    failure_count: int = 0
+
+
+class PushDevicesOut(BaseModel):
+    """GET /push/devices. `configured` false = web push is off on this server
+    (no VAPID keys), and the page draws nothing; `public_key` is what a browser
+    subscribes with."""
+
+    configured: bool = False
+    public_key: str = ""
+    devices: list[PushDeviceOut] = Field(default_factory=list)
+
+
+class PushTestResult(BaseModel):
+    # "sent" | "gone" (the browser dropped it; the row is deleted) | "failed" | "network"
+    status: str = ""
+
+
+class PushRemoved(BaseModel):
+    removed: int = 0
+
+
+# --------------------------------------------------------------------------- #
+# WhatsApp alerts (PLAN 32, part 2): OFF unless the server is configured AND the
+# admin granted this account.
+# --------------------------------------------------------------------------- #
+class WhatsAppStatusOut(BaseModel):
+    """GET /whatsapp. `available` false = the page draws nothing (the server has
+    no WhatsApp set up, or the admin has not granted this account)."""
+
+    available: bool = False
+    # The caller's own number, E.164, "" when none is saved.
+    phone: str = ""
+    opted_in: bool = False
+    verified: bool = False
+    # A code was sent and has not expired.
+    code_pending: bool = False
+    last_sent_at: str = ""
+    last_error: str = ""
+
+
+class WhatsAppCodeIn(BaseModel):
+    phone: str = Field(default="", max_length=40)
+    # The explicit opt-in; the route refuses without it.
+    opt_in: bool = False
+    lang: str = Field(default="", max_length=8)
+
+
+class WhatsAppVerifyIn(BaseModel):
+    code: str = Field(default="", max_length=12)
+
+
+class WhatsAppSendOut(BaseModel):
+    sent: bool = False
+    status: WhatsAppStatusOut = Field(default_factory=WhatsAppStatusOut)
 
 
 class AlertCronResult(BaseModel):
@@ -646,6 +739,8 @@ class UserUpdate(BaseModel):
     email: Optional[str] = None
     # Phase 29 / B2: may this account connect Gmail while INBOX_ACCESS=allowlist.
     inbox_enabled: Optional[bool] = None
+    # PLAN 32: may this account get the morning alert on WhatsApp (the owner pays per message).
+    whatsapp_enabled: Optional[bool] = None
     # Phase 30 / B7: "free" or "unlimited". The route validates it, so anything
     # else is a 400 with a sentence, never FastAPI's list-shaped 422.
     plan: Optional[str] = None
@@ -669,6 +764,7 @@ class UserOut(BaseModel):
     login_email: str = ""
     verified: bool = True
     inbox_enabled: bool = False
+    whatsapp_enabled: bool = False
     # Phase 30 / B7: the stored plan (an unknown value reads as "free", the way it
     # is enforced) and what this user's pool spent this UTC month. Two accounts on
     # one pool (a gmail alias) show the same count.
@@ -747,6 +843,9 @@ class DeleteMyDataResult(BaseModel):
     google_revoked: bool = False
     # PLAN 31.8: the first time this person reached each step (`db.funnel`).
     steps: int = 0
+    # PLAN 32: the devices the morning alert was pushed to, and the WhatsApp number.
+    push_devices: int = 0
+    whatsapp: int = 0
 
 
 class MeOut(BaseModel):

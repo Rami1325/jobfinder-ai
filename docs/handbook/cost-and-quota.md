@@ -129,6 +129,30 @@ the `MAX_NEXT` / `GOOGLE_FAIL_PER_IP` knobs — is in `accounts-and-auth.md`.)*
 - **What one call costs, measured 2026-09-27** on ten real calls: 250-257 prompt tokens and 18-27 completion tokens. At `gpt-4o-mini`'s list price ($0.15 / 1M input, $0.60 / 1M output) that is about **$0.00005 a call**; the worst case at the cap is 30 calls, about **$0.0016 a day or $0.05 a month per account**, against one search's 10-25 JD_FIT calls. Production runs `gpt-5.4-mini`, whose price this repo does not record, so its dollar figure is not stated here; the token counts are the measurement. The input is bounded at 1 KB of line (413 kind `query`) and the answer is four short fields, so the per-call width cannot grow past these numbers by much.
 - **Revisit** if a paid tier changes what a use is, or if the cap is ever seen biting a real user (it would mean someone typing thirty unreadable lines a day).
 
+### Alerts on the phone cost no use (PLAN 32, 2026-09-27)
+
+- **A notification never charges, and never keeps a morning's use.** The owner's rule for the alert is that a morning
+  charges only when it mailed something, and pushing costs the owner nothing, so the morning's one `job_alert` use is
+  still kept exactly when the EMAIL went out. A morning that pushed but could not email (no SMTP, a failed send) gives
+  its use back like any morning that mailed nothing, and the push runs after the use is decided, so it can neither
+  raise into the run nor change the charge (smoke 34c pins both, and a mutation that kept the use for a push-only
+  morning went red). Run now is unchanged: its `search` use is kept once its search completed.
+- **The four push routes spend no use.** `GET`, `POST` and `DELETE /push/devices` are `free` in 32.13; `POST
+  /push/test` reaches no model but is one real POST to a push service per tap, so it is `net_capped:push_test` with
+  its own daily cap (`DAILY_PUSH_TEST_CAP`, 10; admins exempt; `dailyLimit.pushTest` says it), counted only once the
+  device is found to be the caller's. `docs/handbook/notifications.md` has the rest.
+- **WhatsApp costs the owner real money, so the ADMIN chooses who gets it** (PLAN 32, part 2, 2026-09-28). Meta bills
+  every delivered template message to the owner: in Israel $0.0353 for the digest (a saved-search digest is MARKETING
+  by Meta's own example) and $0.0053 for a code, about $21 a month for 20 people. Decided with the owner's rule in
+  mind: (1) access is admin-granted per account, `users.whatsapp_enabled` through `PATCH /admin/users/{id}` like
+  `inbox_enabled` (`WHATSAPP_ACCESS=all` opens it to everyone); (2) a WhatsApp message IS a message sent, so a
+  morning keeps its one `job_alert` use when it emailed OR WhatsApped jobs, and gives it back when it sent neither
+  (a push never counts); (3) no WhatsApp route charges a monthly use, since none reaches a model, but a code and a
+  test message each cost the owner a message, so both carry the `whatsapp` daily cap (`DAILY_WHATSAPP_CAP`, 5;
+  `net_capped:whatsapp` in 32.13). Charging a monthly use per WhatsApp message was rejected: it would make a person
+  the owner chose to pay for spend their own free uses on the owner's decision. smoke 35 pins the kept use on a
+  WhatsApp-only morning and the refund once the grant is taken away.
+
 ### The first search is free, once per POOL (PLAN 31.5, owner decision 7, 2026-09-26)
 
 - **Why:** the funnel died at first use (`jobfinder-beta-adoption`), and the first sight of the product's best output, real matches for this resume, cost 1 of 10. Now a new account reaches it with a tap that costs nothing: the first-run sheet's "Find jobs that fit" or the Jobs page's Find jobs. The measured cost of one search is about 10-25 model calls.

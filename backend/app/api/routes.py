@@ -116,12 +116,14 @@ from app.db.models import (
     JobSearchHit,
     MailConnection,
     MailEvent,
+    PushSubscription,
     SavedResume,
     SavedResumeVersion,
     TailorKit,
     UsageLog,
     User,
     UserLogin,
+    WhatsAppContact,
 )
 from app.models import (
     ReviewRequest,
@@ -2892,6 +2894,11 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
         inbox_connections=_wipe(MailConnection),
         google_revoked=google_revoked,
         steps=_wipe(FunnelStep),
+        # PLAN 32: the devices the morning alert reaches. A wiped account's
+        # phone must stop receiving notifications, not only forget them.
+        push_devices=_wipe(PushSubscription),
+        # PLAN 32: the WhatsApp number is personal data, and the owner's money.
+        whatsapp=_wipe(WhatsAppContact),
     )
 
 
@@ -2991,6 +2998,7 @@ def _user_out(u: User, login: UserLogin | None = None, uses: int = 0) -> UserOut
             u.is_admin, u.signup_source, login.email_verified_at if login is not None else None
         ),
         inbox_enabled=bool(u.inbox_enabled),
+        whatsapp_enabled=bool(u.whatsapp_enabled),
         plan=quota.plan_of(u),
         uses_this_month=uses,
     )
@@ -3118,6 +3126,10 @@ def admin_update_user(
         # while the Google app is in Testing, the account must also be one of its
         # test users, or Google's own consent page refuses it.
         u.inbox_enabled = body.inbox_enabled
+    if body.whatsapp_enabled is not None:
+        # PLAN 32: WhatsApp alerts cost the owner per message, so the admin
+        # chooses who gets them (WHATSAPP_ACCESS=allowlist, the default).
+        u.whatsapp_enabled = body.whatsapp_enabled
     if body.plan is not None:
         # "unlimited" lifts the monthly limit only; the daily caps still apply.
         u.plan = body.plan

@@ -224,6 +224,41 @@ class Settings(BaseSettings):
     alert_smtp_user: str = ""
     alert_smtp_password: str = ""
     alert_email_from: str = ""  # defaults to alert_smtp_user
+    # Web push (PLAN 32, app/core/webpush.py): the morning alert on the phone's
+    # lock screen, beside the email. All three unset = the feature is hidden
+    # (`/push/devices` answers configured=false and the Settings switch is not
+    # drawn). The keys are base64url, the raw 65-byte public point and the raw
+    # 32-byte private scalar (`python -m app.core.webpush --generate-keys`, or
+    # `npx web-push generate-vapid-keys`); the subject is a "mailto:" address a
+    # push service can write to. The PRIVATE key is a Sensitive variable, and
+    # replacing the pair orphans every subscription (each answers 403 and is
+    # dropped after webpush.MAX_FAILURES tries), so a device must be turned on
+    # again after a rotation.
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = ""
+    # "Send a test notification" per user per UTC day (admins exempt, <= 0
+    # disables). No model, but each tap is one outbound POST per device.
+    daily_push_test_cap: int = 10
+    # WhatsApp alerts (PLAN 32, app/core/whatsapp.py), OFF until all four of the
+    # first four are set, and then only for accounts the admin grants
+    # (`PATCH /admin/users/{id}` {"whatsapp_enabled": true}) unless
+    # WHATSAPP_ACCESS=all. Every message is billed to the owner by Meta. The token
+    # is a System User token (Sensitive); the two template names are the owner's
+    # APPROVED templates: the digest (named variables job_count and top_job) and
+    # an AUTHENTICATION template for the verification code, the only category
+    # Meta lets a one-time code travel in. WHATSAPP_TEMPLATE_LANGS lists the
+    # language versions approved under both names ("en", "he").
+    whatsapp_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_template_name: str = ""
+    whatsapp_code_template_name: str = ""
+    whatsapp_template_langs: str = "en,he"
+    whatsapp_api_version: str = "v26.0"
+    whatsapp_access: str = "allowlist"
+    # Codes and test messages per user per UTC day (admins exempt, <= 0 disables):
+    # each is a message the owner pays for.
+    daily_whatsapp_cap: int = 5
 
     # Self-service accounts (Phase 29 / B1). Invite codes keep working exactly as
     # before; everything below governs the email + password sign-in beside them.

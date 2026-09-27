@@ -788,6 +788,45 @@ export interface AlertRunResult {
   // "monthly_limit" when a scheduled morning did not run for want of a use (ran
   // false, error empty); "" when the run was not skipped. Absent on older backends.
   skipped_reason?: string;
+  // PLAN 32: devices the run's notification reached. Absent on older backends.
+  pushed?: number;
+  // PLAN 32: the digest went to the owner's verified WhatsApp number.
+  whatsapped?: boolean;
+}
+/** GET /whatsapp (PLAN 32; backend `WhatsAppStatusOut`). `available` false = the
+ * server has no WhatsApp set up or the admin has not granted this account, and
+ * the page draws nothing. */
+export interface WhatsAppStatus {
+  available: boolean;
+  phone: string;
+  opted_in: boolean;
+  verified: boolean;
+  code_pending: boolean;
+  last_sent_at: string;
+  last_error: string;
+}
+export interface WhatsAppSendOut {
+  sent: boolean;
+  status: WhatsAppStatus;
+}
+/** One device the morning alert is pushed to (PLAN 32; backend `PushDeviceOut`). */
+export interface PushDevice {
+  id: number;
+  endpoint: string;
+  lang: string;
+  created_at: string;
+  last_success_at: string;
+  failure_count: number;
+}
+/** GET /push/devices. `configured` false = the server sends no notifications,
+ * and the page draws no switch. */
+export interface PushDevices {
+  configured: boolean;
+  public_key: string;
+  devices: PushDevice[];
+}
+export interface PushTestResult {
+  status: "sent" | "gone" | "failed" | "network" | string;
 }
 export interface JobSearchResult {
   context: SearchContext;
@@ -1106,6 +1145,8 @@ export interface UserOut {
   login_email: string;
   verified: boolean;
   inbox_enabled: boolean;
+  /** PLAN 32: may this account get alerts on WhatsApp (the owner pays per message). */
+  whatsapp_enabled?: boolean;
   plan: string; // "free" | "unlimited"
   /** What this account's pool spent this UTC month. */
   uses_this_month: number;

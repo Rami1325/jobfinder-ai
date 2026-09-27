@@ -24,7 +24,11 @@ type LimitAction =
   | "search_context"
   | "scan"
   | "fetch"
-  | "search_query";
+  | "search_query"
+  // PLAN 32: "Send a test notification", one POST to a push service per tap.
+  | "push_test"
+  // PLAN 32: WhatsApp codes and test messages, each billed to the owner.
+  | "whatsapp";
 
 interface DailyLimitDetail {
   code: "daily_limit";
@@ -48,6 +52,8 @@ const LIMIT_KEYS: Record<LimitAction, string> = {
   fetch: "dailyLimit.fetch",
   // Search in plain words (Phase 32): only a line that reaches the model counts.
   search_query: "dailyLimit.searchQuery",
+  push_test: "dailyLimit.pushTest",
+  whatsapp: "dailyLimit.whatsapp",
 };
 
 // Prompt-size limits (backend app/llm/limits.py). Same structured-detail shape

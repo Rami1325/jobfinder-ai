@@ -13,6 +13,7 @@ from starlette._utils import get_route_path
 
 from app.api.auth_routes import router as auth_router
 from app.api.inbox_routes import router as inbox_router
+from app.api.notify_routes import router as notify_router
 from app.api.routes import router
 from app.config import get_settings
 from app.core import quota
@@ -356,6 +357,7 @@ async def access_gate(request: Request, call_next):
 app.include_router(router)
 app.include_router(auth_router)
 app.include_router(inbox_router)
+app.include_router(notify_router)
 
 
 @app.get("/")
