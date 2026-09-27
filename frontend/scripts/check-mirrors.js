@@ -13222,6 +13222,452 @@ try {
   fail(`applied-jobs check (check 85) could not run: ${e.message}`);
 }
 
+// ---- 89. every interview answer box can be spoken, and the mic talks to no server //
+// Phase 32, "Answer out loud" (2026-09-27; docs/handbook/interview.md). A mic on
+// every box where the user types an interview answer, through the browser's OWN
+// speech recognition: no model call, no route, no audio through our server. What
+// is pinned, each rule with a planted twin probed every run:
+//   (a) every <textarea> on the interview page and under pages/interview/ is bound
+//       to a `useDictation` on the same value and setter, is read-only while the
+//       mic writes into it, sits first in a `relative` wrapper with its Listening
+//       badge right after it (so the badge moves nothing), and draws the button
+//       and the note; and every send of an answer (`interviewFeedback`,
+//       `sendMockAnswer`) cancels the mic first, so what is sent is what the box
+//       showed and no word lands after it.
+//   (b) lib/dictation.ts, hooks/useDictation.ts and components/Dictation.tsx
+//       reach no network and capture no raw audio, and import only from a short
+//       list: the privacy page promises the voice never reaches JobFinder.
+//   (c) every `dictate.*` key the component reads, and a sentence for every
+//       `DictationNote` kind, resolve in both interview.json files.
+//   (d) `MAX_ANSWER_KB` is the backend's `max_answer_kb` default, the cap that
+//       measures a practice answer and each candidate turn (degrades without
+//       backend/).
+//   (e) the privacy page says, in both languages, that dictation uses the
+//       browser's own speech service and never sends the voice to JobFinder.
+try {
+  const ANSWER_FILES = [
+    "pages/InterviewPage.tsx",
+    ...fs
+      .readdirSync(path.join(SRC, "pages", "interview"))
+      .filter((f) => f.endsWith(".tsx"))
+      .map((f) => `pages/interview/${f}`),
+  ];
+  // From `<textarea` to the end of its opening tag, reading braces, so an arrow's
+  // `=>` inside a prop is not the tag's end.
+  const openingTag = (src, at) => {
+    let depth = 0;
+    for (let i = at; i < src.length; i++) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (depth === 0 && c === ">") return { text: src.slice(at, i + 1), end: i + 1, selfClosing: src[i - 1] === "/" };
+    }
+    throw new Error("an unterminated <textarea");
+  };
+  const readBoxes = (files) => {
+    const out = [];
+    let boxes = 0;
+    let sends = 0;
+    for (const [file, src] of Object.entries(files)) {
+      const hooks = [];
+      for (const m of src.matchAll(/const (\w+) = useDictation\(\{([\s\S]*?)\}\);/g)) {
+        const value = /\bvalue:\s*([\w.]+)/.exec(m[2]);
+        const setter = /\bonChange:\s*([\w.]+)/.exec(m[2]);
+        if (!value || !setter) throw new Error(`${file}: a useDictation call whose value or onChange cannot be read`);
+        hooks.push({ name: m[1], value: value[1], setter: setter[1] });
+      }
+      for (const m of src.matchAll(/<textarea\b/g)) {
+        boxes += 1;
+        const tag = openingTag(src, m.index);
+        if (!tag.selfClosing) throw new Error(`${file}: a <textarea> with children, which this reader cannot read`);
+        const value = /\bvalue=\{\s*([\w.]+)\s*\}/.exec(tag.text);
+        const setter = /\bonChange=\{\s*\(\s*(\w+)\s*\)\s*=>\s*([\w.]+)\(\s*\1\.target\.value\s*\)\s*\}/.exec(tag.text);
+        if (!value || !setter) throw new Error(`${file}: an answer box whose value or onChange this reader cannot read`);
+        const box = `the box on \`${value[1]}\``;
+        const hook = hooks.find((h) => h.value === value[1] && h.setter === setter[2]);
+        if (!hook) {
+          out.push(`${file}: ${box} has no mic (no useDictation({ value: ${value[1]}, onChange: ${setter[2]} }))`);
+          continue;
+        }
+        const d = hook.name;
+        if (!tag.text.includes(`readOnly={${d}.listening}`))
+          out.push(`${file}: ${box} takes typing while the mic writes into it (readOnly={${d}.listening})`);
+        if (!/<div className="relative\b[^"]*">\s*$/.test(src.slice(0, m.index)))
+          out.push(`${file}: ${box} is not the first child of a relative wrapper, so its Listening badge has nothing to sit on`);
+        if (!new RegExp(`^\\s*<ListeningBadge dictation=\\{${d}\\} />\\s*</div>`).test(src.slice(tag.end)))
+          out.push(`${file}: ${box} has no Listening badge on its own edge, right after it in its wrapper`);
+        if (!src.includes(`<DictateButton dictation={${d}} />`)) out.push(`${file}: the mic button of ${box} is not drawn`);
+        if (!src.includes(`<DictationNote dictation={${d}}`)) out.push(`${file}: the mic's note for ${box} is not drawn`);
+      }
+      for (const m of src.matchAll(/\b(interviewFeedback|sendMockAnswer)\(/g)) {
+        sends += 1;
+        const head = src.slice(0, m.index);
+        const fns = [...head.matchAll(/\bfunction\s+(\w+)\s*\(/g)];
+        if (!fns.length) throw new Error(`${file}: ${m[1]}( is called outside any function this reader can find`);
+        const last = fns[fns.length - 1];
+        const body = head.slice(last.index);
+        if (!hooks.some((h) => body.includes(`${h.name}.cancel();`)))
+          out.push(`${file}: ${last[1]}() sends the answer (${m[1]}) without cancelling the mic first, so a word can land after it`);
+      }
+    }
+    if (boxes < 2) throw new Error(`read ${boxes} answer boxes on the interview page (expected at least 2: the practice box and the mock chat)`);
+    if (sends < 2) throw new Error(`read ${sends} sends of an answer (expected interviewFeedback and sendMockAnswer)`);
+    return out;
+  };
+  const pages = Object.fromEntries(ANSWER_FILES.map((f) => [f, decomment(read(f))]));
+  for (const p of readBoxes(pages)) fail(`check 89: ${p} (Answer out loud)`);
+  const plantBox = (file, from, to, label) => {
+    if (!pages[file].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!readBoxes({ ...pages, [file]: pages[file].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plantBox("pages/interview/MockInterview.tsx", "readOnly={dictation.listening}", "", "a box that takes typing while the mic writes");
+  plantBox("pages/InterviewPage.tsx", "<DictateButton dictation={dictation} />", "", "a practice box with no mic button");
+  plantBox("pages/InterviewPage.tsx", "dictation.cancel();", "", "Get feedback sent with the mic still on");
+  plantBox(
+    "pages/InterviewPage.tsx",
+    "export default function InterviewPage",
+    'const Extra = () => <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />;\nexport default function InterviewPage',
+    "a new answer box with no mic",
+  );
+  plantBox(
+    "pages/interview/MockInterview.tsx",
+    "<ListeningBadge dictation={dictation} />",
+    "",
+    "a badge that is not on its box",
+  );
+
+  // (b) no network, no raw audio, a short import list.
+  const MIC_FILES = ["lib/dictation.ts", "hooks/useDictation.ts", "components/Dictation.tsx"];
+  const NET = [
+    [/\bfetch\s*\(/, "fetch"],
+    [/\bXMLHttpRequest\b/, "XMLHttpRequest"],
+    [/\bWebSocket\b/, "a WebSocket"],
+    [/\bEventSource\b/, "an EventSource"],
+    [/\bsendBeacon\b/, "sendBeacon"],
+    [/\baxios\b/, "axios"],
+    [/\bimport\s*\(/, "a dynamic import"],
+    [/\bgetUserMedia\b|\bMediaRecorder\b|\bAudioContext\b/, "raw audio capture"],
+  ];
+  const IMPORTS_OK = new Set([
+    "react",
+    "react-i18next",
+    "lucide-react",
+    "./lang",
+    "../lib/cn",
+    "../lib/dictation",
+    "../lib/inAppBrowser",
+    "../hooks/useDictation",
+  ]);
+  const readNet = (files) => {
+    const out = [];
+    for (const [file, src] of Object.entries(files)) {
+      for (const [re, what] of NET) if (re.test(src)) out.push(`${file} uses ${what}; the mic may reach no server and keep no audio`);
+      const from = [...src.matchAll(/^\s*import\b[^;]*?\bfrom\s+"([^"]+)"/gm), ...src.matchAll(/^\s*import\s+"([^"]+)"/gm)].map((m) => m[1]);
+      if (!from.length) throw new Error(`read no imports out of ${file}`);
+      for (const spec of from) if (!IMPORTS_OK.has(spec)) out.push(`${file} imports "${spec}", which is not on the mic's short list (no API client, no network)`);
+    }
+    return out;
+  };
+  const mic = Object.fromEntries(MIC_FILES.map((f) => [f, decomment(read(f))]));
+  for (const p of readNet(mic)) fail(`check 89: ${p} (Answer out loud)`);
+  const plantNet = (file, from, to, label) => {
+    if (!mic[file].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!readNet({ ...mic, [file]: mic[file].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plantNet("hooks/useDictation.ts", "  return {\n    supported:", '  void fetch("/api/speech");\n  return {\n    supported:', "a fetch from the hook");
+  plantNet("components/Dictation.tsx", 'import { cn } from "../lib/cn";', 'import { cn } from "../lib/cn";\nimport { api } from "../api/client";', "the API client imported");
+  plantNet("lib/dictation.ts", "  const emit = ", "  const rec2 = new MediaRecorder(stream);\n  const emit = ", "raw audio recorded");
+
+  // (c) every word the mic says, in both languages.
+  const comp = mic["components/Dictation.tsx"];
+  const bindings = [...comp.matchAll(/useTranslation\(([^)]*)\)/g)].map((m) => m[1].trim());
+  if (bindings.length < 3 || bindings.some((b) => b !== '"interview"'))
+    fail(`check 89: components/Dictation.tsx reads a namespace other than "interview" (${bindings.join(", ")}); its keys would not resolve`);
+  const keys = [...new Set([...comp.matchAll(/\bt\("(dictate\.[\w.]+)"\)/g)].map((m) => m[1]))];
+  if (keys.length < 10) throw new Error(`read ${keys.length} dictate.* keys out of components/Dictation.tsx (expected at least 10)`);
+  const union = /export type DictationNote =([^;]+);/.exec(mic["lib/dictation.ts"]);
+  if (!union) throw new Error("lib/dictation.ts: the DictationNote union was not found");
+  const kinds = [...union[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
+  if (kinds.length < 6) throw new Error(`read ${kinds.length} DictationNote kinds (expected at least 6)`);
+  for (const kind of kinds)
+    if (!comp.includes(`dictation.note === "${kind}" && t("dictate.note.${kind}")`))
+      fail(`check 89: the note "${kind}" has no sentence in components/Dictation.tsx; the mic would stop and say nothing`);
+  for (const loc of ["en", "he"]) {
+    const ns = JSON.parse(read(`locales/${loc}/interview.json`));
+    for (const key of new Set([...keys, ...kinds.map((k) => `dictate.note.${k}`)]))
+      if (!resolvesIn(ns, key)) fail(`check 89: locales/${loc}/interview.json is missing "${key}"; the mic would print the raw key`);
+  }
+
+  // (d) the cap is the backend's.
+  const capTs = /export const MAX_ANSWER_KB = (\d+);/.exec(mic["lib/dictation.ts"]);
+  if (!capTs) throw new Error("lib/dictation.ts: MAX_ANSWER_KB was not found");
+  const config = pySource("app/config.py", "check 89");
+  if (config !== null) {
+    const capPy = /^\s*max_answer_kb:\s*int\s*=\s*(\d+)\s*$/m.exec(config);
+    if (!capPy) throw new Error("backend/app/config.py: max_answer_kb was not found");
+    if (capPy[1] !== capTs[1])
+      fail(`check 89: lib/dictation.ts caps a spoken answer at ${capTs[1]} KB, the backend at ${capPy[1]} KB; the mic would stop early, or fill a box the server refuses`);
+    const prompts = pySource("app/llm/prompts.py", "check 89");
+    if (!prompts.includes('"answer": _Rule("answer", "max_answer_kb")') || !prompts.includes('_Rule("transcript", "max_transcript_kb", turn_cap="max_answer_kb")'))
+      fail("check 89: backend/app/llm/prompts.py no longer caps a practice answer and a mock-interview turn with max_answer_kb; point MAX_ANSWER_KB at the cap that measures them");
+  }
+
+  // (e) the privacy page says where the voice goes.
+  const VOICE = {
+    en: [/\bbrowser's own speech recognition\b/i, /\bGoogle in Chrome\b/, /\bnever to JobFinder\b/, /\bonly when you send\b/i],
+    he: [/הדפדפן עצמו/, /Google בכרום/, /לא ל-JobFinder/, /רק כשאתם שולחים/],
+  };
+  const voiceProblem = (text, rules) =>
+    typeof text !== "string" ? "is missing" : rules.some((re) => !re.test(text)) ? "does not say the voice goes to the browser's own speech service and never to JobFinder" : "";
+  for (const loc of ["en", "he"]) {
+    const why = voiceProblem(JSON.parse(read(`locales/${loc}/auth.json`)).privacy?.ai?.voice, VOICE[loc]);
+    if (why) fail(`check 89: locales/${loc}/auth.json "privacy.ai.voice" ${why}`);
+  }
+  if (!voiceProblem("Your voice goes to the speech service in your browser, and then to JobFinder.", VOICE.en))
+    fail("check 89's privacy rule passes a sentence that sends the voice to JobFinder");
+  if (!/<p>\{t\("privacy\.ai\.voice"\)\}<\/p>/.test(decomment(read("pages/PrivacyPage.tsx"))))
+    fail("check 89: the privacy page does not say where a spoken answer goes (privacy.ai.voice)");
+  // No route of ours takes speech.
+  if (/["'`]\/[^"'`\n]*(?:speech|dictat|voice|audio)[^"'`\n]*["'`]/i.test(decomment(read("api/client.ts"))))
+    fail("check 89: api/client.ts calls a speech route; dictation must stay in the browser");
+} catch (e) {
+  fail(`answer-out-loud check (check 89) could not run: ${e.message}`);
+}
+
+// ---- 90. the mic writes after what was typed, and stops where it should (EXECUTED) //
+// Phase 32, "Answer out loud". It runs lib/dictation.ts's controller against a
+// scripted recognizer and requires: the heard words go AFTER the typed text, one
+// space between, never over it; the settled and the guessed words show as they
+// come; tapping off lets the last words land and opens nothing more; a box the
+// page changed (an answer sent) is never written again; a cancel lets every later
+// word go; the cap stops the mic in UTF-8 bytes (a Hebrew answer meets it at half
+// the letters), and a box already at the cap does not open it; every error has
+// its note; a session the browser ends by itself after hearing words opens the
+// next one, and one that heard nothing stops and says so; Chrome on Android's
+// repeated zero-confidence finals are skipped; and the language is the
+// question's by its share of words, else the interface's. Eight planted twins of
+// the file are probed every run.
+try {
+  const src90 = read("lib/dictation.ts").replace('from "./lang"', 'from "./lib/lang"');
+  if (!src90.includes('from "./lib/lang"')) throw new Error('lib/dictation.ts no longer imports "./lang"; point this probe at its imports');
+  const run90 = (src) => {
+    const lib = runProbeBundle("dictation90", src);
+    const out = [];
+    const eq = (got, want, what) => {
+      if (JSON.stringify(got) !== JSON.stringify(want)) out.push(`${what}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    };
+    class FakeRec {
+      constructor() {
+        FakeRec.made.push(this);
+        this.calls = [];
+        this.onresult = this.onerror = this.onend = null;
+      }
+      start() {
+        this.calls.push("start");
+        if (FakeRec.refuse) throw new Error("refused");
+      }
+      stop() {
+        this.calls.push("stop");
+      }
+      abort() {
+        this.calls.push("abort");
+      }
+    }
+    // [transcript, isFinal, confidence]
+    const say = (rec, ...rs) =>
+      rec.onresult?.({ resultIndex: 0, results: rs.map(([text, isFinal, confidence = 0.9]) => Object.assign([{ transcript: text, confidence }], { isFinal })) });
+    const harness = (typed, opts = {}) => {
+      FakeRec.made = [];
+      FakeRec.refuse = false;
+      const h = { box: typed, writes: [], states: [], lang: opts.lang ?? "en-US" };
+      h.ctl = lib.createDictation({
+        ctor: FakeRec,
+        read: () => h.box,
+        write: (text) => {
+          h.box = text;
+          h.writes.push(text);
+        },
+        lang: () => h.lang,
+        onState: (s) => h.states.push({ ...s }),
+        capKb: opts.capKb,
+        android: opts.android,
+      });
+      h.last = () => h.states[h.states.length - 1] ?? { listening: false, note: null };
+      h.rec = () => FakeRec.made[FakeRec.made.length - 1];
+      return h;
+    };
+
+    // After the typed text, one space between, the guessed words shown as they come.
+    let h = harness("I led");
+    h.ctl.start();
+    eq(h.last(), { listening: true, note: null }, "a tap opens the mic");
+    let r = h.rec();
+    eq([r?.lang, r?.continuous, r?.interimResults, r?.calls.join()], ["en-US", true, true, "start"], "the recognizer is continuous, shows its guesses and listens for the language asked");
+    say(r, ["a team", false]);
+    eq(h.box, "I led a team", "the first words heard go after the typed text");
+    say(r, [" a team of five", true], [" and we", false]);
+    eq(h.box, "I led a team of five and we", "settled and guessed words both show, in order");
+    if (!h.writes.every((w) => w.startsWith("I led "))) out.push("a write did not keep the typed text in front of it");
+    h = harness("");
+    h.ctl.start();
+    say(h.rec(), ["hello", false]);
+    eq(h.box, "hello", "an empty box gets the words with no space before them");
+    h = harness("Line one\n");
+    h.ctl.start();
+    say(h.rec(), ["two", false]);
+    eq(h.box, "Line one\ntwo", "a box ending in a line break gets no extra space");
+
+    // Tapping off: the last words land, nothing more opens.
+    h = harness("A");
+    h.ctl.start();
+    r = h.rec();
+    say(r, ["b", false]);
+    h.ctl.stop();
+    eq(h.last().listening, false, "tapping off shows the mic off at once");
+    if (!r.calls.includes("stop")) out.push("tapping off does not stop the recognizer");
+    say(r, ["b c", true]);
+    eq(h.box, "A b c", "the words on their way when the mic was tapped off still land");
+    r.onend?.();
+    eq(FakeRec.made.length, 1, "a session the person stopped opens no other");
+
+    // The page changed the box (an answer sent): nothing is written over it.
+    h = harness("A");
+    h.ctl.start();
+    r = h.rec();
+    say(r, ["b", false]);
+    h.box = "";
+    say(r, ["b c", true]);
+    eq(h.box, "", "a word heard after the box was sent is not written into the empty box");
+    eq(h.last().listening, false, "a box the page changed ends the listening");
+    if (!r.calls.includes("abort")) out.push("a box the page changed does not stop the recognizer");
+
+    // Cancel: stop now, every later word goes.
+    h = harness("A");
+    h.ctl.start();
+    r = h.rec();
+    say(r, ["b", false]);
+    h.ctl.cancel();
+    say(r, ["b c", true]);
+    r.onend?.();
+    eq([h.box, h.last().listening, FakeRec.made.length], ["A b", false, 1], "a cancel keeps what the box showed and lets every later word go");
+    if (!r.calls.includes("abort")) out.push("a cancel does not abort the recognizer");
+
+    // The cap, in UTF-8 bytes.
+    h = harness("", { capKb: 1 });
+    h.ctl.start();
+    r = h.rec();
+    say(r, ["א".repeat(600), false]);
+    eq([h.box, h.last()], ["", { listening: false, note: "cap" }], "600 Hebrew letters (1,200 bytes) pass a 1 KB cap: the mic stops and says so");
+    if (!r.calls.includes("abort")) out.push("the cap does not stop the recognizer");
+    h = harness("", { capKb: 1 });
+    h.ctl.start();
+    say(h.rec(), ["a".repeat(600), false]);
+    eq(h.box.length, 600, "600 English letters (600 bytes) fit a 1 KB cap");
+    h = harness("x".repeat(1024), { capKb: 1 });
+    h.ctl.start();
+    eq([FakeRec.made.length, h.last()], [0, { listening: false, note: "cap" }], "a box already at the cap does not open the mic, and says why");
+    h = harness("x".repeat(1022), { capKb: 1 });
+    h.ctl.start();
+    eq(FakeRec.made.length, 1, "a box with room for one more word opens the mic");
+    eq(
+      [lib.fitsAnswerCap("x".repeat(16 * 1024)), lib.fitsAnswerCap("x".repeat(16 * 1024 + 1)), lib.fitsAnswerCap("א".repeat(8 * 1024)), lib.fitsAnswerCap("א".repeat(8 * 1024 + 1))],
+      [true, false, true, false],
+      "the default cap is the server's 16 KB, in bytes",
+    );
+
+    // Every error has its note, and none restarts the mic.
+    for (const [error, note] of [
+      ["not-allowed", "denied"],
+      ["service-not-allowed", "service"],
+      ["no-speech", "noSpeech"],
+      ["network", "network"],
+      ["audio-capture", "noMic"],
+      ["language-not-supported", "failed"],
+      ["aborted", null],
+    ]) {
+      h = harness("A");
+      h.ctl.start();
+      r = h.rec();
+      r.onerror?.({ error });
+      r.onend?.();
+      eq([h.last(), FakeRec.made.length], [{ listening: false, note }, 1], `the error "${error}"`);
+    }
+    h = harness("A");
+    FakeRec.refuse = true;
+    h.ctl.start();
+    eq(h.last(), { listening: false, note: "failed" }, "a recognizer that refuses to start says so");
+
+    // A session the browser ends by itself.
+    h = harness("A");
+    h.ctl.start();
+    const r1 = h.rec();
+    say(r1, ["b", true]);
+    h.lang = "he-IL";
+    r1.onend?.();
+    eq(FakeRec.made.length, 2, "a session that heard words and ended by itself opens the next");
+    const r2 = h.rec();
+    eq(r2?.lang, "he-IL", "the next session reads the language again");
+    say(r2, ["c", false]);
+    eq(h.box, "A b c", "the next session writes after the words the last one heard");
+    r2.onend?.();
+    const r3 = h.rec();
+    eq(FakeRec.made.length, 3, "and the one after that, while words keep coming");
+    r3.onend?.();
+    eq([FakeRec.made.length, h.last()], [3, { listening: false, note: "stopped" }], "a session that heard nothing stops, and says the mic stopped");
+
+    // Chrome on Android repeats a final with a confidence of 0.
+    h = harness("", { android: true });
+    h.ctl.start();
+    say(h.rec(), ["one", true, 0.9], ["one", true, 0], ["two", false]);
+    eq(h.box, "one two", "on Android a repeated zero-confidence final is skipped");
+    h = harness("");
+    h.ctl.start();
+    say(h.rec(), ["one", true, 0.9], ["one", true, 0], ["two", false]);
+    eq(h.box, "one one two", "off Android every result counts");
+
+    // Feature detection, and the language.
+    const F1 = function () {};
+    const F2 = function () {};
+    eq(
+      [lib.recognitionCtor({}), lib.recognitionCtor(null), lib.recognitionCtor({ webkitSpeechRecognition: "x" })],
+      [null, null, null],
+      "no recognizer where the browser has none",
+    );
+    if (lib.recognitionCtor({ webkitSpeechRecognition: F2 }) !== F2 || lib.recognitionCtor({ SpeechRecognition: F1, webkitSpeechRecognition: F2 }) !== F1)
+      out.push("the recognizer is not the browser's own (SpeechRecognition, else webkitSpeechRecognition)");
+    eq(
+      [
+        lib.dictationLang("en", null),
+        lib.dictationLang("he", null),
+        lib.dictationLang(undefined, ""),
+        lib.dictationLang("en", "ספרו על פרויקט שהובלתם"),
+        lib.dictationLang("he", "Tell me about a project you led"),
+        lib.dictationLang("en", "Tell me about your time at רפאל and what you built there"),
+        lib.dictationLang("he", "ספרו לי על הניסיון שלכם עם Kubernetes ו-AWS"),
+        lib.dictationLang("he", "1, 2, 3?"),
+      ],
+      ["en-US", "he-IL", "en-US", "he-IL", "en-US", "en-US", "he-IL", "he-IL"],
+      "the language is the question's by its share of words, else the interface's",
+    );
+    return out;
+  };
+  for (const p of run90(src90)) fail(`check 90: ${p} (Answer out loud)`);
+  const plant = (from, to, label) => {
+    if (!src90.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!run90(src90.replace(from, to)).length) throw new Error(`the run passes "${label}"`);
+  };
+  plant("const next = joinDictation(base, words);", "const next = words;", "words written over the typed text");
+  plant("new TextEncoder().encode(text).length", "text.length", "a cap counted in letters");
+  plant("if (o.read() !== written) {", "if (false) {", "a word written into a box the page just sent");
+  plant("if (wanted && heard && open()) return;", "", "a long answer cut off when the browser ends its session");
+  plant("if (wanted && heard && open()) return;", "if (heard && open()) return;", "a mic that opens again after it was tapped off");
+  plant("const asked = question ? proseLanguage(question) : null;", "const asked = null;", "the question's language ignored");
+  plant("question ? proseLanguage(question)", 'question ? (/[\\u0590-\\u05FF]/.test(question) ? "he" : "en")', "any Hebrew letter making a question Hebrew");
+  plant("r.continuous = true;", "r.continuous = false;", "a mic that stops after one sentence");
+} catch (e) {
+  fail(`answer-out-loud run (check 90) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

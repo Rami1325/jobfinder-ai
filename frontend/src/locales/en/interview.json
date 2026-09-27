@@ -53,5 +53,20 @@
     "strengths": "Strengths",
     "improve": "Improve",
     "revised": "Revised"
+  },
+  "dictate": {
+    "label": "Speak your answer",
+    "listening": "Listening",
+    "on": "Listening. Tap the mic again to stop.",
+    "note": {
+      "denied": "The microphone is blocked. Allow it for this site in your browser's settings (the icon beside the address), then tap the mic again.",
+      "service": "Speech input is off or not available in this browser. You can type your answer.",
+      "noSpeech": "Nothing was heard, so the mic stopped. Tap it to try again.",
+      "network": "The speech service could not be reached. Check your connection, then tap the mic again.",
+      "noMic": "No microphone was found. Connect one, or type your answer.",
+      "cap": "The mic stopped: this answer is at its length limit. Shorten it to add more.",
+      "stopped": "The mic stopped. Tap it to go on.",
+      "failed": "Speech input stopped working. Tap the mic to try again, or type your answer."
+    }
   }
 }

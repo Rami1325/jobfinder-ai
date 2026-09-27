@@ -44,3 +44,15 @@ export function resumeLanguage(resume: ResumeModel): "he" | "en" {
   if (!words) [hebrew, words] = hebrewWords((resume.skills ?? []).join(" "));
   return words && hebrew * HEBREW_SHARE_DEN >= words ? "he" : "en";
 }
+
+/** The language of one piece of prose by the same share of words, or null when
+ * it has no words to count. An interview question is read this way, because
+ * the answer's dictation follows it (`lib/dictation.ts`): `textLanguage` would
+ * read an English question naming a Hebrew-spelled company as Hebrew, and the
+ * browser would then listen for Hebrew. Client-only: nothing on the server
+ * reads a question's language. */
+export function proseLanguage(text: string): "he" | "en" | null {
+  const [hebrew, words] = hebrewWords(text);
+  if (!words) return null;
+  return hebrew * HEBREW_SHARE_DEN >= words ? "he" : "en";
+}

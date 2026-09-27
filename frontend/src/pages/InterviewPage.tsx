@@ -10,10 +10,12 @@ import {
   interviewQuestions,
   recruiterScreen,
 } from "../api/client";
+import { DictateButton, DictationNote, ListeningBadge } from "../components/Dictation";
 import JDPaste from "../components/JDPaste";
 import ResumeGate from "../components/ResumeGate";
 import UsesNote from "../components/UsesNote";
 import MockInterview from "./interview/MockInterview";
+import { useDictation } from "../hooks/useDictation";
 import { useJobContext } from "../hooks/useJobContext";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { apiErrorMessage } from "../lib/apiError";
@@ -59,6 +61,10 @@ function QuestionCard({
   const [feedback, setFeedback] = useState<InterviewFeedbackResult | null>(null);
   const [loadingF, setLoadingF] = useState(false);
   const [errorF, setErrorF] = useState("");
+  // The practice answer can be spoken (docs/handbook/interview.md): the browser's
+  // own speech recognition writes it into the box, after what was typed, in the
+  // question's language. Get feedback stays the only thing that sends it.
+  const dictation = useDictation({ value: practice, onChange: setPractice, question: q.question });
 
   // Both ride the practice session the questions opened (Phase 30 / B5): never
   // disabled mid-session, and a refusal, the monthly limit included, is said
@@ -79,6 +85,8 @@ function QuestionCard({
 
   async function getFeedback() {
     if (practice.trim().length < 10) return;
+    // What is graded is what the box shows: no word may land after the send.
+    dictation.cancel();
     setLoadingF(true);
     setErrorF("");
     try {
@@ -102,7 +110,11 @@ function QuestionCard({
           </Badge>
         )}
       </div>
-      {q.rationale && <p className="mt-1 text-xs text-ink-muted">{q.rationale}</p>}
+      {q.rationale && (
+        <p className="mt-1 text-xs text-ink-muted" dir="auto">
+          {q.rationale}
+        </p>
+      )}
 
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" loading={loadingA} icon={<Lightbulb size={14} />} onClick={getAnswer}>
@@ -129,22 +141,30 @@ function QuestionCard({
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
           {t("practice.label")}
         </p>
-        <textarea
-          value={practice}
-          onChange={(e) => setPractice(e.target.value)}
-          placeholder={t("practice.placeholder")}
-          className="min-h-[90px] w-full resize-y rounded-lg border border-line bg-bg-soft p-3 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
-        />
-        <Button
-          size="sm"
-          className="mt-2"
-          loading={loadingF}
-          disabled={practice.trim().length < 10}
-          icon={<ClipboardCheck size={14} />}
-          onClick={getFeedback}
-        >
-          {t("practice.cta")}
-        </Button>
+        <div className="relative">
+          <textarea
+            value={practice}
+            onChange={(e) => setPractice(e.target.value)}
+            readOnly={dictation.listening}
+            placeholder={t("practice.placeholder")}
+            dir="auto"
+            className="block min-h-[90px] w-full resize-y rounded-lg border border-line bg-bg-soft p-3 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
+          />
+          <ListeningBadge dictation={dictation} />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <DictateButton dictation={dictation} />
+          <Button
+            size="sm"
+            loading={loadingF}
+            disabled={practice.trim().length < 10}
+            icon={<ClipboardCheck size={14} />}
+            onClick={getFeedback}
+          >
+            {t("practice.cta")}
+          </Button>
+        </div>
+        <DictationNote dictation={dictation} className="mt-1.5" />
         <UsesNote feature="interview" inSession className="mt-1.5" />
         {errorF && <p className="mt-2 text-sm text-danger">{errorF}</p>}
       </div>
