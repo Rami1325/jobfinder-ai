@@ -36,6 +36,7 @@ import { followUpStage } from "../hooks/useJobContext";
 import { useMasterResume } from "../hooks/useMasterResume";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { apiErrorMessage } from "../lib/apiError";
+import { sendRefusal, sendRefusalKey } from "../lib/sendRefusal";
 import { cn } from "../lib/cn";
 import { TEMPLATE_IDS } from "../lib/templateSpecs";
 import { useUses } from "../lib/usesStore";
@@ -722,7 +723,11 @@ function SendSection({ detail, reload }: { detail: ApplicationDetail; reload: ()
       // The row is Applied now, with the send written into its notes.
       await reload();
     } catch (e: unknown) {
-      toast("error", apiErrorMessage(e, t("job.send.error")));
+      // A refusal is read by its code, in the reader's language (lib/sendRefusal);
+      // anything else (the daily cap, a session that ended, a network failure)
+      // by apiErrorMessage, as before.
+      const refusal = sendRefusal(e);
+      toast("error", refusal ? t(sendRefusalKey(refusal.code), refusal.params) : apiErrorMessage(e, t("job.send.error")));
     } finally {
       setSending(false);
     }

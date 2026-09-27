@@ -27,6 +27,11 @@ application.
 `parse_comeet_position_url`, `split_name`, and `build_multipart` are pure
 functions pinned by the smoke test; the HTTP POST is injectable so the whole
 submit path is testable offline.
+
+Every refusal is a `SubmitRefused`: a stable code from `REFUSAL_CODES`, the
+values its sentence names, and an English sentence. The job's page translates
+the code (the English went to a Hebrew page verbatim until 2026-09-27), and the
+route keeps the English as `detail` for a tab loaded before the codes existed.
 """
 from __future__ import annotations
 
@@ -54,6 +59,44 @@ _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
 )
+
+# Every way the send can be refused, as the code the job's page translates
+# (`frontend/src/lib/sendRefusal.ts`). check-mirrors 81 reads this tuple and
+# requires a sentence for each code in both locales, and the smoke test requires
+# every `raise` in the send path to name one of these, and each of these to be
+# raised somewhere. ONE quoted entry per line: the check reads it line by line.
+REFUSAL_CODES = (
+    "kit_not_found",
+    "already_sent",
+    "not_approved",
+    "kit_flagged",
+    "not_comeet",
+    "not_comeet_url",
+    "recaptcha",
+    "company_already_sent",
+    "application_missing",
+    "draft_changed",
+    "resume_unreadable",
+    "contact_missing",
+    "careers_unreachable",
+    "comeet_locked",
+    "comeet_declined",
+    "comeet_unreachable",
+)
+
+
+class SubmitRefused(ValueError):
+    """The send refused, or Comeet declined: `code` (one of REFUSAL_CODES), the
+    values the translated sentence names (`params`: `company`, `status`), and
+    the English sentence as the exception's text. A ValueError still, so a
+    caller that only knew the old contract ("raises ValueError with a
+    user-facing message") reads it unchanged."""
+
+    def __init__(self, code: str, message: str, **params: str | int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = params
+
 
 # https://www.comeet.com/jobs/<slug>/<CO.UID>/<position-slug>/<PO.UID>
 _POSITION_URL_RE = re.compile(
@@ -182,9 +225,11 @@ def _resolve_token(db: Session, ref: ComeetPositionRef) -> str:
     try:
         token = _scrape_token(careers_url)
     except Exception as e:  # noqa: BLE001 - network/markup trouble, user-facing
-        raise ValueError(
+        raise SubmitRefused(
+            "careers_unreachable",
             f"Couldn't reach {ref.slug}'s Comeet careers page to authorize the "
-            "application. Try again in a minute."
+            "application. Try again in a minute.",
+            company=ref.slug,
         ) from e
     if row is not None:
         save_tokens(db, {ref.slug: token})
@@ -209,28 +254,34 @@ def submit_kit(
     recaptcha_fn: Callable[[str], bool] | None = None,
 ) -> TailorKit:
     """Send one approved kit's application through Comeet's public apply
-    endpoint, enforcing every 8.4 guardrail. Raises ValueError with a
-    user-facing message on any refusal — the route maps it to a 400.
+    endpoint, enforcing every 8.4 guardrail. Raises `SubmitRefused` (a
+    ValueError) with a code and an English sentence on any refusal — the route
+    maps it to a 400 carrying both.
 
     `charge` (the daily-cap check) runs AFTER the guardrails but BEFORE the
     network send, so refused submits don't burn the cap but every real send
     attempt does."""
     # --- Guardrails -------------------------------------------------------
     if kit.status == "submitted":
-        raise ValueError("This application was already sent.")
+        raise SubmitRefused("already_sent", "This application was already sent.")
     if kit.status != "approved":
-        raise ValueError("Only a kit you approved in review can be sent.")
+        raise SubmitRefused("not_approved", "Only a kit you approved in review can be sent.")
     if (kit.flag_count or 0) > 0:
-        raise ValueError(
+        raise SubmitRefused(
+            "kit_flagged",
             "This kit has fabrication flags — flagged kits are never "
-            "auto-submitted, even after approval."
+            "auto-submitted, even after approval.",
         )
     if (kit.source or "") != "comeet":
-        raise ValueError(
+        raise SubmitRefused(
+            "not_comeet",
             "Auto-submit only works for Comeet postings (the one channel with a "
-            "public application API). Apply to this one on the board itself."
+            "public application API). Apply to this one on the board itself.",
         )
-    ref = parse_comeet_position_url(kit.url or "")
+    try:
+        ref = parse_comeet_position_url(kit.url or "")
+    except ValueError as e:
+        raise SubmitRefused("not_comeet_url", str(e)) from e
 
     # reCAPTCHA-gated positions can't be auto-submitted: the apply endpoint
     # answers 423 without a grecaptcha_token we can't (and won't) produce.
@@ -239,11 +290,13 @@ def submit_kit(
     # assisted-apply path (the browser extension fills the form; the user
     # clicks Apply, which produces the token legitimately).
     if (recaptcha_fn or position_requires_recaptcha)(kit.url or ""):
-        raise ValueError(
+        raise SubmitRefused(
+            "recaptcha",
             f"{kit.company or ref.slug} protects this position with a reCAPTCHA "
             "bot check, so it can't be auto-submitted. Use the browser extension's "
             "assisted apply (it fills the form with this kit — you click Apply), or "
-            "apply on the Comeet page directly."
+            "apply on the Comeet page directly.",
+            company=kit.company or ref.slug,
         )
 
     company_key = (kit.company or "").strip().lower()
@@ -263,35 +316,43 @@ def submit_kit(
                 ).scalars().all()
             }
             if company_key in sent_companies:
-                raise ValueError(
+                raise SubmitRefused(
+                    "company_already_sent",
                     f"You already auto-applied to {kit.company} — one application "
-                    "per company. Apply to their other openings manually."
+                    "per company. Apply to their other openings manually.",
+                    company=kit.company or "",
                 )
 
     app_row = db.get(Application, kit.application_id) if kit.application_id else None
     if app_row is None or app_row.user_id != user.id or not app_row.tailored_resume_json:
-        raise ValueError("This kit's approved application is missing — re-approve it.")
+        raise SubmitRefused(
+            "application_missing", "This kit's approved application is missing — re-approve it."
+        )
     # PLAN 31.4/5: the kit's flags above were read when it was approved, but what
     # is sent is the row's draft NOW. The job's page can tailor the job again onto
     # this row, and the document writes every typed line to it with an unknown
     # count, so a clean kit is no answer for the draft that would go out.
     if not draft_guard_clean(app_row):
-        raise ValueError(
+        raise SubmitRefused(
+            "draft_changed",
             "The resume on this job changed after you approved it (a new tailor, "
             "or lines you typed), so it has no clean fabrication-guard reading to "
-            "send on. Apply on the Comeet page, or with the extension's assisted apply."
+            "send on. Apply on the Comeet page, or with the extension's assisted apply.",
         )
     try:
         resume = ResumeModel.model_validate_json(app_row.tailored_resume_json)
-    except Exception:  # noqa: BLE001 - corrupt row, user-facing
-        raise ValueError("This kit's approved resume can't be read — re-approve it.")
+    except Exception as e:  # noqa: BLE001 - corrupt row, user-facing
+        raise SubmitRefused(
+            "resume_unreadable", "This kit's approved resume can't be read — re-approve it."
+        ) from e
 
     first, last = split_name(resume.contact.name.strip())
     email = resume.contact.email.strip()
     if not first or not email:
-        raise ValueError(
+        raise SubmitRefused(
+            "contact_missing",
             "Your resume needs a name and an email address before it can be "
-            "sent — fix the contact section and re-approve."
+            "sent — fix the contact section and re-approve.",
         )
 
     # --- Build the application -------------------------------------------
@@ -326,18 +387,26 @@ def submit_kit(
         if e.code == 423:
             # "Locked" — almost always a reCAPTCHA/bot gate our pre-flight
             # check didn't catch, or a position that just closed.
-            raise ValueError(
+            raise SubmitRefused(
+                "comeet_locked",
                 f"{kit.company or ref.slug} locked this application against "
                 "automated sending (usually a bot check, or the position just "
                 "closed). Use the extension's assisted apply, or apply on Comeet "
-                "directly."
+                "directly.",
+                company=kit.company or ref.slug,
             ) from e
-        raise ValueError(
+        # Comeet's own words stay in the English sentence only: they are the
+        # board's, in no language this app can translate.
+        raise SubmitRefused(
+            "comeet_declined",
             f"Comeet declined the application (HTTP {e.code})"
-            + (f": {detail}" if detail else ".")
+            + (f": {detail}" if detail else "."),
+            status=int(e.code),
         ) from e
     except Exception as e:  # noqa: BLE001 - network trouble, user-facing
-        raise ValueError("Couldn't reach Comeet to send the application. Try again.") from e
+        raise SubmitRefused(
+            "comeet_unreachable", "Couldn't reach Comeet to send the application. Try again."
+        ) from e
 
     try:
         result = json.loads(raw) if raw.strip() else {}

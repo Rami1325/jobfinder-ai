@@ -13884,6 +13884,398 @@ try {
   fail(`plain-words route check (check 97) could not run: ${e.message}`);
 }
 
+// ---- 81. every refusal of the Comeet send has a sentence in both locales (EXECUTED) //
+// Found in PLAN 31.4/5, fixed 2026-09-27. A refused send (a job's page, PLAN
+// 8.4) toasted the server's English sentence, on the Hebrew page too. The server
+// now answers `{detail, code, params}`, `code` one of `auto_submit.REFUSAL_CODES`
+// (smoke pins that every refusal path raises one), and `lib/sendRefusal.ts` maps
+// the code to a `tracker` sentence. Held here, each way round:
+// (a) REFUSAL_CODES is read out of the backend (one quoted entry per line), and
+//     every code has a row in SEND_REFUSAL_KEYS and no row names a code the server
+//     never sends;
+// (b) every row, and the fallback, resolves in BOTH tracker.json files, and the
+//     en and he sentences of a code name the same {{placeholders}}, each one a
+//     value the backend's `SubmitRefused(<code>, …, name=…)` sends, or the toast
+//     prints "{{company}}";
+// (c) EXECUTED: `sendRefusal` reads the code and the string/number params of a
+//     refusal and nothing else (the daily cap's object detail, a network error,
+//     a 5xx body), and `sendRefusalKey` answers an unknown code and `constructor`
+//     with the fallback, never a function every object inherits;
+// (d) the job page's send reads its refusal through the two.
+// It degrades only when backend/ is absent, and then runs (b)-(d) over the
+// table's own codes. Planted twins are probed every run.
+try {
+  const table81 = read("lib/sendRefusal.ts");
+  const run81 = (src) => runProbeBundle("send-refusal", src);
+  const m81 = run81(table81);
+  const rows = Object.keys(m81.SEND_REFUSAL_KEYS || {});
+  if (rows.length < 10) throw new Error(`lib/sendRefusal.ts: read only ${rows.length} rows of SEND_REFUSAL_KEYS (expected at least 10)`);
+
+  // (a) the backend's codes, and what each one's sentence may name.
+  const asPy = pySource("app/core/auto_submit.py", "check 81");
+  const routesPy = pySource("app/api/routes.py", "check 81");
+  let codes = rows;
+  const paramsOf = new Map(); // code -> Set(kwarg names), from every SubmitRefused(...) call
+  if (asPy !== null && routesPy !== null) {
+    codes = pyTuple(asPy, "REFUSAL_CODES", "backend/app/core/auto_submit.py");
+    if (codes.length < 10) throw new Error(`backend/app/core/auto_submit.py: REFUSAL_CODES has only ${codes.length} codes`);
+    // A string-aware call reader: the sentences hold parentheses of their own.
+    const calls = (src) => {
+      const out = [];
+      for (let at = src.indexOf("SubmitRefused("); at !== -1; at = src.indexOf("SubmitRefused(", at + 1)) {
+        if (/class\s+$/.test(src.slice(Math.max(0, at - 6), at))) continue; // the class statement itself
+        let i = at + "SubmitRefused(".length;
+        let depth = 1;
+        let text = "";
+        while (i < src.length && depth > 0) {
+          const c = src[i];
+          if (c === '"' || c === "'") {
+            const q = c;
+            text += '""';
+            i++;
+            while (i < src.length && src[i] !== q) i += src[i] === "\\" ? 2 : 1;
+            i++;
+            continue;
+          }
+          if (c === "(") depth++;
+          else if (c === ")") depth--;
+          if (depth > 0) text += c;
+          i++;
+        }
+        if (depth !== 0) throw new Error("an unclosed SubmitRefused( call in the backend");
+        const code = /^\s*"(\w*)"/.exec(src.slice(at + "SubmitRefused(".length));
+        if (!code) throw new Error(`a SubmitRefused( call whose code is not a literal: ${src.slice(at, at + 60)}`);
+        const kw = new Set([...text.matchAll(/(?<![=!<>])\b([a-z_]\w*)\s*=(?!=)/g)].map((k) => k[1]));
+        out.push([code[1], kw]);
+      }
+      return out;
+    };
+    const found = [...calls(asPy), ...calls(routesPy)];
+    // A floor, so a reader that finds nothing fails loudly (every code being
+    // RAISED somewhere is the smoke test's pin, not this one's).
+    if (found.length < 10) throw new Error(`read only ${found.length} SubmitRefused( calls out of the backend (expected at least 10)`);
+    for (const [code, kw] of found) {
+      if (!paramsOf.has(code)) paramsOf.set(code, new Set());
+      for (const k of kw) paramsOf.get(code).add(k);
+    }
+  }
+  const missingRow = codes.filter((c) => !rows.includes(c));
+  const deadRow = rows.filter((r) => !codes.includes(r));
+  for (const c of missingRow)
+    fail(`check 81: the send refuses with code "${c}" and lib/sendRefusal.ts has no sentence for it, so the page says only that it failed (PLAN 31.4/5)`);
+  for (const r of deadRow) fail(`check 81: lib/sendRefusal.ts has a sentence for "${r}", a code auto_submit.REFUSAL_CODES does not list`);
+
+  // (b) both locales, and the same placeholders, each one the backend sends.
+  const holes = (s) => new Set([...String(s).matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((h) => h[1]));
+  const at81 = (bundle, key) => key.split(".").reduce((o, k) => (o == null ? o : o[k]), bundle);
+  const read81b = (en, he) => {
+    const out = [];
+    for (const key of [...rows.map((r) => m81.SEND_REFUSAL_KEYS[r]), m81.SEND_REFUSAL_FALLBACK]) {
+      for (const [loc, b] of [["en", en], ["he", he]]) if (!resolvesIn(b, key)) out.push(`locales/${loc}/tracker.json is missing "${key}"`);
+    }
+    for (const code of rows) {
+      const key = m81.SEND_REFUSAL_KEYS[code];
+      const [e, h] = [holes(at81(en, key)), holes(at81(he, key))];
+      if ([...e].some((x) => !h.has(x)) || [...h].some((x) => !e.has(x)))
+        out.push(`"${key}" names {{${[...e].join(", ")}}} in English and {{${[...h].join(", ")}}} in Hebrew`);
+      if (paramsOf.size)
+        for (const x of new Set([...e, ...h]))
+          if (!paramsOf.get(code)?.has(x)) out.push(`"${key}" names {{${x}}}, which the backend's SubmitRefused("${code}", …) never sends`);
+    }
+    return out;
+  };
+  const en81 = JSON.parse(read("locales/en/tracker.json"));
+  const he81 = JSON.parse(read("locales/he/tracker.json"));
+  for (const p of read81b(en81, he81)) fail(`check 81: ${p} (PLAN 31.4/5)`);
+  {
+    const broken = JSON.parse(JSON.stringify(he81));
+    broken.job.send.refused.recaptcha = "בדיקת בוטים.";
+    if (!read81b(en81, broken).length) throw new Error('the reader passes a Hebrew "recaptcha" sentence that drops {{company}}');
+    const unsent = JSON.parse(JSON.stringify(en81));
+    unsent.job.send.refused.already_sent = "Already sent to {{company}}.";
+    const unsentHe = JSON.parse(JSON.stringify(he81));
+    unsentHe.job.send.refused.already_sent = "נשלחה אל {{company}}.";
+    if (paramsOf.size && !read81b(unsent, unsentHe).length)
+      throw new Error("the reader passes a sentence naming {{company}} for a code the backend sends no company with");
+  }
+
+  // (c) the reader and the key, executed.
+  const run81c = (m) => {
+    const got = [
+      JSON.stringify(m.sendRefusal({ response: { data: { detail: "x", code: "recaptcha", params: { company: "Acme", status: 423, extra: { a: 1 } } } } })),
+      JSON.stringify(m.sendRefusal({ response: { data: { detail: { code: "daily_limit", action: "submit", cap: 1 } } } })),
+      JSON.stringify(m.sendRefusal(new Error("Network Error"))),
+      JSON.stringify(m.sendRefusal({ response: { data: "Internal Server Error" } })),
+      JSON.stringify(m.sendRefusal({ response: { data: { detail: "Kit not found.", code: "kit_not_found" } } })),
+      m.sendRefusalKey("recaptcha"),
+      String(m.sendRefusalKey("constructor")),
+      m.sendRefusalKey("a_code_from_a_newer_server"),
+    ];
+    return got.join(" | ");
+  };
+  const WANT81 = [
+    '{"code":"recaptcha","params":{"company":"Acme","status":423}}',
+    "null",
+    "null",
+    "null",
+    '{"code":"kit_not_found","params":{}}',
+    "job.send.refused.recaptcha",
+    "job.send.error",
+    "job.send.error",
+  ].join(" | ");
+  const real81c = run81c(m81);
+  if (real81c !== WANT81)
+    fail(`check 81: lib/sendRefusal.ts answers [${real81c}] where [${WANT81}] is right (PLAN 31.4/5)`);
+  for (const [label, from, to] of [
+    ["a key lookup that answers `constructor`", "Object.prototype.hasOwnProperty.call(SEND_REFUSAL_KEYS, code) ? SEND_REFUSAL_KEYS[code] : SEND_REFUSAL_FALLBACK", "SEND_REFUSAL_KEYS[code] ?? SEND_REFUSAL_FALLBACK"],
+    ["a reader that keeps any param", 'if (typeof v === "string" || typeof v === "number") params[k] = v;', "params[k] = v as string;"],
+  ]) {
+    if (!table81.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (run81c(run81(table81.replace(from, to))) === WANT81) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+  {
+    const lessTable = table81.replace(/^\s*kit_flagged: "job\.send\.refused\.kit_flagged",\n/m, "");
+    if (lessTable === table81) throw new Error('the probe could not plant "a table without kit_flagged"');
+    const lessRows = Object.keys(run81(lessTable).SEND_REFUSAL_KEYS);
+    if (codes.every((c) => lessRows.includes(c))) throw new Error('the comparison passes "a table without kit_flagged"');
+  }
+
+  // (d) the job page's send reads its refusal through the two.
+  const read81d = (page) => {
+    const send = fnSource(page, "function SendSection(");
+    return /const refusal = sendRefusal\(e\);/.test(send) &&
+      /refusal \? t\(sendRefusalKey\(refusal\.code\), refusal\.params\) : apiErrorMessage\(e, t\("job\.send\.error"\)\)/.test(send)
+      ? []
+      : ["the job page's send does not read a refusal through sendRefusal and sendRefusalKey, so a Hebrew page shows the server's English"];
+  };
+  const page81 = decomment(read("pages/JobPage.tsx"));
+  for (const p of read81d(page81)) fail(`check 81: ${p} (PLAN 31.4/5)`);
+  const planted81 = page81.replace("const refusal = sendRefusal(e);", "const refusal = null;");
+  if (planted81 === page81 || !read81d(planted81).length) throw new Error('the reader passes "a send that ignores the code"');
+} catch (e) {
+  fail(`send refusal check (check 81) could not run: ${e.message}`);
+}
+
+// ---- 82. a tracker card's controls stay inside the card, at 44 px ---------- //
+// Found in PLAN 31.4/5, fixed 2026-09-27. On the board's five columns (from xl)
+// a card is 179 px wide, and its third row held the date beside a group of two
+// controls, the status chip and "Interviewed", that could not wrap: side by
+// side they need about 175 px of the card's 149, so "Interviewed" ran 9 px past
+// the card's edge in the Interview column at 1440 (1 px in Applied), measured.
+// The group now WRAPS (`flex-wrap`, with `min-w-0` so it may be narrower than
+// its content), and each control is a box of at least 44 px (`min-h-11`)
+// around its small face, the owner's touch-target floor: they were 24 and
+// 23 px tall on a phone. Pinned by shape on AppCard, with planted twins.
+try {
+  const MIN44 = /\bmin-h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?=\s|"|$)/;
+  const read82 = (src) => {
+    const out = [];
+    const card = fnSource(src, "function AppCard(");
+    const at = card.indexOf("<FlipStatusChip");
+    if (at === -1) throw new Error("pages/TrackerPage.tsx: AppCard renders no <FlipStatusChip>");
+    const classes = [...card.slice(0, at).matchAll(/className="([^"]*)"/g)].map((m) => m[1]);
+    if (classes.length < 2) throw new Error("pages/TrackerPage.tsx: cannot read the two wrappers around AppCard's status chip");
+    const [group, box] = classes.slice(-2);
+    if (!/\bflex-wrap\b/.test(group) || !/\bmin-w-0\b/.test(group))
+      out.push("the status chip's group cannot wrap (`flex-wrap` and `min-w-0`), so on the board's 179 px card \"Interviewed\" runs past the edge");
+    if (!MIN44.test(box)) out.push("the status chip's box is under 44 px tall (`min-h-11`)");
+    const btn = /<button\b(?:(?!<\/button>)[\s\S])*?\{t\("interviewed"\)\}/.exec(card);
+    if (!btn) throw new Error("pages/TrackerPage.tsx: AppCard has no <button> rendering t(\"interviewed\")");
+    // The first className after `<button` (an arrow's `=>` in onClick is not the tag's end).
+    const btnClass = /^<button\b[\s\S]*?className="([^"]*)"/.exec(btn[0]);
+    if (!btnClass) throw new Error("pages/TrackerPage.tsx: cannot read the Interviewed button's className");
+    if (!MIN44.test(btnClass[1])) out.push("the Interviewed toggle is under 44 px tall (`min-h-11`)");
+    return out;
+  };
+  const tracker = decomment(read("pages/TrackerPage.tsx"));
+  for (const p of read82(tracker)) fail(`check 82: ${p} (PLAN 31.4/5)`);
+  const plant82 = (from, to, label) => {
+    if (!tracker.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read82(tracker.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant82("relative z-10 flex min-w-0 flex-wrap items-center", "relative z-10 flex items-center", "a group that cannot wrap");
+  plant82("relative inline-flex min-h-11 items-center gap-0.5", "relative inline-flex items-center gap-0.5", "a 24 px status chip");
+  plant82("group/iv inline-flex min-h-11 items-center", "group/iv inline-flex items-center", "a 23 px Interviewed toggle");
+  if (MIN44.test("min-h-10") || MIN44.test("min-h-[40px]") || !MIN44.test("min-h-[48px]"))
+    throw new Error("the 44 px reader misreads min-h-10, min-h-[40px] or min-h-[48px]");
+} catch (e) {
+  fail(`tracker card controls check (check 82) could not run: ${e.message}`);
+}
+
+// ---- 83. a long job link survives sign-in, and the rules do not move (EXECUTED) //
+// Found in PLAN 31.4/6, fixed 2026-09-27. An alert email links a job as
+// `/jobs?open=<the posting's URL, quoted whole>`; a posting URL over about 450
+// characters made that `next` longer than MAX_NEXT (512, the backend twin's),
+// both validators refused it, and a signed-out click landed on /app with the job
+// gone. The ceiling stays (it bounds what the anonymous Google door stores): the
+// tab keeps a destination too long for `next` in sessionStorage and sends its
+// path plus `?jf_next=<ref>`, which AppLayout's guard puts back after sign-in.
+// (a) EXECUTES lib/safeNext.ts on a 620-character posting: the `next` that
+//     `authRedirectUrl` builds fits and passes `safeNext` whole, and
+//     `takeLongNext` on the page it lands on gives back the exact address, whose
+//     `open` is the posting, once; a short destination is unchanged and stores
+//     nothing; an auth page passes its own `next` along.
+// (b) EXECUTES the refusals: `safeNext` still refuses the long link itself, and
+//     an off-site, protocol-relative and `javascript:` value; `takeLongNext`
+//     follows nothing for a ref this tab never stored, another ref, a stored value
+//     over an hour old, a stored off-site or script value, or one for another
+//     page, and drops the parameter from the address instead; storage refused
+//     sends the path alone.
+// (c) Pins AppLayout's guard: the destination is put back through takeLongNext
+//     before the shell renders, on both of its branches.
+// Planted twins every run.
+try {
+  const snSrc = read("lib/safeNext.ts");
+  const posting =
+    "https://www.comeet.com/jobs/lumen-payments/A1.001/" +
+    "%D7%9E%D7%94%D7%A0%D7%93%D7%A1-%D7%AA%D7%95%D7%9B%D7%A0%D7%94-".repeat(9) +
+    "backend/B1.011?utm_source=alert&utm_medium=email";
+  if (posting.length < 600) throw new Error("check 83's posting fixture is under 600 characters");
+  const saved83 = { window: globalThis.window, sessionStorage: globalThis.sessionStorage };
+  const run83 = (src) => {
+    const sn = runProbeBundle("safenext-long", src);
+    const out = [];
+    const at = (pathname, search, hash = "") => {
+      globalThis.window = { location: { origin: "https://app.example", pathname, search, hash } };
+    };
+    const store = memoryStorage();
+    globalThis.sessionStorage = store;
+    try {
+      // (a) the long link, round trip.
+      const search = `?open=${encodeURIComponent(posting)}`;
+      at("/jobs", search);
+      const here = `/jobs${search}`;
+      const login = sn.authRedirectUrl("/login");
+      const next = new URLSearchParams(login.slice(login.indexOf("?"))).get("next") ?? "";
+      out.push(next.length <= 512 && sn.safeNext(next) === next ? "fits" : `next ${next.length} chars, safeNext ${sn.safeNext(next)}`);
+      const m = /^\/jobs\?jf_next=([0-9a-f]{16})$/.exec(next);
+      out.push(m ? "marker" : `not a marker: ${next.slice(0, 40)}`);
+      const back = m ? sn.takeLongNext("/jobs", `?jf_next=${m[1]}`) : null;
+      out.push(back === here && new URLSearchParams(back.slice(5)).get("open") === posting ? "restored" : `restored ${String(back).slice(0, 40)}`);
+      out.push(m && sn.takeLongNext("/jobs", `?jf_next=${m[1]}`) === "/jobs" ? "once" : "twice");
+      // a short one, and an auth page.
+      at("/app", "?tailor_app=42");
+      const short = sn.authRedirectUrl("/login");
+      out.push(short === `/login?next=${encodeURIComponent("/app?tailor_app=42")}` && store.getItem(sn.LONG_NEXT_KEY) === null ? "short" : `short ${short}`);
+      at("/signup", `?next=${encodeURIComponent("/jobs?jf_next=0123456789abcdef")}`);
+      out.push(sn.authRedirectUrl("/login") === `/login?next=${encodeURIComponent("/jobs?jf_next=0123456789abcdef")}` ? "passed" : "not passed");
+      // (b) the refusals.
+      out.push(sn.safeNext(here) === "/app" ? "ceiling" : "long kept");
+      out.push(["//evil.example/jobs", "https://evil.example/jobs", "javascript:alert(1)"].every((v) => sn.safeNext(v) === "/app") ? "offsite" : "offsite kept");
+      out.push(sn.takeLongNext("/jobs", "?x=1") === null ? "none" : "acted");
+      at("/jobs", "");
+      const put = (v) => store.setItem(sn.LONG_NEXT_KEY, JSON.stringify(v));
+      const now = Date.now();
+      const cases = [
+        ["nothing stored", null],
+        ["another ref", { ref: "ffffffffffffffff", next: here, at: now }],
+        ["stale", { ref: "0123456789abcdef", next: here, at: now - 2 * 3600_000 }],
+        ["off-site", { ref: "0123456789abcdef", next: "//evil.example/jobs", at: now }],
+        ["script", { ref: "0123456789abcdef", next: "javascript:alert(1)", at: now }],
+        ["another page", { ref: "0123456789abcdef", next: "/tracker?x=1", at: now }],
+      ];
+      for (const [label, v] of cases) {
+        store.clear();
+        if (v) put(v);
+        const got = sn.takeLongNext("/jobs", "?x=1&jf_next=0123456789abcdef");
+        out.push(got === "/jobs?x=1" ? label : `${label} -> ${String(got).slice(0, 30)}`);
+      }
+      // storage refused: the path alone.
+      globalThis.sessionStorage = { getItem: () => null, setItem: () => { throw new Error("quota"); }, removeItem: () => {} };
+      at("/jobs", search);
+      out.push(sn.authRedirectUrl("/login") === `/login?next=${encodeURIComponent("/jobs")}` ? "path" : "no path");
+    } finally {
+      globalThis.window = saved83.window;
+      globalThis.sessionStorage = saved83.sessionStorage;
+    }
+    return out.join(",");
+  };
+  const WANT83 = "fits,marker,restored,once,short,passed,ceiling,offsite,none,nothing stored,another ref,stale,off-site,script,another page,path";
+  const real83 = run83(snSrc);
+  if (real83 !== WANT83) fail(`check 83: lib/safeNext.ts answers [${real83}] where [${WANT83}] is right (PLAN 31.4/6)`);
+  for (const [label, from, to] of [
+    ["a next that is never shortened", "  if (here.length <= MAX_NEXT) return here;", "  return here;"],
+    ["a take that ignores the ref", "if (v.ref !== ref || typeof v.next", "if (typeof v.next"],
+    ["a take that follows another page", " || new URL(safe, window.location.origin).pathname !== pathname) return without;", ") return without;"],
+    ["a take that trusts storage", "    const safe = checkNext(v.next, LONG_NEXT_MAX);\n    if (safe === FALLBACK ||", "    const safe = v.next;\n    if ("],
+    ["a raised ceiling", "const MAX_NEXT = 512;", "const MAX_NEXT = 4096;"],
+  ]) {
+    if (!snSrc.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (run83(snSrc.replace(from, to)) === WANT83) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+
+  // (c) the guard puts the destination back before the shell renders.
+  const read83 = (layout) => {
+    const out = [];
+    const shell = /const shellFor = \(\) => \{([\s\S]*?)\n\s*\};/.exec(layout);
+    if (!shell) return ["AppLayout's guard has no shellFor that puts a long destination back"];
+    if (!/const back = takeLongNext\(window\.location\.pathname, window\.location\.search, window\.location\.hash\);\s*if \(back !== null\) navigate\(back, \{ replace: true \}\);\s*setAuthed\(true\);/.test(shell[1]))
+      out.push("shellFor does not put the destination back (takeLongNext, then navigate with replace) before setAuthed(true)");
+    if ((layout.match(/setAuthed\(true\)/g) || []).length !== 1) out.push("a guard branch renders the shell without shellFor");
+    if ((layout.match(/\bshellFor\(\);/g) || []).length < 2) out.push("shellFor is not called on both of the guard's branches");
+    return out;
+  };
+  const layout83 = decomment(read("layouts/AppLayout.tsx"));
+  for (const p of read83(layout83)) fail(`check 83: ${p} (PLAN 31.4/6)`);
+  const plant83 = (from, to, label) => {
+    if (!layout83.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read83(layout83.replace(from, to)).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant83("if (back !== null) navigate(back, { replace: true });", "", "a guard that never puts it back");
+  plant83("        if (!live) return;\n        shellFor();", "        if (!live) return;\n        setAuthed(true);", "a failed-open guard that skips it");
+} catch (e) {
+  fail(`long job link check (check 83) could not run: ${e.message}`);
+}
+
+// ---- 84. "Needs you" is one row on a phone ----------------------------------- //
+// Found in PLAN 31.5/5, fixed 2026-09-27. With all three chips the strip WRAPPED
+// (`flex flex-wrap`): two rows at 390 px, three at 360 in Hebrew, which moved the
+// first saved job from y = 489 to 533 (597 at 360 in Hebrew), and the review's
+// chip, which answers last, dropped the second row in under the thumb about
+// 0.4 s after the first job was drawn. The strip is one row that scrolls
+// sideways now: `flex` with `overflow-x-auto` and never `flex-wrap`, each item
+// `shrink-0` and each label `whitespace-nowrap` (a label that wrapped inside its
+// chip would make the row taller instead), no scrollbar drawn, the focus ring
+// INSET (a scroller clips an outer ring), and each chip a 44 px target. Pinned
+// by shape on the file, with planted twins.
+try {
+  const MIN44_84 = /\bmin-h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?=\s|"|$)/;
+  const read84 = (src) => {
+    const out = [];
+    const ul = /<ul\b[\s\S]*?className="([^"]*)"[\s\S]*?>/.exec(src);
+    if (!ul) throw new Error("pages/jobs/NeedsYou.tsx: cannot read the strip's <ul className>");
+    const row = ul[1].split(/\s+/);
+    if (row.some((c) => /(^|:)flex-wrap$/.test(c))) out.push("the strip wraps (`flex-wrap`), so three chips are two rows on a phone");
+    if (!row.includes("flex") || !row.includes("overflow-x-auto"))
+      out.push("the strip is not one sideways-scrolling row (`flex overflow-x-auto`)");
+    if (!row.includes("[scrollbar-width:none]") || !row.includes("[&::-webkit-scrollbar]:hidden"))
+      out.push("the strip draws a scrollbar under the chips");
+    const li = /<li\b[^>]*className="([^"]*)"/.exec(src);
+    if (!li || !li[1].split(/\s+/).includes("shrink-0")) out.push("a chip's <li> can shrink (`shrink-0`), so a label is squeezed");
+    const btn = /<button\b[\s\S]*?className="([^"]*)"/.exec(src);
+    if (!btn) throw new Error("pages/jobs/NeedsYou.tsx: cannot read the chip's <button className>");
+    const b = btn[1].split(/\s+/);
+    if (!b.includes("whitespace-nowrap")) out.push("a chip's label can wrap inside it (`whitespace-nowrap`), which makes the row taller");
+    if (!MIN44_84.test(btn[1])) out.push("a chip is under 44 px tall (`min-h-11`)");
+    if (b.includes("focus-visible:ring-2") && !b.includes("focus-visible:ring-inset"))
+      out.push("a chip's focus ring is outside it, where the scroller clips it (`focus-visible:ring-inset`)");
+    return out;
+  };
+  const strip = decomment(read("pages/jobs/NeedsYou.tsx"));
+  for (const p of read84(strip)) fail(`check 84: ${p} (PLAN 31.5/5)`);
+  const plant84 = (from, to, label) => {
+    if (!strip.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read84(strip.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant84("-mx-4 flex gap-1.5 overflow-x-auto", "-mx-4 flex flex-wrap gap-1.5 overflow-x-auto", "a strip that wraps");
+  plant84("-mx-4 flex gap-1.5 overflow-x-auto", "-mx-4 flex gap-1.5", "a strip that neither wraps nor scrolls");
+  plant84('<li key={key} className="shrink-0">', "<li key={key}>", "chips that shrink");
+  plant84("min-h-11 items-center gap-1.5 whitespace-nowrap", "min-h-[36px] items-center gap-1.5 whitespace-nowrap", "36 px chips");
+  plant84("focus-visible:ring-inset ", "", "a focus ring the scroller clips");
+} catch (e) {
+  fail(`needs-you row check (check 84) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

@@ -33,8 +33,9 @@ const FALLBACK = "/app";
  * client refuses the sign-in outright. Nothing on this side is stored, but both
  * validators answer the same question about the same link, and a link this side
  * follows while the other refuses is the disagreement this file exists to
- * prevent. The longest real destination is the extension handoff
- * `/app?tailor_app=<id>`, far under it. */
+ * prevent. The extension's handoff `/app?tailor_app=<id>` is far under it; an
+ * alert email's `/jobs?open=<posting>` can be over it, and waits in the tab
+ * instead (`fitNext`), so the ceiling never has to move. */
 const MAX_NEXT = 512;
 
 const BACKSLASH = 0x5c;
@@ -81,8 +82,16 @@ export function isAuthPage(pathname: string): boolean {
  * browser's own URL parser, which is the one that will follow the link.
  */
 export function safeNext(value: string | null | undefined): string {
+  return checkNext(value, MAX_NEXT);
+}
+
+/** `safeNext`'s rules, every one of them, at a given length ceiling. Only the
+ * ceiling differs between a `next` (MAX_NEXT, the backend twin's) and a long
+ * destination waiting in this tab (LONG_NEXT_MAX, below), which never reaches
+ * the server. */
+function checkNext(value: string | null | undefined, max: number): string {
   if (!value) return FALLBACK;
-  if (value.length > MAX_NEXT) return FALLBACK;
+  if (value.length > max) return FALLBACK;
   let decoded: string;
   try {
     decoded = decodeURIComponent(value);
@@ -161,8 +170,97 @@ export function authRedirectUrl(page: AuthPage): string {
   const { pathname, search, hash } = window.location;
   const here = isAuthPage(pathname)
     ? safeNext(new URLSearchParams(search).get("next"))
-    : pathname + search + hash;
+    : fitNext(pathname + search + hash);
   return withNext(page, here);
+}
+
+/** The query parameter that names a destination waiting in this tab. */
+export const LONG_NEXT_PARAM = "jf_next";
+/** Where it waits: sessionStorage, THIS tab only, the verify token's home. */
+export const LONG_NEXT_KEY = "jobfinder.longNext";
+/** The longest destination a tab keeps for itself. It never reaches the server,
+ * so MAX_NEXT's two reasons (a stored row, a Location header) do not apply;
+ * this only bounds what a stored value may be. */
+const LONG_NEXT_MAX = 8192;
+/** The reset link's hour, for the same reason: a sign-in older is stale. */
+const LONG_NEXT_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * `here` as a `next`, when it fits; otherwise its path plus `?jf_next=<ref>`,
+ * with the whole destination kept in this tab until the sign-in comes back.
+ *
+ * A job link from an alert email is `/jobs?open=<the posting's URL, quoted
+ * whole>`, and a posting URL longer than about 450 characters (a Comeet slug in
+ * Hebrew is ten characters a letter once quoted twice) made the `next` longer
+ * than MAX_NEXT: both validators refused it, and the sign-in landed on /app
+ * with the job gone (found in PLAN 31.4/6, fixed 2026-09-27). The ceiling is
+ * right where it is, so the long value simply never crosses the server: the
+ * `next` that does is short, and Google's round trip, which stores `next`,
+ * carries it like any other. `takeLongNext` puts the destination back.
+ *
+ * Validated before it is kept, by every rule `safeNext` has but the length. If
+ * storage is refused, the path alone: the right page, if not the job.
+ */
+function fitNext(here: string): string {
+  if (here.length <= MAX_NEXT) return here;
+  const safe = checkNext(here, LONG_NEXT_MAX);
+  if (safe === FALLBACK) return FALLBACK;
+  const path = new URL(safe, window.location.origin).pathname;
+  const ref = newRef();
+  try {
+    sessionStorage.setItem(LONG_NEXT_KEY, JSON.stringify({ ref, next: safe, at: Date.now() }));
+  } catch {
+    return path;
+  }
+  return `${path}?${LONG_NEXT_PARAM}=${ref}`;
+}
+
+function newRef(): string {
+  const bytes = new Uint8Array(8);
+  try {
+    crypto.getRandomValues(bytes);
+  } catch {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Where a page that carries `?jf_next=<ref>` should be, or null when it carries
+ * none (almost always: then nothing happens).
+ *
+ * The destination this tab kept, taken ONCE and validated again (storage is not
+ * a trusted source), only when its ref is the one in the address, it is under
+ * an hour old, and its path is the page's own: a ref in a link someone crafted
+ * can only select what this tab itself stored for this very page. Anything else
+ * answers the page's own address without the parameter, so a stale or foreign
+ * ref is dropped from the address bar and never followed.
+ */
+export function takeLongNext(pathname: string, search: string, hash = ""): string | null {
+  const params = new URLSearchParams(search);
+  const ref = params.get(LONG_NEXT_PARAM);
+  if (ref === null) return null;
+  params.delete(LONG_NEXT_PARAM);
+  const rest = params.toString();
+  const without = pathname + (rest ? `?${rest}` : "") + hash;
+  let raw: string | null = null;
+  try {
+    raw = sessionStorage.getItem(LONG_NEXT_KEY);
+    sessionStorage.removeItem(LONG_NEXT_KEY);
+  } catch {
+    return without;
+  }
+  if (!raw) return without;
+  try {
+    const v = JSON.parse(raw) as { ref?: unknown; next?: unknown; at?: unknown };
+    if (v.ref !== ref || typeof v.next !== "string" || typeof v.at !== "number") return without;
+    if (Date.now() - v.at > LONG_NEXT_MAX_AGE_MS) return without;
+    const safe = checkNext(v.next, LONG_NEXT_MAX);
+    if (safe === FALLBACK || new URL(safe, window.location.origin).pathname !== pathname) return without;
+    return safe;
+  } catch {
+    return without;
+  }
 }
 
 /** `<page>?next=<next>`, for links between the auth pages. The default

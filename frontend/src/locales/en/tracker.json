@@ -319,7 +319,25 @@
       "confirm": "Send it",
       "sent": "Application sent to {{company}}",
       "questionnaire": "Complete their questionnaire",
-      "error": "Could not send the application."
+      "error": "Could not send the application.",
+      "refused": {
+        "kit_not_found": "This draft no longer exists. Reload the page.",
+        "already_sent": "This application was already sent.",
+        "not_approved": "Only a draft you approved can be sent.",
+        "kit_flagged": "This draft has claims to check, so it is never sent from here, even after approval.",
+        "not_comeet": "Sending from here works only for Comeet postings. Apply to this one on its board.",
+        "not_comeet_url": "This job's link is not a Comeet position page, so it can't be sent from here.",
+        "recaptcha": "{{company}} protects this position with a bot check, so it can't be sent from here. Use the extension's assisted apply, or apply on the Comeet page.",
+        "company_already_sent": "You already sent an application to {{company}} from here, and it is one per company. Apply to their other openings on their own page.",
+        "application_missing": "The approved draft for this job is missing. Approve it again.",
+        "draft_changed": "The resume on this job changed after you approved it (a new tailor, or lines you typed), so it has no clean claims check to send on. Apply on the Comeet page, or with the extension's assisted apply.",
+        "resume_unreadable": "The approved resume can't be read. Approve the draft again.",
+        "contact_missing": "Your resume needs a name and an email address before it can be sent. Fill in the contact line, then approve it again.",
+        "careers_unreachable": "Couldn't reach the Comeet careers page of {{company}}. Try again in a minute.",
+        "comeet_locked": "{{company}} locked this application against sending from here (usually a bot check, or the position just closed). Use the extension's assisted apply, or apply on Comeet.",
+        "comeet_declined": "Comeet turned the application down (error {{status}}). Apply on the Comeet page instead.",
+        "comeet_unreachable": "Couldn't reach Comeet to send the application. Try again."
+      }
     },
     "prepare": {
       "title": "Prepare"
