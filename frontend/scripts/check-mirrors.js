@@ -13114,6 +13114,52 @@ try {
   fail(`first-steps check (check 80) could not run: ${e.message}`);
 }
 
+// ---- 82. a tracker card's controls stay inside the card, at 44 px ---------- //
+// Found in PLAN 31.4/5, fixed 2026-09-27. On the board's five columns (from xl)
+// a card is 179 px wide, and its third row held the date beside a group of two
+// controls, the status chip and "Interviewed", that could not wrap: side by
+// side they need about 175 px of the card's 149, so "Interviewed" ran 9 px past
+// the card's edge in the Interview column at 1440 (1 px in Applied), measured.
+// The group now WRAPS (`flex-wrap`, with `min-w-0` so it may be narrower than
+// its content), and each control is a box of at least 44 px (`min-h-11`)
+// around its small face, the owner's touch-target floor: they were 24 and
+// 23 px tall on a phone. Pinned by shape on AppCard, with planted twins.
+try {
+  const MIN44 = /\bmin-h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?=\s|"|$)/;
+  const read82 = (src) => {
+    const out = [];
+    const card = fnSource(src, "function AppCard(");
+    const at = card.indexOf("<FlipStatusChip");
+    if (at === -1) throw new Error("pages/TrackerPage.tsx: AppCard renders no <FlipStatusChip>");
+    const classes = [...card.slice(0, at).matchAll(/className="([^"]*)"/g)].map((m) => m[1]);
+    if (classes.length < 2) throw new Error("pages/TrackerPage.tsx: cannot read the two wrappers around AppCard's status chip");
+    const [group, box] = classes.slice(-2);
+    if (!/\bflex-wrap\b/.test(group) || !/\bmin-w-0\b/.test(group))
+      out.push("the status chip's group cannot wrap (`flex-wrap` and `min-w-0`), so on the board's 179 px card \"Interviewed\" runs past the edge");
+    if (!MIN44.test(box)) out.push("the status chip's box is under 44 px tall (`min-h-11`)");
+    const btn = /<button\b(?:(?!<\/button>)[\s\S])*?\{t\("interviewed"\)\}/.exec(card);
+    if (!btn) throw new Error("pages/TrackerPage.tsx: AppCard has no <button> rendering t(\"interviewed\")");
+    // The first className after `<button` (an arrow's `=>` in onClick is not the tag's end).
+    const btnClass = /^<button\b[\s\S]*?className="([^"]*)"/.exec(btn[0]);
+    if (!btnClass) throw new Error("pages/TrackerPage.tsx: cannot read the Interviewed button's className");
+    if (!MIN44.test(btnClass[1])) out.push("the Interviewed toggle is under 44 px tall (`min-h-11`)");
+    return out;
+  };
+  const tracker = decomment(read("pages/TrackerPage.tsx"));
+  for (const p of read82(tracker)) fail(`check 82: ${p} (PLAN 31.4/5)`);
+  const plant82 = (from, to, label) => {
+    if (!tracker.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read82(tracker.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant82("relative z-10 flex min-w-0 flex-wrap items-center", "relative z-10 flex items-center", "a group that cannot wrap");
+  plant82("relative inline-flex min-h-11 items-center gap-0.5", "relative inline-flex items-center gap-0.5", "a 24 px status chip");
+  plant82("group/iv inline-flex min-h-11 items-center", "group/iv inline-flex items-center", "a 23 px Interviewed toggle");
+  if (MIN44.test("min-h-10") || MIN44.test("min-h-[40px]") || !MIN44.test("min-h-[48px]"))
+    throw new Error("the 44 px reader misreads min-h-10, min-h-[40px] or min-h-[48px]");
+} catch (e) {
+  fail(`tracker card controls check (check 82) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

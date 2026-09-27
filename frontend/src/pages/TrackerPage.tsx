@@ -232,12 +232,19 @@ function AppCard({
         </div>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2">
         {/* "Applied <date>" when the date it was sent is known, else the day it
             was added (I3). */}
         <CardDate app={a} />
-        <div className="relative z-10 flex items-center gap-1.5">
-          <span className="relative inline-flex items-center gap-0.5">
+        {/* The two controls WRAP, and each is a 44 px box around its small
+            face. On the board's five columns a card is 179 px wide, and the
+            status and "Interviewed" side by side need about 175 px of its 149,
+            so a group that could not wrap pushed "Interviewed" 9 px past the
+            card's edge (Applied and Interview columns, 1440 px). Wrapping moves
+            it under the status only when the card is that narrow; on a phone
+            and in the two-column board both stay on one line. */}
+        <div className="relative z-10 flex min-w-0 flex-wrap items-center justify-end gap-x-1.5">
+          <span className="relative inline-flex min-h-11 items-center gap-0.5">
             <FlipStatusChip id={a.id} status={a.status || "saved"} />
             <ChevronDown size={12} aria-hidden className="text-ink-faint" />
             <select
@@ -255,17 +262,23 @@ function AppCard({
           </span>
           {submitted && (
             <button
+              type="button"
               onClick={() => onToggleInterviewed(a)}
               title={t("interviewedToggle")}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
-                a.interviewed
-                  ? "border-mint/50 bg-mint/15 text-mint"
-                  : "border-line bg-panel-2 text-ink-faint hover:border-mint/40 hover:text-ink-muted",
-              )}
+              aria-pressed={a.interviewed}
+              className="group/iv inline-flex min-h-11 items-center"
             >
-              <MessageSquare size={11} />
-              {t("interviewed")}
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                  a.interviewed
+                    ? "border-mint/50 bg-mint/15 text-mint"
+                    : "border-line bg-panel-2 text-ink-faint group-hover/iv:border-mint/40 group-hover/iv:text-ink-muted",
+                )}
+              >
+                <MessageSquare size={11} aria-hidden />
+                {t("interviewed")}
+              </span>
             </button>
           )}
         </div>
