@@ -504,6 +504,61 @@ class AlertRunResult(BaseModel):
     # because its owner had no use left (ran is False, error is empty); "" when
     # the run was not skipped.
     skipped_reason: str = ""
+    # PLAN 32: devices the morning's notification reached (web push). Pushing
+    # never keeps or spends a use; only the email decides that.
+    pushed: int = 0
+
+
+# --------------------------------------------------------------------------- #
+# Web push (PLAN 32): the devices a user turned the morning alert on for.
+# --------------------------------------------------------------------------- #
+class PushKeys(BaseModel):
+    p256dh: str = Field(default="", max_length=256)
+    auth: str = Field(default="", max_length=64)
+
+
+class PushSubscribeIn(BaseModel):
+    """What `PushSubscription.toJSON()` gives the page, plus the page's language.
+    The endpoint is a caller-supplied URL: the route stores it only when
+    `webpush.push_endpoint_allowed` passes."""
+
+    endpoint: str = Field(default="", max_length=2048)
+    keys: PushKeys = Field(default_factory=PushKeys)
+    lang: str = Field(default="", max_length=8)
+
+
+class PushEndpointIn(BaseModel):
+    endpoint: str = Field(default="", max_length=2048)
+
+
+class PushDeviceOut(BaseModel):
+    id: int
+    # The browser's own endpoint, so a page can tell whether it is THIS device.
+    endpoint: str = ""
+    lang: str = "en"
+    created_at: str = ""
+    # "" = nothing has reached it yet (never "it failed").
+    last_success_at: str = ""
+    failure_count: int = 0
+
+
+class PushDevicesOut(BaseModel):
+    """GET /push/devices. `configured` false = web push is off on this server
+    (no VAPID keys), and the page draws nothing; `public_key` is what a browser
+    subscribes with."""
+
+    configured: bool = False
+    public_key: str = ""
+    devices: list[PushDeviceOut] = Field(default_factory=list)
+
+
+class PushTestResult(BaseModel):
+    # "sent" | "gone" (the browser dropped it; the row is deleted) | "failed" | "network"
+    status: str = ""
+
+
+class PushRemoved(BaseModel):
+    removed: int = 0
 
 
 class AlertCronResult(BaseModel):
@@ -747,6 +802,8 @@ class DeleteMyDataResult(BaseModel):
     google_revoked: bool = False
     # PLAN 31.8: the first time this person reached each step (`db.funnel`).
     steps: int = 0
+    # PLAN 32: the devices the morning alert was pushed to.
+    push_devices: int = 0
 
 
 class MeOut(BaseModel):

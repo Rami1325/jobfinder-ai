@@ -907,3 +907,38 @@ class FunnelStep(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     step: Mapped[str] = mapped_column(String(16), nullable=False)
     at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class PushSubscription(Base):
+    """One device that asked for the morning alert as a notification (PLAN 32,
+    app/core/webpush.py). A user may have several.
+
+    `endpoint` is the push service's address for this browser, and `p256dh` /
+    `auth` are the browser's keys the message is encrypted to. The endpoint
+    came FROM THE BROWSER, so it is stored only after `webpush.push_endpoint_allowed`
+    passed, and is checked again before every send. It is found again by
+    `endpoint_key` (a sha256), unique across users: a browser profile holds one
+    subscription, so the account that turned it on last owns it.
+
+    A NEW table, so `create_all` makes it with its unique constraint. It holds
+    what reaches a person's device, so both privacy doors delete a user's rows
+    (`routes._wipe_user_rows`).
+    """
+
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (UniqueConstraint("endpoint_key", name="uq_push_subscriptions_endpoint"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    endpoint: Mapped[str] = mapped_column(Text, default="")
+    endpoint_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    p256dh: Mapped[str] = mapped_column(String(128), default="")
+    auth: Mapped[str] = mapped_column(String(64), default="")
+    # "en" | "he": the language this device's notifications are written in, the
+    # app's language on it when it was turned on (kept current by Settings).
+    lang: Mapped[str] = mapped_column(String(8), default="en")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # NULL = no push has reached it yet, never "it failed".
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # Consecutive failures other than 404/410 (which delete at once).
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)

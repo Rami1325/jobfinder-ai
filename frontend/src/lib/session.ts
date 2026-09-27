@@ -5,6 +5,7 @@ import { clearDataCache } from "./dataCache";
 import { clearDraft } from "./draft";
 import { clearInboxHints } from "./inboxHint";
 import { announceAccount } from "./accountWatch";
+import { turnOffHere } from "./push";
 
 /**
  * The one sign-out.
@@ -53,6 +54,13 @@ function forgetOnboardingRole(): void {
 }
 
 export async function signOut(destination: string): Promise<void> {
+  // PLAN 32: this browser stops receiving the account's morning alerts. Only
+  // the local subscription is dropped, with no request: the push service then
+  // answers the next push with 410 and the server deletes the row itself
+  // (webpush.record_result), and a call here could 401 after a closed account
+  // and race this sign-out to /login. Bounded, so a slow push service can
+  // never hold a sign-out.
+  await Promise.race([turnOffHere(), new Promise((done) => setTimeout(done, 1500))]);
   try {
     await logout();
   } catch {

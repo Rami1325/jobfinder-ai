@@ -118,6 +118,19 @@ the `MAX_NEXT` / `GOOGLE_FAIL_PER_IP` knobs — is in `accounts-and-auth.md`.)*
 - **"Uses 1 · 8 left" under the button**, where it said "This uses 1 of the 8 you have left this month." The fit check's and the letter's add what the use includes ("· includes tailoring this job", "· includes changes to this letter"), a batch says "Uses 3 · 8 left", and every `_one` form says "Uses your last one". Nothing about the rules moved: the number is what is LEFT, never the allowance (`UsesNote`'s header), every sentence is still a literal key per state (check-mirrors 32(d)), and a card that does not know still states nothing. check-mirrors 79 refuses the long sentence in any `uses.*` string.
 - **The resume scan reads the saved resume when no file is sent** (`POST /tools/scan`). It asked a signed-in person for the file the app already held. With no file it takes the newest master, or the `lang` slot's, renders it as the Word file in the default design and reads it back with our own parser: Word, not the PDF, because the PDF's text layer is in visual order for Hebrew (`rendering.md`, the x-ray's two forms) and every Hebrew keyword read from it came back missing, which the first draft of this did. The charge is exactly a file's: the daily scan cap, then one use that any failure gives back. **No file and no saved resume is a 400 that moves no counter**, like the empty job description, checked before either. Smoke 31.7 pins the English and the Hebrew slot each covered and each a +1 use, and the 400 with no row and no event, probed red with the PDF path planted. 32.4 and 32.18 pinned "a scan with no file is a malformed 422 that never charges"; a scan with no file is no longer malformed, so their scan leg now sends a file field that is not a file, and the invariant they pin, a malformed body never charges, is unchanged. The page shows the saved resume by name, "Scan a different file" in the same card, and "Use my saved resume" to go back.
 
+### Alerts on the phone cost no use (PLAN 32, 2026-09-27)
+
+- **A notification never charges, and never keeps a morning's use.** The owner's rule for the alert is that a morning
+  charges only when it mailed something, and pushing costs the owner nothing, so the morning's one `job_alert` use is
+  still kept exactly when the EMAIL went out. A morning that pushed but could not email (no SMTP, a failed send) gives
+  its use back like any morning that mailed nothing, and the push runs after the use is decided, so it can neither
+  raise into the run nor change the charge (smoke 34c pins both, and a mutation that kept the use for a push-only
+  morning went red). Run now is unchanged: its `search` use is kept once its search completed.
+- **The four push routes spend no use.** `GET`, `POST` and `DELETE /push/devices` are `free` in 32.13; `POST
+  /push/test` reaches no model but is one real POST to a push service per tap, so it is `net_capped:push_test` with
+  its own daily cap (`DAILY_PUSH_TEST_CAP`, 10; admins exempt; `dailyLimit.pushTest` says it), counted only once the
+  device is found to be the caller's. `docs/handbook/notifications.md` has the rest.
+
 ### The first search is free, once per POOL (PLAN 31.5, owner decision 7, 2026-09-26)
 
 - **Why:** the funnel died at first use (`jobfinder-beta-adoption`), and the first sight of the product's best output, real matches for this resume, cost 1 of 10. Now a new account reaches it with a tap that costs nothing: the first-run sheet's "Find jobs that fit" or the Jobs page's Find jobs. The measured cost of one search is about 10-25 model calls.

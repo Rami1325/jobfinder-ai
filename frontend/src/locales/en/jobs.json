@@ -303,7 +303,26 @@
     "unsaved": "Unsaved changes — save to apply them to the daily alert.",
     "noSmtp": "Email alerts can't be sent right now. Runs still refresh your search history, but no email goes out.",
     "setUp": "Email me new jobs",
-    "settingsLink": "Alert settings"
+    "settingsLink": "Alert settings",
+    "push": {
+      "label": "Also send to this device",
+      "hint": "A notification here when the morning finds jobs above your bar.",
+      "test": "Send a test notification",
+      "testSent": "Test sent. It should arrive in a few seconds.",
+      "testGone": "This device stopped taking notifications. Turn them on again.",
+      "testFailed": "The notification service didn't take it. Try again later.",
+      "turnedOn": "Notifications are on for this device.",
+      "turnedOff": "Notifications are off for this device.",
+      "denied": "Notifications are blocked for this site. Allow them in your browser's site settings, then try again.",
+      "dismissed": "Notifications weren't allowed. Tap the switch again to allow them.",
+      "failed": "This browser couldn't turn notifications on. Try again, or use another browser.",
+      "unsupported": "This browser can't show notifications from websites.",
+      "iosInstall": "On iPhone, add JobFinder to your Home Screen first (Share, then Add to Home Screen) and turn this on from there.",
+      "serviceNotSupported": "This browser's notification service isn't supported.",
+      "error": "Couldn't change notifications. Try again.",
+      "otherDevices_one": "Also on 1 other device.",
+      "otherDevices_other": "Also on {{count}} other devices."
+    }
   },
   "posted": {
     "today": "today",

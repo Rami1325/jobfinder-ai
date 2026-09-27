@@ -103,6 +103,7 @@ from app.db.models import (
     JobSearchHit,
     MailConnection,
     MailEvent,
+    PushSubscription,
     SavedResume,
     SavedResumeVersion,
     TailorKit,
@@ -2775,6 +2776,9 @@ def _wipe_user_rows(db: Session, user: User) -> DeleteMyDataResult:
         inbox_connections=_wipe(MailConnection),
         google_revoked=google_revoked,
         steps=_wipe(FunnelStep),
+        # PLAN 32: the devices the morning alert reaches. A wiped account's
+        # phone must stop receiving notifications, not only forget them.
+        push_devices=_wipe(PushSubscription),
     )
 
 

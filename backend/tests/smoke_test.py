@@ -61,8 +61,13 @@ for _p29_var in (
     "SIGNUP_MODE", "AUTH_SECRET", "INBOX_ACCESS",
     # Phase 30: the sign-in client, blank so /auth/me's google_enabled stays False.
     "GOOGLE_SIGNIN_CLIENT_ID", "GOOGLE_SIGNIN_CLIENT_SECRET",
+    # PLAN 32: web push stays OFF unless a section switches it on with its own
+    # test keys, so a developer .env holding the real VAPID pair can never make
+    # this suite sign anything with it.
+    "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT",
 ):
     os.environ[_p29_var] = ""
+os.environ["DAILY_PUSH_TEST_CAP"] = "10"
 # Phase 30 (monthly uses): the pool and the four new daily caps, each set to its
 # documented default EXPLICITLY, so a developer .env holding FREE_MONTHLY_USES=0
 # cannot switch section 32's limit off from outside this file. A check that is not
@@ -27249,6 +27254,12 @@ _ROUTE_COST = {
     ("POST", "/inbox/events/{event_id}/resolve"): "free",
     ("PATCH", "/inbox/settings"): "free",
     ("DELETE", "/inbox/connection"): "free",
+    # PLAN 32, web push: no model and no use. Turning a device on or off and listing them are free;
+    # the test notification leaves the machine on a tap (one POST per device), so its own daily cap.
+    ("GET", "/push/devices"): "free",
+    ("POST", "/push/devices"): "free",
+    ("DELETE", "/push/devices"): "free",
+    ("POST", "/push/test"): "net_capped:push_test",
     # free: admin, and the app itself
     ("GET", "/admin/users"): "free",
     ("POST", "/admin/users"): "free",
@@ -27690,10 +27701,39 @@ _CHARGED_DRIVES32 = [
     (("POST", "/cover-letter"), False, _call32("POST", "/cover-letter", json={"resume": _R32, "jd": _JDJ32})),
 ]
 
+# PLAN 32: the push rows run with web push ON, on throwaway keys, and every push lands in this recorder.
+from app.core import webpush as _wp32s  # noqa: E402
+from cryptography.hazmat.primitives import serialization as _ser32s  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec as _ec32s  # noqa: E402
+
+_real_push_transport32 = _wp32s._transport
+_sweep_pushes32: list[str] = []
+_VAPID_PUB32, _VAPID_PRIV32 = _wp32s.generate_keys()
+_sw_ua32 = _ec32s.generate_private_key(_ec32s.SECP256R1())
+_SWEEP_SUB32 = {
+    "endpoint": "https://fcm.googleapis.com/fcm/send/sweep32-device",
+    "keys": {
+        "p256dh": _wp32s.b64url(_sw_ua32.public_key().public_bytes(
+            _ser32s.Encoding.X962, _ser32s.PublicFormat.UncompressedPoint)),
+        "auth": _wp32s.b64url(b"sweep32-auth-sec"),
+    },
+    "lang": "en",
+}
+
+
+def _sweep_push32(method, url, headers, body, timeout):  # noqa: ANN001
+    """webpush's transport for the sweep: nothing driven here may reach a push service."""
+    _sweep_pushes32.append(url)
+    return 201
+
+
 _prev32e_env = _env29(FREE_MONTHLY_USES="10", DAILY_LLM_CAP="0", DAILY_TAILOR_CAP="0", DAILY_SEARCH_CAP="0",
-                      CRON_SECRET="smoke-cron-32", INBOX_FAKE_PROVIDER="true", APP_BASE_URL="https://app.jobfinder.test")
+                      CRON_SECRET="smoke-cron-32", INBOX_FAKE_PROVIDER="true", APP_BASE_URL="https://app.jobfinder.test",
+                      VAPID_PUBLIC_KEY=_VAPID_PUB32, VAPID_PRIVATE_KEY=_VAPID_PRIV32,
+                      VAPID_SUBJECT="mailto:smoke32@example.com")
 _ae28._resolve_sender = lambda: _capture_auth_mail28
 _go29._transport = _offline_google32
+_wp32s._transport = _sweep_push32
 _arm_tripwire32()
 try:
     with TestClient(_fastapi_app) as _c32e:
@@ -27939,6 +27979,16 @@ try:
         _plain32(("POST", "/jobs/search-context"),
                  lambda s: _as32("POST", "/jobs/search-context", _SW32["h"], json={"resume": _R32}))
 
+        # Web push (PLAN 32): the friend's own device, turned on, listed, tested, turned off.
+        _plain32(("GET", "/push/devices"), lambda s: _as32("GET", "/push/devices", _SW32["h"]), statuses=(200,))
+        _plain32(("POST", "/push/devices"),
+                 lambda s: _as32("POST", "/push/devices", _SW32["h"], json=_SWEEP_SUB32), statuses=(200,))
+        _plain32(("POST", "/push/test"),
+                 lambda s: _as32("POST", "/push/test", _SW32["h"], json={"endpoint": _SWEEP_SUB32["endpoint"]}))
+        _plain32(("DELETE", "/push/devices"),
+                 lambda s: _as32("DELETE", "/push/devices", _SW32["h"], json={"endpoint": _SWEEP_SUB32["endpoint"]}),
+                 statuses=(200,))
+
         # The inbox: the demo mailbox, then everything that reads or changes what it found.
         _plain32(("GET", "/inbox/status"), lambda s: _as32("GET", "/inbox/status", _SW32["h"]), statuses=(200,))
         _plain32(("POST", "/inbox/google/start"),
@@ -28037,6 +28087,7 @@ try:
 finally:
     _ae28._resolve_sender = _real_resolve_sender28
     _go29._transport = _real_transport32
+    _wp32s._transport = _real_push_transport32
     _unpatch32()
     _disarm_tripwire32()
     _restore29(_prev32e_env)
@@ -29584,6 +29635,634 @@ check(
     and all((out.get("request") or {}).get("query_string") is None for out in _se33_out[3:])
     and not any(secret in dump for dump, secret in zip(_se33_dump[3:], ("mno", "stu", "yz1"))),
     str(_se33_dump[3:])[:400],
+)
+
+# =====================================================================================================================
+# 34. Web push (PLAN 32): the morning alert on the phone, and the push door
+# =====================================================================================================================
+# A subscription's endpoint comes FROM THE BROWSER, so it is a caller-supplied URL. Every piece below runs offline:
+# `webpush._transport` records each POST and answers with the status a check scripts, and the keys are made here.
+import ast as _ast34  # noqa: E402
+import inspect as _insp34  # noqa: E402
+import json as _json34  # noqa: E402
+import struct as _struct34  # noqa: E402
+from urllib.parse import quote as _quote34  # noqa: E402
+
+from cryptography.hazmat.primitives import hashes as _hashes34  # noqa: E402
+from cryptography.hazmat.primitives import serialization as _ser34  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec as _ec34  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature as _eds34  # noqa: E402
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM34  # noqa: E402
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF as _HKDF34  # noqa: E402
+
+from app.core import webpush as _wp34  # noqa: E402
+from app.db.models import PushSubscription as _PS34  # noqa: E402
+
+_B34 = _wp34.b64url
+_D34 = _wp34.b64url_decode
+
+
+def _hkdf34(salt, ikm, info, length):  # noqa: ANN001
+    """RFC 5869 through the cryptography package, so the round trip below never grades webpush with its own HKDF."""
+    return _HKDF34(algorithm=_hashes34.SHA256(), length=length, salt=salt, info=info).derive(ikm)
+
+
+def _decrypt34(body, ua_private, auth_secret):  # noqa: ANN001
+    """What a browser does with an aes128gcm push (RFC 8291/8188): the plaintext, delimiter and padding removed."""
+    salt, (_rs, idlen) = body[:16], _struct34.unpack("!IB", body[16:21])
+    as_public, ciphertext = body[21:21 + idlen], body[21 + idlen:]
+    ua_public = ua_private.public_key().public_bytes(_ser34.Encoding.X962, _ser34.PublicFormat.UncompressedPoint)
+    shared = ua_private.exchange(_ec34.ECDH(), _ec34.EllipticCurvePublicKey.from_encoded_point(_ec34.SECP256R1(),
+                                                                                                as_public))
+    ikm = _hkdf34(auth_secret, shared, b"WebPush: info\x00" + ua_public + as_public, 32)
+    cek = _hkdf34(salt, ikm, b"Content-Encoding: aes128gcm\x00", 16)
+    nonce = _hkdf34(salt, ikm, b"Content-Encoding: nonce\x00", 12)
+    padded = _AESGCM34(cek).decrypt(nonce, ciphertext, None).rstrip(b"\x00")
+    return padded[:-1] if padded.endswith(b"\x02") else b"<no last-record delimiter>"
+
+
+# --- 34a. The arithmetic, pinned to RFC 8291 Appendix A --------------------------------------------------------------
+_RFC34 = {
+    "plaintext": "V2hlbiBJIGdyb3cgdXAsIEkgd2FudCB0byBiZSBhIHdhdGVybWVsb24",
+    "as_private": "yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw",
+    "ua_private": "q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94",
+    "ua_public": "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
+    "auth": "BTBZMqHH6r4Tts7J_aSIgg",
+    "salt": "DGv6ra1nlYgDCS1FRnbzlw",
+    "result": "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6"
+              "PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN",
+}
+
+
+def _p256(b64):  # noqa: ANN001
+    return _ec34.derive_private_key(int.from_bytes(_D34(b64), "big"), _ec34.SECP256R1())
+
+
+_rfc_out34 = _wp34.encrypt(_D34(_RFC34["plaintext"]), _D34(_RFC34["ua_public"]), _D34(_RFC34["auth"]),
+                           salt=_D34(_RFC34["salt"]), as_private=_p256(_RFC34["as_private"]))
+_rfc_back34 = _decrypt34(_D34(_RFC34["result"]), _p256(_RFC34["ua_private"]), _D34(_RFC34["auth"]))
+_rt_ua34 = _ec34.generate_private_key(_ec34.SECP256R1())
+_rt_auth34 = b"0123456789abcdef"
+_rt_pub34 = _rt_ua34.public_key().public_bytes(_ser34.Encoding.X962, _ser34.PublicFormat.UncompressedPoint)
+_rt_a34 = _wp34.encrypt("שלום, round trip".encode(), _rt_pub34, _rt_auth34)
+_rt_b34 = _wp34.encrypt("שלום, round trip".encode(), _rt_pub34, _rt_auth34)
+check(
+    "34a encryption: webpush.encrypt reproduces RFC 8291 Appendix A byte for byte (the RFC's salt and sender key), "
+    "the test's own decrypter (HKDF from the cryptography package, not webpush's) reads the RFC's ciphertext back to "
+    "its plaintext, and a real send — fresh salt, fresh sender key — differs every time and still decrypts",
+    _B34(_rfc_out34) == _RFC34["result"]
+    and _rfc_back34 == b"When I grow up, I want to be a watermelon"
+    and _rt_a34 != _rt_b34 and _rt_a34[:16] != _rt_b34[:16]
+    and _decrypt34(_rt_a34, _rt_ua34, _rt_auth34) == "שלום, round trip".encode(),
+    f"{_B34(_rfc_out34)[:40]}… back={_rfc_back34[:40]!r}",
+)
+
+_VPUB34, _VPRIV34 = _wp34.generate_keys()
+_v34 = _wp34._load_vapid(_VPRIV34, _VPUB34, "mailto:smoke34@example.com")
+_vh34 = _wp34.vapid_authorization("https://FCM.googleapis.com/fcm/send/abc", _v34, now=1_800_000_000) if _v34 else ""
+_vt34 = _vh34[len("vapid t="):].split(", k=")[0] if _vh34.startswith("vapid t=") else ".."
+_vparts34 = (_vt34.split(".") + ["", "", ""])[:3]
+
+
+def _vapid_ok34():  # noqa: ANN202
+    try:
+        sig = _D34(_vparts34[2])
+        der = _eds34(int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big"))
+        _ec34.EllipticCurvePublicKey.from_encoded_point(_ec34.SECP256R1(), _D34(_VPUB34)).verify(
+            der, f"{_vparts34[0]}.{_vparts34[1]}".encode(), _ec34.ECDSA(_hashes34.SHA256()))
+        return True
+    except Exception:  # noqa: BLE001 - a bad signature is the failure being looked for
+        return False
+
+
+_vclaims34 = _json34.loads(_D34(_vparts34[1]) or b"{}") if _vparts34[1] else {}
+_other_pub34, _other_priv34 = _wp34.generate_keys()
+_pem34 = _ec34.generate_private_key(_ec34.SECP256R1())
+_pem_text34 = _pem34.private_bytes(_ser34.Encoding.PEM, _ser34.PrivateFormat.PKCS8, _ser34.NoEncryption()).decode()
+_pem_pub34 = _B34(_pem34.public_key().public_bytes(_ser34.Encoding.X962, _ser34.PublicFormat.UncompressedPoint))
+check(
+    "34a VAPID (RFC 8292): the Authorization header is `vapid t=<JWT>, k=<public key>`, its ES256 signature verifies "
+    "with the configured public key, the audience is the endpoint's origin in lower case, it expires 12 hours out "
+    "and names the subject; a pair whose halves do not belong together, a subject that is neither mailto: nor https:, "
+    "and a 31-byte private key each load as NO keys (push off), while a PEM private key with its own public key loads",
+    _v34 is not None and _vh34.endswith(f", k={_VPUB34}") and _vapid_ok34()
+    and _json34.loads(_D34(_vparts34[0])) == {"typ": "JWT", "alg": "ES256"}
+    and _vclaims34 == {"aud": "https://fcm.googleapis.com", "exp": 1_800_000_000 + 43200, "sub": "mailto:smoke34@example.com"}
+    and _wp34._load_vapid(_other_priv34, _VPUB34, "mailto:smoke34@example.com") is None
+    and _wp34._load_vapid(_VPRIV34, _VPUB34, "smoke34@example.com") is None
+    and _wp34._load_vapid(_B34(_D34(_VPRIV34)[:31]), _VPUB34, "mailto:smoke34@example.com") is None
+    and _wp34._load_vapid(_pem_text34, _pem_pub34, "https://app.jobfinder.test") is not None,
+    f"{_vh34[:50]}… claims={_vclaims34}",
+)
+
+_ALLOWED34 = [
+    "https://fcm.googleapis.com/fcm/send/dQw4w9WgXcQ:APA91b",
+    "https://fcm.googleapis.com/wp/dQw4w9WgXcQ",
+    "https://fcm.googleapis.com:443/wp/explicit-port",
+    "https://updates.push.services.mozilla.com/wpush/v2/gAAAAAB",
+    "https://web.push.apple.com/QOzA1b2c3",
+    "https://wns2-par02p.notify.windows.com/w/?token=BQYAAAB",
+    "https://db5p.notify.windows.com/w/?token=x",
+]
+_REFUSED34 = [
+    "https://fcm.googleapis.com.evil.com/fcm/send/x",  # the host as a lookalike's first labels
+    "http://fcm.googleapis.com/fcm/send/x",  # not https
+    "https://169.254.169.254/latest/meta-data/",  # cloud metadata, an IP literal
+    "https://[::1]/push",  # an IPv6 literal
+    "https://127.0.0.1:8000/push",
+    "https://evil-notify.windows.com/w/?token=x",  # a lookalike with no dot before the suffix
+    "https://notify.windows.com/w/?token=x",  # the bare suffix is no push host
+    "https://fcm.googleapis.com@evil.com/x",  # userinfo
+    "https://user:pw@fcm.googleapis.com/x",
+    "https://fcm.googleapis.com:8443/x",  # another port
+    "https://fcm.googleapis.com./x",  # a trailing dot
+    "https://fcm.googleapis.com/",  # no subscription path
+    "https://fcm.googleapis.com\\@evil.com/x",
+    "https://fcm.googleapis.com/x y",
+    "https://a..notify.windows.com/x",
+    "ftp://fcm.googleapis.com/x",
+    "https://fcm.googleapis.com/" + "x" * 2100,
+    "",
+]
+_allow_bad34 = [u for u in _ALLOWED34 if not _wp34.push_endpoint_allowed(u)]
+_refuse_bad34 = [u for u in _REFUSED34 if _wp34.push_endpoint_allowed(u)]
+check(
+    "34a the push allowlist: FCM, Mozilla's autopush, Apple's web push and a regional Windows host are accepted — "
+    "the false-positive half: an endpoint on each real service must pass — while a lookalike "
+    "(fcm.googleapis.com.evil.com, evil-notify.windows.com), http, an IPv4 or IPv6 literal, cloud metadata, userinfo, "
+    "another port, a trailing dot, a bare suffix, no path, a backslash or a space, and an oversized URL are refused",
+    _allow_bad34 == [] and _refuse_bad34 == [] and not _wp34.push_endpoint_allowed(None),
+    f"wrongly refused={_allow_bad34} wrongly allowed={_refuse_bad34}",
+)
+
+_door34: list[tuple[str, dict, bytes]] = []
+_door_status34 = [201]
+_real_push_transport34 = _wp34._transport
+
+
+def _door_fake34(method, url, headers, body, timeout):  # noqa: ANN001
+    _door34.append((url, dict(headers), body))
+    return _door_status34.pop(0) if len(_door_status34) > 1 else _door_status34[0]
+
+
+_wp34._transport = _door_fake34
+try:
+    try:
+        _wp34._post("https://169.254.169.254/latest/meta-data/", {}, b"x")
+        _door_refused34 = False
+    except _wp34.PushRefused:
+        _door_refused34 = True
+    _door_before34 = list(_door34)
+    _door_ok34 = _wp34._post("https://fcm.googleapis.com/fcm/send/door34", {"TTL": "1"}, b"x")
+finally:
+    _wp34._transport = _real_push_transport34
+    _door34.clear()
+    _door_status34[:] = [201]
+check(
+    "34a the door checks again at SEND time: `_post` refuses a cloud-metadata endpoint with PushRefused before the "
+    "transport is reached (a row that slipped past the subscribe check still cannot be sent to), and passes an "
+    "allowlisted one straight through with its status",
+    _door_refused34 and _door_before34 == [] and _door_ok34 == 201,
+    f"refused={_door_refused34} before={_door_before34} ok={_door_ok34}",
+)
+
+
+def _net_calls_outside34(source, allowed):  # noqa: ANN001
+    """Each network-opening call in `source` that is not inside a function named in `allowed`: (function, what)."""
+    tree = _ast34.parse(source)
+    spans = [(n.lineno, n.end_lineno, n.name) for n in _ast34.walk(tree) if isinstance(n, _ast34.FunctionDef)]
+    found = []
+    for node in _ast34.walk(tree):
+        if not isinstance(node, _ast34.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, _ast34.Attribute) else func.id if isinstance(func, _ast34.Name) else ""
+        if name not in ("urlopen", "build_opener", "open", "Request", "HTTPSConnection", "create_connection"):
+            continue
+        owner = min((s for s in spans if s[0] <= node.lineno <= s[1]), key=lambda s: s[1] - s[0], default=(0, 0, ""))
+        if owner[2] not in allowed:
+            found.append((owner[2] or "<module>", name))
+    return found
+
+
+_wp_src34 = _insp34.getsource(_wp34)
+_wp_tree34 = _ast34.parse(_wp_src34)
+_post_callers34 = sorted({
+    fn.name for fn in _ast34.walk(_wp_tree34) if isinstance(fn, _ast34.FunctionDef)
+    for node in _ast34.walk(fn) if isinstance(node, _ast34.Call)
+    and isinstance(node.func, _ast34.Name) and node.func.id == "_post"
+})
+_probe_leak34 = _net_calls_outside34(
+    "import urllib.request\ndef _post():\n    urllib.request.urlopen('x')\ndef leak():\n    urllib.request.urlopen('y')\n",
+    {"_post"},
+)
+check(
+    "34a structure: in webpush.py the network is opened only inside `_post` (every urlopen, build_opener, .open and "
+    "Request call is in it), and `_post` is called only by `send_to`; the detector is live — a synthetic module that "
+    "opens a URL in a second function is caught there",
+    _net_calls_outside34(_wp_src34, {"_post"}) == [] and _post_callers34 == ["send_to"]
+    and _probe_leak34 == [("leak", "urlopen")],
+    f"outside={_net_calls_outside34(_wp_src34, {'_post'})} callers={_post_callers34} probe={_probe_leak34}",
+)
+
+# --- 34b. The notification's words: the email's decision, short, in the device's language -------------------------
+_PB34 = "https://app.jobfinder.test"
+_pm1_34 = _JM32(title="Backend Engineer", company="Acme", overall=74.5, jd_text="x", source="linkedin",
+                url="https://www.linkedin.com/jobs/view/34?refId=a&x=1")
+_pm_many34 = [
+    _JM32(title="QA Lead", company="Beta", overall=81.0, jd_text="x", url="https://b.test/1"),
+    _JM32(title="Data Engineer", company="Gamma", overall=90.4, jd_text="x", url="https://b.test/2"),
+    _JM32(title="SRE", company="Delta", overall=88.0, jd_text="x", url="https://b.test/3"),
+]
+_pp_en34 = _al32.build_alert_push([_pm1_34], "en", _PB34)
+_pp_he34 = _al32.build_alert_push([_pm1_34], "he", _PB34)
+_pp_many_en34 = _al32.build_alert_push(_pm_many34, "en", _PB34)
+_pp_many_he34 = _al32.build_alert_push(_pm_many34, "he", _PB34)
+_pp_nobase34 = _al32.build_alert_push([_pm1_34], "en", "")
+_long34 = _JM32(title="מהנדס/ת תוכנה בכיר/ה " * 20, company="חברה בע\"מ " * 10, overall=77.0, jd_text="x",
+                url="https://b.test/long")
+_pp_long34 = _al32.build_alert_push([_long34], "he", _PB34)
+_email_link34 = _al32._job_link(_pm1_34, _PB34)
+check(
+    "34b the notification says the email's thing: one job above the bar reads 'A new job for you' / "
+    "'משרה חדשה בשבילך' with the job, its company and the match the app shows (74.5 is 75, displayed_score, never "
+    "round()), and opens THE EMAIL'S OWN LINK for it as a path on the app (/jobs?open=<posting, quoted whole>); in "
+    "Hebrew it is marked rtl",
+    _pp_en34["title"] == "A new job for you" and _pp_en34["body"] == "Backend Engineer · Acme · 75% match"
+    and _pp_en34["url"] == _email_link34[len(_PB34):] == "/jobs?open=" + _quote34(_pm1_34.url, safe="")
+    and _pp_he34["title"] == "משרה חדשה בשבילך" and _pp_he34["body"] == "Backend Engineer · Acme · התאמה 75%"
+    and _pp_he34["dir"] == "rtl" and _pp_he34["lang"] == "he" and _pp_en34["dir"] == "ltr"
+    and _pp_he34["url"] == _pp_en34["url"],
+    f"{_pp_en34} | {_pp_he34}",
+)
+check(
+    "34b several jobs: the title counts them ('3 new jobs for you' / '3 משרות חדשות בשבילך'), the body names the "
+    "BEST by match (Data Engineer, 90), and the tap opens the matches (/jobs), where they all are; with no app "
+    "address a single job opens /jobs too, never the posting's own site; a very long Hebrew title and company are "
+    "clipped, and the whole payload stays well inside one push record",
+    _pp_many_en34["title"] == "3 new jobs for you"
+    and _pp_many_en34["body"] == "Best: Data Engineer · Gamma · 90% match" and _pp_many_en34["url"] == "/jobs"
+    and _pp_many_he34["title"] == "3 משרות חדשות בשבילך" and "Data Engineer · Gamma · התאמה 90%" in _pp_many_he34["body"]
+    and _pp_nobase34["url"] == "/jobs"
+    and len(_pp_long34["body"]) < 130 and "…" in _pp_long34["body"]
+    and len(_json34.dumps(_pp_long34, ensure_ascii=False).encode()) < _wp34.MAX_PAYLOAD,
+    f"{_pp_many_en34} | {_pp_many_he34['title']} | {len(_pp_long34['body'])}",
+)
+_em_text34 = _al32.build_alert_email([_pm1_34], _SC32(job_title="Backend Engineer"), 75)[1]
+_em_html34 = _al32.build_alert_email_html([_pm1_34], _SC32(job_title="Backend Engineer"), min_score=75)
+check(
+    "34b the email says the same number as the notification: a 74.5 prints '75' in both bodies of the email "
+    "(displayed_score, the bar's own rounding) — Python's round() printed 74 under a footer promising 75% or above",
+    "— match 75%" in _em_text34 and ">75% match</span>" in _em_html34 and "74%" not in _em_text34 + _em_html34,
+    _em_text34[:160],
+)
+
+
+# --- 34c. The routes, the morning, the pruning and the wipe --------------------------------------------------------
+def _ua34():  # noqa: ANN202
+    """A browser's key pair and auth secret: (private key, the subscription's keys dict)."""
+    key = _ec34.generate_private_key(_ec34.SECP256R1())
+    secret = os.urandom(16)
+    return key, secret, {"p256dh": _B34(key.public_key().public_bytes(_ser34.Encoding.X962,
+                                                                      _ser34.PublicFormat.UncompressedPoint)),
+                         "auth": _B34(secret)}
+
+
+def _devices34(uid):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        return sorted((r.endpoint, r.lang, int(r.failure_count or 0), r.last_success_at is not None)
+                      for r in d.execute(_sel32(_PS34).where(_PS34.user_id == uid)).scalars())
+    finally:
+        d.close()
+
+
+def _add_device34(uid, endpoint, keys, lang="en"):  # noqa: ANN001
+    d = SessionLocal()
+    try:
+        d.add(_PS34(user_id=uid, endpoint=endpoint, endpoint_key=_wp34.endpoint_key(endpoint),
+                    p256dh=keys["p256dh"], auth=keys["auth"], lang=lang))
+        d.commit()
+    finally:
+        d.close()
+
+
+def _payloads34(calls, keyring):  # noqa: ANN001
+    """{endpoint: the decrypted JSON} for recorded pushes, with the browsers' private keys in `keyring`."""
+    out = {}
+    for url, _headers, body in calls:
+        if url not in keyring:  # a push to a device no check set up is recorded, never a crash
+            out[url] = {"unexpected device": True}
+            continue
+        key, secret = keyring[url]
+        try:
+            out[url] = _json34.loads(_decrypt34(body, key, secret))
+        except Exception as exc:  # noqa: BLE001 - an undecryptable push is the failure being looked for
+            out[url] = {"undecryptable": type(exc).__name__}
+    return out
+
+
+_EP_A1_34 = "https://fcm.googleapis.com/fcm/send/owner34-phone"
+_EP_A2_34 = "https://updates.push.services.mozilla.com/wpush/v2/owner34-laptop"
+_ua_a1_34, _sec_a1_34, _keys_a1_34 = _ua34()
+_ua_a2_34, _sec_a2_34, _keys_a2_34 = _ua34()
+_KEYRING34 = {_EP_A1_34: (_ua_a1_34, _sec_a1_34), _EP_A2_34: (_ua_a2_34, _sec_a2_34)}
+_prev34_env = _env29(VAPID_PUBLIC_KEY="", VAPID_PRIVATE_KEY="", VAPID_SUBJECT="", DAILY_PUSH_TEST_CAP="10",
+                     APP_BASE_URL=_PB34)
+_wp34._transport = _door_fake34
+_arm_tripwire32()
+try:
+    with TestClient(_fastapi_app) as _c34:
+        # Push OFF on this server: nothing is offered, stored or sent.
+        _a_uid34, _A34_H = _alert_user32(_c34, "Push Owner 34", email="push.owner34@example.com")
+        _off_get34 = _c34.get("/push/devices", headers=_A34_H)
+        _off_post34 = _c34.post("/push/devices", json={"endpoint": _EP_A1_34, "keys": _keys_a1_34, "lang": "en"},
+                                headers=_A34_H)
+        _off_test34 = _c34.post("/push/test", json={"endpoint": _EP_A1_34}, headers=_A34_H)
+        _off_stored34 = _devices34(_a_uid34)
+        _add_device34(_a_uid34, _EP_A1_34, _keys_a1_34)  # a row left from when push was on
+        _off_run34, _off_err34 = _run_alert32(_a_uid34, force=True, send_fn=_Outbox32(),
+                                              search_fn=_AlertSearch32(_alert_matches32("push34-off", 91)))
+        _off_calls34 = list(_door34)
+        _off_left34 = _devices34(_a_uid34)
+        check(
+            "34c push OFF (no VAPID keys): /push/devices says configured=false with no key and no devices, turning a "
+            "device on is a 404 push_unconfigured that stores nothing, a test is refused the same way, and a morning "
+            "with a job above the bar pushes NOTHING even to a device row left from when it was on — and leaves that "
+            "row exactly as it was (no failure counted toward dropping it: switching push off on the server must not "
+            "slowly delete everyone's devices) — while it still emails, which is the rest of the alert working",
+            _off_get34.status_code == 200 and _off_get34.json() == {"configured": False, "public_key": "", "devices": []}
+            and _off_post34.status_code == 404 and _j28(_off_post34).get("detail") == {"code": "push_unconfigured"}
+            and _off_test34.status_code == 404 and _off_stored34 == []
+            and _off_err34 is None and _off_run34 is not None and _off_run34.emailed and _off_run34.pushed == 0
+            and _off_calls34 == [] and _off_left34 == [(_EP_A1_34, "en", 0, False)],
+            f"{_off_get34.text[:90]} {_off_post34.status_code} {_off_test34.status_code} run={_off_run34} "
+            f"calls={len(_off_calls34)} left={_off_left34}",
+        )
+        _prev34b_env = _env29(VAPID_PUBLIC_KEY=_VPUB34, VAPID_PRIVATE_KEY=_VPRIV34,
+                              VAPID_SUBJECT="mailto:smoke34@example.com")
+        d34 = SessionLocal()
+        try:
+            for _row34 in d34.execute(_sel32(_PS34).where(_PS34.user_id == _a_uid34)).scalars():
+                d34.delete(_row34)
+            d34.commit()
+        finally:
+            d34.close()
+
+        # Turning devices on.
+        _on_get34 = _c34.get("/push/devices", headers=_A34_H)
+        _sub_a1_34 = _c34.post("/push/devices", json={"endpoint": _EP_A1_34, "keys": _keys_a1_34, "lang": "en"},
+                               headers=_A34_H)
+        _sub_a2_34 = _c34.post("/push/devices", json={"endpoint": _EP_A2_34, "keys": _keys_a2_34, "lang": "he-IL"},
+                               headers=_A34_H)
+        _resub34 = _c34.post("/push/devices", json={"endpoint": _EP_A1_34, "keys": _keys_a1_34, "lang": "he"},
+                             headers=_A34_H)
+        _after_resub34 = _devices34(_a_uid34)
+        _c34.post("/push/devices", json={"endpoint": _EP_A1_34, "keys": _keys_a1_34, "lang": "en"}, headers=_A34_H)
+        _list34 = _c34.get("/push/devices", headers=_A34_H)
+        _bad_ep34 = [
+            _c34.post("/push/devices", json={"endpoint": ep, "keys": _keys_a1_34, "lang": "en"}, headers=_A34_H)
+            for ep in ("https://169.254.169.254/latest/meta-data/", "https://fcm.googleapis.com.evil.com/fcm/send/x",
+                       "http://fcm.googleapis.com/fcm/send/x")
+        ]
+        _bad_keys34 = [
+            _c34.post("/push/devices", json={"endpoint": "https://fcm.googleapis.com/fcm/send/badkeys34",
+                                             "keys": keys, "lang": "en"}, headers=_A34_H)
+            for keys in ({"p256dh": _keys_a1_34["p256dh"], "auth": "c2hvcnQ"},
+                         {"p256dh": _B34(b"\x04" + b"\x01" * 64), "auth": _keys_a1_34["auth"]},
+                         {"p256dh": "", "auth": ""})
+        ]
+        check(
+            "34c turning devices on: with keys configured the page is told the public key; a phone (FCM, en) and a "
+            "laptop (Mozilla, he-IL read as he) each store one row; the same endpoint sent again UPDATES its row "
+            "(language he, still two rows) rather than adding one; the list hands each device's endpoint back so "
+            "a page can tell which is itself",
+            _on_get34.json().get("configured") is True and _on_get34.json().get("public_key") == _VPUB34
+            and _sub_a1_34.status_code == 200 and _sub_a2_34.status_code == 200 and _resub34.status_code == 200
+            and [(e, lang) for e, lang, _f, _s in _after_resub34] == [(_EP_A1_34, "he"), (_EP_A2_34, "he")]
+            and sorted((d["endpoint"], d["lang"]) for d in _list34.json().get("devices", []))
+            == [(_EP_A1_34, "en"), (_EP_A2_34, "he")]
+            and _list34.headers.get("cache-control") == "no-store",
+            f"{_sub_a1_34.text[:80]} {_after_resub34} {_list34.text[:160]}",
+        )
+        check(
+            "34c the subscribe door: an endpoint on cloud metadata, on a lookalike host, or over http is a 400 "
+            "push_endpoint, and keys that are not a 16-byte secret and a point on P-256 are a 400 push_keys — "
+            "none of them stores a row (the account still holds exactly its two devices)",
+            all(r.status_code == 400 and _j28(r).get("detail") == {"code": "push_endpoint"} for r in _bad_ep34)
+            and all(r.status_code == 400 and _j28(r).get("detail") == {"code": "push_keys"} for r in _bad_keys34)
+            and len(_devices34(_a_uid34)) == 2,
+            f"{[r.status_code for r in _bad_ep34]} {[r.text[:60] for r in _bad_keys34]} {_devices34(_a_uid34)}",
+        )
+
+        # A test notification: one encrypted, signed POST to that device, and its own daily count.
+        _door34.clear()
+        _test34 = _c34.post("/push/test", json={"endpoint": _EP_A1_34}, headers=_A34_H)
+        _test_calls34 = list(_door34)
+        _test_payload34 = _payloads34(_test_calls34, _KEYRING34).get(_EP_A1_34, {})
+        _test_h34 = _test_calls34[0][1] if _test_calls34 else {}
+        _b_uid34, _B34_H = _alert_user32(_c34, "Push Stranger 34", email="push.stranger34@example.com")
+        _door34.clear()
+        _stranger_test34 = _c34.post("/push/test", json={"endpoint": _EP_A1_34}, headers=_B34_H)
+        _stranger_calls34 = list(_door34)
+        _stranger_del34 = _c34.request("DELETE", "/push/devices", json={"endpoint": _EP_A2_34}, headers=_B34_H)
+        d34 = SessionLocal()
+        try:
+            _tests_counted34 = int(d34.execute(
+                _sel32(_func32.sum(_UL29.count)).where(_UL29.user_id == _a_uid34, _UL29.action == "push_test")
+            ).scalar() or 0)
+            _stranger_counted34 = int(d34.execute(
+                _sel32(_func32.sum(_UL29.count)).where(_UL29.user_id == _b_uid34, _UL29.action == "push_test")
+            ).scalar() or 0)
+        finally:
+            d34.close()
+        check(
+            "34c 'Send a test notification': one POST to that device only, signed with VAPID (the key the page "
+            "subscribed with), aes128gcm-encrypted to the browser's own key (it decrypts, in the device's language), "
+            "with a TTL; the owner's daily push_test count is 1 and the monthly pool is untouched",
+            _test34.status_code == 200 and _test34.json() == {"status": "sent"}
+            and [c[0] for c in _test_calls34] == [_EP_A1_34]
+            and _test_h34.get("Authorization", "").startswith("vapid t=")
+            and _test_h34.get("Authorization", "").endswith(f", k={_VPUB34}")
+            and _test_h34.get("Content-Encoding") == "aes128gcm" and _test_h34.get("TTL") == str(_wp34.TEST_TTL_S)
+            and _test_payload34.get("title") == "JobFinder" and _test_payload34.get("lang") == "en"
+            and _test_payload34.get("url") == "/jobs"
+            and _tests_counted34 == 1 and _events32(_a_uid34) == [e for e in _events32(_a_uid34) if e[1] == "job_alert"],
+            f"{_test34.text[:80]} calls={[c[0] for c in _test_calls34]} payload={_test_payload34} "
+            f"counted={_tests_counted34}",
+        )
+        check(
+            "34c one account cannot reach another's device: a stranger's test aimed at the owner's endpoint is a 404 "
+            "push_device that sends nothing and counts nothing, and the stranger's DELETE of the owner's endpoint "
+            "removes nothing",
+            _stranger_test34.status_code == 404 and _j28(_stranger_test34).get("detail") == {"code": "push_device"}
+            and _stranger_calls34 == [] and _stranger_counted34 == 0
+            and _stranger_del34.status_code == 200 and _stranger_del34.json() == {"removed": 0}
+            and len(_devices34(_a_uid34)) == 2,
+            f"{_stranger_test34.status_code} {_stranger_test34.text[:80]} {_stranger_del34.text} {_devices34(_a_uid34)}",
+        )
+
+        # The morning: each device, in its own language, only when the email's rule says there is news.
+        _door34.clear()
+        _mo_run34, _mo_err34 = _run_alert32(_a_uid34, force=True, send_fn=_Outbox32(),
+                                            search_fn=_AlertSearch32(_alert_matches32("push34-morning", 88, 60)))
+        _mo_payloads34 = _payloads34(list(_door34), _KEYRING34)
+        _mo_events34 = _events32(_a_uid34)
+        _mo_link34 = "/jobs?open=" + _quote34("https://alert32.test/push34-morning/0", safe="")
+        check(
+            "34c a morning with one job above the bar (88; the 60 is below it) notifies BOTH devices, each in its own "
+            "language — the phone 'A new job for you', the laptop 'משרה חדשה בשבילך' — each opening that job "
+            "through the email's link; the run says pushed=2 and emailed, and keeps its ONE job_alert use because "
+            "the email went (pushing never decides it)",
+            _mo_err34 is None and _mo_run34 is not None and _mo_run34.pushed == 2 and _mo_run34.emailed
+            and _mo_run34.above_min == 1
+            and _mo_payloads34.get(_EP_A1_34, {}).get("title") == "A new job for you"
+            and _mo_payloads34.get(_EP_A2_34, {}).get("title") == "משרה חדשה בשבילך"
+            and _mo_payloads34.get(_EP_A1_34, {}).get("body") == "Alert32 push34-morning 0 · AlertCo32 · 88% match"
+            and {p.get("url") for p in _mo_payloads34.values()} == {_mo_link34}
+            and [(f, dl, rf) for _i, f, dl, rf, _r in _mo_events34 if f == "job_alert"][-1:] == [("job_alert", 1, 0)]
+            and all(last for _e, _l, _f, last in _devices34(_a_uid34)),
+            f"run={_mo_run34} err={_mo_err34} payloads={_mo_payloads34} events={_shape32(_mo_events34)[-3:]}",
+        )
+        _door34.clear()
+        _below_run34, _ = _run_alert32(_a_uid34, force=True, send_fn=_Outbox32(),
+                                       search_fn=_AlertSearch32(_alert_matches32("push34-below", 70, 50)))
+        _below_calls34 = list(_door34)
+        _below_events34 = _events32(_a_uid34)[len(_mo_events34):]
+        _door34.clear()
+        _nosmtp_run34, _ = _run_alert32(_a_uid34, force=True, send_fn=None,
+                                        search_fn=_AlertSearch32(_alert_matches32("push34-nosmtp", 95)))
+        _nosmtp_calls34 = list(_door34)
+        _nosmtp_events34 = _events32(_a_uid34)[len(_mo_events34) + len(_below_events34):]
+        check(
+            "34c the email's rule decides, and pushing never keeps a use: a morning whose new jobs are all below the "
+            "bar pushes nothing and gives its use back; a morning with a job above the bar and NO way to email "
+            "(no SMTP) still notifies both devices — and gives its use back like any morning that mailed nothing",
+            _below_run34 is not None and _below_run34.pushed == 0 and _below_calls34 == []
+            and _refunded32(_below_events34, "job_alert")
+            and _nosmtp_run34 is not None and not _nosmtp_run34.emailed and _nosmtp_run34.pushed == 2
+            and sorted(c[0] for c in _nosmtp_calls34) == sorted([_EP_A1_34, _EP_A2_34])
+            and _refunded32(_nosmtp_events34, "job_alert"),
+            f"below={_below_run34} {_shape32(_below_events34)} nosmtp={_nosmtp_run34} {_shape32(_nosmtp_events34)}",
+        )
+
+        # Pruning: a 410 deletes, a 404 deletes, other failures count to MAX_FAILURES, a success resets the count.
+        _door34.clear()
+        _door_status34[:] = [410, 201]
+        _prune_run34, _ = _run_alert32(_a_uid34, force=True, send_fn=_Outbox32(),
+                                       search_fn=_AlertSearch32(_alert_matches32("push34-prune", 93)))
+        _door_status34[:] = [201]
+        _prune_left34 = _devices34(_a_uid34)
+        _e_uid34, _E34_H = _alert_user32(_c34, "Push Flaky 34", email="push.flaky34@example.com")
+        _EP_E34 = "https://web.push.apple.com/flaky34"
+        _ua_e34, _sec_e34, _keys_e34 = _ua34()
+        _add_device34(_e_uid34, _EP_E34, _keys_e34)
+        _EP_F34 = "https://wns2-par02p.notify.windows.com/w/?token=gone34"
+        _add_device34(_e_uid34, _EP_F34, _ua34()[2])
+
+        def _notify34(status):  # noqa: ANN001
+            _door_status34[:] = [status]
+            d = SessionLocal()
+            try:
+                return _wp34.notify_user(d, _e_uid34, lambda lang: {"title": "t", "body": "b", "url": "/jobs"})
+            finally:
+                d.close()
+                _door_status34[:] = [201]
+
+        _flaky_seen34 = []
+        for _st34 in (500, 500):
+            _notify34(_st34)
+        _flaky_seen34.append([(e, f) for e, _l, f, _s in _devices34(_e_uid34)])
+        _notify34(201)
+        _flaky_seen34.append([(e, f) for e, _l, f, _s in _devices34(_e_uid34)])
+        for _st34 in (503, 429, 400, 403, 500):
+            _notify34(_st34)
+        _flaky_seen34.append(_devices34(_e_uid34))
+        _add_device34(_e_uid34, _EP_F34, _ua34()[2])
+        _notify34(404)
+        _flaky_seen34.append(_devices34(_e_uid34))
+        check(
+            "34c pruning: a push service answering 410 (the phone's subscription is gone) deletes THAT device during "
+            "the morning while the other still gets its notification; 404 deletes too; any other failure only "
+            "counts (two 500s leave the device with failure_count 2), a success resets the count to 0, and "
+            f"{_wp34.MAX_FAILURES} failures in a row drop the device",
+            _prune_run34 is not None and _prune_run34.pushed == 1
+            and [e for e, _l, _f, _s in _prune_left34] == [_EP_A2_34]
+            and _flaky_seen34[0] == [(_EP_E34, 2), (_EP_F34, 2)]
+            and _flaky_seen34[1] == [(_EP_E34, 0), (_EP_F34, 0)]
+            and _flaky_seen34[2] == [] and _flaky_seen34[3] == [],
+            f"run={_prune_run34} left={_prune_left34} flaky={_flaky_seen34}",
+        )
+
+        # The daily cap on the test, and turning a device off.
+        _prev34c_env = _env29(DAILY_PUSH_TEST_CAP="2")
+        try:
+            _g_uid34, _G34_H = _alert_user32(_c34, "Push Tester 34", email="push.tester34@example.com")
+            _EP_G34 = "https://fcm.googleapis.com/fcm/send/tester34"
+            _c34.post("/push/devices", json={"endpoint": _EP_G34, "keys": _ua34()[2], "lang": "en"}, headers=_G34_H)
+            _door34.clear()
+            _cap_runs34 = [_c34.post("/push/test", json={"endpoint": _EP_G34}, headers=_G34_H) for _ in range(3)]
+            _cap_calls34 = list(_door34)
+        finally:
+            _restore29(_prev34c_env)
+        _off_del34 = _c34.request("DELETE", "/push/devices", json={"endpoint": _EP_G34}, headers=_G34_H)
+        _off_again34 = _c34.request("DELETE", "/push/devices", json={"endpoint": _EP_G34}, headers=_G34_H)
+        check(
+            "34c the test's own daily cap: under a cap of 2, two tests send and the third is a 429 daily_limit for "
+            "push_test that sends nothing; turning the device off deletes its row (removed 1), and a second "
+            "turn-off removes nothing",
+            [r.status_code for r in _cap_runs34] == [200, 200, 429]
+            and _j28(_cap_runs34[2]).get("detail") == {"code": "daily_limit", "action": "push_test", "cap": 2}
+            and len(_cap_calls34) == 2
+            and _off_del34.json() == {"removed": 1} and _off_again34.json() == {"removed": 0}
+            and _devices34(_g_uid34) == [],
+            f"{[r.status_code for r in _cap_runs34]} {_cap_runs34[2].text[:100]} calls={len(_cap_calls34)} "
+            f"{_off_del34.text} {_off_again34.text}",
+        )
+
+        # A browser holds ONE subscription: another account that turns it on takes it over.
+        _move34 = _c34.post("/push/devices", json={"endpoint": _EP_A2_34, "keys": _keys_a2_34, "lang": "en"},
+                            headers=_B34_H)
+        check(
+            "34c one browser, one owner: when another account signs in on the same browser and turns notifications "
+            "on, the endpoint MOVES to that account — the first account no longer holds it, so its alerts stop "
+            "reaching a browser someone else now uses",
+            _move34.status_code == 200 and _devices34(_a_uid34) == []
+            and [e for e, _l, _f, _s in _devices34(_b_uid34)] == [_EP_A2_34],
+            f"{_move34.text[:80]} a={_devices34(_a_uid34)} b={_devices34(_b_uid34)}",
+        )
+
+        # Both privacy doors take the devices with them.
+        _w_uid34, _W34_H = _alert_user32(_c34, "Push Wipe 34", email="push.wipe34@example.com")
+        _k_uid34, _K34_H = _alert_user32(_c34, "Push Close 34", email="push.close34@example.com")
+        for _i34 in range(2):
+            _c34.post("/push/devices", json={"endpoint": f"https://fcm.googleapis.com/fcm/send/wipe34-{_i34}",
+                                             "keys": _ua34()[2], "lang": "en"}, headers=_W34_H)
+        _c34.post("/push/devices", json={"endpoint": "https://fcm.googleapis.com/fcm/send/close34",
+                                         "keys": _ua34()[2], "lang": "he"}, headers=_K34_H)
+        _before_wipe34 = (len(_devices34(_w_uid34)), len(_devices34(_k_uid34)))
+        _wipe34 = _c34.request("DELETE", "/profile/data", headers=_W34_H)
+        _close34 = _c34.request("DELETE", "/profile/account", headers=_K34_H)
+        check(
+            "34c both privacy doors delete the devices: 'Delete all my data' reports push_devices=2 and the account "
+            "holds none after it (its phone stops getting alerts, not only forgets them); 'Close my account' "
+            "reports push_devices=1 and leaves none",
+            _before_wipe34 == (2, 1)
+            and _wipe34.status_code == 200 and _wipe34.json().get("push_devices") == 2 and _devices34(_w_uid34) == []
+            and _close34.status_code == 200 and (_close34.json().get("data") or {}).get("push_devices") == 1
+            and _devices34(_k_uid34) == [],
+            f"before={_before_wipe34} wipe={_wipe34.text[:160]} close={_close34.text[:120]}",
+        )
+        _restore29(_prev34b_env)
+finally:
+    _wp34._transport = _real_push_transport34
+    _disarm_tripwire32()
+    _restore29(_prev34_env)
+check(
+    "34c the sweep's push rows reached only the recorder: the one test the sweep drove went to the sweep friend's "
+    "own endpoint, and nothing in section 32 or 34 reached a real push service (the transport is put back)",
+    _sweep_pushes32 == [_SWEEP_SUB32["endpoint"]] and _wp34._transport is None,
+    f"{_sweep_pushes32} transport={_wp34._transport}",
 )
 
 _reached_end = True

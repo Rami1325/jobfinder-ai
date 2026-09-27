@@ -758,6 +758,27 @@ export interface AlertRunResult {
   // "monthly_limit" when a scheduled morning did not run for want of a use (ran
   // false, error empty); "" when the run was not skipped. Absent on older backends.
   skipped_reason?: string;
+  // PLAN 32: devices the run's notification reached. Absent on older backends.
+  pushed?: number;
+}
+/** One device the morning alert is pushed to (PLAN 32; backend `PushDeviceOut`). */
+export interface PushDevice {
+  id: number;
+  endpoint: string;
+  lang: string;
+  created_at: string;
+  last_success_at: string;
+  failure_count: number;
+}
+/** GET /push/devices. `configured` false = the server sends no notifications,
+ * and the page draws no switch. */
+export interface PushDevices {
+  configured: boolean;
+  public_key: string;
+  devices: PushDevice[];
+}
+export interface PushTestResult {
+  status: "sent" | "gone" | "failed" | "network" | string;
 }
 export interface JobSearchResult {
   context: SearchContext;

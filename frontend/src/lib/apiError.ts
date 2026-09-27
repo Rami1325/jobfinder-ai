@@ -23,7 +23,9 @@ type LimitAction =
   | "jd_analyze"
   | "search_context"
   | "scan"
-  | "fetch";
+  | "fetch"
+  // PLAN 32: "Send a test notification", one POST to a push service per tap.
+  | "push_test";
 
 interface DailyLimitDetail {
   code: "daily_limit";
@@ -45,6 +47,7 @@ const LIMIT_KEYS: Record<LimitAction, string> = {
   search_context: "dailyLimit.searchContext",
   scan: "dailyLimit.scan",
   fetch: "dailyLimit.fetch",
+  push_test: "dailyLimit.pushTest",
 };
 
 // Prompt-size limits (backend app/llm/limits.py). Same structured-detail shape

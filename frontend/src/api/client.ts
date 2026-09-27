@@ -67,6 +67,9 @@ import type {
   UsagePassOut,
   PageImagesResult,
   FunnelOut,
+  PushDevice,
+  PushDevices,
+  PushTestResult,
 } from "../types";
 
 // In dev, requests go through the Vite proxy at /api -> http://localhost:8000.
@@ -713,6 +716,32 @@ export async function updateJobAlert(payload: {
 export async function runJobAlert(): Promise<AlertRunResult> {
   const { data } = await api.post<AlertRunResult>("/jobs/alerts/run");
   invalidateData("alert", "history"); // the run stamps bookkeeping + records hits
+  return data;
+}
+
+// Web push (PLAN 32). Never cached: the list says whether THIS browser is on,
+// and a stale answer would draw the switch in the wrong position.
+export async function getPushDevices(): Promise<PushDevices> {
+  const { data } = await api.get<PushDevices>("/push/devices");
+  return data;
+}
+
+export async function addPushDevice(payload: {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  lang: string;
+}): Promise<PushDevice> {
+  const { data } = await api.post<PushDevice>("/push/devices", payload);
+  return data;
+}
+
+export async function removePushDevice(endpoint: string): Promise<{ removed: number }> {
+  const { data } = await api.delete<{ removed: number }>("/push/devices", { data: { endpoint } });
+  return data;
+}
+
+export async function testPushDevice(endpoint: string): Promise<PushTestResult> {
+  const { data } = await api.post<PushTestResult>("/push/test", { endpoint });
   return data;
 }
 

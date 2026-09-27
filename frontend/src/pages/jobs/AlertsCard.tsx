@@ -4,12 +4,21 @@ import { useEffect, useId, useState, type Dispatch, type SetStateAction } from "
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Bell, X } from "lucide-react";
-import { getJobAlert, runJobAlert, searchContext, updateJobAlert } from "../../api/client";
+import {
+  addPushDevice,
+  getJobAlert,
+  getPushDevices,
+  runJobAlert,
+  searchContext,
+  updateJobAlert,
+} from "../../api/client";
 import { Button, Card, CardTitle, useToast, WhyNote } from "../../components/ui";
 import UsesNote from "../../components/UsesNote";
 import { apiErrorMessage } from "../../lib/apiError";
+import { currentSubscription, type PushSub } from "../../lib/push";
 import { formatUsesDate, useUses } from "../../lib/usesStore";
-import type { AlertSettings, ResumeModel, SearchContext } from "../../types";
+import type { AlertSettings, PushDevices, ResumeModel, SearchContext } from "../../types";
+import { PushRow, pushLang } from "./AlertChannels";
 import {
   allowsRemote,
   contextKey,
@@ -322,10 +331,27 @@ export function AlertsCard({
   // mornings wait for the 1st.
   const searchUses = useUses("search");
   const alertUses = useUses("job_alert");
+  // PLAN 32: this device's notifications. Read WITH the alert, so the card
+  // appears whole: a row arriving later would move everything under it. A
+  // server without push (or an older one) answers null and draws no row.
+  const [push, setPush] = useState<PushDevices | null>(null);
+  const [pushHere, setPushHere] = useState<PushSub | null>(null);
 
   useEffect(() => {
-    getJobAlert()
-      .then((s) => {
+    Promise.all([
+      getJobAlert(),
+      getPushDevices().catch(() => null),
+      currentSubscription(),
+    ])
+      .then(([s, devices, here]) => {
+        setPush(devices?.configured ? devices : null);
+        setPushHere(here);
+        // Keep a device's notifications in the language the app is in now
+        // (only for a device the server already holds: after "Delete all my
+        // data" this browser's old subscription must not quietly come back).
+        const mine = here && devices?.configured ? devices.devices.find((d) => d.endpoint === here.endpoint) : undefined;
+        if (here && mine && mine.lang !== pushLang(i18n.language))
+          void addPushDevice({ ...here, lang: pushLang(i18n.language) }).catch(() => {});
         setSettings(s);
         setEmail(s.email);
         setEnabled(s.enabled);
@@ -506,6 +532,19 @@ export function AlertsCard({
         <p className="mt-1 text-xs text-warn">
           {pausedDate ? tCommon("uses.alertPaused", { date: pausedDate }) : tCommon("uses.alertPausedBare")}
         </p>
+      )}
+
+      {/* PLAN 32: the same morning, as a notification on this device. Only on a
+          server that sends notifications (`push` is null otherwise). */}
+      {push && (
+        <PushRow
+          devices={push}
+          here={pushHere}
+          onChange={(devices, here) => {
+            setPush(devices);
+            setPushHere(here);
+          }}
+        />
       )}
 
       {/* The fit bar. Its own row rather than a sixth control in the row above:

@@ -13114,6 +13114,178 @@ try {
   fail(`first-steps check (check 80) could not run: ${e.message}`);
 }
 
+// ---- 91. web push: a worker for push only, permission asked on a tap (PLAN 32) //
+// The morning alert as a notification. What `tsc` cannot see, and each a way the
+// feature ships broken or changes the whole site:
+//   (a) public/sw.js is EXECUTED in a node vm with a fake `self`. It must show
+//       the notification a push carries (title, body, direction, a same-origin
+//       target), open ONLY this origin on a tap (a push naming another origin,
+//       or no URL, opens /jobs), navigate and focus an open window before
+//       opening a new one, and register NO `fetch` listener and touch no cache:
+//       a worker that intercepts fetches changes every deploy on every device
+//       (stale assets), which is not what a notification is worth.
+//   (b) the permission prompt is asked only by lib/push.ts's `turnOn`, as its
+//       FIRST awaited step (a prompt after an await is no longer the tap's and
+//       Safari refuses it), and the worker is registered only there too: never
+//       on page load. `Notification.requestPermission` and
+//       `serviceWorker.register` appear nowhere else under src/.
+//   (c) the alerts card reads the devices IN THE SAME Promise.all as the alert,
+//       so the card appears whole and nothing under it moves when they land.
+//   (d) the client's /push/* calls are routes notify_routes.py mounts, every
+//       `alerts.push.*` key resolves in both jobs.json (the device count with its
+//       full plural set), the push_test daily cap has its own sentence, and the
+//       privacy page says who delivers notifications.
+// Planted twins are probed every run.
+try {
+  const vm = createRequire(import.meta.url)("node:vm");
+  const swPath = path.join(HERE, "..", "public", "sw.js");
+  const swSrc = fs.readFileSync(swPath, "utf8");
+  const ORIGIN = "https://app.jobfinder.test";
+  const loadSw = (src) => {
+    const listeners = {};
+    const shown = [];
+    const opened = [];
+    const clients = [];
+    const self = {
+      location: { origin: ORIGIN, href: `${ORIGIN}/sw.js` },
+      addEventListener: (type, fn) => (listeners[type] = listeners[type] || []).push(fn),
+      skipWaiting: () => Promise.resolve(),
+      registration: { showNotification: async (title, opts) => shown.push({ title, opts }) },
+      clients: {
+        claim: async () => undefined,
+        matchAll: async () => clients,
+        openWindow: async (url) => {
+          opened.push(url);
+          return null;
+        },
+      },
+    };
+    const caches = new Proxy({}, { get: () => () => { throw new Error("the worker touched CacheStorage"); } });
+    vm.runInContext(src, vm.createContext({ self, URL, console, caches, setTimeout }), { filename: "sw.js" });
+    return { listeners, shown, opened, clients };
+  };
+  const fire = async (sw, type, event) => {
+    const waits = [];
+    for (const fn of sw.listeners[type] || []) fn({ ...event, waitUntil: (p) => waits.push(p) });
+    await Promise.all(waits);
+  };
+  const read91a = async (src) => {
+    const out = [];
+    const sw = loadSw(src);
+    if (sw.listeners.fetch?.length) out.push("sw.js listens for fetch, so it would sit between every page and the network");
+    if (/\bcaches\b|CacheStorage|importScripts/.test(decomment(src))) out.push("sw.js touches a cache or imports scripts");
+    if (!sw.listeners.push?.length || !sw.listeners.notificationclick?.length)
+      throw new Error("public/sw.js registers no push or no notificationclick listener");
+    await fire(sw, "push", { data: { json: () => ({ title: "3 new jobs for you", body: "Best: X", url: "/jobs?open=a%3Ab", lang: "he", dir: "rtl" }) } });
+    await fire(sw, "push", { data: { json: () => ({ title: "t", body: "b", url: "https://evil.example/steal" }) } });
+    await fire(sw, "push", { data: { json: () => { throw new Error("not json"); } } });
+    const [ok, evil, junk] = sw.shown;
+    if (!ok || ok.title !== "3 new jobs for you" || ok.opts.body !== "Best: X" || ok.opts.dir !== "rtl" || ok.opts.lang !== "he")
+      out.push(`a push is not shown as sent: ${JSON.stringify(ok)}`);
+    if (ok?.opts?.data?.url !== `${ORIGIN}/jobs?open=a%3Ab`) out.push(`a push's target is ${JSON.stringify(ok?.opts?.data?.url)}, not this origin's /jobs?open=`);
+    if (evil?.opts?.data?.url !== `${ORIGIN}/jobs`) out.push(`a push naming another origin would open ${JSON.stringify(evil?.opts?.data?.url)} instead of /jobs`);
+    if (!junk || junk.title !== "JobFinder" || junk.opts.data.url !== `${ORIGIN}/jobs`) out.push("a push that is not JSON shows nothing (userVisibleOnly) or opens elsewhere");
+    // A tap with no window open opens the target; with one open, that window goes there and comes forward.
+    await fire(sw, "notificationclick", { notification: { close() {}, data: { url: `${ORIGIN}/jobs?open=x` } } });
+    if (sw.opened.join() !== `${ORIGIN}/jobs?open=x`) out.push(`a tap with no window open opened ${JSON.stringify(sw.opened)}`);
+    const moves = [];
+    sw.clients.push({ url: "https://other.example/", navigate: async () => moves.push("other") });
+    sw.clients.push({ url: `${ORIGIN}/app`, navigate: async (u) => (moves.push(u), { focus: async () => moves.push("focus") }) });
+    await fire(sw, "notificationclick", { notification: { close() {}, data: { url: "https://evil.example/x" } } });
+    if (moves.join() !== `${ORIGIN}/jobs,focus` || sw.opened.length !== 1)
+      out.push(`a tap with a JobFinder window open did ${JSON.stringify(moves)} / opened ${JSON.stringify(sw.opened)}`);
+    return out;
+  };
+  for (const p of await read91a(swSrc)) fail(`check 91: ${p} (PLAN 32)`);
+  const plantSw = async (from, to, label) => {
+    if (!swSrc.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!(await read91a(swSrc.replace(from, to))).length) throw new Error(`the reader passes "${label}"`);
+  };
+  await plantSw('self.addEventListener("install"', 'self.addEventListener("fetch", () => {});\nself.addEventListener("install"', "a worker with a fetch handler");
+  await plantSw("if (url.origin !== self.location.origin) return new URL(\"/jobs\", self.location.origin).href;", "", "a worker that opens any origin");
+  await plantSw("const moved = \"navigate\" in client ? await client.navigate(target) : null;", "const moved = null;", "a tap that never brings the open window to the job");
+
+  // (b) and (c): the prompt, the registration and the card's one load.
+  const pushLib = decomment(read("lib/push.ts")).replace(/\r\n/g, "\n");
+  const card = decomment(read("pages/jobs/AlertsCard.tsx")).replace(/\r\n/g, "\n");
+  const read91b = (lib, cardSrc, others) => {
+    const out = [];
+    const turnOn = fnSource(lib, "export async function turnOn(");
+    const firstAwait = /\bawait\s+([^;]+);/.exec(turnOn);
+    if (!firstAwait || !/^Notification\.requestPermission\(\)$/.test(firstAwait[1].trim()))
+      out.push(`turnOn's first await is ${JSON.stringify(firstAwait?.[1])}, not Notification.requestPermission(): the prompt would no longer belong to the tap`);
+    if (!/navigator\.serviceWorker\.register\("\/sw\.js", \{ scope: "\/" \}\)/.test(turnOn)) out.push("turnOn does not register /sw.js at scope /");
+    const outsideTurnOn = lib.replace(turnOn, "");
+    if (/requestPermission|serviceWorker\.register/.test(outsideTurnOn)) out.push("lib/push.ts asks or registers outside turnOn");
+    for (const [file, text] of others)
+      if (/requestPermission|serviceWorker\.register/.test(text)) out.push(`${file} asks for permission or registers the worker, which only turnOn may`);
+    if (!/Promise\.all\(\[\s*getJobAlert\(\),\s*getPushDevices\(\)[^\]]*currentSubscription\(\),?\s*\]\)/.test(cardSrc))
+      out.push("the alerts card does not read the push devices and this browser's subscription together with the alert, so the card would move when they land");
+    return out;
+  };
+  const srcFiles = [];
+  const walk = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) walk(p);
+      else if (/\.(ts|tsx)$/.test(ent.name) && !p.endsWith(path.join("lib", "push.ts")))
+        srcFiles.push([path.relative(SRC, p), decomment(fs.readFileSync(p, "utf8"))]);
+    }
+  };
+  walk(SRC);
+  if (srcFiles.length < 100) throw new Error(`read only ${srcFiles.length} source files under src/`);
+  for (const p of read91b(pushLib, card, srcFiles)) fail(`check 91: ${p} (PLAN 32)`);
+  const plantB = (which, from, to, label) => {
+    const lib = which === "lib" ? pushLib.replace(from, to) : pushLib;
+    const cardSrc = which === "card" ? card.replace(from, to) : card;
+    const others = which === "other" ? [["pages/SettingsPage.tsx", to]] : srcFiles;
+    if (which !== "other" && (which === "lib" ? pushLib : card).indexOf(from) === -1) throw new Error(`the probe could not plant "${label}"`);
+    if (!read91b(lib, cardSrc, others).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plantB("lib", "const permission = await Notification.requestPermission();", "await Promise.resolve();\n  const permission = await Notification.requestPermission();", "a prompt after an await");
+  plantB("other", "", "useEffect(() => { void navigator.serviceWorker.register(\"/sw.js\"); }, []);", "a worker registered on page load");
+  plantB("card", "getPushDevices().catch(() => null),", "", "devices read after the card appeared");
+
+  // (d) routes, words, the daily cap's sentence and the privacy line.
+  const client = decomment(read("api/client.ts"));
+  const routesPy = pySource("app/api/notify_routes.py", "check 91");
+  const calls = [...client.matchAll(/api\.(get|post|delete)<[^>]*>\("(\/push\/[\w/-]+)"/g)].map((m) => `${m[1].toUpperCase()} ${m[2]}`);
+  if (calls.length < 4) throw new Error(`read ${calls.length} /push/* calls out of api/client.ts (expected 4)`);
+  if (routesPy !== null) {
+    const mounted = new Set([...routesPy.matchAll(/@router\.(get|post|delete)\("(\/push\/[\w/-]+)"/g)].map((m) => `${m[1].toUpperCase()} ${m[2]}`));
+    for (const c of calls) if (!mounted.has(c)) fail(`check 91: api/client.ts calls ${c}, which notify_routes.py does not mount (PLAN 32)`);
+  }
+  const channels = decomment(read("pages/jobs/AlertChannels.tsx"));
+  const keys = new Set([...channels.matchAll(/\bt\("(alerts\.push\.[\w.]+)"/g)].map((m) => m[1]));
+  if (!/t\(`alerts\.push\.\$\{e\.reason\}`\)/.test(channels))
+    throw new Error("pages/jobs/AlertChannels.tsx no longer says a PushError by its reason, so the reasons below are unread");
+  if (keys.size < 12) throw new Error(`read ${keys.size} alerts.push.* keys out of pages/jobs/AlertChannels.tsx (expected at least 12)`);
+  const reasons = /readonly reason: ("[a-z]+"(?:\s*\|\s*"[a-z]+")*)/.exec(pushLib);
+  if (!reasons) throw new Error("lib/push.ts's PushError has no readable reason union");
+  for (const r of reasons[1].match(/[a-z]+/g)) keys.add(`alerts.push.${r}`);
+  const plural = { en: ["one", "other"], he: ["one", "two", "other"] };
+  for (const loc of ["en", "he"]) {
+    const jobs = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const key of keys) {
+      if (key === "alerts.push.otherDevices") {
+        for (const form of plural[loc])
+          if (typeof jobs.alerts?.push?.[`otherDevices_${form}`] !== "string")
+            fail(`check 91: locales/${loc}/jobs.json is missing "alerts.push.otherDevices_${form}" (PLAN 32)`);
+      } else if (!resolvesIn(jobs, key)) fail(`check 91: locales/${loc}/jobs.json is missing "${key}" (PLAN 32)`);
+    }
+    if (!resolvesIn(JSON.parse(read(`locales/${loc}/common.json`)), "dailyLimit.pushTest"))
+      fail(`check 91: locales/${loc}/common.json is missing "dailyLimit.pushTest" (PLAN 32)`);
+    if (!/Google.*Apple.*Mozilla.*Microsoft/.test(JSON.parse(read(`locales/${loc}/auth.json`)).privacy?.store?.push ?? ""))
+      fail(`check 91: locales/${loc}/auth.json's privacy.store.push does not name the push services that deliver notifications (PLAN 32)`);
+  }
+  if (!/<li>\{t\("privacy\.store\.push"\)\}<\/li>/.test(decomment(read("pages/PrivacyPage.tsx"))))
+    fail("check 91: the privacy page does not say who delivers notifications (privacy.store.push) (PLAN 32)");
+  if (!/push_test: "dailyLimit\.pushTest"/.test(decomment(read("lib/apiError.ts"))))
+    fail("check 91: lib/apiError.ts's LIMIT_KEYS does not name push_test, so its daily cap reads the generic line (PLAN 32)");
+} catch (e) {
+  fail(`web push check (check 91) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

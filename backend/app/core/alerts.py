@@ -35,6 +35,14 @@ or a raise all give it back. With no use left the morning is skipped
 worked out from the pool when the card is read). "Run now" is a search the
 user pressed: its route charges one `search` use and passes it in, and the run
 keeps it whenever its search completed, because the results are in History.
+
+WEB PUSH (PLAN 32). A morning with jobs to report also notifies every device
+the owner turned on (`webpush.notify_user`), with the email's own content
+decision: the same above-the-bar list, its count and its best match, nothing
+more. It runs after the run's bookkeeping is committed and can neither raise
+nor charge: pushing costs the owner nothing, so a use is still kept only when
+the EMAIL went out, and a morning that only pushed gives it back like any
+morning that mailed nothing.
 """
 from __future__ import annotations
 
@@ -52,7 +60,7 @@ from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.core import hidden_jobs, mailer, quota
+from app.core import hidden_jobs, mailer, quota, webpush
 from app.core.job_search import resume_hash, search_jobs
 from app.db.history import load_score_cache, record_search_hits
 from app.db.models import JobAlert, JobSearchHit, SavedResume, User
@@ -368,7 +376,9 @@ def build_alert_email(
         bits = [m.title or "Untitled role"]
         if m.company:
             bits.append(f"at {m.company}")
-        bits.append(f"— match {round(m.overall)}%")
+        # `displayed_score`, never `round()`: half-to-even printed 74 for a 74.5
+        # the bar (and the app, and the notification) call 75.
+        bits.append(f"— match {displayed_score(m.overall)}%")
         # The earliest date a board stated, and no chip when a `long_open`
         # ghost line is already the age chip — the HTML twin reads the SAME
         # function, so the two bodies cannot print different dates.
@@ -420,7 +430,7 @@ _EM_SOURCE_LABELS = {
 
 def _fit_pill(overall: float) -> str:
     """Score pill colored like the site's fit tiers (mint / blue / gray)."""
-    pct = round(overall)
+    pct = displayed_score(overall)
     if pct >= 60:
         bg, fg, border = "#14332b", _EM["mint"], "#1f5c48"
     elif pct >= 35:
@@ -608,6 +618,77 @@ def build_alert_email_html(
 </html>"""
 
 
+_PUSH_TITLE_MAX = 60
+_PUSH_COMPANY_MAX = 40
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _push_path(m: JobMatch, app_url: str) -> str:
+    """Where tapping the notification lands, as a path on the app: the email's
+    own link for this job (`_job_link`, `/jobs?open=<posting>`) with the app's
+    address taken off, because the service worker opens it on its own origin.
+    "/jobs" (the matches) when there is no app address or no link."""
+    base = (app_url or "").strip().rstrip("/")
+    if not base:
+        return "/jobs"
+    link = _job_link(m, base)
+    return link[len(base):] if link.startswith(base + "/") else "/jobs"
+
+
+def build_alert_push(worth: list[JobMatch], lang: str, app_url: str = "") -> dict:
+    """The notification for a morning's `worth` list, in `lang` ("he" or else
+    English). Pure, smoke-pinned. The email's content decision and nothing more:
+    how many jobs cleared the bar, and the best of them by the number the app
+    shows (`displayed_score`). Short, because a lock screen shows a title and one
+    or two lines. One job opens that job (the email's link); several open the
+    matches, where they all are."""
+    n = len(worth)
+    top = max(worth, key=lambda m: m.overall)
+    he = lang == "he"
+    pct = displayed_score(top.overall)
+    what = _clip(top.title, _PUSH_TITLE_MAX) or ("משרה" if he else "A job")
+    where = _clip(top.company, _PUSH_COMPANY_MAX)
+    job = f"{what} · {where}" if where else what
+    if he:
+        title = "משרה חדשה בשבילך" if n == 1 else f"{n} משרות חדשות בשבילך"
+        body = f"{job} · התאמה {pct}%" if n == 1 else f"הכי מתאימה: {job} · התאמה {pct}%"
+    else:
+        title = "A new job for you" if n == 1 else f"{n} new jobs for you"
+        body = f"{job} · {pct}% match" if n == 1 else f"Best: {job} · {pct}% match"
+    return {
+        "title": title,
+        "body": body,
+        "url": _push_path(top, app_url) if n == 1 else "/jobs",
+        "tag": "jobfinder-alert",
+        "lang": "he" if he else "en",
+        "dir": "rtl" if he else "ltr",
+    }
+
+
+# The default for `run_alert(push_fn=...)`, resolved when the run pushes.
+_DEFAULT_PUSH = object()
+
+
+def _push_morning(db: Session, user_id: int, worth: list[JobMatch], push_fn: object) -> int:
+    """Notify the owner's devices about `worth`; how many it reached. Never
+    raises, never touches a use."""
+    fn = webpush.notify_user if push_fn is _DEFAULT_PUSH else push_fn
+    app_url = get_settings().app_base_url
+    try:
+        outcome = fn(db, user_id, lambda lang: build_alert_push(worth, lang, app_url))  # type: ignore[operator]
+        return int(getattr(outcome, "sent", 0) or 0)
+    except Exception:  # noqa: BLE001 - a push may never fail the morning
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
+
+
 def _master_resume(db: Session, user_id: int) -> ResumeModel | None:
     for row in db.execute(
         select(SavedResume)
@@ -699,6 +780,7 @@ def run_alert(
     charge: quota.Charge | None = None,
     send_fn: object = _DEFAULT_SEND,
     now: datetime | None = None,
+    push_fn: object = _DEFAULT_PUSH,
 ) -> AlertRunResult:
     """Execute one alert run for one user. `force=True` runs even when the
     toggle is off (the UI's "Run now"). Never raises: failures land in
@@ -723,7 +805,9 @@ def run_alert(
       keeps it whatever the email did, because its results are in History.
 
     `send_fn` defaults to the mailer, read at call time (`_resolve_send`); `now`
-    is the aware clock the reserve reads (default: the real time).
+    is the aware clock the reserve reads (default: the real time). `push_fn`
+    defaults to `webpush.notify_user`, read at call time, and is called only
+    when the morning has jobs above the bar, after the run is recorded.
     """
     row = get_alert(db, user_id)
     if not row.enabled and not force:
@@ -851,6 +935,11 @@ def run_alert(
         if own_use:
             row.last_skip = ""
         db.commit()
+        # The notification, AFTER the run is recorded and the use decided: a
+        # push that fails cannot disturb either, and one that succeeds keeps
+        # nothing (PLAN 32). Only a morning with jobs above the bar pushes, the
+        # email's own rule, whether or not the email itself went out.
+        pushed = _push_morning(db, user_id, worth, push_fn) if worth else 0
         return AlertRunResult(
             user_id=user_id,
             ran=True,
@@ -859,6 +948,7 @@ def run_alert(
             above_min=len(worth),
             emailed=emailed,
             error=email_error,
+            pushed=pushed,
         )
     except Exception as e:  # noqa: BLE001 - never raise: one user's failure must not stop the cron
         # Anything after the reserve: roll back, give the morning's use back unless
