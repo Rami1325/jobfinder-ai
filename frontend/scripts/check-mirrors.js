@@ -13160,6 +13160,55 @@ try {
   fail(`tracker card controls check (check 82) could not run: ${e.message}`);
 }
 
+// ---- 84. "Needs you" is one row on a phone ----------------------------------- //
+// Found in PLAN 31.5/5, fixed 2026-09-27. With all three chips the strip WRAPPED
+// (`flex flex-wrap`): two rows at 390 px, three at 360 in Hebrew, which moved the
+// first saved job from y = 489 to 533 (597 at 360 in Hebrew), and the review's
+// chip, which answers last, dropped the second row in under the thumb about
+// 0.4 s after the first job was drawn. The strip is one row that scrolls
+// sideways now: `flex` with `overflow-x-auto` and never `flex-wrap`, each item
+// `shrink-0` and each label `whitespace-nowrap` (a label that wrapped inside its
+// chip would make the row taller instead), no scrollbar drawn, the focus ring
+// INSET (a scroller clips an outer ring), and each chip a 44 px target. Pinned
+// by shape on the file, with planted twins.
+try {
+  const MIN44_84 = /\bmin-h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?=\s|"|$)/;
+  const read84 = (src) => {
+    const out = [];
+    const ul = /<ul\b[\s\S]*?className="([^"]*)"[\s\S]*?>/.exec(src);
+    if (!ul) throw new Error("pages/jobs/NeedsYou.tsx: cannot read the strip's <ul className>");
+    const row = ul[1].split(/\s+/);
+    if (row.some((c) => /(^|:)flex-wrap$/.test(c))) out.push("the strip wraps (`flex-wrap`), so three chips are two rows on a phone");
+    if (!row.includes("flex") || !row.includes("overflow-x-auto"))
+      out.push("the strip is not one sideways-scrolling row (`flex overflow-x-auto`)");
+    if (!row.includes("[scrollbar-width:none]") || !row.includes("[&::-webkit-scrollbar]:hidden"))
+      out.push("the strip draws a scrollbar under the chips");
+    const li = /<li\b[^>]*className="([^"]*)"/.exec(src);
+    if (!li || !li[1].split(/\s+/).includes("shrink-0")) out.push("a chip's <li> can shrink (`shrink-0`), so a label is squeezed");
+    const btn = /<button\b[\s\S]*?className="([^"]*)"/.exec(src);
+    if (!btn) throw new Error("pages/jobs/NeedsYou.tsx: cannot read the chip's <button className>");
+    const b = btn[1].split(/\s+/);
+    if (!b.includes("whitespace-nowrap")) out.push("a chip's label can wrap inside it (`whitespace-nowrap`), which makes the row taller");
+    if (!MIN44_84.test(btn[1])) out.push("a chip is under 44 px tall (`min-h-11`)");
+    if (b.includes("focus-visible:ring-2") && !b.includes("focus-visible:ring-inset"))
+      out.push("a chip's focus ring is outside it, where the scroller clips it (`focus-visible:ring-inset`)");
+    return out;
+  };
+  const strip = decomment(read("pages/jobs/NeedsYou.tsx"));
+  for (const p of read84(strip)) fail(`check 84: ${p} (PLAN 31.5/5)`);
+  const plant84 = (from, to, label) => {
+    if (!strip.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read84(strip.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant84("-mx-4 flex gap-1.5 overflow-x-auto", "-mx-4 flex flex-wrap gap-1.5 overflow-x-auto", "a strip that wraps");
+  plant84("-mx-4 flex gap-1.5 overflow-x-auto", "-mx-4 flex gap-1.5", "a strip that neither wraps nor scrolls");
+  plant84('<li key={key} className="shrink-0">', "<li key={key}>", "chips that shrink");
+  plant84("min-h-11 items-center gap-1.5 whitespace-nowrap", "min-h-[36px] items-center gap-1.5 whitespace-nowrap", "36 px chips");
+  plant84("focus-visible:ring-inset ", "", "a focus ring the scroller clips");
+} catch (e) {
+  fail(`needs-you row check (check 84) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

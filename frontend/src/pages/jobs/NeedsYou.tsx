@@ -45,14 +45,27 @@ export function NeedsYou({ resume }: { resume: ResumeModel }) {
   if (fix > 0) chips.push({ key: "fix", label: t("needs.fix", { count: fix }), Icon: Wrench, go: () => nav("/app", { state: { pane: "review" } }) });
   if (!chips.length) return null;
 
+  // ONE row, at every width (fixed 2026-09-27). With all three chips a phone
+  // WRAPPED them onto two rows (three at 360 px in Hebrew), which moved the first
+  // saved job from y = 489 to 533, and the third chip, the review's, usually
+  // answers last (~0.4 s after the first job is drawn), so that second row
+  // arrived under the thumb. Now the row scrolls sideways instead: it bleeds to
+  // the screen's edges on a phone (`-mx-4 px-4`, the tracker's status tabs), the
+  // chip that does not fit peeks in at the edge, and no scrollbar is drawn. A
+  // chip that arrives late joins the row and moves nothing below it. The full
+  // sentences stay: "2 gone quiet" was tried and read as unclear. Each chip is
+  // a 44 px target (`min-h-11`), the owner's floor.
   return (
-    <ul aria-label={t("needs.label")} className="flex flex-wrap gap-2">
+    <ul
+      aria-label={t("needs.label")}
+      className="-mx-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none] lg:mx-0 lg:px-0 [&::-webkit-scrollbar]:hidden"
+    >
       {chips.map(({ key, label, Icon, go }) => (
-        <li key={key}>
+        <li key={key} className="shrink-0">
           <button
             type="button"
             onClick={go}
-            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-full border border-warn/40 bg-warn/10 px-3 text-xs font-semibold text-ink transition-colors hover:bg-warn/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            className="inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full border border-warn/40 bg-warn/10 px-2.5 text-xs font-semibold text-ink transition-colors hover:bg-warn/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/70"
           >
             <Icon size={14} aria-hidden className="shrink-0 text-warn" />
             {label}
