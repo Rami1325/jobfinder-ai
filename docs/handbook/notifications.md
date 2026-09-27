@@ -164,8 +164,8 @@ not been observed yet**: that is the owner's first step below.
    (or `npx web-push generate-vapid-keys`). It prints `VAPID_PUBLIC_KEY=…` and `VAPID_PRIVATE_KEY=…`.
 2. Vercel → project **jobfinder** → Settings → Environment Variables → Add, for **Production**:
    `VAPID_PUBLIC_KEY` = the first value; `VAPID_PRIVATE_KEY` = the second, with **Sensitive** switched on;
-   `VAPID_SUBJECT` = `mailto:` followed by an address a push service can write to (for example
-   `mailto:ramibaryhe@gmail.com`), Sensitive too if you prefer.
+   `VAPID_SUBJECT` = `mailto:` followed by an address a push service can write to (`mailto:<your address>`),
+   Sensitive too if you prefer.
 3. Redeploy production (the next push to `main` does it).
 4. Check: signed in, `https://jobfinder-hazel-pi.vercel.app/api/push/devices` answers `"configured": true`.
 5. On the phone: Android, open the site in Chrome; iPhone, first Share → Add to Home Screen and open JobFinder from
