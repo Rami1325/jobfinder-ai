@@ -61,6 +61,7 @@ import type {
   ReviewRewriteResult,
   ScreeningAnswerResult,
   SearchContext,
+  SearchQueryReading,
   StaleApplication,
   TailorResult,
   ATSXrayResult,
@@ -590,6 +591,14 @@ export function isConnectionDropped(e: unknown): boolean {
 
 export async function searchContext(resume: ResumeModel): Promise<SearchContext> {
   const { data } = await api.post<SearchContext>("/jobs/search-context", { resume });
+  return data;
+}
+
+/** Search in plain words (Phase 32): the server reads one line into the search
+ * form's fields, rules first and the model only for what they leave. It fills a
+ * form and searches nothing; no monthly use. */
+export async function readSearchQuery(query: string): Promise<SearchQueryReading> {
+  const { data } = await api.post<SearchQueryReading>("/jobs/search-query", { query });
   return data;
 }
 

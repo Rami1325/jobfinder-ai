@@ -56,6 +56,7 @@ import type {
   JobSearchHit,
   ResumeModel,
   SearchContext,
+  SearchQueryReading,
 } from "../types";
 import { AlertSwitch, CustomizeFields } from "./jobs/AlertsCard";
 import { HistoryRow, MatchCard, RestrictedRow } from "./jobs/cards";
@@ -64,8 +65,10 @@ import { NeedsYou } from "./jobs/NeedsYou";
 import { BatchTailorCard, KIT_THRESHOLDS } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
 import { SearchScanPanel } from "./jobs/ScanPanel";
+import { PlainSearch, usePlainSearch } from "./jobs/PlainSearch";
 import {
   allowsRemote,
+  applySearchReading,
   EASE,
   filteredSummary,
   inputCls,
@@ -150,6 +153,17 @@ export default function JobsPage() {
   const [editSearch, setEditSearch] = useState(false);
   const [ctx, setCtx] = useState<SearchContext | null>(null);
   const [prefilling, setPrefilling] = useState(false);
+  // Search in plain words (Phase 32). The line and its answer live here, so the
+  // card can fold and unfold around the box without losing either.
+  const plain = usePlainSearch();
+  /** A line that said something fills the form's own fields and OPENS them, so
+   * the user sees what was understood and taps Find jobs themselves: a search is
+   * a monthly use, and a misread line must be seen before it costs one. */
+  function onPlainRead(reading: SearchQueryReading) {
+    setCtx((prev) => applySearchReading(prev, reading));
+    setCustomOpen(true);
+    setEditSearch(true);
+  }
 
   // Saved customize picks (server-side, per user): prefill and open the panel
   // so a returning user doesn't re-enter everything. Anything the user typed
@@ -881,6 +895,9 @@ export default function JobsPage() {
                   <span className="min-w-0 truncate">{searchSummary}</span>
                 </p>
               )}
+              {/* Search in plain words (Phase 32): one row, and the line is read
+                  into the fields below, which open for the user to check. */}
+              <PlainSearch state={plain} onRead={onPlainRead} disabled={prefilling} />
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
@@ -905,6 +922,7 @@ export default function JobsPage() {
             <p className="mt-1 hidden text-sm text-ink-muted sm:block">
               {t("search.cardBody")}
             </p>
+            <PlainSearch state={plain} onRead={onPlainRead} disabled={prefilling} className="mt-3" />
 
             <label className="mt-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-ink">
               <input

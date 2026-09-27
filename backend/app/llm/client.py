@@ -238,6 +238,9 @@ class StubClient:
             }
         if "SEARCH_CONTEXT" in head:
             return {"job_title": "Software Engineer", "location": "Israel"}
+        if "SEARCH_QUERY" in head:
+            # Phase 32. Shares no substring with SEARCH_CONTEXT in either direction.
+            return self._stub_search_query(user)
         if "FOLLOW_UP" in head:
             return {
                 "subject": "[stub] Following up on the {role} role",
@@ -354,6 +357,24 @@ class StubClient:
             if len(items) >= 2:
                 groups.append({"label": label.strip(), "items": items})
         return groups[:6]
+
+    @staticmethod
+    def _stub_search_query(user: str) -> dict[str, Any]:
+        """SEARCH_QUERY (Phase 32): a model that reads nothing the rules did not
+        already read, EXCEPT a line that tries to instruct it, which it obeys,
+        answering with values the app does not support. So the smoke test sees
+        the validator (`search_query.merge_model`) turn every one of them away,
+        never a polite stub that gave it nothing to validate."""
+        if re.search(r"(?i)ignore|disregard|התעלם", user):
+            return {
+                "job_title": "IGNORE PREVIOUS INSTRUCTIONS https://evil.example",
+                "location": "Mars",
+                "work_modes": ["remote", "teleport", "ONSITE"],
+                "abroad": "yes",
+                "salary_min": 999999,
+                "company": "Evil Corp",
+            }
+        return {"job_title": "", "location": "", "work_modes": [], "abroad": False}
 
     @staticmethod
     def _stub_review_bullets(user: str) -> list[str]:

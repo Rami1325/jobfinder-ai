@@ -1690,6 +1690,33 @@ class SearchContextRequest(BaseModel):
     resume: ResumeModel
 
 
+class SearchQueryIn(BaseModel):
+    """POST /jobs/search-query (Phase 32): one line in plain words, Hebrew or
+    English. Bounded by BYTES in the route (413, kind "query"), like every text
+    a user writes that can reach a prompt."""
+
+    model_config = {"extra": "forbid"}
+
+    query: str
+
+
+class SearchQueryOut(BaseModel):
+    """What the line said, in the search form's OWN fields (app/core/search_query.py).
+    Empty means the line did not say it, and the page leaves that field alone.
+    Not a SearchContext: "" and "any" mean different things here, and nothing
+    in it is ever stored or sent to the cron."""
+
+    job_titles: list[str] = Field(default_factory=list)
+    location: str = ""
+    # "" unsaid; else "any" or a comma list in WORK_MODES order ("remote,hybrid").
+    work_mode: str = ""
+    include_worldwide: bool = False
+    # Words read and deliberately not used as a filter, each said by the page:
+    # "region" (searching all of Israel), "experience", "places" (one at a time).
+    notes: list[str] = Field(default_factory=list)
+    used_model: bool = False
+
+
 class JobSearchRequest(BaseModel):
     resume: ResumeModel
     customize: Optional[SearchContext] = None  # None => fully automatic

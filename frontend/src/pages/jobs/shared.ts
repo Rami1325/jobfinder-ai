@@ -2,7 +2,7 @@
 // JobsPage.tsx — PLAN 12.5d). No JSX here.
 import type { TFunction } from "i18next";
 import { textLanguage } from "../../lib/lang";
-import type { JobMatch, JobSearchResult, KitJobIn, SearchContext } from "../../types";
+import type { JobMatch, JobSearchResult, KitJobIn, SearchContext, SearchQueryReading } from "../../types";
 
 // House ease curve — shared by the scan ticker flips and JobsPage's tab/card motion.
 export const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -215,6 +215,34 @@ export function contextKey(c: SearchContext | null): string {
     c.max_age_days ?? 30,
     c.include_worldwide ?? false,
   ]);
+}
+
+/** Did a plain-words line say anything the form can use? (Phase 32) */
+export function readingUnderstood(r: SearchQueryReading | null | undefined): boolean {
+  return !!r && ((r.job_titles?.length ?? 0) > 0 || !!r.location || !!r.work_mode || !!r.include_worldwide);
+}
+
+/** A plain-words reading applied to the search form (Phase 32). Each field the
+ * line SAID replaces the form's; every field it did not say is left exactly as
+ * it was (the result count, "posted within", the boards, and anything the line
+ * was silent on). Asking for jobs abroad also puts LinkedIn back among the
+ * boards when a customized set left it out, because the worldwide pass runs on
+ * LinkedIn alone and the form shows the box it ticks. Pure, so check-mirrors 95
+ * EXECUTES it; it never searches. */
+export function applySearchReading(prev: SearchContext | null, r: SearchQueryReading): SearchContext {
+  const next: SearchContext = { ...(prev ?? { job_title: "", location: "", work_mode: "any", limit: 10 }) };
+  const titles = (r.job_titles ?? []).map((t) => t.trim()).filter(Boolean).slice(0, 5);
+  if (titles.length) {
+    next.job_titles = titles;
+    next.job_title = titles[0];
+  }
+  if (r.location) next.location = r.location;
+  if (r.work_mode) next.work_mode = joinWorkModes(parseWorkModes(r.work_mode));
+  if (r.include_worldwide) {
+    next.include_worldwide = true;
+    if (next.sources?.length && !next.sources.includes("linkedin")) next.sources = [...next.sources, "linkedin"];
+  }
+  return next;
 }
 
 /** The sentences over the Jobs page's filtered list, counted per reason: how

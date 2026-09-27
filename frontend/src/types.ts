@@ -724,6 +724,19 @@ export interface SearchContext {
   max_age_days?: number; // only postings at most this old, 0 = any age; backend defaults to 30
   include_worldwide?: boolean; // remote/any opt-in: also search worldwide remote roles (US/UK/EU) on LinkedIn
 }
+/** POST /jobs/search-query (Phase 32): one line in plain words, read into the
+ * search form's own fields. Mirrors `SearchQueryOut`. Empty means the line did
+ * not say it, and the page leaves that field alone (`applySearchReading`). */
+export interface SearchQueryReading {
+  job_titles: string[];
+  location: string;
+  /** "" unsaid; else "any" or a comma list in WORK_MODES order. */
+  work_mode: string;
+  include_worldwide: boolean;
+  /** Words read and not used as a filter: "region", "experience", "places". */
+  notes: string[];
+  used_model: boolean;
+}
 export interface AlertSettings {
   enabled: boolean;
   email: string;

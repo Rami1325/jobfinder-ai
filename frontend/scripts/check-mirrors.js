@@ -13672,6 +13672,218 @@ try {
   fail(`answer-out-loud run (check 90) could not run: ${e.message}`);
 }
 
+// ---- 95. search in plain words fills the form and never searches (EXECUTED) -- //
+// Phase 32. One line ("משרות QA בתל אביב, היברידי") is read by the SERVER into
+// the search form's own fields (app/core/search_query.py), and the page applies
+// the answer with `applySearchReading`: each field the line said replaces the
+// form's, every field it did not say stays exactly as it was. Nothing is
+// searched from the box: a search is a monthly use, and a misread line must be
+// seen before it costs one. (a) EXECUTES applySearchReading / readingUnderstood.
+// (b) By shape: the page's handler fills and opens the form and runs no search,
+// the box calls onRead only for a line that said something, and the box sits in
+// both states of the search card. Planted twins are probed every run.
+try {
+  const pw = runProbeBundle(
+    "plain-words",
+    'export { applySearchReading, readingUnderstood } from "./pages/jobs/shared";\n',
+  );
+  for (const name of ["applySearchReading", "readingUnderstood"])
+    if (typeof pw[name] !== "function") throw new Error(`pages/jobs/shared.ts exports no ${name}`);
+  const reading = (over = {}) => ({
+    job_titles: [], location: "", work_mode: "", include_worldwide: false, notes: [], used_model: false, ...over,
+  });
+  const prev = {
+    job_title: "Old", job_titles: ["Old", "Older"], location: "Haifa, Israel", work_mode: "onsite", limit: 25,
+    sources: ["drushim"], max_age_days: 7, include_worldwide: false,
+  };
+  const frozen = JSON.stringify(prev);
+  const cases = [
+    ["a full line over no form", null,
+      reading({ job_titles: ["Junior QA"], location: "Tel Aviv, Israel", work_mode: "hybrid" }),
+      { job_title: "Junior QA", location: "Tel Aviv, Israel", work_mode: "hybrid", limit: 10, job_titles: ["Junior QA"] }],
+    ["a place alone leaves every other field", prev, reading({ location: "Jerusalem, Israel" }),
+      { ...prev, location: "Jerusalem, Israel" }],
+    ["modes in any order are stored in the one order", prev, reading({ work_mode: "hybrid,remote" }),
+      { ...prev, work_mode: "remote,hybrid" }],
+    ["all three modes are any", prev, reading({ work_mode: "any" }), { ...prev, work_mode: "any" }],
+    ["abroad puts LinkedIn back among chosen boards", prev, reading({ include_worldwide: true, work_mode: "remote" }),
+      { ...prev, work_mode: "remote", include_worldwide: true, sources: ["drushim", "linkedin"] }],
+    ["abroad over all boards names none", { ...prev, sources: undefined }, reading({ include_worldwide: true }),
+      { ...prev, sources: undefined, include_worldwide: true }],
+    ["a line that said nothing changes nothing", prev, reading({ notes: ["experience"] }), prev],
+    ["at most five titles, blanks dropped", prev, reading({ job_titles: [" A ", "", "B", "C", "D", "E", "F"] }),
+      { ...prev, job_title: "A", job_titles: ["A", "B", "C", "D", "E"] }],
+  ];
+  const canon = (o) => JSON.stringify(o, Object.keys(o ?? {}).sort());
+  for (const [label, before, r, want] of cases) {
+    const got = pw.applySearchReading(before, r);
+    if (canon(got) !== canon(want))
+      fail(`check 95: applySearchReading, ${label}: ${JSON.stringify(got)} (expected ${JSON.stringify(want)})`);
+  }
+  if (JSON.stringify(prev) !== frozen) fail("check 95: applySearchReading changed the form it was handed in place");
+  for (const [label, r, want] of [
+    ["a title", reading({ job_titles: ["QA"] }), true],
+    ["a place", reading({ location: "Haifa, Israel" }), true],
+    ["a mode", reading({ work_mode: "remote" }), true],
+    ["abroad", reading({ include_worldwide: true }), true],
+    ["notes only", reading({ notes: ["region"] }), false],
+    ["nothing", reading(), false],
+    ["no answer", null, false],
+  ])
+    if (pw.readingUnderstood(r) !== want) fail(`check 95: readingUnderstood(${label}) is not ${want}`);
+
+  const read95 = ({ jobs, box }) => {
+    const out = [];
+    const handler = /function onPlainRead\([^)]*\) \{[\s\S]*?\n  \}\n/.exec(jobs);
+    if (!handler) throw new Error("pages/JobsPage.tsx: function onPlainRead not found");
+    const h = handler[0];
+    if (!/setCtx\(\(prev\) => applySearchReading\(prev, reading\)\)/.test(h))
+      out.push("the page does not fill its form through applySearchReading");
+    if (!/setCustomOpen\(true\)/.test(h) || !/setEditSearch\(true\)/.test(h))
+      out.push("the filled fields are not opened for the user to check");
+    if (/runSearch\(|startJobSearch\(|searchJobs|updateSearchPrefs\(/.test(h))
+      out.push("filling the form runs a search (a monthly use) before the user saw what was read");
+    if (/startJobSearch|searchJobs|runSearch|updateSearchPrefs/.test(box))
+      out.push("the plain-words box reaches a search");
+    if (!/if \(readingUnderstood\(r\)\) onRead\(r\);/.test(box))
+      out.push("the box hands the page a reading that said nothing, which would open an unchanged form");
+    const mounts = [...jobs.matchAll(/<PlainSearch\b[^>]*\bstate=\{plain\}[^>]*onRead=\{onPlainRead\}/g)].length;
+    if (mounts < 2) out.push(`the box is in ${mounts} state(s) of the search card, not both (folded and open)`);
+    return out;
+  };
+  const real = { jobs: decomment(read("pages/JobsPage.tsx")), box: decomment(read("pages/jobs/PlainSearch.tsx")) };
+  for (const p of read95(real)) fail(`check 95: ${p} (Phase 32)`);
+  const plant = (key, from, to, label) => {
+    if (!real[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read95({ ...real, [key]: real[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("jobs", "setEditSearch(true);\n  }", "setEditSearch(true);\n    runSearch();\n  }", "a fill that searches");
+  plant("jobs", "setCustomOpen(true);", "", "a fill the user never sees");
+  plant("box", "if (readingUnderstood(r)) onRead(r);", "onRead(r);", "a box that opens the form on nothing");
+  plant("jobs", "<PlainSearch", "<PlainSearchGone", "a box in one state of the card only");
+} catch (e) {
+  fail(`plain-words fill check (check 95) could not run: ${e.message}`);
+}
+
+// ---- 96. the plain-words box: its words, and a phone's keyboard ------------- //
+// Every literal `plain.*` key the box reads resolves in both jobs.json files.
+// The input is 16 px on a phone (`text-base`, `sm:text-sm` above it): iOS zooms
+// the whole page into a smaller focused input, which moves the layout under the
+// thumb. The input and its button are 44 px tall (`h-11`), the touch target, and
+// the input stops at PLAIN_MAX_CHARS, which at Hebrew's two bytes a character
+// must fit the server's `max_search_query_kb`, or the box would let a person
+// type a line the server then refuses (its Python half degrades without backend/).
+try {
+  const box = decomment(read("pages/jobs/PlainSearch.tsx"));
+  const keys = [...new Set([...box.matchAll(/\bt\("(plain\.[\w.]+)"/g)].map((m) => m[1]))];
+  if (keys.length < 9) throw new Error(`read ${keys.length} plain.* keys out of PlainSearch.tsx (expected at least 9)`);
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const key of keys)
+      for (const problem of keyProblems(bundle, key, loc, "the plain-words search box"))
+        fail(`check 96: locales/${loc}/jobs.json ${problem}`);
+  }
+  const read96 = (src) => {
+    const out = [];
+    const input = /<input\b[\s\S]*?\/>/.exec(src);
+    if (!input) throw new Error("PlainSearch.tsx: no <input>");
+    const cls = (/className="([^"]*)"/.exec(input[0]) || [])[1];
+    if (cls === undefined) throw new Error("PlainSearch.tsx: the input has no literal className");
+    const words = cls.split(/\s+/);
+    if (!words.includes("text-base") || words.includes("text-sm"))
+      out.push("the input is under 16 px on a phone, which iOS zooms the page into");
+    if (!words.includes("h-11")) out.push("the input is under the 44 px touch target");
+    if (!/dir="auto"/.test(input[0])) out.push("the input does not take its direction from what is typed");
+    if (!/maxLength=\{PLAIN_MAX_CHARS\}/.test(input[0])) out.push("the input has no length limit");
+    const button = /<Button\b[\s\S]*?>/.exec(src.slice(input.index));
+    if (!button || !/\bh-11\b/.test(button[0])) out.push("the box's button is under the 44 px touch target");
+    return out;
+  };
+  for (const p of read96(box)) fail(`check 96: ${p} (Phase 32)`);
+  for (const [from, to, label] of [
+    ["text-base", "text-sm", "a 14 px input"],
+    ["h-11 w-full", "h-9 w-full", "a short input"],
+    ["maxLength={PLAIN_MAX_CHARS}", "", "an input with no limit"],
+    ['dir="auto"\n', "\n", "an input with a fixed direction"],
+  ]) {
+    if (!box.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read96(box.replace(from, to)).length) throw new Error(`the reader passes "${label}"`);
+  }
+  const max = Number((/export const PLAIN_MAX_CHARS = (\d+);/.exec(box) || [])[1]);
+  if (!(max > 0)) throw new Error("PlainSearch.tsx: PLAIN_MAX_CHARS not found");
+  const config = pySource("app/config.py", "check 96");
+  if (config !== null) {
+    const kb = Number((/max_search_query_kb: int = (\d+)/.exec(config) || [])[1]);
+    if (!(kb > 0)) throw new Error("backend/app/config.py: max_search_query_kb not found");
+    if (max * 2 > kb * 1024)
+      fail(`check 96: the box takes ${max} characters, up to ${max * 2} bytes in Hebrew, over the server's ${kb} KB`);
+  }
+} catch (e) {
+  fail(`plain-words box check (check 96) could not run: ${e.message}`);
+}
+
+// ---- 97. the route the box calls, its answer, and every daily cap's sentence //
+// (a) `readSearchQuery` posts `{ query }` to the path routes.py mounts, and the
+// TypeScript `SearchQueryReading` names exactly the fields of the backend's
+// `SearchQueryOut`: a field renamed on one side compiles green and reads
+// undefined. (b) Every LITERAL action the backend hands `check_and_count` has
+// its own row in apiError's LIMIT_KEYS, whose sentence resolves in both
+// common.json files: a new daily cap with no row reads the generic line, the
+// defect LIMIT_KEYS was written to stop (32(c) pins five actions by name; this
+// reads them all, the plain-words cap included). Degrades without backend/.
+try {
+  const client = decomment(read("api/client.ts"));
+  const fn = /export async function readSearchQuery\([\s\S]*?\n\}/.exec(client);
+  if (!fn) throw new Error("api/client.ts: readSearchQuery not found");
+  if (!/api\.post<SearchQueryReading>\("\/jobs\/search-query", \{ query \}\)/.test(fn[0]))
+    fail("check 97: readSearchQuery does not post { query } to /jobs/search-query");
+  const types = read("types.ts");
+  const tsBody = /export interface SearchQueryReading \{([\s\S]*?)\n\}/.exec(types);
+  if (!tsBody) throw new Error("types.ts: SearchQueryReading not found");
+  const tsFields = [...decomment(tsBody[1]).matchAll(/^\s*(\w+)\??:/gm)].map((m) => m[1]).sort();
+  const apiError = decomment(read("lib/apiError.ts"));
+  const table = /const LIMIT_KEYS: Record<LimitAction, string> = \{([\s\S]*?)\n\};/.exec(apiError);
+  if (!table) throw new Error("lib/apiError.ts: LIMIT_KEYS not found");
+  const limitKeys = Object.fromEntries([...table[1].matchAll(/^\s*(\w+): "([\w.]+)"/gm)].map((m) => [m[1], m[2]]));
+  if (Object.keys(limitKeys).length < 10) throw new Error(`read ${Object.keys(limitKeys).length} LIMIT_KEYS rows`);
+  for (const loc of ["en", "he"]) {
+    const common = JSON.parse(read(`locales/${loc}/common.json`));
+    for (const [action, key] of Object.entries(limitKeys))
+      if (!resolvesIn(common, key)) fail(`check 97: locales/${loc}/common.json is missing "${key}" (daily cap "${action}")`);
+  }
+  const routes = pySource("app/api/routes.py", "check 97");
+  const models = pySource("app/models/__init__.py", "check 97");
+  if (routes !== null && models !== null) {
+    if (!/@router\.post\("\/jobs\/search-query", response_model=SearchQueryOut\)/.test(routes))
+      fail("check 97: routes.py does not mount POST /jobs/search-query answering SearchQueryOut");
+    const pyBody = /class SearchQueryOut\(BaseModel\):([\s\S]*?)\n(?=\S)/.exec(models);
+    if (!pyBody) throw new Error("app/models: class SearchQueryOut not found");
+    const pyFields = [...pyBody[1].matchAll(/^    (\w+): /gm)].map((m) => m[1]).sort();
+    if (pyFields.length < 6) throw new Error(`read ${pyFields.length} SearchQueryOut fields`);
+    if (JSON.stringify(pyFields) !== JSON.stringify(tsFields))
+      fail(`check 97: SearchQueryOut ${JSON.stringify(pyFields)} and types.ts SearchQueryReading ${JSON.stringify(tsFields)} differ`);
+    const actions = new Set();
+    const pyFiles = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory() && entry.name !== "__pycache__") walk(p);
+        else if (entry.name.endsWith(".py")) pyFiles.push(p);
+      }
+    };
+    walk(path.join(BACKEND_DIR, "app"));
+    for (const file of pyFiles)
+      for (const m of fs.readFileSync(file, "utf8").matchAll(/\bcheck_and_count\(\s*[\w.]+,\s*\w+,\s*"(\w+)"/g)) actions.add(m[1]);
+    if (actions.size < 10 || !actions.has("search_query"))
+      throw new Error(`read ${actions.size} literal daily-cap actions out of backend/app (expected at least 10, search_query among them)`);
+    for (const action of actions)
+      if (!(action in limitKeys))
+        fail(`check 97: the backend's daily cap "${action}" has no row in lib/apiError.ts LIMIT_KEYS, so its 429 reads the generic line`);
+  }
+} catch (e) {
+  fail(`plain-words route check (check 97) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
