@@ -13,8 +13,10 @@ from typing import NamedTuple
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.core.job_match import _linkedin_job_id
+from app.core import applied_jobs
+from app.core.applied_jobs import APPLIED_STATUSES, AppliedJobs
 from app.core.job_search import CachedScore
+from app.core.posting_keys import url_key as _url_key
 from app.db.models import Application, JobSearchHit
 from app.db.sightings import _replaces as _earlier_board_date
 from app.models import JobMatch
@@ -145,11 +147,14 @@ def _json_list(raw: str | None) -> list[str]:
     return data if isinstance(data, list) else []
 
 
-def _url_key(url: str) -> str:
-    """Match applications to history rows by LinkedIn job id when possible —
-    the search card URL and the URL the tracker stored can differ in shape
-    (slug vs bare id, regional subdomain, tracking query) for the same posting."""
-    return _linkedin_job_id(url) or url.split("?")[0].rstrip("/")
+# Applications are matched to search results and History rows by
+# `posting_keys.url_key` (imported above as `_url_key`): LinkedIn's posting id
+# when the URL carries one, since the search card URL and the URL the tracker
+# stored can differ in shape (slug vs bare id, regional subdomain, tracking
+# query) for the same posting; otherwise the address without its trailing slash
+# and its tracking query, keeping the parameters that NAME a posting (JobMaster's
+# `key`, Phase 32). The applied-jobs filter matches by the same key, so a card
+# marked Applied and a posting left out are one answer about one job.
 
 
 class Tracked(NamedTuple):
@@ -176,6 +181,34 @@ def applied_status_map(db: Session, user_id: int) -> dict[str, Tracked]:
     for job_url, status, app_id in rows:
         status_by_key[_url_key(job_url)] = Tracked(status or "saved", app_id)
     return status_by_key
+
+
+def applied_jobs_of(db: Session, user_id: int) -> AppliedJobs | None:
+    """What this user already applied to (Phase 32): every tracker row at
+    applied, interview, offer or rejected, WITH or without an address (the Gmail
+    sync's cards have none), as `applied_jobs` matches them. None when there is
+    none. One read, of this user's rows only."""
+    rows = db.execute(
+        select(Application.job_url, Application.status, Application.job_title, Application.company).where(
+            Application.user_id == user_id, Application.status.in_(sorted(APPLIED_STATUSES))
+        )
+    ).all()
+    return applied_jobs.from_rows(rows)
+
+
+def applied_kw(db: Session, user_id: int) -> dict:
+    """`applied=` for `search_jobs`: the searches' and the alert mornings' one
+    door (Phase 32), so they cannot disagree about what was applied to. Empty
+    when nothing is, so a seam that replaces the search is called as before.
+
+    Never raises. A tracker that cannot be read leaves nothing out: showing a job
+    the user applied to is the safe error, hiding one they did not is the one this
+    feature may never make. Rolled back, so the caller's session stays usable."""
+    try:
+        return applied_jobs.search_kw(applied_jobs_of(db, user_id))
+    except Exception:  # noqa: BLE001 - leave nothing out rather than fail a search
+        db.rollback()
+        return {}
 
 
 def application_statuses(db: Session, urls: list[str], user_id: int) -> dict[str, Tracked | None]:

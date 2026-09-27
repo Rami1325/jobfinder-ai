@@ -54,7 +54,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core import hidden_jobs, mailer, quota
 from app.core.job_search import resume_hash, search_jobs
-from app.db.history import load_score_cache, record_search_hits
+from app.db.history import applied_kw, load_score_cache, record_search_hits
 from app.db.models import JobAlert, JobSearchHit, SavedResume, User
 from app.db.sightings import load_sightings, record_sightings
 from app.models import (
@@ -705,7 +705,9 @@ def run_alert(
     `last_error` and the returned result, so the cron caller always gets a 200
     with the outcome and one user's failure never stops the next. `search_fn` is
     called as `search_fn(resume, context, cache=..., sightings_fn=...)` — fakes
-    must accept BOTH kwargs.
+    must accept BOTH kwargs — plus `hidden=` for a user who hid something and
+    `applied=` for one whose tracker holds an application (Phase 32), each passed
+    only then.
 
     Monthly uses (Phase 30 / B6):
 
@@ -778,7 +780,9 @@ def run_alert(
             # which is what turns `first_seen_at` from "the day someone happened to
             # search" into a real lower bound on a posting's age, within weeks of deploy.
             # The user's "Not for me" set (PLAN 31.5/4): a morning never emails a job
-            # the user hid, and a hidden posting takes no slot in it either.
+            # the user hid, and a hidden posting takes no slot in it either. Nor a
+            # job the tracker says they already applied to (Phase 32), read through
+            # the searches' own door, so the morning and the app cannot disagree.
             owner = db.get(User, user_id)
             result = search_fn(
                 resume,
@@ -786,6 +790,7 @@ def run_alert(
                 cache=cache,
                 sightings_fn=partial(load_sightings, db),
                 **hidden_jobs.search_kw(owner.hidden_jobs_json if owner else ""),
+                **applied_kw(db, user_id),
             )
             new = split_new_matches(db, result.matches, user_id)
             record_search_hits(db, result.matches, user_id, resume_hash=master_hash)

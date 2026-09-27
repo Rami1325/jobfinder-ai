@@ -7,6 +7,7 @@ import {
   Banknote,
   Briefcase,
   Building2,
+  CheckCheck,
   Ghost,
   Globe,
   Laptop,
@@ -78,6 +79,22 @@ import {
 // which answers more with a 400 (Phase 30 / B4.3).
 const MAX_MATCH_LISTINGS = 10;
 
+/** "N jobs you applied to are not shown" (Phase 32). The SERVER leaves out every
+ * job the tracker holds at applied, interview, offer or rejected, from a search
+ * and from the saved matches (app/core/applied_jobs.py), and counts them; this
+ * only says the count, quietly, and nothing at all for none. Not a control: the
+ * jobs live in the tracker, one tab away. */
+function AppliedCount({ count }: { count: number }) {
+  const { t } = useTranslation("jobs");
+  if (count <= 0) return null;
+  return (
+    <p className="flex items-start gap-2 text-xs text-ink-muted">
+      <CheckCheck size={13} aria-hidden className="mt-px shrink-0" />
+      <span className="min-w-0">{t("applied.count", { count })}</span>
+    </p>
+  );
+}
+
 export default function JobsPage() {
   const { t } = useTranslation("jobs");
   const { master, masters, loading, setMaster } = useMasterResume();
@@ -113,6 +130,8 @@ export default function JobsPage() {
   // covered (`gone`, by URL), and the notice a hidden row leaves behind.
   const [hidden, setHidden] = useState<HiddenJobs | null>(null);
   const [historyHidden, setHistoryHidden] = useState(0);
+  // Saved matches the server left out because the user applied to them since (Phase 32).
+  const [historyApplied, setHistoryApplied] = useState(0);
   const [gone, setGone] = useState<Set<string>>(() => new Set());
   const [notice, setNotice] = useState<HiddenNotice | null>(null);
   const [hideManager, setHideManager] = useState(false);
@@ -211,22 +230,17 @@ export default function JobsPage() {
   }, [apps]);
   const idFor = (m: JobMatch) => m.application_id ?? (m.url ? appIdByUrl.get(normalizeJobUrl(m.url)) : undefined) ?? null;
 
-  // "Hide applied": statuses that mean the user has already acted on the job.
-  // `saved` is deliberately NOT one of them — saving is how you say "come back
-  // to this", so hiding it would bury the shortlist.
-  const [hideApplied, setHideApplied] = useState(false);
+  // No "Hide applied" toggle since Phase 32: the SERVER leaves every job the
+  // tracker holds at applied, interview, offer or rejected out of a search and
+  // of the saved matches, and counts them (`AppliedCount`), so a list here never
+  // holds one to hide. `saved` stays shown, marked, as it always was.
   // A one-way "show me anyway", not a saved preference: tapping it reveals the
   // postings the search dropped before scoring (a stated hiring restriction, a
   // closed posting, or a worldwide posting in a country where pay is well below
   // Israel's) and does NOT re-run the search. Reset per result below, or the
   // previous search's reveal leaks into the next one's list.
   const [showRestricted, setShowRestricted] = useState(false);
-  const isDone = (m: JobMatch) => {
-    const s = statusFor(m);
-    return !!s && s !== "saved";
-  };
-  const visible = (list: JobMatch[]) =>
-    (hideApplied ? list.filter((m) => !isDone(m)) : list).filter((m) => !m.url || !gone.has(normalizeJobUrl(m.url)));
+  const visible = (list: JobMatch[]) => list.filter((m) => !m.url || !gone.has(normalizeJobUrl(m.url)));
 
   async function loadHistory() {
     setHistoryLoading(true);
@@ -235,6 +249,7 @@ export default function JobsPage() {
       const h = await getJobHistory();
       setHistory(h.hits);
       setHistoryHidden(h.hidden ?? 0);
+      setHistoryApplied(h.applied ?? 0);
     } catch (e: any) {
       setHistoryError(apiErrorMessage(e, t("history.loadError")));
     } finally {
@@ -621,8 +636,6 @@ export default function JobsPage() {
     searchResult && searchResult.matches.length > 0
       ? searchResult.matches.reduce((a, b) => (b.overall > a.overall ? b : a))
       : null;
-  // Only offer the "hide applied" toggle when it would actually do something.
-  const appliedCount = searchResult ? searchResult.matches.filter(isDone).length : 0;
   const sortedMatches = searchResult
     ? [...searchResult.matches].sort(
         resultSort === "date"
@@ -684,8 +697,13 @@ export default function JobsPage() {
             </Card>
           )}
 
+          {/* What the saved matches left out, said together; the box is gone
+              (`empty:hidden`) when neither count has anything to say. */}
           {!searchResult && !historyLoading && !historyError && (
-            <HiddenCount count={historyHidden} onManage={() => setHideManager(true)} />
+            <div className="space-y-1.5 empty:hidden">
+              <HiddenCount count={historyHidden} onManage={() => setHideManager(true)} />
+              <AppliedCount count={historyApplied} />
+            </div>
           )}
 
           {!historyLoading && !historyError && rows.length > 0 && (
@@ -1045,20 +1063,6 @@ export default function JobsPage() {
                       card is open for editing it is said here instead. */}
                   {!searchFolded && searchSummary && <p className="text-sm text-ink-muted">{searchSummary}</p>}
                   <div className="flex flex-wrap items-center gap-4">
-                    {appliedCount > 0 && (
-                      <label
-                        className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-ink-muted"
-                        title={t("search.hideAppliedHint")}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={hideApplied}
-                          onChange={(e) => setHideApplied(e.target.checked)}
-                          className="h-3.5 w-3.5 accent-mint"
-                        />
-                        {t("search.hideApplied", { count: appliedCount })}
-                      </label>
-                    )}
                     <label className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
                       {t("sort.label")}
                       <select
@@ -1073,14 +1077,19 @@ export default function JobsPage() {
                   </div>
                 </div>
                 {/* Never silent (PLAN 31.5/4): what the server left out before
-                    selection, plus the rows hidden in this view since. */}
-                <HiddenCount
-                  count={
-                    (searchResult.hidden ?? 0) +
-                    searchResult.matches.filter((m) => m.url && gone.has(normalizeJobUrl(m.url))).length
-                  }
-                  onManage={() => setHideManager(true)}
-                />
+                    selection, plus the rows hidden in this view since; and the
+                    jobs the user already applied to (Phase 32), which the server
+                    left out and counted the same way. */}
+                <div className="space-y-1.5 empty:hidden">
+                  <HiddenCount
+                    count={
+                      (searchResult.hidden ?? 0) +
+                      searchResult.matches.filter((m) => m.url && gone.has(normalizeJobUrl(m.url))).length
+                    }
+                    onManage={() => setHideManager(true)}
+                  />
+                  <AppliedCount count={searchResult.applied ?? 0} />
+                </div>
                 {(searchResult.filtered?.length ?? 0) > 0 &&
                   (() => {
                     // Counted per reason, by name, in `filteredSummary`

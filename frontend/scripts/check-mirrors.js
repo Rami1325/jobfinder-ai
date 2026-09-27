@@ -13114,6 +13114,114 @@ try {
   fail(`first-steps check (check 80) could not run: ${e.message}`);
 }
 
+// ---- 85. applied jobs never come back: the server leaves them out, the page says so (EXECUTED) //
+// Phase 32. A job the tracker holds at applied, interview, offer or rejected is
+// left out of every search, the saved matches and the alert mornings by the SERVER
+// (app/core/applied_jobs.py, smoke P32), which counts the jobs it left out; the
+// page never matches, one matcher, one answer. (a) Every literal applied.* key
+// resolves in both jobs.json files with its full plural set. (b) By shape: the
+// search's count and the saved matches' count are each said, the latter fed by
+// `h.applied`, and no list on the page filters by a tracker status itself (the old
+// "Hide applied" toggle was that second matcher, and is deleted). (c) `applied` is
+// mirrored on both result types, and read off the backend's models (degraded,
+// loudly, without backend/). (d) EXECUTED: the data cache drops the saved matches
+// whenever a wrapper drops "applications", since the server filters them by the
+// tracker, and does not when it drops something else. Planted twins every run.
+try {
+  const read85 = ({ jobs, types, models }) => {
+    const out = [];
+    if (!/<AppliedCount count=\{searchResult\.applied \?\? 0\} \/>/.test(jobs))
+      out.push("a search does not say how many jobs it left out as applied to");
+    if (!/<AppliedCount count=\{historyApplied\} \/>/.test(jobs) || !/setHistoryApplied\(h\.applied \?\? 0\)/.test(jobs))
+      out.push("the saved matches do not say how many they left out as applied to");
+    const visible = jobs.match(/const visible = \(list: JobMatch\[\]\) =>[^;]*;/);
+    if (!visible) throw new Error("pages/JobsPage.tsx: the `visible` list filter was not found");
+    if (/statusFor|application_status|appStatus|isDone/.test(visible[0]) || /\bhideApplied\b/.test(jobs))
+      out.push("the page filters jobs by their tracker status itself, a second matcher beside the server's");
+    for (const name of ["JobSearchResult", "JobSearchHistory"]) {
+      if (!/\bapplied\?: number;/.test(blockAfter(types, `export interface ${name} {`, `types.ts ${name}`)))
+        out.push(`types.ts ${name} does not mirror \`applied\``);
+      if (models !== null) {
+        const m = models.match(new RegExp(`\\nclass ${name}\\(BaseModel\\):\\n([\\s\\S]*?)(?=\\n(?:class |def |[A-Z_]+ = ))`));
+        if (!m) throw new Error(`backend/app/models/__init__.py: class ${name} was not found`);
+        if (!/^\s+applied: int = 0$/m.test(m[1])) out.push(`the backend's ${name} carries no \`applied: int = 0\``);
+      }
+    }
+    return out;
+  };
+  // Line endings folded first: a Windows checkout writes CRLF, and a plant or a
+  // pattern that names "\n" must read the same text there as on CI.
+  const lf = (s) => (s === null ? null : s.replace(/\r\n/g, "\n"));
+  const pyModels = pySource("app/models/__init__.py", "check 85");
+  const real = {
+    jobs: lf(decomment(read("pages/JobsPage.tsx"))),
+    types: lf(read("types.ts")),
+    models: lf(pyModels),
+  };
+  for (const p of read85(real)) fail(`check 85: ${p} (Phase 32)`);
+  const plant = (key, from, to, label) => {
+    if (real[key] === null) return;
+    if (!real[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read85({ ...real, [key]: real[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant("jobs", "<AppliedCount count={historyApplied} />", "", "saved matches that leave jobs out in silence");
+  plant("jobs", "<AppliedCount count={searchResult.applied ?? 0} />", "<AppliedCount count={0} />", "a search that leaves jobs out in silence");
+  plant(
+    "jobs",
+    "const visible = (list: JobMatch[]) => list.filter((m) => !m.url || !gone.has(normalizeJobUrl(m.url)));",
+    'const visible = (list: JobMatch[]) => list.filter((m) => !m.url || !gone.has(normalizeJobUrl(m.url))).filter((m) => statusFor(m) !== "applied");',
+    "a page that hides applied jobs by its own matcher",
+  );
+  plant(
+    "types",
+    "  /** Saved rows left out because the user has applied to them since (Phase 32). */\n  applied?: number;\n",
+    "",
+    "History's count not mirrored",
+  );
+  plant("models", "    applied: int = 0\n\n\nclass JobSearchHitOut", "\n\nclass JobSearchHitOut", "the search's count gone from the backend");
+
+  const keys = [...new Set([...real.jobs.matchAll(/\bt\(\s*"(applied\.[\w.]+)"/g)].map((m) => m[1]))];
+  if (keys.length < 1) throw new Error("read no applied.* key out of pages/JobsPage.tsx");
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const key of keys)
+      for (const problem of keyProblems(bundle, key, loc, "the Jobs page's applied-jobs line"))
+        fail(`check 85: locales/${loc}/jobs.json ${problem}`);
+    // The reader of the plural set, probed: the Hebrew count without its _two form must be refused.
+    if (loc === "he") {
+      const lame = JSON.parse(JSON.stringify(bundle));
+      delete lame.applied.count_two;
+      if (!keyProblems(lame, "applied.count", loc).length) throw new Error("keyProblems passes a Hebrew count without its _two form");
+    }
+  }
+
+  // (d) EXECUTED: the cached saved matches go when the tracker changes.
+  const cacheSrc = read("lib/dataCache.ts");
+  const drops85 = async (src) => {
+    const dc = runProbeBundle("data-cache-85", src);
+    let reads = 0;
+    const history = () => dc.cachedFetch("history", async () => ++reads);
+    await history();
+    await history(); // fresh: served from the cache
+    dc.invalidateData("nudges"); // not a source of the saved matches
+    await history();
+    const afterOther = reads;
+    dc.invalidateData("applications", "nudges"); // what every tracker write sends
+    await history();
+    return { cached: afterOther === 1, dropped: reads === 2 };
+  };
+  const got85 = await drops85(cacheSrc);
+  if (!got85.cached) fail("check 85: lib/dataCache.ts drops the saved matches when an unrelated key is dropped");
+  if (!got85.dropped)
+    fail("check 85: lib/dataCache.ts keeps the saved matches cached after a tracker write, so a job just marked applied still shows (Phase 32)");
+  const derivation = "DERIVED.get(key) ?? []";
+  if (!cacheSrc.includes(derivation)) throw new Error("the probe could not plant a cache without its derived keys");
+  if ((await drops85(cacheSrc.replace(derivation, "[]"))).dropped)
+    throw new Error("the executed probe passes a cache that forgets the saved matches depend on the tracker");
+} catch (e) {
+  fail(`applied-jobs check (check 85) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
