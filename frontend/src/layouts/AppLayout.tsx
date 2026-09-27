@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import {
   FileText,
@@ -46,7 +46,7 @@ import { getAuthMe, refreshUses } from "../api/client";
 import { setLanguage } from "../i18n";
 import { useTheme } from "../hooks/useTheme";
 import { useDialogFocus } from "../hooks/useDialogFocus";
-import { authRedirectUrl } from "../lib/safeNext";
+import { authRedirectUrl, takeLongNext } from "../lib/safeNext";
 import { signOut } from "../lib/session";
 import { announceAccount, watchAccount } from "../lib/accountWatch";
 import { awaitingReview } from "../lib/kitsReview";
@@ -751,8 +751,19 @@ export default function AppLayout() {
   // The same answer's account id, for the uses refresh below. Null when the
   // guard failed open: then no account is known and nothing is refreshed.
   const [meId, setMeId] = useState<number | null>(null);
+  const navigate = useNavigate();
   useEffect(() => {
     let live = true;
+    // A destination too long for `next` waited in this tab through the sign-in
+    // (lib/safeNext's fitNext): an alert email's job link with a long posting
+    // URL. It is put back here, before the page under the shell mounts, so the
+    // page reads the whole address; a `?jf_next=` this tab holds nothing for
+    // is only dropped from the address bar.
+    const shellFor = () => {
+      const back = takeLongNext(window.location.pathname, window.location.search, window.location.hash);
+      if (back !== null) navigate(back, { replace: true });
+      setAuthed(true);
+    };
     // No first-run questions open from here any more (PLAN 31.5/2): the first
     // run is the upload, and /app asks "What first?" once the resume is read.
     getAuthMe()
@@ -772,11 +783,11 @@ export default function AppLayout() {
           // Tell this browser's other tabs who holds the cookie now (lib/accountWatch).
           announceAccount(a.user.id);
         }
-        setAuthed(true);
+        shellFor();
       })
       .catch(() => {
         if (!live) return;
-        setAuthed(true);
+        shellFor();
       });
     return () => {
       live = false;

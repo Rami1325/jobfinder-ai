@@ -20383,7 +20383,54 @@ check(
     and _sess28.safe_next("/app?tailor_app=42", _n30_base) == "/app?tailor_app=42",
     f"{len(_n30_edge)} characters -> {len(_sess28.safe_next(_n30_edge, _n30_base))}",
 )
-_e30_bad = ["x<victim@y.com>", "a,b@y.com", "name <a@y.com>", '"a"@y.com', "a b@y.com", "a@y.com;b@z.com",
+# PLAN 31.4/6's open item, fixed 2026-09-27: an alert email links a job as
+# `/jobs?open=<the posting's URL, quoted whole>`, and a long posting URL (a Comeet
+# position slug in Hebrew is ten characters a letter once quoted twice) made that
+# link longer than MAX_NEXT, so a signed-out click lost the job at sign-in. The
+# ceiling stays: the tab keeps the long destination itself and sends a SHORT
+# `next`, its path plus `?jf_next=<16 hex>` (lib/safeNext.ts's fitNext, executed
+# by check-mirrors 83). What the server must do is carry that short `next` whole,
+# through safe_next and the Google door that stores it, while it still refuses the
+# long link itself and every off-site or script `next` beside it.
+from app.core.alerts import _job_link as _ln31_job_link  # noqa: E402
+from app.models import GoogleStartIn as _Ln31Start, JobMatch as _Ln31Match  # noqa: E402
+
+_ln31_posting = (
+    "https://www.comeet.com/jobs/lumen-payments/A1.001/"
+    + "%D7%9E%D7%94%D7%A0%D7%93%D7%A1-%D7%AA%D7%95%D7%9B%D7%A0%D7%94-" * 9
+    + "backend/B1.011?utm_source=alert&utm_medium=email"
+)
+_ln31_link = _ln31_job_link(_Ln31Match(url=_ln31_posting), _n30_base)
+_ln31_next = _ln31_link[len(_n30_base):]  # what the tab's address holds: path + query
+_ln31_marker = "/jobs?jf_next=0123456789abcdef"
+try:
+    _Ln31Start(next=_ln31_next)
+    _ln31_door_refuses = False
+except ValueError:  # pydantic's ValidationError is a ValueError
+    _ln31_door_refuses = True
+_ln31_refused = ["javascript:alert(1)", "//evil.example/jobs?jf_next=0123456789abcdef",
+                 "https://evil.example/jobs?jf_next=0123456789abcdef", "/%2F/evil.example/jobs"]
+check(
+    "31.4/6 long job link (fixed 2026-09-27): a 600+ character posting's alert link is over MAX_NEXT, so it cannot "
+    "cross sign-in as a `next` (the ceiling unchanged: safe_next and the Google door both refuse it) — and the short "
+    "`next` the tab sends in its place, /jobs?jf_next=<ref>, crosses both whole",
+    len(_ln31_posting) >= 600
+    and _ln31_next.startswith("/jobs?open=")
+    and len(_ln31_next) > _sess28.MAX_NEXT
+    and _sess28.safe_next(_ln31_next, _n30_base) == "/app"
+    and _ln31_door_refuses
+    and _sess28.safe_next(_ln31_marker, _n30_base) == _ln31_marker
+    and _Ln31Start(next=_ln31_marker).next == _ln31_marker,
+    f"posting {len(_ln31_posting)} chars, next {len(_ln31_next)} chars -> "
+    f"{_sess28.safe_next(_ln31_next, _n30_base)!r}; marker -> {_sess28.safe_next(_ln31_marker, _n30_base)!r}",
+)
+check(
+    "31.4/6 long job link: …while an off-site, protocol-relative, encoded-slash or javascript: `next` carrying the "
+    "same marker is still refused to /app (the false-positive half: nothing about the fix loosened the rules)",
+    all(_sess28.safe_next(v, _n30_base) == "/app" for v in _ln31_refused),
+    str({v[:40]: _sess28.safe_next(v, _n30_base) for v in _ln31_refused}),
+)
+_e30_bad =["x<victim@y.com>", "a,b@y.com", "name <a@y.com>", '"a"@y.com', "a b@y.com", "a@y.com;b@z.com",
             "(c)a@y.com", "a@[1.2.3.4]", "a:b@y.com", "a\\b@y.com", "a@b@y.com", "a" * 243 + "@example.com"]
 check(
     "B7: an address is ONE plain addr-spec — display-name, list, quoted, bracketed and over-254 forms are refused, so "

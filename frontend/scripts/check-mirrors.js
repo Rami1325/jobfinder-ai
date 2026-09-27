@@ -13332,6 +13332,131 @@ try {
   fail(`tracker card controls check (check 82) could not run: ${e.message}`);
 }
 
+// ---- 83. a long job link survives sign-in, and the rules do not move (EXECUTED) //
+// Found in PLAN 31.4/6, fixed 2026-09-27. An alert email links a job as
+// `/jobs?open=<the posting's URL, quoted whole>`; a posting URL over about 450
+// characters made that `next` longer than MAX_NEXT (512, the backend twin's),
+// both validators refused it, and a signed-out click landed on /app with the job
+// gone. The ceiling stays (it bounds what the anonymous Google door stores): the
+// tab keeps a destination too long for `next` in sessionStorage and sends its
+// path plus `?jf_next=<ref>`, which AppLayout's guard puts back after sign-in.
+// (a) EXECUTES lib/safeNext.ts on a 620-character posting: the `next` that
+//     `authRedirectUrl` builds fits and passes `safeNext` whole, and
+//     `takeLongNext` on the page it lands on gives back the exact address, whose
+//     `open` is the posting, once; a short destination is unchanged and stores
+//     nothing; an auth page passes its own `next` along.
+// (b) EXECUTES the refusals: `safeNext` still refuses the long link itself, and
+//     an off-site, protocol-relative and `javascript:` value; `takeLongNext`
+//     follows nothing for a ref this tab never stored, another ref, a stored value
+//     over an hour old, a stored off-site or script value, or one for another
+//     page, and drops the parameter from the address instead; storage refused
+//     sends the path alone.
+// (c) Pins AppLayout's guard: the destination is put back through takeLongNext
+//     before the shell renders, on both of its branches.
+// Planted twins every run.
+try {
+  const snSrc = read("lib/safeNext.ts");
+  const posting =
+    "https://www.comeet.com/jobs/lumen-payments/A1.001/" +
+    "%D7%9E%D7%94%D7%A0%D7%93%D7%A1-%D7%AA%D7%95%D7%9B%D7%A0%D7%94-".repeat(9) +
+    "backend/B1.011?utm_source=alert&utm_medium=email";
+  if (posting.length < 600) throw new Error("check 83's posting fixture is under 600 characters");
+  const saved83 = { window: globalThis.window, sessionStorage: globalThis.sessionStorage };
+  const run83 = (src) => {
+    const sn = runProbeBundle("safenext-long", src);
+    const out = [];
+    const at = (pathname, search, hash = "") => {
+      globalThis.window = { location: { origin: "https://app.example", pathname, search, hash } };
+    };
+    const store = memoryStorage();
+    globalThis.sessionStorage = store;
+    try {
+      // (a) the long link, round trip.
+      const search = `?open=${encodeURIComponent(posting)}`;
+      at("/jobs", search);
+      const here = `/jobs${search}`;
+      const login = sn.authRedirectUrl("/login");
+      const next = new URLSearchParams(login.slice(login.indexOf("?"))).get("next") ?? "";
+      out.push(next.length <= 512 && sn.safeNext(next) === next ? "fits" : `next ${next.length} chars, safeNext ${sn.safeNext(next)}`);
+      const m = /^\/jobs\?jf_next=([0-9a-f]{16})$/.exec(next);
+      out.push(m ? "marker" : `not a marker: ${next.slice(0, 40)}`);
+      const back = m ? sn.takeLongNext("/jobs", `?jf_next=${m[1]}`) : null;
+      out.push(back === here && new URLSearchParams(back.slice(5)).get("open") === posting ? "restored" : `restored ${String(back).slice(0, 40)}`);
+      out.push(m && sn.takeLongNext("/jobs", `?jf_next=${m[1]}`) === "/jobs" ? "once" : "twice");
+      // a short one, and an auth page.
+      at("/app", "?tailor_app=42");
+      const short = sn.authRedirectUrl("/login");
+      out.push(short === `/login?next=${encodeURIComponent("/app?tailor_app=42")}` && store.getItem(sn.LONG_NEXT_KEY) === null ? "short" : `short ${short}`);
+      at("/signup", `?next=${encodeURIComponent("/jobs?jf_next=0123456789abcdef")}`);
+      out.push(sn.authRedirectUrl("/login") === `/login?next=${encodeURIComponent("/jobs?jf_next=0123456789abcdef")}` ? "passed" : "not passed");
+      // (b) the refusals.
+      out.push(sn.safeNext(here) === "/app" ? "ceiling" : "long kept");
+      out.push(["//evil.example/jobs", "https://evil.example/jobs", "javascript:alert(1)"].every((v) => sn.safeNext(v) === "/app") ? "offsite" : "offsite kept");
+      out.push(sn.takeLongNext("/jobs", "?x=1") === null ? "none" : "acted");
+      at("/jobs", "");
+      const put = (v) => store.setItem(sn.LONG_NEXT_KEY, JSON.stringify(v));
+      const now = Date.now();
+      const cases = [
+        ["nothing stored", null],
+        ["another ref", { ref: "ffffffffffffffff", next: here, at: now }],
+        ["stale", { ref: "0123456789abcdef", next: here, at: now - 2 * 3600_000 }],
+        ["off-site", { ref: "0123456789abcdef", next: "//evil.example/jobs", at: now }],
+        ["script", { ref: "0123456789abcdef", next: "javascript:alert(1)", at: now }],
+        ["another page", { ref: "0123456789abcdef", next: "/tracker?x=1", at: now }],
+      ];
+      for (const [label, v] of cases) {
+        store.clear();
+        if (v) put(v);
+        const got = sn.takeLongNext("/jobs", "?x=1&jf_next=0123456789abcdef");
+        out.push(got === "/jobs?x=1" ? label : `${label} -> ${String(got).slice(0, 30)}`);
+      }
+      // storage refused: the path alone.
+      globalThis.sessionStorage = { getItem: () => null, setItem: () => { throw new Error("quota"); }, removeItem: () => {} };
+      at("/jobs", search);
+      out.push(sn.authRedirectUrl("/login") === `/login?next=${encodeURIComponent("/jobs")}` ? "path" : "no path");
+    } finally {
+      globalThis.window = saved83.window;
+      globalThis.sessionStorage = saved83.sessionStorage;
+    }
+    return out.join(",");
+  };
+  const WANT83 = "fits,marker,restored,once,short,passed,ceiling,offsite,none,nothing stored,another ref,stale,off-site,script,another page,path";
+  const real83 = run83(snSrc);
+  if (real83 !== WANT83) fail(`check 83: lib/safeNext.ts answers [${real83}] where [${WANT83}] is right (PLAN 31.4/6)`);
+  for (const [label, from, to] of [
+    ["a next that is never shortened", "  if (here.length <= MAX_NEXT) return here;", "  return here;"],
+    ["a take that ignores the ref", "if (v.ref !== ref || typeof v.next", "if (typeof v.next"],
+    ["a take that follows another page", " || new URL(safe, window.location.origin).pathname !== pathname) return without;", ") return without;"],
+    ["a take that trusts storage", "    const safe = checkNext(v.next, LONG_NEXT_MAX);\n    if (safe === FALLBACK ||", "    const safe = v.next;\n    if ("],
+    ["a raised ceiling", "const MAX_NEXT = 512;", "const MAX_NEXT = 4096;"],
+  ]) {
+    if (!snSrc.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (run83(snSrc.replace(from, to)) === WANT83) throw new Error(`the run passes "${label}", so it cannot be trusted`);
+  }
+
+  // (c) the guard puts the destination back before the shell renders.
+  const read83 = (layout) => {
+    const out = [];
+    const shell = /const shellFor = \(\) => \{([\s\S]*?)\n\s*\};/.exec(layout);
+    if (!shell) return ["AppLayout's guard has no shellFor that puts a long destination back"];
+    if (!/const back = takeLongNext\(window\.location\.pathname, window\.location\.search, window\.location\.hash\);\s*if \(back !== null\) navigate\(back, \{ replace: true \}\);\s*setAuthed\(true\);/.test(shell[1]))
+      out.push("shellFor does not put the destination back (takeLongNext, then navigate with replace) before setAuthed(true)");
+    if ((layout.match(/setAuthed\(true\)/g) || []).length !== 1) out.push("a guard branch renders the shell without shellFor");
+    if ((layout.match(/\bshellFor\(\);/g) || []).length < 2) out.push("shellFor is not called on both of the guard's branches");
+    return out;
+  };
+  const layout83 = decomment(read("layouts/AppLayout.tsx"));
+  for (const p of read83(layout83)) fail(`check 83: ${p} (PLAN 31.4/6)`);
+  const plant83 = (from, to, label) => {
+    if (!layout83.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read83(layout83.replace(from, to)).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant83("if (back !== null) navigate(back, { replace: true });", "", "a guard that never puts it back");
+  plant83("        if (!live) return;\n        shellFor();", "        if (!live) return;\n        setAuthed(true);", "a failed-open guard that skips it");
+} catch (e) {
+  fail(`long job link check (check 83) could not run: ${e.message}`);
+}
+
 // ---- 84. "Needs you" is one row on a phone ----------------------------------- //
 // Found in PLAN 31.5/5, fixed 2026-09-27. With all three chips the strip WRAPPED
 // (`flex flex-wrap`): two rows at 390 px, three at 360 in Hebrew, which moved the
