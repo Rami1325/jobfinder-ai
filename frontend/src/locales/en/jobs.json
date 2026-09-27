@@ -383,5 +383,17 @@
     "quiet_other": "{{count}} applications gone quiet",
     "fix_one": "{{count}} thing to fix on your resume",
     "fix_other": "{{count}} things to fix on your resume"
+  },
+  "plain": {
+    "label": "Describe the job you want",
+    "placeholder": "e.g. remote QA, Haifa",
+    "fill": "Fill in",
+    "filled": "Filled in below:",
+    "worldwide": "Remote abroad",
+    "nothing": "Couldn't find a role, a place or a work mode in that. Try: remote data analyst in Haifa.",
+    "noteRegion": "A region isn't a search filter, so this searches all of Israel.",
+    "notePlaces": "One place at a time, so this searches {{place}}.",
+    "noteExperience": "Years of experience aren't a search filter.",
+    "error": "Couldn't read that. Try again, or fill in the fields yourself."
   }
 }

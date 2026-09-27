@@ -23,7 +23,8 @@ type LimitAction =
   | "jd_analyze"
   | "search_context"
   | "scan"
-  | "fetch";
+  | "fetch"
+  | "search_query";
 
 interface DailyLimitDetail {
   code: "daily_limit";
@@ -45,6 +46,8 @@ const LIMIT_KEYS: Record<LimitAction, string> = {
   search_context: "dailyLimit.searchContext",
   scan: "dailyLimit.scan",
   fetch: "dailyLimit.fetch",
+  // Search in plain words (Phase 32): only a line that reaches the model counts.
+  search_query: "dailyLimit.searchQuery",
 };
 
 // Prompt-size limits (backend app/llm/limits.py). Same structured-detail shape
@@ -77,6 +80,8 @@ const SIZE_LIMIT_KEYS: Record<string, string> = {
   // reached the model unmeasured, and the page was clipped instead of refused.
   note: "sizeLimit.note",
   page: "sizeLimit.page",
+  // A line typed into the Jobs page's search (Phase 32).
+  query: "sizeLimit.query",
 };
 
 // A context overflow that is not the CV's alone. The model refused the prompt,
