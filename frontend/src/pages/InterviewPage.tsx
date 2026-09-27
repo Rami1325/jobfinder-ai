@@ -110,7 +110,11 @@ function QuestionCard({
           </Badge>
         )}
       </div>
-      {q.rationale && <p className="mt-1 text-xs text-ink-muted">{q.rationale}</p>}
+      {q.rationale && (
+        <p className="mt-1 text-xs text-ink-muted" dir="auto">
+          {q.rationale}
+        </p>
+      )}
 
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" loading={loadingA} icon={<Lightbulb size={14} />} onClick={getAnswer}>

@@ -28,7 +28,8 @@ export function DictateButton({ dictation }: { dictation: Dictation }) {
         disabled={dictation.disabled}
         onClick={dictation.toggle}
         className={cn(
-          "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition-colors lg:h-9 lg:w-9",
+          // No colour transition: the state flips on the tap, not 150 ms later.
+          "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border lg:h-9 lg:w-9",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
           "disabled:cursor-not-allowed disabled:opacity-50",
           on
