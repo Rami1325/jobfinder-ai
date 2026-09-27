@@ -772,6 +772,10 @@ export interface JobSearchResult {
   source_empty?: Record<string, string>; // provider id → note when a source worked but matched nothing; absent on older backends
   /** How many postings the user's own "Not for me" hid before selection (PLAN 31.5/4). */
   hidden?: number;
+  /** How many JOBS the user already applied to were left out before selection
+   * (Phase 32): the tracker holds them at applied, interview, offer or rejected.
+   * The server matches; the page only says the count. */
+  applied?: number;
 }
 /** What the user said "Not for me" to (PLAN 31.5/4), GET/PUT /jobs/hidden. The
  * server stores it canonical and does ALL the matching; the page never
@@ -810,6 +814,8 @@ export interface JobSearchHistory {
   hits: JobSearchHit[];
   /** Saved rows left out because the user hid them since (PLAN 31.5/4). */
   hidden?: number;
+  /** Saved rows left out because the user has applied to them since (Phase 32). */
+  applied?: number;
 }
 
 /** Batch auto-tailor kits (PLAN 8.1): high-fit search results queued for a

@@ -34,10 +34,18 @@ export async function cachedFetch<T>(
   return p;
 }
 
+/** Keys whose answer the server computes FROM another key's data, so dropping
+ * the source drops them too. The saved matches (`history`) leave out every job
+ * the tracker says was applied to (Phase 32), so any tracker write, from any
+ * wrapper that drops "applications" (a status change, a delete, a Gmail sync),
+ * can change them; listing it here keeps every such wrapper right, the next
+ * one written included. */
+const DERIVED = new Map<string, readonly string[]>([["applications", ["history"]]]);
+
 /** Drop cached entries. Each argument matches the key itself and any
- * sub-keys ("master" also drops "master:he"). */
+ * sub-keys ("master" also drops "master:he"), and the keys derived from it. */
 export function invalidateData(...keys: string[]): void {
-  for (const k of keys) {
+  for (const k of keys.flatMap((key) => [key, ...(DERIVED.get(key) ?? [])])) {
     for (const existing of entries.keys()) {
       if (existing === k || existing.startsWith(`${k}:`)) entries.delete(existing);
     }
