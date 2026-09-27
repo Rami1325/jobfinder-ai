@@ -447,6 +447,23 @@ class GreenhouseCompany(Base):
     )
 
 
+class RegistrySeed(Base):
+    """One seed batch a company registry has applied (2026-09-28), so each batch
+    reaches an existing database exactly once (`app/db/registry_seed.py`): a
+    company an admin removed is never re-added, and a retirement runs once. The
+    `name` is the batch's own ("comeet:2026-09-28"); its unique constraint is
+    also the claim two cold starts race for, so only one applies a batch. Shared
+    registry bookkeeping, not user content: neither privacy door touches it."""
+
+    __tablename__ = "registry_seeds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class JobAlert(Base):
     """Job-alert settings (one row per user): re-run the saved search on a
     schedule and email newly seen hits. The schedule itself lives in Vercel

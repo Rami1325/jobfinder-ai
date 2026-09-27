@@ -9,11 +9,31 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.core.providers.comeet_seed import SEED_COMPANIES, careers_url
+from app.core.providers.comeet_seed import SEED_BATCHES, careers_url
 from app.db.models import ComeetCompany
+from app.db.registry_seed import Registry, ensure_synced
+
+
+def _slugs(db: Session) -> set[str]:
+    return set(db.execute(select(ComeetCompany.slug)).scalars())
+
+
+def _insert(db: Session, row: dict) -> None:
+    db.add(
+        ComeetCompany(
+            slug=row["slug"], name=row["name"], uid=row["uid"], careers_url=careers_url(row["slug"], row["uid"])
+        )
+    )
+
+
+def _delete(db: Session, slug: str) -> None:
+    db.execute(delete(ComeetCompany).where(ComeetCompany.slug == slug))
+
+
+REGISTRY = Registry(key="comeet", batches=SEED_BATCHES, slugs=_slugs, insert=_insert, delete=_delete)
 
 
 class CompanyRef(NamedTuple):
@@ -35,20 +55,10 @@ def _ref(row: ComeetCompany) -> CompanyRef:
 
 
 def list_companies(db: Session) -> list[CompanyRef]:
-    """All registered companies, seeding the table on first use."""
+    """All registered companies, after applying any seed batch this database
+    has not applied yet (once per process; `app/db/registry_seed.py`)."""
+    ensure_synced(db, REGISTRY)
     rows = db.execute(select(ComeetCompany).order_by(ComeetCompany.slug)).scalars().all()
-    if not rows:
-        for entry in SEED_COMPANIES:
-            db.add(
-                ComeetCompany(
-                    slug=entry["slug"],
-                    name=entry["name"],
-                    uid=entry["uid"],
-                    careers_url=careers_url(entry["slug"], entry["uid"]),
-                )
-            )
-        db.commit()
-        rows = db.execute(select(ComeetCompany).order_by(ComeetCompany.slug)).scalars().all()
     return [_ref(r) for r in rows]
 
 

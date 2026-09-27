@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.core.providers.greenhouse_seed import SEED_COMPANIES
+from app.core.providers.greenhouse_seed import SEED_BATCHES
 from app.db.models import GreenhouseCompany
+from app.db.registry_seed import Registry, ensure_synced
 
 
 class BoardRef(NamedTuple):
@@ -24,18 +25,28 @@ def _ref(row: GreenhouseCompany) -> BoardRef:
     return BoardRef(slug=row.slug, name=row.name or row.slug)
 
 
+def _slugs(db: Session) -> set[str]:
+    return set(db.execute(select(GreenhouseCompany.slug)).scalars())
+
+
+def _insert(db: Session, row: dict) -> None:
+    db.add(GreenhouseCompany(slug=row["slug"], name=row["name"]))
+
+
+def _delete(db: Session, slug: str) -> None:
+    db.execute(delete(GreenhouseCompany).where(GreenhouseCompany.slug == slug))
+
+
+REGISTRY = Registry(key="greenhouse", batches=SEED_BATCHES, slugs=_slugs, insert=_insert, delete=_delete)
+
+
 def list_companies(db: Session) -> list[BoardRef]:
-    """All registered companies, seeding the table on first use."""
+    """All registered companies, after applying any seed batch this database
+    has not applied yet (once per process; `app/db/registry_seed.py`)."""
+    ensure_synced(db, REGISTRY)
     rows = db.execute(
         select(GreenhouseCompany).order_by(GreenhouseCompany.slug)
     ).scalars().all()
-    if not rows:
-        for entry in SEED_COMPANIES:
-            db.add(GreenhouseCompany(slug=entry["slug"], name=entry["name"]))
-        db.commit()
-        rows = db.execute(
-            select(GreenhouseCompany).order_by(GreenhouseCompany.slug)
-        ).scalars().all()
     return [_ref(r) for r in rows]
 
 

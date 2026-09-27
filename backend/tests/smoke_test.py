@@ -6194,6 +6194,377 @@ check(
 )
 _db.close()
 
+# 16c. The registries' seed BATCHES reach a database that already exists, each
+# exactly once (2026-09-28, PLAN 32 "More places to search"). The seed used to be
+# inserted into an EMPTY table only, so a company added to the file never reached
+# production and a dead one could not leave it. Pinned on scratch in-memory
+# databases: a fresh one, one the old code seeded (with an admin's removal and an
+# admin's own company), a later sync after an admin's changes, Greenhouse's
+# retired board, a batch another instance already claimed, and a failing sync that
+# must never break the search that triggered it.
+import logging as _sd_logging  # noqa: E402
+
+from sqlalchemy import create_engine as _sd_engine, delete as _sd_delete, select as _sd_select  # noqa: E402
+from sqlalchemy.orm import sessionmaker as _sd_sessionmaker  # noqa: E402
+
+import app.db.registry_seed as _sd_mod  # noqa: E402
+from app.core.providers import comeet_seed as _sd_cs, greenhouse_seed as _sd_gs  # noqa: E402
+from app.core.providers.comeet import parse_careers_url as _sd_parse_careers  # noqa: E402
+from app.core.providers.greenhouse import parse_board_ref as _sd_parse_board  # noqa: E402
+from app.core.providers.registry_seeds import SeedBatch as _SdBatch, effective as _sd_effective  # noqa: E402
+from app.db.comeet import REGISTRY as _SD_COMEET  # noqa: E402
+from app.db.database import Base as _SdBase  # noqa: E402
+from app.db.greenhouse import REGISTRY as _SD_GH  # noqa: E402
+from app.db.models import (  # noqa: E402
+    ComeetCompany as _SdComeet,
+    GreenhouseCompany as _SdGh,
+    RegistrySeed as _SdSeed,
+)
+
+
+def _sd_db():
+    _eng = _sd_engine("sqlite://")
+    _SdBase.metadata.create_all(_eng, tables=[_SdComeet.__table__, _SdGh.__table__, _SdSeed.__table__])
+    return _sd_sessionmaker(bind=_eng)()
+
+
+def _sd_slugs(db, model) -> set:  # noqa: ANN001
+    return set(db.execute(_sd_select(model.slug)).scalars())
+
+
+def _sd_marks(db) -> set:  # noqa: ANN001
+    return set(db.execute(_sd_select(_SdSeed.name)).scalars())
+
+
+_SD_LEGACY_CM = {r["slug"] for r in _sd_cs.SEED_BATCHES[0].add}
+_SD_NEW_CM = {r["slug"] for r in _sd_cs.SEED_BATCHES[1].add}
+_SD_RETIRED_CM = set(_sd_cs.SEED_BATCHES[1].retire)
+_SD_WANT_CM = {r["slug"] for r in _sd_cs.SEED_COMPANIES}
+_SD_WANT_GH = {r["slug"] for r in _sd_gs.SEED_COMPANIES}
+_SD_ALL = _sd_cs.SEED_BATCHES + _sd_gs.SEED_BATCHES
+check(
+    "16c seed data: Comeet is the July list plus 55 companies minus the four retired (Aidoc, LIQUiDITY, PTC: no API "
+    "token; CYMOTIVE: no openings), 79 in all; Greenhouse the July list plus 34 minus `sisense` (a 404), 49; slugs "
+    "unique ignoring case, every Comeet careers URL and Greenhouse slug readable by its own parser, every batch named "
+    "for its registry, and only the first batch legacy",
+    len(_sd_cs.SEED_BATCHES[1].add) == 55
+    and _SD_RETIRED_CM == {"Aidoc", "liquiditygroup", "ptc", "cymotive"}
+    and _SD_WANT_CM == (_SD_LEGACY_CM | _SD_NEW_CM) - _SD_RETIRED_CM
+    and len(_sd_cs.SEED_COMPANIES) == 79
+    and len(_sd_gs.SEED_BATCHES[1].add) == 34
+    and set(_sd_gs.SEED_BATCHES[1].retire) == {"sisense"}
+    and len(_sd_gs.SEED_COMPANIES) == 49 and "sisense" not in _SD_WANT_GH
+    and len({s.lower() for s in _SD_WANT_CM}) == len(_SD_WANT_CM)
+    and all(len({r["slug"].lower() for r in b.add}) == len(b.add) for b in _SD_ALL)
+    and all(
+        _sd_parse_careers(_sd_cs.careers_url(r["slug"], r["uid"])) == (r["slug"], r["uid"])
+        for b in _sd_cs.SEED_BATCHES for r in b.add
+    )
+    and all(_sd_parse_board(r["slug"]) == r["slug"] for b in _sd_gs.SEED_BATCHES for r in b.add)
+    and all(b.name.startswith("comeet:") for b in _sd_cs.SEED_BATCHES)
+    and all(b.name.startswith("greenhouse:") for b in _sd_gs.SEED_BATCHES)
+    and [b.legacy for b in _sd_cs.SEED_BATCHES] == [True, False]
+    and [b.legacy for b in _sd_gs.SEED_BATCHES] == [True, False],
+    f"{len(_sd_cs.SEED_COMPANIES)} {len(_sd_gs.SEED_COMPANIES)}",
+)
+check(
+    "16c `effective` is batch order: a slug retired by one batch and added back by a later one is present, "
+    "and the first spelling of a slug wins",
+    [r["name"] for r in _sd_effective((
+        _SdBatch("x:1", add=({"slug": "a", "name": "A1"}, {"slug": "b", "name": "B"})),
+        _SdBatch("x:2", add=({"slug": "a", "name": "A2"},), retire=("b",)),
+        _SdBatch("x:3", add=({"slug": "b", "name": "B again"},)),
+    ))] == ["A1", "B again"],
+)
+
+# A fresh database: every batch, once.
+_sd_fresh = _sd_db()
+_sd_r1 = _sd_mod.sync_registry(_sd_fresh, _SD_COMEET)
+_sd_r1b = _sd_mod.sync_registry(_sd_fresh, _SD_COMEET)
+check(
+    "16c a fresh database gets every batch: its rows are exactly the effective list, both batches are recorded, "
+    "and a second sync changes nothing",
+    _sd_slugs(_sd_fresh, _SdComeet) == _SD_WANT_CM
+    and _sd_marks(_sd_fresh) == {"comeet:2026-07", "comeet:2026-09-28"}
+    and _sd_r1.applied == ["comeet:2026-07", "comeet:2026-09-28"]
+    and (_sd_r1b.applied, _sd_r1b.inserted, _sd_r1b.retired) == ([], 0, 0),
+    f"{sorted(_sd_slugs(_sd_fresh, _SdComeet) ^ _SD_WANT_CM)} {_sd_r1} {_sd_r1b}",
+)
+
+# A database the OLD code seeded (the July list, no batch recorded), where an
+# admin since deleted Kaltura and added a company of their own.
+_sd_old = _sd_db()
+for _sd_row in _sd_cs.SEED_BATCHES[0].add:
+    if _sd_row["slug"] != "kaltura":
+        _sd_old.add(_SdComeet(slug=_sd_row["slug"], name=_sd_row["name"], uid=_sd_row["uid"]))
+_sd_old.add(_SdComeet(slug="acmeadmin", name="Acme", uid="AA.001", token="T"))
+_sd_old.commit()
+_sd_r2 = _sd_mod.sync_registry(_sd_old, _SD_COMEET)
+check(
+    "16c a database the old code seeded: the July batch counts as applied WITHOUT inserting (Kaltura, which an "
+    "admin removed, stays removed), the new batch adds its 55 and retires the four, and an admin's own company "
+    "is untouched",
+    _sd_slugs(_sd_old, _SdComeet) == (_SD_WANT_CM - {"kaltura"}) | {"acmeadmin"}
+    and (_sd_r2.inserted, _sd_r2.retired) == (55, 4)
+    and _sd_r2.applied == ["comeet:2026-07", "comeet:2026-09-28"]
+    and _sd_marks(_sd_old) == {"comeet:2026-07", "comeet:2026-09-28"},
+    f"{sorted(_sd_slugs(_sd_old, _SdComeet) ^ ((_SD_WANT_CM - {'kaltura'}) | {'acmeadmin'}))} {_sd_r2}",
+)
+# After it: the admin deletes a company the new batch added and adds back one it retired.
+_sd_old.execute(_sd_delete(_SdComeet).where(_SdComeet.slug == "cyera"))
+_sd_old.add(_SdComeet(slug="ptc", name="PTC", uid="32.005"))
+_sd_old.commit()
+_sd_r3 = _sd_mod.sync_registry(_sd_old, _SD_COMEET)
+check(
+    "16c a later sync never undoes an admin: Cyera, deleted after its batch ran, stays deleted, and PTC, added "
+    "back after its retirement, stays",
+    "cyera" not in _sd_slugs(_sd_old, _SdComeet)
+    and "ptc" in _sd_slugs(_sd_old, _SdComeet)
+    and (_sd_r3.applied, _sd_r3.inserted, _sd_r3.retired) == ([], 0, 0),
+    str(_sd_r3),
+)
+
+# Greenhouse, seeded by the old code, still holding the dead `sisense` board.
+_sd_ghdb = _sd_db()
+for _sd_row in _sd_gs.SEED_BATCHES[0].add:
+    _sd_ghdb.add(_SdGh(slug=_sd_row["slug"], name=_sd_row["name"]))
+_sd_ghdb.commit()
+_sd_r5 = _sd_mod.sync_registry(_sd_ghdb, _SD_GH)
+check(
+    "16c Greenhouse on a database the old code seeded: `sisense` (404, moved to Ashby) retired, the 34 boards added",
+    _sd_slugs(_sd_ghdb, _SdGh) == _SD_WANT_GH and (_sd_r5.inserted, _sd_r5.retired) == (34, 1)
+    and _sd_marks(_sd_ghdb) == {"greenhouse:2026-07", "greenhouse:2026-09-28"},
+    str(_sd_r5),
+)
+
+# Two cold starts on one deploy: the other instance applied both batches while
+# this one still read "nothing applied". Its claims fail on the unique name, and
+# nothing is inserted twice.
+_sd_real_applied = _sd_mod._applied_names
+_sd_mod._applied_names = lambda db, key: set()  # noqa: ARG005
+try:
+    _sd_r4 = _sd_mod.sync_registry(_sd_fresh, _SD_COMEET)
+finally:
+    _sd_mod._applied_names = _sd_real_applied
+check(
+    "16c a batch another instance already claimed is never applied twice: the claim fails on the batch's unique "
+    "name, is rolled back, and the rows and records are unchanged",
+    (_sd_r4.applied, _sd_r4.inserted) == ([], 0)
+    and _sd_slugs(_sd_fresh, _SdComeet) == _SD_WANT_CM
+    and len(list(_sd_fresh.execute(_sd_select(_SdSeed.id)).scalars())) == 2,
+    str(_sd_r4),
+)
+
+# A sync that fails (here, a batch filed under another registry) is logged,
+# rolled back and tried again on the next search; the search itself never sees it.
+_sd_bad = _sd_mod.Registry(
+    key="probe", batches=(_SdBatch("comeet:not-mine"),), slugs=lambda db: set(),  # noqa: ARG005
+    insert=lambda db, row: None, delete=lambda db, slug: None,  # noqa: ARG005
+)
+_sd_log = _sd_logging.getLogger("app.db.registry_seed")
+_sd_level = _sd_log.level
+_sd_log.setLevel(_sd_logging.CRITICAL)
+try:
+    _sd_raised = ""
+    try:
+        _sd_mod.ensure_synced(_sd_db(), _sd_bad)
+        _sd_mod.ensure_synced(_sd_db(), _sd_bad)
+    except Exception as _sd_e:  # noqa: BLE001
+        _sd_raised = repr(_sd_e)
+finally:
+    _sd_log.setLevel(_sd_level)
+check(
+    "16c a failing seed sync never fails the search that triggered it, and is not marked done (tried again next time)",
+    _sd_raised == "" and "probe" not in _sd_mod._synced,
+    _sd_raised,
+)
+for _sd_s in (_sd_fresh, _sd_old, _sd_ghdb):
+    _sd_s.close()
+
+# 16d. The registry boards' shared feeds (providers/feeds.py): a value cached, a
+# failure remembered (the dead company asked once, not on every query), a fetch in
+# flight shared, and a time budget, so one slow company never holds a search.
+import threading as _fd_threading  # noqa: E402
+import time as _fd_time  # noqa: E402
+
+from app.core.providers.feeds import CompanyFeeds as _FdFeeds  # noqa: E402
+
+_fd_now = [1000.0]
+_fd = _FdFeeds("probe", workers=4, ttl_s=60, fail_ttl_s=30, clock=lambda: _fd_now[0])
+_fd_calls: list[str] = []
+_fd_calls_lock = _fd_threading.Lock()
+
+
+def _fd_fetch(key: str, ok: bool = True):
+    def run():
+        with _fd_calls_lock:
+            _fd_calls.append(key)
+        if not ok:
+            raise OSError("down")
+        return [key]
+
+    return run
+
+
+_fd_jobs = [("a", _fd_fetch("a")), ("b", _fd_fetch("b", ok=False))]
+_fd_g1 = _fd.gather(_fd_jobs, 5)
+_fd_g2 = _fd.gather(_fd_jobs, 5)
+check(
+    "16d feeds: a company's postings are cached (the second query asks nothing) and a failure is counted and "
+    "REMEMBERED (a dead company costs one request, not one per query)",
+    _fd_g1.values == {"a": ["a"]} and _fd_g1.failed == 1
+    and _fd_g2.values == {"a": ["a"]} and _fd_g2.failed == 1 and sorted(_fd_calls) == ["a", "b"],
+    f"{_fd_g1} {_fd_g2} {_fd_calls}",
+)
+_fd_now[0] += 31  # past the failure memory, inside the cache
+_fd.gather(_fd_jobs, 5)
+_fd_after_fail = sorted(_fd_calls)
+_fd_now[0] += 60  # past the cache
+_fd.gather(_fd_jobs, 5)
+check(
+    "16d feeds: a failed company is asked again once its memory lapses, and a cached one once its cache does",
+    _fd_after_fail == ["a", "b", "b"] and sorted(_fd_calls) == ["a", "a", "b", "b", "b"],
+    str(_fd_calls),
+)
+_fd_gate = _fd_threading.Event()
+_fd_slow_runs: list[int] = []
+
+
+def _fd_slow():
+    _fd_slow_runs.append(1)
+    _fd_gate.wait(10)
+    return ["slow"]
+
+
+_fd_t0 = _fd_time.monotonic()
+_fd_g5 = _fd.gather([("s", _fd_slow), ("a2", _fd_fetch("a2"))], 0.3)
+_fd_t1 = _fd_time.monotonic()
+_fd_g6 = _fd.gather([("s", _fd_slow)], 0.3)  # the next query of the same search
+_fd_t2 = _fd_time.monotonic()
+_fd_gate.set()
+for _ in range(100):
+    if _fd.cached("s") is not None:
+        break
+    _fd_time.sleep(0.02)
+_fd_g7 = _fd.gather([("s", _fd_slow)], 0.3)
+check(
+    "16d feeds: a slow company is `late` once the budget runs out and the query answers with the rest; the next "
+    "query does NOT wait for it again (its fetch is past its own budget), it is requested once, and its answer, "
+    "landing later, serves the query after",
+    _fd_g5.late == 1 and _fd_g5.values == {"a2": ["a2"]} and (_fd_t1 - _fd_t0) < 2.0
+    and _fd_g6.late == 1 and (_fd_t2 - _fd_t1) < 0.2
+    and _fd_g7.values == {"s": ["slow"]} and len(_fd_slow_runs) == 1,
+    f"{_fd_g5} {_fd_t1 - _fd_t0:.2f}s {_fd_g6} {_fd_t2 - _fd_t1:.2f}s {_fd_g7} {_fd_slow_runs}",
+)
+
+# 16e. Greenhouse over the fake network, where `_http_get` is BOUND: a board too
+# large to read whole (the read cap cuts its JSON off, Elastic's board measured
+# 2026-09-28) is read as its list, and the postings the search selects fetch
+# their description one at a time; a short malformed body is a failure, never
+# the list; and a failing board is left out and remembered while the others
+# answer.
+import app.core.providers.greenhouse as _gh16e  # noqa: E402
+from app.core.job_match import HTTP_READ_CAP as _GH_CAP  # noqa: E402
+from app.models import SearchContext as _Gh16Ctx  # noqa: E402
+
+_gh16_urls: list[str] = []
+_gh16_mode = {"board": "big"}
+
+
+def _gh16_get(url, timeout=15):  # noqa: ANN001
+    _gh16_urls.append(url)
+    if "/boards/payoneer/" in url:
+        raise OSError("HTTP Error 404: Not Found")
+    if url.endswith("/jobs?content=true"):
+        if "/boards/wizinc/" in url:
+            return _json.dumps({"jobs": [{
+                "id": 7, "title": "Backend Engineer", "absolute_url": "https://job-boards.greenhouse.io/wizinc/jobs/7",
+                "location": {"name": "Tel Aviv, Israel"}, "company_name": "Wiz", "updated_at": "2026-09-27T10:00:00Z",
+                "content": "&lt;p&gt;Python services&lt;/p&gt;",
+            }]})
+        if "/boards/elastic/" in url and _gh16_mode["board"] == "big":
+            return '{"jobs": [{"id": 1, "content": "' + "x" * (_GH_CAP - 40)  # cut off at the cap
+        if "/boards/elastic/" in url:
+            return "<html>maintenance</html>"  # short and malformed: a real failure
+        return _json.dumps({"jobs": []})
+    if url.endswith("/boards/elastic/jobs"):
+        return _json.dumps({"jobs": [
+            {"id": 11, "title": "Senior Backend Engineer", "location": {"name": "Israel"},
+             "absolute_url": "https://jobs.elastic.co/jobs?gh_jid=11", "company_name": "Elastic",
+             "updated_at": "2026-09-20T10:00:00-04:00", "first_published": "2026-08-24T18:06:01-04:00"},
+            {"id": 12, "title": "Backend Engineer", "location": {"name": "London, United Kingdom"},
+             "absolute_url": "https://jobs.elastic.co/jobs?gh_jid=12", "company_name": "Elastic",
+             "updated_at": "2026-09-21T10:00:00-04:00"},
+        ]})
+    if url.endswith("/boards/elastic/jobs/11"):
+        return _json.dumps({"id": 11, "content": "&lt;p&gt;Search at scale in &lt;b&gt;Go&lt;/b&gt;&lt;/p&gt;"})
+    raise AssertionError(f"unexpected Greenhouse URL {url}")
+
+
+_db = SessionLocal()
+_gh16_registry = len(gh_list_companies(_db))
+_db.close()
+_gh16_real = _gh16e._http_get
+_gh16e._http_get = _gh16_get
+_gh16e.FEEDS.clear()
+try:
+    try:
+        _gh16_jobs, _gh16_whole = _gh16e._fetch_jobs("elastic")
+        _gh16_hits = _gh16e.parse_greenhouse_jobs({"jobs": _gh16_jobs}, company_name="Elastic")
+        _gh16_desc = _gh16e.GreenhouseProvider().fetch_description(_gh16_hits[0])
+    except Exception as _gh16_e:  # noqa: BLE001 - a cut-off board that raises is the defect pinned below
+        _gh16_whole, _gh16_hits, _gh16_desc = True, [], repr(_gh16_e)
+    _gh16_mode["board"] = "broken"
+    _gh16_urls.clear()
+    try:
+        _gh16e._fetch_jobs("elastic")
+        _gh16_broken = "no raise"
+    except ValueError:
+        _gh16_broken = "raised"
+    _gh16_broken_urls = list(_gh16_urls)
+    _gh16_mode["board"] = "big"
+    _gh16_urls.clear()
+    _gh16_found = _gh16e.GreenhouseProvider().search(
+        _Gh16Ctx(job_title="Backend Engineer", location="Israel", limit=25)
+    )
+    _gh16_first_urls = list(_gh16_urls)
+    _gh16_urls.clear()
+    _gh16_again = _gh16e.GreenhouseProvider().search(
+        _Gh16Ctx(job_title="Backend Engineer", location="Israel", limit=25)
+    )
+    _gh16_again_urls = list(_gh16_urls)
+finally:
+    _gh16e._http_get = _gh16_real
+    _gh16e.FEEDS.clear()
+check(
+    "16e Greenhouse: a board over the read cap is read as its LIST (the postings carry no description, their "
+    "board slug in `raw`, `first_published` kept), and a selected posting fetches its own description",
+    not _gh16_whole and len(_gh16_hits) == 2 and all(h.description == "" for h in _gh16_hits)
+    and _gh16_hits[0].raw.get("_jf_board") == "elastic"
+    and _gh16_hits[0].raw.get("first_published") == "2026-08-24T18:06:01-04:00"
+    and _gh16_desc == "Search at scale in Go",
+    f"{_gh16_whole} {[h.description for h in _gh16_hits]} {_gh16_desc!r}",
+)
+check(
+    "16e Greenhouse: a SHORT malformed body is a failure, not a cut-off board (the list is never asked for)",
+    _gh16_broken == "raised" and _gh16_broken_urls == ["https://boards-api.greenhouse.io/v1/boards/elastic/jobs?content=true"],
+    f"{_gh16_broken} {_gh16_broken_urls}",
+)
+check(
+    "16e Greenhouse search: a failing board (404) is left out while the others answer (Wiz's inline posting, "
+    "Elastic's Israeli one by its title; its London one filtered out), and the next search asks the dead board "
+    "nothing and the answering ones nothing (cached)",
+    sorted(h.url for h in _gh16_found)
+    == ["https://job-boards.greenhouse.io/wizinc/jobs/7", "https://jobs.elastic.co/jobs?gh_jid=11"]
+    and any("/boards/payoneer/" in u for u in _gh16_first_urls)
+    # every registered board once, plus Elastic's list (the registry also holds 16b's acme-gh)
+    and sum(1 for u in _gh16_first_urls if u.endswith("?content=true")) == _gh16_registry
+    and len(_gh16_first_urls) == _gh16_registry + 1
+    and _gh16_again_urls == []
+    and sorted(h.url for h in _gh16_again) == sorted(h.url for h in _gh16_found),
+    f"{[h.url for h in _gh16_found]} {len(_gh16_first_urls)} {_gh16_again_urls}",
+)
+
 # 17. The CV scan (PLAN 6; an app feature since Phase 30 / A2): deterministic
 # keyword extraction, coverage via the scorer, Hebrew prefix rescue, and the
 # HTTP route behind the gate with its daily cap and its monthly use. Zero LLM
