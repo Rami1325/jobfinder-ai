@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     daily_upload_cap: int = 10
     daily_jd_analyze_cap: int = 30
     daily_search_context_cap: int = 10
+    # Search in plain words (Phase 32, POST /jobs/search-query): only a line the
+    # rules could not read in full reaches the model, and it fills a form that
+    # the search itself then charges for, so it is off the pool like the three
+    # above. Measured cost per call: docs/handbook/cost-and-quota.md.
+    daily_search_query_cap: int = 30
     # The CV scan's own daily cap, beside its monthly charge (Phase 30 / A2).
     daily_scan_cap: int = 20
     # `/jobs/fetch` is NOT one of the three above: it reaches no model, so it is
@@ -177,6 +182,10 @@ class Settings(BaseSettings):
     # text one call can send; it is NOT a cost bound on a pass, whose width is its
     # 60 calls (an open owner question, recorded in docs/handbook/cost-and-quota.md).
     max_transcript_kb: int = 256
+    # One line typed into the Jobs page's search (Phase 32): 1 KB is ~1,000
+    # English or ~550 Hebrew characters, and the page's box stops at 300. Refused
+    # as kind "query" before the rules read it, like every text the user writes.
+    max_search_query_kb: int = 1
     # Runaway-generation stop, NOT a budget — and it may only ship alongside the
     # finish_reason check in llm/client.py, or a truncated completion becomes a
     # JSONDecodeError blamed on us. Arithmetic: the largest legitimate output is

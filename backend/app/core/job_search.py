@@ -37,7 +37,7 @@ from app.core.ghost_signals import (
 )
 # The module, not the function: `_low_pay` calls `pay_market.high_pay_market`
 # through it, so a spy on the module attribute sees the real call path.
-from app.core import hidden_jobs, pay_market
+from app.core import hidden_jobs, pay_market, search_query
 from app.core.relevance import RELEVANT_MIN, title_relevance
 from app.core.salary import extract_salary
 from app.core.scorer import analyze_and_score, top_matched_and_gaps
@@ -173,6 +173,15 @@ def derive_search_context(resume: ResumeModel) -> SearchContext:
         job_title=title or fallback.job_title,
         location=location or fallback.location,
     )
+
+
+def search_query_model(reading: search_query.QueryReading) -> search_query.QueryReading:
+    """Search in plain words (Phase 32): the SEARCH_QUERY model reads only what
+    the rules left (`reading.unread`), and its answer fills only the fields the
+    rules left empty, each validated by the rules' own module first. Raises on a
+    model failure; the route decides what the rules' reading alone is worth."""
+    data = get_llm_client().complete_json(prompts.SEARCH_QUERY_SYSTEM, prompts.search_query_user(reading.unread))
+    return search_query.merge_model(reading, data)
 
 
 def _resolve_context(resume: ResumeModel, customize: SearchContext | None) -> SearchContext:

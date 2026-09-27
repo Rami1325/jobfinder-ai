@@ -66,7 +66,8 @@ from app.core.scorer import analyze_and_score, keyword_analysis
 from app.core.job_match import MAX_MATCH_LISTINGS, fetch_job_text, match_jobs
 from app.core.outreach import generate_outreach
 from app.core.screening import answer_screening_question
-from app.core.job_search import derive_search_context, resume_hash, search_jobs
+from app.core.job_search import derive_search_context, resume_hash, search_jobs, search_query_model
+from app.core.search_query import read_query, settle, work_mode_value
 from app.core import kits as kits_core
 from app.core.lang import resume_language
 from app.core.linkedin import optimize_linkedin
@@ -209,6 +210,8 @@ from app.models import (
     SearchContext,
     SearchContextRequest,
     SearchPrefs,
+    SearchQueryIn,
+    SearchQueryOut,
     HiddenJobs,
     HiddenWhichIn,
     HiddenWhichOut,
@@ -874,6 +877,54 @@ def jobs_search_context(
         raise  # app-level 413/503, never an 'LLM error' 502
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Error deriving search context: {e}")
+
+
+@router.post("/jobs/search-query", response_model=SearchQueryOut)
+def jobs_search_query(
+    body: SearchQueryIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(metered_user),
+) -> SearchQueryOut:
+    """Search in plain words (Phase 32): one line, Hebrew or English, read into
+    the search form's own fields. The page fills them and the user checks them
+    before tapping Search; nothing is searched from here.
+
+    Rules first (`app/core/search_query.py`: no model, no network, no clock),
+    the model only for what they leave, and its answer validated by the rules.
+    It charges NO monthly use: it only fills a form, and the search it leads to
+    charges its own (a search costing two uses would be the price of typing).
+    The rules path reaches no model, so it counts nothing; a line that needs the
+    model counts one `search_query` daily unit FIRST, and its refusal is the
+    daily 429. The measured cost is in docs/handbook/cost-and-quota.md.
+
+    `metered_user`, never `llm_user`: this route has its own cap (the house rule
+    for search, tailor and search-context), and `llm_user` would count a daily
+    `llm` unit on every line, the rules-only ones included."""
+    settings = get_settings()
+    require_within(body.query, settings.max_search_query_kb, "query")  # 413 before anything reads it
+    reading = read_query(body.query)
+    used_model = False
+    if reading.unread:
+        check_and_count(db, user, "search_query", settings.daily_search_query_cap)
+        try:
+            reading = search_query_model(reading)
+            used_model = True
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never a 502
+        except Exception as e:  # noqa: BLE001
+            reading = settle(reading)
+            if not reading.understood:
+                raise HTTPException(502, f"Could not read that search: {e}")
+    else:
+        reading = settle(reading)
+    return SearchQueryOut(
+        job_titles=list(reading.job_titles),
+        location=reading.location,
+        work_mode=work_mode_value(reading),
+        include_worldwide=reading.include_worldwide,
+        notes=list(reading.notes),
+        used_model=used_model,
+    )
 
 
 @router.get("/jobs/search-prefs", response_model=SearchPrefs)
