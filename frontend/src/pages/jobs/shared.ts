@@ -186,6 +186,21 @@ export function sourceLabel(source?: string, lang?: string): string {
   return lang?.startsWith("he") ? names.he : names.en;
 }
 
+/** The board picker's one line below lg (the phone polish pass, 2026-09-28): every
+ * board, or how many and which, in the registry's order and the page's language
+ * ("All 11 boards", "5 of 11: LinkedIn, Drushim, Comeet, Lever, Ashby"). Empty or
+ * absent is every board, as a search reads it; an id this build no longer lists
+ * counts for nothing. check-mirrors 109 runs it. */
+export function boardsSummary(sources: readonly string[] | null | undefined, lang: string, t: TFunction<"jobs">): string {
+  const chosen = sources?.length ? SOURCE_IDS.filter((id) => sources.includes(id)) : [...SOURCE_IDS];
+  if (chosen.length === SOURCE_IDS.length) return t("search.boardsAll", { count: SOURCE_IDS.length });
+  return t("search.boardsSome", {
+    count: chosen.length,
+    total: SOURCE_IDS.length,
+    names: chosen.map((id) => sourceLabel(id, lang)).join(", "),
+  });
+}
+
 export function postedAgo(iso: string, t: TFunction<"jobs">): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";

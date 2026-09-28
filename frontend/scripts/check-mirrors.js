@@ -16035,6 +16035,129 @@ try {
   fail(`phone tap targets check (check 108) could not run: ${e.message}`);
 }
 
+// ---- 109. the board picker is one line on a phone, and says what is chosen (EXECUTED) //
+// The phone polish pass (2026-09-28), item 2. Phase 32 made the boards eleven, and
+// their list, a 44 px row each, was six rows (264 px) of the open search card at
+// 390 in English and seven (308 px) at 360. Below lg it is ONE 44 px line now,
+// which says what is chosen and opens the same list in a bottom sheet (JDPaste's
+// pattern), so every board is two taps away; from lg the list stays inline (two
+// rows at 1440). (a) EXECUTES `boardsSummary` (pages/jobs/shared.ts) with a
+// recording t: no choice, an empty one and every board in another order each ask
+// `search.boardsAll` with the registry's count; a choice asks `search.boardsSome`
+// with its count, the total and the names in the REGISTRY's order and the page's
+// language; an id the registry no longer lists counts for nothing. (b) By shape,
+// on CustomizeFields: the rows are one `boardRows` list, drawn inline only when
+// `wide` (useMediaQuery 1024 px) and in the sheet otherwise; the line is a
+// `min-h-11` button with `aria-haspopup="dialog"` wording itself through
+// `boardsSummary(ctx?.sources, i18n.language, t)`; the sheet is portalled to
+// document.body as a modal dialog that takes focus (`useDialogFocus`), closes on
+// its backdrop, on a 44 px Done and on Escape heard in the capture phase and
+// stopped there (the page may sit under another dialog's window listener). (c)
+// `search.boardsAll` / `boardsSome` / `boardsDone` resolve in both jobs.json with
+// their plural sets, and every form of boardsSome prints the count, the total and
+// the names. Planted twins every run.
+try {
+  const sh109 = runProbeBundle("boards-summary", 'export { boardsSummary, SOURCE_IDS } from "./pages/jobs/shared";\n');
+  if (typeof sh109.boardsSummary !== "function") throw new Error("pages/jobs/shared.ts exports no boardsSummary");
+  const ids = [...sh109.SOURCE_IDS];
+  if (ids.length < 5 || !ids.includes("linkedin") || !ids.includes("drushim")) throw new Error(`SOURCE_IDS reads ${JSON.stringify(ids)}`);
+  const tRec = (key, opts) => `${key}|${JSON.stringify(opts ?? {})}`;
+  const judge109 = (summary) => {
+    const out = [];
+    const call = (sources, lang) => {
+      const [key, opts] = String(summary(sources, lang, tRec)).split("|");
+      return { key, opts: JSON.parse(opts ?? "{}") };
+    };
+    for (const [label, sources] of [["no choice", null], ["an empty choice", []], ["every board, reversed", [...ids].reverse()]]) {
+      const c = call(sources, "en");
+      if (c.key !== "search.boardsAll" || c.opts.count !== ids.length) out.push(`${label} reads ${c.key} ${JSON.stringify(c.opts)}, not every board (${ids.length})`);
+    }
+    const two = call(["drushim", "linkedin"], "en");
+    if (two.key !== "search.boardsSome" || two.opts.count !== 2 || two.opts.total !== ids.length || two.opts.names !== "LinkedIn, Drushim")
+      out.push(`LinkedIn and Drushim read ${two.key} ${JSON.stringify(two.opts)}, not "2 of ${ids.length}: LinkedIn, Drushim" in the registry's order`);
+    const he = call(["drushim", "linkedin"], "he");
+    if (he.opts.names !== "LinkedIn, דרושים") out.push(`in Hebrew the names read ${JSON.stringify(he.opts.names)}, not the page's language`);
+    const stale = call(["jooble", "linkedin"], "en");
+    if (stale.opts.count !== 1 || stale.opts.names !== "LinkedIn") out.push(`a retired board is counted (${JSON.stringify(stale.opts)})`);
+    return out;
+  };
+  for (const p of judge109(sh109.boardsSummary)) fail(`check 109: ${p} (the phone polish pass)`);
+  for (const [label, twin] of [
+    ["names in the order they were chosen", (s, lang, t) => (s?.length && s.length < ids.length ? t("search.boardsSome", { count: s.length, total: ids.length, names: s.map((x) => (x === "linkedin" ? "LinkedIn" : "Drushim")).join(", ") }) : t("search.boardsAll", { count: ids.length }))],
+    ["a retired board counted", (s, lang, t) => {
+      const [key, opts] = String(sh109.boardsSummary(s, lang, t)).split("|");
+      const o = JSON.parse(opts);
+      if (key === "search.boardsSome" && s) o.count = s.length;
+      return `${key}|${JSON.stringify(o)}`;
+    }],
+    ["names in English whatever the page", (s, lang, t) => sh109.boardsSummary(s, "en", t)],
+  ])
+    if (!judge109(twin).length) throw new Error(`the judge passes ${label}`);
+
+  const read109 = ({ alerts, en, he }) => {
+    const out = [];
+    const f = fnSource(alerts, "export function CustomizeFields");
+    if (!/const wide = useMediaQuery\("\(min-width: 1024px\)"\);/.test(f)) out.push("the list is not chosen by width (useMediaQuery 1024 px)");
+    if (!/const boardRows = SOURCE_IDS\.map\(/.test(f)) out.push("the boards are not one `boardRows` list of every SOURCE_IDS board");
+    const draws = (f.match(/\{boardRows\}/g) || []).length;
+    if (draws !== 2) out.push(`the rows are drawn ${draws} times, not twice (inline from lg, in the sheet below it)`);
+    const branch = /\{wide \? \(\s*<div[^>]*>[\s\S]*?\{boardRows\}\s*<\/div>\s*\) : \(\s*(<button\b[\s\S]*?<\/button>)\s*\)\}/.exec(f);
+    if (!branch) out.push("the inline list is not drawn only when wide, with the one-line button otherwise");
+    else {
+      const btn = branch[1];
+      if (!/\bmin-h-11\b/.test(btn)) out.push("the boards line is under 44 px (min-h-11)");
+      if (!/aria-haspopup="dialog"/.test(btn)) out.push("the boards line does not say it opens a dialog");
+      if (!/boardsSummary\(ctx\?\.sources, i18n\.language, t\)/.test(btn)) out.push("the boards line does not say what is chosen (boardsSummary)");
+      if (!/onClick=\{\(\) => setBoardsOpen\(true\)\}/.test(btn)) out.push("the boards line does not open the sheet");
+    }
+    const sheet = /\{boardsUp &&\s*createPortal\(([\s\S]*?)document\.body,\s*\)\}/.exec(f);
+    if (!sheet) out.push("the sheet is not portalled to document.body behind boardsUp");
+    else {
+      const s = sheet[1];
+      if (!/role="dialog"/.test(s) || !/aria-modal="true"/.test(s)) out.push("the sheet is not a modal dialog");
+      if (!/ref=\{boardsRef\}/.test(s)) out.push("the sheet does not carry the ref useDialogFocus moves focus into");
+      if (!/onClick=\{\(\) => setBoardsOpen\(false\)\}\s*className="fixed inset-0/.test(s)) out.push("the sheet's backdrop does not close it");
+      if (!/\{boardRows\}/.test(s)) out.push("the sheet does not hold the boards");
+      if (!/<Button className="min-h-11[^"]*" onClick=\{\(\) => setBoardsOpen\(false\)\}>\s*\{t\("search\.boardsDone"\)\}/.test(s)) out.push("the sheet has no 44 px Done");
+    }
+    if (!/const boardsUp = boardsOpen && !wide;/.test(f) || !/useDialogFocus\(boardsUp, boardsRef\);/.test(f)) out.push("the sheet does not take and give back focus (useDialogFocus)");
+    if (!/if \(!boardsUp\) return;\s*const onKey = \(e: KeyboardEvent\) => \{\s*if \(e\.key !== "Escape"\) return;\s*e\.stopPropagation\(\);\s*setBoardsOpen\(false\);/.test(f) ||
+      !/window\.addEventListener\("keydown", onKey, true\);/.test(f))
+      out.push("Escape does not close the sheet alone (a capture-phase listener that stops it)");
+    for (const [loc, b] of [["en", en], ["he", he]]) {
+      for (const key of ["search.boardsAll", "search.boardsSome", "search.boardsDone"])
+        for (const p of keyProblems(b, key, loc, "the board picker")) out.push(`locales/${loc}/jobs.json ${p}`);
+      for (const [k, v] of Object.entries(b.search ?? {}))
+        if (/^boardsSome_/.test(k) && !["{{count}}", "{{total}}", "{{names}}"].every((ph) => String(v).includes(ph)))
+          out.push(`locales/${loc}/jobs.json search.${k} leaves out the count, the total or the names`);
+    }
+    return out;
+  };
+  const r109 = {
+    alerts: decomment(read("pages/jobs/AlertsCard.tsx")),
+    en: JSON.parse(read("locales/en/jobs.json")),
+    he: JSON.parse(read("locales/he/jobs.json")),
+  };
+  for (const p of read109(r109)) fail(`check 109: ${p} (the phone polish pass)`);
+  const plant109 = (from, to, label) => {
+    if (!r109.alerts.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read109({ ...r109, alerts: r109.alerts.replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant109("{wide ? (", "{true ? (", "the list inline on a phone");
+  plant109("boardsSummary(ctx?.sources, i18n.language, t)", 't("search.sourcesLabel")', "a line that does not say what is chosen");
+  plant109("mt-3 flex min-h-11 w-full items-center gap-2 rounded-lg", "mt-3 flex w-full items-center gap-2 rounded-lg", "a 20 px boards line");
+  plant109("      e.stopPropagation();\n      setBoardsOpen(false);", "      setBoardsOpen(false);", "an Escape that closes the dialog under it too");
+  plant109('<Button className="min-h-11 w-full"', '<Button className="w-full"', "a 42 px Done");
+  plant109("          document.body,\n        )}", "          document.getElementById(\"root\")!,\n        )}", "a sheet left inside the page");
+  const heNoTwo = { ...r109.he, search: { ...r109.he.search } };
+  delete heNoTwo.search.boardsSome_two;
+  if (!read109({ ...r109, he: heNoTwo }).length) throw new Error("the reader passes a Hebrew boardsSome without its _two form");
+  const enNoNames = { ...r109.en, search: { ...r109.en.search, boardsSome_other: "{{count}} of {{total}}" } };
+  if (!read109({ ...r109, en: enNoNames }).length) throw new Error("the reader passes a line that leaves the names out");
+} catch (e) {
+  fail(`board picker check (check 109) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

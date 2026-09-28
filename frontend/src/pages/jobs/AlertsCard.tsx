@@ -1,9 +1,10 @@
 // Email-alert settings card + the shared Customize-search fields
 // (split out of JobsPage.tsx — PLAN 12.5d).
-import { useEffect, useId, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Bell, X } from "lucide-react";
+import { Bell, ChevronDown, X } from "lucide-react";
 import {
   addPushDevice,
   getJobAlert,
@@ -15,6 +16,8 @@ import {
 } from "../../api/client";
 import { Button, Card, CardTitle, useToast, WhyNote } from "../../components/ui";
 import UsesNote from "../../components/UsesNote";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { apiErrorMessage } from "../../lib/apiError";
 import { currentSubscription, type PushSub } from "../../lib/push";
 import { formatUsesDate, useUses } from "../../lib/usesStore";
@@ -22,6 +25,7 @@ import type { AlertSettings, PushDevices, ResumeModel, SearchContext, WhatsAppSt
 import { PushRow, WhatsAppRow, pushLang } from "./AlertChannels";
 import {
   allowsRemote,
+  boardsSummary,
   contextKey,
   inputCls,
   joinWorkModes,
@@ -85,6 +89,42 @@ export function CustomizeFields({
       return { ...(p as SearchContext), sources: next };
     });
   }
+  // Every board, one 44 px row each: inline from lg, in the sheet below it.
+  const boardRows = SOURCE_IDS.map((id) => {
+    const checked = selectedSources.includes(id);
+    return (
+      <label key={id} className="flex min-h-11 cursor-pointer items-center gap-1.5">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={prefilling || (checked && selectedSources.length === 1)}
+          onChange={() => toggleSource(id)}
+          className="h-4 w-4 accent-accent"
+        />
+        {sourceLabel(id, i18n.language)}
+        {WORLDWIDE_ONLY_SOURCES.includes(id) && (
+          <span className="text-xs text-ink-faint">{t("search.worldwideOnlyBoard")}</span>
+        )}
+      </label>
+    );
+  });
+  // Below lg the list is a bottom sheet (JDPaste's pattern): focus goes in and
+  // comes back, and Escape closes the sheet alone, heard in the capture phase.
+  const wide = useMediaQuery("(min-width: 1024px)");
+  const [boardsOpen, setBoardsOpen] = useState(false);
+  const boardsRef = useRef<HTMLDivElement>(null);
+  const boardsUp = boardsOpen && !wide;
+  useDialogFocus(boardsUp, boardsRef);
+  useEffect(() => {
+    if (!boardsUp) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setBoardsOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [boardsUp]);
 
   return (
     <>
@@ -281,30 +321,64 @@ export function CustomizeFields({
         ))}
       </div>
 
-      {/* Nine boards since 2026-09-28: each a 44 px row to tap (the owner's
-          floor), packed with no gap between rows. A worldwide-only board says
-          so, since it is asked only by the worldwide pass above. */}
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 text-sm text-ink">
-        <span className="text-xs font-semibold text-ink-muted">{t("search.sourcesLabel")}</span>
-        {SOURCE_IDS.map((id) => {
-          const checked = selectedSources.includes(id);
-          return (
-            <label key={id} className="flex min-h-11 cursor-pointer items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={prefilling || (checked && selectedSources.length === 1)}
-                onChange={() => toggleSource(id)}
-                className="h-4 w-4 accent-accent"
-              />
-              {sourceLabel(id, i18n.language)}
-              {WORLDWIDE_ONLY_SOURCES.includes(id) && (
-                <span className="text-xs text-ink-faint">{t("search.worldwideOnlyBoard")}</span>
-              )}
-            </label>
-          );
-        })}
-      </div>
+      {/* The boards. From lg, the list itself: two rows at 1440. Below lg it
+          was six 44 px rows (264 px) once Phase 32 made them eleven, so there it
+          is ONE 44 px line that says what is chosen ("All 11 boards", "5 of 11:
+          LinkedIn, Drushim, …") and opens the same list in a bottom sheet, the
+          saved-job picker's pattern (JDPaste): every board two taps away. Each
+          board is a 44 px row to tap (the owner's floor), packed with no gap
+          between rows; a worldwide-only board says so, since it is asked only by
+          the worldwide pass above. */}
+      {wide ? (
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 text-sm text-ink">
+          <span className="text-xs font-semibold text-ink-muted">{t("search.sourcesLabel")}</span>
+          {boardRows}
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={prefilling}
+          aria-haspopup="dialog"
+          aria-expanded={boardsOpen}
+          onClick={() => setBoardsOpen(true)}
+          className="mt-3 flex min-h-11 w-full items-center gap-2 rounded-lg border border-line bg-bg-soft px-3 text-start text-sm text-ink transition-colors hover:border-accent/40 disabled:opacity-50"
+        >
+          <span className="shrink-0 text-xs font-semibold text-ink-muted">{t("search.sourcesLabel")}</span>
+          <span className="min-w-0 flex-1 truncate">{boardsSummary(ctx?.sources, i18n.language, t)}</span>
+          <ChevronDown size={15} aria-hidden className="shrink-0 text-ink-faint" />
+        </button>
+      )}
+      {boardsUp &&
+        createPortal(
+          <>
+            <div
+              aria-hidden
+              onClick={() => setBoardsOpen(false)}
+              className="fixed inset-0 z-[55] touch-none bg-black/40"
+            />
+            <div
+              ref={boardsRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label={t("search.sourcesLabel")}
+              tabIndex={-1}
+              dir={i18n.dir()}
+              className="animate-fade-up fixed inset-x-0 bottom-0 z-[55] flex max-h-[80dvh] flex-col rounded-t-2xl border-t border-line bg-bg-soft pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-panel focus:outline-none"
+            >
+              <div aria-hidden className="mx-auto mb-1 mt-2 h-1 w-10 shrink-0 rounded-full bg-line" />
+              <p className="px-4 pb-1 pt-1 text-sm font-semibold text-ink">{t("search.sourcesLabel")}</p>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4">
+                <div className="flex flex-wrap items-center gap-x-4 text-sm text-ink">{boardRows}</div>
+              </div>
+              <div className="px-4 pt-2">
+                <Button className="min-h-11 w-full" onClick={() => setBoardsOpen(false)}>
+                  {t("search.boardsDone")}
+                </Button>
+              </div>
+            </div>
+          </>,
+          document.body,
+        )}
     </>
   );
 }
