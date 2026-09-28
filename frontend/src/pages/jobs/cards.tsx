@@ -557,6 +557,48 @@ export function JobResultCard({ children }: { children: ReactNode }) {
   return <BorderGlow innerClassName="flex items-start gap-3 p-3.5">{children}</BorderGlow>;
 }
 
+/** A row's meta line: company · when · the board's employment label · the rest
+ * (the work modes the posting states, and the place). ONE line that never wraps,
+ * so it costs no height (PLAN 31.2/5).
+ *
+ * It was one truncating text run, cut wherever the line ended, and behind a long
+ * company name at 360 px the Contract / Freelance label itself was cut (the
+ * freelance mode's one fact about a row). Now each part is its own flex box and
+ * they give way in a set order (the phone polish pass, 2026-09-28): the rest
+ * first (`shrink-[100]`, the place is the long part and the one to lose), then
+ * the company (`min-w-0 truncate`), and the date and the label never (`shrink-0`).
+ * The separators are no-break spaces, which a flex box does not strip.
+ *
+ * `dir="auto"` on the LINE and on none of its parts: the line's direction is the
+ * company's (the first strong letter), as it was, so an English company under
+ * the Hebrew UI is cut at its end, not its start, and every part flows in that
+ * one direction, each dot staying between its neighbours. */
+export function MetaLine({
+  company,
+  postedAt,
+  employment,
+  rest,
+}: {
+  company: string;
+  postedAt?: string;
+  employment?: string;
+  rest?: string;
+}) {
+  const { t } = useTranslation("jobs");
+  return (
+    <p dir="auto" className="flex min-w-0 items-baseline whitespace-nowrap text-sm text-ink-muted">
+      <span className="min-w-0 truncate">{company || "—"}</span>
+      {postedAt && (
+        <span className="shrink-0 whitespace-nowrap" title={postedAt}>
+          {`\u00a0· ${postedAgo(postedAt, t)}`}
+        </span>
+      )}
+      {employment && <span className="shrink-0 whitespace-nowrap">{`\u00a0· ${employment}`}</span>}
+      {rest && <span className="min-w-0 shrink-[100] truncate">{`\u00a0· ${rest}`}</span>}
+    </p>
+  );
+}
+
 /** The search's one number, as a chip (PLAN 31.2/5): the blend it ranks by
  * (job-search.md, "`overall` is the right currency here"), rounded half-up like
  * every place that reads it (`alerts.displayed_score`, the kit threshold), so
@@ -738,25 +780,25 @@ export function MatchCard({
           </p>
           <MatchChip value={m.overall} />
         </div>
-        {/* company · when · the work modes the POSTING states · place. Words on
-            this line rather than more badges; nothing for modes when it says
-            nothing, because unknown is not "on-site" and a "Remote" search
-            keeps such a posting on purpose (the hint under the control). The
-            place goes LAST because it is the long part ("Tel Aviv District,
-            Israel") and the one to lose when the line is cut; `dir="auto"` so
-            the cut lands at its end, not at the company's first letters. */}
-        <p dir="auto" className="truncate text-sm text-ink-muted">
-          {m.company || "—"}
-          {m.posted_at && <span title={m.posted_at}>{` · ${postedAgo(m.posted_at, t)}`}</span>}
-          {/* The board's own employment type when it is not full-time
-              (2026-09-28): words on the line that already truncates, never a
-              badge, so it costs no height. Nothing for full-time or unknown. */}
-          {employment ? ` · ${employment}` : ""}
-          {m.work_modes && m.work_modes.length > 0
-            ? ` · ${m.work_modes.map((mode) => t(`workModes.${mode}`)).join(" / ")}`
-            : ""}
-          {m.location ? ` · ${m.location}` : ""}
-        </p>
+        {/* company · when · the board's employment type · the work modes the
+            POSTING states · place (MetaLine). Words on this line rather than
+            more badges; nothing for modes when it says nothing, because unknown
+            is not "on-site" and a "Remote" search keeps such a posting on
+            purpose (the hint under the control). The employment type is the
+            board's own when it is not full-time (2026-09-28), never a badge, and
+            never cut; the place goes LAST because it is the long part ("Tel Aviv
+            District, Israel") and the one to lose when the line is cut. */}
+        <MetaLine
+          company={m.company}
+          postedAt={m.posted_at}
+          employment={employment}
+          rest={[
+            m.work_modes && m.work_modes.length > 0 ? m.work_modes.map((mode) => t(`workModes.${mode}`)).join(" / ") : "",
+            m.location,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        />
         {/* Only when one of them has something to say (`empty:hidden`). */}
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">
           {best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}
@@ -947,13 +989,8 @@ export function HistoryRow({
           <MatchChip value={hit.overall} />
         </div>
         {/* The search row's order and direction, for its reasons, and its
-            employment label (2026-09-28) in the same place. */}
-        <p dir="auto" className="truncate text-sm text-ink-muted">
-          {hit.company || "—"}
-          {hit.posted_at && <span title={hit.posted_at}>{` · ${postedAgo(hit.posted_at, t)}`}</span>}
-          {employment ? ` · ${employment}` : ""}
-          {hit.location ? ` · ${hit.location}` : ""}
-        </p>
+            employment label (2026-09-28) in the same place, never cut. */}
+        <MetaLine company={hit.company} postedAt={hit.posted_at} employment={employment} rest={hit.location} />
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">
           <NewBadge postedAt={firstPosted} />
           {/* The search row's place, for its reason (Phase 32). */}

@@ -15348,9 +15348,12 @@ try {
         fail(`check 103: locales/${loc}/jobs.json ${p}`);
   }
 
+  // The row's meta line is `MetaLine` since the phone polish pass (2026-09-28),
+  // where the label is its own part that is never cut (check 110): what this
+  // check needs is that the row hands it the label.
   const metaOf = (fn) => {
-    const at = fn.indexOf('<p dir="auto" className="truncate text-sm text-ink-muted">');
-    return at === -1 ? "" : fn.slice(at, fn.indexOf("</p>", at));
+    const at = fn.indexOf("<MetaLine");
+    return at === -1 ? "" : fn.slice(at, fn.indexOf("/>", at));
   };
   const fieldsOf = (src, re) => {
     const m = re.exec(src);
@@ -15362,8 +15365,8 @@ try {
       const fn = fnSource(cards, `export function ${fnName}`);
       if (!new RegExp(`const employment = employmentText\\(${v}\\.employment, t\\)`).test(fn))
         out.push(`${fnName} does not word its row's employment type through employmentText(${v}.employment, t)`);
-      if (!/\{employment \? ` · \$\{employment\}` : ""\}/.test(metaOf(fn)))
-        out.push(`${fnName} does not print the label in its meta line (the truncating line, which costs no height)`);
+      if (!/\bemployment=\{employment\}/.test(metaOf(fn)))
+        out.push(`${fnName} does not print the label in its meta line (MetaLine, the one line, which costs no height)`);
       if (/<Badge\b[^>]*>\s*\{employment\}/.test(fn)) out.push(`${fnName} draws the label as a badge`);
     }
     if (!/const employment = employmentText\(detail\.employment, tJobs\)/.test(jobPage) || !/const meta = \[detail\.company, employment,/.test(jobPage))
@@ -15403,7 +15406,7 @@ try {
     if (!r103[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
     if (!read103({ ...r103, [key]: r103[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
   };
-  plant103("cards", '{employment ? ` · ${employment}` : ""}\n          {hit.location', '{hit.location', "a History row without the label");
+  plant103("cards", "postedAt={hit.posted_at} employment={employment} rest=", "postedAt={hit.posted_at} rest=", "a History row without the label");
   plant103("cards", '{best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}', '{best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}<Badge>{employment}</Badge>', "the label as a badge");
   plant103("jobPage", 'initialKind={proposalFirst(detail.employment) ? "proposal" : "letter"}', 'initialKind="letter"', "a Contract job that opens on the letter");
   plant103("types", "  /** The board's employment type as History stored it (see JobMatch.employment). */\n  employment?: string;\n", "", "History's mirror without the field");
@@ -16156,6 +16159,74 @@ try {
   if (!read109({ ...r109, en: enNoNames }).length) throw new Error("the reader passes a line that leaves the names out");
 } catch (e) {
   fail(`board picker check (check 109) could not run: ${e.message}`);
+}
+
+// ---- 110. a row's Contract / Freelance label is never cut --------------------- //
+// The phone polish pass (2026-09-28), item 3. A job row's meta line (company ·
+// when · the board's employment label · modes · place) was ONE truncating text
+// run, cut wherever the line ended, so behind a long company name at 360 px the
+// label itself was cut: the one fact the freelance mode is about. It is
+// `MetaLine` now (pages/jobs/cards.tsx), each part a flex box giving way in a set
+// order. By shape: the line is `flex min-w-0 whitespace-nowrap` with
+// `dir="auto"` and no part carries a `dir` of its own (the line's direction is
+// the company's, as it was, so every part flows one way); the company is
+// `min-w-0 truncate`; the date and the label are `shrink-0` and never wrap; the
+// rest (modes, place) is `min-w-0 truncate` with a flex-shrink far above the
+// company's, so the place is lost first; a separator is a no-break space, which
+// a flex box does not strip. Both the search row and the History row draw their
+// meta line through MetaLine, handing it the label. Planted twins every run.
+try {
+  const read110 = (cards) => {
+    const out = [];
+    const fn = fnSource(cards, "export function MetaLine(");
+    const p = /<p\b([^>]*)>([\s\S]*?)<\/p>/.exec(fn);
+    if (!p) throw new Error("pages/jobs/cards.tsx: MetaLine renders no <p>");
+    const pCls = (/className="([^"]*)"/.exec(p[1]) || [])[1] ?? "";
+    for (const c of ["flex", "min-w-0", "whitespace-nowrap"])
+      if (!pCls.split(/\s+/).includes(c)) out.push(`the meta line is not \`${c}\` (one line of parts that give way)`);
+    if (!/dir="auto"/.test(p[1])) out.push("the meta line has no dir=\"auto\" (its direction is the company's)");
+    const spans = [...p[2].matchAll(/<span\b([^>]*)>([\s\S]*?)<\/span>/g)].map((m) => ({ attrs: m[1], body: m[2], cls: ((/className="([^"]*)"/.exec(m[1]) || [])[1] ?? "").split(/\s+/) }));
+    if (spans.length !== 4) throw new Error(`pages/jobs/cards.tsx: MetaLine has ${spans.length} parts, not four (company, when, label, rest)`);
+    if (spans.some((s) => /\bdir=/.test(s.attrs))) out.push("a part of the meta line carries a dir of its own, so its dots and cut follow it, not the line");
+    const [company, when, label, rest] = spans;
+    if (!/\{company \|\| "—"\}/.test(company.body)) throw new Error("MetaLine's first part is not the company");
+    if (!/employment/.test(label.body)) throw new Error("MetaLine's third part is not the employment label");
+    if (!company.cls.includes("min-w-0") || !company.cls.includes("truncate")) out.push("the company does not give way (`min-w-0 truncate`)");
+    for (const [name, s] of [["the date", when], ["the label", label]]) {
+      if (!s.cls.includes("shrink-0")) out.push(`${name} can shrink (it must be \`shrink-0\`), so a long company cuts it`);
+      if (!s.cls.includes("whitespace-nowrap")) out.push(`${name} can wrap (\`whitespace-nowrap\`)`);
+      if (!/\\u00a0· /.test(s.body)) out.push(`${name}'s separator is not a no-break space, which a flex box would strip`);
+    }
+    const shrink = rest.cls.map((c) => /^shrink-\[(\d+)\]$/.exec(c)).find(Boolean);
+    if (!rest.cls.includes("min-w-0") || !rest.cls.includes("truncate") || !shrink || Number(shrink[1]) < 10)
+      out.push("the rest (modes, place) does not give way first (`min-w-0 truncate` and a flex-shrink of 10 or more)");
+    for (const [row, v] of [["MatchCard", "m"], ["HistoryRow", "hit"]]) {
+      const body = fnSource(cards, `export function ${row}(`);
+      const tag = /<MetaLine\b([\s\S]*?)\/>/.exec(body);
+      if (!tag) out.push(`${row} does not draw its meta line through MetaLine`);
+      else {
+        if (!/\bemployment=\{employment\}/.test(tag[1])) out.push(`${row} does not hand MetaLine its label`);
+        if (!new RegExp(`company=\\{${v}\\.company\\}`).test(tag[1])) out.push(`${row} does not hand MetaLine its company`);
+      }
+      if (/className="truncate text-sm text-ink-muted"/.test(body)) out.push(`${row} still prints a meta line as one truncating run`);
+    }
+    return out;
+  };
+  const cards110 = decomment(read("pages/jobs/cards.tsx"));
+  for (const p of read110(cards110)) fail(`check 110: ${p} (the phone polish pass)`);
+  const plant110 = (from, to, label) => {
+    if (!cards110.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read110(cards110.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant110('{employment && <span className="shrink-0 whitespace-nowrap">', '{employment && <span className="min-w-0 truncate">', "a label that is cut first");
+  plant110('<span className="min-w-0 truncate">{company || "—"}</span>', '<span className="shrink-0">{company || "—"}</span>', "a company that never gives way");
+  plant110('<span className="min-w-0 shrink-[100] truncate">', '<span className="min-w-0 truncate">', "a place that gives way no sooner than the company");
+  plant110('{employment && <span className="shrink-0 whitespace-nowrap">', '{employment && <span dir="auto" className="shrink-0 whitespace-nowrap">', "a label with its own direction");
+  plant110("{`\\u00a0· ${employment}`}", "{` · ${employment}`}", "a separator the flex box strips");
+  plant110('<p dir="auto" className="flex min-w-0 items-baseline whitespace-nowrap', '<p dir="auto" className="flex min-w-0 items-baseline', "a meta line that wraps");
+  plant110("<MetaLine company={hit.company}", "<MetaLineX company={hit.company}", "a History row that prints its own line");
+} catch (e) {
+  fail(`meta line check (check 110) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //
