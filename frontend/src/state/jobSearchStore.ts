@@ -4,7 +4,7 @@
 import { isConnectionDropped, searchJobs, searchJobsStream, type SearchProgressEvent } from "../api/client";
 import { apiErrorMessage } from "../lib/apiError";
 import { invalidateData } from "../lib/dataCache";
-import type { JobMatch, JobSearchResult, ResumeModel, SearchContext } from "../types";
+import type { JobMatch, JobSearchResult, ResumeModel, SearchContext, SearchMode } from "../types";
 
 export type JobSearchState = {
   searching: boolean;
@@ -22,6 +22,9 @@ export type JobSearchState = {
   // jobs to History. JobsPage says so in its own words (search.connectionDropped).
   // It is not an `error`: nothing says the search failed, and it has used its use.
   dropped: boolean;
+  // The mode the CURRENT search ran in (2026-09-28): its results lead with the
+  // proposal writer when it is "freelance", whatever the switch says since.
+  mode: SearchMode;
 };
 
 let state: JobSearchState = {
@@ -33,6 +36,7 @@ let state: JobSearchState = {
   liveMatches: [],
   cancelled: false,
   dropped: false,
+  mode: "jobs",
 };
 const listeners = new Set<() => void>();
 
@@ -64,7 +68,7 @@ export function cancelJobSearch(): void {
   set({ searching: false, progress: null, cancelled: true });
 }
 
-export function startJobSearch(resume: ResumeModel, customize: SearchContext | null): void {
+export function startJobSearch(resume: ResumeModel, customize: SearchContext | null, mode: SearchMode = "jobs"): void {
   const id = ++seq;
   controller = new AbortController();
   set({
@@ -76,6 +80,7 @@ export function startJobSearch(resume: ResumeModel, customize: SearchContext | n
     liveMatches: [],
     cancelled: false,
     dropped: false,
+    mode,
   });
   searchJobsStream(
     resume,
@@ -93,12 +98,13 @@ export function startJobSearch(resume: ResumeModel, customize: SearchContext | n
       set({ liveMatches: next });
     },
     controller.signal,
+    mode,
   )
     .catch((e: unknown) => {
       // Older backends have no /jobs/search/stream — fall back to the plain
       // search (the progress card then shows its elapsed-time stages).
       const status = (e as { response?: { status?: number } })?.response?.status;
-      if (status === 404 || status === 405) return searchJobs(resume, customize);
+      if (status === 404 || status === 405) return searchJobs(resume, customize, mode);
       throw e;
     })
     .then((r) => {

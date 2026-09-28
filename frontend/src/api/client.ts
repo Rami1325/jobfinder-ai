@@ -52,6 +52,8 @@ import type {
   DeleteAccountResult,
   OutreachResult,
   PageCountResult,
+  ProposalRequest,
+  ProposalResponse,
   RecruiterScreenResult,
   ResumeModel,
   ResumePrefs,
@@ -61,6 +63,7 @@ import type {
   ReviewRewriteResult,
   ScreeningAnswerResult,
   SearchContext,
+  SearchMode,
   SearchQueryReading,
   StaleApplication,
   TailorResult,
@@ -223,6 +226,22 @@ export async function coverLetterPass(jd: JDModel): Promise<UsagePassOut> {
   return data;
 }
 
+/** A short bid for one freelance gig (2026-09-28), on the SAME pass as the
+ * posting's letter: one use per posting covers a letter and a proposal. With no
+ * `jd` the server reads `gig_text` first (a daily count, never a use) and hands
+ * the reading back in `jd`, which the next call must send to ride the pass.
+ * The body is exactly `ProposalRequest` (the route forbids any other field). */
+export async function writeProposal(body: ProposalRequest): Promise<ProposalResponse> {
+  const { data } = await api.post<ProposalResponse>("/proposal", {
+    resume: body.resume,
+    jd: body.jd ?? null,
+    gig_text: body.gig_text,
+    rate: body.rate,
+    tone: body.tone,
+  });
+  return data;
+}
+
 /** "Rami Bar - AppsFlyer" from whatever parts exist; falls back to "resume". */
 export function resumeFilename(candidateName: string, company: string): string {
   const clean = (s: string) => s.replace(/[<>:"/\\|?*]+/g, "").replace(/\s+/g, " ").trim();
@@ -353,14 +372,18 @@ export async function fetchJob(url: string): Promise<string> {
   return data.text;
 }
 
+/** The search request's body. `mode` is sent only for a freelance search
+ * (2026-09-28), so an ordinary search's body is exactly what it was. */
+function searchBody(resume: ResumeModel, customize: SearchContext | null | undefined, mode: SearchMode) {
+  return { resume, customize: customize ?? null, ...(mode === "freelance" ? { mode } : {}) };
+}
+
 export async function searchJobs(
   resume: ResumeModel,
   customize?: SearchContext | null,
+  mode: SearchMode = "jobs",
 ): Promise<JobSearchResult> {
-  const { data } = await api.post<JobSearchResult>("/jobs/search", {
-    resume,
-    customize: customize ?? null,
-  });
+  const { data } = await api.post<JobSearchResult>("/jobs/search", searchBody(resume, customize, mode));
   invalidateData("history"); // the backend records every search into history
   return data;
 }
@@ -392,6 +415,7 @@ export async function searchJobsStream(
   onProgress: (e: SearchProgressEvent) => void,
   onMatch?: (m: JobMatch) => void,
   signal?: AbortSignal,
+  mode: SearchMode = "jobs",
 ): Promise<JobSearchResult> {
   const code = localStorage.getItem(ACCESS_CODE_KEY);
   const resp = await fetch(`${api.defaults.baseURL}/jobs/search/stream`, {
@@ -403,7 +427,7 @@ export async function searchJobsStream(
       ...CSRF_HEADER,
       ...(code ? { "X-App-Key": code } : {}),
     },
-    body: JSON.stringify({ resume, customize: customize ?? null }),
+    body: JSON.stringify(searchBody(resume, customize, mode)),
     signal,
   });
   // The use was reserved before the stream opened, so its count rides these

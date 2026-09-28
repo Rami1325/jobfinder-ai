@@ -135,9 +135,9 @@
     },
     "sourcesLabel": "Job boards",
     "worldwide": "Include worldwide remote jobs",
-    "worldwideLine": "Adds remote jobs abroad, from LinkedIn and Himalayas.",
-    "worldwideWhy": "From LinkedIn: the US, the UK and most of Western and Northern Europe; jobs listed in a lower-paying country are left out. From Himalayas: remote jobs open to people in Israel. The Israeli boards stay local.",
-    "worldwideNeedsLinkedIn": "Runs on LinkedIn and Himalayas — check one of them below to enable it.",
+    "worldwideLine": "Adds remote jobs abroad, from LinkedIn, Himalayas and Jobicy.",
+    "worldwideWhy": "From LinkedIn: the US, the UK and most of Western and Northern Europe; jobs listed in a lower-paying country are left out. From Himalayas and Jobicy: remote jobs open to people in Israel. The Israeli boards stay local.",
+    "worldwideNeedsLinkedIn": "Runs on LinkedIn, Himalayas and Jobicy — check one of them below to enable it.",
     "worldwideOnlyBoard": "remote abroad",
     "worldwideTag": "incl. worldwide",
     "cta": "Find jobs for me",
@@ -235,6 +235,14 @@
     "viewOn": "View on {{source}}",
     "openOn": "Open on {{source}}",
     "viaBoard": "via {{board}}",
+    "employment": {
+      "contract": "Contract",
+      "freelance": "Freelance",
+      "also_freelance": "Also freelance",
+      "temporary": "Temporary",
+      "part_time": "Part-time",
+      "internship": "Internship"
+    },
     "kit": "Draft",
     "kitFailed": "Tailoring this draft failed — try again.",
     "kitExists": "This job already has a draft — see To review in the tracker.",
@@ -273,7 +281,8 @@
     "savedOpenJob": "Saved · open the job",
     "matchChip": "{{value}}% match",
     "moreActions": "More actions",
-    "notForMe": "Not for me"
+    "notForMe": "Not for me",
+    "proposal": "Write a proposal"
   },
   "fit": {
     "strongOn": "Strong on {{skills}}",
@@ -458,5 +467,17 @@
     "notePlaces": "One place at a time, so this searches {{place}}.",
     "noteExperience": "Years of experience aren't a search filter.",
     "error": "Couldn't read that. Try again, or fill in the fields yourself."
+  },
+  "freelance": {
+    "modeLabel": "What to search for",
+    "modeJobs": "Jobs",
+    "modeFreelance": "Freelance & contract",
+    "hint": "Only jobs the board lists as contract or freelance. Includes remote work abroad.",
+    "tag": "freelance & contract",
+    "leftOut_one": "{{count}} job left out: its board doesn't list it as contract or freelance.",
+    "leftOut_other": "{{count}} jobs left out: their boards don't list them as contract or freelance.",
+    "none": "No contract or freelance jobs found for this search.",
+    "few": "Few freelance jobs are listed on Israeli boards. Found a gig on XPlace, Upwork or a Facebook group? Paste it to write a proposal.",
+    "pasteGig": "Paste a gig"
   }
 }

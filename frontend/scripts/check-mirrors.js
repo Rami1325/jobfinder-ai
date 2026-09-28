@@ -4950,7 +4950,12 @@ try {
     // `uses.batchCap` by name: the cap is what keeps a batch from asking for
     // more uses than are left, and its sentence is the one place that says so.
     ["pages/jobs/kits.tsx", 1, ["uses.batchCap"]],
-    ["components/CoverLetter.tsx", 1, []],
+    // The letter's card, which since 2026-09-28 also writes proposals: the
+    // proposal's note by name, since a proposal on the letter's sentence would
+    // say "changes to this letter" under a bid.
+    ["components/CoverLetter.tsx", 1, ["uses.proposal"]],
+    // "Proposal for a gig" (2026-09-28): a new gig opens its own pass, 1 use.
+    ["pages/tools/ProposalToolPage.tsx", 1, ["uses.proposal"]],
     // The overlay's line before a reading, required BY NAME: that state had no
     // line at all once (Phase 30 review, known item 4). Since PLAN 31.3/1 it
     // has one button, Check fit, and `uses.fitThenTailor` prices it AND says
@@ -13045,6 +13050,10 @@ try {
     if (!/const saved = !file && !!master;/.test(sc) || !/\(!!file \|\| saved\)/.test(sc)) out.push("the scan does not default to the saved resume");
     if ((cd.match(/variant="secondary"\s*icon=\{<ArrowRight size=\{14\}/g) ?? []).length !== 2)
       out.push("a job row's Tailor is not secondary, so the Jobs page shows a column of primaries");
+    // A freelance search's rows lead with the proposal writer (2026-09-28), and
+    // it is the row's one action, not a primary: the same column of blue buttons.
+    if ((cd.match(/variant="secondary"\s*icon=\{<Handshake size=\{14\} \/>\}\s*onClick=\{propose\}/g) ?? []).length !== 1)
+      out.push("a freelance row's Write a proposal is not secondary, so a freelance search shows a column of primaries");
     return out;
   };
   const files = { panel, alerts, scan, cards };
@@ -13054,7 +13063,10 @@ try {
     if (!readFiles({ ...files, [key]: files[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
   };
   plantFile("scan", "const saved = !file && !!master;", "const saved = false;", "a scan that asks for the file again");
-  plantFile("cards", 'variant="secondary"', 'variant="primary"', "a primary Tailor on every row");
+  // Each by its own icon: since 2026-09-28 the first `variant="secondary"` in the
+  // file is a freelance row's proposal, and the Tailor twin never planted.
+  plantFile("cards", 'variant="secondary"\n              icon={<ArrowRight size={14}', 'variant="primary"\n              icon={<ArrowRight size={14}', "a primary Tailor on every row");
+  plantFile("cards", 'variant="secondary" icon={<Handshake size={14} />}', 'variant="primary" icon={<Handshake size={14} />}', "a primary proposal on every freelance row");
   for (const loc of ["en", "he"]) {
     const common = JSON.parse(read(`locales/${loc}/common.json`));
     const tailor = JSON.parse(read(`locales/${loc}/tailor.json`));
@@ -13184,7 +13196,7 @@ try {
     "",
     "History's count not mirrored",
   );
-  plant("models", "    applied: int = 0\n\n\nclass JobSearchHitOut", "\n\nclass JobSearchHitOut", "the search's count gone from the backend");
+  plant("models", "    applied: int = 0\n    # A freelance search only", "    # A freelance search only", "the search's count gone from the backend");
 
   const keys = [...new Set([...real.jobs.matchAll(/\bt\(\s*"(applied\.[\w.]+)"/g)].map((m) => m[1]))];
   if (keys.length < 1) throw new Error("read no applied.* key out of pages/JobsPage.tsx");
@@ -14881,6 +14893,10 @@ try {
       ["linkedin", "https://himalayas.app/x", ""],
       [undefined, "not a url", ""],
       [undefined, undefined, ""],
+      // Jobicy since 2026-09-28 (every answer of its API asks for the credit).
+      ["jobicy", "https://jobicy.com/jobs/153923-interpreter", "jobicy"],
+      [undefined, "https://jobicy.com/jobs/153923-interpreter", "jobicy"],
+      [undefined, "https://jobicy.com.evil.example/jobs/1", ""],
     ];
     for (const [source, url, want] of cases)
       if (fn(source, url) !== want) out.push(`attributedSource(${JSON.stringify(source)}, ${JSON.stringify(url)}) is not "${want}"`);
@@ -14972,7 +14988,7 @@ try {
 try {
   const shared100 = runProbeBundle(
     "worldwide",
-    'export { SOURCE_IDS, WORLDWIDE_SOURCES, WORLDWIDE_ONLY_SOURCES, searchedSources, applySearchReading } from "./pages/jobs/shared";\n',
+    'export { SOURCE_IDS, SOURCE_NAMES, WORLDWIDE_SOURCES, WORLDWIDE_ONLY_SOURCES, searchedSources, applySearchReading } from "./pages/jobs/shared";\n',
   );
   for (const k of ["WORLDWIDE_SOURCES", "WORLDWIDE_ONLY_SOURCES", "searchedSources", "applySearchReading"])
     if (!(k in shared100)) throw new Error(`pages/jobs/shared.ts exports no ${k}`);
@@ -15023,7 +15039,8 @@ try {
     const out = [];
     const run = /function runSearch\(\) \{[\s\S]*?\n  \}\n/.exec(jobs);
     if (!run) throw new Error("pages/JobsPage.tsx: function runSearch not found");
-    if (!/setRequestedSources\(searchedSources\(c\)\)/.test(run[0])) out.push("the scan panel is not fed the boards the search asks (searchedSources)");
+    if (!/setRequestedSources\(searchedSourcesFor\(c, searchMode\)\)/.test(run[0]))
+      out.push("the scan panel is not fed the boards the search asks in its mode (searchedSourcesFor)");
     const fields = fnSource(alerts, "export function CustomizeFields");
     if (/selectedSources\.includes\("linkedin"\)/.test(fields)) out.push("the worldwide opt-in is still gated on LinkedIn alone");
     if (!/selectedSources\.some\(\(s\) => WORLDWIDE_SOURCES\.includes\(s\)\)/.test(fields)) out.push("the worldwide opt-in is not gated on the worldwide boards");
@@ -15032,7 +15049,11 @@ try {
     if (!/<label key=\{id\} className="flex min-h-11 /.test(fields)) out.push("a board in the list is not a 44 px row");
     for (const [loc, b] of [["en", en], ["he", he]]) {
       for (const k of ["worldwideLine", "worldwideNeedsLinkedIn", "worldwideWhy"])
-        if (!/Himalayas/.test(b.search?.[k] ?? "")) out.push(`locales/${loc}/jobs.json search.${k} does not name Himalayas`);
+        for (const id of shared100.WORLDWIDE_ONLY_SOURCES) {
+          const name = shared100.SOURCE_NAMES[id]?.en;
+          if (!name) throw new Error(`worldwide-only board "${id}" has no name in SOURCE_NAMES`);
+          if (!(b.search?.[k] ?? "").includes(name)) out.push(`locales/${loc}/jobs.json search.${k} does not name ${name}`);
+        }
       if (typeof b.search?.worldwideOnlyBoard !== "string" || !b.search.worldwideOnlyBoard.trim())
         out.push(`locales/${loc}/jobs.json has no search.worldwideOnlyBoard`);
     }
@@ -15049,14 +15070,526 @@ try {
     if (!real100[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
     if (!read100({ ...real100, [key]: real100[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
   };
-  plant100("jobs", "setRequestedSources(searchedSources(c))", "setRequestedSources(c?.sources ?? [])", "a scan panel fed the chosen boards");
+  plant100("jobs", "setRequestedSources(searchedSourcesFor(c, searchMode))", "setRequestedSources(c?.sources ?? [])", "a scan panel fed the chosen boards");
+  plant100("jobs", "setRequestedSources(searchedSourcesFor(c, searchMode))", "setRequestedSources(searchedSources(c))", "a scan panel that ignores the mode");
   plant100("alerts", "const worldwideBoard = selectedSources.some((s) => WORLDWIDE_SOURCES.includes(s));",
     'const worldwideBoard = selectedSources.includes("linkedin");', "an opt-in gated on LinkedIn alone");
   plant100("alerts", '<label key={id} className="flex min-h-11 ', '<label key={id} className="flex ', "a board row too small to tap");
   if (!read100({ ...real100, he: { ...real100.he, search: { ...real100.he.search, worldwideLine: "מלינקדאין." } } }).length)
     throw new Error("the reader passes a Hebrew line that names LinkedIn alone");
+  if (!read100({ ...real100, en: { ...real100.en, search: { ...real100.en.search, worldwideWhy: "From LinkedIn and Himalayas." } } }).length)
+    throw new Error("the reader passes an English line that leaves Jobicy out");
 } catch (e) {
   fail(`worldwide boards check (check 100) could not run: ${e.message}`);
+}
+
+// ---- 101. the proposal writer: its words, its boxes, and what it promises ---- //
+// 2026-09-28 (freelance, the small version). The letter card writes proposals too,
+// and "Proposal for a gig" is a tool of its own. `tsc` sees none of this: a key is
+// a string, a textarea that cuts a paste compiles, and so does a card that drops
+// the posting's words. (a) Every literal `proposal.*` / `cover.*` key the card
+// reads resolves in both tailor.json, and every `proposal.*` / `cards.proposal.*`
+// key the tool page reads in both tools.json, each with its plural set. (b) The
+// card, by shape: a proposal is written by `writeProposal(` with the posting's own
+// words (`gig_text: postingText`) and the typed rate; the text is an EDITABLE
+// `<textarea>` in its own direction (`dir="auto"`), 16 px on a phone; under a
+// proposal it says the user sends it; it names the [brackets] the server left
+// (`placeholders`); the rate box stops at the schema's bound (PROPOSAL_RATE_MAX,
+// equal to the backend's; a degraded skip without backend/); each kind option is a
+// 44 px target. (c) The tool page: the gig box is `dir="auto"`, 16 px, and has NO
+// maxLength (the paste is the user's own: the server refuses a gig whole, and the
+// browser may not cut it silently); its first write sends no analysis
+// (`jd: null`), and the card after it is proposal-only and handed the gig's words.
+// (d) The send note says what the code does, in both locales (the user sends it,
+// JobFinder never applies), and no proposal sentence says "verified" or
+// "guaranteed". Planted twins are judged every run.
+try {
+  const keysIn101 = (src, re) => [...new Set([...src.matchAll(re)].map((m) => m[1]))];
+  const card101 = decomment(read("components/CoverLetter.tsx"));
+  const tool101 = decomment(read("pages/tools/ProposalToolPage.tsx"));
+  const bundles101 = {
+    tailor: { en: JSON.parse(read("locales/en/tailor.json")), he: JSON.parse(read("locales/he/tailor.json")) },
+    tools: { en: JSON.parse(read("locales/en/tools.json")), he: JSON.parse(read("locales/he/tools.json")) },
+  };
+  const cardKeys = keysIn101(card101, /\bt\("((?:proposal|cover)\.[\w.]+)"/g);
+  const toolKeys = keysIn101(tool101, /\bt\("((?:proposal|cards\.proposal)\.[\w.]+)"/g);
+  if (cardKeys.filter((k) => k.startsWith("proposal.")).length < 12)
+    throw new Error(`read ${cardKeys.length} proposal./cover. keys out of CoverLetter.tsx (expected at least 12 proposal.* among them)`);
+  if (toolKeys.length < 8) throw new Error(`read ${toolKeys.length} proposal keys out of ProposalToolPage.tsx (expected at least 8)`);
+  for (const loc of ["en", "he"]) {
+    for (const k of cardKeys)
+      for (const p of keyProblems(bundles101.tailor[loc], k, loc, "the letter and proposal card"))
+        fail(`check 101: locales/${loc}/tailor.json ${p}`);
+    for (const k of toolKeys)
+      for (const p of keyProblems(bundles101.tools[loc], k, loc, "Proposal for a gig"))
+        fail(`check 101: locales/${loc}/tools.json ${p}`);
+  }
+  const models101 = pySource("app/models/__init__.py", "check 101");
+  const backendRate101 = models101 === null ? null : Number((/^PROPOSAL_RATE_MAX = (\d+)$/m.exec(models101) || [])[1]);
+  if (models101 !== null && !(backendRate101 > 0)) throw new Error("backend/app/models: PROPOSAL_RATE_MAX not found");
+
+  const clsOf = (tag) => ((/className="([^"]*)"/.exec(tag) || [])[1] ?? "").split(/\s+/);
+  const read101 = ({ card, tool, en, he }) => {
+    const out = [];
+    const gen = fnSource(card, "async function generate");
+    if (!/writeProposal\(\{[^}]*\bgig_text:\s*postingText\b[^}]*\brate\b[^}]*\}\)/.test(gen))
+      out.push("the card's proposal does not send the posting's own words (gig_text: postingText) and the typed rate");
+    const box = /<textarea\b[\s\S]*?\/>/.exec(card);
+    if (!box) throw new Error("CoverLetter.tsx: no <textarea>");
+    if (!/dir="auto"/.test(box[0])) out.push("the card's text box does not take its direction from the text");
+    if (!/onChange=\{\(e\) => setText\(e\.target\.value\)\}/.test(box[0]) || /\breadOnly\b/.test(box[0]))
+      out.push("the card's text cannot be edited before it is copied");
+    if (!clsOf(box[0]).includes("text-base")) out.push("the card's text box is under 16 px on a phone, which iOS zooms into");
+    if (!/\{proposal && <p[^>]*>\{t\("proposal\.sendYourself"\)\}<\/p>\}/.test(card))
+      out.push("the card does not say, under a proposal, that the user sends it on the platform themselves");
+    if (!/\.placeholders\b/.test(card) || !/\bt\("proposal\.fillIn"\)/.test(card))
+      out.push("the card does not name the [brackets] the server left for the user to fill in");
+    const rate = /<input\b[\s\S]*?\/>/.exec(card);
+    if (!rate || !/maxLength=\{PROPOSAL_RATE_MAX\}/.test(rate[0])) out.push("the card's rate box has no bound");
+    const cardRate = Number((/export const PROPOSAL_RATE_MAX = (\d+);/.exec(card) || [])[1]);
+    if (!(cardRate > 0)) out.push("CoverLetter.tsx exports no PROPOSAL_RATE_MAX");
+    else if (backendRate101 !== null && cardRate !== backendRate101)
+      out.push(`the rate box stops at ${cardRate} characters, the backend's ProposalRequest.rate at ${backendRate101}`);
+    const radio = /role="radio"[\s\S]*?className=\{cn\(\s*"([^"]*)"/.exec(card);
+    if (!radio || !radio[1].split(/\s+/).includes("min-h-11")) out.push("a Letter / Proposal option is under the 44 px touch target");
+    const gig = /<textarea\b[\s\S]*?\/>/.exec(tool);
+    if (!gig) throw new Error("ProposalToolPage.tsx: no <textarea>");
+    if (/\bmaxLength=/.test(gig[0]))
+      out.push("the gig box cuts a paste (maxLength): the server refuses a gig whole, and the browser may not cut it silently");
+    if (!/dir="auto"/.test(gig[0])) out.push("the gig box does not take its direction from the paste");
+    if (!clsOf(gig[0]).includes("text-base")) out.push("the gig box is under 16 px on a phone, which iOS zooms into");
+    if (!/writeProposal\(\{[^}]*\bjd:\s*null\b/.test(tool)) out.push("the tool's first write does not ask the server to read the gig (jd: null)");
+    const el = /<CoverLetter\b[\s\S]*?\/>/.exec(tool);
+    if (!el) out.push("the tool page does not hand the proposal to the letter card, whose pass rules are the tested ones");
+    else {
+      if (!/kinds=\{\["proposal"\]\}/.test(el[0])) out.push("the tool's card offers a letter for a gig");
+      if (!/postingText=\{current\.gig\}/.test(el[0])) out.push("the tool's card is not handed the gig's words");
+    }
+    for (const [loc, b, words] of [
+      ["en", en, [/\byourself\b/i, /\bnever\b/i]],
+      ["he", he, [/בעצמכם/, /אף פעם/]],
+    ]) {
+      const note = String(b.proposal?.sendYourself ?? "");
+      if (!words.every((w) => w.test(note)))
+        out.push(`locales/${loc}/tailor.json proposal.sendYourself does not say that the user sends it and JobFinder never applies`);
+      for (const [k, v] of Object.entries(b.proposal ?? {}))
+        if (/\bverified\b|\bguarantee|מאומת|מובטח/i.test(String(v)))
+          out.push(`locales/${loc}/tailor.json proposal.${k} claims more than the floor proves ("${v}")`);
+    }
+    return out;
+  };
+  const real101 = { card: card101, tool: tool101, en: bundles101.tailor.en, he: bundles101.tailor.he };
+  for (const p of read101(real101)) fail(`check 101: ${p} (2026-09-28, freelance)`);
+  const plant101 = (key, from, to, label) => {
+    if (!real101[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read101({ ...real101, [key]: real101[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant101("tool", 'id="gig-text"', 'id="gig-text"\n          maxLength={4000}', "a gig box that cuts a paste");
+  plant101("card", "gig_text: postingText", 'gig_text: ""', "a proposal written without the posting's words");
+  plant101("card", "onChange={(e) => setText(e.target.value)}", "readOnly", "a text box that cannot be edited");
+  plant101("card", '{t("proposal.sendYourself")}', '{""}', "a proposal with no send note");
+  plant101("tool", 'kinds={["proposal"]}', 'kinds={["letter", "proposal"]}', "a gig offered a letter");
+  plant101("card", 'dir="auto"\n          value={text}', "value={text}", "a text box in the page's direction");
+  if (!read101({ ...real101, he: { ...real101.he, proposal: { ...real101.he.proposal, sendYourself: "שלחו בעצמכם." } } }).length)
+    throw new Error("the reader passes a Hebrew note that never says JobFinder does not apply");
+  if (!read101({ ...real101, en: { ...real101.en, proposal: { ...real101.en.proposal, tookOut: "Every number verified." } } }).length)
+    throw new Error("the reader passes a sentence that says verified");
+} catch (e) {
+  fail(`proposal writer check (check 101) could not run: ${e.message}`);
+}
+
+// ---- 102. the proposal's wire: the route, the request and the answer --------- //
+// `writeProposal` posts to the path routes.py mounts, answering ProposalResponse;
+// the body it builds names exactly ProposalRequest's fields (the route forbids any
+// other: a stray field is a 422 the card shows as an error, a missing one a
+// proposal written without the gig); types.ts' ProposalRequest and
+// ProposalResponse name exactly the backend's fields (renamed on one side, a field
+// compiles green and reads undefined); and the route rides the LETTER's pass for
+// the same posting (`pass_charged(db, user, "cover_letter", ref=quota.jd_ref(jd))`),
+// so one use covers both (cost-and-quota.md). A degraded skip without backend/.
+try {
+  const fieldsTs = (types, name) => {
+    const body = new RegExp(`export interface ${name} \\{([\\s\\S]*?)\\n\\}`).exec(types);
+    if (!body) throw new Error(`types.ts: ${name} not found`);
+    return [...decomment(body[1]).matchAll(/^\s*(\w+)\??:/gm)].map((m) => m[1]).sort();
+  };
+  const fieldsPy = (models, name) => {
+    const body = new RegExp(`class ${name}\\(BaseModel\\):([\\s\\S]*?)\\n(?=\\S)`).exec(models);
+    if (!body) throw new Error(`app/models: class ${name} not found`);
+    return [...body[1].matchAll(/^    (\w+): /gm)].map((m) => m[1]).sort();
+  };
+  const judge102 = ({ client, types, routes, models }) => {
+    const out = [];
+    const fn = /export async function writeProposal\([\s\S]*?\n\}/.exec(client);
+    if (!fn) return ["api/client.ts has no writeProposal"];
+    const post = /api\.post<ProposalResponse>\("([^"]+)", \{([\s\S]*?)\}\)/.exec(fn[0]);
+    if (!post) return ["writeProposal does not post an object literal answered by ProposalResponse"];
+    const sent = [...post[2].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]).sort();
+    const tsReq = fieldsTs(types, "ProposalRequest");
+    const tsRes = fieldsTs(types, "ProposalResponse");
+    if (JSON.stringify(sent) !== JSON.stringify(tsReq))
+      out.push(`writeProposal sends ${JSON.stringify(sent)}, types.ts ProposalRequest names ${JSON.stringify(tsReq)}`);
+    if (routes !== null && models !== null) {
+      if (!new RegExp(`@router\\.post\\("${post[1].replace(/\//g, "\\/")}", response_model=ProposalResponse\\)`).test(routes))
+        out.push(`routes.py does not mount POST ${post[1]} answering ProposalResponse`);
+      const pyReq = fieldsPy(models, "ProposalRequest");
+      const pyRes = fieldsPy(models, "ProposalResponse");
+      if (pyReq.length < 5 || pyRes.length < 8) throw new Error(`read ${pyReq.length} ProposalRequest / ${pyRes.length} ProposalResponse fields`);
+      if (JSON.stringify(pyReq) !== JSON.stringify(sent))
+        out.push(`writeProposal sends ${JSON.stringify(sent)}, the backend's ProposalRequest takes ${JSON.stringify(pyReq)}`);
+      if (JSON.stringify(pyRes) !== JSON.stringify(tsRes))
+        out.push(`ProposalResponse ${JSON.stringify(pyRes)} and types.ts ProposalResponse ${JSON.stringify(tsRes)} differ`);
+      const route = /\ndef proposal\([\s\S]*?\n(?=@router|\ndef |$)/.exec(routes);
+      if (!route) out.push("routes.py: the proposal route's function was not found");
+      else if (!/quota\.pass_charged\(db, user, "cover_letter", ref=quota\.jd_ref\(jd\)\)/.test(route[0]))
+        out.push("the proposal does not ride the letter's pass for the same posting (pass_charged(..., \"cover_letter\", ref=quota.jd_ref(jd)))");
+    }
+    return out;
+  };
+  const routes102 = pySource("app/api/routes.py", "check 102");
+  const models102 = pySource("app/models/__init__.py", "check 102");
+  const real102 = {
+    client: decomment(read("api/client.ts")),
+    types: read("types.ts"),
+    routes: routes102 === null ? null : routes102.replace(/\r\n/g, "\n"),
+    models: models102 === null ? null : models102.replace(/\r\n/g, "\n"),
+  };
+  for (const p of judge102(real102)) fail(`check 102: ${p} (2026-09-28, freelance)`);
+  const plant102 = (key, from, to, label) => {
+    if (real102[key] === null) return;
+    if (!real102[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!judge102({ ...real102, [key]: real102[key].replace(from, to) }).length) throw new Error(`the judge passes "${label}"`);
+  };
+  plant102("client", "    gig_text: body.gig_text,\n", "", "a body without the gig");
+  plant102("types", "  unverified: string[];\n", "", "an answer mirror without `unverified`");
+  plant102("routes", 'quota.pass_charged(db, user, "cover_letter", ref=quota.jd_ref(jd))', 'quota.pass_charged(db, user, "cover_letter", ref="")', "a proposal on a pass of its own");
+  plant102("client", 'api.post<ProposalResponse>("/proposal"', 'api.post<ProposalResponse>("/proposals"', "a client posting to a path nobody mounts");
+} catch (e) {
+  fail(`proposal wire check (check 102) could not run: ${e.message}`);
+}
+
+// ---- 103. the employment label: the board's words, on the rows, never a filter //
+// 2026-09-28 (freelance). A job row says Contract, Freelance, Also freelance,
+// Temporary, Part-time or Internship when the BOARD's own field says so, and
+// nothing for full-time or unknown. (a) EXECUTES `employmentText` and
+// `proposalFirst` (pages/jobs/shared.ts) over every label the backend can send
+// (`EMPLOYMENT_TYPES`, read out of app/core/employment.py with pyTuple; the six
+// known labels without backend/): each asks its OWN literal
+// `card.employment.<label>` key, and "", "full_time", an unknown value and
+// `constructor` say nothing (never a raw key, never "Full-time"); the page's list
+// equals the backend's; every key resolves in both jobs.json; `proposalFirst` is
+// true for contract and freelance only. (b) By shape: the search row's and the
+// History row's meta line (the `truncate` line, so the label costs no height)
+// print the label, never as a Badge; the job's page puts it in its meta line and
+// opens its letter card on `proposalFirst(detail.employment)`. (c) The mirrors:
+// `employment` on types.ts' JobMatch, JobSearchHit and ApplicationDetail and on the
+// backend's JobMatch, JobSearchHitOut and ApplicationDetail. (d) No filter:
+// SearchContext names no employment field on either side (job-search.md, *The
+// employment type*: in Israel it would mostly return nothing). Planted twins are
+// judged every run.
+try {
+  const sh103 = runProbeBundle(
+    "employment",
+    'export { EMPLOYMENT_TYPES, employmentText, proposalFirst } from "./pages/jobs/shared";\n',
+  );
+  for (const k of ["EMPLOYMENT_TYPES", "employmentText", "proposalFirst"])
+    if (!(k in sh103)) throw new Error(`pages/jobs/shared.ts exports no ${k}`);
+  const KNOWN103 = ["contract", "freelance", "also_freelance", "temporary", "part_time", "internship"];
+  const emp103 = pySource("app/core/employment.py", "check 103");
+  const labels103 = emp103 === null ? KNOWN103 : pyTuple(emp103.replace(/\r\n/g, "\n"), "EMPLOYMENT_TYPES", "backend/app/core/employment.py");
+  if (labels103.length < 5) throw new Error(`read ${labels103.length} labels out of EMPLOYMENT_TYPES`);
+  if (JSON.stringify([...sh103.EMPLOYMENT_TYPES]) !== JSON.stringify(labels103))
+    fail(`check 103: EMPLOYMENT_TYPES is ${JSON.stringify(sh103.EMPLOYMENT_TYPES)}, the backend's ${JSON.stringify(labels103)}`);
+  const judgeText103 = (fn) => {
+    const out = [];
+    const asked = [];
+    const t = (k) => {
+      asked.push(k);
+      return `T:${k}`;
+    };
+    for (const v of labels103) {
+      asked.length = 0;
+      const got = fn(v, t);
+      if (got !== `T:card.employment.${v}` || asked.length !== 1) out.push(`"${v}" reads ${JSON.stringify(got)}, not its own card.employment.${v}`);
+    }
+    for (const v of ["", "full_time", "fulltime", "volunteer", "constructor", undefined, null]) {
+      asked.length = 0;
+      const got = fn(v, t);
+      if (got !== "" || asked.length) out.push(`${JSON.stringify(v)} is labelled ${JSON.stringify(got)}; full-time and unknown say nothing`);
+    }
+    return out;
+  };
+  const judgeFirst103 = (fn) => {
+    const out = [];
+    for (const v of [...labels103, "", "full_time", undefined])
+      if (fn(v) !== (v === "contract" || v === "freelance")) out.push(`proposalFirst(${JSON.stringify(v)}) is ${fn(v)}`);
+    return out;
+  };
+  for (const p of judgeText103(sh103.employmentText)) fail(`check 103: employmentText ${p}`);
+  for (const p of judgeFirst103(sh103.proposalFirst)) fail(`check 103: ${p} — only a Contract or Freelance job opens on the proposal`);
+  const real103 = sh103.employmentText;
+  for (const [label, twin] of [
+    ["a label that says full time", (v, t) => (v ? real103(v, t) : t("card.employment.full_time"))],
+    ["a key built from the value", (v, t) => (v ? t(`card.employment.${v}`) : "")],
+    ["two labels on one sentence", (v, t) => (v === "freelance" ? t("card.employment.also_freelance") : real103(v, t))],
+  ])
+    if (!judgeText103(twin).length) throw new Error(`the judge passes ${label}`);
+  if (!judgeFirst103((v) => v === "contract" || v === "freelance" || v === "also_freelance").length)
+    throw new Error("the judge passes a proposal first for 'also freelance'");
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const v of labels103)
+      for (const p of keyProblems(bundle, `card.employment.${v}`, loc, "a job row"))
+        fail(`check 103: locales/${loc}/jobs.json ${p}`);
+  }
+
+  const metaOf = (fn) => {
+    const at = fn.indexOf('<p dir="auto" className="truncate text-sm text-ink-muted">');
+    return at === -1 ? "" : fn.slice(at, fn.indexOf("</p>", at));
+  };
+  const fieldsOf = (src, re) => {
+    const m = re.exec(src);
+    return m ? m[1] : null;
+  };
+  const read103 = ({ cards, jobPage, types, models }) => {
+    const out = [];
+    for (const [fnName, v] of [["MatchCard", "m"], ["HistoryRow", "hit"]]) {
+      const fn = fnSource(cards, `export function ${fnName}`);
+      if (!new RegExp(`const employment = employmentText\\(${v}\\.employment, t\\)`).test(fn))
+        out.push(`${fnName} does not word its row's employment type through employmentText(${v}.employment, t)`);
+      if (!/\{employment \? ` · \$\{employment\}` : ""\}/.test(metaOf(fn)))
+        out.push(`${fnName} does not print the label in its meta line (the truncating line, which costs no height)`);
+      if (/<Badge\b[^>]*>\s*\{employment\}/.test(fn)) out.push(`${fnName} draws the label as a badge`);
+    }
+    if (!/const employment = employmentText\(detail\.employment, tJobs\)/.test(jobPage) || !/const meta = \[detail\.company, employment,/.test(jobPage))
+      out.push("a job's page does not put the label in its meta line");
+    if (!/initialKind=\{proposalFirst\(detail\.employment\) \? "proposal" : "letter"\}/.test(jobPage))
+      out.push("a job's page does not open its letter card on the proposal for a Contract or Freelance job");
+    for (const name of ["JobMatch", "JobSearchHit", "ApplicationDetail"]) {
+      const body = fieldsOf(types, new RegExp(`export interface ${name} \\{([\\s\\S]*?)\\n\\}`));
+      if (body === null) throw new Error(`types.ts: ${name} not found`);
+      if (!/^\s*employment\?: string;/m.test(body)) out.push(`types.ts ${name} has no employment`);
+    }
+    const ctxTs = fieldsOf(types, /export interface SearchContext \{([\s\S]*?)\n\}/);
+    if (ctxTs === null) throw new Error("types.ts: SearchContext not found");
+    if (/employment|job_type/i.test(decomment(ctxTs))) out.push("types.ts SearchContext carries an employment filter");
+    if (models !== null) {
+      for (const name of ["JobMatch", "JobSearchHitOut", "ApplicationDetail"]) {
+        const body = fieldsOf(models, new RegExp(`class ${name}\\(BaseModel\\):([\\s\\S]*?)\\n(?=\\S)`));
+        if (body === null) throw new Error(`app/models: class ${name} not found`);
+        if (!/^    employment: str = ""$/m.test(body)) out.push(`the backend's ${name} has no employment`);
+      }
+      const ctxPy = fieldsOf(models, /class SearchContext\(BaseModel\):([\s\S]*?)\n(?=\S)/);
+      if (ctxPy === null) throw new Error("app/models: class SearchContext not found");
+      if (/^    (?:employment|job_type)\w*: /m.test(ctxPy)) out.push("the backend's SearchContext carries an employment filter");
+    }
+    return out;
+  };
+  const models103 = pySource("app/models/__init__.py", "check 103");
+  const r103 = {
+    cards: decomment(read("pages/jobs/cards.tsx")),
+    jobPage: decomment(read("pages/JobPage.tsx")),
+    types: read("types.ts"),
+    models: models103 === null ? null : models103.replace(/\r\n/g, "\n"),
+  };
+  for (const p of read103(r103)) fail(`check 103: ${p} (2026-09-28, freelance)`);
+  const plant103 = (key, from, to, label) => {
+    if (r103[key] === null) return;
+    if (!r103[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read103({ ...r103, [key]: r103[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant103("cards", '{employment ? ` · ${employment}` : ""}\n          {hit.location', '{hit.location', "a History row without the label");
+  plant103("cards", '{best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}', '{best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}<Badge>{employment}</Badge>', "the label as a badge");
+  plant103("jobPage", 'initialKind={proposalFirst(detail.employment) ? "proposal" : "letter"}', 'initialKind="letter"', "a Contract job that opens on the letter");
+  plant103("types", "  /** The board's employment type as History stored it (see JobMatch.employment). */\n  employment?: string;\n", "", "History's mirror without the field");
+  plant103("types", "export interface SearchContext {\n", "export interface SearchContext {\n  employment_type?: string;\n", "a search filter on it");
+} catch (e) {
+  fail(`employment label check (check 103) could not run: ${e.message}`);
+}
+
+// ---- 104. the freelance search: one mode, the server's rule, the proposal first //
+// 2026-09-28 (freelance, part 3). "Jobs / Freelance & contract" over the Jobs
+// page's search: a freelance search keeps only postings whose BOARD says contract
+// or freelance (the server's `job_search.freelance_kept`; nothing here reads a
+// title or a label), turns the worldwide pass on when remote work is allowed and
+// never asks Drushim or Greenhouse. (a) EXECUTES pages/jobs/shared.ts:
+// `SEARCH_MODES` equals the backend's `JobSearchRequest.mode` values and
+// `NO_FREELANCE_SOURCES` its `NO_FREELANCE_FIELD` (a degraded skip without
+// backend/); `searchedSourcesFor(c, "jobs")` IS `searchedSources(c)` for every
+// context, and in "freelance" it lists the worldwide-only boards whenever remote
+// work is allowed (a search the page does not customise counts as "any"), none
+// for an on-site search, and never Drushim or Greenhouse. (b) The wire: the
+// client sends `mode` only for a freelance search, from both search calls; the
+// store hands the mode to the stream AND to the fallback; both backend routes pass
+// `**_mode_kw(body)`, which is {} unless the mode is "freelance"; `not_freelance`
+// is mirrored on JobSearchResult both sides. (c) The page: the switch is drawn on
+// both states of the search card, a radiogroup of two 44 px choices, its choice
+// kept in localStorage behind try/catch on both the read and the write; runSearch
+// runs the switch's mode; the results are judged by the mode THEIR search ran in
+// (`resultMode`, from the store), both MatchCard lists take `freelance`, the
+// count of what was left out is said, and the note to paste a gig closes every
+// freelance result (the whole answer when nothing was found). (d) A freelance row
+// leads with Write a proposal, which hands the posting to /tools/proposal as
+// `gigText` (read there), and keeps Tailor in its menu. (e) Every freelance.* key
+// and card.proposal resolve in both jobs.json with their plural sets, and the note
+// names the places the gigs are (XPlace, Upwork). Planted twins every run.
+try {
+  const sh104 = runProbeBundle(
+    "freelance",
+    'export { SEARCH_MODES, NO_FREELANCE_SOURCES, SOURCE_IDS, WORLDWIDE_ONLY_SOURCES, searchedSources, searchedSourcesFor } from "./pages/jobs/shared";\n',
+  );
+  for (const k of ["SEARCH_MODES", "NO_FREELANCE_SOURCES", "searchedSources", "searchedSourcesFor"])
+    if (!(k in sh104)) throw new Error(`pages/jobs/shared.ts exports no ${k}`);
+  const models104 = pySource("app/models/__init__.py", "check 104");
+  const js104 = pySource("app/core/job_search.py", "check 104");
+  const routes104 = pySource("app/api/routes.py", "check 104");
+  const lf104 = (s) => (s === null ? null : s.replace(/\r\n/g, "\n"));
+  if (models104 !== null) {
+    const m = /^    mode: Literal\[([^\]]*)\] = "jobs"$/m.exec(lf104(models104));
+    if (!m) throw new Error('app/models: JobSearchRequest has no `mode: Literal[...] = "jobs"`');
+    const modes = m[1].split(",").map((x) => x.trim().replace(/^"|"$/g, ""));
+    if (JSON.stringify(modes) !== JSON.stringify([...sh104.SEARCH_MODES]))
+      fail(`check 104: SEARCH_MODES is ${JSON.stringify(sh104.SEARCH_MODES)}, the backend's JobSearchRequest.mode ${JSON.stringify(modes)}`);
+  }
+  if (js104 !== null) {
+    const m = /^NO_FREELANCE_FIELD: frozenset\[str\] = frozenset\(\{([^}]*)\}\)/m.exec(lf104(js104));
+    if (!m) throw new Error("job_search.py: NO_FREELANCE_FIELD not found");
+    const ids = m[1].split(",").map((x) => x.trim().replace(/^"|"$/g, "")).filter(Boolean).sort();
+    if (JSON.stringify(ids) !== JSON.stringify([...sh104.NO_FREELANCE_SOURCES].sort()))
+      fail(`check 104: NO_FREELANCE_SOURCES is ${JSON.stringify(sh104.NO_FREELANCE_SOURCES)}, the backend's NO_FREELANCE_FIELD ${JSON.stringify(ids)}`);
+  }
+  const judge104 = (forMode) => {
+    const out = [];
+    const ctx = (over) => ({ job_title: "QA", location: "", work_mode: "any", limit: 10, ...over });
+    const contexts = [
+      ["no customisation", null],
+      ["any", ctx({})],
+      ["remote, pass on", ctx({ work_mode: "remote", include_worldwide: true })],
+      ["on-site", ctx({ work_mode: "onsite" })],
+      ["on-site, pass on", ctx({ work_mode: "onsite", include_worldwide: true })],
+      ["three boards", ctx({ sources: ["drushim", "linkedin", "jobicy"] })],
+    ];
+    for (const [label, c] of contexts)
+      if (JSON.stringify(forMode(c, "jobs")) !== JSON.stringify(sh104.searchedSources(c)))
+        out.push(`a jobs search with ${label} lists ${JSON.stringify(forMode(c, "jobs"))}, not what it asks`);
+    const only = [...sh104.WORLDWIDE_ONLY_SOURCES];
+    const fl = (c) => forMode(c, "freelance");
+    for (const [label, c] of contexts) {
+      const got = fl(c);
+      if (got.some((s) => sh104.NO_FREELANCE_SOURCES.includes(s))) out.push(`a freelance search with ${label} lists Drushim or Greenhouse`);
+      const remote = c === null || c.work_mode !== "onsite";
+      const chosen = c?.sources?.length ? c.sources : [...sh104.SOURCE_IDS];
+      for (const s of only)
+        if (chosen.includes(s) && got.includes(s) !== remote)
+          out.push(`a freelance search with ${label} ${remote ? "leaves out" : "lists"} ${s} (the pass is on exactly when remote work is allowed)`);
+    }
+    if (JSON.stringify(fl(ctx({ sources: ["drushim", "linkedin", "jobicy"] }))) !== JSON.stringify(["linkedin", "jobicy"]))
+      out.push("a freelance search over Drushim, LinkedIn and Jobicy does not ask LinkedIn and Jobicy, in that order");
+    return out;
+  };
+  for (const p of judge104(sh104.searchedSourcesFor)) fail(`check 104: ${p}`);
+  for (const [label, twin] of [
+    ["a freelance search that asks every board", (c, m) => sh104.searchedSources(m === "freelance" ? { ...(c ?? {}), include_worldwide: true } : c)],
+    ["a freelance search that leaves the pass as it was", (c, m) => (m === "freelance" ? sh104.searchedSources(c).filter((s) => !sh104.NO_FREELANCE_SOURCES.includes(s)) : sh104.searchedSources(c))],
+    ["a jobs search that drops Drushim", (c, m) => (m === "jobs" ? sh104.searchedSources(c).filter((s) => s !== "drushim") : sh104.searchedSourcesFor(c, m))],
+  ])
+    if (!judge104(twin).length) throw new Error(`the judge passes ${label}`);
+
+  const read104 = ({ client, store, jobs, cards, fm, tool, types, routes, models }) => {
+    const out = [];
+    if (!/function searchBody\([^)]*\)\s*\{\s*return \{ resume, customize: customize \?\? null, \.\.\.\(mode === "freelance" \? \{ mode \} : \{\}\) \};/.test(client))
+      out.push("the client does not send `mode` only for a freelance search (searchBody)");
+    if ((client.match(/searchBody\(resume, customize, mode\)/g) || []).length !== 2)
+      out.push("the two search calls do not both build their body with searchBody");
+    if (!/searchJobs\(resume, customize, mode\)/.test(store) || !/controller\.signal,\s*mode,\s*\)/.test(store))
+      out.push("the store does not hand the mode to both the stream and its fallback");
+    if (!/mode: resultMode,/.test(jobs) || !/const freelanceResult = resultMode === "freelance";/.test(jobs))
+      out.push("the results are not judged by the mode their own search ran in");
+    const run = /function runSearch\(\) \{[\s\S]*?\n  \}\n/.exec(jobs);
+    if (!run) throw new Error("pages/JobsPage.tsx: function runSearch not found");
+    if (!/startJobSearch\(master\.resume, c, searchMode\)/.test(run[0])) out.push("runSearch does not run the switch's mode");
+    if ((jobs.match(/<SearchModeSwitch mode=\{searchMode\} onChange=\{setSearchMode\}/g) || []).length !== 2)
+      out.push("the switch is not on both states of the search card");
+    if ((jobs.match(/freelance=\{freelanceResult\}/g) || []).length !== 2)
+      out.push("the streamed and the final result lists do not both hand their rows the mode");
+    if (!/\{freelanceResult && <NotFreelanceCount count=\{searchResult\.not_freelance \?\? 0\} \/>\}/.test(jobs))
+      out.push("a freelance search does not say how many jobs it left out");
+    if (!/\{freelanceResult && <FreelanceNote empty=\{searchResult\.matches\.length === 0\} \/>\}/.test(jobs))
+      out.push("a freelance result does not end with the way to paste a gig");
+    const sw = fnSource(fm, "export function SearchModeSwitch");
+    if (!/role="radiogroup"/.test(sw) || !/role="radio"/.test(sw) || !/aria-checked=\{mode === m\}/.test(sw))
+      out.push("the switch is not a radiogroup of radios");
+    if (!/\bmin-h-11\b/.test(sw)) out.push("a choice of the switch is not 44 px to tap (min-h-11)");
+    const readMode = fnSource(fm, "function readMode");
+    const hook = fnSource(fm, "export function useSearchMode");
+    if (!/try \{[\s\S]*localStorage\.getItem[\s\S]*\} catch/.test(readMode) || !/try \{[\s\S]*localStorage\.setItem[\s\S]*\} catch/.test(hook))
+      out.push("the switch's storage is not behind try/catch on both the read and the write");
+    const card = fnSource(cards, "export function MatchCard");
+    if (!/const propose = \(\) => nav\("\/tools\/proposal", \{ state: \{ gigText: jdForTools \} \}\);/.test(card))
+      out.push("a freelance row does not hand its posting to /tools/proposal as gigText");
+    if (!/\{freelance \? \(\s*<Button size="sm" variant="secondary" icon=\{<Handshake size=\{14\} \/>\} onClick=\{propose\}[^>]*>\s*\{t\("card\.proposal"\)\}/.test(card))
+      out.push("a freelance row does not lead with Write a proposal");
+    if (!/onClick=\{propose\} className="[^"]*\bmin-h-11\b/.test(card)) out.push("a freelance row's Write a proposal is not 44 px to tap on a phone");
+    if (!/\.\.\.\(freelance\s*\?\s*\[\{ key: "tailor", label: t\("card\.tailor"\), Icon: ArrowRight, onClick: tailor \}\]/.test(card))
+      out.push("a freelance row does not keep Tailor in its menu");
+    if (!/\(useLocation\(\)\.state as \{ gigText\?: unknown \} \| null\)\?\.gigText/.test(tool))
+      out.push("the proposal tool does not read the gig a search row hands it");
+    const res = blockAfter(types, "export interface JobSearchResult {", "types.ts JobSearchResult");
+    if (!/\bnot_freelance\?: number;/.test(res)) out.push("types.ts JobSearchResult does not mirror not_freelance");
+    if (routes !== null) {
+      if ((routes.match(/\*\*_mode_kw\(body\),/g) || []).length !== 2) out.push("the two search routes do not both pass the mode (**_mode_kw(body))");
+      if (!/return \{"freelance": True\} if body\.mode == "freelance" else \{\}/.test(routes))
+        out.push("_mode_kw hands search_jobs something for an ordinary search");
+    }
+    if (models !== null) {
+      const m = models.match(/\nclass JobSearchResult\(BaseModel\):\n([\s\S]*?)(?=\n(?:class |def |[A-Z_]+ = ))/);
+      if (!m) throw new Error("app/models: class JobSearchResult not found");
+      if (!/^    not_freelance: int = 0$/m.test(m[1])) out.push("the backend's JobSearchResult has no not_freelance");
+    }
+    return out;
+  };
+  const r104 = {
+    client: decomment(read("api/client.ts")),
+    store: decomment(read("state/jobSearchStore.ts")),
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    cards: decomment(read("pages/jobs/cards.tsx")),
+    fm: decomment(read("pages/jobs/FreelanceMode.tsx")),
+    tool: decomment(read("pages/tools/ProposalToolPage.tsx")),
+    types: read("types.ts"),
+    routes: lf104(routes104),
+    models: lf104(models104),
+  };
+  for (const p of read104(r104)) fail(`check 104: ${p} (2026-09-28, freelance)`);
+  const plant104 = (key, from, to, label) => {
+    if (r104[key] === null) return;
+    if (!r104[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read104({ ...r104, [key]: r104[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant104("client", '...(mode === "freelance" ? { mode } : {})', "mode", "a mode sent with every search");
+  plant104("store", "searchJobs(resume, customize, mode)", "searchJobs(resume, customize)", "a fallback that forgets the mode");
+  plant104("jobs", "const freelanceResult = resultMode === \"freelance\";", "const freelanceResult = searchMode === \"freelance\";", "results judged by the switch, not their search");
+  plant104("jobs", "startJobSearch(master.resume, c, searchMode)", "startJobSearch(master.resume, c)", "a switch the search ignores");
+  plant104("jobs", "{freelanceResult && <FreelanceNote empty={searchResult.matches.length === 0} />}", "", "a freelance result with no way to paste a gig");
+  plant104("fm", "role=\"radiogroup\"", "role=\"group\"", "a switch that is not a radiogroup");
+  plant104("fm", "    try {\n      localStorage.setItem(MODE_KEY, m);\n    } catch {", "    {\n      localStorage.setItem(MODE_KEY, m);\n    } {", "a write to storage that can throw");
+  plant104("cards", "onClick={propose}", "onClick={tailor}", "a proposal button that tailors");
+  plant104("cards", 'onClick={propose} className="min-h-11 lg:min-h-0"', "onClick={propose}", "a proposal button too small to tap");
+  plant104("cards", "state: { gigText: jdForTools }", "state: { jdText: jdForTools }", "a gig handed under another name");
+  plant104("tool", "?.gigText;", "?.jdText;", "a tool that never reads the handed gig");
+  plant104("routes", "                    **_mode_kw(body),\n", "", "a stream that drops the mode");
+  plant104("types", "  not_freelance?: number;\n", "", "a result mirror without not_freelance");
+
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/jobs.json`));
+    const keys = new Set(["card.proposal"]);
+    for (const src of [r104.fm, r104.jobs]) for (const m of src.matchAll(/\bt\(\s*"(freelance\.[\w.]+)"/g)) keys.add(m[1]);
+    if (keys.size < 9) throw new Error(`read ${keys.size} freelance keys out of FreelanceMode.tsx and JobsPage.tsx (expected at least 9)`);
+    for (const key of keys) for (const p of keyProblems(bundle, key, loc, "the freelance search")) fail(`check 104: locales/${loc}/jobs.json ${p}`);
+    const few = bundle.freelance?.few ?? "";
+    if (!/XPlace/.test(few) || !/Upwork/.test(few)) fail(`check 104: locales/${loc}/jobs.json freelance.few does not name where the gigs are (XPlace, Upwork)`);
+  }
+} catch (e) {
+  fail(`freelance search check (check 104) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

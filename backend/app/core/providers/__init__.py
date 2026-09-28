@@ -20,6 +20,7 @@ from app.core.providers.comeet import ComeetProvider
 from app.core.providers.drushim import DrushimProvider
 from app.core.providers.greenhouse import GreenhouseProvider
 from app.core.providers.himalayas import HimalayasProvider
+from app.core.providers.jobicy import JobicyProvider
 from app.core.providers.jobmaster import JobMasterProvider
 from app.core.providers.lever import LeverProvider
 from app.core.providers.linkedin import LinkedInProvider
@@ -47,6 +48,7 @@ PROVIDERS: dict[str, JobProvider] = {
         AshbyProvider(),
         # Asked only by the worldwide pass (job_search.WORLDWIDE_ONLY_BOARDS).
         HimalayasProvider(),
+        JobicyProvider(),
     )
 }
 
@@ -54,9 +56,10 @@ DEFAULT_SOURCES: list[str] = list(PROVIDERS)
 
 # Boards whose terms ask every surface that shows one of their postings to NAME
 # the board beside a link back to the posting's page on it: Himalayas, whose API
-# is offered on exactly that condition (providers/himalayas.py). Read by the alert
-# email; the Jobs page mirrors the ids (`ATTRIBUTED_SOURCES`, check-mirrors 99).
-ATTRIBUTED: dict[str, str] = {HimalayasProvider.name: "Himalayas"}
+# is offered on exactly that condition (providers/himalayas.py), and Jobicy, whose
+# every answer asks for it (providers/jobicy.py). Read by the alert email; the Jobs
+# page mirrors the ids (`ATTRIBUTED_SOURCES`, check-mirrors 99).
+ATTRIBUTED: dict[str, str] = {HimalayasProvider.name: "Himalayas", JobicyProvider.name: "Jobicy"}
 
 # The boards that existed before 2026-09-28. A saved search that names every one
 # of them was saved as "all boards" (the Jobs page adopts the resolved context,

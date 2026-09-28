@@ -271,6 +271,34 @@ export interface CoverLetterResponse {
   expires_in_s?: number;
 }
 
+/** POST /proposal (2026-09-28): a short bid for one freelance gig, the cover
+ * letter's twin — backend `ProposalRequest` / `ProposalResponse`, held equal by
+ * check-mirrors 102. It rides the SAME per-posting pass as the letter (one use
+ * per posting covers both). `jd` omitted, the server reads `gig_text` first
+ * (the Tools page) and hands the reading back for the next call to send. */
+export interface ProposalRequest {
+  resume: ResumeModel;
+  jd?: JDModel | null;
+  gig_text: string;
+  rate: string;
+  tone: string;
+}
+
+export interface ProposalResponse {
+  proposal: string;
+  jd: JDModel;
+  language: string;
+  /** The [brackets] the text still holds, for the user to fill in. */
+  placeholders: string[];
+  /** What the floor under the prompt took out (a rate, a timeline, a start the user did not give). */
+  replaced: string[];
+  /** Numbers the resume, the gig and the rate do not carry: for the user to check, never "verified". */
+  unverified: string[];
+  included_until?: string;
+  changes_left?: number;
+  expires_in_s?: number;
+}
+
 export interface ResumeUploadResponse {
   resume: ResumeModel;
   ledger: FactsLedger;
@@ -452,6 +480,9 @@ export interface ApplicationDetail {
   /** Phase 32: the board's competition line, when this user's search history
    * holds a CURRENT reading of the posting; the page never fetches one. */
   applicants?: Applicants | null;
+  /** 2026-09-28: the board's employment type from the same History row
+   * (`EmploymentType`, or ""); a Contract or Freelance job offers the proposal first. */
+  employment?: string;
 }
 
 /** GET /inbox/status: whether this account can use Gmail sync, and how the
@@ -609,6 +640,10 @@ export interface JobMatch {
   /** The board's own competition line (Phase 32), sent only while CURRENT (the
    * server's `current_applicants`, a day); null or absent otherwise. */
   applicants?: Applicants | null;
+  /** The BOARD's own employment type when it is not plain full-time (backend
+   * `employment.EMPLOYMENT_TYPES`); "" or absent for full-time, not stated or
+   * not read. Never guessed from the title (2026-09-28). */
+  employment?: string;
 }
 /** The BOARD's own competition line, read literally from the page the search
  * fetched ("131 applicants"): LinkedIn only, since no other board states one.
@@ -845,7 +880,15 @@ export interface JobSearchResult {
    * (Phase 32): the tracker holds them at applied, interview, offer or rejected.
    * The server matches; the page only says the count. */
   applied?: number;
+  /** A freelance search only (2026-09-28): how many postings were left out
+   * because their board says they are not contract or freelance work
+   * (`app.models.JobSearchResult.not_freelance`). Absent on older backends. */
+  not_freelance?: number;
 }
+/** The Jobs page's search mode (2026-09-28), `app.models.JobSearchRequest.mode`:
+ * "freelance" keeps only postings whose board says contract or freelance. Sent
+ * only when it is "freelance", so an ordinary search's request is unchanged. */
+export type SearchMode = "jobs" | "freelance";
 /** What the user said "Not for me" to (PLAN 31.5/4), GET/PUT /jobs/hidden. The
  * server stores it canonical and does ALL the matching; the page never
  * re-derives which posting a hide covers (POST /jobs/hidden/which answers). */
@@ -878,6 +921,8 @@ export interface JobSearchHit {
   /** The board's competition line as History holds it, sent only while current. */
   applicants?: Applicants | null;
   searched_at: string;
+  /** The board's employment type as History stored it (see JobMatch.employment). */
+  employment?: string;
   app_status: string; // tracker status if saved/applied: "", saved, applied, interview, offer, rejected
   app_id?: number | null; // that tracker row's id, which the row opens (PLAN 31.4/6)
 }

@@ -7118,7 +7118,7 @@ check(
         "https://himalayas.app/companies/x/jobs/y", "https://www.himalayas.app/x", "http://himalayas.app/x",
         "https://himalayas.app.evil.com/x", "https://evilhimalayas.app/x", "not a url",
     )] == [True, True, False, False, False, False]
-    and _HM_ATTR == {"himalayas": "Himalayas"},
+    and _HM_ATTR == {"himalayas": "Himalayas", "jobicy": "Jobicy"},
 )
 check(
     "16j himalayas parser: a title's HTML entities read as text, published pay added in the board's words, a "
@@ -7136,10 +7136,12 @@ check(
 _hm_ww = _resolve_context(resume, SearchContext(job_titles=["Dev", "QA"], location="Tel Aviv", work_mode="remote",
                                                 include_worldwide=True))
 check(
-    "16j the worldwide pass runs on TWO boards now: Himalayas gets one query per keyword, remote, no location, "
+    "16j the worldwide pass runs on THREE boards now (Jobicy since the freelance search): Himalayas gets one "
+    "query per keyword, remote, no location, "
     "stamped as worldwide; with the pass off, an on-site search or the board unchecked it gets NONE (never the "
     "user's own location), and LinkedIn's queries are unchanged",
-    _hm_js.WORLDWIDE_BOARDS == ("linkedin", "himalayas") and _hm_js.WORLDWIDE_ONLY_BOARDS == {"himalayas"}
+    _hm_js.WORLDWIDE_BOARDS == ("linkedin", "himalayas", "jobicy")
+    and _hm_js.WORLDWIDE_ONLY_BOARDS == {"himalayas", "jobicy"}
     and _board_queries("himalayas", _hm_ww) == [("Dev", "", "remote", "Worldwide"), ("QA", "", "remote", "Worldwide")]
     and _board_queries("himalayas", _resolve_context(resume, SearchContext(job_title="Dev", location="Tel Aviv"))) == []
     and _board_queries("himalayas", _resolve_context(resume, SearchContext(
@@ -28731,6 +28733,9 @@ _ROUTE_COST = {
     ("POST", "/interview/scorecard"): "pass:interview",
     ("POST", "/tools/screening-answer"): "pass:screening",
     ("POST", "/cover-letter"): "pass:cover_letter",
+    # 2026-09-28, the freelance proposal: the cover letter's twin, on the SAME per-posting pass (one use covers a
+    # letter and a proposal for one posting). Reading a pasted gig first counts the daily jd_analyze unit, never a use.
+    ("POST", "/proposal"): "pass:cover_letter",
     ("GET", "/jobs/alerts/cron"): "core_charged:alerts.run_alert",
     ("POST", "/kits/process-next"): "batch_paid",
     ("POST", "/inbox/sync"): "own_cap:inbox",
@@ -29280,6 +29285,8 @@ _CHARGED_DRIVES32 = [
     (("POST", "/tools/screening-answer"), False, _call32("POST", "/tools/screening-answer", json={
         "resume": _R32, "jd_text": "Python role at Acme.", "question": "Why Acme?"})),
     (("POST", "/cover-letter"), False, _call32("POST", "/cover-letter", json={"resume": _R32, "jd": _JDJ32})),
+    (("POST", "/proposal"), False, _call32("POST", "/proposal", json={
+        "resume": _R32, "jd": _JDJ32, "gig_text": "Our Django API times out under load. Send your hourly rate."})),
 ]
 
 # PLAN 32: the push rows run with web push ON, on throwaway keys, and every push lands in this recorder.
@@ -32913,6 +32920,993 @@ check(
     [(m.get("template") or {}).get("name") for m in _sweep_wa32] == ["jobfinder_code", "job_digest"]
     and _wa35._transport is None,
     f"{[(m.get('template') or {}).get('name') for m in _sweep_wa32]} transport={_wa35._transport}",
+)
+
+# ---------------------------------------------------------------------------
+# 2026-09-28, freelance: a proposal for a gig the user pasted (docs/handbook/tailoring.md, *The proposal writer*;
+# cost-and-quota.md for its charge). PROPOSAL is a new LLM task, so it has its own stub branch, pinned here; the stub
+# DISOBEYS the prompt (it invents a rate, a delivery time and a start date) so these checks see the floor under the
+# prompt (`app/core/proposal_terms.py`) take each one out. That pins the MECHANISM only: whether the real model
+# invents a rate at all is not something a stub can say (docs/handbook/testing.md, the real-model notes).
+# ---------------------------------------------------------------------------
+import ast as _pp_ast  # noqa: E402
+import inspect as _pp_inspect  # noqa: E402
+from pathlib import Path as _pp_Path  # noqa: E402
+
+from app.core import proposal as _pp  # noqa: E402
+from app.core import proposal_terms as _pt  # noqa: E402
+from app.llm import prompts as _pp_prompts  # noqa: E402
+from app.llm.limits import InputTooLarge as _PP_ITL  # noqa: E402
+
+_PT_SRC = _pp_inspect.getsource(_pt)
+
+
+def _pt_imports(src):  # noqa: ANN001, ANN202
+    mods: set = set()
+    for node in _pp_ast.walk(_pp_ast.parse(src)):
+        if isinstance(node, _pp_ast.Import):
+            mods |= {a.name for a in node.names}
+        elif isinstance(node, _pp_ast.ImportFrom):
+            mods.add("." * node.level + (node.module or ""))
+    return mods
+
+
+def _pt_is_pure(src):  # noqa: ANN001, ANN202
+    tree = _pp_ast.parse(src)
+    clock = {n.attr for n in _pp_ast.walk(tree) if isinstance(n, _pp_ast.Attribute)} & {"now", "utcnow", "today"}
+    doors = {n.func.id for n in _pp_ast.walk(tree)
+             if isinstance(n, _pp_ast.Call) and isinstance(n.func, _pp_ast.Name)} & {"open", "__import__"}
+    return _pt_imports(src) == {"__future__", "re", "dataclasses"} and not clock and not doors
+
+
+_pt_unrefused = [p for p in (
+    "from app.llm.client import get_llm_client",
+    "from app.core.job_match import _http_get",
+    "from app.core import proposal",
+    "from datetime import datetime",
+    "stamp = __import__('datetime').datetime.now()",
+    "text = open('/etc/hosts').read()",
+) if _pt_is_pure(_PT_SRC + "\n" + p + "\n")]
+_PT_IMPORTERS: list = []
+_PT_APP = _pp_Path(_pt.__file__).parents[1]
+for _pt_py in sorted(_PT_APP.rglob("*.py")):
+    _pt_rel = str(_pt_py.relative_to(_PT_APP)).replace("\\", "/")
+    if _pt_rel == "core/proposal_terms.py":
+        continue
+    for _pt_node in _pp_ast.walk(_pp_ast.parse(_pt_py.read_text(encoding="utf-8"))):
+        if (isinstance(_pt_node, _pp_ast.ImportFrom)
+                and ((_pt_node.module or "").split(".")[-1] == "proposal_terms"
+                     or any(a.name == "proposal_terms" for a in _pt_node.names))) or (
+                isinstance(_pt_node, _pp_ast.Import)
+                and any(a.name.split(".")[-1] == "proposal_terms" for a in _pt_node.names)):
+            _PT_IMPORTERS.append(_pt_rel)
+            break
+check(
+    "proposal: the floor under the prompt (proposal_terms) imports EXACTLY __future__, re and dataclasses, reads no "
+    "clock and opens nothing (AST) — the model, the network, the clock and a file one line away are each refused — "
+    "and its one importer is core/proposal.py",
+    len(_PT_SRC) > 3000 and _pt_is_pure(_PT_SRC) and _pt_unrefused == [] and _PT_IMPORTERS == ["core/proposal.py"],
+    f"imports={sorted(_pt_imports(_PT_SRC))} not refused={_pt_unrefused} importers={_PT_IMPORTERS}",
+)
+
+# The stub branch (CLAUDE.md: every new LLM task has one, and a smoke check), and the builder's bounds.
+_pp_head = _pp_prompts.PROPOSAL_SYSTEM[:40].upper()
+_pp_tokens = ("STRUCTURE_RESUME", "ANALYZE_JD", "JD_FIT", "TAILOR", "HUMANIZE", "PLAN_CV", "FIT_SCORE", "INTERVIEW_",
+              "LINKEDIN", "SEARCH_CONTEXT", "SEARCH_QUERY", "FOLLOW_UP", "OUTREACH", "SCREENING_ANSWER",
+              "COMPANY_BRIEF", "REVIEW_REWRITE", "RECRUITER_SCREEN", "INBOX_CLASSIFY")
+_pp_other_heads = [getattr(_pp_prompts, n)[:40].upper() for n in dir(_pp_prompts)
+                   if n.endswith("_SYSTEM") and n != "PROPOSAL_SYSTEM" and isinstance(getattr(_pp_prompts, n), str)]
+_pp_ph_en = ", ".join(f"{k} {_pt.PLACEHOLDERS['en'][k]}" for k in _pt.KINDS)
+_pp_ph_he = ", ".join(f"{k} {_pt.PLACEHOLDERS['he'][k]}" for k in _pt.KINDS)
+try:
+    _pp_stub_en = _Stub32().complete_text(
+        _pp_prompts.PROPOSAL_SYSTEM, _pp_prompts.proposal_user("{}", "{}", "Fix our API", "", "", "en", _pp_ph_en))
+    _pp_stub_he = _Stub32().complete_text(
+        _pp_prompts.PROPOSAL_SYSTEM, _pp_prompts.proposal_user("{}", "{}", "תיקון API", "₪250 לשעה", "", "he", _pp_ph_he))
+    _pp_stub_letter = _Stub32().complete_text(_pp_prompts.cover_letter_system("en", "en"), "RESUME…")
+except Exception as _pp_exc:  # noqa: BLE001 - a broken stub is one red check, never an aborted suite
+    _pp_stub_en = _pp_stub_he = _pp_stub_letter = repr(_pp_exc)
+try:
+    _pp_prompts.proposal_user("{}", "{}", "x" * (33 * 1024), "", "", "en", _pp_ph_en)
+    _pp_builder_kind = ""
+except _PP_ITL as _pp_itl:
+    _pp_builder_kind = _pp_itl.kind
+check(
+    "proposal: PROPOSAL has its stub branch — routed on its own tag, whose head holds no other task's token and whose "
+    "token no other prompt's head holds (the cover letter, with no tag, still gets the letter) — answering in the "
+    "language the message names, with the typed rate echoed; the builder is @_bounded and refuses a pasted gig over "
+    "the job ad's cap as kind 'gig', never clipping it",
+    _pp_prompts.PROPOSAL_SYSTEM.startswith("Task: PROPOSAL.")
+    and not any(t in _pp_head for t in _pp_tokens) and not any("PROPOSAL" in h for h in _pp_other_heads)
+    and _pp_stub_en.startswith("[stub proposal] You need") and "$45/hour" in _pp_stub_en
+    and _pp_stub_he.startswith("[stub proposal] אתם") and "₪250 לשעה" in _pp_stub_he
+    and _pp_stub_letter.startswith("[stub cover letter]")
+    and getattr(_pp_prompts.proposal_user, "__bounded__", False) is True and _pp_builder_kind == "gig",
+    f"head={_pp_head!r} en={_pp_stub_en[:60]!r} he={_pp_stub_he[:40]!r} letter={_pp_stub_letter[:20]!r} "
+    f"refused={_pp_builder_kind!r}",
+)
+_pp_jd_he = _JD32(job_title="x", language="he")
+_pp_jd_en = _JD32(job_title="x", language="en")
+check(
+    "proposal: it answers in the GIG's language, by its share of words (lang.prose_language) — a Hebrew gig in "
+    "Hebrew, an English Upwork post that names a Hebrew-spelled company in English (any-Hebrew-letter would say "
+    "Hebrew), and with no gig pasted the analysed posting's language — never the resume's",
+    _pp.proposal_language("דרוש מפתח React לפרויקט קצר, נא לציין תעריף", _pp_jd_en) == "he"
+    and _pp.proposal_language("We need a React developer for Moon Active's (מון אקטיב) landing page", _pp_jd_he) == "en"
+    and _pp.proposal_language("", _pp_jd_he) == "he" and _pp.proposal_language("   ", _pp_jd_en) == "en",
+    "prose language",
+)
+
+# The floor, driven directly: every invented term goes, every one of the user's stays, in both scripts.
+_PT_RESUME = ("Cut p95 latency from 900ms to 120ms. Saved $200K a year. Led 5 engineers. Shipped the MVP in 3 "
+              "weeks. בניתי מערכת תשלומים תוך 3 שבועות. 2019-2024")
+_pt_cases = {
+    "invented en": _pt.guard("I can do it for $45/hour, deliver within 19 days, and I am available immediately, "
+                             "40 hours a week.", language="en", resume_text=_PT_RESUME),
+    "typed rate": _pt.guard("I can do it for $45/hour. My rate: ₪250 an hour.", language="en",
+                            rate="₪250 an hour", resume_text=_PT_RESUME),
+    "placeholder filled": _pt.guard("המחיר: [התעריף שלך]. אסיים [לוח הזמנים שלך].", language="he",
+                                    rate="₪280 לשעה", resume_text=_PT_RESUME),
+    "invented he": _pt.guard("אפשר ב-₪300 לשעה ולסיים תוך שבועיים, ואני זמין מיד. 20 שעות בשבוע.", language="he",
+                             resume_text=_PT_RESUME),
+    "shared number": _pt.guard("I will finish in 5 days.", language="en", resume_text=_PT_RESUME),
+}
+_pt_quiet = {
+    "years": _pt.guard("I have 5 years of experience.", language="en", resume_text=_PT_RESUME),
+    "past result": _pt.guard("I saved $200K a year and shipped the MVP in 3 weeks.", language="en",
+                             resume_text=_PT_RESUME),
+    "past result he": _pt.guard("בניתי מערכת תשלומים תוך 3 שבועות.", language="he", resume_text=_PT_RESUME),
+    "standups": _pt.guard("I ran 5 daily standups for the team.", language="en", resume_text=_PT_RESUME),
+    "client question he": _pt.guard("כמה שעות בשבוע אתם צריכים?", language="he", resume_text=_PT_RESUME),
+    "client question en": _pt.guard("How many hours a week do you need?", language="en", resume_text=_PT_RESUME),
+}
+_pt_unv = _pt.guard("I cut costs by 40% and latency to 120ms.", language="en", resume_text=_PT_RESUME,
+                    gig_text="We have 3 services.")
+check(
+    "proposal: the floor (mechanism, not the model) — an invented '$45/hour', 'within 19 days', 'available "
+    "immediately' and '40 hours a week' become [your rate] / [your timeline] / [your availability], each reported; a "
+    "typed rate stays verbatim and fills a rate placeholder; the Hebrew twin ('₪300 לשעה', 'שבועיים', 'זמין מיד', '20 "
+    "שעות בשבוע') gets the Hebrew placeholders; and '5 days' is NOT cleared by the resume's '5 engineers' (words, "
+    "never a shared number)",
+    _pt_cases["invented en"].text == "I can do it for [your rate], deliver within [your timeline], and I am available "
+    "[your availability], [your availability]."
+    and set(_pt_cases["invented en"].replaced) == {"$45/hour", "19 days", "immediately", "40 hours a week"}
+    and _pt_cases["typed rate"].text == "I can do it for ₪250 an hour. My rate: ₪250 an hour."
+    and _pt_cases["placeholder filled"].text == "המחיר: ₪280 לשעה. אסיים [לוח הזמנים שלך]."
+    and _pt_cases["placeholder filled"].placeholders == ("[לוח הזמנים שלך]",)
+    and _pt_cases["invented he"].text == "אפשר ב-[התעריף שלך] ולסיים תוך [לוח הזמנים שלך], ואני זמין [הזמינות שלך]. "
+    "[הזמינות שלך]."
+    and _pt_cases["shared number"].text == "I will finish in [your timeline].",
+    str({k: (v.text, v.replaced) for k, v in _pt_cases.items()}),
+)
+check(
+    "proposal: the floor's false-positive half — '5 years of experience', the resume's own 'saved $200K a year' and "
+    "'shipped the MVP in 3 weeks' (and its Hebrew 'תוך 3 שבועות'), '5 daily standups', and the client-facing "
+    "questions 'כמה שעות בשבוע אתם צריכים?' / 'How many hours a week do you need?' are each left word for word; a "
+    "number no source carries ('40%') is REPORTED as unverified, never changed, while the resume's '120ms' is not",
+    all(v.text == t and v.replaced == () for v, t in (
+        (_pt_quiet["years"], "I have 5 years of experience."),
+        (_pt_quiet["past result"], "I saved $200K a year and shipped the MVP in 3 weeks."),
+        (_pt_quiet["past result he"], "בניתי מערכת תשלומים תוך 3 שבועות."),
+        (_pt_quiet["standups"], "I ran 5 daily standups for the team."),
+        (_pt_quiet["client question he"], "כמה שעות בשבוע אתם צריכים?"),
+        (_pt_quiet["client question en"], "How many hours a week do you need?"),
+    ))
+    and _pt_unv.text == "I cut costs by 40% and latency to 120ms." and _pt_unv.unverified == ("40%",),
+    str({k: (v.text, v.replaced) for k, v in _pt_quiet.items()}) + f" unverified={_pt_unv.unverified}",
+)
+
+# The route, as plan-free friends: the shared pass, the refund, the read of a pasted gig, the sizes.
+_PP_GIG = "Our Django API times out under load and we need it fixed. Please send your hourly rate and when you can start."
+_PP_BODY = {"resume": _R32, "jd": _JDJ32, "gig_text": _PP_GIG}
+_pp_ref = _ref_of32(_JDJ32)
+_pp_prev_env = _env29(FREE_MONTHLY_USES="10", DAILY_LLM_CAP="0", DAILY_JD_ANALYZE_CAP="30")
+_pp_real_write = _routes32.write_proposal
+try:
+    with TestClient(_fastapi_app) as _pp_c:
+        # A letter, then a proposal for the SAME posting: one use.
+        _pp_uid, _pp_h = _mint32(_pp_c, "Proposal Letter Then Bid")
+        _pp_letter = _pp_c.post("/cover-letter", json={"resume": _R32, "jd": _JDJ32}, headers=_pp_h)
+        _pp_bid = _pp_c.post("/proposal", json=_PP_BODY, headers=_pp_h)
+        _pp_bid_body = _j28(_pp_bid)
+        check(
+            "proposal: ONE use covers a letter AND a proposal for the same posting — the letter opens the posting's "
+            "cover-letter pass (+1, keyed by its jd_ref), the proposal rides it (changes_left 8, header still 9, no "
+            "new event), and its text came back through the floor: the stub's invented rate, delivery time and start "
+            "date are placeholders now, each listed in `replaced`",
+            _pp_letter.status_code == 200 and _pp_bid.status_code == 200
+            and [e[1:5] for e in _events32(_pp_uid)] == [("cover_letter", 1, 0, _pp_ref)]
+            and _pp_bid_body.get("changes_left") == 8 and _hdr32(_pp_bid) == "9"
+            and "[your rate]" in _pp_bid_body.get("proposal", "") and "$45" not in _pp_bid_body.get("proposal", "")
+            and "[your timeline]" in _pp_bid_body.get("proposal", "")
+            and set(_pp_bid_body.get("replaced") or []) == {"$45/hour", "19 days", "immediately"}
+            and "[your rate]" in (_pp_bid_body.get("placeholders") or []) and _pp_bid_body.get("language") == "en"
+            and _ref_of32(_pp_bid_body.get("jd")) == _pp_ref,
+            f"{_pp_letter.status_code} {_pp_bid.status_code} {_shape32(_events32(_pp_uid))} "
+            f"{({k: v for k, v in _pp_bid_body.items() if k not in ('jd',)})} hdr={_hdr32(_pp_bid)}",
+        )
+        # The other way round, and a typed rate kept verbatim.
+        _pp2_uid, _pp2_h = _mint32(_pp_c, "Proposal Bid Then Letter")
+        _pp2_bid = _pp_c.post("/proposal", json=dict(_PP_BODY, rate="₪250 an hour"), headers=_pp2_h)
+        _pp2_letter = _pp_c.post("/cover-letter", json={"resume": _R32, "jd": _JDJ32}, headers=_pp2_h)
+        check(
+            "proposal: and the other way round — a proposal opens the pass (+1, changes_left 9) and a letter for the "
+            "same posting rides it (changes_left 8, one event); a rate the user typed comes back VERBATIM, in place of "
+            "the rate the stub invented, and no rate placeholder is left",
+            _pp2_bid.status_code == 200 and _j28(_pp2_bid).get("changes_left") == 9
+            and "₪250 an hour" in _j28(_pp2_bid).get("proposal", "") and "$45" not in _j28(_pp2_bid).get("proposal", "")
+            and "[your rate]" not in (_j28(_pp2_bid).get("placeholders") or [])
+            and _pp2_letter.status_code == 200 and _j28(_pp2_letter).get("changes_left") == 8
+            and [e[1:5] for e in _events32(_pp2_uid)] == [("cover_letter", 1, 0, _pp_ref)],
+            f"{_pp2_bid.status_code} {_j28(_pp2_bid).get('proposal', '')[:160]!r} {_pp2_letter.status_code} "
+            f"{_shape32(_events32(_pp2_uid))}",
+        )
+        # A failure gives the use back.
+        _pp3_uid, _pp3_h = _mint32(_pp_c, "Proposal Fails")
+
+        def _pp_boom(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("model unavailable")
+
+        _routes32.write_proposal = _pp_boom
+        try:
+            _pp3 = _pp_c.post("/proposal", json=_PP_BODY, headers=_pp3_h)
+        finally:
+            _routes32.write_proposal = _pp_real_write
+        _pp3_ev = _events32(_pp3_uid)
+        check(
+            "proposal: a first proposal that fails is a 502 that gives the use back (+1/-1 cover_letter) and leaves no "
+            "pass — header 10, the letter's rule",
+            _pp3.status_code == 502 and len(_pp3_ev) == 2 and _refunded32(_pp3_ev, "cover_letter")
+            and _passes32(_pp3_uid) == [] and _hdr32(_pp3) == "10",
+            f"{_pp3.status_code} {_shape32(_pp3_ev)} {_hdr32(_pp3)}",
+        )
+        # The Tools page's path: no jd, so the gig is read first (a daily jd_analyze count, never a use).
+        _pp4_uid, _pp4_h = _mint32(_pp_c, "Proposal Pasted Gig")
+        with _Calls32() as _pp4_calls:
+            _pp4 = _pp_c.post("/proposal", json={"resume": _R32, "gig_text": _PP_GIG}, headers=_pp4_h)
+        _pp4_jd = _j28(_pp4).get("jd")
+        _pp4_again = _pp_c.post("/proposal", json={"resume": _R32, "jd": _pp4_jd, "gig_text": _PP_GIG,
+                                                   "tone": "make it noticeably shorter"}, headers=_pp4_h)
+        check(
+            "proposal: a pasted gig with no analysis is READ first — two model calls (the reading and the proposal), "
+            "one daily jd_analyze unit, one +1 cover_letter use keyed by the reading's jd_ref — and the reading comes "
+            "back, so the next proposal for it (a shorter one) rides the pass with no new event",
+            _pp4.status_code == 200 and _pp4_calls.n == 2 and _ul32(_pp4_uid).get("jd_analyze") == 1
+            and [e[1:5] for e in _events32(_pp4_uid)] == [("cover_letter", 1, 0, _ref_of32(_pp4_jd))]
+            and _pp4_again.status_code == 200 and _j28(_pp4_again).get("changes_left") == 8
+            and len(_events32(_pp4_uid)) == 1,
+            f"{_pp4.status_code} calls={_pp4_calls.n} usage={_ul32(_pp4_uid)} {_shape32(_events32(_pp4_uid))} "
+            f"again={_pp4_again.status_code} {_j28(_pp4_again).get('changes_left')}",
+        )
+        # Sizes and shapes: refused whole, and never charged.
+        _pp5_uid, _pp5_h = _mint32(_pp_c, "Proposal Oversize Gig")
+        _pp5_big = "x" * (33 * 1024)
+        with _Calls32() as _pp5_calls:
+            _pp5_read = _pp_c.post("/proposal", json={"resume": _R32, "gig_text": _pp5_big}, headers=_pp5_h)
+            _pp5_empty = _pp_c.post("/proposal", json={"resume": _R32, "gig_text": "   "}, headers=_pp5_h)
+        _pp5_events_before = len(_events32(_pp5_uid))
+        _pp5_beside = _pp_c.post("/proposal", json=dict(_PP_BODY, gig_text=_pp5_big), headers=_pp5_h)
+        check(
+            "proposal: a pasted gig over the job ad's cap is a 413 of kind 'gig' BEFORE anything reads or counts it "
+            "(no model call, no jd_analyze unit, no use), an empty one a 400 the same way, and an oversize gig sent "
+            "beside an analysis is the same 413 raised inside the pass, which gives the use back (+1/-1)",
+            _pp5_read.status_code == 413 and (_detail28(_pp5_read) or {}).get("kind") == "gig"
+            and _pp5_empty.status_code == 400 and _pp5_calls.n == 0 and _pp5_events_before == 0
+            and "jd_analyze" not in _ul32(_pp5_uid)
+            and _pp5_beside.status_code == 413 and (_detail28(_pp5_beside) or {}).get("kind") == "gig"
+            and _refunded32(_events32(_pp5_uid), "cover_letter"),
+            f"{_pp5_read.status_code} {_detail28(_pp5_read)} {_pp5_empty.status_code} calls={_pp5_calls.n} "
+            f"usage={_ul32(_pp5_uid)} beside={_pp5_beside.status_code} {_shape32(_events32(_pp5_uid))}",
+        )
+        _pp6 = [
+            _pp_c.post("/proposal", json=dict(_PP_BODY, jd_text="a job ad"), headers=_pp5_h).status_code,
+            _pp_c.post("/proposal", json=dict(_PP_BODY, rate="₪" + "9" * 120), headers=_pp5_h).status_code,
+            _pp_c.post("/proposal", json=dict(_PP_BODY, tone="x" * 201), headers=_pp5_h).status_code,
+        ]
+        check(
+            "proposal: the request is closed (extra='forbid': a `jd_text` beside it is a 422, never quietly dropped), "
+            "the typed rate is bounded at 100 characters and the adjustment at 200 — each a 422 before the pass",
+            _pp6 == [422, 422, 422] and len(_events32(_pp5_uid)) == 2,
+            f"{_pp6} {_shape32(_events32(_pp5_uid))}",
+        )
+finally:
+    _routes32.write_proposal = _pp_real_write
+    _restore29(_pp_prev_env)
+
+# ---------------------------------------------------------------------------
+# 2026-09-28, freelance: the employment type on a job row (docs/handbook/job-search.md, *The employment type*). Each
+# board's OWN field, read by a pure reader, never the title: in Israel "Contract" in a title is usually a fixed-term
+# EMPLOYEE, and LinkedIn labels those Full-time. Each catch sits beside the false positive it must not fire on.
+# ---------------------------------------------------------------------------
+import json as _em_json  # noqa: E402
+import re as _pp_re  # noqa: E402
+
+from app.core import employment as _em  # noqa: E402
+from app.core.providers import (  # noqa: E402
+    ashby as _em_ashby,
+    comeet as _em_comeet,
+    drushim as _em_drushim,
+    himalayas as _em_himalayas,
+    jobmaster as _em_jobmaster,
+    lever as _em_lever,
+    smartrecruiters as _em_sr,
+)
+
+_EM_FIX = _pp_Path(__file__).parent / "fixtures"
+_EM_SRC = _pp_inspect.getsource(_em)
+
+
+def _em_is_pure(src):  # noqa: ANN001, ANN202
+    tree = _pp_ast.parse(src)
+    clock = {n.attr for n in _pp_ast.walk(tree) if isinstance(n, _pp_ast.Attribute)} & {"now", "utcnow", "today"}
+    doors = {n.func.id for n in _pp_ast.walk(tree)
+             if isinstance(n, _pp_ast.Call) and isinstance(n.func, _pp_ast.Name)} & {"open", "__import__"}
+    return _pt_imports(src) == {"__future__", "re"} and not clock and not doors
+
+
+_em_unrefused = [p for p in (
+    "from app.llm.client import get_llm_client",
+    "from app.core.job_match import _http_get",
+    "from datetime import datetime",
+    "stamp = __import__('datetime').datetime.now()",
+    "text = open('/etc/hosts').read()",
+) if _em_is_pure(_EM_SRC + "\n" + p + "\n")]
+_EM_IMPORTERS: list = []
+for _em_py in sorted(_PT_APP.rglob("*.py")):
+    _em_rel = str(_em_py.relative_to(_PT_APP)).replace("\\", "/")
+    if _em_rel == "core/employment.py":
+        continue
+    for _em_node in _pp_ast.walk(_pp_ast.parse(_em_py.read_text(encoding="utf-8"))):
+        if (isinstance(_em_node, _pp_ast.ImportFrom)
+                and ((_em_node.module or "").split(".")[-1] == "employment"
+                     or any(a.name == "employment" for a in _em_node.names))):
+            _EM_IMPORTERS.append(_em_rel)
+            break
+check(
+    "employment: the reader (core/employment.py) imports EXACTLY __future__ and re, reads no clock and opens nothing "
+    "(AST) — the model, the network and the clock one line away are each refused — and its importers are the nine "
+    "board providers that hand over a field (Jobicy's jobType since the freelance search), never the search or the "
+    "title matchers; EMPLOYMENT_TYPES is the six labels",
+    len(_EM_SRC) > 2000 and _em_is_pure(_EM_SRC) and _em_unrefused == []
+    and _EM_IMPORTERS == [f"core/providers/{b}.py" for b in (
+        "ashby", "comeet", "drushim", "himalayas", "jobicy", "jobmaster", "lever", "linkedin", "smartrecruiters")]
+    and _em.EMPLOYMENT_TYPES == ("contract", "freelance", "also_freelance", "temporary", "part_time", "internship"),
+    f"imports={sorted(_pt_imports(_EM_SRC))} not refused={_em_unrefused} importers={_EM_IMPORTERS}",
+)
+
+# LinkedIn: the criterion on the guest page, by its classes, never the title or the posting's own words.
+_EM_LI = (_EM_FIX / "linkedin_job_contract.html").read_text(encoding="utf-8")
+_EM_LI_FT = _EM_LI.replace("Software Engineer (AI Training)", "Software Engineer - 12 Month Fixed-Term Contract").replace(
+    "            Contract\n          </span>", "            Full-time\n          </span>")
+_em_li_of = _lp_mod.linkedin_employment_type
+_em_li = {
+    "contract fixture": _em_li_of(_EM_LI),
+    "Fixed-Term Contract title, Full-time field": _em_li_of(_EM_LI_FT),
+    "body says Employment type Contract": _em_li_of(_EM_LI_FT.replace(
+        "</section>", "</section><div class=\"show-more-less-html__markup\"><h3>Employment type</h3>"
+                      "<span>Contract</span> Contract role, fixed-term employee.</div>", 1)),
+    "commented-out Contract": _em_li_of(_EM_LI_FT.replace(
+        "<ul class=\"description__job-criteria-list\">",
+        "<!-- <h3 class=\"description__job-criteria-subheader\">Employment type</h3>"
+        "<span class=\"description__job-criteria-text\">Contract</span> -->"
+        "<ul class=\"description__job-criteria-list\">", 1)),
+    **{v: _em_li_of(_EM_LI.replace("            Contract\n          </span>", f"            {v}\n          </span>"))
+       for v in ("Temporary", "Part-time", "Internship", "Volunteer", "Other")},
+    **{f: _em_li_of((_EM_FIX / f).read_text(encoding="utf-8"))
+       for f in ("linkedin_job_open.html", "linkedin_job_closed.html", "linkedin_job_applicants_count.html")},
+    "empty page": _em_li_of(""),
+}
+check(
+    "employment: LinkedIn's own criterion — the contract fixture reads 'contract'; the Full-time twin whose TITLE says "
+    "'12 Month Fixed-Term Contract' reads nothing (LinkedIn's label is right for Israel); 'Employment type Contract' "
+    "in the posting's own words and a commented-out criterion read nothing; Temporary, Part-time and Internship map, "
+    "Volunteer and Other say nothing; the pages with no criteria list (open, closed, applicants) read nothing",
+    _em_li == {
+        "contract fixture": "contract", "Fixed-Term Contract title, Full-time field": "",
+        "body says Employment type Contract": "", "commented-out Contract": "",
+        "Temporary": "temporary", "Part-time": "part_time", "Internship": "internship", "Volunteer": "", "Other": "",
+        "linkedin_job_open.html": "", "linkedin_job_closed.html": "", "linkedin_job_applicants_count.html": "",
+        "empty page": "",
+    },
+    str(_em_li),
+)
+_em_li_calls: list = []
+_em_li_real_get = _lp_mod._http_get
+
+
+def _em_li_get(url, timeout=15):  # noqa: ANN001
+    _em_li_calls.append(url)
+    return _EM_LI.replace("<section class=\"top-card-layout\">",
+                          "<section class=\"show-more-less-html__markup\">Build training data.</section>"
+                          "<section class=\"top-card-layout\">", 1)
+
+
+_em_li_hit = _FanHit(source="linkedin", url="https://il.linkedin.com/jobs/view/4471174270")
+try:
+    _lp_mod._http_get = _em_li_get
+    _lp_mod.LinkedInProvider().fetch_description(_em_li_hit)
+finally:
+    _lp_mod._http_get = _em_li_real_get
+check(
+    "employment: LinkedIn's fetch_description stamps the label from the page it already fetched — ONE request, the "
+    "same page the description and the competition line come from",
+    _em_li_hit.employment == "contract" and len(_em_li_calls) == 1 and _lp_mod._http_get is _em_li_real_get,
+    f"employment={_em_li_hit.employment!r} calls={_em_li_calls}",
+)
+
+# JobMaster: the card's type list, one honest label.
+_EM_JM = (_EM_FIX / "jobmaster_freelance.html").read_text(encoding="utf-8")
+_EM_JM_LIST = _pp_re.compile(r'(?s)(<li tabindex="0" class="jobType">).*?(</li>)')
+_em_jm_card = [h.employment for h in _em_jobmaster.parse_jobmaster_results(_EM_JM)]
+# The same two cards, their titles still "עסק עצמאי מההבית כסוכני תיירות פרילנס", their type lists full-time only.
+_em_jm_title_only = [h.employment for h in _em_jobmaster.parse_jobmaster_results(
+    _EM_JM_LIST.sub(r'\1<a href="/jobs/q-x">משרה מלאה</a>\2', _EM_JM))]
+_em_jm_rules = {
+    v: _em.from_jobmaster(v) for v in (
+        "פרילאנס", "פרילנס", "משרה חלקית , פרילאנס", "משרה חלקית , משרה מלאה , פרילאנס", "משרה מלאה",
+        "משרה חלקית", "משרה מלאה , משרה חלקית", "עבודה זמנית", "משרה מלאה , עבודה זמנית", "משמרות", "", None)
+}
+check(
+    "employment: JobMaster's own type list — the research's two freelance cards read 'also freelance' (full-time and "
+    "part-time are listed beside it); a card whose TITLE says 'פרילנס' but whose list says only משרה מלאה reads "
+    "nothing; freelance alone is 'freelance', part-time alone 'part_time', full-time with part-time nothing (either), "
+    "temporary 'temporary', shifts and nothing say nothing; the board's alef spelling פרילאנס and the common פרילנס "
+    "both count",
+    _em_jm_card == ["also_freelance", "also_freelance"] and _em_jm_title_only == ["", ""]
+    and len(_EM_JM_LIST.findall(_EM_JM)) == 2 and _EM_JM.count("פרילנס</a>") == 0 and _EM_JM.count("פרילנס") >= 2
+    and _em_jm_rules == {
+        "פרילאנס": "freelance", "פרילנס": "freelance", "משרה חלקית , פרילאנס": "also_freelance",
+        "משרה חלקית , משרה מלאה , פרילאנס": "also_freelance", "משרה מלאה": "", "משרה חלקית": "part_time",
+        "משרה מלאה , משרה חלקית": "", "עבודה זמנית": "temporary", "משרה מלאה , עבודה זמנית": "temporary",
+        "משמרות": "", "": "", None: "",
+    },
+    f"cards={_em_jm_card} title only={_em_jm_title_only} rules={_em_jm_rules}",
+)
+
+# Drushim: the scope codes.
+_EM_DR = _em_json.loads((_EM_FIX / "drushim_scopes.json").read_text(encoding="utf-8"))
+_em_dr_cards = [h.employment for h in _em_drushim.parse_drushim_results(_EM_DR)]
+_em_dr_title = _em_drushim.parse_drushim_results({"ResultList": [dict(
+    _EM_DR["ResultList"][1],
+    JobContent=dict(_EM_DR["ResultList"][1]["JobContent"], Scopes=[{"Code": 1, "NameInHebrew": "משרה מלאה"}]),
+)]})
+_em_dr_rules = {str(c): _em.from_drushim_scopes([{"Code": x} for x in c]) for c in ([3], [1, 2, 3], [2], [1, 2], [1], [4, 5], [])}
+check(
+    "employment: Drushim's scope codes — the research's two postings ([3] and [1,2,3]) read 'temporary'; a posting "
+    "whose TITLE says משרה זמנית but whose scopes say only full-time reads nothing; part-time alone is 'part_time', "
+    "full-time with part-time nothing, shifts and home work nothing; there is no freelance code",
+    _em_dr_cards == ["temporary", "temporary"]
+    and "משרה זמנית" in _em_dr_title[0].title and _em_dr_title[0].employment == ""
+    and _em_dr_rules == {"[3]": "temporary", "[1, 2, 3]": "temporary", "[2]": "part_time", "[1, 2]": "", "[1]": "",
+                         "[4, 5]": "", "[]": ""}
+    and _em.from_drushim_scopes(None) == "" and _em.from_drushim_scopes([{"Code": True}]) == "",
+    f"cards={_em_dr_cards} title={[(h.title, h.employment) for h in _em_dr_title]} rules={_em_dr_rules}",
+)
+
+# The boards added in Phase 32: their own fields, read exactly.
+_em_boards = {
+    "himalayas": [h.employment for h in _em_himalayas.parse_himalayas_jobs(
+        _em_json.loads((_EM_FIX / "himalayas_search.json").read_text(encoding="utf-8")))],
+    "ashby": sorted({h.employment for h in _em_ashby.parse_ashby_jobs(
+        _em_json.loads((_EM_FIX / "ashby_board.json").read_text(encoding="utf-8")))}),
+    "lever": sorted({h.employment for h in _em_lever.parse_lever_postings(
+        _em_json.loads((_EM_FIX / "lever_postings_eu.json").read_text(encoding="utf-8")))}),
+    "smartrecruiters": sorted({h.employment for h in _em_sr.parse_smartrecruiters_postings(
+        _em_json.loads((_EM_FIX / "smartrecruiters_postings.json").read_text(encoding="utf-8")))}),
+    "comeet": sorted({h.employment for h in _em_comeet.parse_comeet_positions(
+        _em_json.loads((_EM_FIX / "comeet_positions.json").read_text(encoding="utf-8")))}),
+}
+_EM_ASHBY = _em_json.loads((_EM_FIX / "ashby_board.json").read_text(encoding="utf-8"))
+_EM_LEVER = _em_json.loads((_EM_FIX / "lever_postings_eu.json").read_text(encoding="utf-8"))
+_EM_SR = _em_json.loads((_EM_FIX / "smartrecruiters_postings.json").read_text(encoding="utf-8"))
+_EM_COMEET = _em_json.loads((_EM_FIX / "comeet_positions.json").read_text(encoding="utf-8"))
+_em_planted = {
+    "ashby Contract": _em_ashby.parse_ashby_jobs({"jobs": [dict(_EM_ASHBY["jobs"][0], employmentType="Contract")]})[0].employment,
+    "lever Intern": _em_lever.parse_lever_postings([dict(_EM_LEVER[0], categories=dict(_EM_LEVER[0]["categories"], commitment="Intern"))])[0].employment,
+    "smartrecruiters contract": _em_sr.parse_smartrecruiters_postings({"content": [dict(
+        _EM_SR["content"][0], typeOfEmployment={"id": "contract", "label": "Contract"})]})[0].employment,
+    "comeet Freelance": _em_comeet.parse_comeet_positions([dict(_EM_COMEET[0], employment_type="Freelance")])[0].employment,
+    "lever title Contractor, Full time": _em_lever.parse_lever_postings([dict(_EM_LEVER[0], text="Contractor Relations Manager")])[0].employment,
+}
+check(
+    "employment: the boards added in Phase 32 hand over their own fields — Himalayas' 'Contractor' reads 'contract' "
+    "and its 'Full Time' nothing; Ashby's FullTime, Lever's 'Full time', SmartRecruiters' permanent/Full-time and "
+    "Comeet's Full-Time (and null) read nothing; planted Contract, Intern, contract and Freelance values map; a Lever "
+    "TITLE 'Contractor Relations Manager' on a Full time commitment reads nothing; and a value is read exactly "
+    "('Fixed-Term Contract' and 'Contract - 6 months' are not the type 'Contract')",
+    _em_boards == {"himalayas": ["contract", "", "", "", ""], "ashby": [""], "lever": [""], "smartrecruiters": [""],
+                   "comeet": [""]}
+    and _em_planted == {"ashby Contract": "contract", "lever Intern": "internship", "smartrecruiters contract": "contract",
+                        "comeet Freelance": "freelance", "lever title Contractor, Full time": ""}
+    and [_em.from_field(v) for v in ("Fixed-Term Contract", "Contract - 6 months", "FULL-TIME", "Part Time", None, 3)]
+    == ["", "", "", "part_time", "", ""],
+    f"boards={_em_boards} planted={_em_planted}",
+)
+
+
+# Through the search, History and a job's page.
+class _EmBoard:
+    name = "fake_em"
+
+    def __init__(self) -> None:
+        self.fetched: list = []
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source=self.name, title="Python Developer fetched", company="EmCo A", description="",
+                    url="https://em.test/fetched"),
+            _FanHit(source=self.name, title="Python Developer inline", company="EmCo B",
+                    description="Python and SQL work on a distributed backend.", url="https://em.test/inline",
+                    employment="temporary"),
+            _FanHit(source=self.name, title="Python Developer Contract (fixed-term)", company="EmCo C", description="",
+                    url="https://em.test/titled"),
+            _FanHit(source=self.name, title="Python Developer cached", company="EmCo D", description="",
+                    url="https://em.test/cached"),
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        self.fetched.append(hit.url.rsplit("/", 1)[-1])
+        if hit.url.endswith("/fetched"):
+            hit.employment = "contract"
+        return "Python and SQL work on a distributed backend."
+
+
+_em_board = _EmBoard()
+_PROV["fake_em"] = _em_board
+try:
+    _em_res = _fan_search(
+        resume,
+        _AlertCtx(job_title="Python Developer", sources=["fake_em"], max_age_days=0, limit=10),
+        cache={"https://em.test/cached": _GeoCached(
+            jd_text="Python and SQL work on a distributed backend.", overall=80.0, keyword_coverage=70.0,
+            fit_score=90.0, top_matched=("Python",), top_gaps=(), title="Python Developer cached", company="EmCo D",
+            location="", posted_at="", logo_url="", is_full_match=True, employment="freelance")},
+    )
+finally:
+    _PROV.pop("fake_em", None)
+_em_by = {m.url.rsplit("/", 1)[-1]: m.employment for m in _em_res.matches}
+check(
+    "employment: through the search — the fetched posting carries the label its page gave, the inline board's own "
+    "field rides as it came, a posting whose TITLE says 'Contract (fixed-term)' carries none, and a CACHED posting is "
+    "rebuilt with no fetch and keeps the label its history row stored",
+    _em_by == {"fetched": "contract", "inline": "temporary", "titled": "", "cached": "freelance"}
+    and "cached" not in _em_board.fetched,
+    f"by={_em_by} fetched={_em_board.fetched}",
+)
+_EM_URL = "https://www.linkedin.com/jobs/view/4471174270"
+_em_prev_env = _env29(DAILY_SEARCH_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _em_c:
+        _em_uid, _EM_H = _mint32(_em_c, "Employment Label")
+
+        def _em_rec(label):  # noqa: ANN001
+            d = SessionLocal()
+            try:
+                _ap_record(d, [_ApMatch(title="Software Engineer (AI Training)", company="Alignerr", url=_EM_URL,
+                                        jd_text="Python.", employment=label)], _em_uid)
+            finally:
+                d.close()
+
+        def _em_row():  # noqa: ANN202
+            d = SessionLocal()
+            try:
+                row = d.query(_ApHitRow).filter(_ApHitRow.user_id == _em_uid, _ApHitRow.url == _EM_URL).first()
+                return row.employment if row is not None else None
+            finally:
+                d.close()
+
+        _em_rec("contract")
+        _em_after_first = _em_row()
+        _em_rec("")  # a search that read none (a cached rebuild)
+        _em_after_none = _em_row()
+        _em_hist = {h["url"]: h.get("employment") for h in _j28(_em_c.get("/jobs/history", headers=_EM_H)).get("hits", [])}
+        _em_app = _j28(_em_c.post("/applications", headers=_EM_H, json={
+            "job_title": "Software Engineer (AI Training)", "company": "Alignerr", "status": "saved",
+            "job_url": "https://il.linkedin.com/jobs/view/software-engineer-ai-training-at-alignerr-4471174270?trk=x"}))
+        _em_other = _j28(_em_c.post("/applications", headers=_EM_H, json={
+            "job_title": "Elsewhere", "company": "X", "status": "saved",
+            "job_url": "https://www.linkedin.com/jobs/view/4000000009"}))
+        _em_detail = _j28(_em_c.get(f"/applications/{_em_app.get('id')}", headers=_EM_H))
+        _em_detail_other = _j28(_em_c.get(f"/applications/{_em_other.get('id')}", headers=_EM_H))
+finally:
+    _restore29(_em_prev_env)
+check(
+    "employment: History stores the label, a search that read none leaves it (never cleared to full-time), GET "
+    "/jobs/history hands it back, and a job's page carries its posting's label from History matched across URL "
+    "shapes (the LinkedIn id), and none for a posting History never labelled",
+    _em_after_first == "contract" and _em_after_none == "contract" and _em_hist.get(_EM_URL) == "contract"
+    and _em_detail.get("employment") == "contract"
+    and "employment" in _em_detail_other and _em_detail_other["employment"] == "",
+    f"row {_em_after_first}/{_em_after_none} hist={_em_hist.get(_EM_URL)!r} detail={_em_detail.get('employment')!r} "
+    f"other={_em_detail_other.get('employment', 'MISSING')!r}",
+)
+
+# ---------------------------------------------------------------------------
+# 2026-09-28, freelance part 3: the "Freelance & contract" search (docs/handbook/job-search.md, *The freelance search*)
+# and Jobicy, the board it added to the worldwide pass. A freelance search keeps a posting only when its BOARD's own
+# field says contract or freelance (never a title's word), judges LinkedIn after the page it already fetches and before
+# any model call, and counts what it left out. Jobicy is read the one way its API page allows.
+# ---------------------------------------------------------------------------
+import copy as _fl_copy  # noqa: E402
+
+import app.core.job_search as _fl_js  # noqa: E402
+from app.core import alerts as _fl_alerts  # noqa: E402
+from app.core.providers import ATTRIBUTED as _FL_ATTR, DEFAULT_SOURCES as _FL_DEFAULTS  # noqa: E402
+from app.core.providers import jobicy as _fl_jc  # noqa: E402
+from app.llm.client import get_llm_client as _fl_get_llm  # noqa: E402
+
+_FL_RAW = _json.loads((_EM_FIX / "jobicy_remote_jobs.json").read_text(encoding="utf-8"))
+_fl_hits = _fl_jc.parse_jobicy_jobs(_FL_RAW)
+_fl_ww = _fl_copy.copy(_fl_hits[2]) if len(_fl_hits) > 2 else None
+if _fl_ww is not None:
+    _fl_ww.origin_market = "Worldwide"
+check(
+    "freelance: jobicy parser — the four postings open to Israel ('Anywhere', an EMEA list) are kept and the UK-only "
+    "one left out whatever the server sent; each is source jobicy, its URL its Jobicy listing (the credit and the "
+    "application link), its location EMPTY (the eligibility list stays in raw, so pay_market never reads 'USA' as "
+    "where the job is), Remote, the board's own jobType as the label (Contract -> contract, Full-Time -> none), "
+    "published pay in the board's words, and the description inline",
+    [h.title[:28] for h in _fl_hits] == [
+        "International Audio/Video Re", "International Audio/Video Re", "Senior Android SDK Engineer",
+        "Senior Security Engineer, Se"]
+    and [h.employment for h in _fl_hits] == ["contract", "contract", "", ""]
+    and all(h.source == "jobicy" and _fl_jc.jobicy_page(h.url) and h.location == "" and h.work_mode == "Remote"
+            for h in _fl_hits)
+    and _fl_hits[0].url == "https://jobicy.com/jobs/153923-international-audio-video-remote-korean-interpreter"
+    and "Compensation: 227,000 USD (yearly)" in _fl_hits[2].description
+    and _fl_hits[2].raw.get("jobGeo") == "EMEA,  LATAM,  Canada,  USA"
+    and _fl_ww is not None and _fl_js._low_pay(_fl_ww) is False
+    and _fl_jc.JobicyProvider().fetch_description(_fl_hits[0]) == _fl_hits[0].description,
+    f"{[(h.title[:28], h.employment, h.location) for h in _fl_hits]}",
+)
+_fl_one = _FL_RAW["jobs"][0]
+check(
+    "freelance: jobicy attribution and eligibility — a posting with no Jobicy listing to credit and apply through "
+    "(another host, a look-alike host, plain http) is dropped; 'Worldwide', 'Middle East', 'Israel' and an EMEA list "
+    "are kept, 'UK', 'USA', blank, missing or a list are not; duplicates folded; junk is []",
+    _fl_jc.parse_jobicy_jobs({"jobs": [{**_fl_one, "url": "https://elsewhere.example/jobs/1"},
+                                       {**_fl_one, "url": "https://jobicy.com.evil.example/jobs/1"},
+                                       {**_fl_one, "url": "http://jobicy.com/jobs/1"}]}) == []
+    and [_fl_jc.open_to_israel(g) for g in (
+        "Worldwide", "Middle East, Africa", "Israel", "EMEA,  Germany", "UK", "USA", "", None, ["Anywhere"])]
+    == [True, True, True, True, False, False, False, False, False]
+    and len(_fl_jc.parse_jobicy_jobs({"jobs": _FL_RAW["jobs"] * 2})) == 4
+    and _fl_jc.parse_jobicy_jobs(None) == [] and _fl_jc.parse_jobicy_jobs({"jobs": {}}) == []
+    and _fl_jc.parse_jobicy_jobs({"jobs": [None, 3, "x"]}) == [],
+)
+_FL_JC_TREE = _pp_ast.parse(_pp_inspect.getsource(_fl_jc))
+_fl_jc_net = {
+    a.name for n in _pp_ast.walk(_FL_JC_TREE) if isinstance(n, _pp_ast.ImportFrom) and n.module == "app.core.job_match"
+    for a in n.names
+}
+check(
+    "freelance: Jobicy is read the way its API page allows — the ONE public feed (no key; the site itself is never "
+    "scraped), cached an hour per instance ('must not run more frequently than once per hour'), a failure remembered, "
+    "fetched only through job_match._http_get (no network import of its own), registered after Himalayas as a "
+    "worldwide-only board, and credited as 'Jobicy' beside its link (the Jobs page mirror and the alert email)",
+    _fl_jc.FEED_URL.startswith("https://jobicy.com/api/v2/remote-jobs?")
+    and _fl_jc.FEEDS.ttl_s >= 3600 and _fl_jc.FEEDS.fail_ttl_s > 0 and _fl_jc.FEEDS.workers == 1
+    and not (_pt_imports(_pp_inspect.getsource(_fl_jc)) & {"urllib.request", "requests", "http.client", "httpx", "socket"})
+    and "_http_get" in _fl_jc_net
+    and list(_FL_DEFAULTS).index("jobicy") == list(_FL_DEFAULTS).index("himalayas") + 1
+    and "jobicy" in _fl_js.WORLDWIDE_ONLY_BOARDS
+    and _FL_ATTR.get("jobicy") == "Jobicy" and _fl_alerts._EM_SOURCE_LABELS.get("jobicy") == "Jobicy",
+    f"ttl={_fl_jc.FEEDS.ttl_s} net={_fl_jc_net} defaults={list(_FL_DEFAULTS)}",
+)
+_fl_calls: list = []
+
+
+def _fl_get(url, timeout=15):  # noqa: ANN001
+    _fl_calls.append(url)
+    return _json.dumps(_FL_RAW)
+
+
+def _fl_try(title):  # noqa: ANN001, ANN202
+    try:
+        return [h.title for h in _fl_jc.JobicyProvider().search(SearchContext(job_title=title, limit=10))]
+    except Exception as e:  # noqa: BLE001
+        return f"{type(e).__name__}: {e}"
+
+
+_fl_real_get = _fl_jc._http_get
+_fl_jc._http_get = _fl_get
+_fl_jc.FEEDS.clear()
+try:
+    _fl_interp = _fl_try("Interpreter")
+    _fl_sec = _fl_try("Security Engineer")
+    _fl_none = _fl_try("Plumber")
+    _fl_heb = _fl_try("מתורגמן")
+finally:
+    _fl_jc._http_get = _fl_real_get
+    _fl_jc.FEEDS.clear()
+check(
+    "freelance: jobicy asks ONE feed for every title within the hour (three searches, one request), matches the "
+    "title's words there ('Interpreter' finds both interpreters, 'Security Engineer' only the SIRT role), says nothing "
+    "matched for a title it lacks, and a Hebrew title is 'nothing matched there' asked of nobody",
+    _fl_calls == [_fl_jc.FEED_URL]
+    and isinstance(_fl_interp, list) and len(_fl_interp) == 2 and all("Interpreter" in t for t in _fl_interp)
+    and isinstance(_fl_sec, list) and len(_fl_sec) == 1 and _fl_sec[0].startswith("Senior Security Engineer")
+    and isinstance(_fl_none, str) and "NoResultsError" in _fl_none and "Jobicy" in _fl_none
+    and isinstance(_fl_heb, str) and "in English" in _fl_heb,
+    f"calls={_fl_calls} interp={_fl_interp} sec={_fl_sec} none={_fl_none} heb={_fl_heb}",
+)
+
+# The queries.
+_fl_ctx = _resolve_context(resume, SearchContext(job_titles=["Data Analyst", "מעצב גרפי"], location="Tel Aviv",
+                                                  work_mode="any"))
+_fl_run = _fl_js.freelance_context(_fl_ctx)
+_fl_onsite = _resolve_context(resume, SearchContext(job_title="Data Analyst", work_mode="onsite,hybrid"))
+_fl_li = _fl_js._board_queries("linkedin", _fl_run, True)
+check(
+    "freelance: the queries — LinkedIn's keywords carry the freelance word at home and abroad ('contract' before a "
+    "Latin title, פרילנס before a Hebrew one, nothing added to a title that already says it, and 'Contracts "
+    "Manager' is not such a title), Drushim and Greenhouse are not asked (no field that says contract), every other "
+    "board's query is unchanged, and the worldwide pass is ON for a search that allows remote work (off for an "
+    "on-site one) while the user's own context is left as it was; the ordinary mode asks exactly what it did before",
+    [_fl_js.freelance_title(t) for t in (
+        "Data Analyst", "מעצב גרפי", "Freelance Designer", "מעצבת פרילנסרית", "Contractor", "Contracts Manager", "")]
+    == ["contract Data Analyst", "פרילנס מעצב גרפי", "Freelance Designer", "מעצבת פרילנסרית", "Contractor",
+        "contract Contracts Manager", ""]
+    and {q[0] for q in _fl_li} == {"contract Data Analyst", "פרילנס מעצב גרפי"}
+    and len(_fl_li) == 2 * (1 + len(_fl_js.WORLDWIDE_REMOTE_LOCATIONS))
+    and ("contract Data Analyst", "Tel Aviv", "any", "") in _fl_li
+    and ("contract Data Analyst", "United States", "remote", "United States") in _fl_li
+    and _fl_js._board_queries("drushim", _fl_run, True) == [] and _fl_js._board_queries("greenhouse", _fl_run, True) == []
+    and _fl_js._board_queries("jobmaster", _fl_run, True) == _fl_js._board_queries("jobmaster", _fl_ctx)
+    and _fl_js._board_queries("jobicy", _fl_run, True) == [
+        ("Data Analyst", "", "remote", "Worldwide"), ("מעצב גרפי", "", "remote", "Worldwide")]
+    and _fl_ctx.include_worldwide is False and _fl_run.include_worldwide is True
+    and _fl_js.freelance_context(_fl_onsite).include_worldwide is False
+    and _fl_js._board_queries("linkedin", _fl_ctx) == [
+        ("Data Analyst", "Tel Aviv", "any", ""), ("מעצב גרפי", "Tel Aviv", "any", "")]
+    and _fl_js._board_queries("drushim", _fl_ctx) != [] and _fl_js._board_queries("jobicy", _fl_ctx) == [],
+    f"li={_fl_li}",
+)
+
+
+def _fl_hit(source, label, n):  # noqa: ANN001, ANN202
+    return _FanHit(source=source, title=f"Role {n}", company="FlCo", url=f"https://fl.test/{n}", employment=label)
+
+
+_fl_tiers = [
+    {"comeet": [_fl_hit("comeet", "", 1), _fl_hit("comeet", "contract", 2)],
+     "jobmaster": [_fl_hit("jobmaster", "also_freelance", 3), _fl_hit("jobmaster", "part_time", 4)]},
+    {"linkedin": [_fl_hit("linkedin", "", 5), _fl_hit("linkedin", "temporary", 6)],
+     "lever": [_fl_hit("lever", "internship", 7), _fl_hit("lever", "freelance", 8), _fl_hit("lever", "", 1)]},
+]
+_fl_kept_tiers, _fl_gone = _fl_js._split_employment(_fl_tiers)
+check(
+    "freelance: the rule on each board's field — contract, freelance and 'also freelance' are kept; no type "
+    "(full-time), part-time, temporary and an internship are left out; a LinkedIn card with no type yet is kept for "
+    "its page (None, judged after the fetch), one whose type is known is judged now; counted once per ADDRESS, and "
+    "the kept postings keep their tier and board order",
+    [_fl_js.freelance_kept(h) for tier in _fl_tiers for hits in tier.values() for h in hits]
+    == [False, True, True, False, None, False, False, True, False]
+    and _fl_gone == 4
+    and [[h.url[-1] for hits in t.values() for h in hits] for t in _fl_kept_tiers] == [["2", "3"], ["5", "8"]]
+    and _fl_js.FREELANCE_KEEP == {"contract", "freelance", "also_freelance"},
+    f"gone={_fl_gone} kept={[[h.url for hits in t.values() for h in hits] for t in _fl_kept_tiers]}",
+)
+
+
+# Through the search: an inline board whose labels came on the card, and LinkedIn, whose label is on its page.
+class _FlBoard:
+    name = "fake_fl"
+
+    def search(self, ctx):  # noqa: ANN001
+        text = "Python and SQL work on a distributed backend."
+        return [
+            _FanHit(source=self.name, title="Python Developer", company="Fl A", description=text,
+                    url="https://fl.test/fulltime"),
+            _FanHit(source=self.name, title="Python Developer (Contract)", company="Fl B", description=text,
+                    url="https://fl.test/titled"),
+            _FanHit(source=self.name, title="Python Developer", company="Fl C", description=text,
+                    url="https://fl.test/contract", employment="contract"),
+            _FanHit(source=self.name, title="Python Developer", company="Fl D", description=text,
+                    url="https://fl.test/freelance", employment="freelance"),
+            _FanHit(source=self.name, title="Python Developer", company="Fl E", description=text,
+                    url="https://fl.test/parttime", employment="part_time"),
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+class _FlLinkedIn:
+    """LinkedIn's shape: cards with no type; the page the fetch reads says it."""
+
+    name = "linkedin"
+
+    def __init__(self, pages: dict) -> None:
+        self.pages = pages
+        self.asked: list = []
+        self.fetched: list = []
+
+    def search(self, ctx):  # noqa: ANN001
+        self.asked.append((ctx.job_title, ctx.location))
+        return [
+            _FanHit(source="linkedin", title="Contract Python Developer", company="Li A", description="",
+                    url="https://www.linkedin.com/jobs/view/1"),
+            _FanHit(source="linkedin", title="Python Developer", company="Li B", description="",
+                    url="https://www.linkedin.com/jobs/view/2"),
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        self.fetched.append(hit.url.rsplit("/", 1)[-1])
+        hit.employment = self.pages.get(hit.url.rsplit("/", 1)[-1], "")
+        return "Python and SQL work on a distributed backend. Fully remote."
+
+
+_fl_stub = _fl_get_llm()
+_fl_orig_cjson = _fl_stub.complete_json
+_fl_model: list = []
+
+
+def _fl_counting(system, user):  # noqa: ANN001, ANN202
+    _fl_model.append(system[:40].upper())
+    return _fl_orig_cjson(system, user)
+
+
+def _fl_search(boards, ctx, **kw):  # noqa: ANN001, ANN003, ANN202
+    """(result, error, JD_FIT calls), CAUGHT so one red check never aborts the run."""
+    _fl_model.clear()
+    saved = {b.name: _PROV.get(b.name) for b in boards}
+    _PROV.update({b.name: b for b in boards})
+    _fl_stub.complete_json = _fl_counting
+    try:
+        return _fl_js.search_jobs(resume, ctx, **kw), "", len([c for c in _fl_model if "JD_FIT" in c])
+    except Exception as e:  # noqa: BLE001
+        return None, f"{type(e).__name__}: {e}", 0
+    finally:
+        _fl_stub.complete_json = _fl_orig_cjson
+        for name, real in saved.items():
+            if real is not None:
+                _PROV[name] = real
+            else:
+                _PROV.pop(name, None)
+
+
+def _fl_ctx_of(**over):  # noqa: ANN003, ANN202
+    return _AlertCtx(**({"job_title": "Python Developer", "location": "Tel Aviv", "work_mode": "any",
+                         "sources": ["fake_fl", "linkedin"], "max_age_days": 0, "limit": 10} | over))
+
+
+def _fl_urls(res):  # noqa: ANN001, ANN202
+    return sorted(m.url.rsplit("/", 1)[-1] for m in res.matches) if res is not None else None
+
+
+_fl_li_on = _FlLinkedIn({"1": "", "2": "contract"})
+_fl_on, _fl_on_err, _fl_on_model = _fl_search([_FlBoard(), _fl_li_on], _fl_ctx_of(), freelance=True)
+_fl_li_off = _FlLinkedIn({"1": "", "2": "contract"})
+_fl_off, _fl_off_err, _fl_off_model = _fl_search([_FlBoard(), _fl_li_off], _fl_ctx_of())
+check(
+    "freelance: through the search — kept are the inline board's contract and freelance postings and the LinkedIn "
+    "posting whose PAGE says Contract; left out are the full-time, the part-time, the one whose TITLE says "
+    "'(Contract)' with no such field, and LinkedIn's 'Contract Python Developer' whose page says Full-time; 4 "
+    "counted as not_freelance; the model scored only the 3 kept (the left-out ones cost no call), LinkedIn was asked "
+    "'contract Python Developer' at home AND abroad (the pass on) though the user never turned it on, and the result "
+    "still carries the user's own context",
+    _fl_on_err == "" and _fl_urls(_fl_on) == ["2", "contract", "freelance"]
+    and _fl_on.not_freelance == 4 and _fl_on.skipped == 0 and _fl_on.filtered == []
+    and _fl_on_model == 3
+    and sorted(_fl_li_on.fetched) == ["1", "2"]
+    and {t for t, _l in _fl_li_on.asked} == {"contract Python Developer"}
+    and {"Tel Aviv", "United States"} <= {loc for _t, loc in _fl_li_on.asked}
+    and _fl_on.context.include_worldwide is False
+    and {m.url.rsplit("/", 1)[-1]: m.employment for m in _fl_on.matches}
+    == {"2": "contract", "contract": "contract", "freelance": "freelance"},
+    f"err={_fl_on_err} urls={_fl_urls(_fl_on)} nf={getattr(_fl_on, 'not_freelance', None)} "
+    f"model={_fl_on_model} fetched={_fl_li_on.fetched} asked={_fl_li_on.asked}",
+)
+check(
+    "freelance: the ordinary mode is untouched — the same boards rank all seven postings, full-time and part-time "
+    "included, not_freelance 0, and LinkedIn is asked the user's own title at the user's own location only",
+    _fl_off_err == "" and _fl_urls(_fl_off) == ["1", "2", "contract", "freelance", "fulltime", "parttime", "titled"]
+    and _fl_off.not_freelance == 0 and _fl_off_model == 7
+    and _fl_li_off.asked == [("Python Developer", "Tel Aviv")],
+    f"err={_fl_off_err} urls={_fl_urls(_fl_off)} model={_fl_off_model} asked={_fl_li_off.asked}",
+)
+_FL_TEXT = "Python and SQL work on a distributed backend. Fully remote."
+_fl_cache = {
+    "https://www.linkedin.com/jobs/view/2": _GeoCached(
+        jd_text=_FL_TEXT, overall=80.0, keyword_coverage=70.0, fit_score=90.0, top_matched=("Python",), top_gaps=(),
+        title="Python Developer", company="Li B", location="", posted_at="", logo_url="", is_full_match=True,
+        employment="contract"),
+    # A row that predates the label: no type is UNKNOWN, never full-time, so the page is read.
+    "https://www.linkedin.com/jobs/view/1": _GeoCached(
+        jd_text=_FL_TEXT, overall=80.0, keyword_coverage=70.0, fit_score=90.0, top_matched=("Python",), top_gaps=(),
+        title="Contract Python Developer", company="Li A", location="", posted_at="", logo_url="", is_full_match=True,
+        employment=""),
+}
+_fl_li_c = _FlLinkedIn({"1": "contract", "2": ""})
+_fl_c, _fl_c_err, _fl_c_model = _fl_search([_fl_li_c], _fl_ctx_of(sources=["linkedin"]), freelance=True,
+                                           cache=_fl_cache)
+
+
+class _FlFullTime(_FlBoard):
+    name = "fake_fl"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [h for h in super().search(ctx) if not h.employment]
+
+
+_fl_all_pre, _fl_all_pre_err, _ = _fl_search([_FlFullTime()], _fl_ctx_of(sources=["fake_fl"]), freelance=True)
+_fl_all_post, _fl_all_post_err, _fl_all_post_model = _fl_search(
+    [_FlLinkedIn({})], _fl_ctx_of(sources=["linkedin"], work_mode="onsite"), freelance=True)
+
+
+class _FlAsked(_FlBoard):
+    """A board that records being asked, standing in for Drushim or Greenhouse (never the real ones: a defect here
+    must not send the offline suite to the network)."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.asked: list = []
+
+    def search(self, ctx):  # noqa: ANN001
+        self.asked.append(ctx.job_title)
+        return [h for h in super().search(ctx) if h.employment]
+
+
+_fl_dr, _fl_gh = _FlAsked("drushim"), _FlAsked("greenhouse")
+_fl_boards_none, _fl_boards_none_err, _ = _fl_search(
+    [_fl_dr, _fl_gh], _fl_ctx_of(sources=["drushim", "greenhouse"]), freelance=True)
+check(
+    "freelance: a history row that stored LinkedIn's type is trusted with no fetch and no model call, a row with NO "
+    "type (older than the label) has its page read, and the page decides; when every posting is left out the answer "
+    "is an honest 200 with nothing ranked and the count (before selection: 2; after LinkedIn's pages: 2, with no "
+    "model call and nothing blamed on the board), and a search whose boards cannot say contract says so",
+    _fl_c_err == "" and _fl_urls(_fl_c) == ["1", "2"] and _fl_li_c.fetched == ["1"] and _fl_c_model == 0
+    and _fl_all_pre_err == "" and _fl_all_pre.matches == [] and _fl_all_pre.not_freelance == 2
+    and _fl_all_post_err == "" and _fl_all_post.matches == [] and _fl_all_post.not_freelance == 2
+    and _fl_all_post.skipped == 0 and _fl_all_post.source_errors == {} and _fl_all_post_model == 0
+    and "Drushim and Greenhouse" in _fl_boards_none_err and _fl_dr.asked == [] and _fl_gh.asked == [],
+    f"c={_fl_c_err or _fl_urls(_fl_c)} fetched={_fl_li_c.fetched} model={_fl_c_model} "
+    f"pre={_fl_all_pre_err or _fl_all_pre.not_freelance} post={_fl_all_post_err or (_fl_all_post.not_freelance, _fl_all_post.skipped)} "
+    f"none={_fl_boards_none_err} asked={_fl_dr.asked}/{_fl_gh.asked}",
+)
+
+# Over HTTP: the mode rides the request, a freelance search is a search.
+_fl_route_kw: list = []
+
+
+def _fl_route_search(resume_, customize, progress=None, cache=None, sightings_fn=None, **kw):  # noqa: ANN001, ANN003, ANN202
+    _fl_route_kw.append(sorted(kw.items()))
+    return JobSearchResult(context=customize or _AlertCtx(job_title="QA"), not_freelance=5)
+
+
+_fl_real_route_search = _routes32.search_jobs
+_fl_prev_env = _env29(DAILY_SEARCH_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _fl_http:
+        _routes32.search_jobs = _fl_route_search
+        try:
+            _fl_uid, _FL_H = _mint32(_fl_http, "Freelance Mode")
+            _fl_body = {"resume": _R32, "customize": _fl_ctx_of().model_dump(mode="json")}
+            _fl_r_free = _fl_http.post("/jobs/search", json={**_fl_body, "mode": "freelance"}, headers=_FL_H)
+            _fl_r_jobs = _fl_http.post("/jobs/search", json={**_fl_body, "mode": "jobs"}, headers=_FL_H)
+            _fl_r_none = _fl_http.post("/jobs/search", json=_fl_body, headers=_FL_H)
+            _fl_r_bad = _fl_http.post("/jobs/search", json={**_fl_body, "mode": "gigs"}, headers=_FL_H)
+            _fl_r_stream = _fl_http.post("/jobs/search/stream", json={**_fl_body, "mode": "freelance"}, headers=_FL_H)
+            _fl_stream_text = _fl_r_stream.text
+            _fl_events = _events32(_fl_uid)
+        finally:
+            _routes32.search_jobs = _fl_real_route_search
+finally:
+    _restore29(_fl_prev_env)
+check(
+    "freelance: over HTTP the mode rides the request — 'freelance' hands search_jobs freelance=True on both routes "
+    "(the stream too), 'jobs' and no mode hand it nothing (the ordinary call, byte for byte), an unknown mode is a 422 "
+    "that spends nothing, not_freelance comes back, and a freelance search is ONE search use like any other "
+    "(10 -> 9 -> 8 -> 7, the stream the 4th), never a second charge",
+    _fl_r_free.status_code == 200 and _j28(_fl_r_free).get("not_freelance") == 5
+    and _fl_route_kw[:3] == [[("freelance", True)], [], []] and _fl_route_kw[3:] == [[("freelance", True)]]
+    and _fl_r_bad.status_code == 422
+    and [_hdr32(r) for r in (_fl_r_free, _fl_r_jobs, _fl_r_none)] == ["9", "8", "7"]
+    and _hdr32(_fl_r_stream) == "6" and '"not_freelance": 5' in _fl_stream_text
+    and [(e[1], e[2]) for e in _fl_events] == [("search", 1)] * 4,
+    f"kw={_fl_route_kw} codes={[r.status_code for r in (_fl_r_free, _fl_r_jobs, _fl_r_none, _fl_r_bad)]} "
+    f"hdr={[_hdr32(r) for r in (_fl_r_free, _fl_r_jobs, _fl_r_none, _fl_r_stream)]} events={_fl_events}",
 )
 
 _reached_end = True

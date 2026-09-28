@@ -32,6 +32,7 @@ import json
 import urllib.parse
 from datetime import datetime, timezone
 
+from app.core import employment
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
 from app.core.providers.base import JobHit, NoResultsError
@@ -107,6 +108,9 @@ def parse_lever_postings(postings: list, company_name: str = "") -> list[JobHit]
                 # "hybrid" / "onsite" / "remote": the board's own statement, which
                 # `work_mode` reads before the words ("unspecified" reads as nothing).
                 work_mode=str(p.get("workplaceType") or "").strip(),
+                # `categories.commitment`, the company's own words ("Full-time",
+                # "Contract", "Intern"), read exactly; never the title.
+                employment=employment.from_field(categories.get("commitment")),
             )
         )
     return hits

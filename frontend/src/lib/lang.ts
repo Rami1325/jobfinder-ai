@@ -49,8 +49,9 @@ export function resumeLanguage(resume: ResumeModel): "he" | "en" {
  * it has no words to count. An interview question is read this way, because
  * the answer's dictation follows it (`lib/dictation.ts`): `textLanguage` would
  * read an English question naming a Hebrew-spelled company as Hebrew, and the
- * browser would then listen for Hebrew. Client-only: nothing on the server
- * reads a question's language. */
+ * browser would then listen for Hebrew. The server's twin is
+ * `app/core/lang.py::prose_language`, which reads a pasted gig's language for
+ * the proposal writer (the proposal answers in the gig's language). */
 export function proseLanguage(text: string): "he" | "en" | null {
   const [hebrew, words] = hebrewWords(text);
   if (!words) return null;

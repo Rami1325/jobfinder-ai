@@ -45,6 +45,7 @@ import urllib.parse
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from app.core import employment
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
 from app.core.providers.base import JobHit, NoResultsError
@@ -162,6 +163,8 @@ def parse_drushim_results(data: dict) -> list[JobHit]:
                 logo_url=logo_url,
                 language=_detect_language(f"{title} {full_text}"),
                 raw=job,
+                # The board's scope codes (3 temporary, 2 part-time), never the title.
+                employment=employment.from_drushim_scopes(content.get("Scopes")),
             )
         )
     return hits

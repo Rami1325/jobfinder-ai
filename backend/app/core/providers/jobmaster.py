@@ -32,6 +32,7 @@ import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 
+from app.core import employment
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
 from app.core.providers.base import JobHit, NoResultsError
@@ -148,6 +149,7 @@ def parse_jobmaster_results(html: str, now: datetime | None = None) -> list[JobH
         pm = _POSTED_RE.search(card)
         if pm:
             posted = parse_hebrew_relative_date(pm.group(1), now)
+        job_type = _card_text(card, "jobType")
 
         hits.append(
             JobHit(
@@ -163,9 +165,12 @@ def parse_jobmaster_results(html: str, now: datetime | None = None) -> list[JobH
                 raw={
                     "key": key,
                     "snippet": snippet,
-                    "job_type": _card_text(card, "jobType"),
+                    "job_type": job_type,
                     "promoted": f'id="Mekudam{key}"' in m.group(0),
                 },
+                # The card's own type list, never the title (2026-09-28):
+                # "עסק עצמאי ... פרילנס" in a title is not the board's field.
+                employment=employment.from_jobmaster(job_type),
             )
         )
     return hits

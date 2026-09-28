@@ -11,6 +11,7 @@ import {
   EyeOff,
   Ghost,
   Globe,
+  Handshake,
   Laptop,
   MessageCircle,
   Bookmark,
@@ -41,6 +42,7 @@ import {
   attributedSource,
   avatarTone,
   companyDomain,
+  employmentText,
   isNewPosting,
   jdTextWithLocation,
   kitJobFromMatch,
@@ -575,6 +577,7 @@ export function MatchCard({
   appStatus,
   appId,
   onNotForMe,
+  freelance = false,
 }: {
   m: JobMatch;
   best: boolean;
@@ -583,6 +586,9 @@ export function MatchCard({
   appId?: number | null;
   /** "Not for me" (PLAN 31.5/4): the page hides the row and offers more. */
   onNotForMe?: () => void;
+  /** A freelance search's row (2026-09-28): the proposal writer is its one
+   * primary action, and Tailor moves into the menu. */
+  freelance?: boolean;
 }) {
   const nav = useNavigate();
   const { t, i18n } = useTranslation("jobs");
@@ -668,10 +674,27 @@ export function MatchCard({
 
   const jdForTools = jdTextWithLocation(m.jd_text, m.location);
   const reason = fitReason(m.top_matched, m.top_gaps, t);
+  const employment = employmentText(m.employment, t);
+  const tailor = () =>
+    nav("/app", {
+      state: {
+        jdText: jdForTools,
+        jobUrl: m.url || undefined,
+        jobTitle: m.title,
+        company: m.company,
+      },
+    });
+  // A freelance row's one primary action: the posting's text goes to the
+  // proposal writer, which reads it as the gig (a daily count, never a use) and
+  // says what the proposal costs before the tap.
+  const propose = () => nav("/tools/proposal", { state: { gigText: jdForTools } });
   // What has no slot of its own on a compact row (PLAN 31.2/5). The kit, the
   // outreach and the brief move to the job's own page with 31.4; until then
   // they are here, so a search result keeps every door it had.
   const more: MoreItem[] = [
+    ...(freelance
+      ? [{ key: "tailor", label: t("card.tailor"), Icon: ArrowRight, onClick: tailor }]
+      : []),
     ...(m.url && m.jd_text
       ? [{ key: "kit", label: t("card.kit"), Icon: Wand2, onClick: () => void makeKit(), disabled: kitOut || batching }]
       : []),
@@ -725,6 +748,10 @@ export function MatchCard({
         <p dir="auto" className="truncate text-sm text-ink-muted">
           {m.company || "—"}
           {m.posted_at && <span title={m.posted_at}>{` · ${postedAgo(m.posted_at, t)}`}</span>}
+          {/* The board's own employment type when it is not full-time
+              (2026-09-28): words on the line that already truncates, never a
+              badge, so it costs no height. Nothing for full-time or unknown. */}
+          {employment ? ` · ${employment}` : ""}
           {m.work_modes && m.work_modes.length > 0
             ? ` · ${m.work_modes.map((mode) => t(`workModes.${mode}`)).join(" / ")}`
             : ""}
@@ -783,23 +810,21 @@ export function MatchCard({
         <div className="mt-2 flex items-center gap-2">
           {/* Secondary (PLAN 31.7, one primary per screen): a list of these
               was a column of blue buttons under the page's own Search again. */}
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
-            onClick={() =>
-              nav("/app", {
-                state: {
-                  jdText: jdForTools,
-                  jobUrl: m.url || undefined,
-                  jobTitle: m.title,
-                  company: m.company,
-                },
-              })
-            }
-          >
-            {t("card.tailor")}
-          </Button>
+          {freelance ? (
+            // 44 px to tap on a phone: the row's one action for a freelancer.
+            <Button size="sm" variant="secondary" icon={<Handshake size={14} />} onClick={propose} className="min-h-11 lg:min-h-0">
+              {t("card.proposal")}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
+              onClick={tailor}
+            >
+              {t("card.tailor")}
+            </Button>
+          )}
           {status ? (
             // NOT disabled: it is the only route to the job the toast just
             // named, and a disabled button dispatches no click at all. It opens
@@ -868,6 +893,7 @@ export function HistoryRow({
   const earlier = !!hit.first_posted_at && hit.first_posted_at !== hit.posted_at;
   const jdForTools = jdTextWithLocation(hit.jd_text, hit.location);
   const reason = fitReason(hit.top_matched, hit.top_gaps, t);
+  const employment = employmentText(hit.employment, t);
   // The compact row's "⋯" (PLAN 31.2/5), the search row's list plus Remove,
   // which still waits out its undo window (JobsPage `deleteHit`, 31.1/6).
   const more: MoreItem[] = [
@@ -914,10 +940,12 @@ export function HistoryRow({
           </p>
           <MatchChip value={hit.overall} />
         </div>
-        {/* The search row's order and direction, for its reasons. */}
+        {/* The search row's order and direction, for its reasons, and its
+            employment label (2026-09-28) in the same place. */}
         <p dir="auto" className="truncate text-sm text-ink-muted">
           {hit.company || "—"}
           {hit.posted_at && <span title={hit.posted_at}>{` · ${postedAgo(hit.posted_at, t)}`}</span>}
+          {employment ? ` · ${employment}` : ""}
           {hit.location ? ` · ${hit.location}` : ""}
         </p>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">

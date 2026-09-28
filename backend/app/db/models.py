@@ -238,6 +238,13 @@ class JobSearchHit(Base):
     # search that read none, and never shown once it is a day old
     # (`job_search.current_applicants`): the row keeps a stale one harmlessly.
     applicants_json: Mapped[str] = mapped_column(Text, default="")
+    # 2026-09-28: the board's own employment type when it is not plain full-time
+    # (`app.core.employment.EMPLOYMENT_TYPES`). "" means full-time, not stated or
+    # never read, alike (the shim's default for every older row: unknown is never
+    # "full-time", and nothing reads "" as full-time). Replaced by a newer label,
+    # never cleared by a search that read none (a cached rebuild fetches nothing).
+    # A board's label, not user content; the row itself is wiped with the rest.
+    employment: Mapped[str] = mapped_column(String(20), default="")
     # sha256 of the resume the scores were computed against (PLAN 12.4) — lets a
     # re-search tell "same resume, reuse the scores" from "different resume,
     # rescore". "" on pre-12.4 rows (never treated as a full-reuse match).

@@ -321,9 +321,41 @@ class StubClient:
         return {}
 
     def complete_text(self, system: str, user: str) -> str:
+        # The proposal writer (2026-09-28) routes on its own tag; the cover letter
+        # carries none, so everything else is still the letter.
+        if "PROPOSAL" in system[:40].upper():
+            return self._stub_proposal(user)
         return (
             "[stub cover letter]\n\nDear Hiring Manager,\n\nI am excited to apply. "
             "My background aligns well with this role.\n\nSincerely,\nApplicant"
+        )
+
+    @staticmethod
+    def _stub_proposal(user: str) -> str:
+        """A proposal in the language the message names that DISOBEYS the prompt
+        the way a real model might: it invents a rate, a delivery time and a start
+        date. So the smoke test sees `proposal_terms.guard` take each one out (the
+        mechanism), never a polite stub that gave it nothing to do. It echoes the
+        typed rate, as the prompt asks, when there is one."""
+        rate = ""
+        for line in user.splitlines():
+            if line.startswith("RATE THE FREELANCER TYPED:"):
+                rate = line.split(":", 1)[1].strip()
+        typed = "" if rate in ("", "(none)") else rate
+        if "LANGUAGE: Hebrew" in user:
+            return (
+                "[stub proposal] אתם צריכים שהמערכת תעבוד מהר ובלי תקלות. בתפקיד הקודם שלי בניתי בדיוק "
+                "דבר כזה. הצעד הראשון: לעבור על הקוד הקיים. אפשר לעשות את זה ב-₪300 לשעה ולסיים תוך "
+                "שבועיים, ואני זמין מיד."
+                + (f" התעריף שלי: {typed}." if typed else "")
+                + " מה הכי דחוף לכם?"
+            )
+        return (
+            "[stub proposal] You need this working reliably and soon. I built something close to it "
+            "in my last role. First step: I would review your current setup. I can do it for $45/hour, "
+            "deliver within 19 days, and I am available immediately."
+            + (f" My rate: {typed}." if typed else "")
+            + " What matters most to you here?"
         )
 
     # -- stub helpers ----------------------------------------------------- #

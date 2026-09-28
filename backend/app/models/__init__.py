@@ -365,6 +365,53 @@ class CoverLetterPassRequest(BaseModel):
     jd: JDModel
 
 
+# The rate a freelancer types beside a gig ("₪250 an hour", "$40-60/hr"):
+# a short line, bounded at the schema (llm-boundary.md, the short fields).
+PROPOSAL_RATE_MAX = 100
+
+
+class ProposalRequest(BaseModel):
+    """Body of `POST /proposal` (2026-09-28): a short bid for one gig.
+
+    `jd` is the analysed posting, the key of the cover-letter pass this rides
+    (`quota.jd_ref`), so a letter and a proposal for one posting share one use.
+    Omitted, the route reads `gig_text` first (the Tools page's pasted gig; the
+    daily `jd_analyze` count, never a monthly use) and hands the reading back,
+    so the next call rides the pass. `gig_text` is the posting's own words, the
+    user's paste: measured as kind "gig" and refused whole, never clipped.
+    `rate` is used verbatim or not at all; `tone` is one of the page's two
+    adjustments. `extra="forbid"`: a field this route does not know is a 422,
+    never quietly dropped."""
+
+    model_config = {"extra": "forbid"}
+
+    resume: ResumeModel
+    jd: Optional[JDModel] = None
+    gig_text: str = ""
+    rate: str = Field(default="", max_length=PROPOSAL_RATE_MAX)
+    tone: str = Field(default="", max_length=200)
+
+
+class ProposalResponse(BaseModel):
+    """A proposal, and what the floor under the prompt found in it
+    (`core/proposal_terms.py`), and the cover-letter pass it rode (the letter's
+    three fields, read the same way). `jd` is the posting as read, for the next
+    call to send back. `placeholders` are the [brackets] left for the user to
+    fill, `replaced` what the floor took out (a rate, a timeline, a start date
+    the user did not give), and `unverified` the numbers neither the resume, the
+    gig nor the rate carries. None of them is a claim that the text is right."""
+
+    proposal: str
+    jd: JDModel
+    language: str = "en"
+    placeholders: list[str] = Field(default_factory=list)
+    replaced: list[str] = Field(default_factory=list)
+    unverified: list[str] = Field(default_factory=list)
+    included_until: str = ""
+    changes_left: int = 0
+    expires_in_s: int = 0
+
+
 class RenderRequest(BaseModel):
     resume: ResumeModel
     fmt: str = "docx"  # docx | pdf
@@ -1371,6 +1418,10 @@ class ApplicationDetail(BaseModel):
     # `job_search.APPLICANTS_FRESH_S`). The row itself never stores it, and
     # viewing the page never fetches the posting to get one.
     applicants: Optional[Applicants] = None
+    # 2026-09-28: the board's employment type for this posting, when the user's
+    # search history holds it (the same match as `applicants`); "" otherwise. The
+    # page labels it and, for Contract or Freelance, offers the proposal first.
+    employment: str = ""
 
 
 class StaleApplication(BaseModel):
@@ -1695,6 +1746,10 @@ class JobMatch(BaseModel):
     # rebuilt from; None when the board states none, when the posting was not
     # fetched, and when the reading is older than a day.
     applicants: Optional[Applicants] = None
+    # The BOARD's own employment type when it is not plain full-time, one of
+    # `app.core.employment.EMPLOYMENT_TYPES`; "" for full-time, not stated or not
+    # read, alike. Never read from the title (2026-09-28).
+    employment: str = ""
     # Tracker status when this posting is already in the user's tracker
     # ("saved" | "applied" | "interview" | "offer" | "rejected"), else "".
     # Carries the status rather than a bool so the card can say WHICH — "saved"
@@ -1862,9 +1917,17 @@ class SearchQueryOut(BaseModel):
     used_model: bool = False
 
 
+SEARCH_MODES = ("jobs", "freelance")
+
+
 class JobSearchRequest(BaseModel):
     resume: ResumeModel
     customize: Optional[SearchContext] = None  # None => fully automatic
+    # The Jobs page's mode (2026-09-28, freelance part 3): "freelance" keeps only
+    # postings whose board says contract or freelance (`job_search.search_jobs`,
+    # `freelance=`). A request field, not a SearchContext one: the context is what
+    # the page's form holds and alerts store, and neither changes with the mode.
+    mode: Literal["jobs", "freelance"] = "jobs"
 
 
 class JobSearchResult(BaseModel):
@@ -1900,6 +1963,11 @@ class JobSearchResult(BaseModel):
     # interview, offer or rejected. A count of jobs, not of board hits, said on
     # the page and never folded into `skipped`, `filtered` or `hidden`.
     applied: int = 0
+    # A freelance search only (`JobSearchRequest.mode`): how many postings were
+    # left out because their board says they are not contract or freelance work
+    # (full-time, part-time, temporary, an internship, or no type stated), before
+    # selection on the card and after the fetch on LinkedIn's page. 0 otherwise.
+    not_freelance: int = 0
 
 
 class JobSearchHitOut(BaseModel):
@@ -1929,6 +1997,8 @@ class JobSearchHitOut(BaseModel):
     # (`job_search.current_applicants`, measured on this request's clock); None
     # for a reading older than a day, which the row keeps until a fetch replaces it.
     applicants: Optional[Applicants] = None
+    # The board's employment type as the row stored it (see JobMatch.employment).
+    employment: str = ""
     searched_at: str = ""
     app_status: str = ""  # tracker status if this job was saved/applied ("", saved, applied, interview, offer, rejected)
     app_id: Optional[int] = None  # that tracker row's id, which the row opens (PLAN 31.4/6); None when untracked

@@ -23,6 +23,7 @@ import {
   Building2,
   Send,
   Contact,
+  Handshake,
   Mail,
   MoreHorizontal,
   Settings,
@@ -101,6 +102,7 @@ const toolsSubNav = [
   { to: "/tools/company-brief", key: "brief", icon: Building2 },
   { to: "/tools/outreach", key: "outreach", icon: Send },
   { to: "/tools/screening", key: "screening", icon: MessageSquareText },
+  { to: "/tools/proposal", key: "proposal", icon: Handshake },
   { to: "/tools/linkedin", key: "linkedin", icon: Contact },
   { to: "/tools/follow-up", key: "followup", icon: Mail },
 ] as const;

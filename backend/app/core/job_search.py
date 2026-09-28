@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -95,12 +96,83 @@ WORLDWIDE_BOARD = "linkedin"  # the worldwide pass's board with markets (the loc
 # Israel, never with the user's own location, so a search without the pass never
 # asks it (and never waits on it). The frontend's `WORLDWIDE_SOURCES` and
 # `WORLDWIDE_ONLY_SOURCES` mirror these (check-mirrors 100).
-WORLDWIDE_BOARDS: tuple[str, ...] = (WORLDWIDE_BOARD, "himalayas")
-WORLDWIDE_ONLY_BOARDS: frozenset[str] = frozenset({"himalayas"})
+# Jobicy joined them on 2026-09-28 (freelance, part 3): one cached feed of remote
+# jobs open to Israel, read under its API page's terms (providers/jobicy.py).
+WORLDWIDE_BOARDS: tuple[str, ...] = (WORLDWIDE_BOARD, "himalayas", "jobicy")
+WORLDWIDE_ONLY_BOARDS: frozenset[str] = frozenset({"himalayas", "jobicy"})
 # The origin stamp of a worldwide-only board's queries: the board filters for
 # "open to Israel" itself and has no market to name, and a stamp that is not ""
 # is what puts its postings under the worldwide rules (geo, pay market, say-remote).
 WORLDWIDE_ONLY_MARKET = "Worldwide"
+
+# THE FREELANCE SEARCH (2026-09-28, freelance part 3; job-search.md, *The freelance
+# search*). A search the user runs in "Freelance & contract" mode keeps ONLY the
+# postings whose BOARD's own field says contract or freelance (`employment.py`),
+# never a title's word. "Also freelance" (JobMaster: an employee job that also
+# takes freelancers) is kept. Temporary, part-time and internship are EMPLOYEE
+# arrangements, so they are not kept: a freelancer asked for projects, not a
+# three-month maternity cover.
+FREELANCE_KEEP: frozenset[str] = frozenset({"contract", "freelance", "also_freelance"})
+# The board whose type lives on the posting's own page, read by the fetch: its
+# card has no type yet, so it is kept for the fetch and judged after it.
+EMPLOYMENT_ON_PAGE: frozenset[str] = frozenset({WORLDWIDE_BOARD})
+# Boards that cannot say contract or freelance at all (Drushim has no such scope
+# code, 3 is temporary; Greenhouse states no type), so a freelance search does not
+# ask them: every posting they returned would be left out.
+NO_FREELANCE_FIELD: frozenset[str] = frozenset({"drushim", "greenhouse"})
+# The word a freelance search puts in front of LinkedIn's keywords, at home and
+# abroad (`freelance_title`): a Latin title gets "contract", a Hebrew one פרילנס.
+# LinkedIn ignores its own job-type filter (`f_JT`: none, F, C, T and P returned
+# the same ten ids on three queries, research 2026-09-27), but its keyword search
+# finds contract work, by LinkedIn's own label on each page: "contract developer"
+# in Israel 3 Contract of 10 where ordinary titles gave 0 of 60, "contract
+# software engineer" in the US 9 of 10 (job-search.md, *The freelance search*, has
+# the 2026-09-28 measurements). JobMaster is not widened: "מפתח פרילנס" and every
+# title + פרילנס measured returned no card at all (2026-09-28).
+FREELANCE_KEYWORD = "contract"
+FREELANCE_KEYWORD_HE = "פרילנס"
+_FREELANCE_WORD_RE = re.compile(r"(?i)\b(?:contract|contractor|freelance|freelancer)\b|פרילנס|פרילאנס")
+_LATIN_RE = re.compile(r"[A-Za-z]")
+
+
+def freelance_context(ctx: SearchContext) -> SearchContext:
+    """The context a freelance search RUNS (never the one it returns, which stays
+    the user's own, so the Jobs page's form keeps what the user set): the
+    worldwide pass ON whenever remote work is allowed, because most contract work
+    that is listed is remote and abroad (Himalayas' and Jobicy's contract roles,
+    LinkedIn's contract roles in the US and Europe)."""
+    return ctx.model_copy(update={"include_worldwide": ctx.include_worldwide or _remote_ok(ctx)})
+
+
+def freelance_kept(hit: JobHit) -> bool | None:
+    """Does a freelance search keep this posting? True for a board label it keeps,
+    None for a LinkedIn card whose label is read after the fetch, False otherwise
+    (full-time, stated or not, and every employee arrangement)."""
+    if hit.employment in FREELANCE_KEEP:
+        return True
+    if hit.source in EMPLOYMENT_ON_PAGE and not hit.employment:
+        return None
+    return False
+
+
+def _split_employment(tiers: list[dict[str, list[JobHit]]]) -> tuple[list[dict[str, list[JobHit]]], int]:
+    """Every tier without the postings a freelance search leaves out on their
+    board's own field, and how many POSTINGS went (by address). `_split_hidden`'s
+    position and shape: before selection, so they take no slot, cost no fetch and
+    no model call, and the freed slot refills in this same round. Counted on the
+    result as `not_freelance`, with the ones the fetch leaves out."""
+    gone: set[str] = set()
+    kept_tiers: list[dict[str, list[JobHit]]] = []
+    for tier in tiers:
+        kept: dict[str, list[JobHit]] = {}
+        for name, tier_hits in tier.items():
+            for hit in tier_hits:
+                if freelance_kept(hit) is False:
+                    gone.add(hit.url.rstrip("/") or f"{hit.source}:{hit.title}|{hit.company}")
+                else:
+                    kept.setdefault(name, []).append(hit)
+        kept_tiers.append(kept)
+    return kept_tiers, len(gone)
 
 
 def resume_hash(resume: ResumeModel) -> str:
@@ -139,6 +211,9 @@ class CachedScore:
     # `read_at`, so a posting rebuilt from the row without a fetch can still
     # show it while it is current. None when the row holds none.
     applicants: Applicants | None = None
+    # The board's employment type as the row stored it (2026-09-28), so a
+    # LinkedIn posting rebuilt without a fetch keeps its label; "" when none.
+    employment: str = ""
 
 
 # What our own search history remembers about the postings in THIS run, looked
@@ -687,7 +762,19 @@ def _stated(mode: tuple[str, WorkModeReading] | None) -> list[str]:
     return [m for m in WORK_MODES if m in mode[1].modes]
 
 
-def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str, str]]:
+def freelance_title(title: str) -> str:
+    """LinkedIn's keywords for one title in a freelance search: the title with
+    the freelance word in front ("contract data analyst", "פרילנס מעצב גרפי"),
+    unless it already carries one (or is blank). Pure; pinned by the smoke test."""
+    if not title.strip() or _FREELANCE_WORD_RE.search(title):
+        return title
+    word = FREELANCE_KEYWORD if _LATIN_RE.search(title) else FREELANCE_KEYWORD_HE
+    return f"{word} {title}".strip()
+
+
+def _board_queries(
+    name: str, ctx: SearchContext, freelance: bool = False
+) -> list[tuple[str, str, str, str]]:
     """(job_title, location, work_mode, origin_market) tuples one board will be
     queried with — normally every keyword against the context's own location
     and work mode.
@@ -718,8 +805,14 @@ def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str, s
     has no local query at all: with the pass on it gets one query per keyword,
     remote, no location (it filters for "open to Israel" itself), stamped
     `WORLDWIDE_ONLY_MARKET`; with the pass off it gets none, and the search does
-    not fan out to it."""
-    if name not in ctx.sources:
+    not fan out to it.
+
+    A FREELANCE search (`freelance=True`, run on `freelance_context(ctx)`) asks
+    the same boards the same way, with two differences: a board that cannot say
+    contract or freelance (`NO_FREELANCE_FIELD`) gets no query, and LinkedIn's
+    keywords carry the freelance word (`freelance_title`) at home and abroad. No
+    other board's query changes: they are filtered on their own field instead."""
+    if name not in ctx.sources or (freelance and name in NO_FREELANCE_FIELD):
         return []
     worldwide = _remote_ok(ctx) and ctx.include_worldwide
     if name in WORLDWIDE_ONLY_BOARDS:
@@ -728,10 +821,15 @@ def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str, s
         locations = [(ctx.location, ctx.work_mode, "")]
         if name == WORLDWIDE_BOARD and worldwide:
             locations = locations + [(loc, "remote", loc) for loc in WORLDWIDE_REMOTE_LOCATIONS]
-    return [(t, loc, mode, origin) for t in ctx.job_titles for loc, mode, origin in locations]
+    titles = ctx.job_titles
+    if freelance and name in EMPLOYMENT_ON_PAGE:
+        titles = list(dict.fromkeys(freelance_title(t) for t in ctx.job_titles))
+    return [(t, loc, mode, origin) for t in titles for loc, mode, origin in locations]
 
 
-def _search_board(name: str, ctx: SearchContext) -> tuple[list[JobHit], list[str], list[str]]:
+def _search_board(
+    name: str, ctx: SearchContext, freelance: bool = False
+) -> tuple[list[JobHit], list[str], list[str]]:
     """All queries for one board (keywords × locations), serially (politeness
     is per-board). Never raises: a query that fails or matches nothing must
     not hide the other queries' hits, so per-query outcomes are collected and
@@ -740,7 +838,7 @@ def _search_board(name: str, ctx: SearchContext) -> tuple[list[JobHit], list[str
     board_hits: list[JobHit] = []
     board_errors: list[str] = []
     board_empty: list[str] = []
-    for query_i, (title, location, work_mode, origin) in enumerate(_board_queries(name, ctx)):
+    for query_i, (title, location, work_mode, origin) in enumerate(_board_queries(name, ctx, freelance)):
         if query_i:
             time.sleep(FETCH_DELAY_S)  # polite gap between queries to the same board
         query_ctx = ctx.model_copy(
@@ -851,8 +949,16 @@ def search_jobs(
     sightings_fn: SightingsFn | None = None,
     hidden: HiddenJobs | None = None,
     applied: AppliedJobs | None = None,
+    freelance: bool = False,
 ) -> JobSearchResult:
-    """`hidden` is the user's "Not for me" set (PLAN 31.5/4), canonical, taken
+    """`freelance` is the Jobs page's "Freelance & contract" mode (2026-09-28): the
+    search runs on `freelance_context(ctx)` with `_board_queries(..., freelance)`,
+    keeps only postings whose board says contract or freelance (`freelance_kept`,
+    before selection on the card and after the fetch on LinkedIn's page, both
+    before any model call) and counts the rest on the result as `not_freelance`.
+    Off, nothing here changes.
+
+    `hidden` is the user's "Not for me" set (PLAN 31.5/4), canonical, taken
     out before selection (`_split_hidden`) and counted on the result.
 
     `applied` is what the tracker says the user already applied to (Phase 32,
@@ -883,7 +989,15 @@ def search_jobs(
     # pass extends the global board's queries in _board_queries, but never
     # adds a board the user unchecked. A checked board with no query (a
     # worldwide-only board while the pass is off) is not asked at all.
-    fanout = [name for name in ctx.sources if _board_queries(name, ctx)]
+    # A freelance search RUNS on its own context (the pass on) and returns the
+    # user's: `run_ctx` is read only by the fan-out below.
+    run_ctx = freelance_context(ctx) if freelance else ctx
+    fanout = [name for name in run_ctx.sources if _board_queries(name, run_ctx, freelance)]
+    if not fanout and freelance:
+        raise NoResultsError(
+            "Drushim and Greenhouse don't say which jobs are contract or freelance, so a "
+            "freelance search can't use them. Pick more boards under 'Customize search'."
+        )
     if not fanout:
         raise NoResultsError(
             "The boards you picked list remote jobs abroad only. Turn on "
@@ -897,7 +1011,7 @@ def search_jobs(
 
     def _run_board(name: str) -> tuple[list[JobHit], list[str], list[str]]:
         nonlocal boards_done
-        out = _search_board(name, ctx)
+        out = _search_board(name, run_ctx, freelance)
         with progress_lock:  # emitted on COMPLETION — parallel boards have no "starting board i"
             boards_done += 1
             notify({"stage": "boards", "source": name, "index": boards_done, "total": len(fanout)})
@@ -951,6 +1065,12 @@ def search_jobs(
     # The jobs the user already applied to (Phase 32), at the same position and
     # for the same reasons: they take no slot, and the slot refills this round.
     tiers, applied_count = _split_applied(tiers, applied)
+    # A freelance search's own filter on each board's field (2026-09-28), at the
+    # same position for the same reasons. LinkedIn's cards carry no type yet, so
+    # they stay here and are judged after the fetch (`_build_match`).
+    not_freelance = 0
+    if freelance:
+        tiers, not_freelance = _split_employment(tiers)
     # The pay-market filter (Phase 30 J) runs HERE, BEFORE selection, and the
     # position is the design. LinkedIn's "European Union" location returns
     # postings in every member state, and `_low_pay` needs only the card's
@@ -1001,12 +1121,14 @@ def search_jobs(
             source_empty=source_empty,
             hidden=hidden_count,
             applied=applied_count,
+            not_freelance=not_freelance,
         )
-    if not hits and (hidden_count or applied_count):
+    if not hits and (hidden_count or applied_count or not_freelance):
         # Everything left was hidden by the user's own choices, or was a job the
-        # user already applied to (Phase 32). "None posted in the last N days"
-        # would be false, and the page must be able to say how many it left out
-        # (and offer the hides back), so this is a 200, like the rows above.
+        # user already applied to (Phase 32), or (a freelance search) said it is
+        # not contract or freelance work. "None posted in the last N days" would
+        # be false, and the page must be able to say how many it left out (and
+        # offer the hides back), so this is a 200, like the rows above.
         return JobSearchResult(
             context=ctx,
             matches=[],
@@ -1015,6 +1137,7 @@ def search_jobs(
             source_empty=source_empty,
             hidden=hidden_count,
             applied=applied_count,
+            not_freelance=not_freelance,
         )
     if not hits and mode_removed:
         # Every posting left after the date and keyword tiers states a work mode the
@@ -1088,6 +1211,9 @@ def search_jobs(
     # Same shape, same reason: (reason, reading) for a posting the work-mode gate
     # removed after its text arrived, None for every other.
     mode_by_hit: list[tuple[str, WorkModeReading] | None] = [None] * len(hits)
+    # Same shape, same reason: True for a posting a freelance search left out
+    # after its board's type was read (LinkedIn's page says Full-time).
+    left_by_hit: list[bool] = [False] * len(hits)
     fetch_locks: dict[str, threading.Lock] = {h.source: threading.Lock() for h in hits}
     last_fetch: dict[str, float] = {}
     scored_done = 0
@@ -1119,8 +1245,9 @@ def search_jobs(
         geo: GeoRestriction | None = None
         ghost: GhostReport | None = None
         mode: tuple[str, WorkModeReading] | None = None
+        left = False
         try:
-            match, geo, ghost, mode = _build_match(hit)
+            match, geo, ghost, mode, left = _build_match(hit)
         except Exception as e:  # noqa: BLE001 - one bad posting must not sink the search
             match = None
             with progress_lock:
@@ -1128,6 +1255,7 @@ def search_jobs(
         geo_by_hit[hit_i] = geo
         ghost_by_hit[hit_i] = ghost
         mode_by_hit[hit_i] = mode
+        left_by_hit[hit_i] = left
         if match is not None:
             matches_by_hit[hit_i] = match
         with progress_lock:
@@ -1172,11 +1300,17 @@ def search_jobs(
     def _build_match(
         hit: JobHit,
     ) -> tuple[
-        JobMatch | None, GeoRestriction | None, GhostReport | None, tuple[str, WorkModeReading] | None
+        JobMatch | None,
+        GeoRestriction | None,
+        GhostReport | None,
+        tuple[str, WorkModeReading] | None,
+        bool,
     ]:
-        """(match, geo_restriction, ghost, work_mode). A blocking restriction
-        returns (None, geo, …), a CLOSED posting (None, …, ghost, None), and a
-        posting whose words fail the work-mode gate (None, …, (reason, reading)) —
+        """(match, geo_restriction, ghost, work_mode, not_freelance). A blocking
+        restriction returns (None, geo, …), a CLOSED posting (None, …, ghost,
+        None, False), a posting whose words fail the work-mode gate (None, …,
+        (reason, reading), False), and in a freelance search a posting whose board
+        says it is not contract or freelance work (None, None, None, None, True) —
         a VALUE,
         never an exception: `_score_hit`'s contract turns a raise into
         `score_errors`, which surfaces as "couldn't score any of them" and would
@@ -1189,6 +1323,20 @@ def search_jobs(
         geo: GeoRestriction | None = None
         ghost: GhostReport | None = None
         mode: tuple[str, WorkModeReading] | None = None
+        # THE FREELANCE GATE, first, above both branches and before any model
+        # call. A LinkedIn card carries no type: its page does, so it is fetched
+        # here (the fetch the tier-2 branch would have made anyway) unless a
+        # history row already holds the type LinkedIn stated. A row with no type
+        # is NOT "full-time": it may predate the label (unknown is never zero),
+        # so the page is read. Every other board's type came on its card and was
+        # judged before selection; this is the one rule, read again on the label.
+        fetched = ""
+        if freelance:
+            if freelance_kept(hit) is None and not (cached is not None and cached.employment):
+                fetched = _fetch_throttled(hit)  # fills `hit.employment` from the page
+            label = hit.employment or (cached.employment if cached is not None else "")
+            if label not in FREELANCE_KEEP:
+                return None, None, None, None, True
         # THE "OLDER" LABEL, computed ONCE, above both branches, because the
         # cache branch is the one that gets forgotten (it does no work, so
         # nothing in it looks like it needs a date).
@@ -1222,7 +1370,7 @@ def search_jobs(
             # through unclassified.
             geo = _geo_for(hit, cached.jd_text, hit.location or cached.location)
             if geo is not None and geo.blocking:
-                return None, geo, ghost, mode
+                return None, geo, ghost, mode, False
             # The ghost classifier is here for the identical reason, and it is
             # the branch that gets forgotten precisely because it does no work.
             # The wording rules and the sighting-based age read fine off cached
@@ -1245,7 +1393,7 @@ def search_jobs(
             # a cached hit must not launder past the user's own filter.
             mode = _work_mode_gate(hit, cached.jd_text, ctx.work_mode)
             if mode is not None:
-                return None, geo, ghost, mode
+                return None, geo, ghost, mode, False
             match = JobMatch(
                 title=hit.title or cached.title,
                 company=hit.company or cached.company,
@@ -1269,19 +1417,24 @@ def search_jobs(
                 ghost=ghost,
                 stale=stale,
                 applicants=_applicants_for(hit, cached),
+                # The board's own field; LinkedIn's is read by the fetch this
+                # branch skips, so the row's stored one stands in.
+                employment=hit.employment or cached.employment,
             )
         else:
             # Tier 2: a fresh row for a DIFFERENT resume still spares the
             # description fetch (and its politeness throttle) — the posting's
             # text hasn't changed; only the scoring must rerun.
-            jd_text = hit.description or (cached.jd_text if cached else "") or _fetch_throttled(hit)
+            # `fetched` first: a freelance search that read the page above holds
+            # the fresh text already, and must not fetch it twice.
+            jd_text = hit.description or fetched or (cached.jd_text if cached else "") or _fetch_throttled(hit)
             if jd_text:
                 # Before analyze_and_score, never after: this is the only seam
                 # where every code path has the text in hand and no model call
                 # has been made, so a blocking posting costs zero tokens.
                 geo = _geo_for(hit, jd_text, hit.location)
                 if geo is not None and geo.blocking:
-                    return None, geo, ghost, mode
+                    return None, geo, ghost, mode, False
                 # Ghost second, and the closure gate BEFORE analyze_and_score
                 # for the same reason the geo gate sits above it: this is the
                 # only seam where every code path holds the text and no model
@@ -1290,12 +1443,12 @@ def search_jobs(
                 # a few lines up — this is the one branch that can observe it.
                 ghost = _ghost_for(hit, jd_text, sighting, now)
                 if ghost is not None and ghost.closed:
-                    return None, geo, ghost, mode
+                    return None, geo, ghost, mode, False
                 # Third, and still before the model: the posting's own words about
                 # where the work happens, read in full now that the text is here.
                 mode = _work_mode_gate(hit, jd_text, ctx.work_mode)
                 if mode is not None:
-                    return None, geo, ghost, mode
+                    return None, geo, ghost, mode, False
                 jd, score = analyze_and_score(resume, jd_text)
                 top_matched, top_gaps = top_matched_and_gaps(score.gaps)
                 match = JobMatch(
@@ -1323,8 +1476,12 @@ def search_jobs(
                     ghost=ghost,
                     stale=stale,
                     applicants=_applicants_for(hit, cached),
+                    # After the text is in hand: LinkedIn's criterion is read by
+                    # `fetch_description`. A cached text (tier 2) was not fetched,
+                    # so the row's stored label stands in.
+                    employment=hit.employment or (cached.employment if cached else ""),
                 )
-        return match, geo, ghost, mode
+        return match, geo, ghost, mode, False
 
     with ThreadPoolExecutor(max_workers=SCORE_WORKERS) as pool:
         # copy_context() per submit, not a bare submit: a pool worker starts
@@ -1420,10 +1577,17 @@ def search_jobs(
     # rows join `filtered` only AFTER it: a market row was never in `hits`, so
     # counting it here would push `skipped` one lower per hidden posting, and
     # below zero on a morning of Bulgarian cards.
-    skipped = len(hits) - len(matches) - sum(1 for reason in filter_reasons if reason)
+    #
+    # A posting a freelance search left out after its page was read is neither:
+    # it was fetched fine and removed on purpose, so it is subtracted too and
+    # joins the pre-selection count as `not_freelance` (no row: "N full-time jobs
+    # left out" is the whole story, and a list of them is not what was asked for).
+    left_count = sum(left_by_hit)
+    skipped = len(hits) - len(matches) - sum(1 for reason in filter_reasons if reason) - left_count
     filtered = filtered + market_rows
+    not_freelance += left_count
 
-    if not matches and any(filter_reasons):
+    if not matches and (any(filter_reasons) or left_count):
         # Nothing ranked, but a SELECTED posting was filtered. Return the 200
         # with the filtered list rather than raising: this is the maximum-
         # suspicion case, the one where the user most needs to read what we
@@ -1466,7 +1630,7 @@ def search_jobs(
         # under a row that says, correctly, "no longer accepting applications".
         if score_errors:
             for i, m in enumerate(matches_by_hit):
-                if m is None and not filter_reasons[i]:
+                if m is None and not filter_reasons[i] and not left_by_hit[i]:
                     source_errors.setdefault(hits[i].source, score_errors[0])
         return JobSearchResult(
             context=ctx,
@@ -1477,6 +1641,7 @@ def search_jobs(
             source_empty=source_empty,
             hidden=hidden_count,
             applied=applied_count,
+            not_freelance=not_freelance,
         )
 
     if not matches:
@@ -1501,4 +1666,5 @@ def search_jobs(
         source_empty=source_empty,
         hidden=hidden_count,
         applied=applied_count,
+        not_freelance=not_freelance,
     )

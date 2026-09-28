@@ -71,6 +71,10 @@ def record_search_hits(
         # stops being shown on its own once it is a day old.
         if m.applicants is not None and m.applicants.read_at:
             row.applicants_json = m.applicants.model_dump_json()
+        # The same rule for the employment type (2026-09-28): a label replaces the
+        # stored one; a search that read none (a cached rebuild) leaves it.
+        if m.employment:
+            row.employment = m.employment
         row.resume_hash = resume_hash
         row.searched_at = now
     db.flush()
@@ -142,6 +146,7 @@ def load_score_cache(
             logo_url=row.logo_url or "",
             is_full_match=bool(row.resume_hash) and row.resume_hash == current_resume_hash,
             applicants=applicants_of(row.applicants_json),
+            employment=row.employment or "",
         )
     return cache
 
@@ -159,10 +164,9 @@ def applicants_of(raw: str | None) -> Applicants | None:
         return None
 
 
-def applicants_for_url(db: Session, user_id: int, url: str) -> Applicants | None:
-    """The competition line this user's search history holds for the posting at
-    `url`, for a job's own page (Phase 32): the newest history row of the same
-    posting, matched the way the tracker and History already match each other
+def hit_for_url(db: Session, user_id: int, url: str) -> JobSearchHit | None:
+    """The newest history row of the posting at `url`, for a job's own page:
+    matched the way the tracker and History already match each other
     (`_url_key`: the LinkedIn id across hosts and slugs, else the bare URL).
     Read-only, one small query (at most MAX_HISTORY rows), no fetch."""
     key = _url_key(url or "")
@@ -170,8 +174,22 @@ def applicants_for_url(db: Session, user_id: int, url: str) -> Applicants | None
         return None
     for row in list_search_hits(db, user_id):
         if row.url and _url_key(row.url) == key:
-            return applicants_of(row.applicants_json)
+            return row
     return None
+
+
+def applicants_for_url(db: Session, user_id: int, url: str) -> Applicants | None:
+    """The competition line this user's search history holds for the posting at
+    `url` (Phase 32), from `hit_for_url`'s row."""
+    row = hit_for_url(db, user_id, url)
+    return applicants_of(row.applicants_json) if row is not None else None
+
+
+def employment_for_url(db: Session, user_id: int, url: str) -> str:
+    """The board's employment type this user's search history holds for the
+    posting at `url` (2026-09-28), from `hit_for_url`'s row; "" for none."""
+    row = hit_for_url(db, user_id, url)
+    return (row.employment or "") if row is not None else ""
 
 
 def _json_list(raw: str | None) -> list[str]:

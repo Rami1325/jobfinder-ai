@@ -39,6 +39,7 @@ import re
 import urllib.error
 import urllib.parse
 
+from app.core import employment
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
 from app.core.providers.base import JobHit, NoResultsError
@@ -112,6 +113,7 @@ def parse_smartrecruiters_postings(data: dict, company_name: str = "") -> list[J
         title = str(p.get("name") or "").strip()
         location = p.get("location") if isinstance(p.get("location"), dict) else {}
         lang = p.get("language") if isinstance(p.get("language"), dict) else {}
+        kind = p.get("typeOfEmployment") if isinstance(p.get("typeOfEmployment"), dict) else {}
         hits.append(
             JobHit(
                 source="smartrecruiters",
@@ -125,6 +127,9 @@ def parse_smartrecruiters_postings(data: dict, company_name: str = "") -> list[J
                 language="he" if str(lang.get("code") or "").lower()[:2] in ("he", "iw") else detect_language(title),
                 raw=p,
                 work_mode=_work_mode(location),
+                # `typeOfEmployment` ({id: "permanent", label: "Full-time"}): the id, else
+                # the label, read exactly; never the title.
+                employment=employment.from_field(kind.get("id")) or employment.from_field(kind.get("label")),
             )
         )
     return hits

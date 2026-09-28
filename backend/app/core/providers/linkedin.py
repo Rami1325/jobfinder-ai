@@ -40,6 +40,7 @@ import time
 import urllib.error
 import urllib.parse
 
+from app.core import employment
 from app.core.geo_restriction import RAW_MAX
 from app.core.job_match import (
     _first_text,
@@ -477,6 +478,41 @@ def linkedin_applicants(html: str) -> Applicants | None:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# The employment type — the board's own criterion (2026-09-28)
+# --------------------------------------------------------------------------- #
+# MEASURED 2026-09-27 (the freelance research): the guest job page ends its
+# description with LinkedIn's own criteria list, on 60 of 60 pages read:
+#
+#     <li class="description__job-criteria-item">
+#       <h3 class="description__job-criteria-subheader">Employment type</h3>
+#       <span class="description__job-criteria-text description__job-criteria-text--criteria">Contract</span>
+#     </li>
+#
+# with one of Full-time, Part-time, Contract, Temporary, Internship, Volunteer,
+# Other. It is accurate where the title is not: LinkedIn labels "Fixed-Term
+# Contract" titles Full-time, which is right for Israel. Both CLASSES are the
+# anchor, never the words "Employment type" in the posting's own text, and
+# comments go first, as for the closure banner. English only: the app asks in
+# English (`_http_get`), and no Hebrew criteria list has been captured.
+_CRITERIA_RE = re.compile(
+    r'(?is)<h3\b[^>]*\bclass="[^"]*\bdescription__job-criteria-subheader\b[^"]*"[^>]*>\s*employment type\s*</h3>'
+    r'\s*<span\b[^>]*\bclass="[^"]*\bdescription__job-criteria-text\b[^"]*"[^>]*>(.*?)</span\s*>'
+)
+
+
+def linkedin_employment_type(html: str) -> str:
+    """The board's own employment type, as `employment.from_field` reads it: ""
+    for Full-time, Volunteer, Other, a page with no criteria list, a login wall
+    and anything unknown. Pure over the FULL guest page HTML (no network, no
+    model, no clock), pinned by `tests/fixtures/linkedin_job_contract.html` and
+    its Full-time twin with a "Fixed-Term Contract" title."""
+    if not html:
+        return ""
+    m = _CRITERIA_RE.search(_COMMENT_RE.sub(" ", html))
+    return employment.from_field(_visible(m.group(1))) if m else ""
+
+
 def _description_from_html(html: str) -> str:
     """The posting text out of an already-fetched guest page.
 
@@ -570,6 +606,9 @@ class LinkedInProvider:
         # it lives in the top card, which the description slice discards. No
         # second request, ever: this board is the one that rate-limits us.
         hit.applicants = linkedin_applicants(html)
+        # And the employment type, from the criteria list on the same page
+        # (2026-09-28): the one board field of LinkedIn's that says it.
+        hit.employment = linkedin_employment_type(html)
         text = _description_from_html(html)
         if not text or _looks_like_login_wall(text):
             return ""

@@ -36,6 +36,7 @@ const FollowUpToolPage = lazy(() => import("./pages/tools/FollowUpToolPage"));
 const OutreachToolPage = lazy(() => import("./pages/tools/OutreachToolPage"));
 const ScreeningToolPage = lazy(() => import("./pages/tools/ScreeningToolPage"));
 const CompanyBriefToolPage = lazy(() => import("./pages/tools/CompanyBriefToolPage"));
+const ProposalToolPage = lazy(() => import("./pages/tools/ProposalToolPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 function RouteFallback() {
@@ -97,6 +98,7 @@ export default function App() {
             <Route path="/tools/outreach" element={<OutreachToolPage />} />
             <Route path="/tools/screening" element={<ScreeningToolPage />} />
             <Route path="/tools/company-brief" element={<CompanyBriefToolPage />} />
+            <Route path="/tools/proposal" element={<ProposalToolPage />} />
             <Route path="/tracker" element={<TrackerPage />} />
             {/* One job, one page (PLAN 31.4). A link the alert email, the
                 extension and the tracker all carry, so the path is kept. */}

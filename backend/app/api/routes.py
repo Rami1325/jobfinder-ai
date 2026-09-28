@@ -34,6 +34,7 @@ from app.core.resume_review import review_resume
 from app.core.ats_xray import xray
 from app.core.company_brief import build_company_brief
 from app.core.cover_letter import generate_cover_letter
+from app.core.proposal import write_proposal
 from app.core.review_rewrites import rewrite_targets, write_rewrites
 from app.core.salary import extract_salary
 from app.llm.limits import (
@@ -96,13 +97,13 @@ from app.db.users import mint_user
 from app.db import applications as applications_db
 from app.db import funnel, resume_versions
 from app.db.history import (
-    applicants_for_url,
     applicants_of,
     application_statuses,
     applied_jobs_of,
     applied_kw,
     clear_search_hits,
     delete_search_hit,
+    hit_for_url,
     list_search_hits,
     load_score_cache,
     applied_status_map,
@@ -211,6 +212,8 @@ from app.models import (
     PageImagesRequest,
     PageImagesResult,
     PageCountResult,
+    ProposalRequest,
+    ProposalResponse,
     ResumeVersionList,
     ResumeVersionOut,
     OutreachRequest,
@@ -605,6 +608,53 @@ def cover_letter_pass(
     return quota.posting_pass(db, user, "cover_letter", ref=quota.jd_ref(body.jd))
 
 
+@router.post("/proposal", response_model=ProposalResponse)
+def proposal(
+    body: ProposalRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> ProposalResponse:
+    """A short bid for one freelance gig (2026-09-28): the cover letter's twin.
+
+    It rides the cover-letter pass keyed by the analysed posting, so one monthly
+    use per posting covers letters and proposals alike, changes to either ride
+    it, and a failure gives the use back (cost-and-quota.md). With no `jd` (the
+    Tools page's pasted gig) the gig is read first: its size is refused as kind
+    "gig" before anything is counted, then the daily `jd_analyze` count that
+    /jd/analyze keeps, never a monthly use, and the reading is handed back so the
+    next call rides the pass. JobFinder never sends it anywhere: the user does,
+    on the platform, themselves."""
+    settings = get_settings()
+    jd = body.jd
+    if jd is None:
+        if not body.gig_text.strip():
+            raise HTTPException(400, "Paste the gig first.")
+        require_within(body.gig_text, settings.max_jd_kb, "gig")  # 413 before any count
+        check_and_count(db, user, "jd_analyze", settings.daily_jd_analyze_cap)
+        try:
+            jd = analyze_jd(body.gig_text)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while reading the gig: {e}")
+    with quota.pass_charged(db, user, "cover_letter", ref=quota.jd_ref(jd)) as use:
+        try:
+            out = write_proposal(body.resume, jd, body.gig_text, body.rate, body.tone)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while writing the proposal: {e}")
+    return ProposalResponse(
+        proposal=out.text,
+        jd=jd,
+        language=out.language,
+        placeholders=list(out.placeholders),
+        replaced=list(out.replaced),
+        unverified=list(out.unverified),
+        included_until=use.included_until,
+        changes_left=use.calls_left,
+        expires_in_s=use.seconds_left(),
+    )
+
+
 @router.post("/render")
 def render(
     body: RenderRequest,
@@ -983,6 +1033,14 @@ def _hidden_kw(user: User) -> dict:
     return hidden_jobs.search_kw(user.hidden_jobs_json)
 
 
+def _mode_kw(body: JobSearchRequest) -> dict:
+    """`freelance=True` for `search_jobs`, only for a freelance search (2026-09-28),
+    so a search in the ordinary mode calls it exactly as before. A freelance search
+    is a search: the same daily cap and the same one monthly use, taken by the
+    route around it, never a second charge (cost-and-quota.md)."""
+    return {"freelance": True} if body.mode == "freelance" else {}
+
+
 @router.get("/jobs/hidden", response_model=HiddenJobs)
 def get_hidden_jobs(user: User = Depends(current_user)) -> HiddenJobs:
     """What this user said "Not for me" to (PLAN 31.5/4). `current_user`, like
@@ -1063,6 +1121,7 @@ def jobs_search(
                 sightings_fn=partial(load_sightings, db),
                 **_hidden_kw(user),
                 **applied,
+                **_mode_kw(body),
             )
         except ValueError as e:  # user-facing scrape/search problems
             raise HTTPException(400, str(e))
@@ -1206,6 +1265,7 @@ def jobs_search_stream(
                     sightings_fn=_sightings_fn,
                     **hidden_kw,
                     **applied,
+                    **_mode_kw(body),
                 )
             except ValueError as e:  # user-facing scrape/search problems
                 # The refund lands BEFORE the frame is queued, so no client can
@@ -1365,6 +1425,7 @@ def jobs_history(
                 ],
                 salary=extract_salary(row.jd_text or ""),
                 applicants=current_applicants(applicants_of(row.applicants_json), now),
+                employment=row.employment or "",
                 searched_at=row.searched_at.isoformat() if row.searched_at else "",
                 app_status=tracked.status if tracked else "",
                 app_id=tracked.id if tracked else None,
@@ -2553,12 +2614,12 @@ def get_application(
     kit = applications_db.pending_kit(db, user.id, app.job_url)
     send = applications_db.sendable_kit(db, user.id, app)
     # The board's competition line, only when the user's own search history
-    # holds a CURRENT reading of this posting (Phase 32). Viewing the page never
-    # fetches the posting to get one.
+    # holds a CURRENT reading of this posting (Phase 32), and the board's
+    # employment type (2026-09-28), from the same history row. Viewing the page
+    # never fetches the posting to get either.
+    seen = hit_for_url(db, user.id, app.job_url) if app.job_url else None
     applicants = (
-        current_applicants(applicants_for_url(db, user.id, app.job_url), _search_utc_now())
-        if app.job_url
-        else None
+        current_applicants(applicants_of(seen.applicants_json), _search_utc_now()) if seen is not None else None
     )
     return ApplicationDetail(
         id=app.id,
@@ -2591,6 +2652,7 @@ def get_application(
         send_kit=ApplicationKit(id=send.id, status=send.status) if send is not None else None,
         has_review=_review_whole(_stored_review(app)),
         applicants=applicants,
+        employment=(seen.employment or "") if seen is not None else "",
     )
 
 
