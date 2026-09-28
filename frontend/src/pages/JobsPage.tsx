@@ -66,6 +66,7 @@ import { BatchTailorCard, KIT_THRESHOLDS } from "./jobs/kits";
 import { SkillsEditorModal } from "./jobs/SkillsEditor";
 import { SearchScanPanel } from "./jobs/ScanPanel";
 import { PlainSearch, usePlainSearch } from "./jobs/PlainSearch";
+import { FreelanceNote, NotFreelanceCount, SearchModeSwitch, useSearchMode } from "./jobs/FreelanceMode";
 import {
   allowsRemote,
   applySearchReading,
@@ -75,6 +76,7 @@ import {
   normalizeJobUrl,
   parseWorkModes,
   searchedSources,
+  searchedSourcesFor,
   sourceLabel,
 } from "./jobs/shared";
 
@@ -151,6 +153,10 @@ export default function JobsPage() {
   // start under it; the whole card stood between the user and the results.
   // "Edit" unfolds it, and the next search folds it again.
   const [editSearch, setEditSearch] = useState(false);
+  // "Jobs / Freelance & contract" (2026-09-28): the mode the NEXT search runs in,
+  // remembered on this device. The results say the mode THEIR search ran in
+  // (`resultMode`, from the store), whatever the switch says since.
+  const [searchMode, setSearchMode] = useSearchMode();
   const [ctx, setCtx] = useState<SearchContext | null>(null);
   const [prefilling, setPrefilling] = useState(false);
   // Search in plain words (Phase 32). The line and its answer live here, so the
@@ -188,7 +194,9 @@ export default function JobsPage() {
     liveMatches,
     cancelled,
     dropped,
+    mode: resultMode,
   } = useSyncExternalStore(subscribeJobSearch, getJobSearchState);
+  const freelanceResult = resultMode === "freelance";
   // A dropped stream may still finish on the server and write its jobs to
   // History (the store has already let go of the cached copy), so the History
   // tab reads again the next time it opens instead of showing what it held.
@@ -483,10 +491,11 @@ export default function JobsPage() {
     // Not customized: null, and the backend derives the role, place and mode
     // from the resume (SEARCH_CONTEXT, a daily count and no monthly use).
     const c = customOpen ? ctx : null;
-    // The boards this search will ask: a worldwide-only board (Himalayas) only
-    // with the worldwide pass on, as the backend's fan-out does.
-    setRequestedSources(searchedSources(c));
-    startJobSearch(master.resume, c);
+    // The boards this search will ask: a worldwide-only board (Himalayas, Jobicy)
+    // only with the worldwide pass on, as the backend's fan-out does; a freelance
+    // search turns the pass on and never asks Drushim or Greenhouse.
+    setRequestedSources(searchedSourcesFor(c, searchMode));
+    startJobSearch(master.resume, c, searchMode);
     // Remember the picks a customized search ran with (or clear them when the
     // panel is off) so the next visit prefills — best-effort, never blocks.
     updateSearchPrefs(customOpen ? ctx : null).catch(() => {});
@@ -641,6 +650,7 @@ export default function JobsPage() {
             .map((w) => t(`workModes.${w}`))
             .join(", ")}`}
         {allowsRemote(searched.work_mode) && searched.include_worldwide && ` · ${t("search.worldwideTag")}`}
+        {freelanceResult && ` · ${t("freelance.tag")}`}
         {" — "}
         {t("search.ranked", { count: searchResult.matches.length })}
         {searchResult.skipped > 0 && t("search.skipped", { count: searchResult.skipped })}
@@ -900,6 +910,7 @@ export default function JobsPage() {
               {/* Search in plain words (Phase 32): one row, and the line is read
                   into the fields below, which open for the user to check. */}
               <PlainSearch state={plain} onRead={onPlainRead} disabled={prefilling} />
+              <SearchModeSwitch mode={searchMode} onChange={setSearchMode} disabled={searching} hint={false} />
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
@@ -925,6 +936,7 @@ export default function JobsPage() {
               {t("search.cardBody")}
             </p>
             <PlainSearch state={plain} onRead={onPlainRead} disabled={prefilling} className="mt-3" />
+            <SearchModeSwitch mode={searchMode} onChange={setSearchMode} disabled={searching} className="mt-3" />
 
             <label className="mt-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-ink">
               <input
@@ -1035,7 +1047,13 @@ export default function JobsPage() {
                     layout: { type: "spring", duration: 0.25, bounce: 0.15 },
                   }}
                 >
-                  <MatchCard m={m} best={i === 0} appStatus={statusFor(m)} appId={idFor(m)} />
+                  <MatchCard
+                    m={m}
+                    best={i === 0}
+                    appStatus={statusFor(m)}
+                    appId={idFor(m)}
+                    freelance={freelanceResult}
+                  />
                 </motion.div>
               ))}
             </div>
@@ -1113,6 +1131,7 @@ export default function JobsPage() {
                     onManage={() => setHideManager(true)}
                   />
                   <AppliedCount count={searchResult.applied ?? 0} />
+                  {freelanceResult && <NotFreelanceCount count={searchResult.not_freelance ?? 0} />}
                 </div>
                 {(searchResult.filtered?.length ?? 0) > 0 &&
                   (() => {
@@ -1194,9 +1213,14 @@ export default function JobsPage() {
                       appStatus={statusFor(m)}
                       appId={idFor(m)}
                       onNotForMe={m.url ? () => void notForMe(m) : undefined}
+                      freelance={freelanceResult}
                     />
                   </motion.div>
                 ))}
+                {/* A freelance search always ends with the way to the gigs it
+                    cannot read (XPlace, Upwork, a group), and with nothing found
+                    that is the whole answer. */}
+                {freelanceResult && <FreelanceNote empty={searchResult.matches.length === 0} />}
                 {showRestricted &&
                   (searchResult.filtered ?? []).map((job, i) => (
                     <RestrictedRow key={job.url || `filtered-${i}`} job={job} />

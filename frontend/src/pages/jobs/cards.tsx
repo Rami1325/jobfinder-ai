@@ -11,6 +11,7 @@ import {
   EyeOff,
   Ghost,
   Globe,
+  Handshake,
   Laptop,
   MessageCircle,
   Bookmark,
@@ -576,6 +577,7 @@ export function MatchCard({
   appStatus,
   appId,
   onNotForMe,
+  freelance = false,
 }: {
   m: JobMatch;
   best: boolean;
@@ -584,6 +586,9 @@ export function MatchCard({
   appId?: number | null;
   /** "Not for me" (PLAN 31.5/4): the page hides the row and offers more. */
   onNotForMe?: () => void;
+  /** A freelance search's row (2026-09-28): the proposal writer is its one
+   * primary action, and Tailor moves into the menu. */
+  freelance?: boolean;
 }) {
   const nav = useNavigate();
   const { t, i18n } = useTranslation("jobs");
@@ -670,10 +675,26 @@ export function MatchCard({
   const jdForTools = jdTextWithLocation(m.jd_text, m.location);
   const reason = fitReason(m.top_matched, m.top_gaps, t);
   const employment = employmentText(m.employment, t);
+  const tailor = () =>
+    nav("/app", {
+      state: {
+        jdText: jdForTools,
+        jobUrl: m.url || undefined,
+        jobTitle: m.title,
+        company: m.company,
+      },
+    });
+  // A freelance row's one primary action: the posting's text goes to the
+  // proposal writer, which reads it as the gig (a daily count, never a use) and
+  // says what the proposal costs before the tap.
+  const propose = () => nav("/tools/proposal", { state: { gigText: jdForTools } });
   // What has no slot of its own on a compact row (PLAN 31.2/5). The kit, the
   // outreach and the brief move to the job's own page with 31.4; until then
   // they are here, so a search result keeps every door it had.
   const more: MoreItem[] = [
+    ...(freelance
+      ? [{ key: "tailor", label: t("card.tailor"), Icon: ArrowRight, onClick: tailor }]
+      : []),
     ...(m.url && m.jd_text
       ? [{ key: "kit", label: t("card.kit"), Icon: Wand2, onClick: () => void makeKit(), disabled: kitOut || batching }]
       : []),
@@ -789,23 +810,21 @@ export function MatchCard({
         <div className="mt-2 flex items-center gap-2">
           {/* Secondary (PLAN 31.7, one primary per screen): a list of these
               was a column of blue buttons under the page's own Search again. */}
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
-            onClick={() =>
-              nav("/app", {
-                state: {
-                  jdText: jdForTools,
-                  jobUrl: m.url || undefined,
-                  jobTitle: m.title,
-                  company: m.company,
-                },
-              })
-            }
-          >
-            {t("card.tailor")}
-          </Button>
+          {freelance ? (
+            // 44 px to tap on a phone: the row's one action for a freelancer.
+            <Button size="sm" variant="secondary" icon={<Handshake size={14} />} onClick={propose} className="min-h-11 lg:min-h-0">
+              {t("card.proposal")}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
+              onClick={tailor}
+            >
+              {t("card.tailor")}
+            </Button>
+          )}
           {status ? (
             // NOT disabled: it is the only route to the job the toast just
             // named, and a disabled button dispatches no click at all. It opens

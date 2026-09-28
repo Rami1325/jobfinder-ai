@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Handshake, Sparkles } from "lucide-react";
 import { writeProposal } from "../../api/client";
@@ -37,7 +38,14 @@ export default function ProposalToolPage() {
   const { t } = useTranslation("tools");
   const { t: tCommon } = useTranslation();
   const { master, loading } = useMasterResume();
-  const [gig, setGig] = useState(lastGig);
+  // A freelance search's "Write a proposal" (2026-09-28) hands over the
+  // posting's text as the gig. It replaces what the box held, once, when the
+  // page opens: the same posting again finds its proposal (its pass) kept.
+  const handed = (useLocation().state as { gigText?: unknown } | null)?.gigText;
+  const [gig, setGig] = useState(() => {
+    if (typeof handed === "string" && handed.trim()) lastGig = handed;
+    return lastGig;
+  });
   const [rate, setRate] = useState(lastRate);
   const [written, setWritten] = useState<Written | null>(lastWritten);
   const [writing, setWriting] = useState(false);

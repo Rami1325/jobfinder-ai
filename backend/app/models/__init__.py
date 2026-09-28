@@ -1917,9 +1917,17 @@ class SearchQueryOut(BaseModel):
     used_model: bool = False
 
 
+SEARCH_MODES = ("jobs", "freelance")
+
+
 class JobSearchRequest(BaseModel):
     resume: ResumeModel
     customize: Optional[SearchContext] = None  # None => fully automatic
+    # The Jobs page's mode (2026-09-28, freelance part 3): "freelance" keeps only
+    # postings whose board says contract or freelance (`job_search.search_jobs`,
+    # `freelance=`). A request field, not a SearchContext one: the context is what
+    # the page's form holds and alerts store, and neither changes with the mode.
+    mode: Literal["jobs", "freelance"] = "jobs"
 
 
 class JobSearchResult(BaseModel):
@@ -1955,6 +1963,11 @@ class JobSearchResult(BaseModel):
     # interview, offer or rejected. A count of jobs, not of board hits, said on
     # the page and never folded into `skipped`, `filtered` or `hidden`.
     applied: int = 0
+    # A freelance search only (`JobSearchRequest.mode`): how many postings were
+    # left out because their board says they are not contract or freelance work
+    # (full-time, part-time, temporary, an internship, or no type stated), before
+    # selection on the card and after the fetch on LinkedIn's page. 0 otherwise.
+    not_freelance: int = 0
 
 
 class JobSearchHitOut(BaseModel):

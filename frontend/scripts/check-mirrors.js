@@ -13050,6 +13050,10 @@ try {
     if (!/const saved = !file && !!master;/.test(sc) || !/\(!!file \|\| saved\)/.test(sc)) out.push("the scan does not default to the saved resume");
     if ((cd.match(/variant="secondary"\s*icon=\{<ArrowRight size=\{14\}/g) ?? []).length !== 2)
       out.push("a job row's Tailor is not secondary, so the Jobs page shows a column of primaries");
+    // A freelance search's rows lead with the proposal writer (2026-09-28), and
+    // it is the row's one action, not a primary: the same column of blue buttons.
+    if ((cd.match(/variant="secondary"\s*icon=\{<Handshake size=\{14\} \/>\}\s*onClick=\{propose\}/g) ?? []).length !== 1)
+      out.push("a freelance row's Write a proposal is not secondary, so a freelance search shows a column of primaries");
     return out;
   };
   const files = { panel, alerts, scan, cards };
@@ -13059,7 +13063,10 @@ try {
     if (!readFiles({ ...files, [key]: files[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
   };
   plantFile("scan", "const saved = !file && !!master;", "const saved = false;", "a scan that asks for the file again");
-  plantFile("cards", 'variant="secondary"', 'variant="primary"', "a primary Tailor on every row");
+  // Each by its own icon: since 2026-09-28 the first `variant="secondary"` in the
+  // file is a freelance row's proposal, and the Tailor twin never planted.
+  plantFile("cards", 'variant="secondary"\n              icon={<ArrowRight size={14}', 'variant="primary"\n              icon={<ArrowRight size={14}', "a primary Tailor on every row");
+  plantFile("cards", 'variant="secondary" icon={<Handshake size={14} />}', 'variant="primary" icon={<Handshake size={14} />}', "a primary proposal on every freelance row");
   for (const loc of ["en", "he"]) {
     const common = JSON.parse(read(`locales/${loc}/common.json`));
     const tailor = JSON.parse(read(`locales/${loc}/tailor.json`));
@@ -13189,7 +13196,7 @@ try {
     "",
     "History's count not mirrored",
   );
-  plant("models", "    applied: int = 0\n\n\nclass JobSearchHitOut", "\n\nclass JobSearchHitOut", "the search's count gone from the backend");
+  plant("models", "    applied: int = 0\n    # A freelance search only", "    # A freelance search only", "the search's count gone from the backend");
 
   const keys = [...new Set([...real.jobs.matchAll(/\bt\(\s*"(applied\.[\w.]+)"/g)].map((m) => m[1]))];
   if (keys.length < 1) throw new Error("read no applied.* key out of pages/JobsPage.tsx");
@@ -14886,6 +14893,10 @@ try {
       ["linkedin", "https://himalayas.app/x", ""],
       [undefined, "not a url", ""],
       [undefined, undefined, ""],
+      // Jobicy since 2026-09-28 (every answer of its API asks for the credit).
+      ["jobicy", "https://jobicy.com/jobs/153923-interpreter", "jobicy"],
+      [undefined, "https://jobicy.com/jobs/153923-interpreter", "jobicy"],
+      [undefined, "https://jobicy.com.evil.example/jobs/1", ""],
     ];
     for (const [source, url, want] of cases)
       if (fn(source, url) !== want) out.push(`attributedSource(${JSON.stringify(source)}, ${JSON.stringify(url)}) is not "${want}"`);
@@ -14977,7 +14988,7 @@ try {
 try {
   const shared100 = runProbeBundle(
     "worldwide",
-    'export { SOURCE_IDS, WORLDWIDE_SOURCES, WORLDWIDE_ONLY_SOURCES, searchedSources, applySearchReading } from "./pages/jobs/shared";\n',
+    'export { SOURCE_IDS, SOURCE_NAMES, WORLDWIDE_SOURCES, WORLDWIDE_ONLY_SOURCES, searchedSources, applySearchReading } from "./pages/jobs/shared";\n',
   );
   for (const k of ["WORLDWIDE_SOURCES", "WORLDWIDE_ONLY_SOURCES", "searchedSources", "applySearchReading"])
     if (!(k in shared100)) throw new Error(`pages/jobs/shared.ts exports no ${k}`);
@@ -15028,7 +15039,8 @@ try {
     const out = [];
     const run = /function runSearch\(\) \{[\s\S]*?\n  \}\n/.exec(jobs);
     if (!run) throw new Error("pages/JobsPage.tsx: function runSearch not found");
-    if (!/setRequestedSources\(searchedSources\(c\)\)/.test(run[0])) out.push("the scan panel is not fed the boards the search asks (searchedSources)");
+    if (!/setRequestedSources\(searchedSourcesFor\(c, searchMode\)\)/.test(run[0]))
+      out.push("the scan panel is not fed the boards the search asks in its mode (searchedSourcesFor)");
     const fields = fnSource(alerts, "export function CustomizeFields");
     if (/selectedSources\.includes\("linkedin"\)/.test(fields)) out.push("the worldwide opt-in is still gated on LinkedIn alone");
     if (!/selectedSources\.some\(\(s\) => WORLDWIDE_SOURCES\.includes\(s\)\)/.test(fields)) out.push("the worldwide opt-in is not gated on the worldwide boards");
@@ -15037,7 +15049,11 @@ try {
     if (!/<label key=\{id\} className="flex min-h-11 /.test(fields)) out.push("a board in the list is not a 44 px row");
     for (const [loc, b] of [["en", en], ["he", he]]) {
       for (const k of ["worldwideLine", "worldwideNeedsLinkedIn", "worldwideWhy"])
-        if (!/Himalayas/.test(b.search?.[k] ?? "")) out.push(`locales/${loc}/jobs.json search.${k} does not name Himalayas`);
+        for (const id of shared100.WORLDWIDE_ONLY_SOURCES) {
+          const name = shared100.SOURCE_NAMES[id]?.en;
+          if (!name) throw new Error(`worldwide-only board "${id}" has no name in SOURCE_NAMES`);
+          if (!(b.search?.[k] ?? "").includes(name)) out.push(`locales/${loc}/jobs.json search.${k} does not name ${name}`);
+        }
       if (typeof b.search?.worldwideOnlyBoard !== "string" || !b.search.worldwideOnlyBoard.trim())
         out.push(`locales/${loc}/jobs.json has no search.worldwideOnlyBoard`);
     }
@@ -15054,12 +15070,15 @@ try {
     if (!real100[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
     if (!read100({ ...real100, [key]: real100[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
   };
-  plant100("jobs", "setRequestedSources(searchedSources(c))", "setRequestedSources(c?.sources ?? [])", "a scan panel fed the chosen boards");
+  plant100("jobs", "setRequestedSources(searchedSourcesFor(c, searchMode))", "setRequestedSources(c?.sources ?? [])", "a scan panel fed the chosen boards");
+  plant100("jobs", "setRequestedSources(searchedSourcesFor(c, searchMode))", "setRequestedSources(searchedSources(c))", "a scan panel that ignores the mode");
   plant100("alerts", "const worldwideBoard = selectedSources.some((s) => WORLDWIDE_SOURCES.includes(s));",
     'const worldwideBoard = selectedSources.includes("linkedin");', "an opt-in gated on LinkedIn alone");
   plant100("alerts", '<label key={id} className="flex min-h-11 ', '<label key={id} className="flex ', "a board row too small to tap");
   if (!read100({ ...real100, he: { ...real100.he, search: { ...real100.he.search, worldwideLine: "מלינקדאין." } } }).length)
     throw new Error("the reader passes a Hebrew line that names LinkedIn alone");
+  if (!read100({ ...real100, en: { ...real100.en, search: { ...real100.en.search, worldwideWhy: "From LinkedIn and Himalayas." } } }).length)
+    throw new Error("the reader passes an English line that leaves Jobicy out");
 } catch (e) {
   fail(`worldwide boards check (check 100) could not run: ${e.message}`);
 }
@@ -15386,6 +15405,191 @@ try {
   plant103("types", "export interface SearchContext {\n", "export interface SearchContext {\n  employment_type?: string;\n", "a search filter on it");
 } catch (e) {
   fail(`employment label check (check 103) could not run: ${e.message}`);
+}
+
+// ---- 104. the freelance search: one mode, the server's rule, the proposal first //
+// 2026-09-28 (freelance, part 3). "Jobs / Freelance & contract" over the Jobs
+// page's search: a freelance search keeps only postings whose BOARD says contract
+// or freelance (the server's `job_search.freelance_kept`; nothing here reads a
+// title or a label), turns the worldwide pass on when remote work is allowed and
+// never asks Drushim or Greenhouse. (a) EXECUTES pages/jobs/shared.ts:
+// `SEARCH_MODES` equals the backend's `JobSearchRequest.mode` values and
+// `NO_FREELANCE_SOURCES` its `NO_FREELANCE_FIELD` (a degraded skip without
+// backend/); `searchedSourcesFor(c, "jobs")` IS `searchedSources(c)` for every
+// context, and in "freelance" it lists the worldwide-only boards whenever remote
+// work is allowed (a search the page does not customise counts as "any"), none
+// for an on-site search, and never Drushim or Greenhouse. (b) The wire: the
+// client sends `mode` only for a freelance search, from both search calls; the
+// store hands the mode to the stream AND to the fallback; both backend routes pass
+// `**_mode_kw(body)`, which is {} unless the mode is "freelance"; `not_freelance`
+// is mirrored on JobSearchResult both sides. (c) The page: the switch is drawn on
+// both states of the search card, a radiogroup of two 44 px choices, its choice
+// kept in localStorage behind try/catch on both the read and the write; runSearch
+// runs the switch's mode; the results are judged by the mode THEIR search ran in
+// (`resultMode`, from the store), both MatchCard lists take `freelance`, the
+// count of what was left out is said, and the note to paste a gig closes every
+// freelance result (the whole answer when nothing was found). (d) A freelance row
+// leads with Write a proposal, which hands the posting to /tools/proposal as
+// `gigText` (read there), and keeps Tailor in its menu. (e) Every freelance.* key
+// and card.proposal resolve in both jobs.json with their plural sets, and the note
+// names the places the gigs are (XPlace, Upwork). Planted twins every run.
+try {
+  const sh104 = runProbeBundle(
+    "freelance",
+    'export { SEARCH_MODES, NO_FREELANCE_SOURCES, SOURCE_IDS, WORLDWIDE_ONLY_SOURCES, searchedSources, searchedSourcesFor } from "./pages/jobs/shared";\n',
+  );
+  for (const k of ["SEARCH_MODES", "NO_FREELANCE_SOURCES", "searchedSources", "searchedSourcesFor"])
+    if (!(k in sh104)) throw new Error(`pages/jobs/shared.ts exports no ${k}`);
+  const models104 = pySource("app/models/__init__.py", "check 104");
+  const js104 = pySource("app/core/job_search.py", "check 104");
+  const routes104 = pySource("app/api/routes.py", "check 104");
+  const lf104 = (s) => (s === null ? null : s.replace(/\r\n/g, "\n"));
+  if (models104 !== null) {
+    const m = /^    mode: Literal\[([^\]]*)\] = "jobs"$/m.exec(lf104(models104));
+    if (!m) throw new Error('app/models: JobSearchRequest has no `mode: Literal[...] = "jobs"`');
+    const modes = m[1].split(",").map((x) => x.trim().replace(/^"|"$/g, ""));
+    if (JSON.stringify(modes) !== JSON.stringify([...sh104.SEARCH_MODES]))
+      fail(`check 104: SEARCH_MODES is ${JSON.stringify(sh104.SEARCH_MODES)}, the backend's JobSearchRequest.mode ${JSON.stringify(modes)}`);
+  }
+  if (js104 !== null) {
+    const m = /^NO_FREELANCE_FIELD: frozenset\[str\] = frozenset\(\{([^}]*)\}\)/m.exec(lf104(js104));
+    if (!m) throw new Error("job_search.py: NO_FREELANCE_FIELD not found");
+    const ids = m[1].split(",").map((x) => x.trim().replace(/^"|"$/g, "")).filter(Boolean).sort();
+    if (JSON.stringify(ids) !== JSON.stringify([...sh104.NO_FREELANCE_SOURCES].sort()))
+      fail(`check 104: NO_FREELANCE_SOURCES is ${JSON.stringify(sh104.NO_FREELANCE_SOURCES)}, the backend's NO_FREELANCE_FIELD ${JSON.stringify(ids)}`);
+  }
+  const judge104 = (forMode) => {
+    const out = [];
+    const ctx = (over) => ({ job_title: "QA", location: "", work_mode: "any", limit: 10, ...over });
+    const contexts = [
+      ["no customisation", null],
+      ["any", ctx({})],
+      ["remote, pass on", ctx({ work_mode: "remote", include_worldwide: true })],
+      ["on-site", ctx({ work_mode: "onsite" })],
+      ["on-site, pass on", ctx({ work_mode: "onsite", include_worldwide: true })],
+      ["three boards", ctx({ sources: ["drushim", "linkedin", "jobicy"] })],
+    ];
+    for (const [label, c] of contexts)
+      if (JSON.stringify(forMode(c, "jobs")) !== JSON.stringify(sh104.searchedSources(c)))
+        out.push(`a jobs search with ${label} lists ${JSON.stringify(forMode(c, "jobs"))}, not what it asks`);
+    const only = [...sh104.WORLDWIDE_ONLY_SOURCES];
+    const fl = (c) => forMode(c, "freelance");
+    for (const [label, c] of contexts) {
+      const got = fl(c);
+      if (got.some((s) => sh104.NO_FREELANCE_SOURCES.includes(s))) out.push(`a freelance search with ${label} lists Drushim or Greenhouse`);
+      const remote = c === null || c.work_mode !== "onsite";
+      const chosen = c?.sources?.length ? c.sources : [...sh104.SOURCE_IDS];
+      for (const s of only)
+        if (chosen.includes(s) && got.includes(s) !== remote)
+          out.push(`a freelance search with ${label} ${remote ? "leaves out" : "lists"} ${s} (the pass is on exactly when remote work is allowed)`);
+    }
+    if (JSON.stringify(fl(ctx({ sources: ["drushim", "linkedin", "jobicy"] }))) !== JSON.stringify(["linkedin", "jobicy"]))
+      out.push("a freelance search over Drushim, LinkedIn and Jobicy does not ask LinkedIn and Jobicy, in that order");
+    return out;
+  };
+  for (const p of judge104(sh104.searchedSourcesFor)) fail(`check 104: ${p}`);
+  for (const [label, twin] of [
+    ["a freelance search that asks every board", (c, m) => sh104.searchedSources(m === "freelance" ? { ...(c ?? {}), include_worldwide: true } : c)],
+    ["a freelance search that leaves the pass as it was", (c, m) => (m === "freelance" ? sh104.searchedSources(c).filter((s) => !sh104.NO_FREELANCE_SOURCES.includes(s)) : sh104.searchedSources(c))],
+    ["a jobs search that drops Drushim", (c, m) => (m === "jobs" ? sh104.searchedSources(c).filter((s) => s !== "drushim") : sh104.searchedSourcesFor(c, m))],
+  ])
+    if (!judge104(twin).length) throw new Error(`the judge passes ${label}`);
+
+  const read104 = ({ client, store, jobs, cards, fm, tool, types, routes, models }) => {
+    const out = [];
+    if (!/function searchBody\([^)]*\)\s*\{\s*return \{ resume, customize: customize \?\? null, \.\.\.\(mode === "freelance" \? \{ mode \} : \{\}\) \};/.test(client))
+      out.push("the client does not send `mode` only for a freelance search (searchBody)");
+    if ((client.match(/searchBody\(resume, customize, mode\)/g) || []).length !== 2)
+      out.push("the two search calls do not both build their body with searchBody");
+    if (!/searchJobs\(resume, customize, mode\)/.test(store) || !/controller\.signal,\s*mode,\s*\)/.test(store))
+      out.push("the store does not hand the mode to both the stream and its fallback");
+    if (!/mode: resultMode,/.test(jobs) || !/const freelanceResult = resultMode === "freelance";/.test(jobs))
+      out.push("the results are not judged by the mode their own search ran in");
+    const run = /function runSearch\(\) \{[\s\S]*?\n  \}\n/.exec(jobs);
+    if (!run) throw new Error("pages/JobsPage.tsx: function runSearch not found");
+    if (!/startJobSearch\(master\.resume, c, searchMode\)/.test(run[0])) out.push("runSearch does not run the switch's mode");
+    if ((jobs.match(/<SearchModeSwitch mode=\{searchMode\} onChange=\{setSearchMode\}/g) || []).length !== 2)
+      out.push("the switch is not on both states of the search card");
+    if ((jobs.match(/freelance=\{freelanceResult\}/g) || []).length !== 2)
+      out.push("the streamed and the final result lists do not both hand their rows the mode");
+    if (!/\{freelanceResult && <NotFreelanceCount count=\{searchResult\.not_freelance \?\? 0\} \/>\}/.test(jobs))
+      out.push("a freelance search does not say how many jobs it left out");
+    if (!/\{freelanceResult && <FreelanceNote empty=\{searchResult\.matches\.length === 0\} \/>\}/.test(jobs))
+      out.push("a freelance result does not end with the way to paste a gig");
+    const sw = fnSource(fm, "export function SearchModeSwitch");
+    if (!/role="radiogroup"/.test(sw) || !/role="radio"/.test(sw) || !/aria-checked=\{mode === m\}/.test(sw))
+      out.push("the switch is not a radiogroup of radios");
+    if (!/\bmin-h-11\b/.test(sw)) out.push("a choice of the switch is not 44 px to tap (min-h-11)");
+    const readMode = fnSource(fm, "function readMode");
+    const hook = fnSource(fm, "export function useSearchMode");
+    if (!/try \{[\s\S]*localStorage\.getItem[\s\S]*\} catch/.test(readMode) || !/try \{[\s\S]*localStorage\.setItem[\s\S]*\} catch/.test(hook))
+      out.push("the switch's storage is not behind try/catch on both the read and the write");
+    const card = fnSource(cards, "export function MatchCard");
+    if (!/const propose = \(\) => nav\("\/tools\/proposal", \{ state: \{ gigText: jdForTools \} \}\);/.test(card))
+      out.push("a freelance row does not hand its posting to /tools/proposal as gigText");
+    if (!/\{freelance \? \(\s*<Button size="sm" variant="secondary" icon=\{<Handshake size=\{14\} \/>\} onClick=\{propose\}[^>]*>\s*\{t\("card\.proposal"\)\}/.test(card))
+      out.push("a freelance row does not lead with Write a proposal");
+    if (!/onClick=\{propose\} className="[^"]*\bmin-h-11\b/.test(card)) out.push("a freelance row's Write a proposal is not 44 px to tap on a phone");
+    if (!/\.\.\.\(freelance\s*\?\s*\[\{ key: "tailor", label: t\("card\.tailor"\), Icon: ArrowRight, onClick: tailor \}\]/.test(card))
+      out.push("a freelance row does not keep Tailor in its menu");
+    if (!/\(useLocation\(\)\.state as \{ gigText\?: unknown \} \| null\)\?\.gigText/.test(tool))
+      out.push("the proposal tool does not read the gig a search row hands it");
+    const res = blockAfter(types, "export interface JobSearchResult {", "types.ts JobSearchResult");
+    if (!/\bnot_freelance\?: number;/.test(res)) out.push("types.ts JobSearchResult does not mirror not_freelance");
+    if (routes !== null) {
+      if ((routes.match(/\*\*_mode_kw\(body\),/g) || []).length !== 2) out.push("the two search routes do not both pass the mode (**_mode_kw(body))");
+      if (!/return \{"freelance": True\} if body\.mode == "freelance" else \{\}/.test(routes))
+        out.push("_mode_kw hands search_jobs something for an ordinary search");
+    }
+    if (models !== null) {
+      const m = models.match(/\nclass JobSearchResult\(BaseModel\):\n([\s\S]*?)(?=\n(?:class |def |[A-Z_]+ = ))/);
+      if (!m) throw new Error("app/models: class JobSearchResult not found");
+      if (!/^    not_freelance: int = 0$/m.test(m[1])) out.push("the backend's JobSearchResult has no not_freelance");
+    }
+    return out;
+  };
+  const r104 = {
+    client: decomment(read("api/client.ts")),
+    store: decomment(read("state/jobSearchStore.ts")),
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    cards: decomment(read("pages/jobs/cards.tsx")),
+    fm: decomment(read("pages/jobs/FreelanceMode.tsx")),
+    tool: decomment(read("pages/tools/ProposalToolPage.tsx")),
+    types: read("types.ts"),
+    routes: lf104(routes104),
+    models: lf104(models104),
+  };
+  for (const p of read104(r104)) fail(`check 104: ${p} (2026-09-28, freelance)`);
+  const plant104 = (key, from, to, label) => {
+    if (r104[key] === null) return;
+    if (!r104[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read104({ ...r104, [key]: r104[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant104("client", '...(mode === "freelance" ? { mode } : {})', "mode", "a mode sent with every search");
+  plant104("store", "searchJobs(resume, customize, mode)", "searchJobs(resume, customize)", "a fallback that forgets the mode");
+  plant104("jobs", "const freelanceResult = resultMode === \"freelance\";", "const freelanceResult = searchMode === \"freelance\";", "results judged by the switch, not their search");
+  plant104("jobs", "startJobSearch(master.resume, c, searchMode)", "startJobSearch(master.resume, c)", "a switch the search ignores");
+  plant104("jobs", "{freelanceResult && <FreelanceNote empty={searchResult.matches.length === 0} />}", "", "a freelance result with no way to paste a gig");
+  plant104("fm", "role=\"radiogroup\"", "role=\"group\"", "a switch that is not a radiogroup");
+  plant104("fm", "    try {\n      localStorage.setItem(MODE_KEY, m);\n    } catch {", "    {\n      localStorage.setItem(MODE_KEY, m);\n    } {", "a write to storage that can throw");
+  plant104("cards", "onClick={propose}", "onClick={tailor}", "a proposal button that tailors");
+  plant104("cards", 'onClick={propose} className="min-h-11 lg:min-h-0"', "onClick={propose}", "a proposal button too small to tap");
+  plant104("cards", "state: { gigText: jdForTools }", "state: { jdText: jdForTools }", "a gig handed under another name");
+  plant104("tool", "?.gigText;", "?.jdText;", "a tool that never reads the handed gig");
+  plant104("routes", "                    **_mode_kw(body),\n", "", "a stream that drops the mode");
+  plant104("types", "  not_freelance?: number;\n", "", "a result mirror without not_freelance");
+
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/jobs.json`));
+    const keys = new Set(["card.proposal"]);
+    for (const src of [r104.fm, r104.jobs]) for (const m of src.matchAll(/\bt\(\s*"(freelance\.[\w.]+)"/g)) keys.add(m[1]);
+    if (keys.size < 9) throw new Error(`read ${keys.size} freelance keys out of FreelanceMode.tsx and JobsPage.tsx (expected at least 9)`);
+    for (const key of keys) for (const p of keyProblems(bundle, key, loc, "the freelance search")) fail(`check 104: locales/${loc}/jobs.json ${p}`);
+    const few = bundle.freelance?.few ?? "";
+    if (!/XPlace/.test(few) || !/Upwork/.test(few)) fail(`check 104: locales/${loc}/jobs.json freelance.few does not name where the gigs are (XPlace, Upwork)`);
+  }
+} catch (e) {
+  fail(`freelance search check (check 104) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

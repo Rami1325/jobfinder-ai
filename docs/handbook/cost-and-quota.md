@@ -138,6 +138,15 @@ the `MAX_NEXT` / `GOOGLE_FAIL_PER_IP` knobs — is in `accounts-and-auth.md`.)*
 - **What that costs, recorded.** With the pool spent and no pass, a Tools-page write still spends the reading's model call before the 429 (the key is the reading, so the pass cannot be looked up first); the page disables Write at 0 uses left for a new gig, so this takes a stale tab or a raced count, and it is bounded by the `jd_analyze` daily cap. The page holds the reading in module state, so a RELOAD of `/tools/proposal` forfeits it: the next write reads again, a new key, a new use (the fit ride's accepted shape). On a job's page the analysis is stored on the row, so the card reads its pass back after a reload (P30-RELOAD-PASS).
 - Smoke pins the shared pass both ways round, the refund, the read (two model calls, one `jd_analyze` unit, one use keyed by the reading, the next call riding), the 413 before any count and inside the pass, and the closed request (a stray field, an over-long rate or adjustment is a 422 before the pass).
 
+### A freelance search is a search (2026-09-28, freelance part 3)
+
+- **Decided: the "Freelance & contract" mode costs exactly what a search costs**, on both routes: the `search` daily cap first, then one `search` use around the search (the pool's first search free, a failure refunded), taken by the route as before. The mode is one request field (`JobSearchRequest.mode`) that `_mode_kw` turns into `freelance=True`; it adds no charge, no second feature and no `_ROUTE_COST` row (`/jobs/search` stays `charged:search`). An ordinary search's call is byte for byte the old one (`_mode_kw` is `{}`), so every fake search and an alert's `search_fn` keep working unchanged.
+- **It never spends more model calls than the ordinary mode would, usually fewer**: a posting left out on its card is never fetched and never scored, and a LinkedIn posting left out on its page costs its fetch and no model call (the gate runs before `analyze_and_score`). What it can spend is fetch time: LinkedIn's cards all carry an unknown type, so each selected one is fetched to be judged.
+- **Jobicy costs nothing** beyond the one feed read an hour per instance (its API's own rule).
+- **A row's "Write a proposal" opens the proposal tool, it does not write.** The posting reaches the tool's gig box; Write reads it (a `jd_analyze` daily count, never a use) and opens that posting's letter pass (one use, said before the tap): *A proposal rides the letter's pass*, above.
+- **Alerts are unchanged**: a morning never runs the freelance mode, so a morning's `job_alert` charge is untouched.
+- Smoke pins it over HTTP: a freelance search, a jobs search and a search with no mode each write one `+1 search` event (X-Uses-Remaining 9, 8, 7), the stream the fourth (6), and an unknown mode is a 422 that spends nothing.
+
 ### Alerts on the phone cost no use (PLAN 32, 2026-09-27)
 
 - **A notification never charges, and never keeps a morning's use.** The owner's rule for the alert is that a morning

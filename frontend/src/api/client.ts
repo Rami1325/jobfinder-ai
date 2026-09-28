@@ -63,6 +63,7 @@ import type {
   ReviewRewriteResult,
   ScreeningAnswerResult,
   SearchContext,
+  SearchMode,
   SearchQueryReading,
   StaleApplication,
   TailorResult,
@@ -371,14 +372,18 @@ export async function fetchJob(url: string): Promise<string> {
   return data.text;
 }
 
+/** The search request's body. `mode` is sent only for a freelance search
+ * (2026-09-28), so an ordinary search's body is exactly what it was. */
+function searchBody(resume: ResumeModel, customize: SearchContext | null | undefined, mode: SearchMode) {
+  return { resume, customize: customize ?? null, ...(mode === "freelance" ? { mode } : {}) };
+}
+
 export async function searchJobs(
   resume: ResumeModel,
   customize?: SearchContext | null,
+  mode: SearchMode = "jobs",
 ): Promise<JobSearchResult> {
-  const { data } = await api.post<JobSearchResult>("/jobs/search", {
-    resume,
-    customize: customize ?? null,
-  });
+  const { data } = await api.post<JobSearchResult>("/jobs/search", searchBody(resume, customize, mode));
   invalidateData("history"); // the backend records every search into history
   return data;
 }
@@ -410,6 +415,7 @@ export async function searchJobsStream(
   onProgress: (e: SearchProgressEvent) => void,
   onMatch?: (m: JobMatch) => void,
   signal?: AbortSignal,
+  mode: SearchMode = "jobs",
 ): Promise<JobSearchResult> {
   const code = localStorage.getItem(ACCESS_CODE_KEY);
   const resp = await fetch(`${api.defaults.baseURL}/jobs/search/stream`, {
@@ -421,7 +427,7 @@ export async function searchJobsStream(
       ...CSRF_HEADER,
       ...(code ? { "X-App-Key": code } : {}),
     },
-    body: JSON.stringify({ resume, customize: customize ?? null }),
+    body: JSON.stringify(searchBody(resume, customize, mode)),
     signal,
   });
   // The use was reserved before the stream opened, so its count rides these

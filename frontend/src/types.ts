@@ -880,7 +880,15 @@ export interface JobSearchResult {
    * (Phase 32): the tracker holds them at applied, interview, offer or rejected.
    * The server matches; the page only says the count. */
   applied?: number;
+  /** A freelance search only (2026-09-28): how many postings were left out
+   * because their board says they are not contract or freelance work
+   * (`app.models.JobSearchResult.not_freelance`). Absent on older backends. */
+  not_freelance?: number;
 }
+/** The Jobs page's search mode (2026-09-28), `app.models.JobSearchRequest.mode`:
+ * "freelance" keeps only postings whose board says contract or freelance. Sent
+ * only when it is "freelance", so an ordinary search's request is unchanged. */
+export type SearchMode = "jobs" | "freelance";
 /** What the user said "Not for me" to (PLAN 31.5/4), GET/PUT /jobs/hidden. The
  * server stores it canonical and does ALL the matching; the page never
  * re-derives which posting a hide covers (POST /jobs/hidden/which answers). */

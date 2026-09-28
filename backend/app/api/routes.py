@@ -1033,6 +1033,14 @@ def _hidden_kw(user: User) -> dict:
     return hidden_jobs.search_kw(user.hidden_jobs_json)
 
 
+def _mode_kw(body: JobSearchRequest) -> dict:
+    """`freelance=True` for `search_jobs`, only for a freelance search (2026-09-28),
+    so a search in the ordinary mode calls it exactly as before. A freelance search
+    is a search: the same daily cap and the same one monthly use, taken by the
+    route around it, never a second charge (cost-and-quota.md)."""
+    return {"freelance": True} if body.mode == "freelance" else {}
+
+
 @router.get("/jobs/hidden", response_model=HiddenJobs)
 def get_hidden_jobs(user: User = Depends(current_user)) -> HiddenJobs:
     """What this user said "Not for me" to (PLAN 31.5/4). `current_user`, like
@@ -1113,6 +1121,7 @@ def jobs_search(
                 sightings_fn=partial(load_sightings, db),
                 **_hidden_kw(user),
                 **applied,
+                **_mode_kw(body),
             )
         except ValueError as e:  # user-facing scrape/search problems
             raise HTTPException(400, str(e))
@@ -1256,6 +1265,7 @@ def jobs_search_stream(
                     sightings_fn=_sightings_fn,
                     **hidden_kw,
                     **applied,
+                    **_mode_kw(body),
                 )
             except ValueError as e:  # user-facing scrape/search problems
                 # The refund lands BEFORE the frame is queued, so no client can
