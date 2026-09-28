@@ -98,7 +98,13 @@ this phase*; the owner approved building it on 2026-09-27).
 - **Pinned** by check-mirrors 89 (every answer box's wiring, the send's cancel, no network, the keys and a sentence
   for every note, the cap against `config.py`, the privacy sentence) and 90 (the controller EXECUTED against a
   scripted recognizer, with eight planted twins); both probed red with 13 plants in the real files. See `testing.md`.
-- **Known open.** Not tried with a real microphone on a real phone (Android's repeat heuristic, iOS's reopen). The
+- **Known open.** Not tried with a real microphone on a real phone (Android's repeat heuristic, iOS's reopen). ~~The
   job-posting box above the questions (`components/JDPaste.tsx`, shared with the tailor dialog) has no `dir="auto"`,
   so an English posting under the Hebrew interface prints its full stops at the wrong end; it was seen during this
-  pass and left alone, since it is not an answer box.
+  pass and left alone, since it is not an answer box.~~ **Fixed in the phone polish pass (2026-09-28)**: the posting
+  box is `dir="auto"`, and so are the other boxes a person types or pastes into that had no `dir` (the Jobs page's
+  Paste / URL box, the feedback box, the search's keyword and location lines, the follow-up writer's company, role
+  and fit lines). Measured with Playwright at 390 and 360 in both languages and at 1440: an English posting under the
+  Hebrew interface was drawn right to left in the posting box, the Paste / URL box and the follow-up company line
+  (and Hebrew under the English one left to right), and follows its own text in all three now. check-mirrors 111
+  holds every `<textarea>` and free-text `<input>` under `src/` to a `dir`, the paper excepted (`document-editor.md`).

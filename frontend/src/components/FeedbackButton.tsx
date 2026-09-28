@@ -60,6 +60,7 @@ export default function FeedbackButton({
       </button>
       <Modal open={open} onClose={() => setOpen(false)} title={t("feedback.title")} maxWidth="max-w-md">
         <textarea
+          dir="auto"
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder={t("feedback.placeholder")}

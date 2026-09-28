@@ -163,7 +163,10 @@ export default function JDPaste({ value, onChange, folded }: Props) {
 
   return (
     <div>
+      {/* The posting's own direction (the phone polish pass): an English ad
+          under the Hebrew UI put its full stops at the wrong end of each line. */}
       <textarea
+        dir="auto"
         value={value}
         onChange={(e) => {
           onChange(e.target.value);

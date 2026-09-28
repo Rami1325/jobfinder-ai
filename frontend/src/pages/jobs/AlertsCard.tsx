@@ -134,6 +134,7 @@ export function CustomizeFields({
           {keywords.map((kw, i) => (
             <div key={i} className="flex items-center gap-1.5">
               <input
+                dir="auto"
                 value={kw}
                 disabled={prefilling}
                 onChange={(e) =>
@@ -175,6 +176,7 @@ export function CustomizeFields({
         <label className="flex flex-col gap-1 text-xs font-semibold text-ink-muted">
           {t("search.location")}
           <input
+            dir="auto"
             value={ctx?.location ?? ""}
             disabled={prefilling}
             onChange={(e) =>

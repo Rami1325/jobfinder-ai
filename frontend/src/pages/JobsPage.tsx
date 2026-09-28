@@ -1253,6 +1253,7 @@ export default function JobsPage() {
             <Card>
               <CardTitle>{t("manual.pasteTitle")}</CardTitle>
               <textarea
+                dir="auto"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder={t("manual.pastePlaceholder")}

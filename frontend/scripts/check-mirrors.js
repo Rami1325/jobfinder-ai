@@ -16367,6 +16367,88 @@ try {
   fail(`meta line check (check 110) could not run: ${e.message}`);
 }
 
+// ---- 111. every box a person types or pastes into takes its text's direction ---- //
+// The phone polish pass (2026-09-28), item 5. The job-posting box (`JDPaste`,
+// shared by the tailor dialog, Interview, Outreach and the company brief) had no
+// `dir`, so an English posting pasted under the Hebrew UI was drawn right to left
+// with every full stop at the wrong end of its line; so did the Jobs page's
+// Paste / URL box and the feedback box, and the search's keyword and location
+// boxes and the follow-up writer's company, role and fit lines. Every
+// `<textarea>` and free-text `<input>` (text, url or search; a checkbox, a
+// number, a password, an email or a phone number is not free text) under src/
+// must carry a `dir`: `"auto"` for what the person types or pastes, whose
+// language is its own, whichever the interface is. The one exception is the
+// paper (components/ResumeView.tsx), whose boxes inherit the direction the sheet
+// COMPUTES from the resume (`document-editor.md`: `dir="auto"` is never used on
+// the paper), and BlockEditSheet's boxes carry that same explicit `dir={paperDir}`,
+// never auto, which this check also holds. JDPaste's box is `dir="auto"` by name.
+// Planted twins every run.
+try {
+  const walk111 = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk111(path.join(dir, e.name)) : e.name.endsWith(".tsx") ? [path.join(dir, e.name)] : [],
+    );
+  const files111 = Object.fromEntries(
+    walk111(SRC).map((f) => [path.relative(SRC, f).split(path.sep).join("/"), decomment(fs.readFileSync(f, "utf8").replace(/\r\n/g, "\n"))]),
+  );
+  const PAPER = new Set(["components/ResumeView.tsx"]);
+  const NOT_TEXT = new Set(["checkbox", "radio", "file", "hidden", "range", "number", "password", "email", "tel", "color", "date", "submit", "button"]);
+  const tagAt111 = (src, at, file) => {
+    let depth = 0;
+    for (let i = at; i < src.length; i++) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (depth === 0 && c === ">") return src.slice(at, i + 1);
+    }
+    throw new Error(`${file}: an unterminated tag`);
+  };
+  const read111 = (files) => {
+    const out = [];
+    let boxes = 0;
+    for (const [file, src] of Object.entries(files)) {
+      for (const m of src.matchAll(/<(textarea|input)\b/g)) {
+        const tag = tagAt111(src, m.index, file);
+        // A type chosen at run time (a password box that can show its text) may
+        // be text, so it is held to the rule like one.
+        const type = /\btype=\{/.test(tag)
+          ? "computed"
+          : (/\btype="([\w-]+)"/.exec(tag) || [])[1] ?? (m[1] === "textarea" ? "textarea" : "text");
+        if (m[1] === "input" && NOT_TEXT.has(type)) continue;
+        boxes += 1;
+        if (PAPER.has(file)) continue;
+        const line = src.slice(0, m.index).split("\n").length;
+        if (!/\bdir=/.test(tag)) out.push(`${file}:${line}: a <${m[1]}> with no dir, so what is typed or pasted into it is drawn in the interface's direction`);
+      }
+    }
+    if (boxes < 20) throw new Error(`read ${boxes} free-text boxes under src/ (expected at least 20)`);
+    const paste = files["components/JDPaste.tsx"];
+    if (!paste) throw new Error("components/JDPaste.tsx not found");
+    const pasteBox = /<textarea\b[\s\S]*?\/>/.exec(paste);
+    if (!pasteBox || !/\bdir="auto"/.test(pasteBox[0])) out.push("JDPaste's posting box is not dir=\"auto\"");
+    const sheet = files["components/BlockEditSheet.tsx"];
+    if (!sheet) throw new Error("components/BlockEditSheet.tsx not found");
+    const sheetBoxes = [...sheet.matchAll(/<(textarea|input)\b/g)].map((m) => tagAt111(sheet, m.index, "BlockEditSheet.tsx"));
+    if (sheetBoxes.length < 2) throw new Error("BlockEditSheet.tsx: read fewer than two boxes");
+    if (sheetBoxes.some((b) => !/\bdir=\{paperDir\}/.test(b))) out.push("a box in BlockEditSheet does not take the paper's explicit direction (dir={paperDir}); dir=\"auto\" flips a Hebrew bullet that starts with \"React\"");
+    return out;
+  };
+  for (const p of read111(files111)) fail(`check 111: ${p} (the phone polish pass)`);
+  const plant111 = (file, from, to, label) => {
+    if (!files111[file]?.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read111({ ...files111, [file]: files111[file].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant111("components/JDPaste.tsx", '<textarea\n        dir="auto"\n', "<textarea\n", "a posting box in the interface's direction");
+  plant111("pages/tools/FollowUpToolPage.tsx", '<input dir="auto" className={input} value={company}', "<input className={input} value={company}", "a company line with no dir");
+  plant111("components/BlockEditSheet.tsx", "dir={paperDir}", 'dir="auto"', "a bullet box that flips on its first word");
+  if (!read111({ ...files111, "pages/NewPage.tsx": "export default () => <textarea value={x} onChange={f} />;\n" }).length)
+    throw new Error("the reader passes a new page's textarea with no dir");
+  if (read111({ ...files111, "pages/NewPage.tsx": 'export default () => <input type="checkbox" checked={x} />;\n' }).length)
+    throw new Error("the reader refuses a checkbox, which is not free text");
+} catch (e) {
+  fail(`box direction check (check 111) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
