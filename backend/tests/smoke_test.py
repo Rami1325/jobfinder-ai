@@ -33925,6 +33925,107 @@ check(
     f"none={_fl_boards_none_err} asked={_fl_dr.asked}/{_fl_gh.asked}",
 )
 
+
+# The phone polish pass (2026-09-28): LinkedIn's pages are read BEFORE selection, so a posting its page calls
+# full-time takes no slot and the search fills its limit; the reads stop at limit + FREELANCE_EXTRA_PAGES.
+class _FlMany:
+    """LinkedIn's shape with many cards: `n` cards with no type, each page saying its own."""
+
+    name = "linkedin"
+
+    def __init__(self, n: int, contracts: set) -> None:
+        self.n, self.contracts = n, contracts
+        self.fetched: list = []
+        self.at: list = []
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source="linkedin", title="Python Developer", company=f"Li Many {i}", description="",
+                    url=f"https://www.linkedin.com/jobs/view/{i}")
+            for i in range(1, self.n + 1)
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        # perf_counter, never monotonic: on Windows before Python 3.13 monotonic ticks in 15.6 ms steps, so a gap
+        # read with it lands on 31 or 47 ms at random. The throttle itself runs on that clock, so a real gap can be
+        # one tick short of FETCH_DELAY_S (34 ms of 50); the bar below is half the delay, and a read with no
+        # throttle measures 0.
+        self.at.append(_time32.perf_counter())
+        i = int(hit.url.rsplit("/", 1)[-1])
+        self.fetched.append(i)
+        hit.employment = "contract" if i in self.contracts else ""
+        return "Python and SQL work on a distributed backend."
+
+
+class _FlThree(_FlBoard):
+    """An inline board with three contract postings, ranked after LinkedIn's cards by the round-robin."""
+
+    name = "fake_fl"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [_FanHit(source=self.name, title="Python Developer", company=f"Fl Three {i}",
+                        description="Python and SQL work on a distributed backend.",
+                        url=f"https://fl.test/three{i}", employment="contract") for i in (1, 2, 3)]
+
+
+def _fl_many_ctx(**over):  # noqa: ANN003, ANN202
+    return _fl_ctx_of(**({"sources": ["linkedin"], "work_mode": "onsite", "limit": 3} | over))
+
+
+_fl_delay_was = _fl_js.FETCH_DELAY_S
+_fl_js.FETCH_DELAY_S = 0.05  # the throttle stays on, shorter, so its gaps are measurable in a fast suite
+try:
+    _fl_fill_li = _FlMany(40, {1, 5, 9})
+    _fl_fill, _fl_fill_err, _fl_fill_model = _fl_search([_fl_fill_li], _fl_many_ctx(), freelance=True)
+    _fl_bound_li = _FlMany(40, set())
+    _fl_bound, _fl_bound_err, _fl_bound_model = _fl_search([_fl_bound_li], _fl_many_ctx(), freelance=True)
+    _fl_refill_li = _FlMany(40, set())
+    _fl_refill, _fl_refill_err, _fl_refill_model = _fl_search(
+        [_fl_refill_li, _FlThree()], _fl_many_ctx(sources=["linkedin", "fake_fl"]), freelance=True)
+    # A History row that stored LinkedIn's type (part-time) is judged before selection with no read, and takes no slot.
+    _fl_stored_li = _FlMany(4, {3, 4})
+    _fl_stored, _fl_stored_err, _fl_stored_model = _fl_search(
+        [_fl_stored_li], _fl_many_ctx(limit=2), freelance=True,
+        cache={"https://www.linkedin.com/jobs/view/1": _GeoCached(
+            jd_text=_FL_TEXT, overall=80.0, keyword_coverage=70.0, fit_score=90.0, top_matched=("Python",),
+            top_gaps=(), title="Python Developer", company="Li Many 1", location="", posted_at="", logo_url="",
+            is_full_match=True, employment="part_time")})
+finally:
+    _fl_js.FETCH_DELAY_S = _fl_delay_was
+_fl_gaps = [b - a for a, b in zip(_fl_fill_li.at, _fl_fill_li.at[1:])]
+check(
+    "freelance: LinkedIn's pages are read BEFORE selection, so a posting its page calls full-time takes no slot — "
+    "40 cards with Contract on pages 1, 5 and 9 fill a limit of 3 with those three (it ranked 1 when the pages were "
+    "read after selection), reading pages 1 to 9 once each, in order, through the search's own per-board throttle; "
+    "the model scored only the 3 kept, and the 6 left out are counted",
+    _fl_fill_err == "" and _fl_urls(_fl_fill) == ["1", "5", "9"]
+    and _fl_fill_li.fetched == list(range(1, 10))
+    and _fl_fill.not_freelance == 6 and _fl_fill.skipped == 0 and _fl_fill.filtered == []
+    and _fl_fill_model == 3
+    and all(m.employment == "contract" for m in _fl_fill.matches)
+    and bool(_fl_gaps) and min(_fl_gaps) >= 0.025,
+    f"err={_fl_fill_err} urls={_fl_urls(_fl_fill)} fetched={_fl_fill_li.fetched} "
+    f"nf={getattr(_fl_fill, 'not_freelance', None)} model={_fl_fill_model} "
+    f"min_gap={round(min(_fl_gaps), 3) if _fl_gaps else None}",
+)
+check(
+    "freelance: the reads are BOUNDED at limit + FREELANCE_EXTRA_PAGES (13 at a limit of 3) — 40 full-time cards: "
+    "exactly pages 1 to 13 are read, the 27 never read are neither counted nor read later, and the answer is an "
+    "honest 200 with nothing ranked and 13 left out; beside 3 contract postings of another board that the "
+    "round-robin ranks after LinkedIn's cards, the same 13 reads free the slots and those three are ranked; a "
+    "History row that stored Part-time is judged with no read and takes no slot",
+    _fl_js.FREELANCE_EXTRA_PAGES == 10
+    and _fl_bound_err == "" and _fl_bound.matches == [] and _fl_bound.not_freelance == 13
+    and _fl_bound.skipped == 0 and _fl_bound_model == 0 and _fl_bound_li.fetched == list(range(1, 14))
+    and _fl_refill_err == "" and _fl_urls(_fl_refill) == ["three1", "three2", "three3"]
+    and _fl_refill_li.fetched == list(range(1, 14)) and _fl_refill.not_freelance == 13 and _fl_refill_model == 3
+    and _fl_stored_err == "" and _fl_urls(_fl_stored) == ["3", "4"] and _fl_stored_li.fetched == [2, 3, 4]
+    and _fl_stored.not_freelance == 2 and _fl_stored_model == 2,
+    f"bound={_fl_bound_err or (_fl_bound.not_freelance, len(_fl_bound.matches))} fetched={_fl_bound_li.fetched} "
+    f"refill={_fl_refill_err or _fl_urls(_fl_refill)} fetched={_fl_refill_li.fetched} "
+    f"stored={_fl_stored_err or (_fl_urls(_fl_stored), _fl_stored.not_freelance)} fetched={_fl_stored_li.fetched}",
+)
+
 # Over HTTP: the mode rides the request, a freelance search is a search.
 _fl_route_kw: list = []
 
