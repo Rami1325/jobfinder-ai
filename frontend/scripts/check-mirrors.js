@@ -14897,6 +14897,11 @@ try {
       ["jobicy", "https://jobicy.com/jobs/153923-interpreter", "jobicy"],
       [undefined, "https://jobicy.com/jobs/153923-interpreter", "jobicy"],
       [undefined, "https://jobicy.com.evil.example/jobs/1", ""],
+      // We Work Remotely since 2026-09-28 (its RSS page: "attribute the links back to We Work Remotely").
+      ["weworkremotely", "https://weworkremotely.com/remote-jobs/acme-developer", "weworkremotely"],
+      [undefined, "https://weworkremotely.com/remote-jobs/acme-developer", "weworkremotely"],
+      [undefined, "https://weworkremotely.com.evil.example/remote-jobs/1", ""],
+      [undefined, "https://notweworkremotely.com/remote-jobs/1", ""],
     ];
     for (const [source, url, want] of cases)
       if (fn(source, url) !== want) out.push(`attributedSource(${JSON.stringify(source)}, ${JSON.stringify(url)}) is not "${want}"`);

@@ -63,8 +63,8 @@ export const MIN_SCORE_OPTIONS = [0, 60, 65, 70, 75, 80, 85, 90] as const;
 // together: a board missing here disappears from any customized search the
 // moment the user unchecks one box, and a board here the backend lacks is a box
 // that searches nothing. (Jooble retired 2026-07-05 — they discontinued their
-// Israeli index. The boards from Lever on joined 2026-09-28, Jobicy with the
-// freelance search the same day.)
+// Israeli index. The boards from Lever on joined 2026-09-28, Jobicy and We Work
+// Remotely with the freelance search the same day.)
 export const SOURCE_IDS = [
   "linkedin",
   "drushim",
@@ -76,15 +76,16 @@ export const SOURCE_IDS = [
   "ashby",
   "himalayas",
   "jobicy",
+  "weworkremotely",
 ] as const;
 
 // The boards the worldwide-remote pass runs on (`job_search.WORLDWIDE_BOARDS`),
-// and the ones it runs on ALONE (`WORLDWIDE_ONLY_BOARDS`): Himalayas and Jobicy
-// list remote jobs and are asked only for jobs open to people in Israel, never
-// with the user's own location, so a search without the pass never asks them.
-// check-mirrors 100 holds both lists to the backend's.
-export const WORLDWIDE_SOURCES: readonly string[] = ["linkedin", "himalayas", "jobicy"];
-export const WORLDWIDE_ONLY_SOURCES: readonly string[] = ["himalayas", "jobicy"];
+// and the ones it runs on ALONE (`WORLDWIDE_ONLY_BOARDS`): Himalayas, Jobicy and
+// We Work Remotely list remote jobs and are asked only for jobs open to people in
+// Israel, never with the user's own location, so a search without the pass never
+// asks them. check-mirrors 100 holds both lists to the backend's.
+export const WORLDWIDE_SOURCES: readonly string[] = ["linkedin", "himalayas", "jobicy", "weworkremotely"];
+export const WORLDWIDE_ONLY_SOURCES: readonly string[] = ["himalayas", "jobicy", "weworkremotely"];
 
 // The search's two modes (`app.models.JobSearchRequest.mode`, check-mirrors 104).
 export const SEARCH_MODES: readonly SearchMode[] = ["jobs", "freelance"];
@@ -120,14 +121,16 @@ export function searchedSourcesFor(ctx: SearchContext | null, mode: SearchMode):
 
 // Boards whose terms ask every surface showing one of their postings to NAME the
 // board beside a link back to the posting's page there (`providers.ATTRIBUTED`):
-// Himalayas' API is offered on that condition, and every answer of Jobicy's API
-// asks for it. A result from one of them shows
+// Himalayas' API is offered on that condition, every answer of Jobicy's API asks
+// for it, and We Work Remotely's feeds are open to anyone who attributes the
+// links back to it. A result from one of them shows
 // "via <board>" linking to its posting (`ViaBoard` in cards.tsx), keyed by the
 // posting's host where no source is stored (a tracked job's page). check-mirrors
 // 99 holds the ids to the backend's and the line to every result surface.
 export const ATTRIBUTED_SOURCES: Record<string, RegExp> = {
   himalayas: /(^|\.)himalayas\.app$/,
   jobicy: /(^|\.)jobicy\.com$/,
+  weworkremotely: /(^|\.)weworkremotely\.com$/,
 };
 
 /** The attributed board a result must credit: by its source when it has one,
@@ -170,6 +173,7 @@ export const SOURCE_NAMES: Record<string, { en: string; he: string }> = {
   ashby: { en: "Ashby", he: "Ashby" },
   himalayas: { en: "Himalayas", he: "Himalayas" },
   jobicy: { en: "Jobicy", he: "Jobicy" },
+  weworkremotely: { en: "We Work Remotely", he: "We Work Remotely" },
   jooble: { en: "Jooble", he: "Jooble" },
 };
 
@@ -261,7 +265,7 @@ export function applicantsText(a: Applicants | null | undefined, t: TFunction<"j
 // cards fall back to the lettered avatar unless the backend supplied a real
 // company logo_url (LinkedIn/Drushim/Comeet boards carry one when available).
 const BOARD_HOST_RE =
-  /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|greenhouse\.io|lever\.co|smartrecruiters\.com|ashbyhq\.com|himalayas\.app|jobicy\.com|jooble\.org)$/;
+  /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|greenhouse\.io|lever\.co|smartrecruiters\.com|ashbyhq\.com|himalayas\.app|jobicy\.com|weworkremotely\.com|jooble\.org)$/;
 
 export function companyDomain(url: string): string | null {
   try {

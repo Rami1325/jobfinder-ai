@@ -7118,7 +7118,7 @@ check(
         "https://himalayas.app/companies/x/jobs/y", "https://www.himalayas.app/x", "http://himalayas.app/x",
         "https://himalayas.app.evil.com/x", "https://evilhimalayas.app/x", "not a url",
     )] == [True, True, False, False, False, False]
-    and _HM_ATTR == {"himalayas": "Himalayas", "jobicy": "Jobicy"},
+    and _HM_ATTR == {"himalayas": "Himalayas", "jobicy": "Jobicy", "weworkremotely": "We Work Remotely"},
 )
 check(
     "16j himalayas parser: a title's HTML entities read as text, published pay added in the board's words, a "
@@ -7136,12 +7136,12 @@ check(
 _hm_ww = _resolve_context(resume, SearchContext(job_titles=["Dev", "QA"], location="Tel Aviv", work_mode="remote",
                                                 include_worldwide=True))
 check(
-    "16j the worldwide pass runs on THREE boards now (Jobicy since the freelance search): Himalayas gets one "
-    "query per keyword, remote, no location, "
+    "16j the worldwide pass runs on FOUR boards now (Jobicy and We Work Remotely since the freelance search): "
+    "Himalayas gets one query per keyword, remote, no location, "
     "stamped as worldwide; with the pass off, an on-site search or the board unchecked it gets NONE (never the "
     "user's own location), and LinkedIn's queries are unchanged",
-    _hm_js.WORLDWIDE_BOARDS == ("linkedin", "himalayas", "jobicy")
-    and _hm_js.WORLDWIDE_ONLY_BOARDS == {"himalayas", "jobicy"}
+    _hm_js.WORLDWIDE_BOARDS == ("linkedin", "himalayas", "jobicy", "weworkremotely")
+    and _hm_js.WORLDWIDE_ONLY_BOARDS == {"himalayas", "jobicy", "weworkremotely"}
     and _board_queries("himalayas", _hm_ww) == [("Dev", "", "remote", "Worldwide"), ("QA", "", "remote", "Worldwide")]
     and _board_queries("himalayas", _resolve_context(resume, SearchContext(job_title="Dev", location="Tel Aviv"))) == []
     and _board_queries("himalayas", _resolve_context(resume, SearchContext(
@@ -33264,12 +33264,13 @@ for _em_py in sorted(_PT_APP.rglob("*.py")):
             break
 check(
     "employment: the reader (core/employment.py) imports EXACTLY __future__ and re, reads no clock and opens nothing "
-    "(AST) — the model, the network and the clock one line away are each refused — and its importers are the nine "
-    "board providers that hand over a field (Jobicy's jobType since the freelance search), never the search or the "
-    "title matchers; EMPLOYMENT_TYPES is the six labels",
+    "(AST) — the model, the network and the clock one line away are each refused — and its importers are the ten "
+    "board providers that hand over a field (Jobicy's jobType and We Work Remotely's type since the freelance "
+    "search), never the search or the title matchers; EMPLOYMENT_TYPES is the six labels",
     len(_EM_SRC) > 2000 and _em_is_pure(_EM_SRC) and _em_unrefused == []
     and _EM_IMPORTERS == [f"core/providers/{b}.py" for b in (
-        "ashby", "comeet", "drushim", "himalayas", "jobicy", "jobmaster", "lever", "linkedin", "smartrecruiters")]
+        "ashby", "comeet", "drushim", "himalayas", "jobicy", "jobmaster", "lever", "linkedin", "smartrecruiters",
+        "weworkremotely")]
     and _em.EMPLOYMENT_TYPES == ("contract", "freelance", "also_freelance", "temporary", "part_time", "internship"),
     f"imports={sorted(_pt_imports(_EM_SRC))} not refused={_em_unrefused} importers={_EM_IMPORTERS}",
 )
@@ -33907,6 +33908,323 @@ check(
     and [(e[1], e[2]) for e in _fl_events] == [("search", 1)] * 4,
     f"kw={_fl_route_kw} codes={[r.status_code for r in (_fl_r_free, _fl_r_jobs, _fl_r_none, _fl_r_bad)]} "
     f"hdr={[_hdr32(r) for r in (_fl_r_free, _fl_r_jobs, _fl_r_none, _fl_r_stream)]} events={_fl_events}",
+)
+
+# ---------------------------------------------------------------------------
+# 2026-09-28, freelance: We Work Remotely, the third worldwide-only board beside Himalayas and Jobicy
+# (docs/handbook/job-search.md, *The freelance search*, its We Work Remotely bullet). Its public RSS feeds, each read at most once an hour through
+# job_match._http_get; a posting kept only when it is open anywhere in the world AND its country list is empty or
+# names Israel; that list never becomes the location; "Company: Role" split at the first colon; only "Contract" is a
+# label; a posting past its expires_at dropped when the cache is read; credited "via We Work Remotely".
+# ---------------------------------------------------------------------------
+from datetime import datetime as _ww_dt, timezone as _ww_tz  # noqa: E402
+
+from app.core.providers import weworkremotely as _ww  # noqa: E402
+
+_WW_XML = (_EM_FIX / "wwr_feed.xml").read_text(encoding="utf-8")
+_WW_EMPTY = '<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0"><channel><title>x</title></channel></rss>'
+_ww_hits = _ww.parse_wwr_feed(_WW_XML)
+_ww_by = {h.company: h for h in _ww_hits}
+check(
+    "wwr parser — of seven real postings (a trimmed live feed), the five open to Israel are kept (four with an empty "
+    "country list, one whose list of 70 countries names Israel) and the two that are not are left out (seven "
+    "countries without Israel; 'North America Only'); each is source weworkremotely, its URL its WWR page (the "
+    "attribution), its location EMPTY, Remote, pubDate as ISO with its offset, the logo from media:content, the "
+    "description inline, and 'Company: Role' split into the two",
+    [(h.company, h.title) for h in _ww_hits] == [
+        ("Sanctuary Computer", "Senior Shopify Developer"),
+        ("GeoPro Labs Inc", "Head of Operations - Shopify App Portfolio"),
+        ("BBE Marketing Inc", "Senior Graphic Designer"),
+        ("Lemon.io", "Senior Java & React Developer"),
+        ("IxDF - Interaction Design Foundation", "Course Writer and Editor: UX, UI, and AI"),
+    ]
+    and all(h.source == "weworkremotely" and _ww.wwr_page(h.url) and h.location == "" and h.work_mode == "Remote"
+            and h.external_id == h.url for h in _ww_hits)
+    and _ww_hits[0].url == "https://weworkremotely.com/remote-jobs/sanctuary-computer-senior-shopify-developer"
+    and _ww_hits[0].posted_at == "2026-09-18T13:04:25+00:00" and _lv_parse_date(_ww_hits[0].posted_at) is not None
+    and _ww_by["BBE Marketing Inc"].logo_url == "https://wwr-pro.s3.amazonaws.com/logos/0064/7908/logo.gif"
+    and _ww_by["GeoPro Labs Inc"].logo_url == ""
+    and all(len(h.description) > 100 and "<p>" not in h.description and "&lt;" not in h.description for h in _ww_hits)
+    and _ww.WeWorkRemotelyProvider().fetch_description(_ww_hits[0]) == _ww_hits[0].description,
+    f"{[(h.company, h.title, h.posted_at, h.logo_url[-12:], len(h.description)) for h in _ww_hits]}",
+)
+_ww_lemon = _ww_by.get("Lemon.io")
+_ww_trap = _fl_copy.copy(_ww_lemon) if _ww_lemon is not None else None
+if _ww_trap is not None:
+    _ww_trap.origin_market = _fl_js.WORLDWIDE_ONLY_MARKET  # what the worldwide pass stamps on it
+_ww_trap_placed = _fl_copy.copy(_ww_trap) if _ww_trap is not None else None
+if _ww_trap_placed is not None:
+    _ww_trap_placed.location = "South Africa"  # the defect, planted: its list's last country read as the place
+_ww_no_country = [h.company for h in _ww.parse_wwr_feed(_WW_XML.replace("<country></country>", "", 1))]
+check(
+    "wwr WHO IT IS OPEN TO, and the location trap — kept only when 'Anywhere in the World' AND the country list is "
+    "empty or names Israel (case and spacing aside); a list of other countries (Ireland is not Israel), another "
+    "region, no region, and NO country field at all (the 'All Programming' feed's shape, which says nothing) are left "
+    "out; neither the list nor the headquarters' state becomes the location, so pay_market keeps the posting whose "
+    "list ends in South Africa, while that country written as its location hides it",
+    [_ww.open_to_israel(r, c) for r, c in (
+        ("Anywhere in the World", ""), ("Anywhere in the World", "🇮🇱 Israel"), ("anywhere  in the World", "  "),
+        ("Anywhere in the World", "🇩🇪 Germany, 🇮🇱 Israel"), ("Anywhere in the World", "🇺🇸 United States of America"),
+        ("Anywhere in the World", "🇮🇹 Italy, and 🇮🇪 Ireland"), ("North America Only", ""), ("USA Only", "🇮🇱 Israel"),
+        ("", ""), (None, ""), ("Anywhere in the World", None), ("Anywhere in the World", 3),
+    )] == [True, True, True, True, False, False, False, False, False, False, False, False]
+    and _ww_lemon is not None and "Israel" in _ww_lemon.raw["country"]
+    and _ww_lemon.raw["country"].endswith("South Africa")
+    and all(h.location == "" for h in _ww_hits) and _ww_by["BBE Marketing Inc"].raw["state"] == "Texas"
+    and _fl_js._low_pay(_ww_trap) is False and _fl_js._low_pay(_ww_trap_placed) is True
+    and "Sanctuary Computer" not in _ww_no_country and len(_ww_no_country) == 4,
+    f"lemon={_ww_lemon.raw.get('country', '')[-40:] if _ww_lemon else None} no_country={_ww_no_country}",
+)
+check(
+    "wwr 'Company: Role' — split at the FIRST colon followed by a space, so a role with a colon of its own keeps it "
+    "(IxDF), a spaced colon reads right (Toptal), a colon inside a word never splits (Werkstudent:in), and a title "
+    "with no such colon is all role with no company",
+    [_ww.split_title(t) for t in (
+        "IxDF - Interaction Design Foundation: Course Writer and Editor: UX, UI, and AI ",
+        "Toptal : Professional Photoshop Artists",
+        "Recruitment Circle GmbH: Werkstudent:in im Headhunting",
+        "NoGigiddy:  Entry-Level Account Manager",
+        "Werkstudent:in im Headhunting",
+        "Senior Developer",
+        "Acme:",
+        ": Role",
+    )] == [
+        ("IxDF - Interaction Design Foundation", "Course Writer and Editor: UX, UI, and AI"),
+        ("Toptal", "Professional Photoshop Artists"),
+        ("Recruitment Circle GmbH", "Werkstudent:in im Headhunting"),
+        ("NoGigiddy", "Entry-Level Account Manager"),
+        ("", "Werkstudent:in im Headhunting"),
+        ("", "Senior Developer"),
+        ("", "Acme:"),
+        ("", ": Role"),
+    ],
+)
+_ww_titled = [h.employment for h in _ww.parse_wwr_feed(_WW_XML.replace(
+    "BBE Marketing Inc: Senior Graphic Designer", "BBE Marketing Inc: Freelance Graphic Designer (Contract)"))
+    if h.company == "BBE Marketing Inc"]
+check(
+    "wwr the label is WWR's own type field and only 'Contract' is one — the two Contract postings kept are contract, "
+    "Full-Time is plain, Part-Time, Freelance or anything unmeasured says nothing, and a Full-Time posting whose TITLE "
+    "says 'Freelance … (Contract)' gets no label (never the title)",
+    [h.employment for h in _ww_hits] == ["contract", "contract", "", "", ""]
+    and [_ww._label(v) for v in ("Contract", " contract ", "Full-Time", "Part-Time", "Freelance",
+                                 "Fixed-Term Contract", "", None)] == ["contract", "contract", "", "", "", "", "", ""]
+    and _ww_titled == [""],
+    f"{[h.employment for h in _ww_hits]} titled={_ww_titled}",
+)
+_WW_NOW = _ww_dt(2026, 9, 28, 15, 0, tzinfo=_ww_tz.utc)
+_WW_LATER = _ww_dt(2026, 10, 20, 0, 0, tzinfo=_ww_tz.utc)
+check(
+    "wwr freshness — a posting past its own expires_at is dropped (on 20 October: Sanctuary's 18th, GeoPro's 11th and "
+    "Lemon.io's 7th have passed), one with none or an unreadable one is kept (unknown is never 'expired'); the "
+    "posting date is the feed's pubDate as it gives it, an RSS date read as ISO with its offset (-0000 as UTC), junk "
+    "as unknown",
+    all(_ww.is_live(h, _WW_NOW) for h in _ww_hits)
+    and [h.company for h in _ww_hits if _ww.is_live(h, _WW_LATER)] == ["BBE Marketing Inc", "IxDF - Interaction Design Foundation"]
+    and all(_ww.is_live(_FanHit(raw=r), _WW_LATER) for r in ({"expires_at": ""}, {"expires_at": "soon"}, {}, None))
+    and [_ww.rfc822_to_iso(v) for v in (
+        "Mon, 28 Sep 2026 11:01:08 +0000", "Mon, 28 Sep 2026 11:01:08 -0000", "Mon, 28 Sep 2026 14:01:08 +0300",
+        "2026-09-28", "yesterday", "", None, 1790000000,
+    )] == ["2026-09-28T11:01:08+00:00", "2026-09-28T11:01:08+00:00", "2026-09-28T14:01:08+03:00", "", "", "", "", ""],
+    f"{[h.company for h in _ww_hits if _ww.is_live(h, _WW_LATER)]}",
+)
+_ww_items = _WW_XML[_WW_XML.index("<item>"):_WW_XML.rindex("</item>") + len("</item>")]
+_WW_SANCTUARY = "https://weworkremotely.com/remote-jobs/sanctuary-computer-senior-shopify-developer"
+
+
+def _ww_refused(text):  # noqa: ANN001, ANN202
+    try:
+        _ww.parse_wwr_feed(text)
+    except ValueError:
+        return True
+    return False
+
+
+def _ww_companies(text):  # noqa: ANN001, ANN202
+    return [h.company for h in _ww.parse_wwr_feed(text)]
+
+
+check(
+    "wwr the parser refuses what is not a feed — a DOCTYPE or an entity of its own (entity expansion kept out of the "
+    "XML parser's reach), an HTML error page, a JSON body, broken XML, nothing — so a broken answer is a remembered "
+    "failure, never an hour of 'no jobs'; an empty channel is []; a posting whose link is not a WWR page (another "
+    "host, a look-alike host, plain http) is dropped; duplicates are folded",
+    all(_ww_refused(t) for t in (
+        '<?xml version="1.0"?><!DOCTYPE rss [<!ENTITY a "aaaa">]><rss version="2.0"><channel></channel></rss>',
+        "<html><body><h1>Something went wrong.</h1></body></html>", '{"jobs": []}', "<rss><channel><item>", "", None))
+    and _ww.parse_wwr_feed(_WW_EMPTY) == []
+    and all("Sanctuary Computer" not in _ww_companies(_WW_XML.replace(_WW_SANCTUARY, u)) for u in (
+        "https://elsewhere.example/remote-jobs/x", "https://weworkremotely.com.evil.example/remote-jobs/x",
+        "http://weworkremotely.com/remote-jobs/x"))
+    and _ww_companies(_WW_XML.replace(_WW_SANCTUARY, "https://www.weworkremotely.com/remote-jobs/x"))[0] == "Sanctuary Computer"
+    and len(_ww.parse_wwr_feed(_WW_XML.replace("</channel>", _ww_items + "</channel>"))) == 5,
+)
+_WW_TREE = _pp_ast.parse(_pp_inspect.getsource(_ww))
+_ww_net = {
+    a.name for n in _pp_ast.walk(_WW_TREE) if isinstance(n, _pp_ast.ImportFrom) and n.module == "app.core.job_match"
+    for a in n.names
+}
+check(
+    "wwr is read the way its RSS page allows ('Anyone can use the feed, all we ask is that you attribute the links back "
+    "to We Work Remotely', re-read 2026-09-28) — eleven public feeds, all https on weworkremotely.com, the all-jobs "
+    "feed first and 'All Programming' (no country field) never, each cached an hour with a failure remembered, fetched "
+    "only through job_match._http_get (no network import of its own), registered after Jobicy as a worldwide-only "
+    "board that the freelance search asks, and credited as 'We Work Remotely' beside its link (the Jobs page mirror "
+    "and the alert email)",
+    len(_ww.FEED_URLS) == 11 and len(set(_ww.FEED_URLS)) == 11
+    and _ww.FEED_URLS[0] == "https://weworkremotely.com/remote-jobs.rss"
+    and all(_ww.wwr_page(u) and u.endswith(".rss") for u in _ww.FEED_URLS)
+    and not any("remote-programming-jobs" in u for u in _ww.FEED_URLS)
+    and _ww.FEEDS.ttl_s >= 3600 and _ww.FEEDS.fail_ttl_s > 0
+    and not (_pt_imports(_pp_inspect.getsource(_ww)) & {"urllib.request", "requests", "http.client", "httpx", "socket"})
+    and "_http_get" in _ww_net
+    and list(_FL_DEFAULTS).index("weworkremotely") == list(_FL_DEFAULTS).index("jobicy") + 1
+    and "weworkremotely" in _fl_js.WORLDWIDE_ONLY_BOARDS and "weworkremotely" in _fl_js.WORLDWIDE_BOARDS
+    and "weworkremotely" not in _fl_js.NO_FREELANCE_FIELD
+    and _FL_ATTR.get("weworkremotely") == "We Work Remotely"
+    and _fl_alerts._EM_SOURCE_LABELS.get("weworkremotely") == "We Work Remotely",
+    f"feeds={len(_ww.FEED_URLS)} ttl={_ww.FEEDS.ttl_s} net={_ww_net} defaults={list(_FL_DEFAULTS)}",
+)
+_ww_calls: list = []
+_ww_fail: set = set()
+_ww_cut = _WW_XML.rindex("<item>", 0, _WW_XML.index(_WW_SANCTUARY))
+_WW_NO_SANCTUARY = _WW_XML[:_ww_cut] + _WW_XML[_WW_XML.index("</item>", _ww_cut) + len("</item>"):]
+
+
+def _ww_get(url, timeout=15):  # noqa: ANN001
+    """The all-jobs feed serves the fixture WITHOUT Sanctuary (the newest match, so the feeds' own order is not the
+    date order), the full-stack feed the whole fixture (the other four again, folded by URL); the rest are empty."""
+    _ww_calls.append(url)
+    if url in _ww_fail:
+        raise ValueError("HTTP 503")
+    if url == _ww.FEED_URLS[0]:
+        return _WW_NO_SANCTUARY
+    if url.endswith("/remote-full-stack-programming-jobs.rss"):
+        return _WW_XML
+    return _WW_EMPTY
+
+
+def _ww_try(title):  # noqa: ANN001, ANN202
+    try:
+        return [(h.company, h.title) for h in _ww.WeWorkRemotelyProvider().search(SearchContext(job_title=title, limit=10))]
+    except Exception as e:  # noqa: BLE001
+        return f"{type(e).__name__}: {e}"
+
+
+_ww_real_get, _ww_real_now = _ww._http_get, _ww._utc_now
+_ww._http_get = _ww_get
+_ww._utc_now = lambda: _WW_NOW
+_ww.FEEDS.clear()
+try:
+    _ww_shopify = _ww_try("Shopify")
+    _ww_dev = _ww_try("Developer")
+    _ww_company = _ww_try("Sanctuary")
+    _ww_first = list(_ww_calls)
+    _ww_heb = _ww_try("מפתח תוכנה")
+    _ww._utc_now = lambda: _WW_LATER  # the same cached feeds, read three weeks on
+    _ww_later = _ww_try("Shopify")
+    _ww_later_calls = len(_ww_calls)
+    _ww._utc_now = lambda: _WW_NOW
+    _ww.FEEDS.clear()
+    _ww_fail.add(_ww.FEED_URLS[-1])  # one category feed fails
+    _ww_partial_none = _ww_try("Plumber")
+    _ww_partial_hit = _ww_try("Shopify")
+    _ww.FEEDS.clear()
+    _ww_fail.update(_ww.FEED_URLS)  # the whole board is down
+    _ww_calls.clear()
+    _ww_down = _ww_try("Shopify")
+    _ww_down_calls = len(_ww_calls)
+    _ww_down_again = _ww_try("Shopify")
+    _ww_down_again_calls = len(_ww_calls)
+finally:
+    _ww._http_get, _ww._utc_now = _ww_real_get, _ww_real_now
+    _ww_fail.clear()
+    _ww.FEEDS.clear()
+check(
+    "wwr search — the eleven feeds are asked ONCE for three searches in the hour, the role's words are matched (never "
+    "the company's), newest first across the feeds with a posting in two feeds shown once; a Hebrew title is "
+    "'nothing matched there' asked of nobody; the cached feeds read three weeks on drop what expired with no new "
+    "request; with one feed failing a match is still found but 'nothing matched' is never claimed (the board could "
+    "not all be read); with every feed down it says so, and the failures are remembered (no second round of requests)",
+    sorted(_ww_first) == sorted(_ww.FEED_URLS)
+    and _ww_companies(_WW_NO_SANCTUARY) == ["GeoPro Labs Inc", "BBE Marketing Inc", "Lemon.io",
+                                            "IxDF - Interaction Design Foundation"]
+    and _ww_shopify == [("Sanctuary Computer", "Senior Shopify Developer"),
+                        ("GeoPro Labs Inc", "Head of Operations - Shopify App Portfolio")]
+    and _ww_dev == [("Sanctuary Computer", "Senior Shopify Developer"), ("Lemon.io", "Senior Java & React Developer")]
+    and isinstance(_ww_company, str) and _ww_company.startswith("NoResultsError")
+    and isinstance(_ww_heb, str) and "NoResultsError" in _ww_heb and "in English" in _ww_heb
+    and isinstance(_ww_later, str) and _ww_later.startswith("NoResultsError") and _ww_later_calls == 11
+    and isinstance(_ww_partial_none, str) and _ww_partial_none.startswith("ValueError") and "all of" in _ww_partial_none
+    and isinstance(_ww_partial_hit, list) and len(_ww_partial_hit) == 2
+    and isinstance(_ww_down, str) and _ww_down.startswith("ValueError") and _ww_down_calls == 11
+    and isinstance(_ww_down_again, str) and _ww_down_again.startswith("ValueError") and _ww_down_again_calls == 11,
+    f"first={len(_ww_first)} shopify={_ww_shopify} dev={_ww_dev} company={_ww_company} heb={_ww_heb} "
+    f"later={_ww_later}/{_ww_later_calls} partial={_ww_partial_none}/{_ww_partial_hit} "
+    f"down={_ww_down}/{_ww_down_calls}/{_ww_down_again_calls}",
+)
+
+
+class _WwLocal:
+    name = "fake_ww_local"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [_FanHit(source=self.name, title="Developer", company="LocalCo", location="Tel Aviv, Israel",
+                        description="Python and SQL work on a distributed backend.", url="https://ww-local.test/1")]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+def _ww_ctx(**over):  # noqa: ANN003, ANN202
+    return _AlertCtx(**({"job_title": "Developer", "location": "Tel Aviv", "work_mode": "remote",
+                         "include_worldwide": True, "sources": ["fake_ww_local", "weworkremotely"],
+                         "max_age_days": 0, "limit": 10} | over))
+
+
+_ww.FEEDS.clear()
+_ww_calls.clear()
+_ww._http_get = _ww_get
+_ww._utc_now = lambda: _WW_NOW
+try:
+    _ww_on, _ww_on_err, _ = _fl_search([_WwLocal()], _ww_ctx())
+    _ww_on_calls = len(_ww_calls)
+    _ww_calls.clear()
+    _ww_off, _ww_off_err, _ = _fl_search([_WwLocal()], _ww_ctx(work_mode="any", include_worldwide=False))
+    _ww_off_calls = len(_ww_calls)
+    _ww_fl, _ww_fl_err, _ = _fl_search([_WwLocal()], _ww_ctx(include_worldwide=False), freelance=True)
+finally:
+    _ww._http_get, _ww._utc_now = _ww_real_get, _ww_real_now
+    _ww.FEEDS.clear()
+_ww_on_ww = [m for m in (_ww_on.matches if _ww_on is not None else []) if m.source == "weworkremotely"]
+check(
+    "wwr through the search — pass ON: its postings ranked beside the local board's (source weworkremotely, their "
+    "WWR page, no place, read as remote), the one whose list ends in South Africa never hidden as low-pay; pass OFF: "
+    "not asked at all; the FREELANCE search (which turns the pass on) keeps only the Contract posting, by WWR's own "
+    "field, and counts the full-time ones it left out",
+    _ww_on_err == "" and {m.company for m in _ww_on_ww} == {"Sanctuary Computer", "Lemon.io"}
+    and all(_ww.wwr_page(m.url) and m.location == "" and m.work_modes == ["remote"] for m in _ww_on_ww)
+    and not any(f.reason == "market" for f in _ww_on.filtered)
+    and any(m.source == "fake_ww_local" for m in _ww_on.matches) and _ww_on_calls == 11
+    and _ww_off_err == "" and _ww_off_calls == 0 and {m.source for m in _ww_off.matches} == {"fake_ww_local"}
+    and "weworkremotely" not in _ww_off.source_empty and "weworkremotely" not in _ww_off.source_errors
+    and _ww_fl_err == "" and [(m.company, m.employment) for m in _ww_fl.matches] == [("Sanctuary Computer", "contract")]
+    and _ww_fl.not_freelance == 2 and _ww_fl.context.include_worldwide is False,
+    f"on={_ww_on_err or [(m.source, m.company, m.location, m.work_modes) for m in _ww_on.matches]} "
+    f"filtered={[(f.reason, f.url) for f in (_ww_on.filtered if _ww_on else [])]} calls={_ww_on_calls}/{_ww_off_calls} "
+    f"fl={_ww_fl_err or ([(m.company, m.employment) for m in _ww_fl.matches], _ww_fl.not_freelance)}",
+)
+_ww_match = JobMatch(title="Senior Shopify Developer", company="Sanctuary Computer", overall=88.0,
+                     source="weworkremotely", url=_WW_SANCTUARY)
+_ww_text = build_alert_email([_ww_match, _hm_li], _AlertCtx(job_title="Dev"), app_url="https://app.example")[1]
+_ww_html = build_alert_email_html([_ww_match, _hm_li], _AlertCtx(job_title="Dev"), app_url="https://app.example")
+check(
+    "wwr the alert email credits We Work Remotely beside a link to the posting's WWR page, in both bodies, even "
+    "though the job's own link opens the app; a LinkedIn job carries no such line",
+    f"  via We Work Remotely: {_WW_SANCTUARY}" in _ww_text and _ww_text.count("via ") == 1
+    and f'href="{_WW_SANCTUARY}"' in _ww_html and ">via We Work Remotely</a>" in _ww_html
+    and _ww_html.count(">via ") == 1,
+    _ww_text[-300:],
 )
 
 _reached_end = True
