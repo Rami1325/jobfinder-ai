@@ -4950,7 +4950,12 @@ try {
     // `uses.batchCap` by name: the cap is what keeps a batch from asking for
     // more uses than are left, and its sentence is the one place that says so.
     ["pages/jobs/kits.tsx", 1, ["uses.batchCap"]],
-    ["components/CoverLetter.tsx", 1, []],
+    // The letter's card, which since 2026-09-28 also writes proposals: the
+    // proposal's note by name, since a proposal on the letter's sentence would
+    // say "changes to this letter" under a bid.
+    ["components/CoverLetter.tsx", 1, ["uses.proposal"]],
+    // "Proposal for a gig" (2026-09-28): a new gig opens its own pass, 1 use.
+    ["pages/tools/ProposalToolPage.tsx", 1, ["uses.proposal"]],
     // The overlay's line before a reading, required BY NAME: that state had no
     // line at all once (Phase 30 review, known item 4). Since PLAN 31.3/1 it
     // has one button, Check fit, and `uses.fitThenTailor` prices it AND says
@@ -15057,6 +15062,191 @@ try {
     throw new Error("the reader passes a Hebrew line that names LinkedIn alone");
 } catch (e) {
   fail(`worldwide boards check (check 100) could not run: ${e.message}`);
+}
+
+// ---- 101. the proposal writer: its words, its boxes, and what it promises ---- //
+// 2026-09-28 (freelance, the small version). The letter card writes proposals too,
+// and "Proposal for a gig" is a tool of its own. `tsc` sees none of this: a key is
+// a string, a textarea that cuts a paste compiles, and so does a card that drops
+// the posting's words. (a) Every literal `proposal.*` / `cover.*` key the card
+// reads resolves in both tailor.json, and every `proposal.*` / `cards.proposal.*`
+// key the tool page reads in both tools.json, each with its plural set. (b) The
+// card, by shape: a proposal is written by `writeProposal(` with the posting's own
+// words (`gig_text: postingText`) and the typed rate; the text is an EDITABLE
+// `<textarea>` in its own direction (`dir="auto"`), 16 px on a phone; under a
+// proposal it says the user sends it; it names the [brackets] the server left
+// (`placeholders`); the rate box stops at the schema's bound (PROPOSAL_RATE_MAX,
+// equal to the backend's; a degraded skip without backend/); each kind option is a
+// 44 px target. (c) The tool page: the gig box is `dir="auto"`, 16 px, and has NO
+// maxLength (the paste is the user's own: the server refuses a gig whole, and the
+// browser may not cut it silently); its first write sends no analysis
+// (`jd: null`), and the card after it is proposal-only and handed the gig's words.
+// (d) The send note says what the code does, in both locales (the user sends it,
+// JobFinder never applies), and no proposal sentence says "verified" or
+// "guaranteed". Planted twins are judged every run.
+try {
+  const keysIn101 = (src, re) => [...new Set([...src.matchAll(re)].map((m) => m[1]))];
+  const card101 = decomment(read("components/CoverLetter.tsx"));
+  const tool101 = decomment(read("pages/tools/ProposalToolPage.tsx"));
+  const bundles101 = {
+    tailor: { en: JSON.parse(read("locales/en/tailor.json")), he: JSON.parse(read("locales/he/tailor.json")) },
+    tools: { en: JSON.parse(read("locales/en/tools.json")), he: JSON.parse(read("locales/he/tools.json")) },
+  };
+  const cardKeys = keysIn101(card101, /\bt\("((?:proposal|cover)\.[\w.]+)"/g);
+  const toolKeys = keysIn101(tool101, /\bt\("((?:proposal|cards\.proposal)\.[\w.]+)"/g);
+  if (cardKeys.filter((k) => k.startsWith("proposal.")).length < 12)
+    throw new Error(`read ${cardKeys.length} proposal./cover. keys out of CoverLetter.tsx (expected at least 12 proposal.* among them)`);
+  if (toolKeys.length < 8) throw new Error(`read ${toolKeys.length} proposal keys out of ProposalToolPage.tsx (expected at least 8)`);
+  for (const loc of ["en", "he"]) {
+    for (const k of cardKeys)
+      for (const p of keyProblems(bundles101.tailor[loc], k, loc, "the letter and proposal card"))
+        fail(`check 101: locales/${loc}/tailor.json ${p}`);
+    for (const k of toolKeys)
+      for (const p of keyProblems(bundles101.tools[loc], k, loc, "Proposal for a gig"))
+        fail(`check 101: locales/${loc}/tools.json ${p}`);
+  }
+  const models101 = pySource("app/models/__init__.py", "check 101");
+  const backendRate101 = models101 === null ? null : Number((/^PROPOSAL_RATE_MAX = (\d+)$/m.exec(models101) || [])[1]);
+  if (models101 !== null && !(backendRate101 > 0)) throw new Error("backend/app/models: PROPOSAL_RATE_MAX not found");
+
+  const clsOf = (tag) => ((/className="([^"]*)"/.exec(tag) || [])[1] ?? "").split(/\s+/);
+  const read101 = ({ card, tool, en, he }) => {
+    const out = [];
+    const gen = fnSource(card, "async function generate");
+    if (!/writeProposal\(\{[^}]*\bgig_text:\s*postingText\b[^}]*\brate\b[^}]*\}\)/.test(gen))
+      out.push("the card's proposal does not send the posting's own words (gig_text: postingText) and the typed rate");
+    const box = /<textarea\b[\s\S]*?\/>/.exec(card);
+    if (!box) throw new Error("CoverLetter.tsx: no <textarea>");
+    if (!/dir="auto"/.test(box[0])) out.push("the card's text box does not take its direction from the text");
+    if (!/onChange=\{\(e\) => setText\(e\.target\.value\)\}/.test(box[0]) || /\breadOnly\b/.test(box[0]))
+      out.push("the card's text cannot be edited before it is copied");
+    if (!clsOf(box[0]).includes("text-base")) out.push("the card's text box is under 16 px on a phone, which iOS zooms into");
+    if (!/\{proposal && <p[^>]*>\{t\("proposal\.sendYourself"\)\}<\/p>\}/.test(card))
+      out.push("the card does not say, under a proposal, that the user sends it on the platform themselves");
+    if (!/\.placeholders\b/.test(card) || !/\bt\("proposal\.fillIn"\)/.test(card))
+      out.push("the card does not name the [brackets] the server left for the user to fill in");
+    const rate = /<input\b[\s\S]*?\/>/.exec(card);
+    if (!rate || !/maxLength=\{PROPOSAL_RATE_MAX\}/.test(rate[0])) out.push("the card's rate box has no bound");
+    const cardRate = Number((/export const PROPOSAL_RATE_MAX = (\d+);/.exec(card) || [])[1]);
+    if (!(cardRate > 0)) out.push("CoverLetter.tsx exports no PROPOSAL_RATE_MAX");
+    else if (backendRate101 !== null && cardRate !== backendRate101)
+      out.push(`the rate box stops at ${cardRate} characters, the backend's ProposalRequest.rate at ${backendRate101}`);
+    const radio = /role="radio"[\s\S]*?className=\{cn\(\s*"([^"]*)"/.exec(card);
+    if (!radio || !radio[1].split(/\s+/).includes("min-h-11")) out.push("a Letter / Proposal option is under the 44 px touch target");
+    const gig = /<textarea\b[\s\S]*?\/>/.exec(tool);
+    if (!gig) throw new Error("ProposalToolPage.tsx: no <textarea>");
+    if (/\bmaxLength=/.test(gig[0]))
+      out.push("the gig box cuts a paste (maxLength): the server refuses a gig whole, and the browser may not cut it silently");
+    if (!/dir="auto"/.test(gig[0])) out.push("the gig box does not take its direction from the paste");
+    if (!clsOf(gig[0]).includes("text-base")) out.push("the gig box is under 16 px on a phone, which iOS zooms into");
+    if (!/writeProposal\(\{[^}]*\bjd:\s*null\b/.test(tool)) out.push("the tool's first write does not ask the server to read the gig (jd: null)");
+    const el = /<CoverLetter\b[\s\S]*?\/>/.exec(tool);
+    if (!el) out.push("the tool page does not hand the proposal to the letter card, whose pass rules are the tested ones");
+    else {
+      if (!/kinds=\{\["proposal"\]\}/.test(el[0])) out.push("the tool's card offers a letter for a gig");
+      if (!/postingText=\{current\.gig\}/.test(el[0])) out.push("the tool's card is not handed the gig's words");
+    }
+    for (const [loc, b, words] of [
+      ["en", en, [/\byourself\b/i, /\bnever\b/i]],
+      ["he", he, [/בעצמכם/, /אף פעם/]],
+    ]) {
+      const note = String(b.proposal?.sendYourself ?? "");
+      if (!words.every((w) => w.test(note)))
+        out.push(`locales/${loc}/tailor.json proposal.sendYourself does not say that the user sends it and JobFinder never applies`);
+      for (const [k, v] of Object.entries(b.proposal ?? {}))
+        if (/\bverified\b|\bguarantee|מאומת|מובטח/i.test(String(v)))
+          out.push(`locales/${loc}/tailor.json proposal.${k} claims more than the floor proves ("${v}")`);
+    }
+    return out;
+  };
+  const real101 = { card: card101, tool: tool101, en: bundles101.tailor.en, he: bundles101.tailor.he };
+  for (const p of read101(real101)) fail(`check 101: ${p} (2026-09-28, freelance)`);
+  const plant101 = (key, from, to, label) => {
+    if (!real101[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read101({ ...real101, [key]: real101[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant101("tool", 'id="gig-text"', 'id="gig-text"\n          maxLength={4000}', "a gig box that cuts a paste");
+  plant101("card", "gig_text: postingText", 'gig_text: ""', "a proposal written without the posting's words");
+  plant101("card", "onChange={(e) => setText(e.target.value)}", "readOnly", "a text box that cannot be edited");
+  plant101("card", '{t("proposal.sendYourself")}', '{""}', "a proposal with no send note");
+  plant101("tool", 'kinds={["proposal"]}', 'kinds={["letter", "proposal"]}', "a gig offered a letter");
+  plant101("card", 'dir="auto"\n          value={text}', "value={text}", "a text box in the page's direction");
+  if (!read101({ ...real101, he: { ...real101.he, proposal: { ...real101.he.proposal, sendYourself: "שלחו בעצמכם." } } }).length)
+    throw new Error("the reader passes a Hebrew note that never says JobFinder does not apply");
+  if (!read101({ ...real101, en: { ...real101.en, proposal: { ...real101.en.proposal, tookOut: "Every number verified." } } }).length)
+    throw new Error("the reader passes a sentence that says verified");
+} catch (e) {
+  fail(`proposal writer check (check 101) could not run: ${e.message}`);
+}
+
+// ---- 102. the proposal's wire: the route, the request and the answer --------- //
+// `writeProposal` posts to the path routes.py mounts, answering ProposalResponse;
+// the body it builds names exactly ProposalRequest's fields (the route forbids any
+// other: a stray field is a 422 the card shows as an error, a missing one a
+// proposal written without the gig); types.ts' ProposalRequest and
+// ProposalResponse name exactly the backend's fields (renamed on one side, a field
+// compiles green and reads undefined); and the route rides the LETTER's pass for
+// the same posting (`pass_charged(db, user, "cover_letter", ref=quota.jd_ref(jd))`),
+// so one use covers both (cost-and-quota.md). A degraded skip without backend/.
+try {
+  const fieldsTs = (types, name) => {
+    const body = new RegExp(`export interface ${name} \\{([\\s\\S]*?)\\n\\}`).exec(types);
+    if (!body) throw new Error(`types.ts: ${name} not found`);
+    return [...decomment(body[1]).matchAll(/^\s*(\w+)\??:/gm)].map((m) => m[1]).sort();
+  };
+  const fieldsPy = (models, name) => {
+    const body = new RegExp(`class ${name}\\(BaseModel\\):([\\s\\S]*?)\\n(?=\\S)`).exec(models);
+    if (!body) throw new Error(`app/models: class ${name} not found`);
+    return [...body[1].matchAll(/^    (\w+): /gm)].map((m) => m[1]).sort();
+  };
+  const judge102 = ({ client, types, routes, models }) => {
+    const out = [];
+    const fn = /export async function writeProposal\([\s\S]*?\n\}/.exec(client);
+    if (!fn) return ["api/client.ts has no writeProposal"];
+    const post = /api\.post<ProposalResponse>\("([^"]+)", \{([\s\S]*?)\}\)/.exec(fn[0]);
+    if (!post) return ["writeProposal does not post an object literal answered by ProposalResponse"];
+    const sent = [...post[2].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]).sort();
+    const tsReq = fieldsTs(types, "ProposalRequest");
+    const tsRes = fieldsTs(types, "ProposalResponse");
+    if (JSON.stringify(sent) !== JSON.stringify(tsReq))
+      out.push(`writeProposal sends ${JSON.stringify(sent)}, types.ts ProposalRequest names ${JSON.stringify(tsReq)}`);
+    if (routes !== null && models !== null) {
+      if (!new RegExp(`@router\\.post\\("${post[1].replace(/\//g, "\\/")}", response_model=ProposalResponse\\)`).test(routes))
+        out.push(`routes.py does not mount POST ${post[1]} answering ProposalResponse`);
+      const pyReq = fieldsPy(models, "ProposalRequest");
+      const pyRes = fieldsPy(models, "ProposalResponse");
+      if (pyReq.length < 5 || pyRes.length < 8) throw new Error(`read ${pyReq.length} ProposalRequest / ${pyRes.length} ProposalResponse fields`);
+      if (JSON.stringify(pyReq) !== JSON.stringify(sent))
+        out.push(`writeProposal sends ${JSON.stringify(sent)}, the backend's ProposalRequest takes ${JSON.stringify(pyReq)}`);
+      if (JSON.stringify(pyRes) !== JSON.stringify(tsRes))
+        out.push(`ProposalResponse ${JSON.stringify(pyRes)} and types.ts ProposalResponse ${JSON.stringify(tsRes)} differ`);
+      const route = /\ndef proposal\([\s\S]*?\n(?=@router|\ndef |$)/.exec(routes);
+      if (!route) out.push("routes.py: the proposal route's function was not found");
+      else if (!/quota\.pass_charged\(db, user, "cover_letter", ref=quota\.jd_ref\(jd\)\)/.test(route[0]))
+        out.push("the proposal does not ride the letter's pass for the same posting (pass_charged(..., \"cover_letter\", ref=quota.jd_ref(jd)))");
+    }
+    return out;
+  };
+  const routes102 = pySource("app/api/routes.py", "check 102");
+  const models102 = pySource("app/models/__init__.py", "check 102");
+  const real102 = {
+    client: decomment(read("api/client.ts")),
+    types: read("types.ts"),
+    routes: routes102 === null ? null : routes102.replace(/\r\n/g, "\n"),
+    models: models102 === null ? null : models102.replace(/\r\n/g, "\n"),
+  };
+  for (const p of judge102(real102)) fail(`check 102: ${p} (2026-09-28, freelance)`);
+  const plant102 = (key, from, to, label) => {
+    if (real102[key] === null) return;
+    if (!real102[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!judge102({ ...real102, [key]: real102[key].replace(from, to) }).length) throw new Error(`the judge passes "${label}"`);
+  };
+  plant102("client", "    gig_text: body.gig_text,\n", "", "a body without the gig");
+  plant102("types", "  unverified: string[];\n", "", "an answer mirror without `unverified`");
+  plant102("routes", 'quota.pass_charged(db, user, "cover_letter", ref=quota.jd_ref(jd))', 'quota.pass_charged(db, user, "cover_letter", ref="")', "a proposal on a pass of its own");
+  plant102("client", 'api.post<ProposalResponse>("/proposal"', 'api.post<ProposalResponse>("/proposals"', "a client posting to a path nobody mounts");
+} catch (e) {
+  fail(`proposal wire check (check 102) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

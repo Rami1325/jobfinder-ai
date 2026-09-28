@@ -28731,6 +28731,9 @@ _ROUTE_COST = {
     ("POST", "/interview/scorecard"): "pass:interview",
     ("POST", "/tools/screening-answer"): "pass:screening",
     ("POST", "/cover-letter"): "pass:cover_letter",
+    # 2026-09-28, the freelance proposal: the cover letter's twin, on the SAME per-posting pass (one use covers a
+    # letter and a proposal for one posting). Reading a pasted gig first counts the daily jd_analyze unit, never a use.
+    ("POST", "/proposal"): "pass:cover_letter",
     ("GET", "/jobs/alerts/cron"): "core_charged:alerts.run_alert",
     ("POST", "/kits/process-next"): "batch_paid",
     ("POST", "/inbox/sync"): "own_cap:inbox",
@@ -29280,6 +29283,8 @@ _CHARGED_DRIVES32 = [
     (("POST", "/tools/screening-answer"), False, _call32("POST", "/tools/screening-answer", json={
         "resume": _R32, "jd_text": "Python role at Acme.", "question": "Why Acme?"})),
     (("POST", "/cover-letter"), False, _call32("POST", "/cover-letter", json={"resume": _R32, "jd": _JDJ32})),
+    (("POST", "/proposal"), False, _call32("POST", "/proposal", json={
+        "resume": _R32, "jd": _JDJ32, "gig_text": "Our Django API times out under load. Send your hourly rate."})),
 ]
 
 # PLAN 32: the push rows run with web push ON, on throwaway keys, and every push lands in this recorder.
@@ -32914,6 +32919,297 @@ check(
     and _wa35._transport is None,
     f"{[(m.get('template') or {}).get('name') for m in _sweep_wa32]} transport={_wa35._transport}",
 )
+
+# ---------------------------------------------------------------------------
+# 2026-09-28, freelance: a proposal for a gig the user pasted (docs/handbook/tailoring.md, *The proposal writer*;
+# cost-and-quota.md for its charge). PROPOSAL is a new LLM task, so it has its own stub branch, pinned here; the stub
+# DISOBEYS the prompt (it invents a rate, a delivery time and a start date) so these checks see the floor under the
+# prompt (`app/core/proposal_terms.py`) take each one out. That pins the MECHANISM only: whether the real model
+# invents a rate at all is not something a stub can say (docs/handbook/testing.md, the real-model notes).
+# ---------------------------------------------------------------------------
+import ast as _pp_ast  # noqa: E402
+import inspect as _pp_inspect  # noqa: E402
+from pathlib import Path as _pp_Path  # noqa: E402
+
+from app.core import proposal as _pp  # noqa: E402
+from app.core import proposal_terms as _pt  # noqa: E402
+from app.llm import prompts as _pp_prompts  # noqa: E402
+from app.llm.limits import InputTooLarge as _PP_ITL  # noqa: E402
+
+_PT_SRC = _pp_inspect.getsource(_pt)
+
+
+def _pt_imports(src):  # noqa: ANN001, ANN202
+    mods: set = set()
+    for node in _pp_ast.walk(_pp_ast.parse(src)):
+        if isinstance(node, _pp_ast.Import):
+            mods |= {a.name for a in node.names}
+        elif isinstance(node, _pp_ast.ImportFrom):
+            mods.add("." * node.level + (node.module or ""))
+    return mods
+
+
+def _pt_is_pure(src):  # noqa: ANN001, ANN202
+    tree = _pp_ast.parse(src)
+    clock = {n.attr for n in _pp_ast.walk(tree) if isinstance(n, _pp_ast.Attribute)} & {"now", "utcnow", "today"}
+    doors = {n.func.id for n in _pp_ast.walk(tree)
+             if isinstance(n, _pp_ast.Call) and isinstance(n.func, _pp_ast.Name)} & {"open", "__import__"}
+    return _pt_imports(src) == {"__future__", "re", "dataclasses"} and not clock and not doors
+
+
+_pt_unrefused = [p for p in (
+    "from app.llm.client import get_llm_client",
+    "from app.core.job_match import _http_get",
+    "from app.core import proposal",
+    "from datetime import datetime",
+    "stamp = __import__('datetime').datetime.now()",
+    "text = open('/etc/hosts').read()",
+) if _pt_is_pure(_PT_SRC + "\n" + p + "\n")]
+_PT_IMPORTERS: list = []
+_PT_APP = _pp_Path(_pt.__file__).parents[1]
+for _pt_py in sorted(_PT_APP.rglob("*.py")):
+    _pt_rel = str(_pt_py.relative_to(_PT_APP)).replace("\\", "/")
+    if _pt_rel == "core/proposal_terms.py":
+        continue
+    for _pt_node in _pp_ast.walk(_pp_ast.parse(_pt_py.read_text(encoding="utf-8"))):
+        if (isinstance(_pt_node, _pp_ast.ImportFrom)
+                and ((_pt_node.module or "").split(".")[-1] == "proposal_terms"
+                     or any(a.name == "proposal_terms" for a in _pt_node.names))) or (
+                isinstance(_pt_node, _pp_ast.Import)
+                and any(a.name.split(".")[-1] == "proposal_terms" for a in _pt_node.names)):
+            _PT_IMPORTERS.append(_pt_rel)
+            break
+check(
+    "proposal: the floor under the prompt (proposal_terms) imports EXACTLY __future__, re and dataclasses, reads no "
+    "clock and opens nothing (AST) — the model, the network, the clock and a file one line away are each refused — "
+    "and its one importer is core/proposal.py",
+    len(_PT_SRC) > 3000 and _pt_is_pure(_PT_SRC) and _pt_unrefused == [] and _PT_IMPORTERS == ["core/proposal.py"],
+    f"imports={sorted(_pt_imports(_PT_SRC))} not refused={_pt_unrefused} importers={_PT_IMPORTERS}",
+)
+
+# The stub branch (CLAUDE.md: every new LLM task has one, and a smoke check), and the builder's bounds.
+_pp_head = _pp_prompts.PROPOSAL_SYSTEM[:40].upper()
+_pp_tokens = ("STRUCTURE_RESUME", "ANALYZE_JD", "JD_FIT", "TAILOR", "HUMANIZE", "PLAN_CV", "FIT_SCORE", "INTERVIEW_",
+              "LINKEDIN", "SEARCH_CONTEXT", "SEARCH_QUERY", "FOLLOW_UP", "OUTREACH", "SCREENING_ANSWER",
+              "COMPANY_BRIEF", "REVIEW_REWRITE", "RECRUITER_SCREEN", "INBOX_CLASSIFY")
+_pp_other_heads = [getattr(_pp_prompts, n)[:40].upper() for n in dir(_pp_prompts)
+                   if n.endswith("_SYSTEM") and n != "PROPOSAL_SYSTEM" and isinstance(getattr(_pp_prompts, n), str)]
+_pp_ph_en = ", ".join(f"{k} {_pt.PLACEHOLDERS['en'][k]}" for k in _pt.KINDS)
+_pp_ph_he = ", ".join(f"{k} {_pt.PLACEHOLDERS['he'][k]}" for k in _pt.KINDS)
+try:
+    _pp_stub_en = _Stub32().complete_text(
+        _pp_prompts.PROPOSAL_SYSTEM, _pp_prompts.proposal_user("{}", "{}", "Fix our API", "", "", "en", _pp_ph_en))
+    _pp_stub_he = _Stub32().complete_text(
+        _pp_prompts.PROPOSAL_SYSTEM, _pp_prompts.proposal_user("{}", "{}", "תיקון API", "₪250 לשעה", "", "he", _pp_ph_he))
+    _pp_stub_letter = _Stub32().complete_text(_pp_prompts.cover_letter_system("en", "en"), "RESUME…")
+except Exception as _pp_exc:  # noqa: BLE001 - a broken stub is one red check, never an aborted suite
+    _pp_stub_en = _pp_stub_he = _pp_stub_letter = repr(_pp_exc)
+try:
+    _pp_prompts.proposal_user("{}", "{}", "x" * (33 * 1024), "", "", "en", _pp_ph_en)
+    _pp_builder_kind = ""
+except _PP_ITL as _pp_itl:
+    _pp_builder_kind = _pp_itl.kind
+check(
+    "proposal: PROPOSAL has its stub branch — routed on its own tag, whose head holds no other task's token and whose "
+    "token no other prompt's head holds (the cover letter, with no tag, still gets the letter) — answering in the "
+    "language the message names, with the typed rate echoed; the builder is @_bounded and refuses a pasted gig over "
+    "the job ad's cap as kind 'gig', never clipping it",
+    _pp_prompts.PROPOSAL_SYSTEM.startswith("Task: PROPOSAL.")
+    and not any(t in _pp_head for t in _pp_tokens) and not any("PROPOSAL" in h for h in _pp_other_heads)
+    and _pp_stub_en.startswith("[stub proposal] You need") and "$45/hour" in _pp_stub_en
+    and _pp_stub_he.startswith("[stub proposal] אתם") and "₪250 לשעה" in _pp_stub_he
+    and _pp_stub_letter.startswith("[stub cover letter]")
+    and getattr(_pp_prompts.proposal_user, "__bounded__", False) is True and _pp_builder_kind == "gig",
+    f"head={_pp_head!r} en={_pp_stub_en[:60]!r} he={_pp_stub_he[:40]!r} letter={_pp_stub_letter[:20]!r} "
+    f"refused={_pp_builder_kind!r}",
+)
+_pp_jd_he = _JD32(job_title="x", language="he")
+_pp_jd_en = _JD32(job_title="x", language="en")
+check(
+    "proposal: it answers in the GIG's language, by its share of words (lang.prose_language) — a Hebrew gig in "
+    "Hebrew, an English Upwork post that names a Hebrew-spelled company in English (any-Hebrew-letter would say "
+    "Hebrew), and with no gig pasted the analysed posting's language — never the resume's",
+    _pp.proposal_language("דרוש מפתח React לפרויקט קצר, נא לציין תעריף", _pp_jd_en) == "he"
+    and _pp.proposal_language("We need a React developer for Moon Active's (מון אקטיב) landing page", _pp_jd_he) == "en"
+    and _pp.proposal_language("", _pp_jd_he) == "he" and _pp.proposal_language("   ", _pp_jd_en) == "en",
+    "prose language",
+)
+
+# The floor, driven directly: every invented term goes, every one of the user's stays, in both scripts.
+_PT_RESUME = ("Cut p95 latency from 900ms to 120ms. Saved $200K a year. Led 5 engineers. Shipped the MVP in 3 "
+              "weeks. בניתי מערכת תשלומים תוך 3 שבועות. 2019-2024")
+_pt_cases = {
+    "invented en": _pt.guard("I can do it for $45/hour, deliver within 19 days, and I am available immediately, "
+                             "40 hours a week.", language="en", resume_text=_PT_RESUME),
+    "typed rate": _pt.guard("I can do it for $45/hour. My rate: ₪250 an hour.", language="en",
+                            rate="₪250 an hour", resume_text=_PT_RESUME),
+    "placeholder filled": _pt.guard("המחיר: [התעריף שלך]. אסיים [לוח הזמנים שלך].", language="he",
+                                    rate="₪280 לשעה", resume_text=_PT_RESUME),
+    "invented he": _pt.guard("אפשר ב-₪300 לשעה ולסיים תוך שבועיים, ואני זמין מיד. 20 שעות בשבוע.", language="he",
+                             resume_text=_PT_RESUME),
+    "shared number": _pt.guard("I will finish in 5 days.", language="en", resume_text=_PT_RESUME),
+}
+_pt_quiet = {
+    "years": _pt.guard("I have 5 years of experience.", language="en", resume_text=_PT_RESUME),
+    "past result": _pt.guard("I saved $200K a year and shipped the MVP in 3 weeks.", language="en",
+                             resume_text=_PT_RESUME),
+    "past result he": _pt.guard("בניתי מערכת תשלומים תוך 3 שבועות.", language="he", resume_text=_PT_RESUME),
+    "standups": _pt.guard("I ran 5 daily standups for the team.", language="en", resume_text=_PT_RESUME),
+    "client question he": _pt.guard("כמה שעות בשבוע אתם צריכים?", language="he", resume_text=_PT_RESUME),
+    "client question en": _pt.guard("How many hours a week do you need?", language="en", resume_text=_PT_RESUME),
+}
+_pt_unv = _pt.guard("I cut costs by 40% and latency to 120ms.", language="en", resume_text=_PT_RESUME,
+                    gig_text="We have 3 services.")
+check(
+    "proposal: the floor (mechanism, not the model) — an invented '$45/hour', 'within 19 days', 'available "
+    "immediately' and '40 hours a week' become [your rate] / [your timeline] / [your availability], each reported; a "
+    "typed rate stays verbatim and fills a rate placeholder; the Hebrew twin ('₪300 לשעה', 'שבועיים', 'זמין מיד', '20 "
+    "שעות בשבוע') gets the Hebrew placeholders; and '5 days' is NOT cleared by the resume's '5 engineers' (words, "
+    "never a shared number)",
+    _pt_cases["invented en"].text == "I can do it for [your rate], deliver within [your timeline], and I am available "
+    "[your availability], [your availability]."
+    and set(_pt_cases["invented en"].replaced) == {"$45/hour", "19 days", "immediately", "40 hours a week"}
+    and _pt_cases["typed rate"].text == "I can do it for ₪250 an hour. My rate: ₪250 an hour."
+    and _pt_cases["placeholder filled"].text == "המחיר: ₪280 לשעה. אסיים [לוח הזמנים שלך]."
+    and _pt_cases["placeholder filled"].placeholders == ("[לוח הזמנים שלך]",)
+    and _pt_cases["invented he"].text == "אפשר ב-[התעריף שלך] ולסיים תוך [לוח הזמנים שלך], ואני זמין [הזמינות שלך]. "
+    "[הזמינות שלך]."
+    and _pt_cases["shared number"].text == "I will finish in [your timeline].",
+    str({k: (v.text, v.replaced) for k, v in _pt_cases.items()}),
+)
+check(
+    "proposal: the floor's false-positive half — '5 years of experience', the resume's own 'saved $200K a year' and "
+    "'shipped the MVP in 3 weeks' (and its Hebrew 'תוך 3 שבועות'), '5 daily standups', and the client-facing "
+    "questions 'כמה שעות בשבוע אתם צריכים?' / 'How many hours a week do you need?' are each left word for word; a "
+    "number no source carries ('40%') is REPORTED as unverified, never changed, while the resume's '120ms' is not",
+    all(v.text == t and v.replaced == () for v, t in (
+        (_pt_quiet["years"], "I have 5 years of experience."),
+        (_pt_quiet["past result"], "I saved $200K a year and shipped the MVP in 3 weeks."),
+        (_pt_quiet["past result he"], "בניתי מערכת תשלומים תוך 3 שבועות."),
+        (_pt_quiet["standups"], "I ran 5 daily standups for the team."),
+        (_pt_quiet["client question he"], "כמה שעות בשבוע אתם צריכים?"),
+        (_pt_quiet["client question en"], "How many hours a week do you need?"),
+    ))
+    and _pt_unv.text == "I cut costs by 40% and latency to 120ms." and _pt_unv.unverified == ("40%",),
+    str({k: (v.text, v.replaced) for k, v in _pt_quiet.items()}) + f" unverified={_pt_unv.unverified}",
+)
+
+# The route, as plan-free friends: the shared pass, the refund, the read of a pasted gig, the sizes.
+_PP_GIG = "Our Django API times out under load and we need it fixed. Please send your hourly rate and when you can start."
+_PP_BODY = {"resume": _R32, "jd": _JDJ32, "gig_text": _PP_GIG}
+_pp_ref = _ref_of32(_JDJ32)
+_pp_prev_env = _env29(FREE_MONTHLY_USES="10", DAILY_LLM_CAP="0", DAILY_JD_ANALYZE_CAP="30")
+_pp_real_write = _routes32.write_proposal
+try:
+    with TestClient(_fastapi_app) as _pp_c:
+        # A letter, then a proposal for the SAME posting: one use.
+        _pp_uid, _pp_h = _mint32(_pp_c, "Proposal Letter Then Bid")
+        _pp_letter = _pp_c.post("/cover-letter", json={"resume": _R32, "jd": _JDJ32}, headers=_pp_h)
+        _pp_bid = _pp_c.post("/proposal", json=_PP_BODY, headers=_pp_h)
+        _pp_bid_body = _j28(_pp_bid)
+        check(
+            "proposal: ONE use covers a letter AND a proposal for the same posting — the letter opens the posting's "
+            "cover-letter pass (+1, keyed by its jd_ref), the proposal rides it (changes_left 8, header still 9, no "
+            "new event), and its text came back through the floor: the stub's invented rate, delivery time and start "
+            "date are placeholders now, each listed in `replaced`",
+            _pp_letter.status_code == 200 and _pp_bid.status_code == 200
+            and [e[1:5] for e in _events32(_pp_uid)] == [("cover_letter", 1, 0, _pp_ref)]
+            and _pp_bid_body.get("changes_left") == 8 and _hdr32(_pp_bid) == "9"
+            and "[your rate]" in _pp_bid_body.get("proposal", "") and "$45" not in _pp_bid_body.get("proposal", "")
+            and "[your timeline]" in _pp_bid_body.get("proposal", "")
+            and set(_pp_bid_body.get("replaced") or []) == {"$45/hour", "19 days", "immediately"}
+            and "[your rate]" in (_pp_bid_body.get("placeholders") or []) and _pp_bid_body.get("language") == "en"
+            and _ref_of32(_pp_bid_body.get("jd")) == _pp_ref,
+            f"{_pp_letter.status_code} {_pp_bid.status_code} {_shape32(_events32(_pp_uid))} "
+            f"{({k: v for k, v in _pp_bid_body.items() if k not in ('jd',)})} hdr={_hdr32(_pp_bid)}",
+        )
+        # The other way round, and a typed rate kept verbatim.
+        _pp2_uid, _pp2_h = _mint32(_pp_c, "Proposal Bid Then Letter")
+        _pp2_bid = _pp_c.post("/proposal", json=dict(_PP_BODY, rate="₪250 an hour"), headers=_pp2_h)
+        _pp2_letter = _pp_c.post("/cover-letter", json={"resume": _R32, "jd": _JDJ32}, headers=_pp2_h)
+        check(
+            "proposal: and the other way round — a proposal opens the pass (+1, changes_left 9) and a letter for the "
+            "same posting rides it (changes_left 8, one event); a rate the user typed comes back VERBATIM, in place of "
+            "the rate the stub invented, and no rate placeholder is left",
+            _pp2_bid.status_code == 200 and _j28(_pp2_bid).get("changes_left") == 9
+            and "₪250 an hour" in _j28(_pp2_bid).get("proposal", "") and "$45" not in _j28(_pp2_bid).get("proposal", "")
+            and "[your rate]" not in (_j28(_pp2_bid).get("placeholders") or [])
+            and _pp2_letter.status_code == 200 and _j28(_pp2_letter).get("changes_left") == 8
+            and [e[1:5] for e in _events32(_pp2_uid)] == [("cover_letter", 1, 0, _pp_ref)],
+            f"{_pp2_bid.status_code} {_j28(_pp2_bid).get('proposal', '')[:160]!r} {_pp2_letter.status_code} "
+            f"{_shape32(_events32(_pp2_uid))}",
+        )
+        # A failure gives the use back.
+        _pp3_uid, _pp3_h = _mint32(_pp_c, "Proposal Fails")
+
+        def _pp_boom(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("model unavailable")
+
+        _routes32.write_proposal = _pp_boom
+        try:
+            _pp3 = _pp_c.post("/proposal", json=_PP_BODY, headers=_pp3_h)
+        finally:
+            _routes32.write_proposal = _pp_real_write
+        _pp3_ev = _events32(_pp3_uid)
+        check(
+            "proposal: a first proposal that fails is a 502 that gives the use back (+1/-1 cover_letter) and leaves no "
+            "pass — header 10, the letter's rule",
+            _pp3.status_code == 502 and len(_pp3_ev) == 2 and _refunded32(_pp3_ev, "cover_letter")
+            and _passes32(_pp3_uid) == [] and _hdr32(_pp3) == "10",
+            f"{_pp3.status_code} {_shape32(_pp3_ev)} {_hdr32(_pp3)}",
+        )
+        # The Tools page's path: no jd, so the gig is read first (a daily jd_analyze count, never a use).
+        _pp4_uid, _pp4_h = _mint32(_pp_c, "Proposal Pasted Gig")
+        with _Calls32() as _pp4_calls:
+            _pp4 = _pp_c.post("/proposal", json={"resume": _R32, "gig_text": _PP_GIG}, headers=_pp4_h)
+        _pp4_jd = _j28(_pp4).get("jd")
+        _pp4_again = _pp_c.post("/proposal", json={"resume": _R32, "jd": _pp4_jd, "gig_text": _PP_GIG,
+                                                   "tone": "make it noticeably shorter"}, headers=_pp4_h)
+        check(
+            "proposal: a pasted gig with no analysis is READ first — two model calls (the reading and the proposal), "
+            "one daily jd_analyze unit, one +1 cover_letter use keyed by the reading's jd_ref — and the reading comes "
+            "back, so the next proposal for it (a shorter one) rides the pass with no new event",
+            _pp4.status_code == 200 and _pp4_calls.n == 2 and _ul32(_pp4_uid).get("jd_analyze") == 1
+            and [e[1:5] for e in _events32(_pp4_uid)] == [("cover_letter", 1, 0, _ref_of32(_pp4_jd))]
+            and _pp4_again.status_code == 200 and _j28(_pp4_again).get("changes_left") == 8
+            and len(_events32(_pp4_uid)) == 1,
+            f"{_pp4.status_code} calls={_pp4_calls.n} usage={_ul32(_pp4_uid)} {_shape32(_events32(_pp4_uid))} "
+            f"again={_pp4_again.status_code} {_j28(_pp4_again).get('changes_left')}",
+        )
+        # Sizes and shapes: refused whole, and never charged.
+        _pp5_uid, _pp5_h = _mint32(_pp_c, "Proposal Oversize Gig")
+        _pp5_big = "x" * (33 * 1024)
+        with _Calls32() as _pp5_calls:
+            _pp5_read = _pp_c.post("/proposal", json={"resume": _R32, "gig_text": _pp5_big}, headers=_pp5_h)
+            _pp5_empty = _pp_c.post("/proposal", json={"resume": _R32, "gig_text": "   "}, headers=_pp5_h)
+        _pp5_events_before = len(_events32(_pp5_uid))
+        _pp5_beside = _pp_c.post("/proposal", json=dict(_PP_BODY, gig_text=_pp5_big), headers=_pp5_h)
+        check(
+            "proposal: a pasted gig over the job ad's cap is a 413 of kind 'gig' BEFORE anything reads or counts it "
+            "(no model call, no jd_analyze unit, no use), an empty one a 400 the same way, and an oversize gig sent "
+            "beside an analysis is the same 413 raised inside the pass, which gives the use back (+1/-1)",
+            _pp5_read.status_code == 413 and (_detail28(_pp5_read) or {}).get("kind") == "gig"
+            and _pp5_empty.status_code == 400 and _pp5_calls.n == 0 and _pp5_events_before == 0
+            and "jd_analyze" not in _ul32(_pp5_uid)
+            and _pp5_beside.status_code == 413 and (_detail28(_pp5_beside) or {}).get("kind") == "gig"
+            and _refunded32(_events32(_pp5_uid), "cover_letter"),
+            f"{_pp5_read.status_code} {_detail28(_pp5_read)} {_pp5_empty.status_code} calls={_pp5_calls.n} "
+            f"usage={_ul32(_pp5_uid)} beside={_pp5_beside.status_code} {_shape32(_events32(_pp5_uid))}",
+        )
+        _pp6 = [
+            _pp_c.post("/proposal", json=dict(_PP_BODY, jd_text="a job ad"), headers=_pp5_h).status_code,
+            _pp_c.post("/proposal", json=dict(_PP_BODY, rate="₪" + "9" * 120), headers=_pp5_h).status_code,
+            _pp_c.post("/proposal", json=dict(_PP_BODY, tone="x" * 201), headers=_pp5_h).status_code,
+        ]
+        check(
+            "proposal: the request is closed (extra='forbid': a `jd_text` beside it is a 422, never quietly dropped), "
+            "the typed rate is bounded at 100 characters and the adjustment at 200 — each a 422 before the pass",
+            _pp6 == [422, 422, 422] and len(_events32(_pp5_uid)) == 2,
+            f"{_pp6} {_shape32(_events32(_pp5_uid))}",
+        )
+finally:
+    _routes32.write_proposal = _pp_real_write
+    _restore29(_pp_prev_env)
 
 _reached_end = True
 print(f"\n{_ran} checks ran.")

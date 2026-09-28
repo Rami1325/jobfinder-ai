@@ -88,6 +88,8 @@ const SIZE_LIMIT_KEYS: Record<string, string> = {
   page: "sizeLimit.page",
   // A line typed into the Jobs page's search (Phase 32).
   query: "sizeLimit.query",
+  // A gig pasted for the proposal writer (2026-09-28): refused whole, never cut.
+  gig: "sizeLimit.gig",
 };
 
 // A context overflow that is not the CV's alone. The model refused the prompt,

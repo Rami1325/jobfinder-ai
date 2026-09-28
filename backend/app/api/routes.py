@@ -34,6 +34,7 @@ from app.core.resume_review import review_resume
 from app.core.ats_xray import xray
 from app.core.company_brief import build_company_brief
 from app.core.cover_letter import generate_cover_letter
+from app.core.proposal import write_proposal
 from app.core.review_rewrites import rewrite_targets, write_rewrites
 from app.core.salary import extract_salary
 from app.llm.limits import (
@@ -211,6 +212,8 @@ from app.models import (
     PageImagesRequest,
     PageImagesResult,
     PageCountResult,
+    ProposalRequest,
+    ProposalResponse,
     ResumeVersionList,
     ResumeVersionOut,
     OutreachRequest,
@@ -603,6 +606,53 @@ def cover_letter_pass(
     plain `current_user`; the JD is hashed here, with the letter's own `jd_ref`.
     """
     return quota.posting_pass(db, user, "cover_letter", ref=quota.jd_ref(body.jd))
+
+
+@router.post("/proposal", response_model=ProposalResponse)
+def proposal(
+    body: ProposalRequest, db: Session = Depends(get_db), user: User = Depends(llm_user)
+) -> ProposalResponse:
+    """A short bid for one freelance gig (2026-09-28): the cover letter's twin.
+
+    It rides the cover-letter pass keyed by the analysed posting, so one monthly
+    use per posting covers letters and proposals alike, changes to either ride
+    it, and a failure gives the use back (cost-and-quota.md). With no `jd` (the
+    Tools page's pasted gig) the gig is read first: its size is refused as kind
+    "gig" before anything is counted, then the daily `jd_analyze` count that
+    /jd/analyze keeps, never a monthly use, and the reading is handed back so the
+    next call rides the pass. JobFinder never sends it anywhere: the user does,
+    on the platform, themselves."""
+    settings = get_settings()
+    jd = body.jd
+    if jd is None:
+        if not body.gig_text.strip():
+            raise HTTPException(400, "Paste the gig first.")
+        require_within(body.gig_text, settings.max_jd_kb, "gig")  # 413 before any count
+        check_and_count(db, user, "jd_analyze", settings.daily_jd_analyze_cap)
+        try:
+            jd = analyze_jd(body.gig_text)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while reading the gig: {e}")
+    with quota.pass_charged(db, user, "cover_letter", ref=quota.jd_ref(jd)) as use:
+        try:
+            out = write_proposal(body.resume, jd, body.gig_text, body.rate, body.tone)
+        except _SIZE_ERRORS:
+            raise  # app-level 413/503, never an 'LLM error' 502
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"LLM error while writing the proposal: {e}")
+    return ProposalResponse(
+        proposal=out.text,
+        jd=jd,
+        language=out.language,
+        placeholders=list(out.placeholders),
+        replaced=list(out.replaced),
+        unverified=list(out.unverified),
+        included_until=use.included_until,
+        changes_left=use.calls_left,
+        expires_in_s=use.seconds_left(),
+    )
 
 
 @router.post("/render")

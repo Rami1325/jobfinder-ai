@@ -19,6 +19,11 @@
       "line": "Answers to application questions",
       "body": "Honest, resume-grounded answers to application questions like \"Why us?\" or \"Describe a time…\""
     },
+    "proposal": {
+      "title": "Proposal for a gig",
+      "line": "A short bid for a freelance gig",
+      "body": "Paste a gig from XPlace, Upwork, Fiverr or a group chat and get a short bid in its language, from your real resume."
+    },
     "xray": {
       "title": "ATS X-ray",
       "line": "What an ATS reads from your file",
@@ -83,6 +88,16 @@
     "answer": "Answer",
     "copied": "Answer copied",
     "error": "Couldn't draft an answer."
+  },
+  "proposal": {
+    "gateFeature": "the proposal writer",
+    "subtitle": "Paste a freelance gig you found and get a short bid in its language, built only from your real resume. You send it on the platform yourself.",
+    "gigLabel": "The gig",
+    "gigPlaceholder": "Paste the client's post: the whole gig from XPlace, Upwork, Fiverr, Facebook or WhatsApp",
+    "rateLabel": "Your rate, if you want it in (optional)",
+    "ratePlaceholder": "₪250 an hour",
+    "write": "Write my proposal",
+    "error": "Couldn't write the proposal."
   },
   "xray": {
     "gateFeature": "the ATS X-ray",

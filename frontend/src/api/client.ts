@@ -52,6 +52,8 @@ import type {
   DeleteAccountResult,
   OutreachResult,
   PageCountResult,
+  ProposalRequest,
+  ProposalResponse,
   RecruiterScreenResult,
   ResumeModel,
   ResumePrefs,
@@ -220,6 +222,22 @@ export async function coverLetter(
  * else — the route forbids any other field (check-mirrors 36). */
 export async function coverLetterPass(jd: JDModel): Promise<UsagePassOut> {
   const { data } = await api.post<UsagePassOut>("/cover-letter/pass", { jd });
+  return data;
+}
+
+/** A short bid for one freelance gig (2026-09-28), on the SAME pass as the
+ * posting's letter: one use per posting covers a letter and a proposal. With no
+ * `jd` the server reads `gig_text` first (a daily count, never a use) and hands
+ * the reading back in `jd`, which the next call must send to ride the pass.
+ * The body is exactly `ProposalRequest` (the route forbids any other field). */
+export async function writeProposal(body: ProposalRequest): Promise<ProposalResponse> {
+  const { data } = await api.post<ProposalResponse>("/proposal", {
+    resume: body.resume,
+    jd: body.jd ?? null,
+    gig_text: body.gig_text,
+    rate: body.rate,
+    tone: body.tone,
+  });
   return data;
 }
 

@@ -271,6 +271,34 @@ export interface CoverLetterResponse {
   expires_in_s?: number;
 }
 
+/** POST /proposal (2026-09-28): a short bid for one freelance gig, the cover
+ * letter's twin — backend `ProposalRequest` / `ProposalResponse`, held equal by
+ * check-mirrors 102. It rides the SAME per-posting pass as the letter (one use
+ * per posting covers both). `jd` omitted, the server reads `gig_text` first
+ * (the Tools page) and hands the reading back for the next call to send. */
+export interface ProposalRequest {
+  resume: ResumeModel;
+  jd?: JDModel | null;
+  gig_text: string;
+  rate: string;
+  tone: string;
+}
+
+export interface ProposalResponse {
+  proposal: string;
+  jd: JDModel;
+  language: string;
+  /** The [brackets] the text still holds, for the user to fill in. */
+  placeholders: string[];
+  /** What the floor under the prompt took out (a rate, a timeline, a start the user did not give). */
+  replaced: string[];
+  /** Numbers the resume, the gig and the rate do not carry: for the user to check, never "verified". */
+  unverified: string[];
+  included_until?: string;
+  changes_left?: number;
+  expires_in_s?: number;
+}
+
 export interface ResumeUploadResponse {
   resume: ResumeModel;
   ledger: FactsLedger;

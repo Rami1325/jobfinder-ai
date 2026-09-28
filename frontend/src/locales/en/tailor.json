@@ -264,6 +264,24 @@
       "warm": "Warm"
     }
   },
+  "proposal": {
+    "title": "Proposal",
+    "kindLabel": "What to write",
+    "kindLetter": "Letter",
+    "kindProposal": "Proposal",
+    "toneLabel": "Tone",
+    "rateLabel": "Your rate, if you want it in (optional)",
+    "ratePlaceholder": "₪250 an hour",
+    "generate": "Write proposal",
+    "regenerate": "Write it again",
+    "error": "Couldn't write the proposal.",
+    "textLabel": "Your proposal",
+    "letterLabel": "Your cover letter",
+    "fillIn": "Fill in before you send:",
+    "checkNumbers": "Not in your resume, check before you send:",
+    "tookOut": "A rate, a timeline or a start date the AI wrote on its own was taken out.",
+    "sendYourself": "You send it on the platform yourself. JobFinder never signs in to or applies on Upwork, XPlace or any other marketplace."
+  },
   "sections": {
     "fallbackName": "Resume",
     "headline": "Headline",

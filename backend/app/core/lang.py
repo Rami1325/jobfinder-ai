@@ -40,6 +40,18 @@ def _hebrew_words(text: str) -> tuple[int, int]:
     return hebrew, hebrew + len(LATIN_WORD_RE.findall(text))
 
 
+def prose_language(text: str) -> str | None:
+    """The language of one piece of prose by the same share of words as a
+    resume, or None when it has no words to count. `lib/lang.ts::proseLanguage`
+    is its twin. A pasted gig is read this way (the proposal writer answers in
+    the gig's language): `detect_language` would read an English Upwork post
+    that names a Hebrew-spelled company as Hebrew."""
+    hebrew, words = _hebrew_words(text or "")
+    if not words:
+        return None
+    return "he" if hebrew * HEBREW_SHARE_DEN >= words else "en"
+
+
 def resume_language(resume: ResumeModel) -> str:
     """Detect the language a resume is written in.
 

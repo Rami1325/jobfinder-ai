@@ -365,6 +365,53 @@ class CoverLetterPassRequest(BaseModel):
     jd: JDModel
 
 
+# The rate a freelancer types beside a gig ("₪250 an hour", "$40-60/hr"):
+# a short line, bounded at the schema (llm-boundary.md, the short fields).
+PROPOSAL_RATE_MAX = 100
+
+
+class ProposalRequest(BaseModel):
+    """Body of `POST /proposal` (2026-09-28): a short bid for one gig.
+
+    `jd` is the analysed posting, the key of the cover-letter pass this rides
+    (`quota.jd_ref`), so a letter and a proposal for one posting share one use.
+    Omitted, the route reads `gig_text` first (the Tools page's pasted gig; the
+    daily `jd_analyze` count, never a monthly use) and hands the reading back,
+    so the next call rides the pass. `gig_text` is the posting's own words, the
+    user's paste: measured as kind "gig" and refused whole, never clipped.
+    `rate` is used verbatim or not at all; `tone` is one of the page's two
+    adjustments. `extra="forbid"`: a field this route does not know is a 422,
+    never quietly dropped."""
+
+    model_config = {"extra": "forbid"}
+
+    resume: ResumeModel
+    jd: Optional[JDModel] = None
+    gig_text: str = ""
+    rate: str = Field(default="", max_length=PROPOSAL_RATE_MAX)
+    tone: str = Field(default="", max_length=200)
+
+
+class ProposalResponse(BaseModel):
+    """A proposal, and what the floor under the prompt found in it
+    (`core/proposal_terms.py`), and the cover-letter pass it rode (the letter's
+    three fields, read the same way). `jd` is the posting as read, for the next
+    call to send back. `placeholders` are the [brackets] left for the user to
+    fill, `replaced` what the floor took out (a rate, a timeline, a start date
+    the user did not give), and `unverified` the numbers neither the resume, the
+    gig nor the rate carries. None of them is a claim that the text is right."""
+
+    proposal: str
+    jd: JDModel
+    language: str = "en"
+    placeholders: list[str] = Field(default_factory=list)
+    replaced: list[str] = Field(default_factory=list)
+    unverified: list[str] = Field(default_factory=list)
+    included_until: str = ""
+    changes_left: int = 0
+    expires_in_s: int = 0
+
+
 class RenderRequest(BaseModel):
     resume: ResumeModel
     fmt: str = "docx"  # docx | pdf

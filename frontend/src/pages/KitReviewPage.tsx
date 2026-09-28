@@ -429,7 +429,14 @@ export default function KitReviewPage() {
             <MatchReport gaps={kit.result.score_after.gaps} jdText={kit.jd_text} />
           )}
           {effectiveResume && kit.jd && (
-            <CoverLetter resume={effectiveResume} jd={kit.jd} onGenerated={onCoverGenerated} initialText={cover} />
+            <CoverLetter
+              resume={effectiveResume}
+              jd={kit.jd}
+              onGenerated={onCoverGenerated}
+              onEdited={onCoverGenerated}
+              initialText={cover}
+              postingText={kit.jd_text}
+            />
           )}
         </>
       )}

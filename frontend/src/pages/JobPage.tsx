@@ -642,7 +642,18 @@ function LetterSection({
   }
 
   if (jd && resume) {
-    return <CoverLetter resume={resume} jd={jd} initialText={detail.cover_letter} onGenerated={(letter) => void save(letter)} />;
+    // A letter or a proposal (2026-09-28), one pass per posting either way; the
+    // text the user edits in the box is saved on the row like a written one.
+    return (
+      <CoverLetter
+        resume={resume}
+        jd={jd}
+        initialText={detail.cover_letter}
+        postingText={detail.jd_text}
+        onGenerated={(letter) => void save(letter)}
+        onEdited={(letter) => void save(letter)}
+      />
+    );
   }
 
   return (

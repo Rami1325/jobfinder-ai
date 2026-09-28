@@ -1,0 +1,168 @@
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Handshake, Sparkles } from "lucide-react";
+import { writeProposal } from "../../api/client";
+import CoverLetter, { PROPOSAL_RATE_MAX, type ProposalFound } from "../../components/CoverLetter";
+import ResumeGate from "../../components/ResumeGate";
+import ToolShell from "../../components/ToolShell";
+import UsesNote from "../../components/UsesNote";
+import { useMasterResume } from "../../hooks/useMasterResume";
+import { apiErrorMessage } from "../../lib/apiError";
+import { useUses } from "../../lib/usesStore";
+import { Button, Card, Skeleton } from "../../components/ui";
+import type { JDModel } from "../../types";
+
+/** The gig as it was read, and the proposal written for it. */
+type Written = { gig: string; rate: string; jd: JDModel; text: string; found: ProposalFound };
+
+// Kept for this tab's life (module state, gone on a reload or a sign-out's
+// document load), so leaving to paste the proposal somewhere and coming back
+// finds it, with its pass, which the card reads back when it mounts.
+let lastGig = "";
+let lastRate = "";
+let lastWritten: Written | null = null;
+
+/**
+ * "Proposal for a gig" (2026-09-28, freelance, the small version): the user
+ * pastes a gig from a place JobFinder cannot read (XPlace, Upwork, Fiverr, a
+ * Facebook or WhatsApp group) and gets a short bid grounded in their resume.
+ *
+ * ONE path: paste, (a rate if they want it in), Write. The first proposal reads
+ * the gig on the server (a daily count, never a use) and opens the posting's
+ * cover-letter pass (one use, said under the button before the tap); after it
+ * the proposal is the letter card itself, in proposal mode, so a change rides
+ * that pass by the card's own tested rules. Editing the gig makes it a new gig.
+ */
+export default function ProposalToolPage() {
+  const { t } = useTranslation("tools");
+  const { t: tCommon } = useTranslation();
+  const { master, loading } = useMasterResume();
+  const [gig, setGig] = useState(lastGig);
+  const [rate, setRate] = useState(lastRate);
+  const [written, setWritten] = useState<Written | null>(lastWritten);
+  const [writing, setWriting] = useState(false);
+  const [error, setError] = useState("");
+  const result = useRef<HTMLDivElement>(null);
+  // Set by a write that just came back: the proposal is brought into view once,
+  // after it has rendered (a frame scheduled from the write ran before React
+  // committed it, and scrolled to nothing about half the time).
+  const reveal = useRef(false);
+  // A new gig opens a new pass: 1 use, said before the tap.
+  const uses = useUses("cover_letter");
+  const current = written && written.gig === gig ? written : null;
+
+  useEffect(() => {
+    if (!reveal.current || !current) return;
+    reveal.current = false;
+    result.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [current]);
+
+  function keep(next: Written | null) {
+    lastWritten = next;
+    setWritten(next);
+  }
+
+  async function write() {
+    if (!master?.resume || !gig.trim()) return;
+    setWriting(true);
+    setError("");
+    // The keyboard goes down, so the proposal is not written under it.
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    try {
+      const res = await writeProposal({ resume: master.resume, jd: null, gig_text: gig, rate, tone: "" });
+      reveal.current = true;
+      keep({ gig, rate, jd: res.jd, text: res.proposal, found: res });
+    } catch (e) {
+      setError(apiErrorMessage(e, t("proposal.error")));
+    } finally {
+      setWriting(false);
+    }
+  }
+
+  if (loading) return <Skeleton className="h-48 w-full" />;
+  if (!master?.resume) return <ResumeGate feature={t("proposal.gateFeature")} />;
+
+  return (
+    <ToolShell
+      title={t("cards.proposal.title")}
+      subtitle={t("proposal.subtitle")}
+      icon={<Handshake className="text-accent-soft" />}
+    >
+      <Card>
+        <label htmlFor="gig-text" className="mb-1 block text-xs text-ink-muted">
+          {t("proposal.gigLabel")}
+        </label>
+        {/* The user's own paste: never cut (no maxLength), refused whole by the
+            server if it is too long. 16 px on a phone, so iOS does not zoom. */}
+        <textarea
+          id="gig-text"
+          dir="auto"
+          value={gig}
+          onChange={(e) => {
+            lastGig = e.target.value;
+            setGig(e.target.value);
+          }}
+          // The keyboard takes half a phone's height: once it is up, the box is
+          // brought to the top of what is left (under the 56 px header), so the
+          // text being pasted or typed is not under the keyboard (measured at
+          // 390 x 340: the box began 281 px down, 59 px of it in view).
+          onFocus={(e) => {
+            const el = e.currentTarget;
+            window.setTimeout(() => el.scrollIntoView({ block: "start", behavior: "smooth" }), 300);
+          }}
+          placeholder={t("proposal.gigPlaceholder")}
+          rows={6}
+          className="min-h-[9rem] w-full scroll-mt-20 resize-y rounded-lg border border-line bg-bg-soft p-3 text-base text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none sm:text-sm"
+        />
+        {!current && (
+          <>
+            <label htmlFor="gig-rate" className="mb-1 mt-3 block text-xs text-ink-muted">
+              {t("proposal.rateLabel")}
+            </label>
+            <input
+              id="gig-rate"
+              dir="auto"
+              value={rate}
+              maxLength={PROPOSAL_RATE_MAX}
+              onChange={(e) => {
+                lastRate = e.target.value;
+                setRate(e.target.value);
+              }}
+              placeholder={t("proposal.ratePlaceholder")}
+              className="h-11 w-full rounded-lg border border-line bg-bg-soft px-3 text-base text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none sm:max-w-xs sm:text-sm"
+            />
+            <Button
+              className="mt-4 min-h-11"
+              loading={writing}
+              disabled={!gig.trim() || uses.out}
+              icon={<Sparkles size={16} />}
+              onClick={() => void write()}
+            >
+              {t("proposal.write")}
+            </Button>
+            <UsesNote feature="cover_letter" className="mt-2">
+              {tCommon("uses.proposal", { count: uses.remaining ?? 0 })}
+            </UsesNote>
+            {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+          </>
+        )}
+      </Card>
+
+      {current && (
+        <div ref={result} className="scroll-mt-20">
+          <CoverLetter
+            resume={master.resume}
+            jd={current.jd}
+            initialText={current.text}
+            initialRate={current.rate}
+            initialFound={current.found}
+            postingText={current.gig}
+            kinds={["proposal"]}
+            onGenerated={(text) => keep({ ...current, text })}
+            onEdited={(text) => keep({ ...current, text })}
+          />
+        </div>
+      )}
+    </ToolShell>
+  );
+}
