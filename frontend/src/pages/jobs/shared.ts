@@ -64,6 +64,7 @@ export const SOURCE_IDS = [
   "greenhouse",
   "lever",
   "smartrecruiters",
+  "ashby",
 ] as const;
 
 // One-click Israeli locations (PLAN 2.3). English values work across all

@@ -9,6 +9,7 @@ pages/jobs/shared.ts) must name every board here, in this order: check-mirrors
 """
 from __future__ import annotations
 
+from app.core.providers.ashby import AshbyProvider
 from app.core.providers.base import (
     JobHit,
     JobProvider,
@@ -42,6 +43,7 @@ PROVIDERS: dict[str, JobProvider] = {
         GreenhouseProvider(),
         LeverProvider(),
         SmartRecruitersProvider(),
+        AshbyProvider(),
     )
 }
 

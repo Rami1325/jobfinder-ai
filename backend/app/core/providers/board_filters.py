@@ -25,7 +25,7 @@ _ISRAELI_PLACES_EN: tuple[str, ...] = tuple(
     sorted(
         set(HE_CITY_ALIASES.values())
         | {
-            "israel", "tel aviv", "tel-aviv", "tel aviv-yafo", "tel aviv yafo", "jerusalem", "haifa",
+            "israel", "tel aviv", "tel-aviv", "tel aviv-yafo", "tel aviv yafo", "tlv", "jerusalem", "haifa",
             "herzliya", "herzelia", "ramat gan", "petah tikva", "petach tikva", "petah tiqva", "netanya",
             "beer sheva", "be'er sheva", "beersheba", "rehovot", "raanana", "ra'anana", "kfar saba",
             "bnei brak", "yokneam", "yoqneam", "hod hasharon", "rosh haayin", "rosh ha'ayin", "modiin",

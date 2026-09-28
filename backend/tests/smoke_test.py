@@ -6956,6 +6956,114 @@ check(
     f"{_sr_refusals} {_sr_refused_urls}",
 )
 
+# 16i. Ashby (2026-09-28): the public posting API, the whole board with its
+# descriptions and work mode inline. Pinned on a trimmed real board (Lemonade:
+# four postings in Tel Aviv, written "TLV", one in New York, one remote in the
+# US), plus plants for the traps: `isRemote` on a hybrid office, a US posting in
+# "Chicago, IL" (Illinois, never Israel), and a US posting whose second office
+# is in Tel Aviv.
+import app.core.providers.ashby as _ab  # noqa: E402
+from app.core.providers.ashby_seed import SEED_COMPANIES as _AB_SEED  # noqa: E402
+
+_AB_BOARD = _json.loads((Path(__file__).parent / "fixtures" / "ashby_board.json").read_text(encoding="utf-8"))
+_ab_hits = _ab.parse_ashby_jobs(_AB_BOARD, company_name="Lemonade")
+check(
+    "16i ashby parser: each listed posting with its title, the registry's company, its location as the board "
+    "writes it, the job URL, publishedAt as posted_at (the one board-date parser reads it), the plain "
+    "description INLINE, and workplaceType as the board's work mode",
+    len(_ab_hits) == 6
+    and [h.location for h in _ab_hits] == ["TLV", "TLV", "TLV", "Remote", "NYC", "TLV"]
+    and _ab_hits[0].title == "Senior Backend Engineer" and _ab_hits[0].company == "Lemonade"
+    and _ab_hits[0].url == "https://jobs.ashbyhq.com/lemonade/9a6153da-639d-413e-b9bf-68ebf5f8c269"
+    and _ab_hits[0].posted_at == "2025-02-04T08:47:42.681+00:00" and _lv_parse_date(_ab_hits[0].posted_at) is not None
+    and all(h.source == "ashby" and len(h.description) > 100 for h in _ab_hits)
+    and [h.work_mode for h in _ab_hits] == ["", "", "", "Remote", "", "Hybrid"]
+    and _ab.AshbyProvider().fetch_description(_ab_hits[0]) == _ab_hits[0].description,
+    f"{[(h.title, h.location, h.work_mode) for h in _ab_hits]}",
+)
+check(
+    "16i ashby `isRemote` IS NOT REMOTE (Comeet's trap again): the hybrid Tel Aviv role carries isRemote true and "
+    "reads HYBRID; a posting with isRemote true and no workplaceType states nothing, and its words decide",
+    _AB_BOARD["jobs"][5]["isRemote"] is True and _AB_BOARD["jobs"][5]["workplaceType"] == "Hybrid"
+    and _lv_read_mode(board_value=_ab_hits[5].work_mode).modes == {"hybrid"}
+    and _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][0], "isRemote": True, "workplaceType": None}]})[0].work_mode == ""
+    and _lv_read_mode(board_value="OnSite").modes == {"onsite"},
+)
+check(
+    "16i ashby parser: an unlisted posting skipped, duplicates folded, no URL skipped, junk is []; published pay "
+    "is added to the description in the board's words",
+    _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][0], "isListed": False}]}) == []
+    and len(_ab.parse_ashby_jobs({"jobs": _AB_BOARD["jobs"] * 2})) == 6
+    and _ab.parse_ashby_jobs({"jobs": [{"id": "x", "title": "T"}]}) == []
+    and _ab.parse_ashby_jobs(None) == [] and _ab.parse_ashby_jobs({"jobs": "x"}) == []
+    and _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][4], "compensation": {
+        "scrapeableCompensationSalarySummary": "$210K – $260K"}}]})[0].description.endswith("Compensation: $210K – $260K"),
+)
+_ab_chicago = _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][4], "id": "chi", "jobUrl": "https://jobs.ashbyhq.com/x/chi",
+    "location": "Chicago, IL", "address": {"postalAddress": {"addressLocality": "Chicago", "addressRegion": "IL",
+    "addressCountry": "United States"}}}]})[0]
+_ab_second = _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][4], "id": "two", "jobUrl": "https://jobs.ashbyhq.com/x/two",
+    # Named so only its ADDRESS says Israel: no place list can read "Second office".
+    "secondaryLocations": [{"location": "Second office", "address": {"postalAddress": {"addressCountry": "Israel"}}}]}]})[0]
+check(
+    "16i ashby place: an Israel search keeps the four \"TLV\" postings by their ADDRESS (also for a Hebrew city), "
+    "leaves out the New York and the US-remote ones, never reads Illinois's \"IL\" as Israel (\"Chicago, IL\"), and "
+    "keeps a New York posting whose second office is in Tel Aviv",
+    [_ab.location_matches(h, "Israel") for h in _ab_hits] == [True, True, True, False, False, True]
+    and _ab.location_matches(_ab_hits[0], "תל אביב")
+    and _ab.location_matches(_ab_hits[0], "Tel Aviv, Israel")
+    and not _ab.location_matches(_ab_chicago, "Israel")
+    and _ab.location_matches(_ab_second, "Israel")
+    and _ab.location_matches(_ab_hits[4], "New York")
+    and _ab.keyword_matches(_ab_hits[0], "Backend Engineer") and not _ab.keyword_matches(_ab_hits[0], "Chef"),
+)
+check(
+    "16i ashby URL: a job-board name (case and dots kept: Viz.ai) goes into the path; anything else is refused "
+    "before any request",
+    _ab.board_url("Viz.ai") == "https://api.ashbyhq.com/posting-api/job-board/Viz.ai?includeCompensation=true"
+    and all(_sr_raises(lambda b=bad: _ab.board_url(b)) for bad in ("../x", "a/b", "", "a b")),
+)
+check(
+    "16i ashby is registered and searched by default; its seed is 17 boards, case kept (Viz.ai, Irregular, HUMAN, "
+    "Snappy), Sisense among them (it left Greenhouse for Ashby)",
+    "ashby" in _LV_PROV and "ashby" in _LV_DEFAULTS
+    and len(_AB_SEED) == 17
+    and {"Viz.ai", "Irregular", "HUMAN", "Snappy", "sisense", "moonactive", "lemonade"} <= {r["slug"] for r in _AB_SEED},
+)
+_ab_urls: list[str] = []
+
+
+def _ab_get(url, timeout=15):  # noqa: ANN001
+    _ab_urls.append(url)
+    if "/job-board/lemonade?" in url:
+        return _json.dumps(_AB_BOARD)
+    if "/job-board/nexxen?" in url:
+        raise OSError("HTTP Error 404: Not Found")
+    return _json.dumps({"jobs": [], "apiVersion": "1"})
+
+
+_ab_real = _ab._http_get
+_ab._http_get = _ab_get
+_ab.FEEDS.clear()
+try:
+    _ab_found = _ab.AshbyProvider().search(_Gh16Ctx(job_title="Backend Engineer", location="Israel", limit=25))
+    _ab_first = list(_ab_urls)
+    _ab_urls.clear()
+    _ab_again = _ab.AshbyProvider().search(_Gh16Ctx(job_title="Backend Engineer", location="Israel", limit=25))
+    _ab_again_urls = list(_ab_urls)
+finally:
+    _ab._http_get = _ab_real
+    _ab.FEEDS.clear()
+check(
+    "16i ashby search: every registered board asked once, a board that fails (404) left out while the rest "
+    "answer, the Israel search keeps Lemonade's two Tel Aviv backend roles (newest first), and the next search "
+    "asks nothing",
+    [h.title for h in _ab_found] == ["Backend Engineer - ML Platform", "Senior Backend Engineer"]
+    and len(_ab_first) == 17 and any("/job-board/nexxen?" in u for u in _ab_first)
+    and _ab_again_urls == [] and len(_ab_again) == 2,
+    f"{[h.title for h in _ab_found]} {len(_ab_first)} {_ab_again_urls}",
+)
+
 # 17. The CV scan (PLAN 6; an app feature since Phase 30 / A2): deterministic
 # keyword extraction, coverage via the scorer, Hebrew prefix rescue, and the
 # HTTP route behind the gate with its daily cap and its monthly use. Zero LLM
