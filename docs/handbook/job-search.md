@@ -283,3 +283,33 @@ The owner: "check what other websites we can get jobs from and lets add them to 
 - **THE LOCATION TRAP**: `locationRestrictions`, the countries a posting is OPEN TO, never becomes its `location`. `pay_market` reads a worldwide posting's location as the country the job is in, and a list ending "…, United States" or "…, Vietnam" would read as that country (live on 2026-09-28, one "devops" posting's list ended in a low-pay country). `location` is left EMPTY (the job has no place; the card already says Remote from its work mode; an empty place is one `pay_market` keeps), and the list stays in `raw`, where the eligibility filter reads it: a posting is kept when its list is empty or names Israel, and any other list (open to the US only) is left out whatever the server sent. Smoke pins the trap both ways (the empty location kept, the list planted as the location hidden).
 - **Pay** is appended to the description in the board's words ("Compensation: 130,000 – 200,000 EUR (annual)"), so the salary reader can find it. **Contractors are kept** (a contractor role is a job), recorded because they float to the top: micro1's AI-training gigs are 2-4 of every 20 (measured 2026-09-28); a denylist or a contractor filter is the owner's call.
 - **Measured live 2026-09-28** through the provider's parser: "software engineer", "data analyst", "product manager", "qa engineer" and "devops" each gave a full page of 20, all kept (open worldwide 94, naming Israel 6), every URL a Himalayas page, every posting dated, 0.1-0.2 s a query.
+
+#### A whole search, before and after (measured 2026-09-28)
+
+A real `search_jobs` over the live boards with the stub model, from the owner's machine (Israel), "Software Engineer" and "Backend Engineer" in Israel, limit 10 (`measure_search.py` in the build's scratch folder; requests counted where each provider binds `_http_get`):
+
+| | total | boards stage | requests |
+|---|---|---|---|
+| **Before** (52b6b48, 5 boards), a new process | 15.6 s | 13.4 s | 86 |
+| Before, the same search again in that process | 21.5 s | 19.3 s (Greenhouse, unbounded) | 21 |
+| **After** (9 boards), the first search a database ever makes (every Comeet token scraped) | 16.9 s | 15.7 s | 249 |
+| After, a new process, tokens stored (the production steady state per instance) | 7.3 s | 6.1 s | 170 |
+| After, the same search again (every feed cached) | 4.9-5.2 s | 3.7-3.8 s | 11 |
+| After, worldwide pass on, a new process | 18.0 s | 16.7 s | 178 |
+| After, worldwide pass on, again | 8.6 s | 7.3 s | 17 |
+
+So a search now asks about 170 board URLs once per instance per 15 minutes (Comeet 79, Greenhouse 50, Ashby 17, Lever 7, SmartRecruiters 7 with a detail, plus the scrape boards), and about 11 on every search after that, where it asked 21 on every repeated search before (the dead Comeet pages and Greenhouse's 404 among them). No registry board can hold the boards stage past its 20 s budget. The slowest single board in these runs was Greenhouse once (13-17 s cold, network variance); on Vercel (US) the times will differ.
+
+#### On the page (measured 2026-09-28)
+
+With Playwright on a scratch copy of the local database (the old 28/16 registries, which the first search migrated to 79/49 plus 17/7/3 in `board_companies`, recording each batch), the stub model and live boards, at 390 × 664 and 360 × 664 in English and Hebrew and at 1440 × 900:
+- **"via Himalayas" / "דרך Himalayas"**: a 44 px box (90 × 44 en, 94 × 44 he) inside its card on every search row and History row of a Himalayas posting, opening its Himalayas page in a new tab. A row that carries New anyway is unchanged (History 184 px, search 162 px, the other boards' rows the same); a History row with no other badge gains the badge row, 156 → 182. No horizontal overflow anywhere (`scrollWidth` equal to the viewport in all eight views). The meta line reads "EWOR GmbH · today · Remote" / "… · היום · מרחוק" (no place, the eligibility list kept out of it). A tracked Himalayas job's page links "Open on Himalayas" / "פתיחה בHimalayas".
+- **The board picker**: nine boards, each a 44 px row, packed with no gap between rows: 4 rows (176 px) at 390 and 360 in both languages, where the five boards were about two text rows before; one 44 px row at 1440. Nothing clipped. Himalayas reads "Himalayas · remote abroad" / "… מרחוק בחו\"ל", Drushim "דרושים" in Hebrew.
+- **The opt-in**: live with LinkedIn and Himalayas ticked, LinkedIn alone or Himalayas alone, and disabled with its reason ("Runs on LinkedIn and Himalayas — check one of them below") only with neither; the line under it names both boards in both languages.
+- **The scan panel**: a search with the pass on listed all nine boards, one without it eight (no Himalayas); a real worldwide search from the page took 23 s the first time and 6 s after, and ranked two Himalayas postings among eight.
+
+#### What keeps working for the new boards, and what was not built
+
+- **Keyed on URL, company and title, so unchanged**: History (`record_search_hits`, deduped by URL), the sightings (`source` + `content_key`), the applied-jobs and hidden-jobs filters (URL key and role key), the cross-board dedupe (`also_on`), the competition line (LinkedIn's alone; the new boards state no count, so none is shown), and the tracker's status stamp. The new boards' URLs carry no tracking query, and `posting_keys.url_key` keeps each exact address. Work mode reads each board's own field (above). The ghost signals read the title and text as for every board.
+- **Not built, recorded**: no admin route adds a company to `board_companies` (a company joins by a seed batch; an admin removes one by deleting its row, which later syncs respect); the new boards' creation dates are not fed to the `long_open` ghost signal as `first_published` (their `posted_at` is a publication date, but the thresholds are unmeasured, PLAN 28.5); a SmartRecruiters description is fetched per search for a selected posting, not cached; a saved search that unticked a board before 2026-09-28 does not get the new boards until they are ticked; Himalayas' contractor postings are kept.
+- **Not built, on purpose (owner decisions)**: Workday (a POST API this app has no door for, and terms that may forbid data gathering), AllJobs (its terms require written permission), Consider / TechAviv (its terms forbid automated access; used once by the research for discovery only). See PLAN.md, *More places to search*.
