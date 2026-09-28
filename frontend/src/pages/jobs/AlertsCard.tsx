@@ -226,10 +226,13 @@ export function CustomizeFields({
           The pass runs on LinkedIn and Himalayas (WORLDWIDE_SOURCES), and the board
           checkboxes are authoritative (PLAN 15.9) — with neither checked the
           toggle is inert, so grey it out and say why. */}
-      {/* Opacity/transform only — never height:auto on a reveal (see Disclosure). */}
+      {/* Opacity/transform only — never height:auto on a reveal (see Disclosure).
+          A 44 px box to tap (the phone polish pass): `py-3` around its 20 px
+          line, in place of the 12 px margin above it, so the text does not
+          move; it was a 20 px target. */}
       {allowsRemote(ctx?.work_mode) && (
           <label
-            className={`animate-fade-up mt-3 flex w-fit items-start gap-2 text-sm text-ink ${
+            className={`animate-fade-up flex w-fit items-start gap-2 py-3 text-sm text-ink ${
               worldwideBoard ? "cursor-pointer" : "opacity-50"
             }`}
           >
@@ -254,7 +257,7 @@ export function CustomizeFields({
           the rule were three lines under a checkbox. Outside the label, so the
           button is not part of what toggles it. */}
       {allowsRemote(ctx?.work_mode) && worldwideBoard && (
-        <WhyNote className="ms-6 mt-0.5" line={t("search.worldwideLine")} why={t("search.worldwideWhy")} />
+        <WhyNote className="ms-6" line={t("search.worldwideLine")} why={t("search.worldwideWhy")} />
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-muted">

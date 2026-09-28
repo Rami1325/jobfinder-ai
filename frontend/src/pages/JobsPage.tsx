@@ -938,7 +938,9 @@ export default function JobsPage() {
             <PlainSearch state={plain} onRead={onPlainRead} disabled={prefilling} className="mt-3" />
             <SearchModeSwitch mode={searchMode} onChange={setSearchMode} disabled={searching} className="mt-3" />
 
-            <label className="mt-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-ink">
+            {/* A 44 px box to tap (the phone polish pass; it was a 20 px line),
+                its text where it was: 4 px of margin and 12 of the box. */}
+            <label className="mt-1 flex min-h-11 w-fit cursor-pointer items-center gap-2 text-sm text-ink">
               <input
                 type="checkbox"
                 checked={customOpen}

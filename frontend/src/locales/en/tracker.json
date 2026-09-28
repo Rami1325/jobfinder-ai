@@ -29,8 +29,10 @@
   "ofApplied": "of {{n}} sent",
   "excitement": {
     "title": "How excited are you about this job?",
-    "set_one": "Set excitement to {{count}} star",
-    "set_other": "Set excitement to {{count}} stars"
+    "label": "Excitement",
+    "none": "No rating",
+    "stars_one": "{{count}} star",
+    "stars_other": "{{count}} stars"
   },
   "notes": {
     "label": "Notes",

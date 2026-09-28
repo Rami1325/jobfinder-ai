@@ -15535,7 +15535,10 @@ try {
       out.push("a freelance row does not hand its posting to /tools/proposal as gigText");
     if (!/\{freelance \? \(\s*<Button size="sm" variant="secondary" icon=\{<Handshake size=\{14\} \/>\} onClick=\{propose\}[^>]*>\s*\{t\("card\.proposal"\)\}/.test(card))
       out.push("a freelance row does not lead with Write a proposal");
-    if (!/onClick=\{propose\} className="[^"]*\bmin-h-11\b/.test(card)) out.push("a freelance row's Write a proposal is not 44 px to tap on a phone");
+    // A 44 px target: since the phone polish pass (2026-09-28) at the Tailor's
+    // size with a 44 px layer (`tap-44`, check 108), where it was a 44 px box.
+    if (!/onClick=\{propose\} className="[^"]*(?:\btap-44\b|\bmin-h-11\b)/.test(card))
+      out.push("a freelance row's Write a proposal is not 44 px to tap on a phone (tap-44, or a min-h-11 box)");
     if (!/\.\.\.\(freelance\s*\?\s*\[\{ key: "tailor", label: t\("card\.tailor"\), Icon: ArrowRight, onClick: tailor \}\]/.test(card))
       out.push("a freelance row does not keep Tailor in its menu");
     if (!/\(useLocation\(\)\.state as \{ gigText\?: unknown \} \| null\)\?\.gigText/.test(tool))
@@ -15579,7 +15582,7 @@ try {
   plant104("fm", "role=\"radiogroup\"", "role=\"group\"", "a switch that is not a radiogroup");
   plant104("fm", "    try {\n      localStorage.setItem(MODE_KEY, m);\n    } catch {", "    {\n      localStorage.setItem(MODE_KEY, m);\n    } {", "a write to storage that can throw");
   plant104("cards", "onClick={propose}", "onClick={tailor}", "a proposal button that tailors");
-  plant104("cards", 'onClick={propose} className="min-h-11 lg:min-h-0"', "onClick={propose}", "a proposal button too small to tap");
+  plant104("cards", 'onClick={propose} className="tap-44"', "onClick={propose}", "a proposal button too small to tap");
   plant104("cards", "state: { gigText: jdForTools }", "state: { jdText: jdForTools }", "a gig handed under another name");
   plant104("tool", "?.gigText;", "?.jdText;", "a tool that never reads the handed gig");
   plant104("routes", "                    **_mode_kw(body),\n", "", "a stream that drops the mode");
@@ -15856,6 +15859,180 @@ try {
   twin107(3, (s) => s.replace(/לינקדאין/g, "פייסבוק"), "a Hebrew note that leaves LinkedIn out");
 } catch (e) {
   fail(`gig copy check (check 107) could not run: ${e.message}`);
+}
+
+// ---- 108. the phone polish pass: every target it fixed is 44 px, and none overlaps //
+// 2026-09-28. The owner's floor is a 44 px target on a phone; Phase 32 left five
+// under it: the tracker card's stars (17 px each, five side by side), the job
+// page's posting link, status chip and stars (36 px, a star 28 wide), the search
+// and History rows' buttons (32-34 px: Tailor, Save, the saved icon, "⋯"), and
+// the search card's "Customize search" and worldwide checkbox lines (20 px).
+// Two ways to 44 px, each where it belongs, and this check holds both:
+//   (a) `.tap-44` (styles.css): the control keeps its size and its place, and a
+//       transparent ::after centred on it, at least 44 px each way, takes the
+//       taps around it; a job row therefore keeps the height Phase 31 budgeted
+//       three to a screen. The rule must be absolute, centred and max(100%, 44px)
+//       both ways. Every button in a search row and a History row carries it, and
+//       so does "⋯" (MoreMenu). A layer only helps while it overlaps nothing, so
+//       the rows keep an 8 px gap (`gap-2` or more): a 36 px icon's layer adds
+//       4 px each side, and two of them meet, never cross.
+//   (b) A 44 px BOX where the page has the room: the job page's posting link and
+//       status chip (`min-h-11`), and the two checkbox lines (`min-h-11`, or `py-3`
+//       around a 20 px line).
+//   (c) Five stars cannot each grow to 44 px without overlapping (220 px, more
+//       than a board card's 149), so the rating is ONE control now
+//       (components/RatingSelect.tsx): the stars show it and a transparent native
+//       select, `h-11` and centred, lies over them, labelled, with "No rating" and
+//       1-5 stars, on the tracker card and the job page, and no star buttons are
+//       left on either. Its words resolve in both tracker.json with their plural
+//       sets. Planted twins are judged every run.
+try {
+  const MIN44 = /\bmin-h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?![\w-])/;
+  const H44 = /(?<![\w-])h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?![\w-])/;
+  const TAP = /(?<![\w-])tap-44(?![\w-])/;
+  // From `<Tag` to the end of its opening tag, reading braces, so an arrow's `=>`
+  // inside a prop is not the tag's end.
+  const tagFrom = (src, at, what) => {
+    let depth = 0;
+    for (let i = at; i < src.length; i++) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (depth === 0 && c === ">") return src.slice(at, i + 1);
+    }
+    throw new Error(`an unterminated tag in ${what}`);
+  };
+  const tags = (src, name) => [...src.matchAll(new RegExp(`<${name}\\b`, "g"))].map((m) => tagFrom(src, m.index, name));
+  // A CSS size of at least 44 px: `max(100%, 44px)`, or a plain 44px / 2.75rem and up.
+  const size44 = (v) => {
+    const m = /^(?:max\(\s*100%\s*,\s*([\d.]+)(px|rem)\s*\)|([\d.]+)(px|rem))$/.exec((v ?? "").trim());
+    if (!m) return false;
+    const [n, unit] = m[1] ? [m[1], m[2]] : [m[3], m[4]];
+    return (unit === "px" ? Number(n) : Number(n) * 16) >= 44;
+  };
+  const cssBlock = (css, selector) => {
+    const at = css.indexOf(`${selector} {`);
+    if (at === -1) return null;
+    const end = css.indexOf("}", at);
+    const out = {};
+    for (const d of css.slice(css.indexOf("{", at) + 1, end).split(";")) {
+      const [k, ...v] = d.split(":");
+      if (k.trim()) out[k.trim()] = v.join(":").trim();
+    }
+    return out;
+  };
+  const read108 = ({ css, cards, more, tracker, job, rating, alerts, jobsPage, en, he }) => {
+    const out = [];
+    // (a) the layer itself.
+    const base = cssBlock(css, ".tap-44");
+    const layer = cssBlock(css, ".tap-44::after");
+    if (!base || base.position !== "relative") out.push("styles.css has no `.tap-44 { position: relative }`");
+    if (!layer) out.push("styles.css has no `.tap-44::after` layer");
+    else {
+      if (layer.content !== '""') out.push("the .tap-44 layer has no `content: \"\"`, so it is never drawn");
+      if (layer.position !== "absolute") out.push("the .tap-44 layer is not `position: absolute`");
+      if (!size44(layer.width) || !size44(layer.height)) out.push("the .tap-44 layer is not at least 44 px each way (`max(100%, 44px)`)");
+      if (layer.left !== "50%" || layer.top !== "50%" || !/translate\(\s*-50%\s*,\s*-50%\s*\)/.test(layer.transform ?? ""))
+        out.push("the .tap-44 layer is not centred on its control (left/top 50%, translate(-50%, -50%))");
+    }
+    // (a) every button of a search row and a History row, and "⋯".
+    for (const [fn, floor] of [["export function MatchCard(", 4], ["export function HistoryRow(", 2]]) {
+      const body = fnSource(cards, fn);
+      const btns = [...tags(body, "Button"), ...tags(body, "button")];
+      if (btns.length < floor) throw new Error(`pages/jobs/cards.tsx ${fn.slice(16, -1)}: read ${btns.length} buttons (expected at least ${floor})`);
+      for (const b of btns)
+        if (!TAP.test(b) && !MIN44.test(b)) out.push(`a button in ${fn.slice(16, -1)}'s row is under 44 px to tap (no tap-44): ${b.replace(/\s+/g, " ").slice(0, 90)}`);
+      const rows = [...body.matchAll(/<div className="mt-2 flex items-center (gap-[\w.[\]]+)">/g)];
+      if (!rows.length) throw new Error(`pages/jobs/cards.tsx ${fn.slice(16, -1)}: its action row (\`mt-2 flex items-center gap-…\`) not found`);
+      for (const r of rows) {
+        const gap = /^gap-(\d+(?:\.\d+)?)$/.exec(r[1]);
+        if (!gap || Number(gap[1]) < 2) out.push(`${fn.slice(16, -1)}'s action row gap is ${r[1]}: under 8 px, two 36 px icons' 44 px layers overlap`);
+      }
+    }
+    const moreBtn = tags(more, "button").find((b) => /ref=\{buttonRef\}/.test(b));
+    if (!moreBtn) throw new Error("components/ui/MoreMenu.tsx: the <button ref={buttonRef}> not found");
+    if (!TAP.test(moreBtn)) out.push("MoreMenu's \"⋯\" is under 44 px to tap (no tap-44)");
+    // (b) the job page's header row, and the two checkbox lines.
+    const link = tags(job, "a").find((a) => /href=\{detail\.job_url\}/.test(a));
+    if (!link) throw new Error("pages/JobPage.tsx: the posting link (<a href={detail.job_url}>) not found");
+    if (!MIN44.test(link)) out.push("the job page's posting link is under 44 px (min-h-11)");
+    const status = tags(fnSource(job, "function StatusSelect("), "span")[0];
+    if (!status || !MIN44.test(status)) out.push("the job page's status chip is under 44 px (min-h-11)");
+    const jobRating = tags(job, "RatingSelect");
+    if (jobRating.length !== 1) out.push(`the job page renders ${jobRating.length} RatingSelect, not one`);
+    else if (!MIN44.test(jobRating[0])) out.push("the job page's rating is not a 44 px box (min-h-11)");
+    const fields = fnSource(alerts, "export function CustomizeFields");
+    const ww = tags(fields, "label").find((l, i, all) => {
+      const at = fields.indexOf(l);
+      return fields.slice(at, fields.indexOf("</label>", at)).includes("include_worldwide");
+    });
+    if (!ww) throw new Error("pages/jobs/AlertsCard.tsx: the worldwide <label> not found");
+    if (!MIN44.test(ww) && !(/(?<![\w-])py-3(?![\w-])/.test(ww) && /(?<![\w-])text-sm(?![\w-])/.test(ww)))
+      out.push("the worldwide checkbox line is under 44 px (min-h-11, or py-3 around its 20 px line)");
+    const custom = tags(jobsPage, "label").find((l) => {
+      const at = jobsPage.indexOf(l);
+      return jobsPage.slice(at, jobsPage.indexOf("</label>", at)).includes("checked={customOpen}");
+    });
+    if (!custom) throw new Error("pages/JobsPage.tsx: the Customize search <label> not found");
+    if (!MIN44.test(custom)) out.push("the Customize search checkbox line is under 44 px (min-h-11)");
+    // (c) the rating: one select over the stars, on both pages.
+    const sel = tags(rating, "select");
+    if (sel.length !== 1) throw new Error(`components/RatingSelect.tsx: read ${sel.length} <select>, expected one`);
+    for (const [need, why] of [
+      [/(?<![\w-])absolute(?![\w-])/, "absolute over the stars"],
+      [/(?<![\w-])opacity-0(?![\w-])/, "transparent (opacity-0)"],
+      [/aria-label=\{t\("excitement\.label"\)\}/, 'labelled (aria-label={t("excitement.label")})'],
+    ])
+      if (!need.test(sel[0])) out.push(`the rating's select is not ${why}`);
+    if (!H44.test(sel[0]) && !MIN44.test(sel[0])) out.push("the rating's select is under 44 px tall (h-11)");
+    if (!/t\("excitement\.none"\)/.test(rating) || !/t\("excitement\.stars", \{ count: n \}\)/.test(rating))
+      out.push("the rating's options are not \"No rating\" and 1-5 stars (excitement.none, excitement.stars)");
+    const card = fnSource(tracker, "function AppCard(");
+    if (tags(card, "RatingSelect").length !== 1) out.push("a tracker card does not rate through one RatingSelect");
+    for (const [file, src] of [["pages/TrackerPage.tsx", tracker], ["pages/JobPage.tsx", job]])
+      if (/function Stars\(|excitement\.set\b/.test(src)) out.push(`${file} still draws the rating as star buttons`);
+    for (const [loc, b] of [["en", en], ["he", he]])
+      for (const key of ["excitement.label", "excitement.none", "excitement.stars"])
+        for (const p of keyProblems(b, key, loc, "the rating")) out.push(`locales/${loc}/tracker.json ${p}`);
+    return out;
+  };
+  const r108 = {
+    css: read("styles.css"),
+    cards: decomment(read("pages/jobs/cards.tsx")),
+    more: decomment(read("components/ui/MoreMenu.tsx")),
+    tracker: decomment(read("pages/TrackerPage.tsx")),
+    job: decomment(read("pages/JobPage.tsx")),
+    rating: decomment(read("components/RatingSelect.tsx")),
+    alerts: decomment(read("pages/jobs/AlertsCard.tsx")),
+    jobsPage: decomment(read("pages/JobsPage.tsx")),
+    en: JSON.parse(read("locales/en/tracker.json")),
+    he: JSON.parse(read("locales/he/tracker.json")),
+  };
+  for (const p of read108(r108)) fail(`check 108: ${p} (the phone polish pass)`);
+  const plant108 = (key, from, to, label) => {
+    if (!r108[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read108({ ...r108, [key]: r108[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant108("css", "width: max(100%, 44px);", "width: max(100%, 32px);", "a 32 px layer");
+  plant108("css", "transform: translate(-50%, -50%);", "", "a layer hung off one corner");
+  plant108("cards", "onClick={saveForLater}\n                className=\"tap-44 ", "onClick={saveForLater}\n                className=\"", "a 32 px Save");
+  plant108("cards", 'className="tap-44"\n            onClick={() =>', "onClick={() =>", "a History row's 34 px Tailor");
+  plant108("cards", '<div className="mt-2 flex items-center gap-2">', '<div className="mt-2 flex items-center gap-1">', "an action row whose layers overlap");
+  plant108("more", '"tap-44 grid min-h-8 w-9', '"grid min-h-8 w-9', "a 32 px \"⋯\"");
+  plant108("job", "inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-accent", "inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-accent", "a 36 px posting link");
+  plant108("job", '<span className="relative inline-flex min-h-11 items-center">', '<span className="relative inline-flex min-h-9 items-center">', "a 36 px status chip");
+  plant108("rating", "h-11 w-full", "h-8 w-full", "a 32 px rating");
+  plant108("tracker", "<RatingSelect value={a.excitement", "<Stars value={a.excitement", "a card that draws its stars again");
+  plant108("alerts", "gap-2 py-3 text-sm", "gap-2 text-sm", "a 20 px worldwide line");
+  plant108("jobsPage", "mt-1 flex min-h-11 w-fit cursor-pointer", "mt-4 flex w-fit cursor-pointer", "a 20 px Customize line");
+  if (!read108({ ...r108, he: withoutForm(r108.he, "excitement.stars", "two") }).length)
+    throw new Error("the reader passes a Hebrew rating without its _two form");
+  if (MIN44.test("min-h-10") || MIN44.test("min-h-[40px]") || !MIN44.test("min-h-[48px]") || H44.test("min-h-8") || !H44.test("h-11") || TAP.test("tap-440"))
+    throw new Error("a 44 px reader misreads min-h-10, min-h-[40px], min-h-[48px], min-h-8, h-11 or tap-440");
+  if (size44("max(100%, 32px)") || !size44("max(100%, 44px)") || !size44("2.75rem"))
+    throw new Error("the CSS size reader misreads max(100%, 32px), max(100%, 44px) or 2.75rem");
+} catch (e) {
+  fail(`phone tap targets check (check 108) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

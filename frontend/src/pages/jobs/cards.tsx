@@ -807,12 +807,17 @@ export function MatchCard({
             {reason}
           </p>
         )}
+        {/* Every control in this row is a 44 px target (`tap-44`, the phone
+            polish pass) at its old size, so the row stays the height Phase 31
+            budgeted three to a screen: the 8 px gap holds the 4 px each 36 px
+            icon's layer adds on either side, and the layers never meet. */}
         <div className="mt-2 flex items-center gap-2">
           {/* Secondary (PLAN 31.7, one primary per screen): a list of these
               was a column of blue buttons under the page's own Search again. */}
           {freelance ? (
-            // 44 px to tap on a phone: the row's one action for a freelancer.
-            <Button size="sm" variant="secondary" icon={<Handshake size={14} />} onClick={propose} className="min-h-11 lg:min-h-0">
+            // The row's one action for a freelancer; 44 px to tap, at the
+            // size of the Tailor it replaces (it was a 44 px box, 10 px a row).
+            <Button size="sm" variant="secondary" icon={<Handshake size={14} />} onClick={propose} className="tap-44">
               {t("card.proposal")}
             </Button>
           ) : (
@@ -821,6 +826,7 @@ export function MatchCard({
               variant="secondary"
               icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
               onClick={tailor}
+              className="tap-44"
             >
               {t("card.tailor")}
             </Button>
@@ -834,7 +840,7 @@ export function MatchCard({
               aria-label={rowId ? t("card.savedOpenJob") : t("card.savedGoTracker")}
               title={rowId ? t("card.savedOpenJob") : t("card.savedGoTracker")}
               onClick={() => nav(rowId ? `/applications/${rowId}` : "/tracker")}
-              className="grid min-h-8 w-9 place-items-center rounded-lg border border-mint/40 bg-mint/10 text-mint transition hover:bg-mint/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              className="tap-44 grid min-h-8 w-9 place-items-center rounded-lg border border-mint/40 bg-mint/10 text-mint transition hover:bg-mint/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
             >
               <BookmarkCheck size={15} aria-hidden />
             </button>
@@ -851,7 +857,7 @@ export function MatchCard({
                 title={t("card.save")}
                 disabled={saving}
                 onClick={saveForLater}
-                className="grid min-h-8 w-9 place-items-center rounded-lg border border-line bg-panel text-ink-muted transition hover:border-accent/40 hover:text-ink disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                className="tap-44 grid min-h-8 w-9 place-items-center rounded-lg border border-line bg-panel text-ink-muted transition hover:border-accent/40 hover:text-ink disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
               >
                 <Bookmark size={15} aria-hidden />
               </button>
@@ -975,6 +981,7 @@ export function HistoryRow({
             {reason}
           </p>
         )}
+        {/* The search row's 44 px targets (`tap-44`), for its reason. */}
         <div className="mt-2 flex items-center gap-2">
           {/* Secondary (PLAN 31.7, one primary per screen): a list of these
               was a column of blue buttons under the page's own Search again. */}
@@ -982,6 +989,7 @@ export function HistoryRow({
             size="sm"
             variant="secondary"
             icon={<ArrowRight size={14} className="rtl:-scale-x-100" />}
+            className="tap-44"
             onClick={() =>
               nav("/app", {
                 state: {
@@ -1003,7 +1011,7 @@ export function HistoryRow({
               aria-label={t("card.savedOpenJob")}
               title={t("card.savedOpenJob")}
               onClick={() => nav(`/applications/${hit.app_id}`)}
-              className="grid min-h-8 w-9 place-items-center rounded-lg border border-mint/40 bg-mint/10 text-mint transition hover:bg-mint/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              className="tap-44 grid min-h-8 w-9 place-items-center rounded-lg border border-mint/40 bg-mint/10 text-mint transition hover:bg-mint/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
             >
               <BookmarkCheck size={15} aria-hidden />
             </button>

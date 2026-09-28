@@ -94,7 +94,10 @@ export default function MoreMenu({ items, label, className }: { items: MoreItem[
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "grid min-h-8 w-9 place-items-center rounded-lg border transition",
+          // A 44 px target at its 32 x 36 size (`tap-44`, styles.css): every
+          // row it ends leaves room around it (a job row's `ms-auto`, the
+          // document's 6 px gap beside the tool row).
+          "tap-44 grid min-h-8 w-9 place-items-center rounded-lg border transition",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
           open
             ? "border-accent bg-accent text-white"

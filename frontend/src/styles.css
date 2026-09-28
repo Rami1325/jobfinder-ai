@@ -300,6 +300,25 @@ select {
   body { overflow-x: clip; }
 }
 
+/* A 44 px tap target around a smaller face (the owner's touch floor, the phone
+   polish pass of 2026-09-28). The control keeps its size and its place in the
+   layout, so a job row stays the height Phase 31 budgeted three to a screen; a
+   transparent layer centred on it takes the taps around it, at least 44 px each
+   way. Only where the neighbours leave room: the gap on each side must be at
+   least what the layer adds, or two layers overlap and one tap has two owners,
+   which is worse than a small target (check-mirrors 108). Clicks on a pseudo
+   element go to its element, and `elementFromPoint` says so too. */
+.tap-44 { position: relative; }
+.tap-44::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+}
+
 /* CSS-only light pillar (PLAN 12.5e) — the marketing backdrop that replaced
    the WebGL raymarcher. Design rules: softness is baked into gradient and
    mask falloffs (never filter: blur, which re-rasterizes every frame), and
