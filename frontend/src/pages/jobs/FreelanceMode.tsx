@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Briefcase, Handshake } from "lucide-react";
+import GigLinks from "../../components/GigLinks";
 import { Button, Card } from "../../components/ui";
 import { cn } from "../../lib/cn";
 import type { SearchMode } from "../../types";
@@ -100,9 +101,11 @@ export function NotFreelanceCount({ count }: { count: number }) {
 }
 
 /** Under a freelance search's results: most freelance work in Israel is posted
- * where JobFinder cannot read it, so the page says so and opens the proposal
- * writer for a gig found there. With nothing found it IS the answer, in a card. */
-export function FreelanceNote({ empty }: { empty: boolean }) {
+ * where JobFinder cannot read it, so the page says so, opens the proposal writer
+ * for a gig found there, and links to where to look, with the search's own
+ * title filled in (`GigLinks`: plain links, nothing read). With nothing found it
+ * IS the answer, in a card. */
+export function FreelanceNote({ empty, title }: { empty: boolean; title: string }) {
   const { t } = useTranslation("jobs");
   const nav = useNavigate();
   const body = (
@@ -118,6 +121,8 @@ export function FreelanceNote({ empty }: { empty: boolean }) {
       >
         {t("freelance.pasteGig")}
       </Button>
+      {/* The row bleeds to the box's own edges: the Card's p-5, the note's px-3. */}
+      <GigLinks title={title} bleed={empty ? "-mx-5 px-5" : "-mx-3 px-3"} className="mt-3" />
     </>
   );
   return empty ? <Card>{body}</Card> : <div className="rounded-lg border border-line px-3 py-3">{body}</div>;

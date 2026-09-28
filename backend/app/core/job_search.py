@@ -97,9 +97,11 @@ WORLDWIDE_BOARD = "linkedin"  # the worldwide pass's board with markets (the loc
 # asks it (and never waits on it). The frontend's `WORLDWIDE_SOURCES` and
 # `WORLDWIDE_ONLY_SOURCES` mirror these (check-mirrors 100).
 # Jobicy joined them on 2026-09-28 (freelance, part 3): one cached feed of remote
-# jobs open to Israel, read under its API page's terms (providers/jobicy.py).
-WORLDWIDE_BOARDS: tuple[str, ...] = (WORLDWIDE_BOARD, "himalayas", "jobicy")
-WORLDWIDE_ONLY_BOARDS: frozenset[str] = frozenset({"himalayas", "jobicy"})
+# jobs open to Israel, read under its API page's terms (providers/jobicy.py). We
+# Work Remotely the same day: its public RSS feeds, cached an hour each, read on
+# the terms its RSS page states (providers/weworkremotely.py).
+WORLDWIDE_BOARDS: tuple[str, ...] = (WORLDWIDE_BOARD, "himalayas", "jobicy", "weworkremotely")
+WORLDWIDE_ONLY_BOARDS: frozenset[str] = frozenset({"himalayas", "jobicy", "weworkremotely"})
 # The origin stamp of a worldwide-only board's queries: the board filters for
 # "open to Israel" itself and has no market to name, and a stamp that is not ""
 # is what puts its postings under the worldwide rules (geo, pay market, say-remote).
@@ -139,8 +141,8 @@ def freelance_context(ctx: SearchContext) -> SearchContext:
     """The context a freelance search RUNS (never the one it returns, which stays
     the user's own, so the Jobs page's form keeps what the user set): the
     worldwide pass ON whenever remote work is allowed, because most contract work
-    that is listed is remote and abroad (Himalayas' and Jobicy's contract roles,
-    LinkedIn's contract roles in the US and Europe)."""
+    that is listed is remote and abroad (Himalayas', Jobicy's and We Work
+    Remotely's contract roles, LinkedIn's contract roles in the US and Europe)."""
     return ctx.model_copy(update={"include_worldwide": ctx.include_worldwide or _remote_ok(ctx)})
 
 

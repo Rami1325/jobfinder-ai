@@ -135,9 +135,9 @@
     },
     "sourcesLabel": "Job boards",
     "worldwide": "Include worldwide remote jobs",
-    "worldwideLine": "Adds remote jobs abroad, from LinkedIn, Himalayas and Jobicy.",
-    "worldwideWhy": "From LinkedIn: the US, the UK and most of Western and Northern Europe; jobs listed in a lower-paying country are left out. From Himalayas and Jobicy: remote jobs open to people in Israel. The Israeli boards stay local.",
-    "worldwideNeedsLinkedIn": "Runs on LinkedIn, Himalayas and Jobicy — check one of them below to enable it.",
+    "worldwideLine": "Adds remote jobs abroad, from LinkedIn, Himalayas, Jobicy and We Work Remotely.",
+    "worldwideWhy": "From LinkedIn: the US, the UK and most of Western and Northern Europe; jobs listed in a lower-paying country are left out. From Himalayas, Jobicy and We Work Remotely: remote jobs open to people in Israel. The Israeli boards stay local.",
+    "worldwideNeedsLinkedIn": "Runs on LinkedIn, Himalayas, Jobicy and We Work Remotely — check one of them below to enable it.",
     "worldwideOnlyBoard": "remote abroad",
     "worldwideTag": "incl. worldwide",
     "cta": "Find jobs for me",
@@ -477,7 +477,11 @@
     "leftOut_one": "{{count}} job left out: its board doesn't list it as contract or freelance.",
     "leftOut_other": "{{count}} jobs left out: their boards don't list them as contract or freelance.",
     "none": "No contract or freelance jobs found for this search.",
-    "few": "Few freelance jobs are listed on Israeli boards. Found a gig on XPlace, Upwork or a Facebook group? Paste it to write a proposal.",
+    "few": "Few freelance jobs are listed on Israeli boards. Found a gig on XPlace, Upwork, LinkedIn or a Facebook group? Paste it to write a proposal.",
     "pasteGig": "Paste a gig"
+  },
+  "gigs": {
+    "label": "Look for gigs on",
+    "opens": "{{site}}, opens in a new tab"
   }
 }

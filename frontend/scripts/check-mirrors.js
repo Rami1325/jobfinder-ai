@@ -14897,6 +14897,11 @@ try {
       ["jobicy", "https://jobicy.com/jobs/153923-interpreter", "jobicy"],
       [undefined, "https://jobicy.com/jobs/153923-interpreter", "jobicy"],
       [undefined, "https://jobicy.com.evil.example/jobs/1", ""],
+      // We Work Remotely since 2026-09-28 (its RSS page: "attribute the links back to We Work Remotely").
+      ["weworkremotely", "https://weworkremotely.com/remote-jobs/acme-developer", "weworkremotely"],
+      [undefined, "https://weworkremotely.com/remote-jobs/acme-developer", "weworkremotely"],
+      [undefined, "https://weworkremotely.com.evil.example/remote-jobs/1", ""],
+      [undefined, "https://notweworkremotely.com/remote-jobs/1", ""],
     ];
     for (const [source, url, want] of cases)
       if (fn(source, url) !== want) out.push(`attributedSource(${JSON.stringify(source)}, ${JSON.stringify(url)}) is not "${want}"`);
@@ -15514,7 +15519,8 @@ try {
       out.push("the streamed and the final result lists do not both hand their rows the mode");
     if (!/\{freelanceResult && <NotFreelanceCount count=\{searchResult\.not_freelance \?\? 0\} \/>\}/.test(jobs))
       out.push("a freelance search does not say how many jobs it left out");
-    if (!/\{freelanceResult && <FreelanceNote empty=\{searchResult\.matches\.length === 0\} \/>\}/.test(jobs))
+    // Since 2026-09-28 the note also carries the search's title, for its "Look for gigs on" row (check 106).
+    if (!/\{freelanceResult && <FreelanceNote empty=\{searchResult\.matches\.length === 0\}(?: title=\{[^}]*\})? \/>\}/.test(jobs))
       out.push("a freelance result does not end with the way to paste a gig");
     const sw = fnSource(fm, "export function SearchModeSwitch");
     if (!/role="radiogroup"/.test(sw) || !/role="radio"/.test(sw) || !/aria-checked=\{mode === m\}/.test(sw))
@@ -15569,7 +15575,7 @@ try {
   plant104("store", "searchJobs(resume, customize, mode)", "searchJobs(resume, customize)", "a fallback that forgets the mode");
   plant104("jobs", "const freelanceResult = resultMode === \"freelance\";", "const freelanceResult = searchMode === \"freelance\";", "results judged by the switch, not their search");
   plant104("jobs", "startJobSearch(master.resume, c, searchMode)", "startJobSearch(master.resume, c)", "a switch the search ignores");
-  plant104("jobs", "{freelanceResult && <FreelanceNote empty={searchResult.matches.length === 0} />}", "", "a freelance result with no way to paste a gig");
+  plant104("jobs", "{freelanceResult && <FreelanceNote empty={searchResult.matches.length === 0} title={searchResult.context.job_title} />}", "", "a freelance result with no way to paste a gig");
   plant104("fm", "role=\"radiogroup\"", "role=\"group\"", "a switch that is not a radiogroup");
   plant104("fm", "    try {\n      localStorage.setItem(MODE_KEY, m);\n    } catch {", "    {\n      localStorage.setItem(MODE_KEY, m);\n    } {", "a write to storage that can throw");
   plant104("cards", "onClick={propose}", "onClick={tailor}", "a proposal button that tailors");
@@ -15590,6 +15596,266 @@ try {
   }
 } catch (e) {
   fail(`freelance search check (check 104) could not run: ${e.message}`);
+}
+
+// ---- 105. "Look for gigs on": the research's links, the title encoded, nothing else //
+// 2026-09-28 (freelance). Under every freelance result and on the proposal tool, a
+// row of plain links to the freelance platforms' own search pages (lib/gigLinks.ts).
+// A link is a string `tsc` cannot judge: a template typed from memory opens a 404, a
+// title spliced in raw lets "C# & .NET" add a parameter or a #fragment, and a Hebrew
+// title sent to an English-only search finds nothing. (a) EXECUTES `gigLinks` over
+// titles in both scripts, with & # / ? = % and Hebrew in them: each link must be
+// EXACTLY the research's verified template (VERIFIED below, probed 2026-09-28) with
+// the title URL-encoded in the platform's own parameter (LinkedIn's Hebrew one with
+// פרילנס in front, unless the title already says it), https, on that template's
+// host, the parameter decoding back to the title with no parameter added and no
+// fragment; or, for a platform that cannot search the title (English-only ones for
+// a Hebrew title) or with no title, its general page. (b) The sets: an English title
+// gets XPlace, Upwork, LinkedIn, We Work Remotely and Arc; a Hebrew one XPlace,
+// AllJobs, LinkedIn and We Work Remotely; no title, the page language's set. (c)
+// `gigField`: a design title adds Dribbble and Behance, a translation one ProZ.com
+// and the ITA, read from a small word list in both scripts beside its false
+// positives (ASIC design, a hairdresser, a TA, translational research). Planted
+// twins are judged every run.
+try {
+  const g105 = runProbeBundle(
+    "giglinks",
+    'export { gigLinks, gigField, GIG_SITES, GIG_SETS, GIG_EXTRAS } from "./lib/gigLinks";\n',
+  );
+  for (const k of ["gigLinks", "gigField", "GIG_SITES", "GIG_SETS", "GIG_EXTRAS"])
+    if (!(k in g105)) throw new Error(`lib/gigLinks.ts exports no ${k}`);
+  // The research's verified table (best-freelance-platforms.md, sections 2.1-2.6,
+  // probed 2026-09-28 from an Israeli IP). `{q}` is the encoded title.
+  const VERIFIED = {
+    xplace: { search: "https://www.xplace.com/jobs?q={q}", general: "https://www.xplace.com/jobs?q=" },
+    upwork: { search: "https://www.upwork.com/nx/search/jobs/?q={q}", general: "https://www.upwork.com/nx/search/jobs/?q=" },
+    linkedin: { search: "https://www.linkedin.com/jobs/search/?keywords={q}&f_JT=C", general: "https://www.linkedin.com/jobs/search/?keywords=&f_JT=C" },
+    weworkremotely: { search: "https://weworkremotely.com/remote-jobs/search?term={q}", general: "https://weworkremotely.com/remote-contract-jobs" },
+    arc: { search: "https://arc.dev/remote-jobs?search={q}", general: "https://arc.dev/remote-jobs" },
+    alljobs: {
+      search: "https://www.alljobs.co.il/SearchResultsGuest.aspx?page=1&position=&type=10&freetxt={q}&city=&region=",
+      general: "https://www.alljobs.co.il/SearchResultsGuest.aspx?page=1&position=&type=10&freetxt=&city=&region=",
+    },
+    dribbble: { search: "https://dribbble.com/jobs?keyword={q}&anywhere=true", general: "https://dribbble.com/jobs" },
+    behance: { search: "https://www.behance.net/joblist?search={q}", general: "https://www.behance.net/joblist" },
+    proz: { search: null, general: "https://www.proz.com/translation-jobs" },
+    ita: { search: null, general: "https://ita.org.il/" },
+  };
+  const ids105 = Object.keys(g105.GIG_SITES).sort();
+  if (JSON.stringify(ids105) !== JSON.stringify(Object.keys(VERIFIED).sort()))
+    fail(`check 105: lib/gigLinks.ts links to ${JSON.stringify(ids105)}, the research verified ${JSON.stringify(Object.keys(VERIFIED).sort())}`);
+  const EN = ["xplace", "upwork", "linkedin", "weworkremotely", "arc"];
+  const HE = ["xplace", "alljobs", "linkedin", "weworkremotely"];
+  const LATIN_ONLY = new Set(["upwork", "weworkremotely", "arc", "dribbble", "behance"]);
+  const FL = "פרילנס";
+  const hebrew = (s) => /[֐-׿]/.test(s);
+  // [title, page language, the ids, the query each searchable one must carry]
+  const cases = [
+    ["Graphic Designer", "en", [...EN, "dribbble", "behance"]],
+    ["C# & .NET / Azure?x=1#top 100%", "en", EN],
+    ["C# & .NET / Azure?x=1#top 100%", "he", EN],
+    ["מעצב/ת גרפי/ת", "he", [...HE, "dribbble", "behance"]],
+    ["מפתח Python & SQL", "en", HE],
+    ["פרילנס מתרגמת", "he", [...HE, "proz", "ita"]],
+    ["Translator (Hebrew-English)", "en", [...EN, "proz", "ita"]],
+    ["", "he", HE],
+    ["   ", "he", HE],
+    ["", "en", EN],
+    [null, "en", EN],
+  ];
+  const judge105 = ({ links, field }) => {
+    const out = [];
+    for (const [title, ui, ids] of cases) {
+      const got = links(title, ui);
+      const tag = `gigLinks(${JSON.stringify(title)}, "${ui}")`;
+      if (JSON.stringify(got.map((l) => l.id)) !== JSON.stringify(ids)) {
+        out.push(`${tag} offers ${JSON.stringify(got.map((l) => l.id))}, not ${JSON.stringify(ids)}`);
+        continue;
+      }
+      const t = (title ?? "").replace(/\s+/g, " ").trim();
+      const he = t ? hebrew(t) : ui === "he";
+      for (const l of got) {
+        const v = VERIFIED[l.id];
+        if (!v) {
+          out.push(`${tag}: ${l.id} is not in the research's verified table`);
+          continue;
+        }
+        let q = t;
+        if (l.id === "linkedin" && he) q = /פרילנס|פרילאנס|\b(?:freelance|freelancer|contract|contractor)\b/i.test(t) ? t : `${FL} ${t}`.trim();
+        const searchable = v.search && q && !(LATIN_ONLY.has(l.id) && he);
+        const want = searchable ? v.search.replace("{q}", encodeURIComponent(q)) : v.general;
+        if (l.href !== want) {
+          out.push(`${tag}: ${l.id} opens ${l.href}, not ${want}`);
+          continue;
+        }
+        let u;
+        try {
+          u = new URL(l.href);
+        } catch {
+          out.push(`${tag}: ${l.id} is not a URL`);
+          continue;
+        }
+        const tpl = new URL((searchable ? v.search : v.general).replace("{q}", "Q"));
+        if (u.protocol !== "https:" || u.hostname !== tpl.hostname || u.pathname !== tpl.pathname || u.hash !== "")
+          out.push(`${tag}: ${l.id} leaves its template's https host and path, or carries a fragment`);
+        if (JSON.stringify([...u.searchParams.keys()]) !== JSON.stringify([...tpl.searchParams.keys()]))
+          out.push(`${tag}: ${l.id}'s parameters are ${JSON.stringify([...u.searchParams.keys()])}, the template's ${JSON.stringify([...tpl.searchParams.keys()])}`);
+        if (searchable) {
+          const param = [...tpl.searchParams.entries()].find(([, val]) => val === "Q")?.[0];
+          if (!param || u.searchParams.get(param) !== q) out.push(`${tag}: ${l.id}'s ${param} is not the title`);
+        }
+        if (typeof l.name !== "string" || !l.name.trim()) out.push(`${tag}: ${l.id} has no name`);
+      }
+      const ita = got.find((l) => l.id === "ita");
+      if (ita && ita.name !== (ui === "he" ? "איגוד המתרגמים" : "ITA")) out.push(`${tag}: the ITA is not named in the page's language`);
+    }
+    const fields = [
+      ["design", ["Graphic Designer", "UI/UX Designer", "Product Designer", "Senior Web Designer", "Logo & Brand Illustrator",
+        "Motion designer", "מעצב/ת גרפי/ת", "גרפיקאית", "מאיירת ספרי ילדים", "מעצבת UX", "מעצב/ת אתרים", "סטודנט/ית לעיצוב גרפי"]],
+      ["translation", ["Translator", "Hebrew Interpreter", "Translation Project Manager", "מתרגם/ת", "מתורגמנית", "תרגום משפטי"]],
+      [null, ["ASIC Design Engineer", "Chip Designer", "Interior Designer", "System Design Lead", "Logistics Coordinator",
+        "UI Developer", "Luxury Sales Associate", "Linux System Administrator", "Guide", "מעצבת שיער", "מעצב/ת פנים", "מהנדס/ת עיצוב שבבים",
+        "מורה לגאוגרפיה", "ניתוח גרפים", "מודד/ת טופוגרפי/ת", "Translational Research Scientist", "Data Interpretation Analyst",
+        "Interpretability Researcher", "מתרגל/ת בקורס", "תרגול", "", null]],
+    ];
+    for (const [want, titles] of fields)
+      for (const title of titles)
+        if (field(title) !== want) out.push(`gigField(${JSON.stringify(title)}) is ${JSON.stringify(field(title))}, not ${JSON.stringify(want)}`);
+    return out;
+  };
+  const real105 = { links: g105.gigLinks, field: g105.gigField };
+  for (const p of judge105(real105)) fail(`check 105: ${p} (2026-09-28, freelance)`);
+  const twins105 = [
+    ["a title spliced in raw", { ...real105, links: (t, u) => real105.links(t, u).map((l) => ({ ...l, href: decodeURIComponent(l.href) })) }],
+    ["a template typed from memory", { ...real105, links: (t, u) => real105.links(t, u).map((l) => ({ ...l, href: l.href.replace("/nx/search/jobs/", "/search/jobs/") })) }],
+    ["plain http", { ...real105, links: (t, u) => real105.links(t, u).map((l) => ({ ...l, href: l.href.replace(/^https:/, "http:") })) }],
+    ["Upwork kept for a Hebrew title", { ...real105, links: (t, u) => real105.links(t, u).map((l) =>
+      (l.id === "alljobs" ? { id: "upwork", name: "Upwork", href: `https://www.upwork.com/nx/search/jobs/?q=${encodeURIComponent(t ?? "")}` } : l)) }],
+    ["LinkedIn without פרילנס for a Hebrew title", { ...real105, links: (t, u) => real105.links(t, u).map((l) =>
+      (l.id === "linkedin" ? { ...l, href: l.href.replace(encodeURIComponent(`${FL} `), "") } : l)) }],
+    ["an English-only search handed a Hebrew title", { ...real105, links: (t, u) => real105.links(t, u).map((l) =>
+      (l.id === "weworkremotely" && t && hebrew(t) ? { ...l, href: `https://weworkremotely.com/remote-jobs/search?term=${encodeURIComponent(t.trim())}` } : l)) }],
+    ["a field read as a bare substring", { ...real105, field: (t) => (/logo|graphic|design|ui|ux/i.test(t ?? "") ? "design" : real105.field(t)) }],
+    ["a Hebrew field read without its word boundary", { ...real105, field: (t) => (/גרפי|מעצב/.test(t ?? "") ? "design" : real105.field(t)) }],
+  ];
+  for (const [label, twin] of twins105) if (!judge105(twin).length) throw new Error(`the judge passes ${label}`);
+} catch (e) {
+  fail(`gig links check (check 105) could not run: ${e.message}`);
+}
+
+// ---- 106. "Look for gigs on": plain links, one row, where the gigs are asked for //
+// 2026-09-28 (freelance). By shape: (a) components/GigLinks.tsx draws each platform
+// as an <a href={link.href} target="_blank" rel="noopener noreferrer"> (a new tab,
+// and the page handed nothing about JobFinder), a 44 px chip (`min-h-11`) that does
+// not wrap, the brand isolated in <bdi>, its focus ring inset; the list is ONE row
+// that scrolls sideways (`flex overflow-x-auto`, never `flex-wrap`, no scrollbar,
+// items `shrink-0`); it reads its links from `gigLinks` in the page's language and
+// reaches nothing else: no fetch, XHR, axios or api/client, so JobFinder never reads
+// those pages. (b) Where: every freelance result's closing note draws it with the
+// search's own title (`<FreelanceNote … title={searchResult.context.job_title} />`,
+// the note handing `title` on), and the proposal tool draws it with the last
+// search's title from the job search store. (c) Its two keys resolve in both
+// jobs.json, `gigs.opens` naming `{{site}}`. Planted twins every run.
+try {
+  const read106 = ({ comp, fm, jobs, tool, en, he }) => {
+    const out = [];
+    const a = /<a\b[\s\S]*?>/.exec(comp)?.[0] ?? "";
+    if (!a) throw new Error("components/GigLinks.tsx draws no <a>");
+    if (!/href=\{link\.href\}/.test(a)) out.push("a gig link does not open the link gigLinks built");
+    if (!/target="_blank"/.test(a)) out.push("a gig link does not open a new tab");
+    if (!/rel="noopener noreferrer"/.test(a)) out.push('a gig link is not rel="noopener noreferrer"');
+    if (!/\bmin-h-11\b/.test(a) || !/\bwhitespace-nowrap\b/.test(a)) out.push("a gig link is not a 44 px chip that keeps to one line");
+    if (!/focus-visible:ring-inset/.test(a)) out.push("a gig link's focus ring is not inset (the scroller clips an outer one)");
+    const ul = /<ul\b[\s\S]*?>/.exec(comp)?.[0] ?? "";
+    if (!ul) throw new Error("components/GigLinks.tsx draws no <ul>");
+    if (!/\bflex\b/.test(ul) || !/\boverflow-x-auto\b/.test(ul) || /\bflex-wrap\b/.test(ul)) out.push("the gig row is not one row that scrolls sideways");
+    if (!/\[scrollbar-width:none\]/.test(ul)) out.push("the gig row draws a scrollbar");
+    if (!/<li\b[^>]*\bshrink-0\b/.test(comp)) out.push("a gig chip can shrink");
+    if (!/<bdi>\{link\.name\}<\/bdi>/.test(comp)) out.push("a platform's name is not isolated in <bdi>");
+    if (!/gigLinks\(title, i18n\.language\)/.test(comp)) out.push("the row does not build its links with gigLinks in the page's language");
+    if (/\bfetch\(|XMLHttpRequest|\baxios\b|api\/client|sendBeacon/.test(comp)) out.push("the gig row reaches the network (it must only link)");
+    const imports = [...comp.matchAll(/^import[^;]*?from "([^"]+)";/gm)].map((m) => m[1]);
+    for (const m of imports)
+      if (!["react", "react-i18next", "lucide-react", "../lib/gigLinks", "../lib/cn"].includes(m)) out.push(`components/GigLinks.tsx imports ${m}`);
+    const note = fnSource(fm, "export function FreelanceNote");
+    if (!/<GigLinks title=\{title\}/.test(note)) out.push("the freelance note does not draw the gig row with its title");
+    if (!/\{freelanceResult && <FreelanceNote empty=\{searchResult\.matches\.length === 0\} title=\{searchResult\.context\.job_title\} \/>\}/.test(jobs))
+      out.push("a freelance result's note is not handed the search's own title");
+    if (!/<GigLinks\s+title=\{lastTitle\}/.test(tool)) out.push("the proposal tool does not draw the gig row");
+    if (!/useSyncExternalStore\(subscribeJobSearch, getJobSearchState\)/.test(tool)) out.push("the proposal tool does not read the last search's title from the job search store");
+    for (const [loc, b] of [["en", en], ["he", he]]) {
+      for (const key of ["gigs.label", "gigs.opens"])
+        for (const p of keyProblems(b, key, loc, "the gig row")) out.push(`locales/${loc}/jobs.json ${p}`);
+      if (!String(b.gigs?.opens ?? "").includes("{{site}}")) out.push(`locales/${loc}/jobs.json gigs.opens does not name {{site}}`);
+    }
+    return out;
+  };
+  const r106 = {
+    comp: decomment(read("components/GigLinks.tsx")),
+    fm: decomment(read("pages/jobs/FreelanceMode.tsx")),
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    tool: decomment(read("pages/tools/ProposalToolPage.tsx")),
+    en: JSON.parse(read("locales/en/jobs.json")),
+    he: JSON.parse(read("locales/he/jobs.json")),
+  };
+  for (const p of read106(r106)) fail(`check 106: ${p} (2026-09-28, freelance)`);
+  const plant106 = (key, from, to, label) => {
+    if (!r106[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read106({ ...r106, [key]: r106[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant106("comp", 'target="_blank"', "", "a link that leaves the page in the same tab");
+  plant106("comp", 'rel="noopener noreferrer"', 'rel="noopener"', "a link that hands over the referrer");
+  plant106("comp", "flex gap-1.5 overflow-x-auto", "flex flex-wrap gap-1.5 overflow-x-auto", "a row that wraps");
+  plant106("comp", "const links = gigLinks(", "void fetch(link);\n  const links = gigLinks(", "a row that reads the platform");
+  plant106("jobs", " title={searchResult.context.job_title} />", " />", "a note with no title");
+  plant106("tool", "<GigLinks", "<Other", "a proposal tool without the row");
+  if (!read106({ ...r106, he: { ...r106.he, gigs: { label: r106.he.gigs?.label } } }).length)
+    throw new Error("the reader passes a Hebrew bundle without gigs.opens");
+} catch (e) {
+  fail(`gig row check (check 106) could not run: ${e.message}`);
+}
+
+// ---- 107. where a gig is found, named truthfully ------------------------------ //
+// 2026-09-28 (freelance). The copy that sends a person to find a gig and paste it
+// named Fiverr, where there is nothing to find: a Fiverr seller waits for buyers,
+// and buyer requests are private briefs (the freelance research, section 4), while
+// LinkedIn, where Israeli tech clients post, went unnamed. Every sentence that
+// names where a gig comes from (the freelance note, jobs.json freelance.few; the
+// proposal tool's card, tools.json cards.proposal.body; its gig box,
+// proposal.gigPlaceholder) must name XPlace, Upwork and LinkedIn in both locales
+// (Hebrew writes לינקדאין, as the app's other Hebrew copy does) and never Fiverr.
+try {
+  const read107 = (bundles) => {
+    const out = [];
+    for (const [loc, file, key, text] of bundles) {
+      if (typeof text !== "string" || !text.trim()) {
+        out.push(`locales/${loc}/${file} ${key} is missing`);
+        continue;
+      }
+      if (/fiverr|פייבר/i.test(text)) out.push(`locales/${loc}/${file} ${key} sends people to find a gig on Fiverr, where there is none to find`);
+      for (const name of ["XPlace", "Upwork"]) if (!text.includes(name)) out.push(`locales/${loc}/${file} ${key} does not name ${name}`);
+      if (!(loc === "he" ? /לינקדאין|LinkedIn/ : /LinkedIn/).test(text)) out.push(`locales/${loc}/${file} ${key} does not name LinkedIn`);
+    }
+    return out;
+  };
+  const b107 = [];
+  for (const loc of ["en", "he"]) {
+    const jobs = JSON.parse(read(`locales/${loc}/jobs.json`));
+    const tools = JSON.parse(read(`locales/${loc}/tools.json`));
+    b107.push([loc, "jobs.json", "freelance.few", jobs.freelance?.few]);
+    b107.push([loc, "tools.json", "cards.proposal.body", tools.cards?.proposal?.body]);
+    b107.push([loc, "tools.json", "proposal.gigPlaceholder", tools.proposal?.gigPlaceholder]);
+  }
+  for (const p of read107(b107)) fail(`check 107: ${p} (2026-09-28, freelance)`);
+  const twin107 = (i, f, label) => {
+    const planted = b107.map((row, j) => (j === i ? [...row.slice(0, 3), f(row[3] ?? "")] : row));
+    if (!read107(planted).length) throw new Error(`the reader passes ${label}`);
+  };
+  twin107(4, (s) => s.replace("XPlace", "XPlace, Fiverr"), "a Hebrew card that names Fiverr again");
+  twin107(2, (s) => s.replace("LinkedIn", "Fiverr"), "an English gig box with Fiverr for LinkedIn");
+  twin107(3, (s) => s.replace(/לינקדאין/g, "פייסבוק"), "a Hebrew note that leaves LinkedIn out");
+} catch (e) {
+  fail(`gig copy check (check 107) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

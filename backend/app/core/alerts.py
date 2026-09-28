@@ -365,8 +365,9 @@ def _job_link(m: JobMatch, app_url: str = "") -> str:
 
 def _via(m: JobMatch) -> str:
     """The board a posting must be credited to, beside a link to its page there
-    ("Himalayas", "Jobicy"), or "" (`providers.ATTRIBUTED`: the terms Himalayas'
-    and Jobicy's APIs are offered under). The link is the posting's own URL, its page on that board,
+    ("Himalayas", "Jobicy", "We Work Remotely"), or "" (`providers.ATTRIBUTED`: the
+    terms Himalayas' and Jobicy's APIs and We Work Remotely's feeds are offered
+    under). The link is the posting's own URL, its page on that board,
     even when the email's job links go into the app."""
     return ATTRIBUTED.get(m.source, "") if m.url else ""
 
@@ -449,6 +450,7 @@ _EM_SOURCE_LABELS = {
     "ashby": "Ashby",
     "himalayas": "Himalayas",
     "jobicy": "Jobicy",
+    "weworkremotely": "We Work Remotely",
     "jooble": "Jooble",
 }
 

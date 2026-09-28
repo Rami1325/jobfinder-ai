@@ -23,7 +23,9 @@ board with no such field gets no label:
 - Lever `categories.commitment`, SmartRecruiters `typeOfEmployment`, Ashby
   `employmentType`, Himalayas `employmentType` and Comeet `employment_type`:
   English values, read EXACTLY (after case, spaces and punctuation), never as a
-  word inside a longer value (`from_field`). Greenhouse states no type.
+  word inside a longer value (`from_field`). Greenhouse states no type. Jobicy's
+  `jobType` and We Work Remotely's `type` (only its "Contract" is kept as a
+  label) go through `from_field` too.
 
 No filter reads this (docs/handbook/job-search.md, *The employment type*): on the
 Israeli boards it would mostly return nothing.

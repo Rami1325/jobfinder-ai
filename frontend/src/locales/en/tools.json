@@ -22,7 +22,7 @@
     "proposal": {
       "title": "Proposal for a gig",
       "line": "A short bid for a freelance gig",
-      "body": "Paste a gig from XPlace, Upwork, Fiverr or a group chat and get a short bid in its language, from your real resume."
+      "body": "Paste a gig from XPlace, Upwork, LinkedIn or a group chat and get a short bid in its language, from your real resume."
     },
     "xray": {
       "title": "ATS X-ray",
@@ -93,7 +93,7 @@
     "gateFeature": "the proposal writer",
     "subtitle": "Paste a freelance gig you found and get a short bid in its language, built only from your real resume. You send it on the platform yourself.",
     "gigLabel": "The gig",
-    "gigPlaceholder": "Paste the client's post: the whole gig from XPlace, Upwork, Fiverr, Facebook or WhatsApp",
+    "gigPlaceholder": "Paste the client's post: the whole gig from XPlace, Upwork, LinkedIn, Facebook or WhatsApp",
     "rateLabel": "Your rate, if you want it in (optional)",
     "ratePlaceholder": "₪250 an hour",
     "write": "Write my proposal",

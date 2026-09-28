@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Handshake, Sparkles } from "lucide-react";
 import { writeProposal } from "../../api/client";
 import CoverLetter, { PROPOSAL_RATE_MAX, type ProposalFound } from "../../components/CoverLetter";
+import GigLinks from "../../components/GigLinks";
 import ResumeGate from "../../components/ResumeGate";
 import ToolShell from "../../components/ToolShell";
 import UsesNote from "../../components/UsesNote";
 import { useMasterResume } from "../../hooks/useMasterResume";
 import { apiErrorMessage } from "../../lib/apiError";
 import { useUses } from "../../lib/usesStore";
+import { getJobSearchState, subscribeJobSearch } from "../../state/jobSearchStore";
 import { Button, Card, Skeleton } from "../../components/ui";
 import type { JDModel } from "../../types";
 
@@ -25,8 +27,9 @@ let lastWritten: Written | null = null;
 
 /**
  * "Proposal for a gig" (2026-09-28, freelance, the small version): the user
- * pastes a gig from a place JobFinder cannot read (XPlace, Upwork, Fiverr, a
- * Facebook or WhatsApp group) and gets a short bid grounded in their resume.
+ * pastes a gig from a place JobFinder cannot read (XPlace, Upwork, LinkedIn, a
+ * Facebook or WhatsApp group; never Fiverr, where a seller waits for buyers and
+ * there is no gig to find) and gets a short bid grounded in their resume.
  *
  * ONE path: paste, (a rate if they want it in), Write. The first proposal reads
  * the gig on the server (a daily count, never a use) and opens the posting's
@@ -58,6 +61,10 @@ export default function ProposalToolPage() {
   // A new gig opens a new pass: 1 use, said before the tap.
   const uses = useUses("cover_letter");
   const current = written && written.gig === gig ? written : null;
+  // Where to look for a gig (`GigLinks`, plain links): with the title of this
+  // tab's last job search (a freelance search's "Paste a gig" lands here), and
+  // with none, each platform's general page. The tool itself has no title box.
+  const lastTitle = useSyncExternalStore(subscribeJobSearch, getJobSearchState).result?.context.job_title ?? "";
 
   useEffect(() => {
     if (!reveal.current || !current) return;
@@ -171,6 +178,10 @@ export default function ProposalToolPage() {
           />
         </div>
       )}
+
+      {/* Last on the page, so the proposal arriving above it moves nothing the
+          person is reading. */}
+      <GigLinks title={lastTitle} bleed="-mx-4 px-4 lg:mx-0 lg:px-0" />
     </ToolShell>
   );
 }
