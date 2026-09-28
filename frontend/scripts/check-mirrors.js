@@ -15815,6 +15815,49 @@ try {
   fail(`gig row check (check 106) could not run: ${e.message}`);
 }
 
+// ---- 107. where a gig is found, named truthfully ------------------------------ //
+// 2026-09-28 (freelance). The copy that sends a person to find a gig and paste it
+// named Fiverr, where there is nothing to find: a Fiverr seller waits for buyers,
+// and buyer requests are private briefs (the freelance research, section 4), while
+// LinkedIn, where Israeli tech clients post, went unnamed. Every sentence that
+// names where a gig comes from (the freelance note, jobs.json freelance.few; the
+// proposal tool's card, tools.json cards.proposal.body; its gig box,
+// proposal.gigPlaceholder) must name XPlace, Upwork and LinkedIn in both locales
+// (Hebrew writes לינקדאין, as the app's other Hebrew copy does) and never Fiverr.
+try {
+  const read107 = (bundles) => {
+    const out = [];
+    for (const [loc, file, key, text] of bundles) {
+      if (typeof text !== "string" || !text.trim()) {
+        out.push(`locales/${loc}/${file} ${key} is missing`);
+        continue;
+      }
+      if (/fiverr|פייבר/i.test(text)) out.push(`locales/${loc}/${file} ${key} sends people to find a gig on Fiverr, where there is none to find`);
+      for (const name of ["XPlace", "Upwork"]) if (!text.includes(name)) out.push(`locales/${loc}/${file} ${key} does not name ${name}`);
+      if (!(loc === "he" ? /לינקדאין|LinkedIn/ : /LinkedIn/).test(text)) out.push(`locales/${loc}/${file} ${key} does not name LinkedIn`);
+    }
+    return out;
+  };
+  const b107 = [];
+  for (const loc of ["en", "he"]) {
+    const jobs = JSON.parse(read(`locales/${loc}/jobs.json`));
+    const tools = JSON.parse(read(`locales/${loc}/tools.json`));
+    b107.push([loc, "jobs.json", "freelance.few", jobs.freelance?.few]);
+    b107.push([loc, "tools.json", "cards.proposal.body", tools.cards?.proposal?.body]);
+    b107.push([loc, "tools.json", "proposal.gigPlaceholder", tools.proposal?.gigPlaceholder]);
+  }
+  for (const p of read107(b107)) fail(`check 107: ${p} (2026-09-28, freelance)`);
+  const twin107 = (i, f, label) => {
+    const planted = b107.map((row, j) => (j === i ? [...row.slice(0, 3), f(row[3] ?? "")] : row));
+    if (!read107(planted).length) throw new Error(`the reader passes ${label}`);
+  };
+  twin107(4, (s) => s.replace("XPlace", "XPlace, Fiverr"), "a Hebrew card that names Fiverr again");
+  twin107(2, (s) => s.replace("LinkedIn", "Fiverr"), "an English gig box with Fiverr for LinkedIn");
+  twin107(3, (s) => s.replace(/לינקדאין/g, "פייסבוק"), "a Hebrew note that leaves LinkedIn out");
+} catch (e) {
+  fail(`gig copy check (check 107) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

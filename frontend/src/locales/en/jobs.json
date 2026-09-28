@@ -477,7 +477,7 @@
     "leftOut_one": "{{count}} job left out: its board doesn't list it as contract or freelance.",
     "leftOut_other": "{{count}} jobs left out: their boards don't list them as contract or freelance.",
     "none": "No contract or freelance jobs found for this search.",
-    "few": "Few freelance jobs are listed on Israeli boards. Found a gig on XPlace, Upwork or a Facebook group? Paste it to write a proposal.",
+    "few": "Few freelance jobs are listed on Israeli boards. Found a gig on XPlace, Upwork, LinkedIn or a Facebook group? Paste it to write a proposal.",
     "pasteGig": "Paste a gig"
   },
   "gigs": {

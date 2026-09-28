@@ -27,8 +27,9 @@ let lastWritten: Written | null = null;
 
 /**
  * "Proposal for a gig" (2026-09-28, freelance, the small version): the user
- * pastes a gig from a place JobFinder cannot read (XPlace, Upwork, Fiverr, a
- * Facebook or WhatsApp group) and gets a short bid grounded in their resume.
+ * pastes a gig from a place JobFinder cannot read (XPlace, Upwork, LinkedIn, a
+ * Facebook or WhatsApp group; never Fiverr, where a seller waits for buyers and
+ * there is no gig to find) and gets a short bid grounded in their resume.
  *
  * ONE path: paste, (a rate if they want it in), Write. The first proposal reads
  * the gig on the server (a daily count, never a use) and opens the posting's
