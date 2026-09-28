@@ -38,6 +38,7 @@ import type {
 import type { AlsoOn } from "../../types";
 import {
   applicantsText,
+  attributedSource,
   avatarTone,
   companyDomain,
   isNewPosting,
@@ -69,6 +70,29 @@ function AlsoOnLinks({ links }: { links?: AlsoOn[] }) {
         </a>
       ))}
     </span>
+  );
+}
+
+/** "via Himalayas": the credit a board's terms ask for, beside a link back to the
+ * posting's page on that board (`ATTRIBUTED_SOURCES`; Himalayas' API is offered
+ * on exactly that condition, `job-search.md`). Drawn on every search and History
+ * row of such a posting, in the badge row. A 44 px box to tap (the owner's
+ * floor) that takes a line of text's height in the row: `py-3` makes the box,
+ * `-my-3` gives the height back, and the rows after it paint over the overlap. */
+export function ViaBoard({ source, url }: { source?: string; url?: string }) {
+  const { t, i18n } = useTranslation("jobs");
+  const board = attributedSource(source, url);
+  if (!board || !url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="-my-3 inline-flex min-h-11 shrink-0 items-center gap-1 py-3 text-xs font-medium text-accent-soft underline-offset-2 hover:underline"
+    >
+      {t("card.viaBoard", { board: sourceLabel(board, i18n.language) })}
+      <ExternalLink size={11} aria-hidden className="shrink-0" />
+    </a>
   );
 }
 
@@ -736,6 +760,7 @@ export function MatchCard({
               LinkedIn posting fresh enough to carry a reading usually carries
               "New" too, so it mostly costs no height (Phase 32). */}
           <CompetitionLine applicants={m.applicants} />
+          <ViaBoard source={m.source} url={m.url} />
           {m.salary?.raw && (
             <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
               {m.salary.raw}
@@ -899,6 +924,7 @@ export function HistoryRow({
           <NewBadge postedAt={firstPosted} />
           {/* The search row's place, for its reason (Phase 32). */}
           <CompetitionLine applicants={hit.applicants} />
+          <ViaBoard source={hit.source} url={hit.url} />
           {hit.salary?.raw && (
             <Badge tone="mint" className="shrink-0" title={t("card.salaryNote")}>
               {hit.salary.raw}

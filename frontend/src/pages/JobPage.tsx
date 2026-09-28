@@ -44,7 +44,7 @@ import { sendKitApplication } from "../state/kitsStore";
 import { getTailorState } from "../state/tailorStore";
 import { useNextStep } from "../hooks/useNextStep";
 import type { ApplicationDetail, ApplicationOut, JDModel } from "../types";
-import { applicantsText, postedAgo } from "./jobs/shared";
+import { applicantsText, attributedSource, postedAgo, sourceLabel } from "./jobs/shared";
 
 /** The tracker's statuses in board order, as the backend stores them. The board
  * (`TrackerPage`'s COLUMNS) lists the same five. */
@@ -227,7 +227,10 @@ function JobBody({
   reload: () => Promise<void>;
 }) {
   const { t } = useTranslation("tracker");
-  const { t: tJobs } = useTranslation("jobs");
+  const { t: tJobs, i18n } = useTranslation("jobs");
+  // A posting from a board that asks to be credited (Himalayas) names it on
+  // its link back; the row keeps no source, so the posting's host says which.
+  const credited = attributedSource(undefined, detail.job_url ?? "");
   const toast = useToast();
   const nav = useNavigate();
   const nextStep = useNextStep();
@@ -317,7 +320,9 @@ function JobBody({
               className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-accent hover:underline"
             >
               <ExternalLink size={15} />
-              {t("job.openPosting")}
+              {credited
+                ? tJobs("card.openOn", { source: sourceLabel(credited, i18n.language) })
+                : t("job.openPosting")}
             </a>
           )}
         </div>

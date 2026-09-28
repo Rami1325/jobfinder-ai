@@ -74,7 +74,7 @@ import {
   inputCls,
   normalizeJobUrl,
   parseWorkModes,
-  SOURCE_IDS,
+  searchedSources,
   sourceLabel,
 } from "./jobs/shared";
 
@@ -476,14 +476,16 @@ export default function JobsPage() {
 
   // Boards the in-flight search was asked to scan, snapshotted at launch so
   // the scan ticker doesn't drift if the customize box is edited mid-search.
-  const [requestedSources, setRequestedSources] = useState<string[]>([...SOURCE_IDS]);
+  const [requestedSources, setRequestedSources] = useState<string[]>(() => searchedSources(null));
 
   function runSearch() {
     if (!master?.resume || searching || limitInvalid) return;
     // Not customized: null, and the backend derives the role, place and mode
     // from the resume (SEARCH_CONTEXT, a daily count and no monthly use).
     const c = customOpen ? ctx : null;
-    setRequestedSources(c?.sources?.length ? [...c.sources] : [...SOURCE_IDS]);
+    // The boards this search will ask: a worldwide-only board (Himalayas) only
+    // with the worldwide pass on, as the backend's fan-out does.
+    setRequestedSources(searchedSources(c));
     startJobSearch(master.resume, c);
     // Remember the picks a customized search ran with (or clear them when the
     // panel is off) so the next visit prefills — best-effort, never blocks.

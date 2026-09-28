@@ -7064,6 +7064,195 @@ check(
     f"{[h.title for h in _ab_found]} {len(_ab_first)} {_ab_again_urls}",
 )
 
+# 16j. Himalayas (2026-09-28): remote jobs open to people in Israel, for the
+# WORLDWIDE pass only. Its API is offered on one condition, a link back to the
+# posting's page on Himalayas and its name beside it, so every hit's URL is that
+# page and every surface credits it. Two traps pinned: the pass used to be
+# LinkedIn-only, and an eligibility list written into `location` would be read by
+# pay_market as the job's country. Pinned on trimmed real answers: three open
+# worldwide, one naming Israel alone, Canonical's long list naming Israel, and one
+# open to the United States only.
+import copy as _hm_copy  # noqa: E402
+
+import app.core.job_search as _hm_js  # noqa: E402
+import app.core.providers.himalayas as _hm  # noqa: E402
+from app.core.providers import ATTRIBUTED as _HM_ATTR  # noqa: E402
+
+_HM_RAW = _json.loads((Path(__file__).parent / "fixtures" / "himalayas_search.json").read_text(encoding="utf-8"))
+_hm_hits = _hm.parse_himalayas_jobs(_HM_RAW)
+check(
+    "16j himalayas parser: a posting open worldwide or to Israel is kept, one open to the United States only is "
+    "left out (the server's country filter checked again); each is source himalayas, its URL its Himalayas page, "
+    "its board work mode Remote, pubDate (epoch SECONDS) an ISO date the one parser reads, the description inline",
+    [h.company for h in _hm_hits] == ["micro1", "Incentivio", "EWOR GmbH", "Spotlock", "Canonical"]
+    and all(h.source == "himalayas" and _hm.himalayas_page(h.url) and h.work_mode == "Remote" for h in _hm_hits)
+    and _hm_hits[0].url == "https://himalayas.app/companies/micro1/jobs/backend-security-engineer"
+    and _hm_hits[0].posted_at == "2026-09-26T15:50:13+00:00" and _lv_parse_date(_hm_hits[0].posted_at) is not None
+    and all(len(h.description) > 200 and "<p>" not in h.description for h in _hm_hits)
+    and _hm.HimalayasProvider().fetch_description(_hm_hits[0]) == _hm_hits[0].description,
+    f"{[(h.company, h.url, h.posted_at) for h in _hm_hits]}",
+)
+_hm_trap = _hm.parse_himalayas_jobs({"jobs": [{**_HM_RAW["jobs"][3], "locationRestrictions": ["Israel", "Vietnam"]}]})[0]
+_hm_trap.origin_market = _hm_js.WORLDWIDE_ONLY_MARKET  # what the worldwide pass stamps on it
+_hm_trap_as_place = _hm_copy.deepcopy(_hm_trap)
+_hm_trap_as_place.location = ", ".join(_hm_trap.raw["locationRestrictions"])  # the defect, planted
+check(
+    "16j himalayas LOCATION TRAP: the countries a posting is OPEN TO never become its location (every hit's "
+    "location is empty), so pay_market keeps a posting open to Israel and Vietnam; written as its location, the same "
+    "list reads as a job in Vietnam and hides it",
+    all(h.location == "" for h in _hm_hits)
+    and _hm_hits[4].raw["locationRestrictions"][-1] == "United States"
+    and _hm_js._low_pay(_hm_trap) is False
+    and _hm_js._low_pay(_hm_trap_as_place) is True,
+    f"{_hm_trap.location!r} {_hm_trap_as_place.location!r}",
+)
+_hm_away = {**_HM_RAW["jobs"][0], "guid": "https://elsewhere.example/job/1", "applicationLink": "https://elsewhere.example/apply"}
+_hm_alt = {**_HM_RAW["jobs"][0], "guid": "https://elsewhere.example/job/2"}
+check(
+    "16j himalayas attribution: a posting with no Himalayas page to link back to is dropped, one whose guid points "
+    "away but whose application link is on Himalayas keeps that page; only https on himalayas.app (or a subdomain) "
+    "counts, never a look-alike host",
+    _hm.parse_himalayas_jobs({"jobs": [_hm_away]}) == []
+    and _hm.parse_himalayas_jobs({"jobs": [_hm_alt]})[0].url == _HM_RAW["jobs"][0]["applicationLink"]
+    and [_hm.himalayas_page(u) for u in (
+        "https://himalayas.app/companies/x/jobs/y", "https://www.himalayas.app/x", "http://himalayas.app/x",
+        "https://himalayas.app.evil.com/x", "https://evilhimalayas.app/x", "not a url",
+    )] == [True, True, False, False, False, False]
+    and _HM_ATTR == {"himalayas": "Himalayas"},
+)
+check(
+    "16j himalayas parser: a title's HTML entities read as text, published pay added in the board's words, a "
+    "posting whose list is not a list is left out, duplicates folded, junk is []",
+    _hm.parse_himalayas_jobs({"jobs": [{**_HM_RAW["jobs"][1], "title": "&#x28;Senior&#x29; Full-Stack Developer"}]})[0].title
+    == "(Senior) Full-Stack Developer"
+    and "Compensation: 130,000 – 200,000 EUR (annual)" in
+    _hm.parse_himalayas_jobs({"jobs": [{**_HM_RAW["jobs"][2], "minSalary": 130000, "maxSalary": 200000,
+                                        "currency": "EUR", "salaryPeriod": "annual"}]})[0].description
+    and _hm.parse_himalayas_jobs({"jobs": [{**_HM_RAW["jobs"][0], "locationRestrictions": "Israel"}]}) == []
+    and len(_hm.parse_himalayas_jobs({"jobs": _HM_RAW["jobs"] * 2})) == 5
+    and _hm.parse_himalayas_jobs(None) == [] and _hm.parse_himalayas_jobs({"jobs": {}}) == []
+    and [_hm.epoch_s_to_iso(v) for v in (1790437813000, True, "1790437813", None)] == ["", "", "", ""],
+)
+_hm_ww = _resolve_context(resume, SearchContext(job_titles=["Dev", "QA"], location="Tel Aviv", work_mode="remote",
+                                                include_worldwide=True))
+check(
+    "16j the worldwide pass runs on TWO boards now: Himalayas gets one query per keyword, remote, no location, "
+    "stamped as worldwide; with the pass off, an on-site search or the board unchecked it gets NONE (never the "
+    "user's own location), and LinkedIn's queries are unchanged",
+    _hm_js.WORLDWIDE_BOARDS == ("linkedin", "himalayas") and _hm_js.WORLDWIDE_ONLY_BOARDS == {"himalayas"}
+    and _board_queries("himalayas", _hm_ww) == [("Dev", "", "remote", "Worldwide"), ("QA", "", "remote", "Worldwide")]
+    and _board_queries("himalayas", _resolve_context(resume, SearchContext(job_title="Dev", location="Tel Aviv"))) == []
+    and _board_queries("himalayas", _resolve_context(resume, SearchContext(
+        job_title="Dev", work_mode="onsite", include_worldwide=True))) == []
+    and _board_queries("himalayas", _resolve_context(resume, SearchContext(
+        job_title="Dev", work_mode="remote", include_worldwide=True, sources=["linkedin"]))) == []
+    and len(_board_queries(WORLDWIDE_BOARD, _hm_ww)) == 2 * (1 + len(WORLDWIDE_REMOTE_LOCATIONS)),
+    str(_board_queries("himalayas", _hm_ww)),
+)
+try:
+    _hm.HimalayasProvider().search(SearchContext(job_title="מפתח תוכנה"))
+    _hm_hebrew = "no raise"
+except _LvNoRes as _e:
+    _hm_hebrew = str(_e)
+check(
+    "16j himalayas is an English board: a Hebrew title is 'nothing matched there', asked of nobody",
+    "in English" in _hm_hebrew,
+    _hm_hebrew,
+)
+
+
+class _HmLocal:
+    name = "fake_local16j"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [JobHit(source=self.name, title="Engineer (Tel Aviv)", company="LocalCo", location="Tel Aviv, Israel",
+                       description="Python services and APIs for our platform team.", url="https://local.example/1")]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+_hm_calls: list[str] = []
+# One of the fixture's worldwide postings, planted OPEN to Israel and Vietnam only:
+# kept, and never hidden as low-pay (its location is empty, not the list).
+_HM_SERVED = {**_HM_RAW, "jobs": _HM_RAW["jobs"] + [{**_HM_RAW["jobs"][3], "title": "Senior Full Stack Engineer II",
+    "guid": "https://himalayas.app/companies/spotlock/jobs/sfse-2", "locationRestrictions": ["Israel", "Vietnam"]}]}
+
+
+def _hm_get(url, timeout=15):  # noqa: ANN001
+    _hm_calls.append(url)
+    return _json.dumps(_HM_SERVED)
+
+
+_hm_real = _hm._http_get
+_hm._http_get = _hm_get
+_hm.FEEDS.clear()
+PROVIDERS["fake_local16j"] = _HmLocal()
+try:
+    _hm_events: list[dict] = []
+    _hm_on = _hm_js.search_jobs(resume, SearchContext(
+        job_title="Engineer", location="Tel Aviv, Israel", work_mode="remote", include_worldwide=True,
+        sources=["fake_local16j", "himalayas"], max_age_days=0, limit=10,
+    ), progress=_hm_events.append)
+    _hm_on_calls = list(_hm_calls)
+    _hm_calls.clear()
+    _hm_events_off: list[dict] = []
+    _hm_off = _hm_js.search_jobs(resume, SearchContext(
+        job_title="Engineer", location="Tel Aviv, Israel", work_mode="any",
+        sources=["fake_local16j", "himalayas"], max_age_days=0, limit=10,
+    ), progress=_hm_events_off.append)
+    _hm_off_calls = list(_hm_calls)
+    try:
+        _hm_js.search_jobs(resume, SearchContext(job_title="Engineer", sources=["himalayas"], max_age_days=0))
+        _hm_only = "no raise"
+    except _LvNoRes as _e:
+        _hm_only = str(_e)
+finally:
+    _hm._http_get = _hm_real
+    _hm.FEEDS.clear()
+    PROVIDERS.pop("fake_local16j", None)
+_hm_on_hm = [m for m in _hm_on.matches if m.source == "himalayas"]
+check(
+    "16j search end to end, pass ON: Himalayas asked once with country=IL and the English title, its postings "
+    "ranked beside the local board's (source himalayas, their Himalayas page, no place, read as remote), the one "
+    "open to Israel and Vietnam kept and never hidden as low-pay, the US-only one never shown",
+    len(_hm_on_calls) == 1 and "country=IL" in _hm_on_calls[0] and "q=Engineer" in _hm_on_calls[0]
+    and len(_hm_on_hm) >= 5
+    and all(_hm.himalayas_page(m.url) and m.location == "" and m.work_modes == ["remote"] for m in _hm_on_hm)
+    and "https://himalayas.app/companies/spotlock/jobs/sfse-2" in {m.url for m in _hm_on_hm}
+    and not any(f.reason == "market" for f in _hm_on.filtered)
+    and not any("ElitevoraSys" in m.company for m in _hm_on.matches)
+    and any(m.source == "fake_local16j" for m in _hm_on.matches),
+    f"{_hm_on_calls} {[(m.company, m.url) for m in _hm_on_hm]} {[(f.reason, f.url) for f in _hm_on.filtered]}",
+)
+check(
+    "16j search, pass OFF: Himalayas is not asked at all (no request, no board event, not an empty board), and "
+    "picking it alone without the pass says why instead of searching nothing",
+    _hm_off_calls == [] and {e["source"] for e in _hm_events_off if e["stage"] == "boards"} == {"fake_local16j"}
+    and "himalayas" not in _hm_off.source_empty and "himalayas" not in _hm_off.source_errors
+    and {e["source"] for e in _hm_events if e["stage"] == "boards"} == {"fake_local16j", "himalayas"}
+    and "worldwide" in _hm_only.lower(),
+    f"{_hm_off_calls} {_hm_events_off} {_hm_only}",
+)
+_hm_match = JobMatch(title="Remote Dev", company="EWOR GmbH", overall=88.0, source="himalayas",
+                     url="https://himalayas.app/companies/ewor-gmbh/jobs/dev")
+_hm_li = JobMatch(title="Dev", company="L", overall=88.0, source="linkedin", url="https://www.linkedin.com/jobs/view/1")
+_hm_text = build_alert_email([_hm_match, _hm_li], _AlertCtx(job_title="Dev"), app_url="https://app.example")[1]
+_hm_html = build_alert_email_html([_hm_match, _hm_li], _AlertCtx(job_title="Dev"), app_url="https://app.example")
+check(
+    "16j the alert email credits Himalayas beside a link to the posting's Himalayas page, in both bodies, even "
+    "though the job's own link opens the app; a LinkedIn job carries no such line",
+    "  via Himalayas: https://himalayas.app/companies/ewor-gmbh/jobs/dev" in _hm_text
+    and _hm_text.count("via ") == 1
+    and 'href="https://himalayas.app/companies/ewor-gmbh/jobs/dev"' in _hm_html
+    and ">via Himalayas</a>" in _hm_html and _hm_html.count(">via ") == 1,
+    _hm_text[-300:],
+)
+check(
+    "16j himalayas is registered and searched by default (by the worldwide pass only)",
+    "himalayas" in _LV_PROV and "himalayas" in _LV_DEFAULTS and _LV_PROV["himalayas"].name == "himalayas",
+)
+
 # 17. The CV scan (PLAN 6; an app feature since Phase 30 / A2): deterministic
 # keyword extraction, coverage via the scorer, Hebrew prefix rescue, and the
 # HTTP route behind the gate with its daily cap and its monthly use. Zero LLM

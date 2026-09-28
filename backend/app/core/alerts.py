@@ -66,7 +66,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core import hidden_jobs, mailer, quota, webpush, whatsapp
 from app.core.job_search import resume_hash, search_jobs
-from app.core.providers import stored_sources
+from app.core.providers import ATTRIBUTED, stored_sources
 from app.db.history import applied_kw, load_score_cache, record_search_hits
 from app.db.models import JobAlert, JobSearchHit, SavedResume, User
 from app.db.sightings import load_sightings, record_sightings
@@ -363,6 +363,14 @@ def _job_link(m: JobMatch, app_url: str = "") -> str:
     return f"{base}/jobs?open={urllib.parse.quote(m.url, safe='')}" if base else m.url
 
 
+def _via(m: JobMatch) -> str:
+    """The board a posting must be credited to, beside a link to its page there
+    ("Himalayas"), or "" (`providers.ATTRIBUTED`: the terms Himalayas' API is
+    offered under). The link is the posting's own URL, its page on that board,
+    even when the email's job links go into the app."""
+    return ATTRIBUTED.get(m.source, "") if m.url else ""
+
+
 def build_alert_email(
     new: list[JobMatch], ctx: SearchContext, min_score: int = 0, app_url: str = ""
 ) -> tuple[str, str]:
@@ -406,6 +414,8 @@ def build_alert_email(
         lines.append("• " + " ".join(bits))
         if link := _job_link(m, app_url):
             lines.append(f"  {link}")
+        if via := _via(m):
+            lines.append(f"  via {via}: {m.url}")
     lines += [""]
     if note := _bar_note(min_score):
         lines += [note]
@@ -474,9 +484,17 @@ def _job_card_html(m: JobMatch, app_url: str = "") -> str:
         f'<span style="display:inline-block;padding:3px 10px;border-radius:999px;'
         f"background:{_EM['panel2']};color:{_EM['muted']};"
         f'font:600 11px {_EM_FONT};letter-spacing:.4px;">{esc(source)}</span>'
-        if source
+        if source and not _via(m)
         else ""
     )
+    # A board that asks to be credited (Himalayas): its chip is "via <board>",
+    # linking to the posting's page there, whatever the job's own link opens.
+    if via := _via(m):
+        chips = (
+            f'<a href="{esc(m.url, quote=True)}" style="display:inline-block;padding:3px 10px;'
+            f"border-radius:999px;background:{_EM['panel2']};color:{_EM['accent_soft']};"
+            f'font:600 11px {_EM_FONT};letter-spacing:.4px;text-decoration:none;">via {esc(via)}</a>'
+        )
     # Older posting (PLAN 15.6): amber chip with the EARLIEST date a board
     # stated for the role, so an older posting is never mistaken for a fresh
     # one and a relist never passes off its own date as the role's
