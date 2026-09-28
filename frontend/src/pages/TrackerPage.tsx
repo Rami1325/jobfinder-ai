@@ -11,7 +11,6 @@ import {
   Loader2,
   MessageSquare,
   ShieldAlert,
-  Star,
   StickyNote,
   Wand2,
 } from "lucide-react";
@@ -23,6 +22,7 @@ import {
 } from "../api/client";
 import TrackerAnalytics from "../components/TrackerAnalytics";
 import InboxBar from "../components/inbox/InboxBar";
+import RatingSelect from "../components/RatingSelect";
 import { CardDate, CardEmailBadge } from "../components/inbox/shared";
 import { Badge, Button, Card, CardTitle, CountUp, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
@@ -51,30 +51,6 @@ const COLUMNS: {
 ];
 
 const STATUSES = COLUMNS.map((c) => c.key);
-
-/** 1-5 excitement stars (Teal pattern). Clicking the current rating clears it. */
-function Stars({ value, onRate }: { value: number; onRate: (n: number) => void }) {
-  const { t } = useTranslation("tracker");
-  return (
-    <div className="flex items-center" title={t("excitement.title")}>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <button
-          key={n}
-          type="button"
-          aria-label={t("excitement.set", { count: n })}
-          aria-pressed={n <= value}
-          onClick={() => onRate(n === value ? 0 : n)}
-          className={cn(
-            "rounded p-0.5 transition-colors",
-            n <= value ? "text-warn" : "text-ink-faint/60 hover:text-warn/70",
-          )}
-        >
-          <Star size={13} fill={n <= value ? "currentColor" : "none"} />
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /** Status → chip face classes (mirrors the column tones). */
 const CHIP_FACES: Record<string, string> = {
@@ -212,8 +188,10 @@ function AppCard({
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2">
-        <div className="relative z-10">
-          <Stars value={a.excitement || 0} onRate={(n) => onRate(a, n)} />
+        {/* The rating is one 44 px select over the stars (RatingSelect),
+            overhanging this 17 px row, so the card keeps its height. */}
+        <div className="relative z-10 flex">
+          <RatingSelect value={a.excitement || 0} onRate={(n) => onRate(a, n)} />
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           {/* The newest email's kind, only when it adds to the column (see

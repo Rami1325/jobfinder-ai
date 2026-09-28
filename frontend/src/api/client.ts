@@ -1216,8 +1216,19 @@ export async function changePassword(payload: {
   return data ?? {};
 }
 
-export async function logoutOtherDevices(): Promise<KeyRotationFields> {
-  const { data } = await api.post<KeyRotationFields>("/auth/logout-others");
+/** POST /auth/logout-others' answer beyond the key rotation (the phone polish
+ * pass, 2026-09-28): how many devices' notifications stopped, and whether this
+ * browser's own subscription was found and kept. Absent from an older server. */
+export interface LogoutOthersResult extends KeyRotationFields {
+  push_removed?: number;
+  push_kept?: boolean;
+}
+
+/** Every other session ends, the extension key is replaced, and every other
+ * device's notifications stop. `keepPushEndpoint` is this browser's own push
+ * endpoint (`currentSubscription`), which the server keeps; "" keeps none. */
+export async function logoutOtherDevices(keepPushEndpoint = ""): Promise<LogoutOthersResult> {
+  const { data } = await api.post<LogoutOthersResult>("/auth/logout-others", { keep_push_endpoint: keepPushEndpoint });
   return data ?? {};
 }
 

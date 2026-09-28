@@ -14,7 +14,6 @@ import {
   MessageSquareText,
   Mic,
   Send,
-  Star,
   Trash2,
 } from "lucide-react";
 import {
@@ -27,6 +26,7 @@ import {
   type ResumeTemplate,
 } from "../api/client";
 import CoverLetter from "../components/CoverLetter";
+import RatingSelect from "../components/RatingSelect";
 import EmailTimeline from "../components/inbox/EmailTimeline";
 import { formatDay, useLocaleTag } from "../components/inbox/shared";
 import UsesNote from "../components/UsesNote";
@@ -307,9 +307,13 @@ function JobBody({
             ))}
           </p>
         )}
+        {/* Each control here is a 44 px box, the owner's touch floor (the phone
+            polish pass): the status chip, the rating and the posting link were
+            36 px tall and a star 28 px wide. The page has the room, so the
+            boxes grow and the faces keep their size. */}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <StatusSelect status={detail.status || "saved"} onChange={(s) => void setStatus(s)} />
-          <Stars value={detail.excitement || 0} onRate={(n) => void rate(n)} />
+          <RatingSelect value={detail.excitement || 0} onRate={(n) => void rate(n)} className="min-h-11" />
           {/* Only a scored row has a match to show: an unscored one stores 0.0,
               and "Match 0%" would be a measurement nobody took. */}
           {detail.overall_score ? (
@@ -322,7 +326,7 @@ function JobBody({
               href={detail.job_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-accent hover:underline"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-accent hover:underline"
             >
               <ExternalLink size={15} />
               {credited
@@ -364,7 +368,7 @@ function JobBody({
 function StatusSelect({ status, onChange }: { status: string; onChange: (s: string) => void }) {
   const { t } = useTranslation("tracker");
   return (
-    <span className="relative inline-flex min-h-9 items-center">
+    <span className="relative inline-flex min-h-11 items-center">
       <span
         className={cn(
           "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold leading-none",
@@ -387,30 +391,6 @@ function StatusSelect({ status, onChange }: { status: string; onChange: (s: stri
         ))}
       </select>
     </span>
-  );
-}
-
-/** 1-5 excitement stars; tapping the current rating clears it. */
-function Stars({ value, onRate }: { value: number; onRate: (n: number) => void }) {
-  const { t } = useTranslation("tracker");
-  return (
-    <div className="flex items-center" title={t("excitement.title")}>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <button
-          key={n}
-          type="button"
-          aria-label={t("excitement.set", { count: n })}
-          aria-pressed={n <= value}
-          onClick={() => onRate(n === value ? 0 : n)}
-          className={cn(
-            "grid h-9 w-7 place-items-center rounded transition-colors",
-            n <= value ? "text-warn" : "text-ink-faint/60 hover:text-warn/70",
-          )}
-        >
-          <Star size={15} fill={n <= value ? "currentColor" : "none"} />
-        </button>
-      ))}
-    </div>
   );
 }
 

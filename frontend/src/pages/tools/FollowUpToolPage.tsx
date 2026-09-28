@@ -75,11 +75,11 @@ export default function FollowUpToolPage() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs text-ink-muted">{t("followup.company")}</label>
-            <input className={input} value={company} onChange={(e) => setCompany(e.target.value)} placeholder={t("followup.companyPlaceholder")} />
+            <input dir="auto" className={input} value={company} onChange={(e) => setCompany(e.target.value)} placeholder={t("followup.companyPlaceholder")} />
           </div>
           <div>
             <label className="mb-1 block text-xs text-ink-muted">{t("followup.role")}</label>
-            <input className={input} value={role} onChange={(e) => setRole(e.target.value)} placeholder={t("followup.rolePlaceholder")} />
+            <input dir="auto" className={input} value={role} onChange={(e) => setRole(e.target.value)} placeholder={t("followup.rolePlaceholder")} />
           </div>
           <div>
             <label className="mb-1 block text-xs text-ink-muted">{t("followup.stage")}</label>
@@ -93,7 +93,7 @@ export default function FollowUpToolPage() {
           </div>
           <div>
             <label className="mb-1 block text-xs text-ink-muted">{t("followup.fit")}</label>
-            <input className={input} value={context} onChange={(e) => setContext(e.target.value)} placeholder={t("followup.fitPlaceholder")} />
+            <input dir="auto" className={input} value={context} onChange={(e) => setContext(e.target.value)} placeholder={t("followup.fitPlaceholder")} />
           </div>
         </div>
         <Button

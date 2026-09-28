@@ -134,6 +134,11 @@
       "israel": "All of Israel"
     },
     "sourcesLabel": "Job boards",
+    "boardsAll_one": "{{count}} board",
+    "boardsAll_other": "All {{count}} boards",
+    "boardsSome_one": "{{count}} of {{total}}: {{names}}",
+    "boardsSome_other": "{{count}} of {{total}}: {{names}}",
+    "boardsDone": "Done",
     "worldwide": "Include worldwide remote jobs",
     "worldwideLine": "Adds remote jobs abroad, from LinkedIn, Himalayas, Jobicy and We Work Remotely.",
     "worldwideWhy": "From LinkedIn: the US, the UK and most of Western and Northern Europe; jobs listed in a lower-paying country are left out. From Himalayas, Jobicy and We Work Remotely: remote jobs open to people in Israel. The Israeli boards stay local.",

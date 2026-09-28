@@ -14655,6 +14655,71 @@ try {
   fail(`web push check (check 91) could not run: ${e.message}`);
 }
 
+// ---- 91, continued (e): "Sign out other devices" stops their notifications and keeps this one's //
+// The phone polish pass (2026-09-28), item 6. A session ended while its device
+// kept getting the morning's job titles, until a push service answered 410. The
+// server now deletes every push device of the account but the one the calling
+// browser names (smoke 34c pins that half). This is the page's half: Settings reads
+// this browser's own subscription (read-only `currentSubscription`) and names its
+// endpoint; the client posts `{ keep_push_endpoint }`, the field the backend's
+// `LogoutOthersIn` declares, and mirrors `push_removed` / `push_kept`; the toast
+// says the notifications stopped (and, when this browser could name none while
+// notifications are allowed here, that they may have stopped here too); and the
+// hint says it before the tap, in both locales. Planted twins every run.
+try {
+  const read91e = ({ settings, client, models, en, he }) => {
+    const out = [];
+    const fn = fnSource(settings, "function OtherDevices(");
+    if (!/const mine = await currentSubscription\(\);\s*const result = await logoutOtherDevices\(mine\?\.endpoint \?\? ""\);/.test(fn))
+      out.push("Settings' Sign out other devices does not name this browser's own push endpoint, so its notifications would stop too");
+    if (!/t\("account\.others\.pushStopped"\)/.test(fn) || !/t\("account\.others\.pushStoppedAll"\)/.test(fn) || !/result\.push_removed/.test(fn))
+      out.push("the sign-out toast does not say the notifications stopped");
+    const wrapper = fnSource(client, "export async function logoutOtherDevices(");
+    if (!/api\.post<LogoutOthersResult>\("\/auth\/logout-others", \{ keep_push_endpoint: keepPushEndpoint \}\)/.test(wrapper))
+      out.push("logoutOtherDevices does not post { keep_push_endpoint } to /auth/logout-others");
+    const mirror = blockAfter(client, "export interface LogoutOthersResult extends KeyRotationFields", "api/client.ts LogoutOthersResult");
+    if (!/\bpush_removed\?: number;/.test(mirror) || !/\bpush_kept\?: boolean;/.test(mirror))
+      out.push("api/client.ts LogoutOthersResult does not mirror push_removed and push_kept");
+    if (models !== null) {
+      const body = /\nclass LogoutOthersIn\(BaseModel\):([\s\S]*?)\n(?=\S)/.exec(models);
+      const answer = /\nclass LogoutOthersOut\(BaseModel\):([\s\S]*?)\n(?=\S)/.exec(models);
+      if (!body || !answer) throw new Error("app/models: LogoutOthersIn or LogoutOthersOut not found");
+      if (!/^    keep_push_endpoint: str = /m.test(body[1])) out.push("the backend's LogoutOthersIn declares no keep_push_endpoint, the field the page sends");
+      if (!/"extra": "forbid"/.test(body[1])) out.push("the backend's LogoutOthersIn takes fields it does not know");
+      if (!/^    push_removed: int = 0$/m.test(answer[1]) || !/^    push_kept: bool = False$/m.test(answer[1]))
+        out.push("the backend's LogoutOthersOut has no push_removed / push_kept");
+    }
+    for (const [loc, b, word] of [["en", en, /notification/i], ["he", he, /התראות/]]) {
+      const o = b.account?.others ?? {};
+      if (!word.test(o.hint ?? "")) out.push(`locales/${loc}/settings.json account.others.hint does not say the other devices' notifications stop`);
+      for (const k of ["pushStopped", "pushStoppedAll"])
+        if (typeof o[k] !== "string" || !word.test(o[k])) out.push(`locales/${loc}/settings.json account.others.${k} is missing or says nothing of notifications`);
+    }
+    return out;
+  };
+  const models91e = pySource("app/models/__init__.py", "check 91 (e)");
+  const r91e = {
+    settings: decomment(read("pages/SettingsPage.tsx")),
+    client: decomment(read("api/client.ts")),
+    models: models91e === null ? null : models91e.replace(/\r\n/g, "\n"),
+    en: JSON.parse(read("locales/en/settings.json")),
+    he: JSON.parse(read("locales/he/settings.json")),
+  };
+  for (const p of read91e(r91e)) fail(`check 91 (e): ${p} (the phone polish pass)`);
+  const plant91e = (key, from, to, label) => {
+    if (r91e[key] === null) return;
+    if (!r91e[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read91e({ ...r91e, [key]: r91e[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant91e("settings", 'logoutOtherDevices(mine?.endpoint ?? "")', 'logoutOtherDevices("")', "a sign-out that names no device to keep");
+  plant91e("client", "{ keep_push_endpoint: keepPushEndpoint }", "{}", "a client that sends nothing to keep");
+  plant91e("models", "    keep_push_endpoint: str = ", "    keep_endpoint: str = ", "a backend field under another name");
+  if (!read91e({ ...r91e, en: { ...r91e.en, account: { ...r91e.en.account, others: { ...r91e.en.account.others, hint: "Ends every other session on this account. This device stays signed in." } } } }).length)
+    throw new Error("the reader passes a hint that does not say the notifications stop");
+} catch (e) {
+  fail(`sign-out notifications check (check 91 e) could not run: ${e.message}`);
+}
+
 // ---- 92. WhatsApp alerts: opt-in first, every refusal said (PLAN 32, part 2) -- //
 // Every WhatsApp message is billed to the owner, and Meta requires an explicit
 // opt-in that names the business. What `tsc` cannot see:
@@ -15203,6 +15268,142 @@ try {
   fail(`proposal writer check (check 101) could not run: ${e.message}`);
 }
 
+// ---- 101, continued: the proposal tool keeps its gig and its pass across a reload (EXECUTED) //
+// The phone polish pass (2026-09-28), item 4. The tool held the gig, the rate and
+// the proposal (with the server's reading of the gig, the letter pass's key) in
+// module state, so a reload lost the reading: the next write read the gig again
+// under a new key and charged a second use for a posting whose pass was open, and
+// the page said "Uses 1" for it. lib/proposalStash.ts keeps the page in this TAB's
+// sessionStorage under the account signed in here, never on the server. (e)
+// EXECUTES it with a memory sessionStorage: nothing is written or read while no
+// account is known; the account's own stash comes back whole (a malformed
+// proposal comes back as none, the gig kept); another account's is never
+// returned and is removed; unparseable text is removed; a storage that throws
+// neither throws nor returns anything; clear removes it. Three planted twins
+// must each go red. (f) By shape: the page restores once, in the gig's first
+// state, before a handed posting is applied; it keeps the stash on every change
+// of the gig and the rate and on every proposal written or edited; a handed
+// posting is pasted once per navigation (`location.key`), so a reload never
+// pastes it over an edit; the card is handed the kept reading (`jd={current.jd}`),
+// whose pass it reads back on mount (check 36); and "Delete all my data" clears
+// the stash. Planted twins every run.
+try {
+  const savedSS = globalThis.sessionStorage;
+  const savedBC = globalThis.BroadcastChannel;
+  try {
+    // No channel: announcing only sets this bundle's own tab account.
+    globalThis.BroadcastChannel = undefined;
+    const W = { gig: "G", rate: "₪250", jd: { title: "Scraper" }, text: "Hi", found: { placeholders: [] } };
+    const judge101e = (make) => {
+      const out = [];
+      const api = make();
+      globalThis.sessionStorage = memoryStorage();
+      const ss = globalThis.sessionStorage;
+      api.writeProposalStash({ gig: "G", rate: "", written: null, handed: "" });
+      if (ss._map.size) out.push("a stash is written while no account is known");
+      ss.setItem(api.PROPOSAL_STASH_KEY, JSON.stringify({ owner: 7, gig: "G", rate: "", written: null, handed: "" }));
+      if (api.readProposalStash() !== null) out.push("a stash is read while no account is known");
+      api.announceAccount(7);
+      api.writeProposalStash({ gig: "G", rate: "₪250", written: W, handed: "k1" });
+      const back = api.readProposalStash();
+      if (!back || back.gig !== "G" || back.rate !== "₪250" || back.handed !== "k1" || JSON.stringify(back.written) !== JSON.stringify(W))
+        out.push(`the account's own stash does not come back whole (${JSON.stringify(back)})`);
+      ss.setItem(api.PROPOSAL_STASH_KEY, JSON.stringify({ owner: 7, gig: "G", rate: "", written: { gig: "G", text: "x" }, handed: "" }));
+      const half = api.readProposalStash();
+      if (!half || half.gig !== "G" || half.written !== null) out.push("a malformed proposal (no reading) is handed back as if it could ride a pass");
+      api.writeProposalStash({ gig: "G", rate: "", written: W, handed: "" });
+      api.announceAccount(8);
+      if (api.readProposalStash() !== null) out.push("another account's stash is handed back");
+      if (ss.getItem(api.PROPOSAL_STASH_KEY) !== null) out.push("another account's stash is left in the tab");
+      ss.setItem(api.PROPOSAL_STASH_KEY, "{not json");
+      if (api.readProposalStash() !== null || ss.getItem(api.PROPOSAL_STASH_KEY) !== null) out.push("an unreadable stash is kept or returned");
+      api.writeProposalStash({ gig: "H", rate: "", written: null, handed: "" });
+      api.clearProposalStash();
+      if (ss.getItem(api.PROPOSAL_STASH_KEY) !== null) out.push("clearProposalStash leaves the stash");
+      globalThis.sessionStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } };
+      try {
+        api.writeProposalStash({ gig: "G", rate: "", written: null, handed: "" });
+        if (api.readProposalStash() !== null) out.push("a blocked storage returns a stash");
+        api.clearProposalStash();
+      } catch (e) {
+        out.push(`a blocked storage throws (${e.message})`);
+      }
+      return out;
+    };
+    const fresh = (n) => runProbeBundle(`proposal-stash-${n}`, 'export * from "./lib/proposalStash";\nexport { announceAccount } from "./lib/accountWatch";\n');
+    let n = 0;
+    for (const p of judge101e(() => fresh(n++))) fail(`check 101 (e): ${p} (the phone polish pass)`);
+    const twin = (label, wrap) => {
+      if (!judge101e(() => wrap(fresh(n++))).length) throw new Error(`the judge passes ${label}`);
+    };
+    twin("a read that ignores whose stash it is", (api) => ({
+      ...api,
+      readProposalStash: () => {
+        const raw = globalThis.sessionStorage.getItem(api.PROPOSAL_STASH_KEY);
+        try {
+          const v = JSON.parse(raw);
+          return v ? { gig: v.gig, rate: v.rate, written: v.written, handed: v.handed } : null;
+        } catch {
+          return null;
+        }
+      },
+    }));
+    twin("a write with no account known", (api) => ({
+      ...api,
+      writeProposalStash: (s) => globalThis.sessionStorage.setItem(api.PROPOSAL_STASH_KEY, JSON.stringify({ owner: null, ...s })),
+    }));
+    twin("a read that leaves another account's stash in the tab", (api) => ({
+      ...api,
+      readProposalStash: () => {
+        const raw = globalThis.sessionStorage.getItem(api.PROPOSAL_STASH_KEY);
+        const got = api.readProposalStash();
+        if (got === null && raw) globalThis.sessionStorage.setItem(api.PROPOSAL_STASH_KEY, raw);
+        return got;
+      },
+    }));
+  } finally {
+    globalThis.sessionStorage = savedSS;
+    globalThis.BroadcastChannel = savedBC;
+  }
+
+  const read101f = ({ tool, settings }) => {
+    const out = [];
+    const init = /const \[gig, setGig\] = useState\(\(\) => \{([\s\S]*?)return lastGig;\s*\}\);/.exec(tool);
+    if (!init) throw new Error("ProposalToolPage.tsx: the gig's first state (useState(() => { … return lastGig; })) not found");
+    if (!/^\s*restoreOnce\(\);/.test(init[1])) out.push("the page does not restore what this tab kept before it reads a handed posting");
+    if (!/location\.key !== lastHanded/.test(init[1]) || !/lastHanded = location\.key;/.test(init[1]))
+      out.push("a handed posting is not pasted once per navigation (location.key), so a reload pastes it over an edit");
+    const restore = fnSource(tool, "function restoreOnce(");
+    if (!/readProposalStash<Written>\(\)/.test(restore)) out.push("restoreOnce does not read the stash");
+    const keep = fnSource(tool, "function keep(");
+    if (!/stash\(\);/.test(keep)) out.push("a written or edited proposal is not kept in the tab");
+    const changes = [...tool.matchAll(/onChange=\{\(e\) => \{([\s\S]*?)\}\}/g)].map((m) => m[1]);
+    for (const [what, re] of [["the gig", /lastGig = e\.target\.value;/], ["the rate", /lastRate = e\.target\.value;/]]) {
+      const c = changes.find((x) => re.test(x));
+      if (!c) throw new Error(`ProposalToolPage.tsx: the onChange of ${what} not found`);
+      if (!/stash\(\);/.test(c)) out.push(`a change of ${what} is not kept in the tab`);
+    }
+    if (!/<CoverLetter\b[^>]*?jd=\{current\.jd\}/.test(tool.replace(/\n\s*/g, " ")))
+      out.push("the card is not handed the kept reading (jd={current.jd}), so it cannot read its pass back");
+    const wipe = fnSource(settings, "async function wipe(");
+    if (!/await deleteMyData\(\);[\s\S]*?clearProposalStash\(\);/.test(wipe)) out.push("\"Delete all my data\" leaves the proposal kept in this tab");
+    return out;
+  };
+  const r101f = { tool: decomment(read("pages/tools/ProposalToolPage.tsx")), settings: decomment(read("pages/SettingsPage.tsx")) };
+  for (const p of read101f(r101f)) fail(`check 101 (f): ${p} (the phone polish pass)`);
+  const plant101f = (key, from, to, label) => {
+    if (!r101f[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read101f({ ...r101f, [key]: r101f[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant101f("tool", "    restoreOnce();\n", "\n", "a page that never restores");
+  plant101f("tool", "location.key !== lastHanded", "true", "a handed posting pasted on every reload");
+  plant101f("tool", "    lastWritten = next;\n    stash();\n", "    lastWritten = next;\n", "a proposal that is not kept");
+  plant101f("tool", "lastRate = e.target.value;\n                stash();", "lastRate = e.target.value;", "a rate that is not kept");
+  plant101f("settings", "      clearProposalStash();\n", "", "a data wipe that leaves the tab's proposal");
+} catch (e) {
+  fail(`proposal tool reload check (check 101 e/f) could not run: ${e.message}`);
+}
+
 // ---- 102. the proposal's wire: the route, the request and the answer --------- //
 // `writeProposal` posts to the path routes.py mounts, answering ProposalResponse;
 // the body it builds names exactly ProposalRequest's fields (the route forbids any
@@ -15348,9 +15549,12 @@ try {
         fail(`check 103: locales/${loc}/jobs.json ${p}`);
   }
 
+  // The row's meta line is `MetaLine` since the phone polish pass (2026-09-28),
+  // where the label is its own part that is never cut (check 110): what this
+  // check needs is that the row hands it the label.
   const metaOf = (fn) => {
-    const at = fn.indexOf('<p dir="auto" className="truncate text-sm text-ink-muted">');
-    return at === -1 ? "" : fn.slice(at, fn.indexOf("</p>", at));
+    const at = fn.indexOf("<MetaLine");
+    return at === -1 ? "" : fn.slice(at, fn.indexOf("/>", at));
   };
   const fieldsOf = (src, re) => {
     const m = re.exec(src);
@@ -15362,8 +15566,8 @@ try {
       const fn = fnSource(cards, `export function ${fnName}`);
       if (!new RegExp(`const employment = employmentText\\(${v}\\.employment, t\\)`).test(fn))
         out.push(`${fnName} does not word its row's employment type through employmentText(${v}.employment, t)`);
-      if (!/\{employment \? ` · \$\{employment\}` : ""\}/.test(metaOf(fn)))
-        out.push(`${fnName} does not print the label in its meta line (the truncating line, which costs no height)`);
+      if (!/\bemployment=\{employment\}/.test(metaOf(fn)))
+        out.push(`${fnName} does not print the label in its meta line (MetaLine, the one line, which costs no height)`);
       if (/<Badge\b[^>]*>\s*\{employment\}/.test(fn)) out.push(`${fnName} draws the label as a badge`);
     }
     if (!/const employment = employmentText\(detail\.employment, tJobs\)/.test(jobPage) || !/const meta = \[detail\.company, employment,/.test(jobPage))
@@ -15403,7 +15607,7 @@ try {
     if (!r103[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
     if (!read103({ ...r103, [key]: r103[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
   };
-  plant103("cards", '{employment ? ` · ${employment}` : ""}\n          {hit.location', '{hit.location', "a History row without the label");
+  plant103("cards", "postedAt={hit.posted_at} employment={employment} rest=", "postedAt={hit.posted_at} rest=", "a History row without the label");
   plant103("cards", '{best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}', '{best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}<Badge>{employment}</Badge>', "the label as a badge");
   plant103("jobPage", 'initialKind={proposalFirst(detail.employment) ? "proposal" : "letter"}', 'initialKind="letter"', "a Contract job that opens on the letter");
   plant103("types", "  /** The board's employment type as History stored it (see JobMatch.employment). */\n  employment?: string;\n", "", "History's mirror without the field");
@@ -15535,10 +15739,15 @@ try {
       out.push("a freelance row does not hand its posting to /tools/proposal as gigText");
     if (!/\{freelance \? \(\s*<Button size="sm" variant="secondary" icon=\{<Handshake size=\{14\} \/>\} onClick=\{propose\}[^>]*>\s*\{t\("card\.proposal"\)\}/.test(card))
       out.push("a freelance row does not lead with Write a proposal");
-    if (!/onClick=\{propose\} className="[^"]*\bmin-h-11\b/.test(card)) out.push("a freelance row's Write a proposal is not 44 px to tap on a phone");
+    // A 44 px target: since the phone polish pass (2026-09-28) at the Tailor's
+    // size with a 44 px layer (`tap-44`, check 108), where it was a 44 px box.
+    if (!/onClick=\{propose\} className="[^"]*(?:\btap-44\b|\bmin-h-11\b)/.test(card))
+      out.push("a freelance row's Write a proposal is not 44 px to tap on a phone (tap-44, or a min-h-11 box)");
     if (!/\.\.\.\(freelance\s*\?\s*\[\{ key: "tailor", label: t\("card\.tailor"\), Icon: ArrowRight, onClick: tailor \}\]/.test(card))
       out.push("a freelance row does not keep Tailor in its menu");
-    if (!/\(useLocation\(\)\.state as \{ gigText\?: unknown \} \| null\)\?\.gigText/.test(tool))
+    // `location` since the phone polish pass: the page also reads its key, to
+    // paste a handed posting once per tap and never again on a reload.
+    if (!/\((?:useLocation\(\)|location)\.state as \{ gigText\?: unknown \} \| null\)\?\.gigText/.test(tool))
       out.push("the proposal tool does not read the gig a search row hands it");
     const res = blockAfter(types, "export interface JobSearchResult {", "types.ts JobSearchResult");
     if (!/\bnot_freelance\?: number;/.test(res)) out.push("types.ts JobSearchResult does not mirror not_freelance");
@@ -15579,7 +15788,7 @@ try {
   plant104("fm", "role=\"radiogroup\"", "role=\"group\"", "a switch that is not a radiogroup");
   plant104("fm", "    try {\n      localStorage.setItem(MODE_KEY, m);\n    } catch {", "    {\n      localStorage.setItem(MODE_KEY, m);\n    } {", "a write to storage that can throw");
   plant104("cards", "onClick={propose}", "onClick={tailor}", "a proposal button that tailors");
-  plant104("cards", 'onClick={propose} className="min-h-11 lg:min-h-0"', "onClick={propose}", "a proposal button too small to tap");
+  plant104("cards", 'onClick={propose} className="tap-44"', "onClick={propose}", "a proposal button too small to tap");
   plant104("cards", "state: { gigText: jdForTools }", "state: { jdText: jdForTools }", "a gig handed under another name");
   plant104("tool", "?.gigText;", "?.jdText;", "a tool that never reads the handed gig");
   plant104("routes", "                    **_mode_kw(body),\n", "", "a stream that drops the mode");
@@ -15856,6 +16065,453 @@ try {
   twin107(3, (s) => s.replace(/לינקדאין/g, "פייסבוק"), "a Hebrew note that leaves LinkedIn out");
 } catch (e) {
   fail(`gig copy check (check 107) could not run: ${e.message}`);
+}
+
+// ---- 108. the phone polish pass: every target it fixed is 44 px, and none overlaps //
+// 2026-09-28. The owner's floor is a 44 px target on a phone; Phase 32 left five
+// under it: the tracker card's stars (17 px each, five side by side), the job
+// page's posting link, status chip and stars (36 px, a star 28 wide), the search
+// and History rows' buttons (32-34 px: Tailor, Save, the saved icon, "⋯"), and
+// the search card's "Customize search" and worldwide checkbox lines (20 px).
+// Two ways to 44 px, each where it belongs, and this check holds both:
+//   (a) `.tap-44` (styles.css): the control keeps its size and its place, and a
+//       transparent ::after centred on it, at least 44 px each way, takes the
+//       taps around it; a job row therefore keeps the height Phase 31 budgeted
+//       three to a screen. The rule must be absolute, centred and max(100%, 44px)
+//       both ways. Every button in a search row and a History row carries it, and
+//       so does "⋯" (MoreMenu). A layer only helps while it overlaps nothing, so
+//       the rows keep an 8 px gap (`gap-2` or more): a 36 px icon's layer adds
+//       4 px each side, and two of them meet, never cross.
+//   (b) A 44 px BOX where the page has the room: the job page's posting link and
+//       status chip (`min-h-11`), and the two checkbox lines (`min-h-11`, or `py-3`
+//       around a 20 px line).
+//   (c) Five stars cannot each grow to 44 px without overlapping (220 px, more
+//       than a board card's 149), so the rating is ONE control now
+//       (components/RatingSelect.tsx): the stars show it and a transparent native
+//       select, `h-11` and centred, lies over them, labelled, with "No rating" and
+//       1-5 stars, on the tracker card and the job page, and no star buttons are
+//       left on either. Its words resolve in both tracker.json with their plural
+//       sets. Planted twins are judged every run.
+try {
+  const MIN44 = /\bmin-h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?![\w-])/;
+  const H44 = /(?<![\w-])h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?![\w-])/;
+  const TAP = /(?<![\w-])tap-44(?![\w-])/;
+  // From `<Tag` to the end of its opening tag, reading braces, so an arrow's `=>`
+  // inside a prop is not the tag's end.
+  const tagFrom = (src, at, what) => {
+    let depth = 0;
+    for (let i = at; i < src.length; i++) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (depth === 0 && c === ">") return src.slice(at, i + 1);
+    }
+    throw new Error(`an unterminated tag in ${what}`);
+  };
+  const tags = (src, name) => [...src.matchAll(new RegExp(`<${name}\\b`, "g"))].map((m) => tagFrom(src, m.index, name));
+  // A CSS size of at least 44 px: `max(100%, 44px)`, or a plain 44px / 2.75rem and up.
+  const size44 = (v) => {
+    const m = /^(?:max\(\s*100%\s*,\s*([\d.]+)(px|rem)\s*\)|([\d.]+)(px|rem))$/.exec((v ?? "").trim());
+    if (!m) return false;
+    const [n, unit] = m[1] ? [m[1], m[2]] : [m[3], m[4]];
+    return (unit === "px" ? Number(n) : Number(n) * 16) >= 44;
+  };
+  const cssBlock = (css, selector) => {
+    const at = css.indexOf(`${selector} {`);
+    if (at === -1) return null;
+    const end = css.indexOf("}", at);
+    const out = {};
+    for (const d of css.slice(css.indexOf("{", at) + 1, end).split(";")) {
+      const [k, ...v] = d.split(":");
+      if (k.trim()) out[k.trim()] = v.join(":").trim();
+    }
+    return out;
+  };
+  const read108 = ({ css, cards, more, tracker, job, rating, alerts, jobsPage, en, he }) => {
+    const out = [];
+    // (a) the layer itself.
+    const base = cssBlock(css, ".tap-44");
+    const layer = cssBlock(css, ".tap-44::after");
+    if (!base || base.position !== "relative") out.push("styles.css has no `.tap-44 { position: relative }`");
+    if (!layer) out.push("styles.css has no `.tap-44::after` layer");
+    else {
+      if (layer.content !== '""') out.push("the .tap-44 layer has no `content: \"\"`, so it is never drawn");
+      if (layer.position !== "absolute") out.push("the .tap-44 layer is not `position: absolute`");
+      if (!size44(layer.width) || !size44(layer.height)) out.push("the .tap-44 layer is not at least 44 px each way (`max(100%, 44px)`)");
+      if (layer.left !== "50%" || layer.top !== "50%" || !/translate\(\s*-50%\s*,\s*-50%\s*\)/.test(layer.transform ?? ""))
+        out.push("the .tap-44 layer is not centred on its control (left/top 50%, translate(-50%, -50%))");
+    }
+    // (a) every button of a search row and a History row, and "⋯".
+    for (const [fn, floor] of [["export function MatchCard(", 4], ["export function HistoryRow(", 2]]) {
+      const body = fnSource(cards, fn);
+      const btns = [...tags(body, "Button"), ...tags(body, "button")];
+      if (btns.length < floor) throw new Error(`pages/jobs/cards.tsx ${fn.slice(16, -1)}: read ${btns.length} buttons (expected at least ${floor})`);
+      for (const b of btns)
+        if (!TAP.test(b) && !MIN44.test(b)) out.push(`a button in ${fn.slice(16, -1)}'s row is under 44 px to tap (no tap-44): ${b.replace(/\s+/g, " ").slice(0, 90)}`);
+      const rows = [...body.matchAll(/<div className="mt-2 flex items-center (gap-[\w.[\]]+)">/g)];
+      if (!rows.length) throw new Error(`pages/jobs/cards.tsx ${fn.slice(16, -1)}: its action row (\`mt-2 flex items-center gap-…\`) not found`);
+      for (const r of rows) {
+        const gap = /^gap-(\d+(?:\.\d+)?)$/.exec(r[1]);
+        if (!gap || Number(gap[1]) < 2) out.push(`${fn.slice(16, -1)}'s action row gap is ${r[1]}: under 8 px, two 36 px icons' 44 px layers overlap`);
+      }
+    }
+    const moreBtn = tags(more, "button").find((b) => /ref=\{buttonRef\}/.test(b));
+    if (!moreBtn) throw new Error("components/ui/MoreMenu.tsx: the <button ref={buttonRef}> not found");
+    if (!TAP.test(moreBtn)) out.push("MoreMenu's \"⋯\" is under 44 px to tap (no tap-44)");
+    // (b) the job page's header row, and the two checkbox lines.
+    const link = tags(job, "a").find((a) => /href=\{detail\.job_url\}/.test(a));
+    if (!link) throw new Error("pages/JobPage.tsx: the posting link (<a href={detail.job_url}>) not found");
+    if (!MIN44.test(link)) out.push("the job page's posting link is under 44 px (min-h-11)");
+    const status = tags(fnSource(job, "function StatusSelect("), "span")[0];
+    if (!status || !MIN44.test(status)) out.push("the job page's status chip is under 44 px (min-h-11)");
+    const jobRating = tags(job, "RatingSelect");
+    if (jobRating.length !== 1) out.push(`the job page renders ${jobRating.length} RatingSelect, not one`);
+    else if (!MIN44.test(jobRating[0])) out.push("the job page's rating is not a 44 px box (min-h-11)");
+    const fields = fnSource(alerts, "export function CustomizeFields");
+    const ww = tags(fields, "label").find((l, i, all) => {
+      const at = fields.indexOf(l);
+      return fields.slice(at, fields.indexOf("</label>", at)).includes("include_worldwide");
+    });
+    if (!ww) throw new Error("pages/jobs/AlertsCard.tsx: the worldwide <label> not found");
+    if (!MIN44.test(ww) && !(/(?<![\w-])py-3(?![\w-])/.test(ww) && /(?<![\w-])text-sm(?![\w-])/.test(ww)))
+      out.push("the worldwide checkbox line is under 44 px (min-h-11, or py-3 around its 20 px line)");
+    const custom = tags(jobsPage, "label").find((l) => {
+      const at = jobsPage.indexOf(l);
+      return jobsPage.slice(at, jobsPage.indexOf("</label>", at)).includes("checked={customOpen}");
+    });
+    if (!custom) throw new Error("pages/JobsPage.tsx: the Customize search <label> not found");
+    if (!MIN44.test(custom)) out.push("the Customize search checkbox line is under 44 px (min-h-11)");
+    // (c) the rating: one select over the stars, on both pages.
+    const sel = tags(rating, "select");
+    if (sel.length !== 1) throw new Error(`components/RatingSelect.tsx: read ${sel.length} <select>, expected one`);
+    for (const [need, why] of [
+      [/(?<![\w-])absolute(?![\w-])/, "absolute over the stars"],
+      [/(?<![\w-])opacity-0(?![\w-])/, "transparent (opacity-0)"],
+      [/aria-label=\{t\("excitement\.label"\)\}/, 'labelled (aria-label={t("excitement.label")})'],
+    ])
+      if (!need.test(sel[0])) out.push(`the rating's select is not ${why}`);
+    if (!H44.test(sel[0]) && !MIN44.test(sel[0])) out.push("the rating's select is under 44 px tall (h-11)");
+    if (!/t\("excitement\.none"\)/.test(rating) || !/t\("excitement\.stars", \{ count: n \}\)/.test(rating))
+      out.push("the rating's options are not \"No rating\" and 1-5 stars (excitement.none, excitement.stars)");
+    const card = fnSource(tracker, "function AppCard(");
+    if (tags(card, "RatingSelect").length !== 1) out.push("a tracker card does not rate through one RatingSelect");
+    for (const [file, src] of [["pages/TrackerPage.tsx", tracker], ["pages/JobPage.tsx", job]])
+      if (/function Stars\(|excitement\.set\b/.test(src)) out.push(`${file} still draws the rating as star buttons`);
+    for (const [loc, b] of [["en", en], ["he", he]])
+      for (const key of ["excitement.label", "excitement.none", "excitement.stars"])
+        for (const p of keyProblems(b, key, loc, "the rating")) out.push(`locales/${loc}/tracker.json ${p}`);
+    return out;
+  };
+  const r108 = {
+    css: read("styles.css"),
+    cards: decomment(read("pages/jobs/cards.tsx")),
+    more: decomment(read("components/ui/MoreMenu.tsx")),
+    tracker: decomment(read("pages/TrackerPage.tsx")),
+    job: decomment(read("pages/JobPage.tsx")),
+    rating: decomment(read("components/RatingSelect.tsx")),
+    alerts: decomment(read("pages/jobs/AlertsCard.tsx")),
+    jobsPage: decomment(read("pages/JobsPage.tsx")),
+    en: JSON.parse(read("locales/en/tracker.json")),
+    he: JSON.parse(read("locales/he/tracker.json")),
+  };
+  for (const p of read108(r108)) fail(`check 108: ${p} (the phone polish pass)`);
+  const plant108 = (key, from, to, label) => {
+    if (!r108[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read108({ ...r108, [key]: r108[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant108("css", "width: max(100%, 44px);", "width: max(100%, 32px);", "a 32 px layer");
+  plant108("css", "transform: translate(-50%, -50%);", "", "a layer hung off one corner");
+  plant108("cards", "onClick={saveForLater}\n                className=\"tap-44 ", "onClick={saveForLater}\n                className=\"", "a 32 px Save");
+  plant108("cards", 'className="tap-44"\n            onClick={() =>', "onClick={() =>", "a History row's 34 px Tailor");
+  plant108("cards", '<div className="mt-2 flex items-center gap-2">', '<div className="mt-2 flex items-center gap-1">', "an action row whose layers overlap");
+  plant108("more", '"tap-44 grid min-h-8 w-9', '"grid min-h-8 w-9', "a 32 px \"⋯\"");
+  plant108("job", "inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-accent", "inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-accent", "a 36 px posting link");
+  plant108("job", '<span className="relative inline-flex min-h-11 items-center">', '<span className="relative inline-flex min-h-9 items-center">', "a 36 px status chip");
+  plant108("rating", "h-11 w-full", "h-8 w-full", "a 32 px rating");
+  plant108("tracker", "<RatingSelect value={a.excitement", "<Stars value={a.excitement", "a card that draws its stars again");
+  plant108("alerts", "gap-2 py-3 text-sm", "gap-2 text-sm", "a 20 px worldwide line");
+  plant108("jobsPage", "mt-1 flex min-h-11 w-fit cursor-pointer", "mt-4 flex w-fit cursor-pointer", "a 20 px Customize line");
+  if (!read108({ ...r108, he: withoutForm(r108.he, "excitement.stars", "two") }).length)
+    throw new Error("the reader passes a Hebrew rating without its _two form");
+  if (MIN44.test("min-h-10") || MIN44.test("min-h-[40px]") || !MIN44.test("min-h-[48px]") || H44.test("min-h-8") || !H44.test("h-11") || TAP.test("tap-440"))
+    throw new Error("a 44 px reader misreads min-h-10, min-h-[40px], min-h-[48px], min-h-8, h-11 or tap-440");
+  if (size44("max(100%, 32px)") || !size44("max(100%, 44px)") || !size44("2.75rem"))
+    throw new Error("the CSS size reader misreads max(100%, 32px), max(100%, 44px) or 2.75rem");
+} catch (e) {
+  fail(`phone tap targets check (check 108) could not run: ${e.message}`);
+}
+
+// ---- 109. the board picker is one line on a phone, and says what is chosen (EXECUTED) //
+// The phone polish pass (2026-09-28), item 2. Phase 32 made the boards eleven, and
+// their list, a 44 px row each, was six rows (264 px) of the open search card at
+// 390 in English and seven (308 px) at 360. Below lg it is ONE 44 px line now,
+// which says what is chosen and opens the same list in a bottom sheet (JDPaste's
+// pattern), so every board is two taps away; from lg the list stays inline (two
+// rows at 1440). (a) EXECUTES `boardsSummary` (pages/jobs/shared.ts) with a
+// recording t: no choice, an empty one and every board in another order each ask
+// `search.boardsAll` with the registry's count; a choice asks `search.boardsSome`
+// with its count, the total and the names in the REGISTRY's order and the page's
+// language; an id the registry no longer lists counts for nothing. (b) By shape,
+// on CustomizeFields: the rows are one `boardRows` list, drawn inline only when
+// `wide` (useMediaQuery 1024 px) and in the sheet otherwise; the line is a
+// `min-h-11` button with `aria-haspopup="dialog"` wording itself through
+// `boardsSummary(ctx?.sources, i18n.language, t)`; the sheet is portalled to
+// document.body as a modal dialog that takes focus (`useDialogFocus`), closes on
+// its backdrop, on a 44 px Done and on Escape heard in the capture phase and
+// stopped there (the page may sit under another dialog's window listener). (c)
+// `search.boardsAll` / `boardsSome` / `boardsDone` resolve in both jobs.json with
+// their plural sets, and every form of boardsSome prints the count, the total and
+// the names. Planted twins every run.
+try {
+  const sh109 = runProbeBundle("boards-summary", 'export { boardsSummary, SOURCE_IDS } from "./pages/jobs/shared";\n');
+  if (typeof sh109.boardsSummary !== "function") throw new Error("pages/jobs/shared.ts exports no boardsSummary");
+  const ids = [...sh109.SOURCE_IDS];
+  if (ids.length < 5 || !ids.includes("linkedin") || !ids.includes("drushim")) throw new Error(`SOURCE_IDS reads ${JSON.stringify(ids)}`);
+  const tRec = (key, opts) => `${key}|${JSON.stringify(opts ?? {})}`;
+  const judge109 = (summary) => {
+    const out = [];
+    const call = (sources, lang) => {
+      const [key, opts] = String(summary(sources, lang, tRec)).split("|");
+      return { key, opts: JSON.parse(opts ?? "{}") };
+    };
+    for (const [label, sources] of [["no choice", null], ["an empty choice", []], ["every board, reversed", [...ids].reverse()]]) {
+      const c = call(sources, "en");
+      if (c.key !== "search.boardsAll" || c.opts.count !== ids.length) out.push(`${label} reads ${c.key} ${JSON.stringify(c.opts)}, not every board (${ids.length})`);
+    }
+    const two = call(["drushim", "linkedin"], "en");
+    if (two.key !== "search.boardsSome" || two.opts.count !== 2 || two.opts.total !== ids.length || two.opts.names !== "LinkedIn, Drushim")
+      out.push(`LinkedIn and Drushim read ${two.key} ${JSON.stringify(two.opts)}, not "2 of ${ids.length}: LinkedIn, Drushim" in the registry's order`);
+    const he = call(["drushim", "linkedin"], "he");
+    if (he.opts.names !== "LinkedIn, דרושים") out.push(`in Hebrew the names read ${JSON.stringify(he.opts.names)}, not the page's language`);
+    const stale = call(["jooble", "linkedin"], "en");
+    if (stale.opts.count !== 1 || stale.opts.names !== "LinkedIn") out.push(`a retired board is counted (${JSON.stringify(stale.opts)})`);
+    return out;
+  };
+  for (const p of judge109(sh109.boardsSummary)) fail(`check 109: ${p} (the phone polish pass)`);
+  for (const [label, twin] of [
+    ["names in the order they were chosen", (s, lang, t) => (s?.length && s.length < ids.length ? t("search.boardsSome", { count: s.length, total: ids.length, names: s.map((x) => (x === "linkedin" ? "LinkedIn" : "Drushim")).join(", ") }) : t("search.boardsAll", { count: ids.length }))],
+    ["a retired board counted", (s, lang, t) => {
+      const [key, opts] = String(sh109.boardsSummary(s, lang, t)).split("|");
+      const o = JSON.parse(opts);
+      if (key === "search.boardsSome" && s) o.count = s.length;
+      return `${key}|${JSON.stringify(o)}`;
+    }],
+    ["names in English whatever the page", (s, lang, t) => sh109.boardsSummary(s, "en", t)],
+  ])
+    if (!judge109(twin).length) throw new Error(`the judge passes ${label}`);
+
+  const read109 = ({ alerts, en, he }) => {
+    const out = [];
+    const f = fnSource(alerts, "export function CustomizeFields");
+    if (!/const wide = useMediaQuery\("\(min-width: 1024px\)"\);/.test(f)) out.push("the list is not chosen by width (useMediaQuery 1024 px)");
+    if (!/const boardRows = SOURCE_IDS\.map\(/.test(f)) out.push("the boards are not one `boardRows` list of every SOURCE_IDS board");
+    const draws = (f.match(/\{boardRows\}/g) || []).length;
+    if (draws !== 2) out.push(`the rows are drawn ${draws} times, not twice (inline from lg, in the sheet below it)`);
+    const branch = /\{wide \? \(\s*<div[^>]*>[\s\S]*?\{boardRows\}\s*<\/div>\s*\) : \(\s*(<button\b[\s\S]*?<\/button>)\s*\)\}/.exec(f);
+    if (!branch) out.push("the inline list is not drawn only when wide, with the one-line button otherwise");
+    else {
+      const btn = branch[1];
+      if (!/\bmin-h-11\b/.test(btn)) out.push("the boards line is under 44 px (min-h-11)");
+      if (!/aria-haspopup="dialog"/.test(btn)) out.push("the boards line does not say it opens a dialog");
+      if (!/boardsSummary\(ctx\?\.sources, i18n\.language, t\)/.test(btn)) out.push("the boards line does not say what is chosen (boardsSummary)");
+      if (!/onClick=\{\(\) => setBoardsOpen\(true\)\}/.test(btn)) out.push("the boards line does not open the sheet");
+    }
+    const sheet = /\{boardsUp &&\s*createPortal\(([\s\S]*?)document\.body,\s*\)\}/.exec(f);
+    if (!sheet) out.push("the sheet is not portalled to document.body behind boardsUp");
+    else {
+      const s = sheet[1];
+      if (!/role="dialog"/.test(s) || !/aria-modal="true"/.test(s)) out.push("the sheet is not a modal dialog");
+      if (!/ref=\{boardsRef\}/.test(s)) out.push("the sheet does not carry the ref useDialogFocus moves focus into");
+      if (!/onClick=\{\(\) => setBoardsOpen\(false\)\}\s*className="fixed inset-0/.test(s)) out.push("the sheet's backdrop does not close it");
+      if (!/\{boardRows\}/.test(s)) out.push("the sheet does not hold the boards");
+      if (!/<Button className="min-h-11[^"]*" onClick=\{\(\) => setBoardsOpen\(false\)\}>\s*\{t\("search\.boardsDone"\)\}/.test(s)) out.push("the sheet has no 44 px Done");
+    }
+    if (!/const boardsUp = boardsOpen && !wide;/.test(f) || !/useDialogFocus\(boardsUp, boardsRef\);/.test(f)) out.push("the sheet does not take and give back focus (useDialogFocus)");
+    if (!/if \(!boardsUp\) return;\s*const onKey = \(e: KeyboardEvent\) => \{\s*if \(e\.key !== "Escape"\) return;\s*e\.stopPropagation\(\);\s*setBoardsOpen\(false\);/.test(f) ||
+      !/window\.addEventListener\("keydown", onKey, true\);/.test(f))
+      out.push("Escape does not close the sheet alone (a capture-phase listener that stops it)");
+    for (const [loc, b] of [["en", en], ["he", he]]) {
+      for (const key of ["search.boardsAll", "search.boardsSome", "search.boardsDone"])
+        for (const p of keyProblems(b, key, loc, "the board picker")) out.push(`locales/${loc}/jobs.json ${p}`);
+      for (const [k, v] of Object.entries(b.search ?? {}))
+        if (/^boardsSome_/.test(k) && !["{{count}}", "{{total}}", "{{names}}"].every((ph) => String(v).includes(ph)))
+          out.push(`locales/${loc}/jobs.json search.${k} leaves out the count, the total or the names`);
+    }
+    return out;
+  };
+  const r109 = {
+    alerts: decomment(read("pages/jobs/AlertsCard.tsx")),
+    en: JSON.parse(read("locales/en/jobs.json")),
+    he: JSON.parse(read("locales/he/jobs.json")),
+  };
+  for (const p of read109(r109)) fail(`check 109: ${p} (the phone polish pass)`);
+  const plant109 = (from, to, label) => {
+    if (!r109.alerts.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read109({ ...r109, alerts: r109.alerts.replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant109("{wide ? (", "{true ? (", "the list inline on a phone");
+  plant109("boardsSummary(ctx?.sources, i18n.language, t)", 't("search.sourcesLabel")', "a line that does not say what is chosen");
+  plant109("mt-3 flex min-h-11 w-full items-center gap-2 rounded-lg", "mt-3 flex w-full items-center gap-2 rounded-lg", "a 20 px boards line");
+  plant109("      e.stopPropagation();\n      setBoardsOpen(false);", "      setBoardsOpen(false);", "an Escape that closes the dialog under it too");
+  plant109('<Button className="min-h-11 w-full"', '<Button className="w-full"', "a 42 px Done");
+  plant109("          document.body,\n        )}", "          document.getElementById(\"root\")!,\n        )}", "a sheet left inside the page");
+  const heNoTwo = { ...r109.he, search: { ...r109.he.search } };
+  delete heNoTwo.search.boardsSome_two;
+  if (!read109({ ...r109, he: heNoTwo }).length) throw new Error("the reader passes a Hebrew boardsSome without its _two form");
+  const enNoNames = { ...r109.en, search: { ...r109.en.search, boardsSome_other: "{{count}} of {{total}}" } };
+  if (!read109({ ...r109, en: enNoNames }).length) throw new Error("the reader passes a line that leaves the names out");
+} catch (e) {
+  fail(`board picker check (check 109) could not run: ${e.message}`);
+}
+
+// ---- 110. a row's Contract / Freelance label is never cut --------------------- //
+// The phone polish pass (2026-09-28), item 3. A job row's meta line (company ·
+// when · the board's employment label · modes · place) was ONE truncating text
+// run, cut wherever the line ended, so behind a long company name at 360 px the
+// label itself was cut: the one fact the freelance mode is about. It is
+// `MetaLine` now (pages/jobs/cards.tsx), each part a flex box giving way in a set
+// order. By shape: the line is `flex min-w-0 whitespace-nowrap` with
+// `dir="auto"` and no part carries a `dir` of its own (the line's direction is
+// the company's, as it was, so every part flows one way); the company is
+// `min-w-0 truncate`; the date and the label are `shrink-0` and never wrap; the
+// rest (modes, place) is `min-w-0 truncate` with a flex-shrink far above the
+// company's, so the place is lost first; a separator is a no-break space, which
+// a flex box does not strip. Both the search row and the History row draw their
+// meta line through MetaLine, handing it the label. Planted twins every run.
+try {
+  const read110 = (cards) => {
+    const out = [];
+    const fn = fnSource(cards, "export function MetaLine(");
+    const p = /<p\b([^>]*)>([\s\S]*?)<\/p>/.exec(fn);
+    if (!p) throw new Error("pages/jobs/cards.tsx: MetaLine renders no <p>");
+    const pCls = (/className="([^"]*)"/.exec(p[1]) || [])[1] ?? "";
+    for (const c of ["flex", "min-w-0", "whitespace-nowrap"])
+      if (!pCls.split(/\s+/).includes(c)) out.push(`the meta line is not \`${c}\` (one line of parts that give way)`);
+    if (!/dir="auto"/.test(p[1])) out.push("the meta line has no dir=\"auto\" (its direction is the company's)");
+    const spans = [...p[2].matchAll(/<span\b([^>]*)>([\s\S]*?)<\/span>/g)].map((m) => ({ attrs: m[1], body: m[2], cls: ((/className="([^"]*)"/.exec(m[1]) || [])[1] ?? "").split(/\s+/) }));
+    if (spans.length !== 4) throw new Error(`pages/jobs/cards.tsx: MetaLine has ${spans.length} parts, not four (company, when, label, rest)`);
+    if (spans.some((s) => /\bdir=/.test(s.attrs))) out.push("a part of the meta line carries a dir of its own, so its dots and cut follow it, not the line");
+    const [company, when, label, rest] = spans;
+    if (!/\{company \|\| "—"\}/.test(company.body)) throw new Error("MetaLine's first part is not the company");
+    if (!/employment/.test(label.body)) throw new Error("MetaLine's third part is not the employment label");
+    if (!company.cls.includes("min-w-0") || !company.cls.includes("truncate")) out.push("the company does not give way (`min-w-0 truncate`)");
+    for (const [name, s] of [["the date", when], ["the label", label]]) {
+      if (!s.cls.includes("shrink-0")) out.push(`${name} can shrink (it must be \`shrink-0\`), so a long company cuts it`);
+      if (!s.cls.includes("whitespace-nowrap")) out.push(`${name} can wrap (\`whitespace-nowrap\`)`);
+      if (!/\\u00a0· /.test(s.body)) out.push(`${name}'s separator is not a no-break space, which a flex box would strip`);
+    }
+    const shrink = rest.cls.map((c) => /^shrink-\[(\d+)\]$/.exec(c)).find(Boolean);
+    if (!rest.cls.includes("min-w-0") || !rest.cls.includes("truncate") || !shrink || Number(shrink[1]) < 10)
+      out.push("the rest (modes, place) does not give way first (`min-w-0 truncate` and a flex-shrink of 10 or more)");
+    for (const [row, v] of [["MatchCard", "m"], ["HistoryRow", "hit"]]) {
+      const body = fnSource(cards, `export function ${row}(`);
+      const tag = /<MetaLine\b([\s\S]*?)\/>/.exec(body);
+      if (!tag) out.push(`${row} does not draw its meta line through MetaLine`);
+      else {
+        if (!/\bemployment=\{employment\}/.test(tag[1])) out.push(`${row} does not hand MetaLine its label`);
+        if (!new RegExp(`company=\\{${v}\\.company\\}`).test(tag[1])) out.push(`${row} does not hand MetaLine its company`);
+      }
+      if (/className="truncate text-sm text-ink-muted"/.test(body)) out.push(`${row} still prints a meta line as one truncating run`);
+    }
+    return out;
+  };
+  const cards110 = decomment(read("pages/jobs/cards.tsx"));
+  for (const p of read110(cards110)) fail(`check 110: ${p} (the phone polish pass)`);
+  const plant110 = (from, to, label) => {
+    if (!cards110.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read110(cards110.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant110('{employment && <span className="shrink-0 whitespace-nowrap">', '{employment && <span className="min-w-0 truncate">', "a label that is cut first");
+  plant110('<span className="min-w-0 truncate">{company || "—"}</span>', '<span className="shrink-0">{company || "—"}</span>', "a company that never gives way");
+  plant110('<span className="min-w-0 shrink-[100] truncate">', '<span className="min-w-0 truncate">', "a place that gives way no sooner than the company");
+  plant110('{employment && <span className="shrink-0 whitespace-nowrap">', '{employment && <span dir="auto" className="shrink-0 whitespace-nowrap">', "a label with its own direction");
+  plant110("{`\\u00a0· ${employment}`}", "{` · ${employment}`}", "a separator the flex box strips");
+  plant110('<p dir="auto" className="flex min-w-0 items-baseline whitespace-nowrap', '<p dir="auto" className="flex min-w-0 items-baseline', "a meta line that wraps");
+  plant110("<MetaLine company={hit.company}", "<MetaLineX company={hit.company}", "a History row that prints its own line");
+} catch (e) {
+  fail(`meta line check (check 110) could not run: ${e.message}`);
+}
+
+// ---- 111. every box a person types or pastes into takes its text's direction ---- //
+// The phone polish pass (2026-09-28), item 5. The job-posting box (`JDPaste`,
+// shared by the tailor dialog, Interview, Outreach and the company brief) had no
+// `dir`, so an English posting pasted under the Hebrew UI was drawn right to left
+// with every full stop at the wrong end of its line; so did the Jobs page's
+// Paste / URL box and the feedback box, and the search's keyword and location
+// boxes and the follow-up writer's company, role and fit lines. Every
+// `<textarea>` and free-text `<input>` (text, url or search; a checkbox, a
+// number, a password, an email or a phone number is not free text) under src/
+// must carry a `dir`: `"auto"` for what the person types or pastes, whose
+// language is its own, whichever the interface is. The one exception is the
+// paper (components/ResumeView.tsx), whose boxes inherit the direction the sheet
+// COMPUTES from the resume (`document-editor.md`: `dir="auto"` is never used on
+// the paper), and BlockEditSheet's boxes carry that same explicit `dir={paperDir}`,
+// never auto, which this check also holds. JDPaste's box is `dir="auto"` by name.
+// Planted twins every run.
+try {
+  const walk111 = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk111(path.join(dir, e.name)) : e.name.endsWith(".tsx") ? [path.join(dir, e.name)] : [],
+    );
+  const files111 = Object.fromEntries(
+    walk111(SRC).map((f) => [path.relative(SRC, f).split(path.sep).join("/"), decomment(fs.readFileSync(f, "utf8").replace(/\r\n/g, "\n"))]),
+  );
+  const PAPER = new Set(["components/ResumeView.tsx"]);
+  const NOT_TEXT = new Set(["checkbox", "radio", "file", "hidden", "range", "number", "password", "email", "tel", "color", "date", "submit", "button"]);
+  const tagAt111 = (src, at, file) => {
+    let depth = 0;
+    for (let i = at; i < src.length; i++) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (depth === 0 && c === ">") return src.slice(at, i + 1);
+    }
+    throw new Error(`${file}: an unterminated tag`);
+  };
+  const read111 = (files) => {
+    const out = [];
+    let boxes = 0;
+    for (const [file, src] of Object.entries(files)) {
+      for (const m of src.matchAll(/<(textarea|input)\b/g)) {
+        const tag = tagAt111(src, m.index, file);
+        // A type chosen at run time (a password box that can show its text) may
+        // be text, so it is held to the rule like one.
+        const type = /\btype=\{/.test(tag)
+          ? "computed"
+          : (/\btype="([\w-]+)"/.exec(tag) || [])[1] ?? (m[1] === "textarea" ? "textarea" : "text");
+        if (m[1] === "input" && NOT_TEXT.has(type)) continue;
+        boxes += 1;
+        if (PAPER.has(file)) continue;
+        const line = src.slice(0, m.index).split("\n").length;
+        if (!/\bdir=/.test(tag)) out.push(`${file}:${line}: a <${m[1]}> with no dir, so what is typed or pasted into it is drawn in the interface's direction`);
+      }
+    }
+    if (boxes < 20) throw new Error(`read ${boxes} free-text boxes under src/ (expected at least 20)`);
+    const paste = files["components/JDPaste.tsx"];
+    if (!paste) throw new Error("components/JDPaste.tsx not found");
+    const pasteBox = /<textarea\b[\s\S]*?\/>/.exec(paste);
+    if (!pasteBox || !/\bdir="auto"/.test(pasteBox[0])) out.push("JDPaste's posting box is not dir=\"auto\"");
+    const sheet = files["components/BlockEditSheet.tsx"];
+    if (!sheet) throw new Error("components/BlockEditSheet.tsx not found");
+    const sheetBoxes = [...sheet.matchAll(/<(textarea|input)\b/g)].map((m) => tagAt111(sheet, m.index, "BlockEditSheet.tsx"));
+    if (sheetBoxes.length < 2) throw new Error("BlockEditSheet.tsx: read fewer than two boxes");
+    if (sheetBoxes.some((b) => !/\bdir=\{paperDir\}/.test(b))) out.push("a box in BlockEditSheet does not take the paper's explicit direction (dir={paperDir}); dir=\"auto\" flips a Hebrew bullet that starts with \"React\"");
+    return out;
+  };
+  for (const p of read111(files111)) fail(`check 111: ${p} (the phone polish pass)`);
+  const plant111 = (file, from, to, label) => {
+    if (!files111[file]?.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read111({ ...files111, [file]: files111[file].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant111("components/JDPaste.tsx", '<textarea\n        dir="auto"\n', "<textarea\n", "a posting box in the interface's direction");
+  plant111("pages/tools/FollowUpToolPage.tsx", '<input dir="auto" className={input} value={company}', "<input className={input} value={company}", "a company line with no dir");
+  plant111("components/BlockEditSheet.tsx", "dir={paperDir}", 'dir="auto"', "a bullet box that flips on its first word");
+  if (!read111({ ...files111, "pages/NewPage.tsx": "export default () => <textarea value={x} onChange={f} />;\n" }).length)
+    throw new Error("the reader passes a new page's textarea with no dir");
+  if (read111({ ...files111, "pages/NewPage.tsx": 'export default () => <input type="checkbox" checked={x} />;\n' }).length)
+    throw new Error("the reader refuses a checkbox, which is not free text");
+} catch (e) {
+  fail(`box direction check (check 111) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

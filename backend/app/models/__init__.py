@@ -1073,10 +1073,26 @@ class ResetOut(AuthMe):
     extension_key_rotated: bool = False
 
 
+class LogoutOthersIn(BaseModel):
+    """Body of `POST /auth/logout-others` (the phone polish pass, 2026-09-28): the
+    push endpoint THIS browser holds, if it holds one, so the morning's
+    notifications keep reaching it while every other device's stop. Empty or no
+    body at all (a tab loaded before this, a browser with no subscription) keeps
+    none. `extra="forbid"`: nothing else rides this door."""
+
+    model_config = {"extra": "forbid"}
+
+    keep_push_endpoint: str = Field(default="", max_length=2048)
+
+
 class LogoutOthersOut(BaseModel):
     ok: bool = True
     revoked: int = 0
     extension_key_rotated: bool = False
+    # The phone polish pass: how many devices' notifications stopped, and whether
+    # this browser's own subscription was found among the account's and kept.
+    push_removed: int = 0
+    push_kept: bool = False
 
 
 class ExtensionKeyOut(BaseModel):

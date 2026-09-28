@@ -140,6 +140,13 @@
       "israel": "כל הארץ"
     },
     "sourcesLabel": "לוחות משרות",
+    "boardsAll_one": "לוח אחד",
+    "boardsAll_two": "שני הלוחות",
+    "boardsAll_other": "כל {{count}} הלוחות",
+    "boardsSome_one": "{{count}} מתוך {{total}}: {{names}}",
+    "boardsSome_two": "{{count}} מתוך {{total}}: {{names}}",
+    "boardsSome_other": "{{count}} מתוך {{total}}: {{names}}",
+    "boardsDone": "סיום",
     "worldwide": "לכלול משרות מרחוק מכל העולם",
     "worldwideLine": "מוסיף משרות מרחוק בחו\"ל, מלינקדאין, מ־Himalayas, מ־Jobicy ומ־We Work Remotely.",
     "worldwideWhy": "מלינקדאין: ארה\"ב, בריטניה ורוב מערב וצפון אירופה; משרות שמיקומן במדינה עם שכר נמוך יותר לא נכללות. מ־Himalayas, מ־Jobicy ומ־We Work Remotely: משרות מרחוק שפתוחות למי שגר בישראל. הלוחות הישראליים נשארים מקומיים.",

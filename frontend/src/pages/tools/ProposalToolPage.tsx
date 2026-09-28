@@ -10,6 +10,7 @@ import ToolShell from "../../components/ToolShell";
 import UsesNote from "../../components/UsesNote";
 import { useMasterResume } from "../../hooks/useMasterResume";
 import { apiErrorMessage } from "../../lib/apiError";
+import { readProposalStash, writeProposalStash } from "../../lib/proposalStash";
 import { useUses } from "../../lib/usesStore";
 import { getJobSearchState, subscribeJobSearch } from "../../state/jobSearchStore";
 import { Button, Card, Skeleton } from "../../components/ui";
@@ -18,12 +19,36 @@ import type { JDModel } from "../../types";
 /** The gig as it was read, and the proposal written for it. */
 type Written = { gig: string; rate: string; jd: JDModel; text: string; found: ProposalFound };
 
-// Kept for this tab's life (module state, gone on a reload or a sign-out's
-// document load), so leaving to paste the proposal somewhere and coming back
-// finds it, with its pass, which the card reads back when it mounts.
+// Kept for this tab's life, so leaving to paste the proposal somewhere and
+// coming back finds it, with its pass, which the card reads back when it mounts.
+// Module state, and since the phone polish pass (2026-09-28) also this tab's
+// sessionStorage under the signed-in account (lib/proposalStash): a reload used
+// to lose the server's reading of the gig, the pass's key, so the next write read
+// it again and charged a second use for a posting whose pass was still open.
 let lastGig = "";
 let lastRate = "";
 let lastWritten: Written | null = null;
+// The navigation that last handed a posting over (its location key): a search
+// row's state survives a reload under the same key, so the posting is pasted in
+// once per tap and a reload never pastes it over what was typed since.
+let lastHanded = "";
+let restored = false;
+
+/** Once per document: what this tab kept before a reload, for this account. */
+function restoreOnce(): void {
+  if (restored) return;
+  restored = true;
+  const kept = readProposalStash<Written>();
+  if (!kept) return;
+  lastGig = kept.gig;
+  lastRate = kept.rate;
+  lastWritten = kept.written;
+  lastHanded = kept.handed;
+}
+
+function stash(): void {
+  writeProposalStash<Written>({ gig: lastGig, rate: lastRate, written: lastWritten, handed: lastHanded });
+}
 
 /**
  * "Proposal for a gig" (2026-09-28, freelance, the small version): the user
@@ -44,9 +69,15 @@ export default function ProposalToolPage() {
   // A freelance search's "Write a proposal" (2026-09-28) hands over the
   // posting's text as the gig. It replaces what the box held, once, when the
   // page opens: the same posting again finds its proposal (its pass) kept.
-  const handed = (useLocation().state as { gigText?: unknown } | null)?.gigText;
+  const location = useLocation();
+  const handed = (location.state as { gigText?: unknown } | null)?.gigText;
   const [gig, setGig] = useState(() => {
-    if (typeof handed === "string" && handed.trim()) lastGig = handed;
+    restoreOnce();
+    if (typeof handed === "string" && handed.trim() && location.key !== lastHanded) {
+      lastHanded = location.key;
+      lastGig = handed;
+      stash();
+    }
     return lastGig;
   });
   const [rate, setRate] = useState(lastRate);
@@ -74,6 +105,7 @@ export default function ProposalToolPage() {
 
   function keep(next: Written | null) {
     lastWritten = next;
+    stash();
     setWritten(next);
   }
 
@@ -115,6 +147,7 @@ export default function ProposalToolPage() {
           value={gig}
           onChange={(e) => {
             lastGig = e.target.value;
+            stash();
             setGig(e.target.value);
           }}
           // The keyboard takes half a phone's height: once it is up, the box is
@@ -141,6 +174,7 @@ export default function ProposalToolPage() {
               maxLength={PROPOSAL_RATE_MAX}
               onChange={(e) => {
                 lastRate = e.target.value;
+                stash();
                 setRate(e.target.value);
               }}
               placeholder={t("proposal.ratePlaceholder")}

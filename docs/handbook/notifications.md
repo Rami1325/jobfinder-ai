@@ -175,9 +175,43 @@ not been observed yet**: that is the owner's first step below.
 
 **Known limits, recorded.** `pushsubscriptionchange` (a browser replacing a subscription by itself, Firefox mostly)
 is not handled: the old endpoint answers 410, its row goes, and the switch on that device reads off until it is tapped
-again. "Sign out of other devices" does not stop notifications on those devices (only a sign-out ON the device does,
-or the next 410). A test counts toward its daily cap even when the push service refuses it. The language follows the
-app only when Settings is opened.
+again. ~~"Sign out of other devices" does not stop notifications on those devices (only a sign-out ON the device does,
+or the next 410).~~ (Fixed in the phone polish pass: *Sign out of other devices stops their notifications*, below.)
+A password change and a reset still end the other sessions without touching their devices' notifications (their copy
+promises only the sign-out). A test counts toward its daily cap even when the push service refuses it. The language
+follows the app only when Settings is opened.
+
+### Sign out of other devices stops their notifications (the phone polish pass, 2026-09-28)
+
+- **What was wrong.** "Sign out other devices" (`POST /auth/logout-others`) ended every other session and replaced the
+  extension key, and every other device kept getting the morning's job titles on its lock screen: a push subscription
+  names a BROWSER, not a session, so ending a session touched nothing here. A lost phone signed out from Settings went
+  on showing "3 new jobs for you".
+- **What it does now.** The same commit that ends the sessions deletes every push device of the account but ONE, the
+  calling browser's own (`webpush.forget_other_devices`, called by `accounts.logout_others`). The server cannot tell
+  which row is the caller's (no row names a session), but the browser can: Settings reads its own subscription with
+  the read-only `currentSubscription` (`lib/push.ts`; nothing asked, nothing registered) and sends its endpoint as
+  `keep_push_endpoint` (`LogoutOthersIn`, `extra="forbid"`, at most 2048 characters). An endpoint that is not one of
+  the account's keeps nothing of it and never touches another account's; no body at all (a tab loaded before this
+  deploy, or a browser with no subscription) keeps none, so every device's notifications stop. The answer says
+  `push_removed` and `push_kept`. Nothing is sent to a push service: the other devices simply get no more pushes.
+- **What the page says.** The hint under the button says it before the tap: "Ends every other session on this account
+  and stops notifications on your other devices. This device stays signed in." / "…ועוצר את ההתראות במכשירים
+  האחרים…". After it, the toast adds "Notifications stopped on them too." when any were deleted, and, when this browser
+  could name no subscription of its own while notifications are allowed here (so its own may have been deleted with
+  the rest), "Notifications stopped on every device. If this one had them on, turn them on again under Email alerts."
+- **Measured** with Playwright (iPhone 13, a verified email account on a scratch DB with three push devices, this
+  browser's subscription supplied to the page since headless Chromium holds none): before, the tap sent no body, the
+  toast said only that the devices were signed out, and all three devices stayed; after, the request carried this
+  browser's endpoint, the lost phone and the laptop were deleted and this browser's device stayed, and the toast read
+  "Your other devices were signed out, and your extension key was replaced. Notifications stopped on them too." /
+  "…גם ההתראות בהם נעצרו.". The longer hint costs one line: the block 98 → 117 px at 390 and 360 in English, 78 → 98
+  at 390 in Hebrew (98 at 360 before and after); no overflow. The button itself is a 34 px `sm` button like every
+  Settings action (recorded, not changed here).
+- **Pinned** by smoke 34c (this browser's device kept and the other two deleted, a body-less call deleting all, another
+  account's endpoint keeping nothing and touching nothing, a stray field and an over-long endpoint each a 422 that
+  deletes nothing, the stranger's device there throughout; four planted defects each turned it red) and check-mirrors
+  91 (e) (the page names its endpoint, the client posts the model's field, the mirrors, the copy in both locales).
 
 **Pinned (web push) by** smoke 34 (+20: 34a the RFC vector, VAPID, the allowlist, the door, the network AST pin; 34b the words,
 the deep link, the email's 75; 34c push off, turning on, the subscribe door, the test, another account's device, the

@@ -33,6 +33,8 @@ import { tabAccount } from "../lib/accountWatch";
 import { ACCESS_CODE_KEY } from "../lib/accessCode";
 import { apiErrorMessage } from "../lib/apiError";
 import { clearKeyRotated, keyRotatedNotice, markKeyRotated, readKeyRotation } from "../lib/authResults";
+import { clearProposalStash } from "../lib/proposalStash";
+import { currentSubscription, pushPermission } from "../lib/push";
 import { withNext } from "../lib/safeNext";
 import { signOut } from "../lib/session";
 import { formatUsesDate } from "../lib/usesStore";
@@ -311,7 +313,13 @@ function PasswordChange({
 }
 
 /** One button: every other session on this account ends, this one stays. No
- * confirm step, because nothing is lost. The other devices just sign in again. */
+ * confirm step, because nothing is lost. The other devices just sign in again.
+ *
+ * And their notifications stop (the phone polish pass, 2026-09-28): a signed-out
+ * phone kept getting the morning's job titles. This browser's own subscription is
+ * read (read-only, `currentSubscription`) and named, so the server keeps it; the
+ * toast says what stopped, and when this browser could not name its own while
+ * notifications are allowed here, that this one may have stopped too. */
 function OtherDevices({ method, onKeyRotated }: { method: AuthMe["method"]; onKeyRotated: () => void }) {
   const { t } = useTranslation("settings");
   const toast = useToast();
@@ -321,13 +329,23 @@ function OtherDevices({ method, onKeyRotated }: { method: AuthMe["method"]; onKe
     if (busy) return;
     setBusy(true);
     try {
-      const rotation = readKeyRotation(await logoutOtherDevices());
+      const mine = await currentSubscription();
+      const result = await logoutOtherDevices(mine?.endpoint ?? "");
+      const rotation = readKeyRotation(result);
       if (rotation.rotated) {
         // PasswordChange's reason: an invite-code device stores the new key.
         if (method === "invite_code" && rotation.key) localStorage.setItem(ACCESS_CODE_KEY, rotation.key);
         onKeyRotated();
       }
-      toast("success", rotation.rotated ? t("account.others.doneKey") : t("account.others.done"));
+      const done = rotation.rotated ? t("account.others.doneKey") : t("account.others.done");
+      const stopped = result.push_removed ?? 0;
+      const push =
+        stopped > 0
+          ? !mine && pushPermission() === "granted"
+            ? t("account.others.pushStoppedAll")
+            : t("account.others.pushStopped")
+          : "";
+      toast("success", push ? `${done} ${push}` : done);
     } catch {
       toast("error", t("account.others.error"));
     }
@@ -843,6 +861,9 @@ export default function SettingsPage() {
   async function wipe() {
     try {
       await deleteMyData();
+      // The proposal tool's page kept in this tab (lib/proposalStash) is data
+      // this person asked to delete; the other tabs' copies die with them.
+      clearProposalStash();
       toast("success", tCommon("privacy.wiped"));
       // Same reasoning as signOut: reload rather than navigate, so nothing keeps
       // painting rows the server no longer has. Jobs, because the account still

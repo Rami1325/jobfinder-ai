@@ -133,6 +133,12 @@ NO_FREELANCE_FIELD: frozenset[str] = frozenset({"drushim", "greenhouse"})
 # title + פרילנס measured returned no card at all (2026-09-28).
 FREELANCE_KEYWORD = "contract"
 FREELANCE_KEYWORD_HE = "פרילנס"
+# How many MORE of LinkedIn's posting pages a freelance search may read than its
+# limit (the phone polish pass, 2026-09-28; `_freelance_pages_first`). Its pages
+# are read BEFORE selection, so a full-time one never takes a slot, and the reads
+# stop at `limit` + this many whatever the pages say: a search's requests stay
+# bounded, and the model still scores at most `limit` postings, as in any search.
+FREELANCE_EXTRA_PAGES = 10
 _FREELANCE_WORD_RE = re.compile(r"(?i)\b(?:contract|contractor|freelance|freelancer)\b|פרילנס|פרילאנס")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
@@ -170,11 +176,112 @@ def _split_employment(tiers: list[dict[str, list[JobHit]]]) -> tuple[list[dict[s
         for name, tier_hits in tier.items():
             for hit in tier_hits:
                 if freelance_kept(hit) is False:
-                    gone.add(hit.url.rstrip("/") or f"{hit.source}:{hit.title}|{hit.company}")
+                    gone.add(_address(hit))
                 else:
                     kept.setdefault(name, []).append(hit)
         kept_tiers.append(kept)
     return kept_tiers, len(gone)
+
+
+def _address(hit: JobHit) -> str:
+    """A posting's address, the way a freelance search counts what it leaves out."""
+    return hit.url.rstrip("/") or f"{hit.source}:{hit.title}|{hit.company}"
+
+
+def _trial_selection(tiers: list[dict[str, list[JobHit]]], limit: int) -> list[JobHit]:
+    """The ORIGINAL hits `select_hits` would pick from these tiers, with none of
+    its side effects: it runs on copies, because `_interleave_into` appends to a
+    kept card's `also_on` and `twin_posted` (`_displaced_low_pay`'s reason), and
+    each copy is traced back to its original by identity."""
+    original: dict[int, JobHit] = {}
+    twin_tiers: list[dict[str, list[JobHit]]] = []
+    for tier in tiers:
+        twin_tier: dict[str, list[JobHit]] = {}
+        for name, tier_hits in tier.items():
+            twins: list[JobHit] = []
+            for hit in tier_hits:
+                twin = copy.deepcopy(hit)
+                original[id(twin)] = hit
+                twins.append(twin)
+            twin_tier[name] = twins
+        twin_tiers.append(twin_tier)
+    return [original[id(twin)] for twin in select_hits(twin_tiers, limit)]
+
+
+def _freelance_pages_first(
+    tiers: list[dict[str, list[JobHit]]],
+    limit: int,
+    stored: dict[str, str],
+    read_page: Callable[[JobHit], str],
+) -> tuple[list[dict[str, list[JobHit]]], int, dict[str, str]]:
+    """A freelance search's LinkedIn cards, judged BEFORE selection (the phone
+    polish pass, 2026-09-28): (tiers, left out, the pages read by address).
+
+    A LinkedIn card carries no type; its page does. When the page was read after
+    selection, a posting it called full-time had already taken a slot, so a
+    freelance search ranked fewer jobs than its limit. Here the cards the
+    selection WOULD pick (`_trial_selection`, on what `_split_low_pay` keeps)
+    are read first, the ones their page leaves out go, the freed slots refill,
+    and the refill is read in turn, until the selection holds no unread card.
+    Each page goes through `read_page` (the search's own per-board throttle) and
+    is read ONCE: `search_jobs` hands its text to `_build_match`.
+
+    The bound: at most `limit + FREELANCE_EXTRA_PAGES` pages in all. When they
+    are spent, the cards still unread are dropped from the tiers, neither judged
+    nor counted (unknown is never "not freelance"), like any posting past the
+    limit, and never read later, so the scoring stage reads no page of its own
+    for a type. The model is untouched: it scores at most `limit` postings, and
+    only ones already known to be contract or freelance.
+
+    A type a History row stored (`stored`, by address) is trusted with no read,
+    as `_build_match` trusts it, and judged here with the cards. The rule is
+    `freelance_kept`'s: a read that failed names no type, like a page that says
+    Full-time, and the posting is left out, as it was when the fetch came after
+    selection. A kept posting's other hits (its address from another query) take
+    its type, so every copy agrees."""
+    budget = limit + FREELANCE_EXTRA_PAGES
+    pages: dict[str, str] = {}
+    labels: dict[str, str] = {}
+    for tier in tiers:
+        for tier_hits in tier.values():
+            for hit in tier_hits:
+                if freelance_kept(hit) is None and stored.get(_address(hit)):
+                    labels[_address(hit)] = stored[_address(hit)]
+
+    def unjudged(hit: JobHit) -> bool:
+        return freelance_kept(hit) is None and _address(hit) not in labels
+
+    while True:
+        judged: list[dict[str, list[JobHit]]] = []
+        for tier in tiers:
+            kept: dict[str, list[JobHit]] = {}
+            for name, tier_hits in tier.items():
+                for hit in tier_hits:
+                    label = labels.get(_address(hit))
+                    if label is not None and label not in FREELANCE_KEEP:
+                        continue
+                    if label and not hit.employment:
+                        hit.employment = label
+                    kept.setdefault(name, []).append(hit)
+            judged.append(kept)
+        tiers = judged
+        unread = [hit for hit in _trial_selection(_split_low_pay(tiers)[0], limit) if unjudged(hit)]
+        if not unread:
+            break
+        if len(pages) >= budget:
+            tiers = [
+                {name: rest for name, tier_hits in tier.items() if (rest := [h for h in tier_hits if not unjudged(h)])}
+                for tier in tiers
+            ]
+            break
+        for hit in unread[: budget - len(pages)]:
+            try:
+                pages[_address(hit)] = read_page(hit)
+            except Exception:  # noqa: BLE001 - a page that failed says no type, like LinkedIn's own ""
+                pages[_address(hit)] = ""
+            labels[_address(hit)] = hit.employment
+    left = sum(1 for label in labels.values() if label not in FREELANCE_KEEP)
+    return tiers, left, pages
 
 
 def resume_hash(resume: ResumeModel) -> str:
@@ -956,9 +1063,10 @@ def search_jobs(
     """`freelance` is the Jobs page's "Freelance & contract" mode (2026-09-28): the
     search runs on `freelance_context(ctx)` with `_board_queries(..., freelance)`,
     keeps only postings whose board says contract or freelance (`freelance_kept`,
-    before selection on the card and after the fetch on LinkedIn's page, both
-    before any model call) and counts the rest on the result as `not_freelance`.
-    Off, nothing here changes.
+    before selection on the card, and on LinkedIn's page, which is read before
+    selection too, at most `limit + FREELANCE_EXTRA_PAGES` pages: both before any
+    model call) and counts the rest on the result as `not_freelance`. Off,
+    nothing here changes.
 
     `hidden` is the user's "Not for me" set (PLAN 31.5/4), canonical, taken
     out before selection (`_split_hidden`) and counted on the result.
@@ -1067,12 +1175,35 @@ def search_jobs(
     # The jobs the user already applied to (Phase 32), at the same position and
     # for the same reasons: they take no slot, and the slot refills this round.
     tiers, applied_count = _split_applied(tiers, applied)
+    # Every posting page this search reads goes through here: one request per
+    # FETCH_DELAY_S per board, whether it is read before selection (a freelance
+    # search's LinkedIn pages, below) or while scoring (`_fetch_throttled`), so
+    # the scoring stage's first read waits out the last read made before it.
+    last_fetch: dict[str, float] = {}
+
+    def _read_page(hit: JobHit) -> str:
+        wait = FETCH_DELAY_S - (time.monotonic() - last_fetch.get(hit.source, float("-inf")))
+        if wait > 0:
+            time.sleep(wait)  # polite gap between fetches to the same board
+        try:
+            return PROVIDERS[hit.source].fetch_description(hit)
+        finally:
+            last_fetch[hit.source] = time.monotonic()
+
     # A freelance search's own filter on each board's field (2026-09-28), at the
-    # same position for the same reasons. LinkedIn's cards carry no type yet, so
-    # they stay here and are judged after the fetch (`_build_match`).
+    # same position for the same reasons. LinkedIn's cards carry no type, so their
+    # pages are read here too, BEFORE selection (the phone polish pass): a
+    # full-time one takes no slot, the slot refills, and the reads stop at
+    # `limit + FREELANCE_EXTRA_PAGES` (`_freelance_pages_first`). The text each
+    # read returned is `pages_read`, handed to `_build_match`, which never reads
+    # a page twice.
     not_freelance = 0
+    pages_read: dict[str, str] = {}
     if freelance:
         tiers, not_freelance = _split_employment(tiers)
+        stored = {address: row.employment for address, row in (cache or {}).items() if row.employment}
+        tiers, left_early, pages_read = _freelance_pages_first(tiers, ctx.limit, stored, _read_page)
+        not_freelance += left_early
     # The pay-market filter (Phase 30 J) runs HERE, BEFORE selection, and the
     # position is the design. LinkedIn's "European Union" location returns
     # postings in every member state, and `_low_pay` needs only the card's
@@ -1217,19 +1348,12 @@ def search_jobs(
     # after its board's type was read (LinkedIn's page says Full-time).
     left_by_hit: list[bool] = [False] * len(hits)
     fetch_locks: dict[str, threading.Lock] = {h.source: threading.Lock() for h in hits}
-    last_fetch: dict[str, float] = {}
     scored_done = 0
     score_errors: list[str] = []  # why individual jobs were skipped (see _score_hit)
 
     def _fetch_throttled(hit: JobHit) -> str:
         with fetch_locks[hit.source]:
-            wait = FETCH_DELAY_S - (time.monotonic() - last_fetch.get(hit.source, float("-inf")))
-            if wait > 0:
-                time.sleep(wait)  # polite gap between fetches to the same board
-            try:
-                return PROVIDERS[hit.source].fetch_description(hit)
-            finally:
-                last_fetch[hit.source] = time.monotonic()
+            return _read_page(hit)
 
     def _score_hit(hit_i: int, hit: JobHit) -> None:
         """Score one posting. Never raises for a per-job problem.
@@ -1326,16 +1450,20 @@ def search_jobs(
         ghost: GhostReport | None = None
         mode: tuple[str, WorkModeReading] | None = None
         # THE FREELANCE GATE, first, above both branches and before any model
-        # call. A LinkedIn card carries no type: its page does, so it is fetched
-        # here (the fetch the tier-2 branch would have made anyway) unless a
-        # history row already holds the type LinkedIn stated. A row with no type
-        # is NOT "full-time": it may predate the label (unknown is never zero),
-        # so the page is read. Every other board's type came on its card and was
-        # judged before selection; this is the one rule, read again on the label.
-        fetched = ""
+        # call. A LinkedIn card carries no type: its page does, and a freelance
+        # search read that page BEFORE selection (`_freelance_pages_first`), so
+        # its text is here in `pages_read` and is never fetched twice. A card
+        # that reached this point unread is read here (the fetch the tier-2
+        # branch would have made anyway) unless a history row already holds the
+        # type LinkedIn stated. A row with no type is NOT "full-time": it may
+        # predate the label (unknown is never zero), so the page is read. Every
+        # other board's type came on its card and was judged before selection;
+        # this is the one rule, read again on the label.
+        read = hit.url.rstrip("/") in pages_read
+        fetched = pages_read.get(hit.url.rstrip("/"), "")
         if freelance:
-            if freelance_kept(hit) is None and not (cached is not None and cached.employment):
-                fetched = _fetch_throttled(hit)  # fills `hit.employment` from the page
+            if not read and freelance_kept(hit) is None and not (cached is not None and cached.employment):
+                fetched, read = _fetch_throttled(hit), True  # fills `hit.employment` from the page
             label = hit.employment or (cached.employment if cached is not None else "")
             if label not in FREELANCE_KEEP:
                 return None, None, None, None, True
@@ -1427,9 +1555,15 @@ def search_jobs(
             # Tier 2: a fresh row for a DIFFERENT resume still spares the
             # description fetch (and its politeness throttle) — the posting's
             # text hasn't changed; only the scoring must rerun.
-            # `fetched` first: a freelance search that read the page above holds
-            # the fresh text already, and must not fetch it twice.
-            jd_text = hit.description or fetched or (cached.jd_text if cached else "") or _fetch_throttled(hit)
+            # `fetched` first: a freelance search that read the page (before
+            # selection, or above) holds the fresh text already, and must not
+            # fetch it twice, not even when that read came back empty.
+            jd_text = (
+                hit.description
+                or fetched
+                or (cached.jd_text if cached else "")
+                or ("" if read else _fetch_throttled(hit))
+            )
             if jd_text:
                 # Before analyze_and_score, never after: this is the only seam
                 # where every code path has the text in hand and no model call
@@ -1584,6 +1718,8 @@ def search_jobs(
     # it was fetched fine and removed on purpose, so it is subtracted too and
     # joins the pre-selection count as `not_freelance` (no row: "N full-time jobs
     # left out" is the whole story, and a list of them is not what was asked for).
+    # Since the phone polish pass LinkedIn's pages are read before selection, so
+    # only a selected card the pre-read never judged could land here.
     left_count = sum(left_by_hit)
     skipped = len(hits) - len(matches) - sum(1 for reason in filter_reasons if reason) - left_count
     filtered = filtered + market_rows
