@@ -56,7 +56,15 @@ export const MIN_SCORE_OPTIONS = [0, 60, 65, 70, 75, 80, 85, 90] as const;
 // moment the user unchecks one box, and a board here the backend lacks is a box
 // that searches nothing. (Jooble retired 2026-07-05 — they discontinued their
 // Israeli index. The boards from Lever on joined 2026-09-28.)
-export const SOURCE_IDS = ["linkedin", "drushim", "comeet", "jobmaster", "greenhouse", "lever"] as const;
+export const SOURCE_IDS = [
+  "linkedin",
+  "drushim",
+  "comeet",
+  "jobmaster",
+  "greenhouse",
+  "lever",
+  "smartrecruiters",
+] as const;
 
 // One-click Israeli locations (PLAN 2.3). English values work across all
 // boards: LinkedIn expects English; Drushim matches CityEnglish; Comeet

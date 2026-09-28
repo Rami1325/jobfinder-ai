@@ -1,0 +1,400 @@
+{
+ "offset": 0,
+ "limit": 3,
+ "totalFound": 57,
+ "content": [
+  {
+   "id": "744000152024919",
+   "name": "AI Engineer – Next-Generation Cyber Security",
+   "uuid": "033d025c-0620-4b66-8649-01c68466e0f7",
+   "jobAdId": "dda30679-7b98-462a-8f5f-a7869ece2f71",
+   "defaultJobAd": true,
+   "refNumber": "REF401N",
+   "company": {
+    "identifier": "CheckPointSoftwareTechnologies2",
+    "name": "Check Point Software Technologies"
+   },
+   "releasedDate": "2026-09-27T09:59:38.945Z",
+   "location": {
+    "city": "Tel Aviv-Yafo",
+    "region": "Tel Aviv District",
+    "country": "il",
+    "remote": false,
+    "hybrid": true,
+    "latitude": "32.0852999",
+    "longitude": "34.78176759999999",
+    "fullLocation": "Tel Aviv-Yafo, Tel Aviv District, Israel"
+   },
+   "industry": {
+    "id": "computer_software",
+    "label": "Computer Software"
+   },
+   "department": {},
+   "function": {
+    "id": "engineering",
+    "label": "Engineering"
+   },
+   "typeOfEmployment": {
+    "id": "permanent",
+    "label": "Full-time"
+   },
+   "experienceLevel": {
+    "id": "mid_senior_level",
+    "label": "Mid-Senior Level"
+   },
+   "customField": [
+    {
+     "fieldId": "6a21aa1206dc5007efef6da3",
+     "fieldLabel": "Employment Percentage",
+     "valueId": "100",
+     "valueLabel": "100%"
+    },
+    {
+     "fieldId": "6a21a72e57f3707f05fe7c96",
+     "fieldLabel": "CP Department",
+     "valueId": "130",
+     "valueLabel": "Workspace Security"
+    },
+    {
+     "fieldId": "6a21a7d2311f6c9c65f6d0c9",
+     "fieldLabel": "Office Location",
+     "valueId": "97203",
+     "valueLabel": "Tel-Aviv"
+    },
+    {
+     "fieldId": "6a21ad5ef46fc3803795b44e",
+     "fieldLabel": "HRP",
+     "valueId": "29854",
+     "valueLabel": "Limor Sella Broyde"
+    },
+    {
+     "fieldId": "6a2a844349a1a3a8872e7750",
+     "fieldLabel": "Evergreen Job",
+     "valueId": "432cfa9d-a08c-4d7a-90ad-6498284f4d8c",
+     "valueLabel": "No"
+    },
+    {
+     "fieldId": "6a21b4a18c40edfe81d1d604",
+     "fieldLabel": "Career site Category",
+     "valueId": "10",
+     "valueLabel": "R&D"
+    },
+    {
+     "fieldId": "6a86a07dbc112cc8da711786",
+     "fieldLabel": "Sub-Region",
+     "valueId": "12",
+     "valueLabel": "Israel"
+    },
+    {
+     "fieldId": "6a21ad14311f6c9c65f6d0ca",
+     "fieldLabel": "Referral Category",
+     "valueId": "0",
+     "valueLabel": "Standard Position"
+    },
+    {
+     "fieldId": "6a21a7591f561247defa7adb",
+     "fieldLabel": "Team",
+     "valueId": "9042866",
+     "valueLabel": "Endpoint Security Area (Asaf Livne)"
+    },
+    {
+     "fieldId": "COUNTRY",
+     "fieldLabel": "Country/Region",
+     "valueId": "il",
+     "valueLabel": "Israel"
+    },
+    {
+     "fieldId": "69fb2260d32371e2f69d4e72",
+     "fieldLabel": "Brands",
+     "valueId": "default",
+     "valueLabel": "Check Point Software Technologies"
+    },
+    {
+     "fieldId": "6a21a824214450174406f79c",
+     "fieldLabel": "Employment Type",
+     "valueId": "9",
+     "valueLabel": "Employee"
+    },
+    {
+     "fieldId": "6a33ccaa0f2acdd461645977",
+     "fieldLabel": "C-Level",
+     "valueId": "23214",
+     "valueLabel": "Gil Friedrich"
+    },
+    {
+     "fieldId": "6a21a790b89f6c3d3b565ae2",
+     "fieldLabel": "Region",
+     "valueId": "100",
+     "valueLabel": "IL"
+    }
+   ],
+   "visibility": "PUBLIC",
+   "ref": "https://api.smartrecruiters.com/v1/companies/CheckPointSoftwareTechnologies2/postings/744000152024919",
+   "language": {
+    "code": "en",
+    "label": "English",
+    "labelNative": "English (US)"
+   }
+  },
+  {
+   "id": "744000151664219",
+   "name": "Security Software Engineer — Container Network Security",
+   "uuid": "7710dfc5-8a3d-407f-ae79-093dfa7fb5a5",
+   "jobAdId": "c1915fba-6c78-4b47-a591-253701c15147",
+   "defaultJobAd": true,
+   "refNumber": "REF417R",
+   "company": {
+    "identifier": "CheckPointSoftwareTechnologies2",
+    "name": "Check Point Software Technologies"
+   },
+   "releasedDate": "2026-09-24T16:11:33.552Z",
+   "location": {
+    "city": "Tel Aviv-Yafo",
+    "region": "Tel Aviv District",
+    "country": "il",
+    "remote": false,
+    "hybrid": true,
+    "latitude": "32.0852999",
+    "longitude": "34.78176759999999",
+    "fullLocation": "Tel Aviv-Yafo, Tel Aviv District, Israel"
+   },
+   "industry": {
+    "id": "computer_software",
+    "label": "Computer Software"
+   },
+   "department": {},
+   "function": {
+    "id": "engineering",
+    "label": "Engineering"
+   },
+   "typeOfEmployment": {
+    "id": "permanent",
+    "label": "Full-time"
+   },
+   "experienceLevel": {
+    "id": "mid_senior_level",
+    "label": "Mid-Senior Level"
+   },
+   "customField": [
+    {
+     "fieldId": "6a21aa1206dc5007efef6da3",
+     "fieldLabel": "Employment Percentage",
+     "valueId": "100",
+     "valueLabel": "100%"
+    },
+    {
+     "fieldId": "6a21a72e57f3707f05fe7c96",
+     "fieldLabel": "CP Department",
+     "valueId": "70",
+     "valueLabel": "Cloud & SASE"
+    },
+    {
+     "fieldId": "6a21a7d2311f6c9c65f6d0c9",
+     "fieldLabel": "Office Location",
+     "valueId": "97203",
+     "valueLabel": "Tel-Aviv"
+    },
+    {
+     "fieldId": "6a2a844349a1a3a8872e7750",
+     "fieldLabel": "Evergreen Job",
+     "valueId": "432cfa9d-a08c-4d7a-90ad-6498284f4d8c",
+     "valueLabel": "No"
+    },
+    {
+     "fieldId": "6a21ad5ef46fc3803795b44e",
+     "fieldLabel": "HRP",
+     "valueId": "26236",
+     "valueLabel": "Elise Aronowitz"
+    },
+    {
+     "fieldId": "6a21b4a18c40edfe81d1d604",
+     "fieldLabel": "Career site Category",
+     "valueId": "10",
+     "valueLabel": "R&D"
+    },
+    {
+     "fieldId": "6a86a07dbc112cc8da711786",
+     "fieldLabel": "Sub-Region",
+     "valueId": "12",
+     "valueLabel": "Israel"
+    },
+    {
+     "fieldId": "6a21ad14311f6c9c65f6d0ca",
+     "fieldLabel": "Referral Category",
+     "valueId": "0",
+     "valueLabel": "Standard Position"
+    },
+    {
+     "fieldId": "6a21a7591f561247defa7adb",
+     "fieldLabel": "Team",
+     "valueId": "9046132",
+     "valueLabel": "Cloud Network Firewall (Amir Groisman)"
+    },
+    {
+     "fieldId": "COUNTRY",
+     "fieldLabel": "Country/Region",
+     "valueId": "il",
+     "valueLabel": "Israel"
+    },
+    {
+     "fieldId": "69fb2260d32371e2f69d4e72",
+     "fieldLabel": "Brands",
+     "valueId": "default",
+     "valueLabel": "Check Point Software Technologies"
+    },
+    {
+     "fieldId": "6a21a824214450174406f79c",
+     "fieldLabel": "Employment Type",
+     "valueId": "9",
+     "valueLabel": "Employee"
+    },
+    {
+     "fieldId": "6a33ccaa0f2acdd461645977",
+     "fieldLabel": "C-Level",
+     "valueId": "27227",
+     "valueLabel": "Nataly Kremer"
+    },
+    {
+     "fieldId": "6a21a790b89f6c3d3b565ae2",
+     "fieldLabel": "Region",
+     "valueId": "100",
+     "valueLabel": "IL"
+    }
+   ],
+   "visibility": "PUBLIC",
+   "ref": "https://api.smartrecruiters.com/v1/companies/CheckPointSoftwareTechnologies2/postings/744000151664219",
+   "language": {
+    "code": "en",
+    "label": "English",
+    "labelNative": "English (US)"
+   }
+  },
+  {
+   "id": "744000151559419",
+   "name": "Versatile Software Developer – WAF Capabilities",
+   "uuid": "33a6c781-5cef-4241-9c5e-086db90675aa",
+   "jobAdId": "55a4e9d1-8653-4f14-b588-bc7267a95a40",
+   "defaultJobAd": true,
+   "refNumber": "REF395O",
+   "company": {
+    "identifier": "CheckPointSoftwareTechnologies2",
+    "name": "Check Point Software Technologies"
+   },
+   "releasedDate": "2026-09-24T08:37:22.006Z",
+   "location": {
+    "city": "Tel Aviv-Yafo",
+    "region": "Tel Aviv District",
+    "country": "il",
+    "remote": false,
+    "hybrid": true,
+    "latitude": "32.0852999",
+    "longitude": "34.78176759999999",
+    "fullLocation": "Tel Aviv-Yafo, Tel Aviv District, Israel"
+   },
+   "industry": {
+    "id": "computer_software",
+    "label": "Computer Software"
+   },
+   "department": {},
+   "function": {
+    "id": "engineering",
+    "label": "Engineering"
+   },
+   "typeOfEmployment": {
+    "id": "permanent",
+    "label": "Full-time"
+   },
+   "experienceLevel": {
+    "id": "mid_senior_level",
+    "label": "Mid-Senior Level"
+   },
+   "customField": [
+    {
+     "fieldId": "6a21aa1206dc5007efef6da3",
+     "fieldLabel": "Employment Percentage",
+     "valueId": "100",
+     "valueLabel": "100%"
+    },
+    {
+     "fieldId": "6a21a72e57f3707f05fe7c96",
+     "fieldLabel": "CP Department",
+     "valueId": "28",
+     "valueLabel": "Products - R&D"
+    },
+    {
+     "fieldId": "6a21a7d2311f6c9c65f6d0c9",
+     "fieldLabel": "Office Location",
+     "valueId": "97203",
+     "valueLabel": "Tel-Aviv"
+    },
+    {
+     "fieldId": "6a2a844349a1a3a8872e7750",
+     "fieldLabel": "Evergreen Job",
+     "valueId": "432cfa9d-a08c-4d7a-90ad-6498284f4d8c",
+     "valueLabel": "No"
+    },
+    {
+     "fieldId": "6a21ad5ef46fc3803795b44e",
+     "fieldLabel": "HRP",
+     "valueId": "26236",
+     "valueLabel": "Elise Aronowitz"
+    },
+    {
+     "fieldId": "6a21b4a18c40edfe81d1d604",
+     "fieldLabel": "Career site Category",
+     "valueId": "10",
+     "valueLabel": "R&D"
+    },
+    {
+     "fieldId": "6a86a07dbc112cc8da711786",
+     "fieldLabel": "Sub-Region",
+     "valueId": "12",
+     "valueLabel": "Israel"
+    },
+    {
+     "fieldId": "6a21a7591f561247defa7adb",
+     "fieldLabel": "Team",
+     "valueId": "9045950",
+     "valueLabel": "WAF Features (Wiaam Mahameed)"
+    },
+    {
+     "fieldId": "COUNTRY",
+     "fieldLabel": "Country/Region",
+     "valueId": "il",
+     "valueLabel": "Israel"
+    },
+    {
+     "fieldId": "69fb2260d32371e2f69d4e72",
+     "fieldLabel": "Brands",
+     "valueId": "default",
+     "valueLabel": "Check Point Software Technologies"
+    },
+    {
+     "fieldId": "6a21a824214450174406f79c",
+     "fieldLabel": "Employment Type",
+     "valueId": "9",
+     "valueLabel": "Employee"
+    },
+    {
+     "fieldId": "6a33ccaa0f2acdd461645977",
+     "fieldLabel": "C-Level",
+     "valueId": "27227",
+     "valueLabel": "Nataly Kremer"
+    },
+    {
+     "fieldId": "6a21a790b89f6c3d3b565ae2",
+     "fieldLabel": "Region",
+     "valueId": "100",
+     "valueLabel": "IL"
+    }
+   ],
+   "visibility": "PUBLIC",
+   "ref": "https://api.smartrecruiters.com/v1/companies/CheckPointSoftwareTechnologies2/postings/744000151559419",
+   "language": {
+    "code": "en",
+    "label": "English",
+    "labelNative": "English (US)"
+   }
+  }
+ ]
+}

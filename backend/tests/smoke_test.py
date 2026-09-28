@@ -6789,6 +6789,173 @@ check(
     f"{_ws_stored_all} {_ws_stored_some} {_ws_alert_all}",
 )
 
+# 16h. SmartRecruiters (2026-09-28): the public posting list filters by country and
+# keywords SERVER-side; a selected posting's description is one more JSON GET.
+# Pinned on trimmed real responses (Check Point, country=il&q=engineer, and one
+# posting's detail), plus a US posting planted from the first to prove a posting
+# outside Israel never reaches an Israel search whatever the server sent.
+import app.core.providers.smartrecruiters as _sr  # noqa: E402
+from app.core.providers.smartrecruiters_seed import SEED_COMPANIES as _SR_SEED  # noqa: E402
+
+_SR_LIST = _json.loads((Path(__file__).parent / "fixtures" / "smartrecruiters_postings.json").read_text(encoding="utf-8"))
+_SR_ONE = _json.loads((Path(__file__).parent / "fixtures" / "smartrecruiters_posting.json").read_text(encoding="utf-8"))
+_sr_hits = _sr.parse_smartrecruiters_postings(_SR_LIST, company_name="Fallback")
+check(
+    "16h smartrecruiters parser: each posting with its title, the board's company name, its full location, a "
+    "public posting URL built from the company and posting ids, releasedDate as posted_at (the one board-date "
+    "parser reads it), NO description (fetched per posting), and the board's hybrid flag as its work mode",
+    len(_sr_hits) == 3
+    and _sr_hits[0].title == "AI Engineer – Next-Generation Cyber Security"
+    and _sr_hits[0].company == "Check Point Software Technologies"
+    and _sr_hits[0].location == "Tel Aviv-Yafo, Tel Aviv District, Israel"
+    and _sr_hits[0].url == "https://jobs.smartrecruiters.com/CheckPointSoftwareTechnologies2/744000152024919"
+    and _sr_hits[0].external_id == "744000152024919"
+    and _sr_hits[0].posted_at == "2026-09-27T09:59:38.945Z" and _lv_parse_date(_sr_hits[0].posted_at) is not None
+    and all(h.description == "" and h.source == "smartrecruiters" and h.work_mode == "Hybrid" for h in _sr_hits),
+    f"{[(h.title, h.location, h.work_mode) for h in _sr_hits]}",
+)
+_sr_flags = [
+    _sr._work_mode({"remote": True, "hybrid": False}),
+    _sr._work_mode({"remote": False, "hybrid": True}),
+    _sr._work_mode({"remote": False, "hybrid": False}),
+    _sr._work_mode({}),
+]
+check(
+    "16h smartrecruiters work mode: a flag the board SET is its statement (Remote, Hybrid); both false is UNKNOWN, "
+    "never \"on-site\" (the board leaves them false on postings that are not on-site too)",
+    _sr_flags == ["Remote", "Hybrid", "", ""],
+    str(_sr_flags),
+)
+check(
+    "16h smartrecruiters parser: duplicate ids folded, a posting whose id or company is not an identifier is "
+    "skipped (the URL is built from them), junk is []",
+    len(_sr.parse_smartrecruiters_postings({"content": _SR_LIST["content"] * 2})) == 3
+    and _sr.parse_smartrecruiters_postings({"content": [{**_SR_LIST["content"][0], "id": "../../x"}]}) == []
+    and _sr.parse_smartrecruiters_postings({"content": [{**_SR_LIST["content"][0], "company": {"identifier": "a b"}}]}) == []
+    and _sr.parse_smartrecruiters_postings({}) == [] and _sr.parse_smartrecruiters_postings(None) == [],
+)
+def _sr_raises(fn) -> bool:  # noqa: ANN001
+    try:
+        fn()
+    except ValueError:
+        return True
+    return False
+
+
+_sr_desc = _sr.parse_smartrecruiters_posting(_SR_ONE)
+check(
+    "16h smartrecruiters detail: the job ad's sections in order, each under its title, HTML stripped; an answer "
+    "with no job ad is \"\"",
+    _sr_desc.startswith("Company Description\nWe are seeking an innovative AI Engineer")
+    and "Job Description\nAgentic Framework Design:" in _sr_desc
+    and "Qualifications\nRequired Technical Skills" in _sr_desc
+    and "<li>" not in _sr_desc and "Additional Information" not in _sr_desc
+    and _sr.parse_smartrecruiters_posting({}) == "" and _sr.parse_smartrecruiters_posting({"jobAd": {}}) == "",
+    _sr_desc[:160],
+)
+_sr_us = _sr.parse_smartrecruiters_postings({"content": [{
+    **_SR_LIST["content"][1], "id": "744000999",
+    "location": {"city": "Austin", "region": "TX", "country": "us", "remote": False, "hybrid": True,
+                 "fullLocation": "Austin, TX, United States"},
+    "name": "Security Software Engineer (works with our Tel Aviv, Israel R&D)",
+}]})[0]
+check(
+    "16h smartrecruiters place: an Israel search keeps the Tel Aviv postings (also by a Hebrew city name) and "
+    "leaves out an Austin posting even when its TITLE names Tel Aviv and Israel; London misses; no place keeps all",
+    all(_sr.location_matches(h, "Israel") for h in _sr_hits)
+    and _sr.location_matches(_sr_hits[0], "תל אביב")
+    and not _sr.location_matches(_sr_us, "Israel")
+    and not _sr.location_matches(_sr_us, "Tel Aviv, Israel")
+    and not _sr.location_matches(_sr_hits[0], "London")
+    and _sr.location_matches(_sr_us, ""),
+)
+check(
+    "16h smartrecruiters URLs: Israel asked as country=il with the title as q, one page of 100; the detail is built "
+    "from the company and posting ids, never from the list's `ref`; an id that is not one is refused before any request",
+    _sr.postings_url("Wix2", "QA Engineer", "il")
+    == "https://api.smartrecruiters.com/v1/companies/Wix2/postings?limit=100&country=il&q=QA+Engineer"
+    and _sr.postings_url("Wix2", "", "") == "https://api.smartrecruiters.com/v1/companies/Wix2/postings?limit=100"
+    and _sr.posting_url("Wix2", "744000152028049")
+    == "https://api.smartrecruiters.com/v1/companies/Wix2/postings/744000152028049"
+    and all(_sr_raises(lambda b=bad: _sr.posting_url("Wix2", b)) for bad in ("../x", "a/b", "", "x" * 81)),
+)
+check(
+    "16h smartrecruiters is registered and searched by default; its seed is Check Point, Wix and ServiceNow, by "
+    "the identifiers their public URLs use",
+    "smartrecruiters" in _LV_PROV and "smartrecruiters" in _LV_DEFAULTS
+    and [r["slug"] for r in _SR_SEED] == ["CheckPointSoftwareTechnologies2", "Wix2", "ServiceNow"],
+)
+_sr_urls: list[str] = []
+_sr_mode = {"refuse": set()}
+
+
+def _sr_get(url, timeout=15):  # noqa: ANN001
+    import urllib.error as _ue
+
+    _sr_urls.append(url)
+    company = url.split("/companies/")[1].split("/")[0]
+    if company in _sr_mode["refuse"]:
+        raise _ue.HTTPError(url, 403, "Forbidden", {}, None)
+    if "/postings/" in url:
+        return _json.dumps(_SR_ONE)
+    if company == "CheckPointSoftwareTechnologies2":
+        return _json.dumps(_SR_LIST)
+    if company == "Wix2":
+        raise OSError("timed out")
+    return _json.dumps({"offset": 0, "limit": 100, "totalFound": 0, "content": []})
+
+
+_sr_real = _sr._http_get
+_sr._http_get = _sr_get
+_sr.FEEDS.clear()
+try:
+    _sr_found = _sr.SmartRecruitersProvider().search(_Gh16Ctx(job_title="engineer", location="Israel", limit=25))
+    _sr_first = list(_sr_urls)
+    _sr_urls.clear()
+    _sr_again = _sr.SmartRecruitersProvider().search(_Gh16Ctx(job_title="engineer", location="Israel", limit=25))
+    _sr_again_urls = list(_sr_urls)
+    _sr_urls.clear()
+    _sr_text = _sr.SmartRecruitersProvider().fetch_description(_sr_found[0])
+    _sr_detail_urls = list(_sr_urls)
+    # The board starts refusing every company: one clean sentence, remembered.
+    _sr.FEEDS.clear()
+    _sr_mode["refuse"] = {"CheckPointSoftwareTechnologies2", "Wix2", "ServiceNow"}
+    _sr_urls.clear()
+    _sr_refusals: list[str] = []
+    for _ in range(2):
+        try:
+            _sr.SmartRecruitersProvider().search(_Gh16Ctx(job_title="engineer", location="Israel", limit=25))
+            _sr_refusals.append("no raise")
+        except _LvNoRes as _e:
+            _sr_refusals.append(f"NoResultsError: {_e}")
+        except ValueError as _e:
+            _sr_refusals.append(str(_e))
+    _sr_refused_urls = list(_sr_urls)
+finally:
+    _sr._http_get = _sr_real
+    _sr.FEEDS.clear()
+check(
+    "16h smartrecruiters search: each company asked ONCE with country=il and the query, a company that fails "
+    "(Wix, a timeout) left out while Check Point answers, the next search asks nothing (cached, the failure "
+    "remembered), and a selected posting's description is one GET built from its ids",
+    sorted(h.external_id for h in _sr_found) == ["744000151559419", "744000151664219", "744000152024919"]
+    and len(_sr_first) == 3 and all("country=il" in u and "q=engineer" in u for u in _sr_first)
+    and _sr_again_urls == [] and len(_sr_again) == 3
+    and _sr_detail_urls == ["https://api.smartrecruiters.com/v1/companies/CheckPointSoftwareTechnologies2/postings/"
+                            + _sr_found[0].external_id]
+    and _sr_text.startswith("Company Description"),
+    f"{[h.external_id for h in _sr_found]} {_sr_first} {_sr_again_urls} {_sr_detail_urls}",
+)
+check(
+    "16h smartrecruiters REFUSING (403, the keyed-API risk): quiet and clean — one plain sentence for the board, "
+    "never a raise past the provider or a NoResultsError that reads as 'nothing matched', and the refusal is "
+    "remembered like an answer (the second search asks nothing)",
+    len(_sr_refusals) == 2
+    and all("refusing requests" in r for r in _sr_refusals)
+    and len(_sr_refused_urls) == 3,
+    f"{_sr_refusals} {_sr_refused_urls}",
+)
+
 # 17. The CV scan (PLAN 6; an app feature since Phase 30 / A2): deterministic
 # keyword extraction, coverage via the scorer, Hebrew prefix rescue, and the
 # HTTP route behind the gate with its daily cap and its monthly use. Zero LLM

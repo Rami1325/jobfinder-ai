@@ -21,6 +21,7 @@ from app.core.providers.greenhouse import GreenhouseProvider
 from app.core.providers.jobmaster import JobMasterProvider
 from app.core.providers.lever import LeverProvider
 from app.core.providers.linkedin import LinkedInProvider
+from app.core.providers.smartrecruiters import SmartRecruitersProvider
 
 # Jooble is deliberately NOT registered: Jooble discontinued its Israeli index
 # (il.jooble.org dead at the network level, global API is US-only, verified
@@ -40,6 +41,7 @@ PROVIDERS: dict[str, JobProvider] = {
         JobMasterProvider(),
         GreenhouseProvider(),
         LeverProvider(),
+        SmartRecruitersProvider(),
     )
 }
 
