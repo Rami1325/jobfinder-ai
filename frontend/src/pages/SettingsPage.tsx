@@ -33,6 +33,7 @@ import { tabAccount } from "../lib/accountWatch";
 import { ACCESS_CODE_KEY } from "../lib/accessCode";
 import { apiErrorMessage } from "../lib/apiError";
 import { clearKeyRotated, keyRotatedNotice, markKeyRotated, readKeyRotation } from "../lib/authResults";
+import { clearProposalStash } from "../lib/proposalStash";
 import { withNext } from "../lib/safeNext";
 import { signOut } from "../lib/session";
 import { formatUsesDate } from "../lib/usesStore";
@@ -843,6 +844,9 @@ export default function SettingsPage() {
   async function wipe() {
     try {
       await deleteMyData();
+      // The proposal tool's page kept in this tab (lib/proposalStash) is data
+      // this person asked to delete; the other tabs' copies die with them.
+      clearProposalStash();
       toast("success", tCommon("privacy.wiped"));
       // Same reasoning as signOut: reload rather than navigate, so nothing keeps
       // painting rows the server no longer has. Jobs, because the account still

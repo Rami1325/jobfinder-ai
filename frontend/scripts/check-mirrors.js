@@ -15203,6 +15203,142 @@ try {
   fail(`proposal writer check (check 101) could not run: ${e.message}`);
 }
 
+// ---- 101, continued: the proposal tool keeps its gig and its pass across a reload (EXECUTED) //
+// The phone polish pass (2026-09-28), item 4. The tool held the gig, the rate and
+// the proposal (with the server's reading of the gig, the letter pass's key) in
+// module state, so a reload lost the reading: the next write read the gig again
+// under a new key and charged a second use for a posting whose pass was open, and
+// the page said "Uses 1" for it. lib/proposalStash.ts keeps the page in this TAB's
+// sessionStorage under the account signed in here, never on the server. (e)
+// EXECUTES it with a memory sessionStorage: nothing is written or read while no
+// account is known; the account's own stash comes back whole (a malformed
+// proposal comes back as none, the gig kept); another account's is never
+// returned and is removed; unparseable text is removed; a storage that throws
+// neither throws nor returns anything; clear removes it. Three planted twins
+// must each go red. (f) By shape: the page restores once, in the gig's first
+// state, before a handed posting is applied; it keeps the stash on every change
+// of the gig and the rate and on every proposal written or edited; a handed
+// posting is pasted once per navigation (`location.key`), so a reload never
+// pastes it over an edit; the card is handed the kept reading (`jd={current.jd}`),
+// whose pass it reads back on mount (check 36); and "Delete all my data" clears
+// the stash. Planted twins every run.
+try {
+  const savedSS = globalThis.sessionStorage;
+  const savedBC = globalThis.BroadcastChannel;
+  try {
+    // No channel: announcing only sets this bundle's own tab account.
+    globalThis.BroadcastChannel = undefined;
+    const W = { gig: "G", rate: "₪250", jd: { title: "Scraper" }, text: "Hi", found: { placeholders: [] } };
+    const judge101e = (make) => {
+      const out = [];
+      const api = make();
+      globalThis.sessionStorage = memoryStorage();
+      const ss = globalThis.sessionStorage;
+      api.writeProposalStash({ gig: "G", rate: "", written: null, handed: "" });
+      if (ss._map.size) out.push("a stash is written while no account is known");
+      ss.setItem(api.PROPOSAL_STASH_KEY, JSON.stringify({ owner: 7, gig: "G", rate: "", written: null, handed: "" }));
+      if (api.readProposalStash() !== null) out.push("a stash is read while no account is known");
+      api.announceAccount(7);
+      api.writeProposalStash({ gig: "G", rate: "₪250", written: W, handed: "k1" });
+      const back = api.readProposalStash();
+      if (!back || back.gig !== "G" || back.rate !== "₪250" || back.handed !== "k1" || JSON.stringify(back.written) !== JSON.stringify(W))
+        out.push(`the account's own stash does not come back whole (${JSON.stringify(back)})`);
+      ss.setItem(api.PROPOSAL_STASH_KEY, JSON.stringify({ owner: 7, gig: "G", rate: "", written: { gig: "G", text: "x" }, handed: "" }));
+      const half = api.readProposalStash();
+      if (!half || half.gig !== "G" || half.written !== null) out.push("a malformed proposal (no reading) is handed back as if it could ride a pass");
+      api.writeProposalStash({ gig: "G", rate: "", written: W, handed: "" });
+      api.announceAccount(8);
+      if (api.readProposalStash() !== null) out.push("another account's stash is handed back");
+      if (ss.getItem(api.PROPOSAL_STASH_KEY) !== null) out.push("another account's stash is left in the tab");
+      ss.setItem(api.PROPOSAL_STASH_KEY, "{not json");
+      if (api.readProposalStash() !== null || ss.getItem(api.PROPOSAL_STASH_KEY) !== null) out.push("an unreadable stash is kept or returned");
+      api.writeProposalStash({ gig: "H", rate: "", written: null, handed: "" });
+      api.clearProposalStash();
+      if (ss.getItem(api.PROPOSAL_STASH_KEY) !== null) out.push("clearProposalStash leaves the stash");
+      globalThis.sessionStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } };
+      try {
+        api.writeProposalStash({ gig: "G", rate: "", written: null, handed: "" });
+        if (api.readProposalStash() !== null) out.push("a blocked storage returns a stash");
+        api.clearProposalStash();
+      } catch (e) {
+        out.push(`a blocked storage throws (${e.message})`);
+      }
+      return out;
+    };
+    const fresh = (n) => runProbeBundle(`proposal-stash-${n}`, 'export * from "./lib/proposalStash";\nexport { announceAccount } from "./lib/accountWatch";\n');
+    let n = 0;
+    for (const p of judge101e(() => fresh(n++))) fail(`check 101 (e): ${p} (the phone polish pass)`);
+    const twin = (label, wrap) => {
+      if (!judge101e(() => wrap(fresh(n++))).length) throw new Error(`the judge passes ${label}`);
+    };
+    twin("a read that ignores whose stash it is", (api) => ({
+      ...api,
+      readProposalStash: () => {
+        const raw = globalThis.sessionStorage.getItem(api.PROPOSAL_STASH_KEY);
+        try {
+          const v = JSON.parse(raw);
+          return v ? { gig: v.gig, rate: v.rate, written: v.written, handed: v.handed } : null;
+        } catch {
+          return null;
+        }
+      },
+    }));
+    twin("a write with no account known", (api) => ({
+      ...api,
+      writeProposalStash: (s) => globalThis.sessionStorage.setItem(api.PROPOSAL_STASH_KEY, JSON.stringify({ owner: null, ...s })),
+    }));
+    twin("a read that leaves another account's stash in the tab", (api) => ({
+      ...api,
+      readProposalStash: () => {
+        const raw = globalThis.sessionStorage.getItem(api.PROPOSAL_STASH_KEY);
+        const got = api.readProposalStash();
+        if (got === null && raw) globalThis.sessionStorage.setItem(api.PROPOSAL_STASH_KEY, raw);
+        return got;
+      },
+    }));
+  } finally {
+    globalThis.sessionStorage = savedSS;
+    globalThis.BroadcastChannel = savedBC;
+  }
+
+  const read101f = ({ tool, settings }) => {
+    const out = [];
+    const init = /const \[gig, setGig\] = useState\(\(\) => \{([\s\S]*?)return lastGig;\s*\}\);/.exec(tool);
+    if (!init) throw new Error("ProposalToolPage.tsx: the gig's first state (useState(() => { … return lastGig; })) not found");
+    if (!/^\s*restoreOnce\(\);/.test(init[1])) out.push("the page does not restore what this tab kept before it reads a handed posting");
+    if (!/location\.key !== lastHanded/.test(init[1]) || !/lastHanded = location\.key;/.test(init[1]))
+      out.push("a handed posting is not pasted once per navigation (location.key), so a reload pastes it over an edit");
+    const restore = fnSource(tool, "function restoreOnce(");
+    if (!/readProposalStash<Written>\(\)/.test(restore)) out.push("restoreOnce does not read the stash");
+    const keep = fnSource(tool, "function keep(");
+    if (!/stash\(\);/.test(keep)) out.push("a written or edited proposal is not kept in the tab");
+    const changes = [...tool.matchAll(/onChange=\{\(e\) => \{([\s\S]*?)\}\}/g)].map((m) => m[1]);
+    for (const [what, re] of [["the gig", /lastGig = e\.target\.value;/], ["the rate", /lastRate = e\.target\.value;/]]) {
+      const c = changes.find((x) => re.test(x));
+      if (!c) throw new Error(`ProposalToolPage.tsx: the onChange of ${what} not found`);
+      if (!/stash\(\);/.test(c)) out.push(`a change of ${what} is not kept in the tab`);
+    }
+    if (!/<CoverLetter\b[^>]*?jd=\{current\.jd\}/.test(tool.replace(/\n\s*/g, " ")))
+      out.push("the card is not handed the kept reading (jd={current.jd}), so it cannot read its pass back");
+    const wipe = fnSource(settings, "async function wipe(");
+    if (!/await deleteMyData\(\);[\s\S]*?clearProposalStash\(\);/.test(wipe)) out.push("\"Delete all my data\" leaves the proposal kept in this tab");
+    return out;
+  };
+  const r101f = { tool: decomment(read("pages/tools/ProposalToolPage.tsx")), settings: decomment(read("pages/SettingsPage.tsx")) };
+  for (const p of read101f(r101f)) fail(`check 101 (f): ${p} (the phone polish pass)`);
+  const plant101f = (key, from, to, label) => {
+    if (!r101f[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read101f({ ...r101f, [key]: r101f[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant101f("tool", "    restoreOnce();\n", "\n", "a page that never restores");
+  plant101f("tool", "location.key !== lastHanded", "true", "a handed posting pasted on every reload");
+  plant101f("tool", "    lastWritten = next;\n    stash();\n", "    lastWritten = next;\n", "a proposal that is not kept");
+  plant101f("tool", "lastRate = e.target.value;\n                stash();", "lastRate = e.target.value;", "a rate that is not kept");
+  plant101f("settings", "      clearProposalStash();\n", "", "a data wipe that leaves the tab's proposal");
+} catch (e) {
+  fail(`proposal tool reload check (check 101 e/f) could not run: ${e.message}`);
+}
+
 // ---- 102. the proposal's wire: the route, the request and the answer --------- //
 // `writeProposal` posts to the path routes.py mounts, answering ProposalResponse;
 // the body it builds names exactly ProposalRequest's fields (the route forbids any
@@ -15544,7 +15680,9 @@ try {
       out.push("a freelance row's Write a proposal is not 44 px to tap on a phone (tap-44, or a min-h-11 box)");
     if (!/\.\.\.\(freelance\s*\?\s*\[\{ key: "tailor", label: t\("card\.tailor"\), Icon: ArrowRight, onClick: tailor \}\]/.test(card))
       out.push("a freelance row does not keep Tailor in its menu");
-    if (!/\(useLocation\(\)\.state as \{ gigText\?: unknown \} \| null\)\?\.gigText/.test(tool))
+    // `location` since the phone polish pass: the page also reads its key, to
+    // paste a handed posting once per tap and never again on a reload.
+    if (!/\((?:useLocation\(\)|location)\.state as \{ gigText\?: unknown \} \| null\)\?\.gigText/.test(tool))
       out.push("the proposal tool does not read the gig a search row hands it");
     const res = blockAfter(types, "export interface JobSearchResult {", "types.ts JobSearchResult");
     if (!/\bnot_freelance\?: number;/.test(res)) out.push("types.ts JobSearchResult does not mirror not_freelance");
