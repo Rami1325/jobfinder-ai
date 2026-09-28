@@ -1418,6 +1418,10 @@ class ApplicationDetail(BaseModel):
     # `job_search.APPLICANTS_FRESH_S`). The row itself never stores it, and
     # viewing the page never fetches the posting to get one.
     applicants: Optional[Applicants] = None
+    # 2026-09-28: the board's employment type for this posting, when the user's
+    # search history holds it (the same match as `applicants`); "" otherwise. The
+    # page labels it and, for Contract or Freelance, offers the proposal first.
+    employment: str = ""
 
 
 class StaleApplication(BaseModel):
@@ -1742,6 +1746,10 @@ class JobMatch(BaseModel):
     # rebuilt from; None when the board states none, when the posting was not
     # fetched, and when the reading is older than a day.
     applicants: Optional[Applicants] = None
+    # The BOARD's own employment type when it is not plain full-time, one of
+    # `app.core.employment.EMPLOYMENT_TYPES`; "" for full-time, not stated or not
+    # read, alike. Never read from the title (2026-09-28).
+    employment: str = ""
     # Tracker status when this posting is already in the user's tracker
     # ("saved" | "applied" | "interview" | "offer" | "rejected"), else "".
     # Carries the status rather than a bool so the card can say WHICH — "saved"
@@ -1976,6 +1984,8 @@ class JobSearchHitOut(BaseModel):
     # (`job_search.current_applicants`, measured on this request's clock); None
     # for a reading older than a day, which the row keeps until a fetch replaces it.
     applicants: Optional[Applicants] = None
+    # The board's employment type as the row stored it (see JobMatch.employment).
+    employment: str = ""
     searched_at: str = ""
     app_status: str = ""  # tracker status if this job was saved/applied ("", saved, applied, interview, offer, rejected)
     app_id: Optional[int] = None  # that tracker row's id, which the row opens (PLAN 31.4/6); None when untracked

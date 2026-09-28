@@ -57,6 +57,7 @@ import re
 import urllib.parse
 from datetime import datetime, timezone
 
+from app.core import employment
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
 from app.core.providers.base import JobHit, NoResultsError
@@ -159,6 +160,8 @@ def parse_himalayas_jobs(data: dict) -> list[JobHit]:
                 language=detect_language(f"{title} {description}"),
                 raw=job,
                 work_mode="Remote",  # a remote-only board says so for every posting
+                # "Full Time" / "Part Time" / "Contractor" / "Intern"; never the title.
+                employment=employment.from_field(job.get("employmentType")),
             )
         )
     return hits

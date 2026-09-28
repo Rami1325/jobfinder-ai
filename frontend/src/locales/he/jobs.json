@@ -253,6 +253,14 @@
     "viewOn": "צפייה ב{{source}}",
     "openOn": "פתיחה ב{{source}}",
     "viaBoard": "דרך {{board}}",
+    "employment": {
+      "contract": "חוזה",
+      "freelance": "פרילנס",
+      "also_freelance": "גם פרילנס",
+      "temporary": "משרה זמנית",
+      "part_time": "משרה חלקית",
+      "internship": "התמחות"
+    },
     "kit": "טיוטה",
     "kitFailed": "התאמת הטיוטה נכשלה — נסו שוב.",
     "kitExists": "למשרה הזו כבר יש טיוטה — ראו לבדיקה במעקב.",

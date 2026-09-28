@@ -97,13 +97,13 @@ from app.db.users import mint_user
 from app.db import applications as applications_db
 from app.db import funnel, resume_versions
 from app.db.history import (
-    applicants_for_url,
     applicants_of,
     application_statuses,
     applied_jobs_of,
     applied_kw,
     clear_search_hits,
     delete_search_hit,
+    hit_for_url,
     list_search_hits,
     load_score_cache,
     applied_status_map,
@@ -1415,6 +1415,7 @@ def jobs_history(
                 ],
                 salary=extract_salary(row.jd_text or ""),
                 applicants=current_applicants(applicants_of(row.applicants_json), now),
+                employment=row.employment or "",
                 searched_at=row.searched_at.isoformat() if row.searched_at else "",
                 app_status=tracked.status if tracked else "",
                 app_id=tracked.id if tracked else None,
@@ -2603,12 +2604,12 @@ def get_application(
     kit = applications_db.pending_kit(db, user.id, app.job_url)
     send = applications_db.sendable_kit(db, user.id, app)
     # The board's competition line, only when the user's own search history
-    # holds a CURRENT reading of this posting (Phase 32). Viewing the page never
-    # fetches the posting to get one.
+    # holds a CURRENT reading of this posting (Phase 32), and the board's
+    # employment type (2026-09-28), from the same history row. Viewing the page
+    # never fetches the posting to get either.
+    seen = hit_for_url(db, user.id, app.job_url) if app.job_url else None
     applicants = (
-        current_applicants(applicants_for_url(db, user.id, app.job_url), _search_utc_now())
-        if app.job_url
-        else None
+        current_applicants(applicants_of(seen.applicants_json), _search_utc_now()) if seen is not None else None
     )
     return ApplicationDetail(
         id=app.id,
@@ -2641,6 +2642,7 @@ def get_application(
         send_kit=ApplicationKit(id=send.id, status=send.status) if send is not None else None,
         has_review=_review_whole(_stored_review(app)),
         applicants=applicants,
+        employment=(seen.employment or "") if seen is not None else "",
     )
 
 

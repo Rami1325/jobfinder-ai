@@ -44,7 +44,7 @@ import { sendKitApplication } from "../state/kitsStore";
 import { getTailorState } from "../state/tailorStore";
 import { useNextStep } from "../hooks/useNextStep";
 import type { ApplicationDetail, ApplicationOut, JDModel } from "../types";
-import { applicantsText, attributedSource, postedAgo, sourceLabel } from "./jobs/shared";
+import { applicantsText, attributedSource, employmentText, postedAgo, proposalFirst, sourceLabel } from "./jobs/shared";
 
 /** The tracker's statuses in board order, as the backend stores them. The board
  * (`TrackerPage`'s COLUMNS) lists the same five. */
@@ -280,7 +280,12 @@ function JobBody({
   // reading of this posting; the page never fetches one, and the server sends
   // none once it is a day old.
   const competition = applicantsText(detail.applicants, tJobs);
-  const meta = [detail.company, detail.location, posted && t("job.posted", { when: posted }), competition].filter(Boolean);
+  // The board's employment type (2026-09-28), from the same History row; nothing
+  // for full-time or unknown.
+  const employment = employmentText(detail.employment, tJobs);
+  const meta = [detail.company, employment, detail.location, posted && t("job.posted", { when: posted }), competition].filter(
+    Boolean,
+  );
 
   return (
     <div className="space-y-5">
@@ -643,12 +648,14 @@ function LetterSection({
 
   if (jd && resume) {
     // A letter or a proposal (2026-09-28), one pass per posting either way; the
-    // text the user edits in the box is saved on the row like a written one.
+    // text the user edits in the box is saved on the row like a written one. A
+    // job its board labels Contract or Freelance opens on the proposal.
     return (
       <CoverLetter
         resume={resume}
         jd={jd}
         initialText={detail.cover_letter}
+        initialKind={proposalFirst(detail.employment) ? "proposal" : "letter"}
         postingText={detail.jd_text}
         onGenerated={(letter) => void save(letter)}
         onEdited={(letter) => void save(letter)}

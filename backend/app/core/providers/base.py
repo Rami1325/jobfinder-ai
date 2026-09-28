@@ -102,6 +102,14 @@ class JobHit:
     # no count), and a hit whose page was never fetched in this search is None
     # too. Set by providers, never by the fan-out.
     applicants: Applicants | None = None
+    # The BOARD's own employment type when it is not plain full-time
+    # (`app.core.employment.EMPLOYMENT_TYPES`: contract, freelance, also_freelance,
+    # temporary, part_time, internship), read from the board's own field by its
+    # provider: in the parser for the boards that send it inline, and in
+    # `fetch_description` for LinkedIn, whose criteria list is on the job page.
+    # "" means full-time, not stated, or not read, alike: never guessed from the
+    # title (2026-09-28). Set by providers, never by the fan-out.
+    employment: str = ""
 
 
 @runtime_checkable

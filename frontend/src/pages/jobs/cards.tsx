@@ -41,6 +41,7 @@ import {
   attributedSource,
   avatarTone,
   companyDomain,
+  employmentText,
   isNewPosting,
   jdTextWithLocation,
   kitJobFromMatch,
@@ -668,6 +669,7 @@ export function MatchCard({
 
   const jdForTools = jdTextWithLocation(m.jd_text, m.location);
   const reason = fitReason(m.top_matched, m.top_gaps, t);
+  const employment = employmentText(m.employment, t);
   // What has no slot of its own on a compact row (PLAN 31.2/5). The kit, the
   // outreach and the brief move to the job's own page with 31.4; until then
   // they are here, so a search result keeps every door it had.
@@ -725,6 +727,10 @@ export function MatchCard({
         <p dir="auto" className="truncate text-sm text-ink-muted">
           {m.company || "—"}
           {m.posted_at && <span title={m.posted_at}>{` · ${postedAgo(m.posted_at, t)}`}</span>}
+          {/* The board's own employment type when it is not full-time
+              (2026-09-28): words on the line that already truncates, never a
+              badge, so it costs no height. Nothing for full-time or unknown. */}
+          {employment ? ` · ${employment}` : ""}
           {m.work_modes && m.work_modes.length > 0
             ? ` · ${m.work_modes.map((mode) => t(`workModes.${mode}`)).join(" / ")}`
             : ""}
@@ -868,6 +874,7 @@ export function HistoryRow({
   const earlier = !!hit.first_posted_at && hit.first_posted_at !== hit.posted_at;
   const jdForTools = jdTextWithLocation(hit.jd_text, hit.location);
   const reason = fitReason(hit.top_matched, hit.top_gaps, t);
+  const employment = employmentText(hit.employment, t);
   // The compact row's "⋯" (PLAN 31.2/5), the search row's list plus Remove,
   // which still waits out its undo window (JobsPage `deleteHit`, 31.1/6).
   const more: MoreItem[] = [
@@ -914,10 +921,12 @@ export function HistoryRow({
           </p>
           <MatchChip value={hit.overall} />
         </div>
-        {/* The search row's order and direction, for its reasons. */}
+        {/* The search row's order and direction, for its reasons, and its
+            employment label (2026-09-28) in the same place. */}
         <p dir="auto" className="truncate text-sm text-ink-muted">
           {hit.company || "—"}
           {hit.posted_at && <span title={hit.posted_at}>{` · ${postedAgo(hit.posted_at, t)}`}</span>}
+          {employment ? ` · ${employment}` : ""}
           {hit.location ? ` · ${hit.location}` : ""}
         </p>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">

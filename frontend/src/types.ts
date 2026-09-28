@@ -480,6 +480,9 @@ export interface ApplicationDetail {
   /** Phase 32: the board's competition line, when this user's search history
    * holds a CURRENT reading of the posting; the page never fetches one. */
   applicants?: Applicants | null;
+  /** 2026-09-28: the board's employment type from the same History row
+   * (`EmploymentType`, or ""); a Contract or Freelance job offers the proposal first. */
+  employment?: string;
 }
 
 /** GET /inbox/status: whether this account can use Gmail sync, and how the
@@ -637,6 +640,10 @@ export interface JobMatch {
   /** The board's own competition line (Phase 32), sent only while CURRENT (the
    * server's `current_applicants`, a day); null or absent otherwise. */
   applicants?: Applicants | null;
+  /** The BOARD's own employment type when it is not plain full-time (backend
+   * `employment.EMPLOYMENT_TYPES`); "" or absent for full-time, not stated or
+   * not read. Never guessed from the title (2026-09-28). */
+  employment?: string;
 }
 /** The BOARD's own competition line, read literally from the page the search
  * fetched ("131 applicants"): LinkedIn only, since no other board states one.
@@ -906,6 +913,8 @@ export interface JobSearchHit {
   /** The board's competition line as History holds it, sent only while current. */
   applicants?: Applicants | null;
   searched_at: string;
+  /** The board's employment type as History stored it (see JobMatch.employment). */
+  employment?: string;
   app_status: string; // tracker status if saved/applied: "", saved, applied, interview, offer, rejected
   app_id?: number | null; // that tracker row's id, which the row opens (PLAN 31.4/6)
 }

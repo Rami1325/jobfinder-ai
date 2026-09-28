@@ -33211,6 +33211,313 @@ finally:
     _routes32.write_proposal = _pp_real_write
     _restore29(_pp_prev_env)
 
+# ---------------------------------------------------------------------------
+# 2026-09-28, freelance: the employment type on a job row (docs/handbook/job-search.md, *The employment type*). Each
+# board's OWN field, read by a pure reader, never the title: in Israel "Contract" in a title is usually a fixed-term
+# EMPLOYEE, and LinkedIn labels those Full-time. Each catch sits beside the false positive it must not fire on.
+# ---------------------------------------------------------------------------
+import json as _em_json  # noqa: E402
+import re as _pp_re  # noqa: E402
+
+from app.core import employment as _em  # noqa: E402
+from app.core.providers import (  # noqa: E402
+    ashby as _em_ashby,
+    comeet as _em_comeet,
+    drushim as _em_drushim,
+    himalayas as _em_himalayas,
+    jobmaster as _em_jobmaster,
+    lever as _em_lever,
+    smartrecruiters as _em_sr,
+)
+
+_EM_FIX = _pp_Path(__file__).parent / "fixtures"
+_EM_SRC = _pp_inspect.getsource(_em)
+
+
+def _em_is_pure(src):  # noqa: ANN001, ANN202
+    tree = _pp_ast.parse(src)
+    clock = {n.attr for n in _pp_ast.walk(tree) if isinstance(n, _pp_ast.Attribute)} & {"now", "utcnow", "today"}
+    doors = {n.func.id for n in _pp_ast.walk(tree)
+             if isinstance(n, _pp_ast.Call) and isinstance(n.func, _pp_ast.Name)} & {"open", "__import__"}
+    return _pt_imports(src) == {"__future__", "re"} and not clock and not doors
+
+
+_em_unrefused = [p for p in (
+    "from app.llm.client import get_llm_client",
+    "from app.core.job_match import _http_get",
+    "from datetime import datetime",
+    "stamp = __import__('datetime').datetime.now()",
+    "text = open('/etc/hosts').read()",
+) if _em_is_pure(_EM_SRC + "\n" + p + "\n")]
+_EM_IMPORTERS: list = []
+for _em_py in sorted(_PT_APP.rglob("*.py")):
+    _em_rel = str(_em_py.relative_to(_PT_APP)).replace("\\", "/")
+    if _em_rel == "core/employment.py":
+        continue
+    for _em_node in _pp_ast.walk(_pp_ast.parse(_em_py.read_text(encoding="utf-8"))):
+        if (isinstance(_em_node, _pp_ast.ImportFrom)
+                and ((_em_node.module or "").split(".")[-1] == "employment"
+                     or any(a.name == "employment" for a in _em_node.names))):
+            _EM_IMPORTERS.append(_em_rel)
+            break
+check(
+    "employment: the reader (core/employment.py) imports EXACTLY __future__ and re, reads no clock and opens nothing "
+    "(AST) — the model, the network and the clock one line away are each refused — and its importers are the eight "
+    "board providers that hand over a field, never the search or the title matchers; EMPLOYMENT_TYPES is the six labels",
+    len(_EM_SRC) > 2000 and _em_is_pure(_EM_SRC) and _em_unrefused == []
+    and _EM_IMPORTERS == [f"core/providers/{b}.py" for b in (
+        "ashby", "comeet", "drushim", "himalayas", "jobmaster", "lever", "linkedin", "smartrecruiters")]
+    and _em.EMPLOYMENT_TYPES == ("contract", "freelance", "also_freelance", "temporary", "part_time", "internship"),
+    f"imports={sorted(_pt_imports(_EM_SRC))} not refused={_em_unrefused} importers={_EM_IMPORTERS}",
+)
+
+# LinkedIn: the criterion on the guest page, by its classes, never the title or the posting's own words.
+_EM_LI = (_EM_FIX / "linkedin_job_contract.html").read_text(encoding="utf-8")
+_EM_LI_FT = _EM_LI.replace("Software Engineer (AI Training)", "Software Engineer - 12 Month Fixed-Term Contract").replace(
+    "            Contract\n          </span>", "            Full-time\n          </span>")
+_em_li_of = _lp_mod.linkedin_employment_type
+_em_li = {
+    "contract fixture": _em_li_of(_EM_LI),
+    "Fixed-Term Contract title, Full-time field": _em_li_of(_EM_LI_FT),
+    "body says Employment type Contract": _em_li_of(_EM_LI_FT.replace(
+        "</section>", "</section><div class=\"show-more-less-html__markup\"><h3>Employment type</h3>"
+                      "<span>Contract</span> Contract role, fixed-term employee.</div>", 1)),
+    "commented-out Contract": _em_li_of(_EM_LI_FT.replace(
+        "<ul class=\"description__job-criteria-list\">",
+        "<!-- <h3 class=\"description__job-criteria-subheader\">Employment type</h3>"
+        "<span class=\"description__job-criteria-text\">Contract</span> -->"
+        "<ul class=\"description__job-criteria-list\">", 1)),
+    **{v: _em_li_of(_EM_LI.replace("            Contract\n          </span>", f"            {v}\n          </span>"))
+       for v in ("Temporary", "Part-time", "Internship", "Volunteer", "Other")},
+    **{f: _em_li_of((_EM_FIX / f).read_text(encoding="utf-8"))
+       for f in ("linkedin_job_open.html", "linkedin_job_closed.html", "linkedin_job_applicants_count.html")},
+    "empty page": _em_li_of(""),
+}
+check(
+    "employment: LinkedIn's own criterion — the contract fixture reads 'contract'; the Full-time twin whose TITLE says "
+    "'12 Month Fixed-Term Contract' reads nothing (LinkedIn's label is right for Israel); 'Employment type Contract' "
+    "in the posting's own words and a commented-out criterion read nothing; Temporary, Part-time and Internship map, "
+    "Volunteer and Other say nothing; the pages with no criteria list (open, closed, applicants) read nothing",
+    _em_li == {
+        "contract fixture": "contract", "Fixed-Term Contract title, Full-time field": "",
+        "body says Employment type Contract": "", "commented-out Contract": "",
+        "Temporary": "temporary", "Part-time": "part_time", "Internship": "internship", "Volunteer": "", "Other": "",
+        "linkedin_job_open.html": "", "linkedin_job_closed.html": "", "linkedin_job_applicants_count.html": "",
+        "empty page": "",
+    },
+    str(_em_li),
+)
+_em_li_calls: list = []
+_em_li_real_get = _lp_mod._http_get
+
+
+def _em_li_get(url, timeout=15):  # noqa: ANN001
+    _em_li_calls.append(url)
+    return _EM_LI.replace("<section class=\"top-card-layout\">",
+                          "<section class=\"show-more-less-html__markup\">Build training data.</section>"
+                          "<section class=\"top-card-layout\">", 1)
+
+
+_em_li_hit = _FanHit(source="linkedin", url="https://il.linkedin.com/jobs/view/4471174270")
+try:
+    _lp_mod._http_get = _em_li_get
+    _lp_mod.LinkedInProvider().fetch_description(_em_li_hit)
+finally:
+    _lp_mod._http_get = _em_li_real_get
+check(
+    "employment: LinkedIn's fetch_description stamps the label from the page it already fetched — ONE request, the "
+    "same page the description and the competition line come from",
+    _em_li_hit.employment == "contract" and len(_em_li_calls) == 1 and _lp_mod._http_get is _em_li_real_get,
+    f"employment={_em_li_hit.employment!r} calls={_em_li_calls}",
+)
+
+# JobMaster: the card's type list, one honest label.
+_EM_JM = (_EM_FIX / "jobmaster_freelance.html").read_text(encoding="utf-8")
+_EM_JM_LIST = _pp_re.compile(r'(?s)(<li tabindex="0" class="jobType">).*?(</li>)')
+_em_jm_card = [h.employment for h in _em_jobmaster.parse_jobmaster_results(_EM_JM)]
+# The same two cards, their titles still "עסק עצמאי מההבית כסוכני תיירות פרילנס", their type lists full-time only.
+_em_jm_title_only = [h.employment for h in _em_jobmaster.parse_jobmaster_results(
+    _EM_JM_LIST.sub(r'\1<a href="/jobs/q-x">משרה מלאה</a>\2', _EM_JM))]
+_em_jm_rules = {
+    v: _em.from_jobmaster(v) for v in (
+        "פרילאנס", "פרילנס", "משרה חלקית , פרילאנס", "משרה חלקית , משרה מלאה , פרילאנס", "משרה מלאה",
+        "משרה חלקית", "משרה מלאה , משרה חלקית", "עבודה זמנית", "משרה מלאה , עבודה זמנית", "משמרות", "", None)
+}
+check(
+    "employment: JobMaster's own type list — the research's two freelance cards read 'also freelance' (full-time and "
+    "part-time are listed beside it); a card whose TITLE says 'פרילנס' but whose list says only משרה מלאה reads "
+    "nothing; freelance alone is 'freelance', part-time alone 'part_time', full-time with part-time nothing (either), "
+    "temporary 'temporary', shifts and nothing say nothing; the board's alef spelling פרילאנס and the common פרילנס "
+    "both count",
+    _em_jm_card == ["also_freelance", "also_freelance"] and _em_jm_title_only == ["", ""]
+    and len(_EM_JM_LIST.findall(_EM_JM)) == 2 and _EM_JM.count("פרילנס</a>") == 0 and _EM_JM.count("פרילנס") >= 2
+    and _em_jm_rules == {
+        "פרילאנס": "freelance", "פרילנס": "freelance", "משרה חלקית , פרילאנס": "also_freelance",
+        "משרה חלקית , משרה מלאה , פרילאנס": "also_freelance", "משרה מלאה": "", "משרה חלקית": "part_time",
+        "משרה מלאה , משרה חלקית": "", "עבודה זמנית": "temporary", "משרה מלאה , עבודה זמנית": "temporary",
+        "משמרות": "", "": "", None: "",
+    },
+    f"cards={_em_jm_card} title only={_em_jm_title_only} rules={_em_jm_rules}",
+)
+
+# Drushim: the scope codes.
+_EM_DR = _em_json.loads((_EM_FIX / "drushim_scopes.json").read_text(encoding="utf-8"))
+_em_dr_cards = [h.employment for h in _em_drushim.parse_drushim_results(_EM_DR)]
+_em_dr_title = _em_drushim.parse_drushim_results({"ResultList": [dict(
+    _EM_DR["ResultList"][1],
+    JobContent=dict(_EM_DR["ResultList"][1]["JobContent"], Scopes=[{"Code": 1, "NameInHebrew": "משרה מלאה"}]),
+)]})
+_em_dr_rules = {str(c): _em.from_drushim_scopes([{"Code": x} for x in c]) for c in ([3], [1, 2, 3], [2], [1, 2], [1], [4, 5], [])}
+check(
+    "employment: Drushim's scope codes — the research's two postings ([3] and [1,2,3]) read 'temporary'; a posting "
+    "whose TITLE says משרה זמנית but whose scopes say only full-time reads nothing; part-time alone is 'part_time', "
+    "full-time with part-time nothing, shifts and home work nothing; there is no freelance code",
+    _em_dr_cards == ["temporary", "temporary"]
+    and "משרה זמנית" in _em_dr_title[0].title and _em_dr_title[0].employment == ""
+    and _em_dr_rules == {"[3]": "temporary", "[1, 2, 3]": "temporary", "[2]": "part_time", "[1, 2]": "", "[1]": "",
+                         "[4, 5]": "", "[]": ""}
+    and _em.from_drushim_scopes(None) == "" and _em.from_drushim_scopes([{"Code": True}]) == "",
+    f"cards={_em_dr_cards} title={[(h.title, h.employment) for h in _em_dr_title]} rules={_em_dr_rules}",
+)
+
+# The boards added in Phase 32: their own fields, read exactly.
+_em_boards = {
+    "himalayas": [h.employment for h in _em_himalayas.parse_himalayas_jobs(
+        _em_json.loads((_EM_FIX / "himalayas_search.json").read_text(encoding="utf-8")))],
+    "ashby": sorted({h.employment for h in _em_ashby.parse_ashby_jobs(
+        _em_json.loads((_EM_FIX / "ashby_board.json").read_text(encoding="utf-8")))}),
+    "lever": sorted({h.employment for h in _em_lever.parse_lever_postings(
+        _em_json.loads((_EM_FIX / "lever_postings_eu.json").read_text(encoding="utf-8")))}),
+    "smartrecruiters": sorted({h.employment for h in _em_sr.parse_smartrecruiters_postings(
+        _em_json.loads((_EM_FIX / "smartrecruiters_postings.json").read_text(encoding="utf-8")))}),
+    "comeet": sorted({h.employment for h in _em_comeet.parse_comeet_positions(
+        _em_json.loads((_EM_FIX / "comeet_positions.json").read_text(encoding="utf-8")))}),
+}
+_EM_ASHBY = _em_json.loads((_EM_FIX / "ashby_board.json").read_text(encoding="utf-8"))
+_EM_LEVER = _em_json.loads((_EM_FIX / "lever_postings_eu.json").read_text(encoding="utf-8"))
+_EM_SR = _em_json.loads((_EM_FIX / "smartrecruiters_postings.json").read_text(encoding="utf-8"))
+_EM_COMEET = _em_json.loads((_EM_FIX / "comeet_positions.json").read_text(encoding="utf-8"))
+_em_planted = {
+    "ashby Contract": _em_ashby.parse_ashby_jobs({"jobs": [dict(_EM_ASHBY["jobs"][0], employmentType="Contract")]})[0].employment,
+    "lever Intern": _em_lever.parse_lever_postings([dict(_EM_LEVER[0], categories=dict(_EM_LEVER[0]["categories"], commitment="Intern"))])[0].employment,
+    "smartrecruiters contract": _em_sr.parse_smartrecruiters_postings({"content": [dict(
+        _EM_SR["content"][0], typeOfEmployment={"id": "contract", "label": "Contract"})]})[0].employment,
+    "comeet Freelance": _em_comeet.parse_comeet_positions([dict(_EM_COMEET[0], employment_type="Freelance")])[0].employment,
+    "lever title Contractor, Full time": _em_lever.parse_lever_postings([dict(_EM_LEVER[0], text="Contractor Relations Manager")])[0].employment,
+}
+check(
+    "employment: the boards added in Phase 32 hand over their own fields — Himalayas' 'Contractor' reads 'contract' "
+    "and its 'Full Time' nothing; Ashby's FullTime, Lever's 'Full time', SmartRecruiters' permanent/Full-time and "
+    "Comeet's Full-Time (and null) read nothing; planted Contract, Intern, contract and Freelance values map; a Lever "
+    "TITLE 'Contractor Relations Manager' on a Full time commitment reads nothing; and a value is read exactly "
+    "('Fixed-Term Contract' and 'Contract - 6 months' are not the type 'Contract')",
+    _em_boards == {"himalayas": ["contract", "", "", "", ""], "ashby": [""], "lever": [""], "smartrecruiters": [""],
+                   "comeet": [""]}
+    and _em_planted == {"ashby Contract": "contract", "lever Intern": "internship", "smartrecruiters contract": "contract",
+                        "comeet Freelance": "freelance", "lever title Contractor, Full time": ""}
+    and [_em.from_field(v) for v in ("Fixed-Term Contract", "Contract - 6 months", "FULL-TIME", "Part Time", None, 3)]
+    == ["", "", "", "part_time", "", ""],
+    f"boards={_em_boards} planted={_em_planted}",
+)
+
+
+# Through the search, History and a job's page.
+class _EmBoard:
+    name = "fake_em"
+
+    def __init__(self) -> None:
+        self.fetched: list = []
+
+    def search(self, ctx):  # noqa: ANN001
+        return [
+            _FanHit(source=self.name, title="Python Developer fetched", company="EmCo A", description="",
+                    url="https://em.test/fetched"),
+            _FanHit(source=self.name, title="Python Developer inline", company="EmCo B",
+                    description="Python and SQL work on a distributed backend.", url="https://em.test/inline",
+                    employment="temporary"),
+            _FanHit(source=self.name, title="Python Developer Contract (fixed-term)", company="EmCo C", description="",
+                    url="https://em.test/titled"),
+            _FanHit(source=self.name, title="Python Developer cached", company="EmCo D", description="",
+                    url="https://em.test/cached"),
+        ]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        self.fetched.append(hit.url.rsplit("/", 1)[-1])
+        if hit.url.endswith("/fetched"):
+            hit.employment = "contract"
+        return "Python and SQL work on a distributed backend."
+
+
+_em_board = _EmBoard()
+_PROV["fake_em"] = _em_board
+try:
+    _em_res = _fan_search(
+        resume,
+        _AlertCtx(job_title="Python Developer", sources=["fake_em"], max_age_days=0, limit=10),
+        cache={"https://em.test/cached": _GeoCached(
+            jd_text="Python and SQL work on a distributed backend.", overall=80.0, keyword_coverage=70.0,
+            fit_score=90.0, top_matched=("Python",), top_gaps=(), title="Python Developer cached", company="EmCo D",
+            location="", posted_at="", logo_url="", is_full_match=True, employment="freelance")},
+    )
+finally:
+    _PROV.pop("fake_em", None)
+_em_by = {m.url.rsplit("/", 1)[-1]: m.employment for m in _em_res.matches}
+check(
+    "employment: through the search — the fetched posting carries the label its page gave, the inline board's own "
+    "field rides as it came, a posting whose TITLE says 'Contract (fixed-term)' carries none, and a CACHED posting is "
+    "rebuilt with no fetch and keeps the label its history row stored",
+    _em_by == {"fetched": "contract", "inline": "temporary", "titled": "", "cached": "freelance"}
+    and "cached" not in _em_board.fetched,
+    f"by={_em_by} fetched={_em_board.fetched}",
+)
+_EM_URL = "https://www.linkedin.com/jobs/view/4471174270"
+_em_prev_env = _env29(DAILY_SEARCH_CAP="0")
+try:
+    with TestClient(_fastapi_app) as _em_c:
+        _em_uid, _EM_H = _mint32(_em_c, "Employment Label")
+
+        def _em_rec(label):  # noqa: ANN001
+            d = SessionLocal()
+            try:
+                _ap_record(d, [_ApMatch(title="Software Engineer (AI Training)", company="Alignerr", url=_EM_URL,
+                                        jd_text="Python.", employment=label)], _em_uid)
+            finally:
+                d.close()
+
+        def _em_row():  # noqa: ANN202
+            d = SessionLocal()
+            try:
+                row = d.query(_ApHitRow).filter(_ApHitRow.user_id == _em_uid, _ApHitRow.url == _EM_URL).first()
+                return row.employment if row is not None else None
+            finally:
+                d.close()
+
+        _em_rec("contract")
+        _em_after_first = _em_row()
+        _em_rec("")  # a search that read none (a cached rebuild)
+        _em_after_none = _em_row()
+        _em_hist = {h["url"]: h.get("employment") for h in _j28(_em_c.get("/jobs/history", headers=_EM_H)).get("hits", [])}
+        _em_app = _j28(_em_c.post("/applications", headers=_EM_H, json={
+            "job_title": "Software Engineer (AI Training)", "company": "Alignerr", "status": "saved",
+            "job_url": "https://il.linkedin.com/jobs/view/software-engineer-ai-training-at-alignerr-4471174270?trk=x"}))
+        _em_other = _j28(_em_c.post("/applications", headers=_EM_H, json={
+            "job_title": "Elsewhere", "company": "X", "status": "saved",
+            "job_url": "https://www.linkedin.com/jobs/view/4000000009"}))
+        _em_detail = _j28(_em_c.get(f"/applications/{_em_app.get('id')}", headers=_EM_H))
+        _em_detail_other = _j28(_em_c.get(f"/applications/{_em_other.get('id')}", headers=_EM_H))
+finally:
+    _restore29(_em_prev_env)
+check(
+    "employment: History stores the label, a search that read none leaves it (never cleared to full-time), GET "
+    "/jobs/history hands it back, and a job's page carries its posting's label from History matched across URL "
+    "shapes (the LinkedIn id), and none for a posting History never labelled",
+    _em_after_first == "contract" and _em_after_none == "contract" and _em_hist.get(_EM_URL) == "contract"
+    and _em_detail.get("employment") == "contract"
+    and "employment" in _em_detail_other and _em_detail_other["employment"] == "",
+    f"row {_em_after_first}/{_em_after_none} hist={_em_hist.get(_EM_URL)!r} detail={_em_detail.get('employment')!r} "
+    f"other={_em_detail_other.get('employment', 'MISSING')!r}",
+)
+
 _reached_end = True
 print(f"\n{_ran} checks ran.")
 print("ALL PASSED" if not failures else f"FAILURES: {failures}")

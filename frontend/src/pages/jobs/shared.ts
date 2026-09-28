@@ -175,6 +175,43 @@ export function postedAgo(iso: string, t: TFunction<"jobs">): string {
  * names none. A `kind` this build has no sentence for draws nothing, because
  * `t()` on a missing key renders the key. Each key is a plain literal call, so
  * check-mirrors 87 resolves it in both locales. */
+/** The labels a board's employment type can carry (2026-09-28), backend
+ * `app/core/employment.py::EMPLOYMENT_TYPES`, held equal by check-mirrors 103.
+ * Full-time has none on purpose: a "Full-time" chip on every card is noise. */
+export const EMPLOYMENT_TYPES = ["contract", "freelance", "also_freelance", "temporary", "part_time", "internship"] as const;
+export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
+
+/** A job row's employment label, in the page's words, or "" for full-time, not
+ * stated, not read, or a value this build does not know (unknown is never
+ * "full-time", and a raw key is never printed). One literal key per label, so
+ * check-mirrors 103 can resolve each. The server reads it from the BOARD's own
+ * field; nothing here reads a title. */
+export function employmentText(value: string | null | undefined, t: TFunction<"jobs">): string {
+  switch (value) {
+    case "contract":
+      return t("card.employment.contract");
+    case "freelance":
+      return t("card.employment.freelance");
+    case "also_freelance":
+      return t("card.employment.also_freelance");
+    case "temporary":
+      return t("card.employment.temporary");
+    case "part_time":
+      return t("card.employment.part_time");
+    case "internship":
+      return t("card.employment.internship");
+    default:
+      return "";
+  }
+}
+
+/** Whether a job's letter card opens on the proposal (2026-09-28): a job the
+ * board labels Contract or Freelance. "Also freelance" (an employee job that
+ * also takes freelancers) and the rest open on the letter. */
+export function proposalFirst(value: string | null | undefined): boolean {
+  return value === "contract" || value === "freelance";
+}
+
 export function applicantsText(a: Applicants | null | undefined, t: TFunction<"jobs">): string {
   if (!a || !a.source || !Number.isInteger(a.n) || a.n < 0) return "";
   const board = sourceLabel(a.source);

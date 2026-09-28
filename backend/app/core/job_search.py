@@ -139,6 +139,9 @@ class CachedScore:
     # `read_at`, so a posting rebuilt from the row without a fetch can still
     # show it while it is current. None when the row holds none.
     applicants: Applicants | None = None
+    # The board's employment type as the row stored it (2026-09-28), so a
+    # LinkedIn posting rebuilt without a fetch keeps its label; "" when none.
+    employment: str = ""
 
 
 # What our own search history remembers about the postings in THIS run, looked
@@ -1269,6 +1272,9 @@ def search_jobs(
                 ghost=ghost,
                 stale=stale,
                 applicants=_applicants_for(hit, cached),
+                # The board's own field; LinkedIn's is read by the fetch this
+                # branch skips, so the row's stored one stands in.
+                employment=hit.employment or cached.employment,
             )
         else:
             # Tier 2: a fresh row for a DIFFERENT resume still spares the
@@ -1323,6 +1329,10 @@ def search_jobs(
                     ghost=ghost,
                     stale=stale,
                     applicants=_applicants_for(hit, cached),
+                    # After the text is in hand: LinkedIn's criterion is read by
+                    # `fetch_description`. A cached text (tier 2) was not fetched,
+                    # so the row's stored label stands in.
+                    employment=hit.employment or (cached.employment if cached else ""),
                 )
         return match, geo, ghost, mode
 

@@ -31,6 +31,7 @@ import json
 import re
 import urllib.parse
 
+from app.core import employment
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
 from app.core.providers.ashby_seed import SEED_BATCHES
@@ -106,6 +107,8 @@ def parse_ashby_jobs(data: dict, company_name: str = "") -> list[JobHit]:
                 raw=job,
                 # "OnSite" / "Hybrid" / "Remote"; never `isRemote` (module docstring).
                 work_mode=str(job.get("workplaceType") or "").strip(),
+                # "FullTime" / "PartTime" / "Intern" / "Contract" / "Temporary"; never the title.
+                employment=employment.from_field(job.get("employmentType")),
             )
         )
     return hits

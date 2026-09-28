@@ -32,6 +32,7 @@ import re
 import urllib.error
 import urllib.parse
 
+from app.core import employment
 from app.core.job_match import _html_to_text, _http_get
 from app.core.lang import detect_language
 from app.core.providers.base import JobHit, NoResultsError
@@ -138,6 +139,8 @@ def parse_comeet_positions(positions: list, company_name: str = "") -> list[JobH
                 # "Hybrid" / "Remote" / "On-site". NOT `location.is_remote`, which
                 # the fixture's hybrid Bnei Brak office carries as true.
                 work_mode=str(pos.get("workplace_type") or "").strip(),
+                # `employment_type` ("Full-Time", or null); never the title.
+                employment=employment.from_field(pos.get("employment_type")),
             )
         )
     return hits

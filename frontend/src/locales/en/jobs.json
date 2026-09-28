@@ -235,6 +235,14 @@
     "viewOn": "View on {{source}}",
     "openOn": "Open on {{source}}",
     "viaBoard": "via {{board}}",
+    "employment": {
+      "contract": "Contract",
+      "freelance": "Freelance",
+      "also_freelance": "Also freelance",
+      "temporary": "Temporary",
+      "part_time": "Part-time",
+      "internship": "Internship"
+    },
     "kit": "Draft",
     "kitFailed": "Tailoring this draft failed — try again.",
     "kitExists": "This job already has a draft — see To review in the tracker.",

@@ -15249,6 +15249,145 @@ try {
   fail(`proposal wire check (check 102) could not run: ${e.message}`);
 }
 
+// ---- 103. the employment label: the board's words, on the rows, never a filter //
+// 2026-09-28 (freelance). A job row says Contract, Freelance, Also freelance,
+// Temporary, Part-time or Internship when the BOARD's own field says so, and
+// nothing for full-time or unknown. (a) EXECUTES `employmentText` and
+// `proposalFirst` (pages/jobs/shared.ts) over every label the backend can send
+// (`EMPLOYMENT_TYPES`, read out of app/core/employment.py with pyTuple; the six
+// known labels without backend/): each asks its OWN literal
+// `card.employment.<label>` key, and "", "full_time", an unknown value and
+// `constructor` say nothing (never a raw key, never "Full-time"); the page's list
+// equals the backend's; every key resolves in both jobs.json; `proposalFirst` is
+// true for contract and freelance only. (b) By shape: the search row's and the
+// History row's meta line (the `truncate` line, so the label costs no height)
+// print the label, never as a Badge; the job's page puts it in its meta line and
+// opens its letter card on `proposalFirst(detail.employment)`. (c) The mirrors:
+// `employment` on types.ts' JobMatch, JobSearchHit and ApplicationDetail and on the
+// backend's JobMatch, JobSearchHitOut and ApplicationDetail. (d) No filter:
+// SearchContext names no employment field on either side (job-search.md, *The
+// employment type*: in Israel it would mostly return nothing). Planted twins are
+// judged every run.
+try {
+  const sh103 = runProbeBundle(
+    "employment",
+    'export { EMPLOYMENT_TYPES, employmentText, proposalFirst } from "./pages/jobs/shared";\n',
+  );
+  for (const k of ["EMPLOYMENT_TYPES", "employmentText", "proposalFirst"])
+    if (!(k in sh103)) throw new Error(`pages/jobs/shared.ts exports no ${k}`);
+  const KNOWN103 = ["contract", "freelance", "also_freelance", "temporary", "part_time", "internship"];
+  const emp103 = pySource("app/core/employment.py", "check 103");
+  const labels103 = emp103 === null ? KNOWN103 : pyTuple(emp103.replace(/\r\n/g, "\n"), "EMPLOYMENT_TYPES", "backend/app/core/employment.py");
+  if (labels103.length < 5) throw new Error(`read ${labels103.length} labels out of EMPLOYMENT_TYPES`);
+  if (JSON.stringify([...sh103.EMPLOYMENT_TYPES]) !== JSON.stringify(labels103))
+    fail(`check 103: EMPLOYMENT_TYPES is ${JSON.stringify(sh103.EMPLOYMENT_TYPES)}, the backend's ${JSON.stringify(labels103)}`);
+  const judgeText103 = (fn) => {
+    const out = [];
+    const asked = [];
+    const t = (k) => {
+      asked.push(k);
+      return `T:${k}`;
+    };
+    for (const v of labels103) {
+      asked.length = 0;
+      const got = fn(v, t);
+      if (got !== `T:card.employment.${v}` || asked.length !== 1) out.push(`"${v}" reads ${JSON.stringify(got)}, not its own card.employment.${v}`);
+    }
+    for (const v of ["", "full_time", "fulltime", "volunteer", "constructor", undefined, null]) {
+      asked.length = 0;
+      const got = fn(v, t);
+      if (got !== "" || asked.length) out.push(`${JSON.stringify(v)} is labelled ${JSON.stringify(got)}; full-time and unknown say nothing`);
+    }
+    return out;
+  };
+  const judgeFirst103 = (fn) => {
+    const out = [];
+    for (const v of [...labels103, "", "full_time", undefined])
+      if (fn(v) !== (v === "contract" || v === "freelance")) out.push(`proposalFirst(${JSON.stringify(v)}) is ${fn(v)}`);
+    return out;
+  };
+  for (const p of judgeText103(sh103.employmentText)) fail(`check 103: employmentText ${p}`);
+  for (const p of judgeFirst103(sh103.proposalFirst)) fail(`check 103: ${p} — only a Contract or Freelance job opens on the proposal`);
+  const real103 = sh103.employmentText;
+  for (const [label, twin] of [
+    ["a label that says full time", (v, t) => (v ? real103(v, t) : t("card.employment.full_time"))],
+    ["a key built from the value", (v, t) => (v ? t(`card.employment.${v}`) : "")],
+    ["two labels on one sentence", (v, t) => (v === "freelance" ? t("card.employment.also_freelance") : real103(v, t))],
+  ])
+    if (!judgeText103(twin).length) throw new Error(`the judge passes ${label}`);
+  if (!judgeFirst103((v) => v === "contract" || v === "freelance" || v === "also_freelance").length)
+    throw new Error("the judge passes a proposal first for 'also freelance'");
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/jobs.json`));
+    for (const v of labels103)
+      for (const p of keyProblems(bundle, `card.employment.${v}`, loc, "a job row"))
+        fail(`check 103: locales/${loc}/jobs.json ${p}`);
+  }
+
+  const metaOf = (fn) => {
+    const at = fn.indexOf('<p dir="auto" className="truncate text-sm text-ink-muted">');
+    return at === -1 ? "" : fn.slice(at, fn.indexOf("</p>", at));
+  };
+  const fieldsOf = (src, re) => {
+    const m = re.exec(src);
+    return m ? m[1] : null;
+  };
+  const read103 = ({ cards, jobPage, types, models }) => {
+    const out = [];
+    for (const [fnName, v] of [["MatchCard", "m"], ["HistoryRow", "hit"]]) {
+      const fn = fnSource(cards, `export function ${fnName}`);
+      if (!new RegExp(`const employment = employmentText\\(${v}\\.employment, t\\)`).test(fn))
+        out.push(`${fnName} does not word its row's employment type through employmentText(${v}.employment, t)`);
+      if (!/\{employment \? ` · \$\{employment\}` : ""\}/.test(metaOf(fn)))
+        out.push(`${fnName} does not print the label in its meta line (the truncating line, which costs no height)`);
+      if (/<Badge\b[^>]*>\s*\{employment\}/.test(fn)) out.push(`${fnName} draws the label as a badge`);
+    }
+    if (!/const employment = employmentText\(detail\.employment, tJobs\)/.test(jobPage) || !/const meta = \[detail\.company, employment,/.test(jobPage))
+      out.push("a job's page does not put the label in its meta line");
+    if (!/initialKind=\{proposalFirst\(detail\.employment\) \? "proposal" : "letter"\}/.test(jobPage))
+      out.push("a job's page does not open its letter card on the proposal for a Contract or Freelance job");
+    for (const name of ["JobMatch", "JobSearchHit", "ApplicationDetail"]) {
+      const body = fieldsOf(types, new RegExp(`export interface ${name} \\{([\\s\\S]*?)\\n\\}`));
+      if (body === null) throw new Error(`types.ts: ${name} not found`);
+      if (!/^\s*employment\?: string;/m.test(body)) out.push(`types.ts ${name} has no employment`);
+    }
+    const ctxTs = fieldsOf(types, /export interface SearchContext \{([\s\S]*?)\n\}/);
+    if (ctxTs === null) throw new Error("types.ts: SearchContext not found");
+    if (/employment|job_type/i.test(decomment(ctxTs))) out.push("types.ts SearchContext carries an employment filter");
+    if (models !== null) {
+      for (const name of ["JobMatch", "JobSearchHitOut", "ApplicationDetail"]) {
+        const body = fieldsOf(models, new RegExp(`class ${name}\\(BaseModel\\):([\\s\\S]*?)\\n(?=\\S)`));
+        if (body === null) throw new Error(`app/models: class ${name} not found`);
+        if (!/^    employment: str = ""$/m.test(body)) out.push(`the backend's ${name} has no employment`);
+      }
+      const ctxPy = fieldsOf(models, /class SearchContext\(BaseModel\):([\s\S]*?)\n(?=\S)/);
+      if (ctxPy === null) throw new Error("app/models: class SearchContext not found");
+      if (/^    (?:employment|job_type)\w*: /m.test(ctxPy)) out.push("the backend's SearchContext carries an employment filter");
+    }
+    return out;
+  };
+  const models103 = pySource("app/models/__init__.py", "check 103");
+  const r103 = {
+    cards: decomment(read("pages/jobs/cards.tsx")),
+    jobPage: decomment(read("pages/JobPage.tsx")),
+    types: read("types.ts"),
+    models: models103 === null ? null : models103.replace(/\r\n/g, "\n"),
+  };
+  for (const p of read103(r103)) fail(`check 103: ${p} (2026-09-28, freelance)`);
+  const plant103 = (key, from, to, label) => {
+    if (r103[key] === null) return;
+    if (!r103[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read103({ ...r103, [key]: r103[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant103("cards", '{employment ? ` · ${employment}` : ""}\n          {hit.location', '{hit.location', "a History row without the label");
+  plant103("cards", '{best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}', '{best && <Badge tone="mint" className="shrink-0">{t("card.best")}</Badge>}<Badge>{employment}</Badge>', "the label as a badge");
+  plant103("jobPage", 'initialKind={proposalFirst(detail.employment) ? "proposal" : "letter"}', 'initialKind="letter"', "a Contract job that opens on the letter");
+  plant103("types", "  /** The board's employment type as History stored it (see JobMatch.employment). */\n  employment?: string;\n", "", "History's mirror without the field");
+  plant103("types", "export interface SearchContext {\n", "export interface SearchContext {\n  employment_type?: string;\n", "a search filter on it");
+} catch (e) {
+  fail(`employment label check (check 103) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

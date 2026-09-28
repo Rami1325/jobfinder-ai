@@ -1,0 +1,104 @@
+{
+ "_probe": [
+  "C:\\Users\\RAMI_\\AppData\\Local\\Programs\\Python\\Python312\\python.exe probe.py \"https://webapi.drushim.co.il/api/jobs/search?searchterm=%D7%96%D7%9E%D7%A0%D7%99&page=0\" out.json",
+  "C:\\Users\\RAMI_\\AppData\\Local\\Programs\\Python\\Python312\\python.exe probe.py \"https://webapi.drushim.co.il/api/jobs/search?searchterm=%D7%A4%D7%A8%D7%99%D7%9C%D7%A0%D7%A1&page=0\" out.json"
+ ],
+ "_fetched": "2026-09-27; searchterm=פרילנס returned TotalSearchResultCount 14 (the whole board).",
+ "_scope_codes_seen": {
+  "1": "משרה מלאה",
+  "2": "משרה חלקית",
+  "3": "משרה זמנית",
+  "4": "משמרות",
+  "5": "עבודה מהבית",
+  "6": "היברידי"
+ },
+ "TotalSearchResultCount": 14,
+ "ResultList": [
+  {
+   "Code": 38301248,
+   "Company": {
+    "CompanyDisplayName": "אריאל מגורים"
+   },
+   "JobContent": {
+    "Name": "מנהל/ת חשבונות למשרה זמנית (החלפה לחל\"ד)",
+    "JobCode": 38301248,
+    "FullName": "מנהל/ת חשבונות למשרה זמנית (החלפה לחל\"ד)",
+    "Scopes": [
+     {
+      "Code": 3,
+      "NameInHebrew": "משרה זמנית"
+     }
+    ],
+    "Requirements": "מנהל /ת חשבונות סוג 3 - חובה<br/>חשב/ת שכר  – יתרון<br/>ניסיון קודם כמנהל/ת חשבונות עד מאזן – חובה<br/>ניסיון קודם בעבודה על מערכת  Priority- חובה<br/>ניסיון קודם בתכנת מכפל - יתרון<br/>ניסיון קודם בעולם הנדל\"ן – יתרון<br/>לקיחת אחריות ויכולת לעבוד עצמאית.",
+    "Description": "לחברת נדל\"ן יזמי צעירה ברעננה דרוש/ה מנהל/ת חשבונות מנוסה ומקצועי/ת בעל/ת ידע נרחב בתחום וניסיון קודם בעולם הנדל\"ן למשרה זמנית. התפקיד כולל הנהלת חשבונות של מס' חברות העוסקות בתחום הנדל\"ן וחשבות שכר (למספר קטן של עובדים)<br/><br/>התפקיד בעל משמעות ואתגר בכפיפות למנכ\"ל וחשבת החברה.",
+    "Addresses": [
+     {
+      "CityId": 484,
+      "City": "רעננה",
+      "CityEnglish": "\tRaanana\t",
+      "GeoLexId": 539092,
+      "Longitude": 34.871326,
+      "Latitude": 32.184781,
+      "RegionIds": [
+       11
+      ]
+     }
+    ]
+   },
+   "JobInfo": {
+    "Link": "/job/38301248/69163de7/",
+    "JobCode": 38301248,
+    "Date": "2026-09-02T15:00:56.88",
+    "JumpDateString": "לפני 30 דקות",
+    "IsExpired": false
+   }
+  },
+  {
+   "Code": 38531167,
+   "Company": {
+    "CompanyDisplayName": "חברה לשיווק מזון"
+   },
+   "JobContent": {
+    "Name": "פקיד/ת קבלה ואדמיניסטרציה למשרד בת\"א משרה זמנית",
+    "JobCode": 38531167,
+    "FullName": "פקיד/ת קבלה ואדמיניסטרציה למשרד בת\"א משרה זמנית",
+    "Scopes": [
+     {
+      "Code": 1,
+      "NameInHebrew": "משרה מלאה"
+     },
+     {
+      "Code": 2,
+      "NameInHebrew": "משרה חלקית"
+     },
+     {
+      "Code": 3,
+      "NameInHebrew": "משרה זמנית"
+     }
+    ],
+    "Requirements": "•\tניסיון קודם באדמיניסטרציה - ייתרון משמעותי.<br/>•\tשליטה טובה ביישומי OFFICE.<br/>•\tתודעת שירות גבוהה ויחסי אנוש מצוינים.<br/>•\tסדר, ארגון ויכולת עבודה עצמאית.<br/>•\tאחריות, יוזמה ויכולת עבודה בסביבה דינמית.",
+    "Description": "לחברה מובילה דרוש/ה פקיד/ת קבלה ואדמיניסטרציה לתפקיד מגוון הכולל עבודה מול עובדים, מנהלים, ספקים ואורחים, לצד תמיכה אדמיניסטרטיבית שוטפת.<br/>תחומי אחריות:<br/>•\tמתן מענה טלפוני.<br/>•\tניהול עמדת הקבלה.<br/>•\tטיפול בדואר, שליחויות והזמנות משרדיות.<br/>•\tתיאום פגישות. <br/>•\tתמיכה אדמיניסטרטיבית למחלקות החברה.<br/>העבודה בימים א'-ה' בין השעות 8:00-17:00 (יש גמישות בשעות).<br/>* משרה זמנית לשלושה חודשים.",
+    "Addresses": [
+     {
+      "CityId": 380,
+      "City": "תל אביב",
+      "CityEnglish": "Tel Aviv",
+      "GeoLexId": 537905,
+      "Longitude": 34.814985,
+      "Latitude": 32.048725,
+      "RegionIds": [
+       1
+      ]
+     }
+    ]
+   },
+   "JobInfo": {
+    "Link": "/job/38531167/9361acbc/",
+    "JobCode": 38531167,
+    "Date": "2026-09-24T13:27:52.38",
+    "JumpDateString": "לפני 2 שעות",
+    "IsExpired": false
+   }
+  }
+ ]
+}
