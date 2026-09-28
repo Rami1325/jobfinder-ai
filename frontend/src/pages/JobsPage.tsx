@@ -1218,9 +1218,10 @@ export default function JobsPage() {
                   </motion.div>
                 ))}
                 {/* A freelance search always ends with the way to the gigs it
-                    cannot read (XPlace, Upwork, a group), and with nothing found
+                    cannot read (XPlace, Upwork, LinkedIn, a group) and links to
+                    look for them with this search's title, and with nothing found
                     that is the whole answer. */}
-                {freelanceResult && <FreelanceNote empty={searchResult.matches.length === 0} />}
+                {freelanceResult && <FreelanceNote empty={searchResult.matches.length === 0} title={searchResult.context.job_title} />}
                 {showRestricted &&
                   (searchResult.filtered ?? []).map((job, i) => (
                     <RestrictedRow key={job.url || `filtered-${i}`} job={job} />

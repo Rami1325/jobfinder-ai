@@ -479,5 +479,9 @@
     "none": "No contract or freelance jobs found for this search.",
     "few": "Few freelance jobs are listed on Israeli boards. Found a gig on XPlace, Upwork or a Facebook group? Paste it to write a proposal.",
     "pasteGig": "Paste a gig"
+  },
+  "gigs": {
+    "label": "Look for gigs on",
+    "opens": "{{site}}, opens in a new tab"
   }
 }
