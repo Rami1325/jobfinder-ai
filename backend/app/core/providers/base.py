@@ -48,8 +48,10 @@ class JobHit:
     language: str = "en"  # "he" | "en" — best-effort detection by the provider
     raw: dict = field(default_factory=dict)  # provider-native payload for debugging
     # The board's OWN statement of the work mode, verbatim ("Hybrid"), when it
-    # has a field for it: Comeet's `workplace_type`. "" for every other board.
-    # `app.core.work_mode` reads it before the posting's words, and it wins.
+    # has a field for it: Comeet's `workplace_type`, and the boards added since
+    # 2026-09-28 (Lever's `workplaceType` first; each provider's docstring names
+    # its field). "" for every other board. `app.core.work_mode` reads it before
+    # the posting's words, and it wins; a value it does not know reads as nothing.
     work_mode: str = ""
     # Cross-board duplicates merged into this hit (PLAN 15.1): the same posting
     # found on other boards, as {"source": ..., "url": ...}. Filled by the

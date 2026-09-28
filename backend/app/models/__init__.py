@@ -1756,7 +1756,8 @@ class SearchContext(BaseModel):
     # Worldwide-remote opt-in: when the work modes include "remote" (or are
     # "any"), ALSO search the US, the UK and the EU (see
     # job_search.WORLDWIDE_REMOTE_LOCATIONS) on the boards with global reach
-    # (LinkedIn). A posting from those queries is kept only when it SAYS it is
+    # (LinkedIn; and since 2026-09-28 Himalayas, asked only here, for remote jobs
+    # open to people in Israel). A posting from those queries is kept only when it SAYS it is
     # remote (reason "not_remote" otherwise): LinkedIn's remote filter is ignored
     # by its logged-out search, so the query alone returns on-site jobs abroad.
     # Local Israeli boards are never queried with those locations, and the flag

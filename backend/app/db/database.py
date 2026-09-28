@@ -149,3 +149,16 @@ def init_db() -> None:
         backfill_user_ids(db)
     finally:
         db.close()
+
+    # 2026-09-28: a saved search that names every board there was is stored as
+    # "every board", once, so the boards added that day join it
+    # (`registry_seed.widen_saved_sources`). Bookkeeping: never fails a boot.
+    from app.db.registry_seed import widen_saved_sources
+
+    db = SessionLocal()
+    try:
+        widen_saved_sources(db)
+    except Exception:  # noqa: BLE001 - tried again on the next cold start
+        db.rollback()
+    finally:
+        db.close()

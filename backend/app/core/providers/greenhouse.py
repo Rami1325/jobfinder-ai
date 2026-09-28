@@ -6,11 +6,21 @@ returns every open position with the full posting HTML inline (HTML-escaped in
 the `content` field) — so, like Comeet, hits need no per-job detail fetch.
 
 Like Comeet, Greenhouse is queried per company: we keep a registry of Israeli
-tech companies (`greenhouse_companies` table, seeded from greenhouse_seed.py,
-user-extensible via POST /jobs/greenhouse/companies), pull each board in
-parallel with a short in-process TTL cache, then filter client-side by the
-search title/location (with Hebrew→English aliases for the big Israeli cities —
-Greenhouse location data is English).
+tech companies (`greenhouse_companies` table, seeded from greenhouse_seed.py's
+batches, admin-extensible via POST /jobs/greenhouse/companies), pull each board
+through this board's `CompanyFeeds` (feeds.py: cache, one fetch at a time per
+board, failures remembered, a time budget per query), then filter client-side
+by the search title/location (with Hebrew→English aliases for the big Israeli
+cities — Greenhouse location data is English).
+
+A BOARD TOO LARGE TO READ WHOLE (2026-09-28). `_http_get` reads at most 3 MB
+(`HTTP_READ_CAP`), and with every description inline Elastic's board (384 jobs)
+is over it: the JSON arrived cut off and failed to parse on every search.
+SentinelOne's measured 2.96 MB and NICE's 2.66. Such a board is read as its
+LIST (`/jobs` without `content`, 0.45 MB for Elastic), which carries the title,
+the place, the dates and the link; its postings then match on the title alone,
+and the ones a search selects fetch their description one at a time
+(`fetch_description`, `/jobs/<id>`), the scrape-style path.
 
 `parse_greenhouse_jobs` and `parse_board_ref` are pure functions pinned by the
 offline smoke test against a trimmed real API response
@@ -22,19 +32,25 @@ from __future__ import annotations
 import html as _html
 import json
 import re
-import time
-from concurrent.futures import ThreadPoolExecutor
 
-from app.core.job_match import _html_to_text, _http_get
+from app.core.job_match import HTTP_READ_CAP, _html_to_text, _http_get
 from app.core.lang import detect_language
 from app.core.providers.base import JobHit, NoResultsError
+from app.core.providers.feeds import CompanyFeeds, fresh_copy
 from app.core.providers.geo import HE_CITY_ALIASES, ISRAEL_TOKENS
 from app.models import SearchContext
 
 _API_URL = "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
+_LIST_URL = "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"  # no descriptions
+_JOB_URL = "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs/{job_id}"
 _TIMEOUT_S = 30
 _MAX_WORKERS = 8  # registry-wide fan-out; keep the burst polite
 _CACHE_TTL_S = 15 * 60  # boards change slowly; don't re-hit every search
+_FAIL_TTL_S = 10 * 60  # a board that failed (a 404: it moved) is not asked again for ten minutes
+_BUDGET_S = 20.0  # how long one query waits for the registry (feeds.py)
+# The raw key a list-only posting carries its board slug under, for its
+# description fetch. Never a Greenhouse field name.
+_BOARD_KEY = "_jf_board"
 
 # A board slug ("wizinc") or any URL that carries one:
 #   https://job-boards.greenhouse.io/wizinc[/...]
@@ -46,9 +62,8 @@ _URL_RE = re.compile(
     r"(?:v1/boards/)?([A-Za-z0-9_-]+)"
 )
 
-# slug -> (fetched_at, raw jobs list). In-process cache so a burst of searches
-# doesn't re-hit ~16 board APIs each time.
-_jobs_cache: dict[str, tuple[float, list]] = {}
+# Each board's parsed postings by slug, shared by every search in the process.
+FEEDS = CompanyFeeds("greenhouse", workers=_MAX_WORKERS, ttl_s=_CACHE_TTL_S, fail_ttl_s=_FAIL_TTL_S)
 
 
 def parse_board_ref(text: str) -> str:
@@ -148,17 +163,41 @@ def _location_matches(hit: JobHit, wanted: str) -> bool:
     return False
 
 
-def _fetch_jobs(slug: str) -> list:
-    """One board's open jobs (cached). Raises on failure — the caller isolates."""
-    now = time.time()
-    cached = _jobs_cache.get(slug)
-    if cached and now - cached[0] < _CACHE_TTL_S:
-        return cached[1]
-    data = json.loads(_http_get(_API_URL.format(slug=slug), timeout=_TIMEOUT_S))
+def _jobs_of(data) -> list:
     jobs = data.get("jobs") if isinstance(data, dict) else None
-    jobs = jobs if isinstance(jobs, list) else []
-    _jobs_cache[slug] = (now, jobs)
-    return jobs
+    return jobs if isinstance(jobs, list) else []
+
+
+def _fetch_jobs(slug: str) -> tuple[list, bool]:
+    """One board's open jobs, and whether they carry their descriptions. A board
+    whose inline descriptions pass the read cap is read as its list instead (see
+    the module docstring). Raises on failure — the caller isolates. Uncached:
+    `FEEDS` is the cache."""
+    body = _http_get(_API_URL.format(slug=slug), timeout=_TIMEOUT_S)
+    try:
+        return _jobs_of(json.loads(body)), True
+    except ValueError:
+        if len(body.encode("utf-8")) < HTTP_READ_CAP - 4096:
+            raise  # malformed, not cut off: a real failure
+    listed = _jobs_of(json.loads(_http_get(_LIST_URL.format(slug=slug), timeout=_TIMEOUT_S)))
+    return [{**job, _BOARD_KEY: slug} for job in listed if isinstance(job, dict)], False
+
+
+def _feed(company):
+    """The fetch `FEEDS` runs for one board: its postings, parsed once."""
+
+    def fetch() -> list[JobHit]:
+        jobs, _whole = _fetch_jobs(company.slug)
+        return parse_greenhouse_jobs({"jobs": jobs}, company_name=company.name)
+
+    return fetch
+
+
+def fetch_job_description(slug: str, job_id: str) -> str:
+    """One posting's description from its board (a list-only board's posting)."""
+    data = json.loads(_http_get(_JOB_URL.format(slug=slug, job_id=job_id), timeout=_TIMEOUT_S))
+    content = data.get("content") if isinstance(data, dict) else ""
+    return _html_to_text(_html.unescape(str(content or "")))
 
 
 def register_company(db, board: str):
@@ -169,7 +208,9 @@ def register_company(db, board: str):
 
     slug = parse_board_ref(board)
     try:
-        data = json.loads(_http_get(_API_URL.format(slug=slug), timeout=_TIMEOUT_S))
+        # The list, not the board with its descriptions: it names the company
+        # just as well, and a large board's full form passes the read cap.
+        data = json.loads(_http_get(_LIST_URL.format(slug=slug), timeout=_TIMEOUT_S))
     except Exception as e:  # noqa: BLE001 - 404/network, user-facing
         raise ValueError(
             f"Couldn't find a public Greenhouse board named '{slug}'. "
@@ -204,22 +245,15 @@ class GreenhouseProvider:
                 "No Greenhouse companies registered. Add one with its board slug."
             )
 
-        hits: list[JobHit] = []
-        reached = 0
-        with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
-            futures = [(c, pool.submit(_fetch_jobs, c.slug)) for c in companies]
-            for company, fut in futures:
-                try:
-                    jobs = fut.result()
-                except Exception:  # noqa: BLE001 - one board must not sink the rest
-                    continue
-                reached += 1
-                hits.extend(parse_greenhouse_jobs({"jobs": jobs}, company_name=company.name))
-        if not reached:
+        # One board must not sink the rest (feeds.py counts failures and late
+        # boards); only a registry that answered NOTHING is a board failure.
+        got = FEEDS.gather([(c.slug, _feed(c)) for c in companies], _BUDGET_S)
+        if not got.values:
             raise ValueError(
                 "Couldn't reach any Greenhouse boards right now. Try again in a minute."
             )
 
+        hits: list[JobHit] = [h for c in companies for h in got.values.get(c.slug, [])]
         if ctx.job_title.strip():
             hits = [h for h in hits if _keyword_matches(h, ctx.job_title)]
         if ctx.location.strip():
@@ -228,10 +262,21 @@ class GreenhouseProvider:
             where = f" in '{ctx.location}'" if ctx.location.strip() else ""
             raise NoResultsError(
                 f"No open positions matching '{ctx.job_title}'{where} at the "
-                f"{len(companies)} Greenhouse companies in your registry."
+                f"{len(got.values)} Greenhouse companies that answered."
             )
         hits.sort(key=lambda h: h.posted_at, reverse=True)  # freshest first
-        return hits[: ctx.limit]
+        # Fresh copies: the fan-out writes on a hit, and the cached ones serve
+        # the next query too.
+        return [fresh_copy(h) for h in hits[: ctx.limit]]
 
     def fetch_description(self, hit: JobHit) -> str:
-        return hit.description  # inline from the boards API — never refetch
+        if hit.description:
+            return hit.description  # inline from the boards API — never refetch
+        # A posting of a board read as its list (module docstring): its own page.
+        slug = hit.raw.get(_BOARD_KEY) if isinstance(hit.raw, dict) else None
+        if not slug or not hit.external_id:
+            return ""
+        try:
+            return fetch_job_description(str(slug), hit.external_id)
+        except Exception:  # noqa: BLE001 - an unfetchable posting is `skipped`, never a raise
+            return ""

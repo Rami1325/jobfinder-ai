@@ -1,0 +1,160 @@
+{
+ "id": "744000152024919",
+ "name": "AI Engineer – Next-Generation Cyber Security",
+ "uuid": "033d025c-0620-4b66-8649-01c68466e0f7",
+ "jobId": "12915f4c-416f-4721-91e6-3a5ec5cffca2",
+ "jobAdId": "dda30679-7b98-462a-8f5f-a7869ece2f71",
+ "defaultJobAd": true,
+ "refNumber": "REF401N",
+ "company": {
+  "name": "Check Point Software Technologies",
+  "identifier": "CheckPointSoftwareTechnologies2"
+ },
+ "location": {
+  "city": "Tel Aviv-Yafo",
+  "region": "Tel Aviv District",
+  "country": "il",
+  "remote": false,
+  "hybrid": true,
+  "latitude": "32.0852999",
+  "longitude": "34.78176759999999",
+  "fullLocation": "Tel Aviv-Yafo, Tel Aviv District, Israel"
+ },
+ "customField": [
+  {
+   "fieldId": "6a21aa1206dc5007efef6da3",
+   "fieldLabel": "Employment Percentage",
+   "valueId": "100",
+   "valueLabel": "100%"
+  },
+  {
+   "fieldId": "6a21a72e57f3707f05fe7c96",
+   "fieldLabel": "CP Department",
+   "valueId": "130",
+   "valueLabel": "Workspace Security"
+  },
+  {
+   "fieldId": "6a21a7d2311f6c9c65f6d0c9",
+   "fieldLabel": "Office Location",
+   "valueId": "97203",
+   "valueLabel": "Tel-Aviv"
+  },
+  {
+   "fieldId": "6a21ad5ef46fc3803795b44e",
+   "fieldLabel": "HRP",
+   "valueId": "29854",
+   "valueLabel": "Limor Sella Broyde"
+  },
+  {
+   "fieldId": "6a2a844349a1a3a8872e7750",
+   "fieldLabel": "Evergreen Job",
+   "valueId": "432cfa9d-a08c-4d7a-90ad-6498284f4d8c",
+   "valueLabel": "No"
+  },
+  {
+   "fieldId": "6a21b4a18c40edfe81d1d604",
+   "fieldLabel": "Career site Category",
+   "valueId": "10",
+   "valueLabel": "R&D"
+  },
+  {
+   "fieldId": "6a86a07dbc112cc8da711786",
+   "fieldLabel": "Sub-Region",
+   "valueId": "12",
+   "valueLabel": "Israel"
+  },
+  {
+   "fieldId": "6a21ad14311f6c9c65f6d0ca",
+   "fieldLabel": "Referral Category",
+   "valueId": "0",
+   "valueLabel": "Standard Position"
+  },
+  {
+   "fieldId": "6a21a7591f561247defa7adb",
+   "fieldLabel": "Team",
+   "valueId": "9042866",
+   "valueLabel": "Endpoint Security Area (Asaf Livne)"
+  },
+  {
+   "fieldId": "COUNTRY",
+   "fieldLabel": "Country/Region",
+   "valueId": "il",
+   "valueLabel": "Israel"
+  },
+  {
+   "fieldId": "69fb2260d32371e2f69d4e72",
+   "fieldLabel": "Brands",
+   "valueId": "default",
+   "valueLabel": "Check Point Software Technologies"
+  },
+  {
+   "fieldId": "6a21a824214450174406f79c",
+   "fieldLabel": "Employment Type",
+   "valueId": "9",
+   "valueLabel": "Employee"
+  },
+  {
+   "fieldId": "6a33ccaa0f2acdd461645977",
+   "fieldLabel": "C-Level",
+   "valueId": "23214",
+   "valueLabel": "Gil Friedrich"
+  },
+  {
+   "fieldId": "6a21a790b89f6c3d3b565ae2",
+   "fieldLabel": "Region",
+   "valueId": "100",
+   "valueLabel": "IL"
+  }
+ ],
+ "releasedDate": "2026-09-27T09:59:38.945Z",
+ "creator": {
+  "name": "",
+  "avatarUrl": ""
+ },
+ "postingUrl": "https://jobs.smartrecruiters.com/CheckPointSoftwareTechnologies2/744000152024919-ai-engineer-next-generation-cyber-security",
+ "applyUrl": "https://jobs.smartrecruiters.com/CheckPointSoftwareTechnologies2/744000152024919-ai-engineer-next-generation-cyber-security?oga=true",
+ "referralUrl": "https://jobs.smartrecruiters.com/external-referrals/company/CheckPointSoftwareTechnologies2/publication/033d025c-0620-4b66-8649-01c68466e0f7?dcr_ci=CheckPointSoftwareTechnologies2",
+ "jobAd": {
+  "sections": {
+   "companyDescription": {
+    "title": "Company Description",
+    "text": "<p>We are seeking an innovative <strong>AI Engineer</strong> to join our team in building the next generation of security protection and cyber attack detection for endpoints. In this role, you will leverage cutting-edge AI technologies and advanced agentic approaches to revolutionize how cyber threats are identified, analyzed, and mitigated. You will design, build, and optimize intelligent AI agents that analyze complex security data to deliver highly accurate, automated verdict decisions on malicious activities, ensuring endpoint resilience against sophisticated attacks.</p>"
+   },
+   "jobDescription": {
+    "title": "Job Description",
+    "text": "<ul><li><strong>Agentic Framework Design:</strong> Design and implement intelligent, multi-agent AI systems capable of executing complex security analysis workflows and automated decision-making.</li><li><strong>Context Optimization:</strong> Analyze diverse security datasets to determine the most effective context, telemetry data, and threat intelligence to feed into AI agents to maximize decision accuracy and minimize false positives.</li><li><strong>Model Configuration &amp; Integration:</strong> Evaluate, configure, and deploy a variety of state-of-the-art language models and AI architectures tailored for high-performance security use cases.</li><li><strong>Data Analysis &amp; Performance Evaluation:</strong> Perform deep data analysis on security events and model outputs to continuous"
+   },
+   "qualifications": {
+    "title": "Qualifications",
+    "text": "<p><strong>Required Technical Skills</strong></p><ul><li><strong>AI &amp; Agentic Systems:</strong> Proven experience building applications with modern AI architectures, advanced prompt engineering, and multi-agent orchestration frameworks.</li><li><strong>Model Management:</strong> Hands-on experience configuring, optimizing, and deploying diverse machine learning and language models.</li><li><strong>Data Processing &amp; Analysis:</strong> Strong proficiency in Python and data analysis libraries to manipulate, clean, and extract insights from high-velocity data streams.</li><li><strong>Security Awareness:</strong> Familiarity with cybersecurity concepts, threat detection principles, or common security data formats (such as system logs, event tracking, or endpoint telemetry).</li></ul><p>"
+   },
+   "additionalInformation": {
+    "title": "Additional Information",
+    "text": ""
+   }
+  }
+ },
+ "active": true,
+ "visibility": "PUBLIC",
+ "industry": {
+  "id": "computer_software",
+  "label": "Computer Software"
+ },
+ "function": {
+  "id": "engineering",
+  "label": "Engineering"
+ },
+ "experienceLevel": {
+  "id": "mid_senior_level",
+  "label": "Mid-Senior Level"
+ },
+ "typeOfEmployment": {
+  "id": "permanent",
+  "label": "Full-time"
+ },
+ "language": {
+  "code": "en",
+  "label": "English",
+  "labelNative": "English (US)"
+ }
+}

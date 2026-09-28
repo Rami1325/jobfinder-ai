@@ -32,6 +32,8 @@ import {
   SOURCE_IDS,
   sourceLabel,
   WORK_MODES,
+  WORLDWIDE_ONLY_SOURCES,
+  WORLDWIDE_SOURCES,
   type WorkMode,
 } from "./shared";
 
@@ -48,7 +50,7 @@ export function CustomizeFields({
   setCtx: Dispatch<SetStateAction<SearchContext | null>>;
   prefilling: boolean;
 }) {
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
 
   // Multi-keyword search: the UI edits ctx.job_titles (one input per keyword);
   // job_title mirrors the first entry so older backends and the results
@@ -73,6 +75,9 @@ export function CustomizeFields({
 
   // Sources selection lives on ctx.sources; empty/absent means "all boards".
   const selectedSources: string[] = ctx?.sources?.length ? ctx.sources : [...SOURCE_IDS];
+  // The worldwide pass runs on LinkedIn and Himalayas: with neither ticked the
+  // opt-in is inert, so it is greyed out with the reason under it.
+  const worldwideBoard = selectedSources.some((s) => WORLDWIDE_SOURCES.includes(s));
   function toggleSource(id: string) {
     setCtx((p) => {
       const cur = p?.sources?.length ? p.sources : [...SOURCE_IDS];
@@ -218,20 +223,20 @@ export function CustomizeFields({
           that can include remote roles ("remote" among the picks, or "any").
           Abroad, a posting is kept only when it SAYS it is remote. Rides SearchContext,
           so saving an alert with it customizes the daily alert email the same way.
-          The pass runs on LinkedIn (the only board with worldwide inventory), and
-          the board checkboxes are authoritative (PLAN 15.9) — with LinkedIn
-          unchecked the toggle is inert, so grey it out and say why. */}
+          The pass runs on LinkedIn and Himalayas (WORLDWIDE_SOURCES), and the board
+          checkboxes are authoritative (PLAN 15.9) — with neither checked the
+          toggle is inert, so grey it out and say why. */}
       {/* Opacity/transform only — never height:auto on a reveal (see Disclosure). */}
       {allowsRemote(ctx?.work_mode) && (
           <label
             className={`animate-fade-up mt-3 flex w-fit items-start gap-2 text-sm text-ink ${
-              selectedSources.includes("linkedin") ? "cursor-pointer" : "opacity-50"
+              worldwideBoard ? "cursor-pointer" : "opacity-50"
             }`}
           >
             <input
               type="checkbox"
               checked={!!ctx?.include_worldwide}
-              disabled={prefilling || !selectedSources.includes("linkedin")}
+              disabled={prefilling || !worldwideBoard}
               onChange={(e) =>
                 setCtx((p) => ({ ...(p as SearchContext), include_worldwide: e.target.checked }))
               }
@@ -239,7 +244,7 @@ export function CustomizeFields({
             />
             <span>
               {t("search.worldwide")}
-              {!selectedSources.includes("linkedin") && (
+              {!worldwideBoard && (
                 <span className="block text-xs font-normal text-ink-muted">{t("search.worldwideNeedsLinkedIn")}</span>
               )}
             </span>
@@ -248,7 +253,7 @@ export function CustomizeFields({
       {/* One line, and which countries under "Why?" (PLAN 31.7): the list and
           the rule were three lines under a checkbox. Outside the label, so the
           button is not part of what toggles it. */}
-      {allowsRemote(ctx?.work_mode) && selectedSources.includes("linkedin") && (
+      {allowsRemote(ctx?.work_mode) && worldwideBoard && (
         <WhyNote className="ms-6 mt-0.5" line={t("search.worldwideLine")} why={t("search.worldwideWhy")} />
       )}
 
@@ -273,12 +278,15 @@ export function CustomizeFields({
         ))}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-ink">
+      {/* Nine boards since 2026-09-28: each a 44 px row to tap (the owner's
+          floor), packed with no gap between rows. A worldwide-only board says
+          so, since it is asked only by the worldwide pass above. */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 text-sm text-ink">
         <span className="text-xs font-semibold text-ink-muted">{t("search.sourcesLabel")}</span>
         {SOURCE_IDS.map((id) => {
           const checked = selectedSources.includes(id);
           return (
-            <label key={id} className="flex cursor-pointer items-center gap-1.5">
+            <label key={id} className="flex min-h-11 cursor-pointer items-center gap-1.5">
               <input
                 type="checkbox"
                 checked={checked}
@@ -286,7 +294,10 @@ export function CustomizeFields({
                 onChange={() => toggleSource(id)}
                 className="h-4 w-4 accent-accent"
               />
-              {sourceLabel(id)}
+              {sourceLabel(id, i18n.language)}
+              {WORLDWIDE_ONLY_SOURCES.includes(id) && (
+                <span className="text-xs text-ink-faint">{t("search.worldwideOnlyBoard")}</span>
+              )}
             </label>
           );
         })}

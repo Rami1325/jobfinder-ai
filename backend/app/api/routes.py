@@ -79,6 +79,7 @@ from app.core.search_query import read_query, settle, work_mode_value
 from app.core import kits as kits_core
 from app.core.lang import resume_language
 from app.core.linkedin import optimize_linkedin
+from app.core.providers import stored_sources
 from app.core.providers.comeet import register_company as register_comeet_company
 from app.core.providers.greenhouse import register_company as register_greenhouse_company
 from app.core.providers.greenhouse_seed import board_url as greenhouse_board_url
@@ -960,8 +961,14 @@ def update_search_prefs(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> SearchPrefs:
-    """Persist (context set) or clear (context null) the saved customize picks."""
-    user.search_prefs_json = body.context.model_dump_json() if body.context else ""
+    """Persist (context set) or clear (context null) the saved customize picks.
+    Every board ticked is stored as "every board" ([]), so a board added later
+    joins it (`providers.stored_sources`)."""
+    user.search_prefs_json = (
+        body.context.model_copy(update={"sources": stored_sources(body.context.sources)}).model_dump_json()
+        if body.context
+        else ""
+    )
     db.commit()
     return body
 

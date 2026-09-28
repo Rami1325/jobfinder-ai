@@ -1,0 +1,113 @@
+[
+ {
+  "additionalPlain": "Mobileye changes the way we drive, from preventing accidents to semi and fully autonomous vehicles. If you are an excellent, bright, hands-on person with a passion to make a difference come to lead the revolution!\n",
+  "additional": "<div>Mobileye changes the way we drive, from preventing accidents to semi and fully autonomous vehicles. If you are an excellent, bright, hands-on person with a passion to make a difference come to lead the revolution!</div>",
+  "categories": {
+   "commitment": "Full time",
+   "department": "R&D",
+   "location": "Ramat Gan, Israel",
+   "team": "Algorithms",
+   "allLocations": [
+    "Ramat Gan, Israel"
+   ]
+  },
+  "createdAt": 1779188005917,
+  "descriptionPlain": "Mobileye is looking for a 3D Algorithm Developer who will be challenged by solving problems from the real world using Computer Vision, multi-sensor reasoning, and 3D reconstruction. The work within our Algorithms department plays a key role in advancing autonomous driving technologies and improving road safety.\nIn this position, you will combine algorithmic research and development in Python, contributing to both existing products and new feature development. The role involves designing and implementing algorithms to solve complex real-world challenges.\nThe work in Mobileye’s Algorithms depart",
+  "description": "<p>Mobileye is looking for a 3D Algorithm Developer who will be challenged by solving problems from the real world using Computer Vision, multi-sensor reasoning, and 3D reconstruction. The work within our Algorithms department plays a key role in advancing autonomous driving technologies and improving road safety.</p>\n<p>In this position, you will combine algorithmic research and development in Python, contributing to both existing products and new feature development. The role involves designing and implementing algorithms to solve complex real-world challenges.</p>\n<p>The work in Mobileye’s ",
+  "id": "bb661a53-79b8-459d-a8df-5dd419d62596",
+  "lists": [
+   {
+    "text": "What will your job look like:",
+    "content": "\n<li>Algorithm development in the areas of computer vision (both classical and learning-based) and 3D reconstruction.</li>\n<li>You will develop primarily in Python, taking part in both maintaining existing products and developing new features.</li>\n<li>You will need to learn and develop new algorithms that can address new problems as they arise.&nbsp;</li>\n"
+   },
+   {
+    "text": "All you need is:",
+    "content": "\n<li>\n<p>B.Sc. in Mathematics, Physics, or Computer Science (M.Sc. or Ph.D.- an advantage).</p>\n</li>\n<li>\n<p>2+ years of experience in algorithm development, including academic or hands-on project experience, preferably in areas such as Computer Vision, multi-sensor reasoning, or 3D reconstruction.</p>\n</li>\n<li>\n<p>Strong problem-solving skills and ability to tackle complex, real-world challenge"
+   },
+   {
+    "text": "Nice to have:",
+    "content": "<div>\n\n<li>\n<p>Hands-on experience with multi-view geometry.</p>\n</li>\n<li>\n<p>Background in statistical estimation.</p>\n</li>\n\n</div>"
+   }
+  ],
+  "text": "3D Algorithm Developer",
+  "country": "IL",
+  "workplaceType": "hybrid",
+  "opening": "",
+  "openingPlain": "",
+  "descriptionBody": "<p>Mobileye is looking for a 3D Algorithm Developer who will be challenged by solving problems from the real world using Computer Vision, multi-sensor reasoning, and 3D reconstruction. The work within our Algorithms department plays a key role in advancing autonomous driving technologies and improving road safety.</p>\n<p>In this position, you will combine algorithmic research and development in Python, contributing to both existing products and new feature development. The role involves designing and implementing algorithms to solve complex real-world challenges.</p>\n<p>The work in Mobileye&rs",
+  "descriptionBodyPlain": "Mobileye is looking for a 3D Algorithm Developer who will be challenged by solving problems from the real world using Computer Vision, multi-sensor reasoning, and 3D reconstruction. The work within our Algorithms department plays a key role in advancing autonomous driving technologies and improving road safety.\nIn this position, you will combine algorithmic research and development in Python, contributing to both existing products and new feature development. The role involves designing and implementing algorithms to solve complex real-world challenges.\nThe work in Mobileye’s Algorithms depart",
+  "hostedUrl": "https://jobs.eu.lever.co/mobileye/bb661a53-79b8-459d-a8df-5dd419d62596",
+  "applyUrl": "https://jobs.eu.lever.co/mobileye/bb661a53-79b8-459d-a8df-5dd419d62596/apply"
+ },
+ {
+  "additional": "",
+  "additionalPlain": "",
+  "categories": {
+   "department": "R&D",
+   "location": "Beijing, China",
+   "team": "Algorithms",
+   "allLocations": [
+    "Beijing, China"
+   ]
+  },
+  "createdAt": 1786953210297,
+  "descriptionPlain": "Mobileye China R&D Center is looking for an AI Algorithm Engineer to join our Perception team and develop advanced machine learning algorithms that enable autonomous vehicles to accurately understand their surroundings. In this role, you will work on large-scale perception systems that process sensor data from cameras and other automotive sensors to detect, classify, and track objects in complex real-world environments.\nYou will collaborate closely with research, software, and system engineering teams to design and deploy robust perception models that operate reliably at production scale.\n",
+  "description": "<div>\n<p>Mobileye China R&amp;D Center is looking for an AI Algorithm Engineer to join our Perception team and develop advanced machine learning algorithms that enable autonomous vehicles to accurately understand their surroundings. In this role, you will work on large-scale perception systems that process sensor data from cameras and other automotive sensors to detect, classify, and track objects in complex real-world environments.</p>\n<p>You will collaborate closely with research, software, and system engineering teams to design and deploy robust perception models that operate reliably at pr",
+  "id": "85acad65-ee0c-4dd6-89a9-7262b9b87fbd",
+  "lists": [
+   {
+    "text": "What will your job look like:",
+    "content": "<div>\n\n<li>Develop and improve deep learning models for perception tasks such as object detection/tracking, semantic segmentation, etc.</li>\n<li>Work with large-scale driving datasets to train and evaluate machine learning models.</li>\n<li>Optimize models for performance, accuracy, and robustness across diverse driving scenarios.</li>\n<li>Analyze edge cases and failure modes to continuously improv"
+   },
+   {
+    "text": "All you need is:",
+    "content": "<div>\n\n<li>Ph.D. or M.S. in Computer Science, Electronic Engineering, or related fields.</li>\n<li>Outstanding coding skills and proficient in algorithms with Python, C/C++, etc.</li>\n<li>Strong product background and hands on experiences in building product-quality computer vision, deep learning and general AI technologies. Intensive experience with at least one DL framework such as PyTorch or Ten"
+   }
+  ],
+  "text": "AI Algorithm Engineer",
+  "country": "CN",
+  "workplaceType": "onsite",
+  "opening": "",
+  "openingPlain": "",
+  "descriptionBody": "<div>\n<p>Mobileye China R&amp;D Center is looking for an AI Algorithm Engineer to join our Perception team and develop advanced machine learning algorithms that enable autonomous vehicles to accurately understand their surroundings. In this role, you will work on large-scale perception systems that process sensor data from cameras and other automotive sensors to detect, classify, and track objects in complex real-world environments.</p>\n<p>You will collaborate closely with research, software, and system engineering teams to design and deploy robust perception models that operate reliably at pr",
+  "descriptionBodyPlain": "Mobileye China R&D Center is looking for an AI Algorithm Engineer to join our Perception team and develop advanced machine learning algorithms that enable autonomous vehicles to accurately understand their surroundings. In this role, you will work on large-scale perception systems that process sensor data from cameras and other automotive sensors to detect, classify, and track objects in complex real-world environments.\nYou will collaborate closely with research, software, and system engineering teams to design and deploy robust perception models that operate reliably at production scale.\n",
+  "hostedUrl": "https://jobs.eu.lever.co/mobileye/85acad65-ee0c-4dd6-89a9-7262b9b87fbd",
+  "applyUrl": "https://jobs.eu.lever.co/mobileye/85acad65-ee0c-4dd6-89a9-7262b9b87fbd/apply"
+ },
+ {
+  "additionalPlain": "Mobileye changes the way we drive, from preventing accidents to semi and fully autonomous vehicles. If you are an excellent, bright, hands-on person with a passion to make a difference come to lead the revolution!\n",
+  "additional": "<div>Mobileye changes the way we drive, from preventing accidents to semi and fully autonomous vehicles. If you are an excellent, bright, hands-on person with a passion to make a difference come to lead the revolution!</div>",
+  "categories": {
+   "commitment": "Full time",
+   "department": "R&D",
+   "location": "Ramat Gan, Israel",
+   "team": "Algorithms",
+   "allLocations": [
+    "Ramat Gan, Israel"
+   ]
+  },
+  "createdAt": 1784016669714,
+  "descriptionPlain": "Our vision Localization group is responsible for accurately localizing the vehicle on a high-definition 3D map with centimeter-level precision using surround camera systems to enable autonomous driving. Our work combines advanced geometric reasoning, scene understanding, and large-scale mapping to solve one of the core challenges of autonomous vehicles in complex real-world environments.\nThe role involves developing algorithmic and deep learning solutions that integrate mathematical optimization, computer vision, and 3D geometry. We work with modern neural network architectures including Trans",
+  "description": "<p>Our vision Localization group is responsible for accurately localizing the vehicle on a high-definition 3D map with centimeter-level precision using surround camera systems to enable autonomous driving. Our work combines advanced geometric reasoning, scene understanding, and large-scale mapping to solve one of the core challenges of autonomous vehicles in complex real-world environments.</p>\n<p>The role involves developing algorithmic and deep learning solutions that integrate mathematical optimization, computer vision, and 3D geometry. We work with modern neural network architectures inclu",
+  "id": "d85072cf-3d47-4c42-a760-2c691af6093b",
+  "lists": [
+   {
+    "text": "What will your job look like:",
+    "content": "\n<li><span data-teams=\"true\">Develop state-of-the-art localization algorithms for autonomous driving using multi-camera surround vision systems.</span></li>\n<li><span data-teams=\"true\">Design and implement deep learning models based on Transformers, Graph Neural Networks, and Convolutional Neural Networks.</span></li>\n<li><span data-teams=\"true\">Solve challenging problems involving 3D geometry, sc"
+   },
+   {
+    "text": "All you need is:",
+    "content": "\n<li><strong>2+ years of practical experience&nbsp;</strong>developing computer vision or machine learning solutions using Python and frameworks such as PyTorch or TensorFlow – must.</li>\n<li>B.Sc. or M.Sc. in Computer Science, Electrical Engineering, or a related field, with strong academic performance.</li>\n<li>Solid foundation in algorithms, data structures, and computer vision/deep learning fu"
+   }
+  ],
+  "text": "AI Algorithm Engineer - Vision Localization Group",
+  "country": "IL",
+  "workplaceType": "hybrid",
+  "opening": "",
+  "openingPlain": "",
+  "descriptionBody": "<p>Our vision Localization group is responsible for accurately localizing the vehicle on a high-definition 3D map with centimeter-level precision using surround camera systems to enable autonomous driving. Our work combines advanced geometric reasoning, scene understanding, and large-scale mapping to solve one of the core challenges of autonomous vehicles in complex real-world environments.</p>\n<p>The role involves developing algorithmic and deep learning solutions that integrate mathematical optimization, computer vision, and 3D geometry. We work with modern neural network architectures inclu",
+  "descriptionBodyPlain": "Our vision Localization group is responsible for accurately localizing the vehicle on a high-definition 3D map with centimeter-level precision using surround camera systems to enable autonomous driving. Our work combines advanced geometric reasoning, scene understanding, and large-scale mapping to solve one of the core challenges of autonomous vehicles in complex real-world environments.\nThe role involves developing algorithmic and deep learning solutions that integrate mathematical optimization, computer vision, and 3D geometry. We work with modern neural network architectures including Trans",
+  "hostedUrl": "https://jobs.eu.lever.co/mobileye/d85072cf-3d47-4c42-a760-2c691af6093b",
+  "applyUrl": "https://jobs.eu.lever.co/mobileye/d85072cf-3d47-4c42-a760-2c691af6093b/apply"
+ }
+]

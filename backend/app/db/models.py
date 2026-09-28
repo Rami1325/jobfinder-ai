@@ -447,6 +447,45 @@ class GreenhouseCompany(Base):
     )
 
 
+class BoardCompany(Base):
+    """A company whose public job board a registry-driven provider reads
+    (2026-09-28): Lever (`board="lever"`, `host` is `api.lever.co` or the EU
+    host `api.eu.lever.co`), SmartRecruiters (the company identifier) and Ashby
+    (the job-board name). One table for the boards whose registry is a slug and
+    nothing else, where Comeet (a token) and Greenhouse keep their own. Seeded by
+    batches (`app/db/registry_seed.py`) like the other two; shared bookkeeping,
+    not user content, so neither privacy door touches it."""
+
+    __tablename__ = "board_companies"
+    __table_args__ = (UniqueConstraint("board", "slug", name="uq_board_companies_board_slug"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    board: Mapped[str] = mapped_column(String(32), index=True)
+    slug: Mapped[str] = mapped_column(String(120))  # case-sensitive on some boards ("Zadara", "Viz.ai")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    host: Mapped[str] = mapped_column(String(80), default="")  # Lever's API host; "" elsewhere
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class RegistrySeed(Base):
+    """One seed batch a company registry has applied (2026-09-28), so each batch
+    reaches an existing database exactly once (`app/db/registry_seed.py`): a
+    company an admin removed is never re-added, and a retirement runs once. The
+    `name` is the batch's own ("comeet:2026-09-28"); its unique constraint is
+    also the claim two cold starts race for, so only one applies a batch. Shared
+    registry bookkeeping, not user content: neither privacy door touches it."""
+
+    __tablename__ = "registry_seeds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class JobAlert(Base):
     """Job-alert settings (one row per user): re-run the saved search on a
     schedule and email newly seen hits. The schedule itself lives in Vercel

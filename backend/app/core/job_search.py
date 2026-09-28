@@ -89,7 +89,18 @@ SCORE_WORKERS = 5  # concurrent scoring workers; same-board detail fetches stay 
 # than a list of the rich member states because every entry here multiplies the
 # per-board query count by len(job_titles), run serially against a board that 429s.
 WORLDWIDE_REMOTE_LOCATIONS: list[str] = ["United States", "United Kingdom", "European Union"]
-WORLDWIDE_BOARD = "linkedin"  # the only registered board with worldwide inventory
+WORLDWIDE_BOARD = "linkedin"  # the worldwide pass's board with markets (the locations above)
+# Every board the worldwide pass runs on (2026-09-28), and the ones it runs on
+# ALONE: Himalayas lists remote jobs and is asked only for jobs open to people in
+# Israel, never with the user's own location, so a search without the pass never
+# asks it (and never waits on it). The frontend's `WORLDWIDE_SOURCES` and
+# `WORLDWIDE_ONLY_SOURCES` mirror these (check-mirrors 100).
+WORLDWIDE_BOARDS: tuple[str, ...] = (WORLDWIDE_BOARD, "himalayas")
+WORLDWIDE_ONLY_BOARDS: frozenset[str] = frozenset({"himalayas"})
+# The origin stamp of a worldwide-only board's queries: the board filters for
+# "open to Israel" itself and has no market to name, and a stamp that is not ""
+# is what puts its postings under the worldwide rules (geo, pay market, say-remote).
+WORLDWIDE_ONLY_MARKET = "Worldwide"
 
 
 def resume_hash(resume: ResumeModel) -> str:
@@ -701,17 +712,23 @@ def _board_queries(name: str, ctx: SearchContext) -> list[tuple[str, str, str, s
     location recurs at index 0, len(locations), 2*len(locations)…, so a
     positional test is wrong; and a `location != ctx.location` test misfires the
     moment a user literally types "United States" as their location. This
-    function already knows which pass produced each query, so it says so."""
+    function already knows which pass produced each query, so it says so.
+
+    A WORLDWIDE-ONLY board (`WORLDWIDE_ONLY_BOARDS`, Himalayas since 2026-09-28)
+    has no local query at all: with the pass on it gets one query per keyword,
+    remote, no location (it filters for "open to Israel" itself), stamped
+    `WORLDWIDE_ONLY_MARKET`; with the pass off it gets none, and the search does
+    not fan out to it."""
     if name not in ctx.sources:
         return []
-    locations = [(ctx.location, ctx.work_mode, "")]
-    if name == WORLDWIDE_BOARD and _remote_ok(ctx) and ctx.include_worldwide:
-        locations = locations + [(loc, "remote", loc) for loc in WORLDWIDE_REMOTE_LOCATIONS]
-    return [
-        (t, loc, mode, origin)
-        for t in ctx.job_titles
-        for loc, mode, origin in (locations or [(ctx.location, ctx.work_mode, "")])
-    ]
+    worldwide = _remote_ok(ctx) and ctx.include_worldwide
+    if name in WORLDWIDE_ONLY_BOARDS:
+        locations = [("", "remote", WORLDWIDE_ONLY_MARKET)] if worldwide else []
+    else:
+        locations = [(ctx.location, ctx.work_mode, "")]
+        if name == WORLDWIDE_BOARD and worldwide:
+            locations = locations + [(loc, "remote", loc) for loc in WORLDWIDE_REMOTE_LOCATIONS]
+    return [(t, loc, mode, origin) for t in ctx.job_titles for loc, mode, origin in locations]
 
 
 def _search_board(name: str, ctx: SearchContext) -> tuple[list[JobHit], list[str], list[str]]:
@@ -864,8 +881,14 @@ def search_jobs(
     # round-robin order stays stable regardless of which board finishes first.
     # The fan-out is EXACTLY the checked boards (PLAN 15.9): the worldwide
     # pass extends the global board's queries in _board_queries, but never
-    # adds a board the user unchecked.
-    fanout = list(ctx.sources)
+    # adds a board the user unchecked. A checked board with no query (a
+    # worldwide-only board while the pass is off) is not asked at all.
+    fanout = [name for name in ctx.sources if _board_queries(name, ctx)]
+    if not fanout:
+        raise NoResultsError(
+            "The boards you picked list remote jobs abroad only. Turn on "
+            "'Include worldwide remote jobs', or pick more boards under 'Customize search'."
+        )
     hits_by_source: dict[str, list[JobHit]] = {}
     source_errors: dict[str, str] = {}
     source_empty: dict[str, str] = {}

@@ -13037,8 +13037,10 @@ try {
     const out = [];
     const why = /<WhyNote\b[\s\S]*?line=\{t\("doc\.screen\.line"\)\}[\s\S]*?why=\{[\s\S]*?t\("doc\.screen\.note"\)[\s\S]*?doc\.screen\.icons[\s\S]*?doc\.screen\.footer[\s\S]*?doc\.screen\.twoColumn[\s\S]*?\/>/;
     if (!why.test(pn)) out.push("the template note is not one line with its gated paragraph under Why?");
-    // `[\s{}]*`: a JSX comment between them decomments to an empty `{}`.
-    if (!/<\/label>\s*\)\}[\s{}]*allowsRemote\(ctx\?\.work_mode\) && selectedSources\.includes\("linkedin"\) && \(\s*<WhyNote\b/.test(al))
+    // `[\s{}]*`: a JSX comment between them decomments to an empty `{}`. The gate
+    // is "any worldwide board ticked" since 2026-09-28 (LinkedIn or Himalayas;
+    // check 100 holds `worldwideBoard` to WORLDWIDE_SOURCES).
+    if (!/<\/label>\s*\)\}[\s{}]*allowsRemote\(ctx\?\.work_mode\) && worldwideBoard && \(\s*<WhyNote\b/.test(al))
       out.push("the worldwide option's Why? is not a sibling after its label");
     if (!/const saved = !file && !!master;/.test(sc) || !/\(!!file \|\| saved\)/.test(sc)) out.push("the scan does not default to the saved resume");
     if ((cd.match(/variant="secondary"\s*icon=\{<ArrowRight size=\{14\}/g) ?? []).length !== 2)
@@ -14731,6 +14733,330 @@ try {
   }
 } catch (e) {
   fail(`WhatsApp check (check 92) could not run: ${e.message}`);
+}
+
+// ---- 98. the board list is the backend's registry, and every board has its names //
+// 2026-09-28 (PLAN 32, More places to search). `SOURCE_IDS` in pages/jobs/shared.ts
+// is the list a search is customised from: a registered board missing from it
+// vanishes from a customised search the moment one box is unticked, and a board
+// the backend lacks is a box that searches nothing. (a) EXECUTES shared.ts:
+// SOURCE_IDS must equal the backend's `PROVIDERS` in its order (read out of
+// providers/__init__.py and each provider class's `name`, a degraded skip without
+// backend/), every board must have an English and a Hebrew name in SOURCE_NAMES,
+// and `sourceLabel` must answer the page's language (Hebrew for "he", English
+// otherwise, an unknown id capitalised, nothing for none). (b) Every call of
+// `sourceLabel(` under src/ outside shared.ts hands it the page's language, and
+// none maps over it bare: `.map(sourceLabel)` hands it the array INDEX as the
+// language (it nearly shipped with this change). (c) The alert email names every
+// registered board (alerts._EM_SOURCE_LABELS; "smartrecruiters".capitalize() is
+// "Smartrecruiters"). Planted twins are judged every run.
+try {
+  const judge98 = ({ ids, names, label, backend, callers, email }) => {
+    const out = [];
+    if (backend !== null) {
+      if (JSON.stringify(ids) !== JSON.stringify(backend))
+        out.push(`SOURCE_IDS is ${JSON.stringify(ids)}, the backend registry is ${JSON.stringify(backend)} (same boards, same order)`);
+    }
+    for (const id of ids) {
+      const n = names[id];
+      if (!n || typeof n.en !== "string" || !n.en.trim() || typeof n.he !== "string" || !n.he.trim())
+        out.push(`board "${id}" has no English and Hebrew name in SOURCE_NAMES`);
+      else {
+        if (label(id, "he") !== n.he) out.push(`sourceLabel("${id}", "he") is not its Hebrew name`);
+        if (label(id, "en") !== n.en || label(id) !== n.en) out.push(`sourceLabel("${id}") is not its English name`);
+      }
+    }
+    if (label("newboard", "he") !== "Newboard") out.push("an unknown board is not shown capitalised");
+    if (label("", "he") !== "" || label(undefined, "en") !== "") out.push("no board is not an empty name");
+    for (const [file, src] of callers) {
+      if (/\.map\(\s*sourceLabel\s*\)/.test(src)) out.push(`${file} maps over sourceLabel bare, which hands it the index as the language`);
+      for (const m of src.matchAll(/\bsourceLabel\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g))
+        if (!/,/.test(m[1])) out.push(`${file}: sourceLabel(${m[1]}) is not handed the page's language`);
+    }
+    if (email !== null && backend !== null)
+      for (const id of backend) if (!email.includes(`"${id}"`)) out.push(`the alert email has no name for board "${id}" (alerts._EM_SOURCE_LABELS)`);
+    return out;
+  };
+
+  const shared98 = runProbeBundle(
+    "sources",
+    'export { SOURCE_IDS, SOURCE_NAMES, sourceLabel } from "./pages/jobs/shared";\n',
+  );
+  for (const k of ["SOURCE_IDS", "SOURCE_NAMES", "sourceLabel"])
+    if (!(k in shared98)) throw new Error(`pages/jobs/shared.ts exports no ${k}`);
+
+  // The backend's registry, in order: the classes `PROVIDERS` is built from, each
+  // mapped to its `name` through the module it is imported from.
+  let backend98 = null;
+  const init98 = pySource("app/core/providers/__init__.py", "check 98");
+  if (init98 !== null) {
+    const src = init98.replace(/\r\n/g, "\n");
+    const block = /PROVIDERS: dict\[str, JobProvider\] = \{[\s\S]*?for provider in \(([\s\S]*?)\n    \)\n\}/.exec(src);
+    if (!block) throw new Error("providers/__init__.py: the PROVIDERS comprehension was not found");
+    const classes = [...block[1].matchAll(/^\s*(\w+Provider)\(\),?\s*$/gm)].map((m) => m[1]);
+    if (classes.length < 5) throw new Error(`read ${classes.length} provider classes out of PROVIDERS (expected at least 5)`);
+    backend98 = classes.map((cls) => {
+      const imp = new RegExp(`^from app\\.core\\.providers\\.(\\w+) import ${cls}$`, "m").exec(src);
+      if (!imp) throw new Error(`providers/__init__.py does not import ${cls} from a provider module`);
+      const mod = pySource(`app/core/providers/${imp[1]}.py`, "check 98").replace(/\r\n/g, "\n");
+      const body = new RegExp(`^class ${cls}\\b[\\s\\S]*?^    name = "([\\w-]+)"`, "m").exec(mod);
+      if (!body) throw new Error(`providers/${imp[1]}.py: class ${cls} has no \`name = "…"\``);
+      return body[1];
+    });
+  }
+  const alerts98 = pySource("app/core/alerts.py", "check 98");
+  const email98 = alerts98 === null ? null : (/_EM_SOURCE_LABELS = \{([\s\S]*?)\n\}/.exec(alerts98) || [])[1];
+  if (alerts98 !== null && email98 === undefined) throw new Error("app/core/alerts.py: _EM_SOURCE_LABELS not found");
+
+  const walk98 = (dir, rel = "") =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+      d.isDirectory()
+        ? d.name === "locales" ? [] : walk98(path.join(dir, d.name), `${rel}${d.name}/`)
+        : /\.(ts|tsx)$/.test(d.name) && `${rel}${d.name}` !== "pages/jobs/shared.ts"
+          ? [[`${rel}${d.name}`, decomment(fs.readFileSync(path.join(dir, d.name), "utf8"))]]
+          : [],
+    );
+  const callers98 = walk98(SRC).filter(([, s]) => /\bsourceLabel\b/.test(s));
+  const calls98 = callers98.reduce((n, [, s]) => n + (s.match(/\bsourceLabel\(/g) || []).length, 0);
+  if (calls98 < 10) throw new Error(`found ${calls98} sourceLabel( calls under src/ (expected at least 10)`);
+
+  const real = {
+    ids: [...shared98.SOURCE_IDS],
+    names: shared98.SOURCE_NAMES,
+    label: shared98.sourceLabel,
+    backend: backend98,
+    callers: callers98,
+    email: email98 ?? null,
+  };
+  for (const p of judge98(real)) fail(`check 98: ${p} (PLAN 32, More places to search)`);
+  const twins = [
+    ["a board missing from the list", { ...real, ids: real.ids.slice(0, -1) }],
+    ["the boards in another order", { ...real, ids: [...real.ids].reverse() }],
+    ["a board with no Hebrew name", { ...real, names: { ...real.names, [real.ids[1]]: { en: "X", he: "" } } }],
+    ["a label that ignores the language", { ...real, label: (s, _l) => real.label(s, "en") }],
+    ["a caller mapping over it bare", { ...real, callers: [...real.callers, ["x.tsx", "keys.map(sourceLabel).join()"]] }],
+    ["a caller with no language", { ...real, callers: [...real.callers, ["x.tsx", "{sourceLabel(job.source)}"]] }],
+  ];
+  for (const [label, planted] of twins) {
+    if (planted.backend === null && /missing|order/.test(label)) continue; // no backend to compare with
+    if (!judge98(planted).length) throw new Error(`the judge passes ${label}`);
+  }
+  if (real.email !== null && real.backend !== null && !judge98({ ...real, email: real.email.replace(`"${real.backend[1]}"`, '"x"') }).length)
+    throw new Error("the judge passes an alert email with a board unnamed");
+} catch (e) {
+  fail(`board list check (check 98) could not run: ${e.message}`);
+}
+
+// ---- 99. a Himalayas result names Himalayas beside a link back to it --------- //
+// 2026-09-28. Himalayas' API is offered on one condition: "link back to the URL
+// found on Himalayas AND mention Himalayas as the original source". Missing the
+// line on one surface is the defect nothing else would see. (a) EXECUTES
+// `attributedSource` and `ATTRIBUTED_SOURCES` (pages/jobs/shared.ts): the ids equal
+// the backend's `providers.ATTRIBUTED` (a degraded skip without backend/); a
+// result is credited by its source, else, where no source is stored (a tracked
+// job's page), by its URL's host, never by a look-alike host or another board's
+// source. (b) `card.viaBoard` resolves in both jobs.json and prints {{board}}.
+// (c) By shape: the search row and the History row draw `<ViaBoard …/>` INSIDE
+// their badge rows with their own source and URL; ViaBoard links to that URL in a
+// new tab, words it through `card.viaBoard` with the board's name in the page's
+// language, and is a 44 px box (`min-h-11`); a tracked job's page names the board
+// on its link back (`attributedSource` + `card.openOn`). (d) The alert email
+// credits it in BOTH bodies (`_via` in the plain text and the HTML). Planted twins
+// are judged every run.
+try {
+  const shared99 = runProbeBundle(
+    "attribution",
+    'export { ATTRIBUTED_SOURCES, attributedSource } from "./pages/jobs/shared";\n',
+  );
+  if (typeof shared99.attributedSource !== "function") throw new Error("pages/jobs/shared.ts exports no attributedSource");
+  const judgeFn99 = (fn) => {
+    const out = [];
+    const cases = [
+      ["himalayas", "https://himalayas.app/companies/x/jobs/y", "himalayas"],
+      [undefined, "https://himalayas.app/companies/x/jobs/y", "himalayas"],
+      [undefined, "https://www.himalayas.app/x", "himalayas"],
+      ["", "https://himalayas.app/x", "himalayas"],
+      [undefined, "https://himalayas.app.evil.com/x", ""],
+      [undefined, "https://evilhimalayas.app/x", ""],
+      ["linkedin", "https://himalayas.app/x", ""],
+      [undefined, "not a url", ""],
+      [undefined, undefined, ""],
+    ];
+    for (const [source, url, want] of cases)
+      if (fn(source, url) !== want) out.push(`attributedSource(${JSON.stringify(source)}, ${JSON.stringify(url)}) is not "${want}"`);
+    return out;
+  };
+  for (const p of judgeFn99(shared99.attributedSource)) fail(`check 99: ${p} (PLAN 32)`);
+  for (const [label, twin] of [
+    ["a credit read from the source alone", (s, _u) => (s === "himalayas" ? "himalayas" : "")],
+    ["a host matched as a substring", (s, u) => (s ? (s === "himalayas" ? s : "") : String(u ?? "").includes("himalayas.app") ? "himalayas" : "")],
+  ])
+    if (!judgeFn99(twin).length) throw new Error(`the judge passes ${label}`);
+
+  const ids99 = Object.keys(shared99.ATTRIBUTED_SOURCES).sort();
+  const init99 = pySource("app/core/providers/__init__.py", "check 99");
+  if (init99 !== null) {
+    const m = /^ATTRIBUTED: dict\[str, str\] = \{([^}]*)\}/m.exec(init99.replace(/\r\n/g, "\n"));
+    if (!m) throw new Error("providers/__init__.py: ATTRIBUTED not found");
+    const backend = [...m[1].matchAll(/(\w+)Provider\.name\s*:/g)].map((x) => x[1].toLowerCase()).sort();
+    if (!backend.length) throw new Error("providers/__init__.py: read no board out of ATTRIBUTED");
+    if (JSON.stringify(backend) !== JSON.stringify(ids99))
+      fail(`check 99: ATTRIBUTED_SOURCES names ${JSON.stringify(ids99)}, the backend credits ${JSON.stringify(backend)} (PLAN 32)`);
+  }
+
+  for (const loc of ["en", "he"]) {
+    const v = JSON.parse(read(`locales/${loc}/jobs.json`)).card?.viaBoard;
+    if (typeof v !== "string" || !v.includes("{{board}}"))
+      fail(`check 99: locales/${loc}/jobs.json card.viaBoard is missing or does not name {{board}} (PLAN 32)`);
+  }
+
+  const read99 = ({ cards, jobPage, alerts }) => {
+    const out = [];
+    const badgeRow = (fn) => {
+      const open = fn.indexOf('<div className="mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">');
+      return open === -1 ? "" : fn.slice(open, fn.indexOf("</div>", open));
+    };
+    if (!/<ViaBoard\s+source=\{\s*m\.source\s*\}\s+url=\{\s*m\.url\s*\}\s*\/>/.test(badgeRow(fnSource(cards, "export function MatchCard"))))
+      out.push("the search row does not draw <ViaBoard source={m.source} url={m.url} /> in its badge row");
+    if (!/<ViaBoard\s+source=\{\s*hit\.source\s*\}\s+url=\{\s*hit\.url\s*\}\s*\/>/.test(badgeRow(fnSource(cards, "export function HistoryRow"))))
+      out.push("the History row does not draw <ViaBoard source={hit.source} url={hit.url} /> in its badge row");
+    const via = fnSource(cards, "export function ViaBoard");
+    if (!/attributedSource\(\s*source\s*,\s*url\s*\)/.test(via)) out.push("ViaBoard does not ask attributedSource which board to credit");
+    if (!/href=\{url\}/.test(via) || !/target="_blank"/.test(via)) out.push("ViaBoard does not link back to the posting's page in a new tab");
+    if (!/t\("card\.viaBoard",\s*\{\s*board:\s*sourceLabel\(board,\s*i18n\.language\)\s*\}\)/.test(via))
+      out.push("ViaBoard does not word the credit through card.viaBoard with the board's name in the page's language");
+    if (!/\bmin-h-11\b/.test(via)) out.push("ViaBoard is not a 44 px box to tap (min-h-11)");
+    if (!/attributedSource\(/.test(jobPage) || !/tJobs\("card\.openOn"/.test(jobPage))
+      out.push("a tracked job's page does not name the credited board on its link back");
+    if (alerts !== null) {
+      if ((alerts.match(/if via := _via\(m\):/g) || []).length < 2) out.push("the alert email does not credit the board in both bodies (_via)");
+      if (!/f"  via \{via\}: \{m\.url\}"/.test(alerts)) out.push("the plain-text email's credit does not carry the posting's page");
+    }
+    return out;
+  };
+  const alerts99 = pySource("app/core/alerts.py", "check 99");
+  const real99 = {
+    cards: decomment(read("pages/jobs/cards.tsx")),
+    jobPage: decomment(read("pages/JobPage.tsx")),
+    alerts: alerts99 === null ? null : alerts99.replace(/\r\n/g, "\n"),
+  };
+  for (const p of read99(real99)) fail(`check 99: ${p} (PLAN 32)`);
+  const plant99 = (key, from, to, label) => {
+    if (real99[key] === null) return;
+    if (!real99[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read99({ ...real99, [key]: real99[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant99("cards", "<ViaBoard source={hit.source} url={hit.url} />", "", "a History row without the credit");
+  plant99("cards", 'target="_blank"\n      rel="noopener noreferrer"\n      className="-my-3', '\n      className="-my-3', "a credit that leaves the page");
+  plant99("cards", "-my-3 inline-flex min-h-11", "-my-3 inline-flex", "a credit too small to tap");
+  plant99("jobPage", 'tJobs("card.openOn"', 't("job.openPosting"', "a job page that never names the board");
+  plant99("alerts", "        if via := _via(m):\n            lines.append", "        if False:\n            lines.append", "a plain-text email without the credit");
+} catch (e) {
+  fail(`Himalayas credit check (check 99) could not run: ${e.message}`);
+}
+
+// ---- 100. the worldwide pass runs on two boards, and only it asks Himalayas -- //
+// 2026-09-28. The pass was LinkedIn's alone (`WORLDWIDE_BOARD`); it runs on
+// LinkedIn and Himalayas now, and Himalayas runs on nothing else. (a) The page's
+// `WORLDWIDE_SOURCES` / `WORLDWIDE_ONLY_SOURCES` equal the backend's
+// `WORLDWIDE_BOARDS` / `WORLDWIDE_ONLY_BOARDS` (job_search.py, a degraded skip
+// without backend/). (b) EXECUTES `searchedSources`: without the pass (off, or on
+// with an on-site-only search) a search never lists Himalayas, with it the chosen
+// boards stand; and `applySearchReading`: "abroad" over a chosen set holding
+// neither worldwide board puts LinkedIn back, over one holding Himalayas changes
+// nothing. (c) By shape: the scan panel is fed `searchedSources(c)`; the opt-in
+// is gated on ANY worldwide board ticked (never `includes("linkedin")`), and its
+// sentences name Himalayas in both locales; the board list says a worldwide-only
+// board is "remote abroad" (`search.worldwideOnlyBoard`, both locales) and each
+// board is a 44 px row. Planted twins are judged every run.
+try {
+  const shared100 = runProbeBundle(
+    "worldwide",
+    'export { SOURCE_IDS, WORLDWIDE_SOURCES, WORLDWIDE_ONLY_SOURCES, searchedSources, applySearchReading } from "./pages/jobs/shared";\n',
+  );
+  for (const k of ["WORLDWIDE_SOURCES", "WORLDWIDE_ONLY_SOURCES", "searchedSources", "applySearchReading"])
+    if (!(k in shared100)) throw new Error(`pages/jobs/shared.ts exports no ${k}`);
+  const js100 = pySource("app/core/job_search.py", "check 100");
+  if (js100 !== null) {
+    const src = js100.replace(/\r\n/g, "\n");
+    const board = (/^WORLDWIDE_BOARD = "(\w+)"/m.exec(src) || [])[1];
+    const boards = /^WORLDWIDE_BOARDS: tuple\[str, \.\.\.\] = \(([^)]*)\)/m.exec(src);
+    const only = /^WORLDWIDE_ONLY_BOARDS: frozenset\[str\] = frozenset\(\{([^}]*)\}\)/m.exec(src);
+    if (!board || !boards || !only) throw new Error("job_search.py: WORLDWIDE_BOARD / WORLDWIDE_BOARDS / WORLDWIDE_ONLY_BOARDS not found");
+    const names = (s) => s.split(",").map((x) => x.trim()).filter(Boolean).map((x) => (x === "WORLDWIDE_BOARD" ? board : x.replace(/^"|"$/g, "")));
+    if (JSON.stringify(names(boards[1])) !== JSON.stringify([...shared100.WORLDWIDE_SOURCES]))
+      fail(`check 100: WORLDWIDE_SOURCES is ${JSON.stringify(shared100.WORLDWIDE_SOURCES)}, the backend's WORLDWIDE_BOARDS ${JSON.stringify(names(boards[1]))} (PLAN 32)`);
+    if (JSON.stringify(names(only[1]).sort()) !== JSON.stringify([...shared100.WORLDWIDE_ONLY_SOURCES].sort()))
+      fail(`check 100: WORLDWIDE_ONLY_SOURCES is ${JSON.stringify(shared100.WORLDWIDE_ONLY_SOURCES)}, the backend's ${JSON.stringify(names(only[1]))} (PLAN 32)`);
+  }
+  const judge100 = (searched, apply) => {
+    const out = [];
+    const all = [...shared100.SOURCE_IDS];
+    const noOnly = all.filter((s) => !shared100.WORLDWIDE_ONLY_SOURCES.includes(s));
+    const ctx = (over) => ({ job_title: "QA", location: "", work_mode: "any", limit: 10, ...over });
+    const cases = [
+      ["no customisation", null, noOnly],
+      ["the pass off", ctx({}), noOnly],
+      ["the pass on", ctx({ include_worldwide: true, work_mode: "remote" }), all],
+      ["the pass on over an on-site search", ctx({ include_worldwide: true, work_mode: "onsite" }), noOnly],
+      ["two boards, pass off", ctx({ sources: ["drushim", "himalayas"] }), ["drushim"]],
+      ["two boards, pass on", ctx({ sources: ["drushim", "himalayas"], include_worldwide: true }), ["drushim", "himalayas"]],
+    ];
+    for (const [label, c, want] of cases)
+      if (JSON.stringify(searched(c)) !== JSON.stringify(want)) out.push(`searchedSources with ${label} is ${JSON.stringify(searched(c))}`);
+    const r = { job_titles: [], location: "", work_mode: "", include_worldwide: true, notes: [], used_model: false };
+    if (JSON.stringify(apply(ctx({ sources: ["drushim", "himalayas"] }), r).sources) !== JSON.stringify(["drushim", "himalayas"]))
+      out.push("'abroad' over a set holding Himalayas changes its boards");
+    if (JSON.stringify(apply(ctx({ sources: ["drushim"] }), r).sources) !== JSON.stringify(["drushim", "linkedin"]))
+      out.push("'abroad' over a set with no worldwide board does not put LinkedIn back");
+    return out;
+  };
+  for (const p of judge100(shared100.searchedSources, shared100.applySearchReading)) fail(`check 100: ${p} (PLAN 32)`);
+  for (const [label, s, a] of [
+    ["a search that always lists Himalayas", (c) => (c?.sources?.length ? [...c.sources] : [...shared100.SOURCE_IDS]), shared100.applySearchReading],
+    ["'abroad' that adds LinkedIn whenever it is missing", shared100.searchedSources,
+      (p, r) => ({ ...p, include_worldwide: true, sources: p.sources.includes("linkedin") ? p.sources : [...p.sources, "linkedin"] })],
+  ])
+    if (!judge100(s, a).length) throw new Error(`the judge passes ${label}`);
+
+  const read100 = ({ jobs, alerts, en, he }) => {
+    const out = [];
+    const run = /function runSearch\(\) \{[\s\S]*?\n  \}\n/.exec(jobs);
+    if (!run) throw new Error("pages/JobsPage.tsx: function runSearch not found");
+    if (!/setRequestedSources\(searchedSources\(c\)\)/.test(run[0])) out.push("the scan panel is not fed the boards the search asks (searchedSources)");
+    const fields = fnSource(alerts, "export function CustomizeFields");
+    if (/selectedSources\.includes\("linkedin"\)/.test(fields)) out.push("the worldwide opt-in is still gated on LinkedIn alone");
+    if (!/selectedSources\.some\(\(s\) => WORLDWIDE_SOURCES\.includes\(s\)\)/.test(fields)) out.push("the worldwide opt-in is not gated on the worldwide boards");
+    if (!/WORLDWIDE_ONLY_SOURCES\.includes\(id\) && \(\s*<span[^>]*>\{t\("search\.worldwideOnlyBoard"\)\}/.test(fields))
+      out.push("the board list does not say a worldwide-only board is remote abroad");
+    if (!/<label key=\{id\} className="flex min-h-11 /.test(fields)) out.push("a board in the list is not a 44 px row");
+    for (const [loc, b] of [["en", en], ["he", he]]) {
+      for (const k of ["worldwideLine", "worldwideNeedsLinkedIn", "worldwideWhy"])
+        if (!/Himalayas/.test(b.search?.[k] ?? "")) out.push(`locales/${loc}/jobs.json search.${k} does not name Himalayas`);
+      if (typeof b.search?.worldwideOnlyBoard !== "string" || !b.search.worldwideOnlyBoard.trim())
+        out.push(`locales/${loc}/jobs.json has no search.worldwideOnlyBoard`);
+    }
+    return out;
+  };
+  const real100 = {
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    alerts: decomment(read("pages/jobs/AlertsCard.tsx")),
+    en: JSON.parse(read("locales/en/jobs.json")),
+    he: JSON.parse(read("locales/he/jobs.json")),
+  };
+  for (const p of read100(real100)) fail(`check 100: ${p} (PLAN 32)`);
+  const plant100 = (key, from, to, label) => {
+    if (!real100[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read100({ ...real100, [key]: real100[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}"`);
+  };
+  plant100("jobs", "setRequestedSources(searchedSources(c))", "setRequestedSources(c?.sources ?? [])", "a scan panel fed the chosen boards");
+  plant100("alerts", "const worldwideBoard = selectedSources.some((s) => WORLDWIDE_SOURCES.includes(s));",
+    'const worldwideBoard = selectedSources.includes("linkedin");', "an opt-in gated on LinkedIn alone");
+  plant100("alerts", '<label key={id} className="flex min-h-11 ', '<label key={id} className="flex ', "a board row too small to tap");
+  if (!read100({ ...real100, he: { ...real100.he, search: { ...real100.he.search, worldwideLine: "מלינקדאין." } } }).length)
+    throw new Error("the reader passes a Hebrew line that names LinkedIn alone");
+} catch (e) {
+  fail(`worldwide boards check (check 100) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

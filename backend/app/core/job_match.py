@@ -133,6 +133,12 @@ def _looks_like_login_wall(text: str) -> bool:
     return any(m in low for m in _LOGIN_WALL_MARKERS)
 
 
+# The most `_http_get` reads of one response. A JSON board larger than this
+# arrives cut off and fails to parse (Greenhouse's `elastic` board, 2026-09-28),
+# so a provider that reads whole boards checks against it (providers/greenhouse.py).
+HTTP_READ_CAP = 3_000_000
+
+
 def _http_get(url: str, timeout: float = 15) -> str:
     """Every outbound fetch in the app funnels through here, so the SSRF guard
     lives here too rather than only on the two user-URL routes: board URLs are
@@ -152,7 +158,7 @@ def _http_get(url: str, timeout: float = 15) -> str:
     # guarded_opener re-checks each redirect hop; urlopen's default opener would
     # follow a 302 into a private address without asking.
     with guarded_opener.open(req, timeout=timeout) as resp:  # noqa: S310 - guarded above
-        return resp.read(3_000_000).decode("utf-8", errors="ignore")
+        return resp.read(HTTP_READ_CAP).decode("utf-8", errors="ignore")
 
 
 def _first_text(html: str, cls: str) -> str:

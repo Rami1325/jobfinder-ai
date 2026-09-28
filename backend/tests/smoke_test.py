@@ -6194,6 +6194,1065 @@ check(
 )
 _db.close()
 
+# 16c. The registries' seed BATCHES reach a database that already exists, each
+# exactly once (2026-09-28, PLAN 32 "More places to search"). The seed used to be
+# inserted into an EMPTY table only, so a company added to the file never reached
+# production and a dead one could not leave it. Pinned on scratch in-memory
+# databases: a fresh one, one the old code seeded (with an admin's removal and an
+# admin's own company), a later sync after an admin's changes, Greenhouse's
+# retired board, a batch another instance already claimed, and a failing sync that
+# must never break the search that triggered it.
+import logging as _sd_logging  # noqa: E402
+
+from sqlalchemy import create_engine as _sd_engine, delete as _sd_delete, select as _sd_select  # noqa: E402
+from sqlalchemy.orm import sessionmaker as _sd_sessionmaker  # noqa: E402
+
+import app.db.registry_seed as _sd_mod  # noqa: E402
+from app.core.providers import comeet_seed as _sd_cs, greenhouse_seed as _sd_gs  # noqa: E402
+from app.core.providers.comeet import parse_careers_url as _sd_parse_careers  # noqa: E402
+from app.core.providers.greenhouse import parse_board_ref as _sd_parse_board  # noqa: E402
+from app.core.providers.registry_seeds import SeedBatch as _SdBatch, effective as _sd_effective  # noqa: E402
+from app.db.comeet import REGISTRY as _SD_COMEET  # noqa: E402
+from app.db.database import Base as _SdBase  # noqa: E402
+from app.db.greenhouse import REGISTRY as _SD_GH  # noqa: E402
+from app.db.models import (  # noqa: E402
+    ComeetCompany as _SdComeet,
+    GreenhouseCompany as _SdGh,
+    RegistrySeed as _SdSeed,
+)
+
+
+def _sd_db():
+    _eng = _sd_engine("sqlite://")
+    _SdBase.metadata.create_all(_eng, tables=[_SdComeet.__table__, _SdGh.__table__, _SdSeed.__table__])
+    return _sd_sessionmaker(bind=_eng)()
+
+
+def _sd_slugs(db, model) -> set:  # noqa: ANN001
+    return set(db.execute(_sd_select(model.slug)).scalars())
+
+
+def _sd_marks(db) -> set:  # noqa: ANN001
+    return set(db.execute(_sd_select(_SdSeed.name)).scalars())
+
+
+_SD_LEGACY_CM = {r["slug"] for r in _sd_cs.SEED_BATCHES[0].add}
+_SD_NEW_CM = {r["slug"] for r in _sd_cs.SEED_BATCHES[1].add}
+_SD_RETIRED_CM = set(_sd_cs.SEED_BATCHES[1].retire)
+_SD_WANT_CM = {r["slug"] for r in _sd_cs.SEED_COMPANIES}
+_SD_WANT_GH = {r["slug"] for r in _sd_gs.SEED_COMPANIES}
+_SD_ALL = _sd_cs.SEED_BATCHES + _sd_gs.SEED_BATCHES
+check(
+    "16c seed data: Comeet is the July list plus 55 companies minus the four retired (Aidoc, LIQUiDITY, PTC: no API "
+    "token; CYMOTIVE: no openings), 79 in all; Greenhouse the July list plus 34 minus `sisense` (a 404), 49; slugs "
+    "unique ignoring case, every Comeet careers URL and Greenhouse slug readable by its own parser, every batch named "
+    "for its registry, and only the first batch legacy",
+    len(_sd_cs.SEED_BATCHES[1].add) == 55
+    and _SD_RETIRED_CM == {"Aidoc", "liquiditygroup", "ptc", "cymotive"}
+    and _SD_WANT_CM == (_SD_LEGACY_CM | _SD_NEW_CM) - _SD_RETIRED_CM
+    and len(_sd_cs.SEED_COMPANIES) == 79
+    and len(_sd_gs.SEED_BATCHES[1].add) == 34
+    and set(_sd_gs.SEED_BATCHES[1].retire) == {"sisense"}
+    and len(_sd_gs.SEED_COMPANIES) == 49 and "sisense" not in _SD_WANT_GH
+    and len({s.lower() for s in _SD_WANT_CM}) == len(_SD_WANT_CM)
+    and all(len({r["slug"].lower() for r in b.add}) == len(b.add) for b in _SD_ALL)
+    and all(
+        _sd_parse_careers(_sd_cs.careers_url(r["slug"], r["uid"])) == (r["slug"], r["uid"])
+        for b in _sd_cs.SEED_BATCHES for r in b.add
+    )
+    and all(_sd_parse_board(r["slug"]) == r["slug"] for b in _sd_gs.SEED_BATCHES for r in b.add)
+    and all(b.name.startswith("comeet:") for b in _sd_cs.SEED_BATCHES)
+    and all(b.name.startswith("greenhouse:") for b in _sd_gs.SEED_BATCHES)
+    and [b.legacy for b in _sd_cs.SEED_BATCHES] == [True, False]
+    and [b.legacy for b in _sd_gs.SEED_BATCHES] == [True, False],
+    f"{len(_sd_cs.SEED_COMPANIES)} {len(_sd_gs.SEED_COMPANIES)}",
+)
+check(
+    "16c `effective` is batch order: a slug retired by one batch and added back by a later one is present, "
+    "and the first spelling of a slug wins",
+    [r["name"] for r in _sd_effective((
+        _SdBatch("x:1", add=({"slug": "a", "name": "A1"}, {"slug": "b", "name": "B"})),
+        _SdBatch("x:2", add=({"slug": "a", "name": "A2"},), retire=("b",)),
+        _SdBatch("x:3", add=({"slug": "b", "name": "B again"},)),
+    ))] == ["A1", "B again"],
+)
+
+# A fresh database: every batch, once.
+_sd_fresh = _sd_db()
+_sd_r1 = _sd_mod.sync_registry(_sd_fresh, _SD_COMEET)
+_sd_r1b = _sd_mod.sync_registry(_sd_fresh, _SD_COMEET)
+check(
+    "16c a fresh database gets every batch: its rows are exactly the effective list, both batches are recorded, "
+    "and a second sync changes nothing",
+    _sd_slugs(_sd_fresh, _SdComeet) == _SD_WANT_CM
+    and _sd_marks(_sd_fresh) == {"comeet:2026-07", "comeet:2026-09-28"}
+    and _sd_r1.applied == ["comeet:2026-07", "comeet:2026-09-28"]
+    and (_sd_r1b.applied, _sd_r1b.inserted, _sd_r1b.retired) == ([], 0, 0),
+    f"{sorted(_sd_slugs(_sd_fresh, _SdComeet) ^ _SD_WANT_CM)} {_sd_r1} {_sd_r1b}",
+)
+
+# A database the OLD code seeded (the July list, no batch recorded), where an
+# admin since deleted Kaltura and added a company of their own.
+_sd_old = _sd_db()
+for _sd_row in _sd_cs.SEED_BATCHES[0].add:
+    if _sd_row["slug"] != "kaltura":
+        _sd_old.add(_SdComeet(slug=_sd_row["slug"], name=_sd_row["name"], uid=_sd_row["uid"]))
+_sd_old.add(_SdComeet(slug="acmeadmin", name="Acme", uid="AA.001", token="T"))
+_sd_old.commit()
+_sd_r2 = _sd_mod.sync_registry(_sd_old, _SD_COMEET)
+check(
+    "16c a database the old code seeded: the July batch counts as applied WITHOUT inserting (Kaltura, which an "
+    "admin removed, stays removed), the new batch adds its 55 and retires the four, and an admin's own company "
+    "is untouched",
+    _sd_slugs(_sd_old, _SdComeet) == (_SD_WANT_CM - {"kaltura"}) | {"acmeadmin"}
+    and (_sd_r2.inserted, _sd_r2.retired) == (55, 4)
+    and _sd_r2.applied == ["comeet:2026-07", "comeet:2026-09-28"]
+    and _sd_marks(_sd_old) == {"comeet:2026-07", "comeet:2026-09-28"},
+    f"{sorted(_sd_slugs(_sd_old, _SdComeet) ^ ((_SD_WANT_CM - {'kaltura'}) | {'acmeadmin'}))} {_sd_r2}",
+)
+# After it: the admin deletes a company the new batch added and adds back one it retired.
+_sd_old.execute(_sd_delete(_SdComeet).where(_SdComeet.slug == "cyera"))
+_sd_old.add(_SdComeet(slug="ptc", name="PTC", uid="32.005"))
+_sd_old.commit()
+_sd_r3 = _sd_mod.sync_registry(_sd_old, _SD_COMEET)
+check(
+    "16c a later sync never undoes an admin: Cyera, deleted after its batch ran, stays deleted, and PTC, added "
+    "back after its retirement, stays",
+    "cyera" not in _sd_slugs(_sd_old, _SdComeet)
+    and "ptc" in _sd_slugs(_sd_old, _SdComeet)
+    and (_sd_r3.applied, _sd_r3.inserted, _sd_r3.retired) == ([], 0, 0),
+    str(_sd_r3),
+)
+
+# Greenhouse, seeded by the old code, still holding the dead `sisense` board.
+_sd_ghdb = _sd_db()
+for _sd_row in _sd_gs.SEED_BATCHES[0].add:
+    _sd_ghdb.add(_SdGh(slug=_sd_row["slug"], name=_sd_row["name"]))
+_sd_ghdb.commit()
+_sd_r5 = _sd_mod.sync_registry(_sd_ghdb, _SD_GH)
+check(
+    "16c Greenhouse on a database the old code seeded: `sisense` (404, moved to Ashby) retired, the 34 boards added",
+    _sd_slugs(_sd_ghdb, _SdGh) == _SD_WANT_GH and (_sd_r5.inserted, _sd_r5.retired) == (34, 1)
+    and _sd_marks(_sd_ghdb) == {"greenhouse:2026-07", "greenhouse:2026-09-28"},
+    str(_sd_r5),
+)
+
+# Two cold starts on one deploy: the other instance applied both batches while
+# this one still read "nothing applied". Its claims fail on the unique name, and
+# nothing is inserted twice.
+_sd_real_applied = _sd_mod._applied_names
+_sd_mod._applied_names = lambda db, key: set()  # noqa: ARG005
+try:
+    _sd_r4 = _sd_mod.sync_registry(_sd_fresh, _SD_COMEET)
+finally:
+    _sd_mod._applied_names = _sd_real_applied
+check(
+    "16c a batch another instance already claimed is never applied twice: the claim fails on the batch's unique "
+    "name, is rolled back, and the rows and records are unchanged",
+    (_sd_r4.applied, _sd_r4.inserted) == ([], 0)
+    and _sd_slugs(_sd_fresh, _SdComeet) == _SD_WANT_CM
+    and len(list(_sd_fresh.execute(_sd_select(_SdSeed.id)).scalars())) == 2,
+    str(_sd_r4),
+)
+
+# A sync that fails (here, a batch filed under another registry) is logged,
+# rolled back and tried again on the next search; the search itself never sees it.
+_sd_bad = _sd_mod.Registry(
+    key="probe", batches=(_SdBatch("comeet:not-mine"),), slugs=lambda db: set(),  # noqa: ARG005
+    insert=lambda db, row: None, delete=lambda db, slug: None,  # noqa: ARG005
+)
+_sd_log = _sd_logging.getLogger("app.db.registry_seed")
+_sd_level = _sd_log.level
+_sd_log.setLevel(_sd_logging.CRITICAL)
+try:
+    _sd_raised = ""
+    try:
+        _sd_mod.ensure_synced(_sd_db(), _sd_bad)
+        _sd_mod.ensure_synced(_sd_db(), _sd_bad)
+    except Exception as _sd_e:  # noqa: BLE001
+        _sd_raised = repr(_sd_e)
+finally:
+    _sd_log.setLevel(_sd_level)
+check(
+    "16c a failing seed sync never fails the search that triggered it, and is not marked done (tried again next time)",
+    _sd_raised == "" and "probe" not in _sd_mod._synced,
+    _sd_raised,
+)
+for _sd_s in (_sd_fresh, _sd_old, _sd_ghdb):
+    _sd_s.close()
+
+# 16d. The registry boards' shared feeds (providers/feeds.py): a value cached, a
+# failure remembered (the dead company asked once, not on every query), a fetch in
+# flight shared, and a time budget, so one slow company never holds a search.
+import threading as _fd_threading  # noqa: E402
+import time as _fd_time  # noqa: E402
+
+from app.core.providers.feeds import CompanyFeeds as _FdFeeds  # noqa: E402
+
+_fd_now = [1000.0]
+_fd = _FdFeeds("probe", workers=4, ttl_s=60, fail_ttl_s=30, clock=lambda: _fd_now[0])
+_fd_calls: list[str] = []
+_fd_calls_lock = _fd_threading.Lock()
+
+
+def _fd_fetch(key: str, ok: bool = True):
+    def run():
+        with _fd_calls_lock:
+            _fd_calls.append(key)
+        if not ok:
+            raise OSError("down")
+        return [key]
+
+    return run
+
+
+_fd_jobs = [("a", _fd_fetch("a")), ("b", _fd_fetch("b", ok=False))]
+_fd_g1 = _fd.gather(_fd_jobs, 5)
+_fd_g2 = _fd.gather(_fd_jobs, 5)
+check(
+    "16d feeds: a company's postings are cached (the second query asks nothing) and a failure is counted and "
+    "REMEMBERED (a dead company costs one request, not one per query)",
+    _fd_g1.values == {"a": ["a"]} and _fd_g1.failed == 1
+    and _fd_g2.values == {"a": ["a"]} and _fd_g2.failed == 1 and sorted(_fd_calls) == ["a", "b"],
+    f"{_fd_g1} {_fd_g2} {_fd_calls}",
+)
+_fd_now[0] += 31  # past the failure memory, inside the cache
+_fd.gather(_fd_jobs, 5)
+_fd_after_fail = sorted(_fd_calls)
+_fd_now[0] += 60  # past the cache
+_fd.gather(_fd_jobs, 5)
+check(
+    "16d feeds: a failed company is asked again once its memory lapses, and a cached one once its cache does",
+    _fd_after_fail == ["a", "b", "b"] and sorted(_fd_calls) == ["a", "a", "b", "b", "b"],
+    str(_fd_calls),
+)
+_fd_gate = _fd_threading.Event()
+_fd_slow_runs: list[int] = []
+
+
+def _fd_slow():
+    _fd_slow_runs.append(1)
+    _fd_gate.wait(10)
+    return ["slow"]
+
+
+_fd_t0 = _fd_time.monotonic()
+_fd_g5 = _fd.gather([("s", _fd_slow), ("a2", _fd_fetch("a2"))], 0.3)
+_fd_t1 = _fd_time.monotonic()
+_fd_g6 = _fd.gather([("s", _fd_slow)], 0.3)  # the next query of the same search
+_fd_t2 = _fd_time.monotonic()
+_fd_gate.set()
+for _ in range(100):
+    if _fd.cached("s") is not None:
+        break
+    _fd_time.sleep(0.02)
+_fd_g7 = _fd.gather([("s", _fd_slow)], 0.3)
+check(
+    "16d feeds: a slow company is `late` once the budget runs out and the query answers with the rest; the next "
+    "query does NOT wait for it again (its fetch is past its own budget), it is requested once, and its answer, "
+    "landing later, serves the query after",
+    _fd_g5.late == 1 and _fd_g5.values == {"a2": ["a2"]} and (_fd_t1 - _fd_t0) < 2.0
+    and _fd_g6.late == 1 and (_fd_t2 - _fd_t1) < 0.2
+    and _fd_g7.values == {"s": ["slow"]} and len(_fd_slow_runs) == 1,
+    f"{_fd_g5} {_fd_t1 - _fd_t0:.2f}s {_fd_g6} {_fd_t2 - _fd_t1:.2f}s {_fd_g7} {_fd_slow_runs}",
+)
+
+# 16e. Greenhouse over the fake network, where `_http_get` is BOUND: a board too
+# large to read whole (the read cap cuts its JSON off, Elastic's board measured
+# 2026-09-28) is read as its list, and the postings the search selects fetch
+# their description one at a time; a short malformed body is a failure, never
+# the list; and a failing board is left out and remembered while the others
+# answer.
+import app.core.providers.greenhouse as _gh16e  # noqa: E402
+from app.core.job_match import HTTP_READ_CAP as _GH_CAP  # noqa: E402
+from app.models import SearchContext as _Gh16Ctx  # noqa: E402
+
+_gh16_urls: list[str] = []
+_gh16_mode = {"board": "big"}
+
+
+def _gh16_get(url, timeout=15):  # noqa: ANN001
+    _gh16_urls.append(url)
+    if "/boards/payoneer/" in url:
+        raise OSError("HTTP Error 404: Not Found")
+    if url.endswith("/jobs?content=true"):
+        if "/boards/wizinc/" in url:
+            return _json.dumps({"jobs": [{
+                "id": 7, "title": "Backend Engineer", "absolute_url": "https://job-boards.greenhouse.io/wizinc/jobs/7",
+                "location": {"name": "Tel Aviv, Israel"}, "company_name": "Wiz", "updated_at": "2026-09-27T10:00:00Z",
+                "content": "&lt;p&gt;Python services&lt;/p&gt;",
+            }]})
+        if "/boards/elastic/" in url and _gh16_mode["board"] == "big":
+            return '{"jobs": [{"id": 1, "content": "' + "x" * (_GH_CAP - 40)  # cut off at the cap
+        if "/boards/elastic/" in url:
+            return "<html>maintenance</html>"  # short and malformed: a real failure
+        return _json.dumps({"jobs": []})
+    if url.endswith("/boards/elastic/jobs"):
+        return _json.dumps({"jobs": [
+            {"id": 11, "title": "Senior Backend Engineer", "location": {"name": "Israel"},
+             "absolute_url": "https://jobs.elastic.co/jobs?gh_jid=11", "company_name": "Elastic",
+             "updated_at": "2026-09-20T10:00:00-04:00", "first_published": "2026-08-24T18:06:01-04:00"},
+            {"id": 12, "title": "Backend Engineer", "location": {"name": "London, United Kingdom"},
+             "absolute_url": "https://jobs.elastic.co/jobs?gh_jid=12", "company_name": "Elastic",
+             "updated_at": "2026-09-21T10:00:00-04:00"},
+        ]})
+    if url.endswith("/boards/elastic/jobs/11"):
+        return _json.dumps({"id": 11, "content": "&lt;p&gt;Search at scale in &lt;b&gt;Go&lt;/b&gt;&lt;/p&gt;"})
+    raise AssertionError(f"unexpected Greenhouse URL {url}")
+
+
+_db = SessionLocal()
+_gh16_registry = len(gh_list_companies(_db))
+_db.close()
+_gh16_real = _gh16e._http_get
+_gh16e._http_get = _gh16_get
+_gh16e.FEEDS.clear()
+try:
+    try:
+        _gh16_jobs, _gh16_whole = _gh16e._fetch_jobs("elastic")
+        _gh16_hits = _gh16e.parse_greenhouse_jobs({"jobs": _gh16_jobs}, company_name="Elastic")
+        _gh16_desc = _gh16e.GreenhouseProvider().fetch_description(_gh16_hits[0])
+    except Exception as _gh16_e:  # noqa: BLE001 - a cut-off board that raises is the defect pinned below
+        _gh16_whole, _gh16_hits, _gh16_desc = True, [], repr(_gh16_e)
+    _gh16_mode["board"] = "broken"
+    _gh16_urls.clear()
+    try:
+        _gh16e._fetch_jobs("elastic")
+        _gh16_broken = "no raise"
+    except ValueError:
+        _gh16_broken = "raised"
+    _gh16_broken_urls = list(_gh16_urls)
+    _gh16_mode["board"] = "big"
+    _gh16_urls.clear()
+    _gh16_found = _gh16e.GreenhouseProvider().search(
+        _Gh16Ctx(job_title="Backend Engineer", location="Israel", limit=25)
+    )
+    _gh16_first_urls = list(_gh16_urls)
+    _gh16_urls.clear()
+    _gh16_again = _gh16e.GreenhouseProvider().search(
+        _Gh16Ctx(job_title="Backend Engineer", location="Israel", limit=25)
+    )
+    _gh16_again_urls = list(_gh16_urls)
+finally:
+    _gh16e._http_get = _gh16_real
+    _gh16e.FEEDS.clear()
+check(
+    "16e Greenhouse: a board over the read cap is read as its LIST (the postings carry no description, their "
+    "board slug in `raw`, `first_published` kept), and a selected posting fetches its own description",
+    not _gh16_whole and len(_gh16_hits) == 2 and all(h.description == "" for h in _gh16_hits)
+    and _gh16_hits[0].raw.get("_jf_board") == "elastic"
+    and _gh16_hits[0].raw.get("first_published") == "2026-08-24T18:06:01-04:00"
+    and _gh16_desc == "Search at scale in Go",
+    f"{_gh16_whole} {[h.description for h in _gh16_hits]} {_gh16_desc!r}",
+)
+check(
+    "16e Greenhouse: a SHORT malformed body is a failure, not a cut-off board (the list is never asked for)",
+    _gh16_broken == "raised" and _gh16_broken_urls == ["https://boards-api.greenhouse.io/v1/boards/elastic/jobs?content=true"],
+    f"{_gh16_broken} {_gh16_broken_urls}",
+)
+check(
+    "16e Greenhouse search: a failing board (404) is left out while the others answer (Wiz's inline posting, "
+    "Elastic's Israeli one by its title; its London one filtered out), and the next search asks the dead board "
+    "nothing and the answering ones nothing (cached)",
+    sorted(h.url for h in _gh16_found)
+    == ["https://job-boards.greenhouse.io/wizinc/jobs/7", "https://jobs.elastic.co/jobs?gh_jid=11"]
+    and any("/boards/payoneer/" in u for u in _gh16_first_urls)
+    # every registered board once, plus Elastic's list (the registry also holds 16b's acme-gh)
+    and sum(1 for u in _gh16_first_urls if u.endswith("?content=true")) == _gh16_registry
+    and len(_gh16_first_urls) == _gh16_registry + 1
+    and _gh16_again_urls == []
+    and sorted(h.url for h in _gh16_again) == sorted(h.url for h in _gh16_found),
+    f"{[h.url for h in _gh16_found]} {len(_gh16_first_urls)} {_gh16_again_urls}",
+)
+
+# 16f. Lever (2026-09-28): the official postings API on BOTH hosts. The July probe
+# asked api.lever.co only and recorded "no Israeli tenant"; Mobileye is on
+# api.eu.lever.co. Pinned on trimmed real responses: Mobileye (EU host: two
+# Ramat Gan postings and one in Beijing) and WalkMe (the US host, "Tel Aviv" with
+# country IL).
+import app.core.providers.lever as _lv  # noqa: E402
+from app.core.ghost_signals import parse_board_date as _lv_parse_date  # noqa: E402
+from app.core.providers import DEFAULT_SOURCES as _LV_DEFAULTS, PROVIDERS as _LV_PROV  # noqa: E402
+from app.core.providers.base import NoResultsError as _LvNoRes  # noqa: E402
+from app.core.providers.lever_seed import SEED_COMPANIES as _LV_SEED  # noqa: E402
+from app.core.work_mode import read_work_mode as _lv_read_mode  # noqa: E402
+
+_LV_EU = _json.loads((Path(__file__).parent / "fixtures" / "lever_postings_eu.json").read_text(encoding="utf-8"))
+_LV_US = _json.loads((Path(__file__).parent / "fixtures" / "lever_postings_us.json").read_text(encoding="utf-8"))
+_lv_eu = _lv.parse_lever_postings(_LV_EU, company_name="Mobileye")
+_lv_us = _lv.parse_lever_postings(_LV_US, company_name="WalkMe")
+check(
+    "16f lever parser: every posting read with its title, the registry's company name, its location, the hosted "
+    "URL, the board's own work mode, and createdAt (epoch MILLISECONDS) as an ISO UTC date the one board-date "
+    "parser reads, within the 32-character column",
+    len(_lv_eu) == 3 and len(_lv_us) == 2
+    and [h.title for h in _lv_eu] == ["3D Algorithm Developer", "AI Algorithm Engineer", "AI Algorithm Engineer - Vision Localization Group"]
+    and all(h.source == "lever" and h.company == "Mobileye" for h in _lv_eu)
+    and _lv_eu[0].location == "Ramat Gan, Israel" and _lv_eu[1].location == "Beijing, China"
+    and _lv_eu[0].url == "https://jobs.eu.lever.co/mobileye/bb661a53-79b8-459d-a8df-5dd419d62596"
+    and _lv_eu[0].external_id == "bb661a53-79b8-459d-a8df-5dd419d62596"
+    and _lv_eu[0].posted_at == "2026-05-19T10:53:25+00:00" and len(_lv_eu[0].posted_at) <= 32
+    and _lv_parse_date(_lv_eu[0].posted_at) is not None
+    and [h.work_mode for h in _lv_eu] == ["hybrid", "onsite", "hybrid"]
+    and _lv_us[0].location == "Tel Aviv" and _lv_us[0].language == "en",
+    f"{[(h.title, h.location, h.posted_at, h.work_mode) for h in _lv_eu]}",
+)
+check(
+    "16f lever description is INLINE (no detail fetch): the plain description, each list section with its heading "
+    "(HTML stripped) and the closing paragraph; fetch_description returns it as it is",
+    "3D Algorithm Developer" in _lv_eu[0].description
+    and "What will your job look like:" in _lv_eu[0].description
+    and "Algorithm development in the areas of computer vision" in _lv_eu[0].description
+    and "<li>" not in _lv_eu[0].description
+    and "come to lead the revolution" in _lv_eu[0].description
+    and _lv.LeverProvider().fetch_description(_lv_eu[0]) == _lv_eu[0].description,
+    _lv_eu[0].description[:120],
+)
+check(
+    "16f lever parser: duplicates by id folded, a posting with no URL or not an object skipped, junk is []",
+    len(_lv.parse_lever_postings(_LV_EU * 2)) == 3
+    and _lv.parse_lever_postings([{"id": "x", "text": "No URL"}, "junk", None]) == []
+    and _lv.parse_lever_postings(None) == [] and _lv.parse_lever_postings({}) == [],
+)
+check(
+    "16f lever dates: epoch SECONDS, a bool, a string and a negative are unknown (\"\"), never a guessed date",
+    [_lv.epoch_ms_to_iso(v) for v in (1790437813, True, "1779188005917", -5, None)] == ["", "", "", "", ""]
+    and _lv.epoch_ms_to_iso(1779188005917) == "2026-05-19T10:53:25+00:00",
+)
+# The false-positive half: the Beijing posting's own words planted with Israel.
+_lv_bj = _lv.parse_lever_postings(
+    [{**_LV_EU[1], "descriptionPlain": "Mobileye is headquartered in Jerusalem, Israel; our Tel Aviv team leads this."}],
+    company_name="Mobileye",
+)[0]
+check(
+    "16f lever place: an Israel search keeps Mobileye's Ramat Gan postings and WalkMe's \"Tel Aviv\" (country IL), "
+    "and leaves out Mobileye's BEIJING posting, even with Israel and Tel Aviv planted in its description (a posting "
+    "is where it says it is, never where its company is); a Hebrew city reads as its English form; another city misses",
+    [_lv.location_matches(h, "Israel") for h in _lv_eu] == [True, False, True]
+    and _lv.location_matches(_lv_bj, "Israel") is False
+    and _lv.location_matches(_lv_bj, "Tel Aviv, Israel") is False
+    and _lv.location_matches(_lv_us[0], "Israel") and _lv.location_matches(_lv_us[0], "Tel Aviv, Israel")
+    and _lv.location_matches(_lv_eu[0], "רמת גן")
+    and not _lv.location_matches(_lv_us[0], "Haifa")
+    and _lv.location_matches(_lv_eu[1], "Beijing"),
+)
+check(
+    "16f lever title filter: every word of the title in the posting's title, team or description",
+    _lv.keyword_matches(_lv_eu[0], "Algorithm Developer")
+    and _lv.keyword_matches(_lv_eu[0], "python")
+    and not _lv.keyword_matches(_lv_eu[0], "Product Designer")
+    and _lv.keyword_matches(_lv_us[0], "Product Designer"),
+)
+check(
+    "16f lever work mode: the board's own field is read before the words (hybrid, onsite), and a value the reader "
+    "does not know (\"unspecified\") falls back to the posting's words",
+    _lv_read_mode(board_value="hybrid").modes == {"hybrid"}
+    and _lv_read_mode(board_value="onsite").modes == {"onsite"}
+    and _lv_read_mode(board_value="unspecified", text="This is a fully remote role.").modes == {"remote"},
+)
+try:
+    _lv.api_url("evil.example", "mobileye")
+    _lv_refused = False
+except ValueError:
+    _lv_refused = True
+check(
+    "16f lever asks only its two hosts: a registry row naming another host is refused before any request, and a "
+    "site name is quoted into the path",
+    _lv_refused
+    and _lv.api_url("api.eu.lever.co", "mobileye") == "https://api.eu.lever.co/v0/postings/mobileye?mode=json"
+    and _lv.api_url("api.lever.co", "a/b") == "https://api.lever.co/v0/postings/a%2Fb?mode=json",
+)
+check(
+    "16f lever is registered and searched by default; its seed is seven sites, Mobileye on the EU host and the "
+    "rest on api.lever.co",
+    "lever" in _LV_PROV and "lever" in _LV_DEFAULTS
+    and len(_LV_SEED) == 7
+    and {r["slug"]: r["host"] for r in _LV_SEED}["mobileye"] == "api.eu.lever.co"
+    and all(r["host"] == "api.lever.co" for r in _LV_SEED if r["slug"] != "mobileye"),
+)
+# The provider end to end over a fake network, patched where `_http_get` is BOUND.
+_lv_urls: list[str] = []
+
+
+def _lv_get(url, timeout=15):  # noqa: ANN001
+    _lv_urls.append(url)
+    if url == "https://api.eu.lever.co/v0/postings/mobileye?mode=json":
+        return _json.dumps(_LV_EU)
+    if url == "https://api.lever.co/v0/postings/walkme?mode=json":
+        return _json.dumps(_LV_US)
+    if "/houzz" in url:
+        raise OSError("timed out")
+    return "[]"
+
+
+_lv_real = _lv._http_get
+_lv._http_get = _lv_get
+_lv.FEEDS.clear()
+try:
+    _lv_found = _lv.LeverProvider().search(_Gh16Ctx(job_title="Algorithm", location="Israel", limit=25))
+    _lv_first = list(_lv_urls)
+    _lv_urls.clear()
+    _lv_again = _lv.LeverProvider().search(_Gh16Ctx(job_title="Algorithm", location="Israel", limit=25))
+    _lv_again_urls = list(_lv_urls)
+    try:
+        _lv.LeverProvider().search(_Gh16Ctx(job_title="Chef", location="Israel", limit=25))
+        _lv_none = "no raise"
+    except _LvNoRes:
+        _lv_none = "NoResultsError"
+finally:
+    _lv._http_get = _lv_real
+    _lv.FEEDS.clear()
+check(
+    "16f lever search: each registered site asked once on ITS host (Mobileye on the EU host), a site that fails "
+    "(Houzz) is left out while the rest answer, the Israel search keeps the two Ramat Gan algorithm postings and "
+    "not Beijing's, the next search asks nothing (cached, the failure remembered), and nothing matching is "
+    "NoResultsError (an empty board, never an outage)",
+    sorted(h.title for h in _lv_found) == ["3D Algorithm Developer", "AI Algorithm Engineer - Vision Localization Group"]
+    and "https://api.eu.lever.co/v0/postings/mobileye?mode=json" in _lv_first
+    and len(_lv_first) == 7 and any("/houzz" in u for u in _lv_first)
+    and _lv_again_urls == [] and len(_lv_again) == 2
+    and _lv_none == "NoResultsError",
+    f"{[h.title for h in _lv_found]} {_lv_first} {_lv_again_urls} {_lv_none}",
+)
+
+# 16g. A saved search's boards, once (2026-09-28). The Jobs page adopts the
+# context a search RESOLVED, which lists every board by name, so "all boards"
+# was stored as the five there were, and a board added later was never searched
+# for that person. Such a list is stored as "every board" ([]) once, a list that
+# left a board out stays, and both write doors store every-board as [] from now on.
+import app.db.registry_seed as _ws_mod  # noqa: E402
+from app.api.routes import update_search_prefs as _ws_put_prefs  # noqa: E402
+from app.core.providers import stored_sources as _ws_stored  # noqa: E402
+from app.db.models import JobAlert as _WsAlert, User as _WsUser  # noqa: E402
+from app.models import SearchContext as _WsCtx, SearchPrefs as _WsPrefs  # noqa: E402
+
+_WS_OLD = ["linkedin", "drushim", "comeet", "jobmaster", "greenhouse"]
+_ws_eng = _sd_engine("sqlite://")
+_SdBase.metadata.create_all(_ws_eng)
+_ws_db = _sd_sessionmaker(bind=_ws_eng)()
+_ws_cases = {
+    "every old board": _json.dumps({"job_title": "QA", "sources": _WS_OLD}),
+    "every old board and a retired one": _json.dumps({"job_title": "QA", "sources": _WS_OLD + ["jooble"]}),
+    "a board left out": _json.dumps({"job_title": "QA", "sources": _WS_OLD[:4]}),
+    "saved after the deploy": _json.dumps({"job_title": "QA", "sources": _WS_OLD + ["lever"]}),
+    "no list": _json.dumps({"job_title": "QA"}),
+    "not a context": "{not json",
+}
+for _ws_i, (_ws_label, _ws_raw) in enumerate(_ws_cases.items()):
+    _ws_db.add(_WsUser(id=900 + _ws_i, name=_ws_label, invite_code=f"ws16g-{_ws_i}", search_prefs_json=_ws_raw))
+_ws_db.add(_WsAlert(user_id=900, context_json=_json.dumps({"job_title": "QA", "sources": _WS_OLD, "limit": 7})))
+_ws_db.commit()
+_ws_n1 = _ws_mod.widen_saved_sources(_ws_db)
+_ws_after = {
+    label: _ws_db.get(_WsUser, 900 + i).search_prefs_json for i, label in enumerate(_ws_cases)
+}
+_ws_alert_after = _json.loads(_ws_db.execute(_sd_select(_WsAlert.context_json)).scalar_one())
+_ws_db.get(_WsUser, 900).search_prefs_json = _json.dumps({"job_title": "QA", "sources": _WS_OLD})  # saved again later
+_ws_db.commit()
+_ws_n2 = _ws_mod.widen_saved_sources(_ws_db)
+check(
+    "16g saved searches, once: a list naming every board there was before 2026-09-28 (with or without a retired "
+    "one) becomes \"every board\" ([]) in a user's saved search AND an alert, its other fields kept; a list that "
+    "left a board out, one saved after the deploy, one with no list and text that is not a context stay as they "
+    "were; and it runs ONCE (a list saved again later is not rewritten)",
+    _ws_n1 == 3
+    and _json.loads(_ws_after["every old board"])["sources"] == []
+    and _json.loads(_ws_after["every old board"])["job_title"] == "QA"
+    and _json.loads(_ws_after["every old board and a retired one"])["sources"] == []
+    and _ws_after["a board left out"] == _ws_cases["a board left out"]
+    and _ws_after["saved after the deploy"] == _ws_cases["saved after the deploy"]
+    and _ws_after["no list"] == _ws_cases["no list"]
+    and _ws_after["not a context"] == _ws_cases["not a context"]
+    and _ws_alert_after == {"job_title": "QA", "sources": [], "limit": 7}
+    and _ws_n2 == 0 and _json.loads(_ws_db.get(_WsUser, 900).search_prefs_json)["sources"] == _WS_OLD,
+    f"{_ws_n1} {_ws_after} {_ws_alert_after} {_ws_n2}",
+)
+_ws_db.close()
+_db = SessionLocal()
+_ws_admin = _db.get(_WsUser, _admin_id)
+_ws_prev_prefs = _ws_admin.search_prefs_json
+_ws_put_prefs(_WsPrefs(context=_WsCtx(job_title="QA", sources=list(_LV_PROV))), db=_db, user=_ws_admin)
+_ws_stored_all = _json.loads(_ws_admin.search_prefs_json)["sources"]
+_ws_put_prefs(_WsPrefs(context=_WsCtx(job_title="QA", sources=["drushim", "lever"])), db=_db, user=_ws_admin)
+_ws_stored_some = _json.loads(_ws_admin.search_prefs_json)["sources"]
+update_alert(_db, _admin_id, enabled=False, email="me@example.com", context=_WsCtx(job_title="QA", sources=list(_LV_PROV)))
+_ws_alert_all = _json.loads(get_alert(_db, _admin_id).context_json)["sources"]
+update_alert(_db, _admin_id, enabled=False, email="me@example.com", context=None, min_score=DEFAULT_MIN_SCORE)
+_ws_admin.search_prefs_json = _ws_prev_prefs
+_db.commit()
+_db.close()
+check(
+    "16g both write doors store \"every board\" as []: PUT /jobs/search-prefs and an alert's context, each handed "
+    "every registered board by name, store [] (so the next board joins them); a choice of boards is stored as chosen",
+    _ws_stored_all == [] and _ws_stored_some == ["drushim", "lever"] and _ws_alert_all == []
+    and _ws_stored(list(_LV_PROV) + ["jooble"]) == [] and _ws_stored(["linkedin"]) == ["linkedin"],
+    f"{_ws_stored_all} {_ws_stored_some} {_ws_alert_all}",
+)
+
+# 16h. SmartRecruiters (2026-09-28): the public posting list filters by country and
+# keywords SERVER-side; a selected posting's description is one more JSON GET.
+# Pinned on trimmed real responses (Check Point, country=il&q=engineer, and one
+# posting's detail), plus a US posting planted from the first to prove a posting
+# outside Israel never reaches an Israel search whatever the server sent.
+import app.core.providers.smartrecruiters as _sr  # noqa: E402
+from app.core.providers.smartrecruiters_seed import SEED_COMPANIES as _SR_SEED  # noqa: E402
+
+_SR_LIST = _json.loads((Path(__file__).parent / "fixtures" / "smartrecruiters_postings.json").read_text(encoding="utf-8"))
+_SR_ONE = _json.loads((Path(__file__).parent / "fixtures" / "smartrecruiters_posting.json").read_text(encoding="utf-8"))
+_sr_hits = _sr.parse_smartrecruiters_postings(_SR_LIST, company_name="Fallback")
+check(
+    "16h smartrecruiters parser: each posting with its title, the board's company name, its full location, a "
+    "public posting URL built from the company and posting ids, releasedDate as posted_at (the one board-date "
+    "parser reads it), NO description (fetched per posting), and the board's hybrid flag as its work mode",
+    len(_sr_hits) == 3
+    and _sr_hits[0].title == "AI Engineer – Next-Generation Cyber Security"
+    and _sr_hits[0].company == "Check Point Software Technologies"
+    and _sr_hits[0].location == "Tel Aviv-Yafo, Tel Aviv District, Israel"
+    and _sr_hits[0].url == "https://jobs.smartrecruiters.com/CheckPointSoftwareTechnologies2/744000152024919"
+    and _sr_hits[0].external_id == "744000152024919"
+    and _sr_hits[0].posted_at == "2026-09-27T09:59:38.945Z" and _lv_parse_date(_sr_hits[0].posted_at) is not None
+    and all(h.description == "" and h.source == "smartrecruiters" and h.work_mode == "Hybrid" for h in _sr_hits),
+    f"{[(h.title, h.location, h.work_mode) for h in _sr_hits]}",
+)
+_sr_flags = [
+    _sr._work_mode({"remote": True, "hybrid": False}),
+    _sr._work_mode({"remote": False, "hybrid": True}),
+    _sr._work_mode({"remote": False, "hybrid": False}),
+    _sr._work_mode({}),
+]
+check(
+    "16h smartrecruiters work mode: a flag the board SET is its statement (Remote, Hybrid); both false is UNKNOWN, "
+    "never \"on-site\" (the board leaves them false on postings that are not on-site too)",
+    _sr_flags == ["Remote", "Hybrid", "", ""],
+    str(_sr_flags),
+)
+check(
+    "16h smartrecruiters parser: duplicate ids folded, a posting whose id or company is not an identifier is "
+    "skipped (the URL is built from them), junk is []",
+    len(_sr.parse_smartrecruiters_postings({"content": _SR_LIST["content"] * 2})) == 3
+    and _sr.parse_smartrecruiters_postings({"content": [{**_SR_LIST["content"][0], "id": "../../x"}]}) == []
+    and _sr.parse_smartrecruiters_postings({"content": [{**_SR_LIST["content"][0], "company": {"identifier": "a b"}}]}) == []
+    and _sr.parse_smartrecruiters_postings({}) == [] and _sr.parse_smartrecruiters_postings(None) == [],
+)
+def _sr_raises(fn) -> bool:  # noqa: ANN001
+    try:
+        fn()
+    except ValueError:
+        return True
+    return False
+
+
+_sr_desc = _sr.parse_smartrecruiters_posting(_SR_ONE)
+check(
+    "16h smartrecruiters detail: the job ad's sections in order, each under its title, HTML stripped; an answer "
+    "with no job ad is \"\"",
+    _sr_desc.startswith("Company Description\nWe are seeking an innovative AI Engineer")
+    and "Job Description\nAgentic Framework Design:" in _sr_desc
+    and "Qualifications\nRequired Technical Skills" in _sr_desc
+    and "<li>" not in _sr_desc and "Additional Information" not in _sr_desc
+    and _sr.parse_smartrecruiters_posting({}) == "" and _sr.parse_smartrecruiters_posting({"jobAd": {}}) == "",
+    _sr_desc[:160],
+)
+_sr_us = _sr.parse_smartrecruiters_postings({"content": [{
+    **_SR_LIST["content"][1], "id": "744000999",
+    "location": {"city": "Austin", "region": "TX", "country": "us", "remote": False, "hybrid": True,
+                 "fullLocation": "Austin, TX, United States"},
+    "name": "Security Software Engineer (works with our Tel Aviv, Israel R&D)",
+}]})[0]
+check(
+    "16h smartrecruiters place: an Israel search keeps the Tel Aviv postings (also by a Hebrew city name) and "
+    "leaves out an Austin posting even when its TITLE names Tel Aviv and Israel; London misses; no place keeps all",
+    all(_sr.location_matches(h, "Israel") for h in _sr_hits)
+    and _sr.location_matches(_sr_hits[0], "תל אביב")
+    and not _sr.location_matches(_sr_us, "Israel")
+    and not _sr.location_matches(_sr_us, "Tel Aviv, Israel")
+    and not _sr.location_matches(_sr_hits[0], "London")
+    and _sr.location_matches(_sr_us, ""),
+)
+check(
+    "16h smartrecruiters URLs: Israel asked as country=il with the title as q, one page of 100; the detail is built "
+    "from the company and posting ids, never from the list's `ref`; an id that is not one is refused before any request",
+    _sr.postings_url("Wix2", "QA Engineer", "il")
+    == "https://api.smartrecruiters.com/v1/companies/Wix2/postings?limit=100&country=il&q=QA+Engineer"
+    and _sr.postings_url("Wix2", "", "") == "https://api.smartrecruiters.com/v1/companies/Wix2/postings?limit=100"
+    and _sr.posting_url("Wix2", "744000152028049")
+    == "https://api.smartrecruiters.com/v1/companies/Wix2/postings/744000152028049"
+    and all(_sr_raises(lambda b=bad: _sr.posting_url("Wix2", b)) for bad in ("../x", "a/b", "", "x" * 81)),
+)
+check(
+    "16h smartrecruiters is registered and searched by default; its seed is Check Point, Wix and ServiceNow, by "
+    "the identifiers their public URLs use",
+    "smartrecruiters" in _LV_PROV and "smartrecruiters" in _LV_DEFAULTS
+    and [r["slug"] for r in _SR_SEED] == ["CheckPointSoftwareTechnologies2", "Wix2", "ServiceNow"],
+)
+_sr_urls: list[str] = []
+_sr_mode = {"refuse": set()}
+
+
+def _sr_get(url, timeout=15):  # noqa: ANN001
+    import urllib.error as _ue
+
+    _sr_urls.append(url)
+    company = url.split("/companies/")[1].split("/")[0]
+    if company in _sr_mode["refuse"]:
+        raise _ue.HTTPError(url, 403, "Forbidden", {}, None)
+    if "/postings/" in url:
+        return _json.dumps(_SR_ONE)
+    if company == "CheckPointSoftwareTechnologies2":
+        return _json.dumps(_SR_LIST)
+    if company == "Wix2":
+        raise OSError("timed out")
+    return _json.dumps({"offset": 0, "limit": 100, "totalFound": 0, "content": []})
+
+
+_sr_real = _sr._http_get
+_sr._http_get = _sr_get
+_sr.FEEDS.clear()
+try:
+    _sr_found = _sr.SmartRecruitersProvider().search(_Gh16Ctx(job_title="engineer", location="Israel", limit=25))
+    _sr_first = list(_sr_urls)
+    _sr_urls.clear()
+    _sr_again = _sr.SmartRecruitersProvider().search(_Gh16Ctx(job_title="engineer", location="Israel", limit=25))
+    _sr_again_urls = list(_sr_urls)
+    _sr_urls.clear()
+    _sr_text = _sr.SmartRecruitersProvider().fetch_description(_sr_found[0])
+    _sr_detail_urls = list(_sr_urls)
+    # The board starts refusing every company: one clean sentence, remembered.
+    _sr.FEEDS.clear()
+    _sr_mode["refuse"] = {"CheckPointSoftwareTechnologies2", "Wix2", "ServiceNow"}
+    _sr_urls.clear()
+    _sr_refusals: list[str] = []
+    for _ in range(2):
+        try:
+            _sr.SmartRecruitersProvider().search(_Gh16Ctx(job_title="engineer", location="Israel", limit=25))
+            _sr_refusals.append("no raise")
+        except _LvNoRes as _e:
+            _sr_refusals.append(f"NoResultsError: {_e}")
+        except ValueError as _e:
+            _sr_refusals.append(str(_e))
+    _sr_refused_urls = list(_sr_urls)
+finally:
+    _sr._http_get = _sr_real
+    _sr.FEEDS.clear()
+check(
+    "16h smartrecruiters search: each company asked ONCE with country=il and the query, a company that fails "
+    "(Wix, a timeout) left out while Check Point answers, the next search asks nothing (cached, the failure "
+    "remembered), and a selected posting's description is one GET built from its ids",
+    sorted(h.external_id for h in _sr_found) == ["744000151559419", "744000151664219", "744000152024919"]
+    and len(_sr_first) == 3 and all("country=il" in u and "q=engineer" in u for u in _sr_first)
+    and _sr_again_urls == [] and len(_sr_again) == 3
+    and _sr_detail_urls == ["https://api.smartrecruiters.com/v1/companies/CheckPointSoftwareTechnologies2/postings/"
+                            + _sr_found[0].external_id]
+    and _sr_text.startswith("Company Description"),
+    f"{[h.external_id for h in _sr_found]} {_sr_first} {_sr_again_urls} {_sr_detail_urls}",
+)
+check(
+    "16h smartrecruiters REFUSING (403, the keyed-API risk): quiet and clean — one plain sentence for the board, "
+    "never a raise past the provider or a NoResultsError that reads as 'nothing matched', and the refusal is "
+    "remembered like an answer (the second search asks nothing)",
+    len(_sr_refusals) == 2
+    and all("refusing requests" in r for r in _sr_refusals)
+    and len(_sr_refused_urls) == 3,
+    f"{_sr_refusals} {_sr_refused_urls}",
+)
+
+# 16i. Ashby (2026-09-28): the public posting API, the whole board with its
+# descriptions and work mode inline. Pinned on a trimmed real board (Lemonade:
+# four postings in Tel Aviv, written "TLV", one in New York, one remote in the
+# US), plus plants for the traps: `isRemote` on a hybrid office, a US posting in
+# "Chicago, IL" (Illinois, never Israel), and a US posting whose second office
+# is in Tel Aviv.
+import app.core.providers.ashby as _ab  # noqa: E402
+from app.core.providers.ashby_seed import SEED_COMPANIES as _AB_SEED  # noqa: E402
+
+_AB_BOARD = _json.loads((Path(__file__).parent / "fixtures" / "ashby_board.json").read_text(encoding="utf-8"))
+_ab_hits = _ab.parse_ashby_jobs(_AB_BOARD, company_name="Lemonade")
+check(
+    "16i ashby parser: each listed posting with its title, the registry's company, its location as the board "
+    "writes it, the job URL, publishedAt as posted_at (the one board-date parser reads it), the plain "
+    "description INLINE, and workplaceType as the board's work mode",
+    len(_ab_hits) == 6
+    and [h.location for h in _ab_hits] == ["TLV", "TLV", "TLV", "Remote", "NYC", "TLV"]
+    and _ab_hits[0].title == "Senior Backend Engineer" and _ab_hits[0].company == "Lemonade"
+    and _ab_hits[0].url == "https://jobs.ashbyhq.com/lemonade/9a6153da-639d-413e-b9bf-68ebf5f8c269"
+    and _ab_hits[0].posted_at == "2025-02-04T08:47:42.681+00:00" and _lv_parse_date(_ab_hits[0].posted_at) is not None
+    and all(h.source == "ashby" and len(h.description) > 100 for h in _ab_hits)
+    and [h.work_mode for h in _ab_hits] == ["", "", "", "Remote", "", "Hybrid"]
+    and _ab.AshbyProvider().fetch_description(_ab_hits[0]) == _ab_hits[0].description,
+    f"{[(h.title, h.location, h.work_mode) for h in _ab_hits]}",
+)
+check(
+    "16i ashby `isRemote` IS NOT REMOTE (Comeet's trap again): the hybrid Tel Aviv role carries isRemote true and "
+    "reads HYBRID; a posting with isRemote true and no workplaceType states nothing, and its words decide",
+    _AB_BOARD["jobs"][5]["isRemote"] is True and _AB_BOARD["jobs"][5]["workplaceType"] == "Hybrid"
+    and _lv_read_mode(board_value=_ab_hits[5].work_mode).modes == {"hybrid"}
+    and _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][0], "isRemote": True, "workplaceType": None}]})[0].work_mode == ""
+    and _lv_read_mode(board_value="OnSite").modes == {"onsite"},
+)
+check(
+    "16i ashby parser: an unlisted posting skipped, duplicates folded, no URL skipped, junk is []; published pay "
+    "is added to the description in the board's words",
+    _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][0], "isListed": False}]}) == []
+    and len(_ab.parse_ashby_jobs({"jobs": _AB_BOARD["jobs"] * 2})) == 6
+    and _ab.parse_ashby_jobs({"jobs": [{"id": "x", "title": "T"}]}) == []
+    and _ab.parse_ashby_jobs(None) == [] and _ab.parse_ashby_jobs({"jobs": "x"}) == []
+    and _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][4], "compensation": {
+        "scrapeableCompensationSalarySummary": "$210K – $260K"}}]})[0].description.endswith("Compensation: $210K – $260K"),
+)
+_ab_chicago = _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][4], "id": "chi", "jobUrl": "https://jobs.ashbyhq.com/x/chi",
+    "location": "Chicago, IL", "address": {"postalAddress": {"addressLocality": "Chicago", "addressRegion": "IL",
+    "addressCountry": "United States"}}}]})[0]
+_ab_second = _ab.parse_ashby_jobs({"jobs": [{**_AB_BOARD["jobs"][4], "id": "two", "jobUrl": "https://jobs.ashbyhq.com/x/two",
+    # Named so only its ADDRESS says Israel: no place list can read "Second office".
+    "secondaryLocations": [{"location": "Second office", "address": {"postalAddress": {"addressCountry": "Israel"}}}]}]})[0]
+check(
+    "16i ashby place: an Israel search keeps the four \"TLV\" postings by their ADDRESS (also for a Hebrew city), "
+    "leaves out the New York and the US-remote ones, never reads Illinois's \"IL\" as Israel (\"Chicago, IL\"), and "
+    "keeps a New York posting whose second office is in Tel Aviv",
+    [_ab.location_matches(h, "Israel") for h in _ab_hits] == [True, True, True, False, False, True]
+    and _ab.location_matches(_ab_hits[0], "תל אביב")
+    and _ab.location_matches(_ab_hits[0], "Tel Aviv, Israel")
+    and not _ab.location_matches(_ab_chicago, "Israel")
+    and _ab.location_matches(_ab_second, "Israel")
+    and _ab.location_matches(_ab_hits[4], "New York")
+    and _ab.keyword_matches(_ab_hits[0], "Backend Engineer") and not _ab.keyword_matches(_ab_hits[0], "Chef"),
+)
+check(
+    "16i ashby URL: a job-board name (case and dots kept: Viz.ai) goes into the path; anything else is refused "
+    "before any request",
+    _ab.board_url("Viz.ai") == "https://api.ashbyhq.com/posting-api/job-board/Viz.ai?includeCompensation=true"
+    and all(_sr_raises(lambda b=bad: _ab.board_url(b)) for bad in ("../x", "a/b", "", "a b")),
+)
+check(
+    "16i ashby is registered and searched by default; its seed is 17 boards, case kept (Viz.ai, Irregular, HUMAN, "
+    "Snappy), Sisense among them (it left Greenhouse for Ashby)",
+    "ashby" in _LV_PROV and "ashby" in _LV_DEFAULTS
+    and len(_AB_SEED) == 17
+    and {"Viz.ai", "Irregular", "HUMAN", "Snappy", "sisense", "moonactive", "lemonade"} <= {r["slug"] for r in _AB_SEED},
+)
+_ab_urls: list[str] = []
+
+
+def _ab_get(url, timeout=15):  # noqa: ANN001
+    _ab_urls.append(url)
+    if "/job-board/lemonade?" in url:
+        return _json.dumps(_AB_BOARD)
+    if "/job-board/nexxen?" in url:
+        raise OSError("HTTP Error 404: Not Found")
+    return _json.dumps({"jobs": [], "apiVersion": "1"})
+
+
+_ab_real = _ab._http_get
+_ab._http_get = _ab_get
+_ab.FEEDS.clear()
+try:
+    _ab_found = _ab.AshbyProvider().search(_Gh16Ctx(job_title="Backend Engineer", location="Israel", limit=25))
+    _ab_first = list(_ab_urls)
+    _ab_urls.clear()
+    _ab_again = _ab.AshbyProvider().search(_Gh16Ctx(job_title="Backend Engineer", location="Israel", limit=25))
+    _ab_again_urls = list(_ab_urls)
+finally:
+    _ab._http_get = _ab_real
+    _ab.FEEDS.clear()
+check(
+    "16i ashby search: every registered board asked once, a board that fails (404) left out while the rest "
+    "answer, the Israel search keeps Lemonade's two Tel Aviv backend roles (newest first), and the next search "
+    "asks nothing",
+    [h.title for h in _ab_found] == ["Backend Engineer - ML Platform", "Senior Backend Engineer"]
+    and len(_ab_first) == 17 and any("/job-board/nexxen?" in u for u in _ab_first)
+    and _ab_again_urls == [] and len(_ab_again) == 2,
+    f"{[h.title for h in _ab_found]} {len(_ab_first)} {_ab_again_urls}",
+)
+
+# 16j. Himalayas (2026-09-28): remote jobs open to people in Israel, for the
+# WORLDWIDE pass only. Its API is offered on one condition, a link back to the
+# posting's page on Himalayas and its name beside it, so every hit's URL is that
+# page and every surface credits it. Two traps pinned: the pass used to be
+# LinkedIn-only, and an eligibility list written into `location` would be read by
+# pay_market as the job's country. Pinned on trimmed real answers: three open
+# worldwide, one naming Israel alone, Canonical's long list naming Israel, and one
+# open to the United States only.
+import copy as _hm_copy  # noqa: E402
+
+import app.core.job_search as _hm_js  # noqa: E402
+import app.core.providers.himalayas as _hm  # noqa: E402
+from app.core.providers import ATTRIBUTED as _HM_ATTR  # noqa: E402
+
+_HM_RAW = _json.loads((Path(__file__).parent / "fixtures" / "himalayas_search.json").read_text(encoding="utf-8"))
+_hm_hits = _hm.parse_himalayas_jobs(_HM_RAW)
+check(
+    "16j himalayas parser: a posting open worldwide or to Israel is kept, one open to the United States only is "
+    "left out (the server's country filter checked again); each is source himalayas, its URL its Himalayas page, "
+    "its board work mode Remote, pubDate (epoch SECONDS) an ISO date the one parser reads, the description inline",
+    [h.company for h in _hm_hits] == ["micro1", "Incentivio", "EWOR GmbH", "Spotlock", "Canonical"]
+    and all(h.source == "himalayas" and _hm.himalayas_page(h.url) and h.work_mode == "Remote" for h in _hm_hits)
+    and _hm_hits[0].url == "https://himalayas.app/companies/micro1/jobs/backend-security-engineer"
+    and _hm_hits[0].posted_at == "2026-09-26T15:50:13+00:00" and _lv_parse_date(_hm_hits[0].posted_at) is not None
+    and all(len(h.description) > 200 and "<p>" not in h.description for h in _hm_hits)
+    and _hm.HimalayasProvider().fetch_description(_hm_hits[0]) == _hm_hits[0].description,
+    f"{[(h.company, h.url, h.posted_at) for h in _hm_hits]}",
+)
+_hm_trap = _hm.parse_himalayas_jobs({"jobs": [{**_HM_RAW["jobs"][3], "locationRestrictions": ["Israel", "Vietnam"]}]})[0]
+_hm_trap.origin_market = _hm_js.WORLDWIDE_ONLY_MARKET  # what the worldwide pass stamps on it
+_hm_trap_as_place = _hm_copy.deepcopy(_hm_trap)
+_hm_trap_as_place.location = ", ".join(_hm_trap.raw["locationRestrictions"])  # the defect, planted
+check(
+    "16j himalayas LOCATION TRAP: the countries a posting is OPEN TO never become its location (every hit's "
+    "location is empty), so pay_market keeps a posting open to Israel and Vietnam; written as its location, the same "
+    "list reads as a job in Vietnam and hides it",
+    all(h.location == "" for h in _hm_hits)
+    and _hm_hits[4].raw["locationRestrictions"][-1] == "United States"
+    and _hm_js._low_pay(_hm_trap) is False
+    and _hm_js._low_pay(_hm_trap_as_place) is True,
+    f"{_hm_trap.location!r} {_hm_trap_as_place.location!r}",
+)
+_hm_away = {**_HM_RAW["jobs"][0], "guid": "https://elsewhere.example/job/1", "applicationLink": "https://elsewhere.example/apply"}
+_hm_alt = {**_HM_RAW["jobs"][0], "guid": "https://elsewhere.example/job/2"}
+check(
+    "16j himalayas attribution: a posting with no Himalayas page to link back to is dropped, one whose guid points "
+    "away but whose application link is on Himalayas keeps that page; only https on himalayas.app (or a subdomain) "
+    "counts, never a look-alike host",
+    _hm.parse_himalayas_jobs({"jobs": [_hm_away]}) == []
+    and _hm.parse_himalayas_jobs({"jobs": [_hm_alt]})[0].url == _HM_RAW["jobs"][0]["applicationLink"]
+    and [_hm.himalayas_page(u) for u in (
+        "https://himalayas.app/companies/x/jobs/y", "https://www.himalayas.app/x", "http://himalayas.app/x",
+        "https://himalayas.app.evil.com/x", "https://evilhimalayas.app/x", "not a url",
+    )] == [True, True, False, False, False, False]
+    and _HM_ATTR == {"himalayas": "Himalayas"},
+)
+check(
+    "16j himalayas parser: a title's HTML entities read as text, published pay added in the board's words, a "
+    "posting whose list is not a list is left out, duplicates folded, junk is []",
+    _hm.parse_himalayas_jobs({"jobs": [{**_HM_RAW["jobs"][1], "title": "&#x28;Senior&#x29; Full-Stack Developer"}]})[0].title
+    == "(Senior) Full-Stack Developer"
+    and "Compensation: 130,000 – 200,000 EUR (annual)" in
+    _hm.parse_himalayas_jobs({"jobs": [{**_HM_RAW["jobs"][2], "minSalary": 130000, "maxSalary": 200000,
+                                        "currency": "EUR", "salaryPeriod": "annual"}]})[0].description
+    and _hm.parse_himalayas_jobs({"jobs": [{**_HM_RAW["jobs"][0], "locationRestrictions": "Israel"}]}) == []
+    and len(_hm.parse_himalayas_jobs({"jobs": _HM_RAW["jobs"] * 2})) == 5
+    and _hm.parse_himalayas_jobs(None) == [] and _hm.parse_himalayas_jobs({"jobs": {}}) == []
+    and [_hm.epoch_s_to_iso(v) for v in (1790437813000, True, "1790437813", None)] == ["", "", "", ""],
+)
+_hm_ww = _resolve_context(resume, SearchContext(job_titles=["Dev", "QA"], location="Tel Aviv", work_mode="remote",
+                                                include_worldwide=True))
+check(
+    "16j the worldwide pass runs on TWO boards now: Himalayas gets one query per keyword, remote, no location, "
+    "stamped as worldwide; with the pass off, an on-site search or the board unchecked it gets NONE (never the "
+    "user's own location), and LinkedIn's queries are unchanged",
+    _hm_js.WORLDWIDE_BOARDS == ("linkedin", "himalayas") and _hm_js.WORLDWIDE_ONLY_BOARDS == {"himalayas"}
+    and _board_queries("himalayas", _hm_ww) == [("Dev", "", "remote", "Worldwide"), ("QA", "", "remote", "Worldwide")]
+    and _board_queries("himalayas", _resolve_context(resume, SearchContext(job_title="Dev", location="Tel Aviv"))) == []
+    and _board_queries("himalayas", _resolve_context(resume, SearchContext(
+        job_title="Dev", work_mode="onsite", include_worldwide=True))) == []
+    and _board_queries("himalayas", _resolve_context(resume, SearchContext(
+        job_title="Dev", work_mode="remote", include_worldwide=True, sources=["linkedin"]))) == []
+    and len(_board_queries(WORLDWIDE_BOARD, _hm_ww)) == 2 * (1 + len(WORLDWIDE_REMOTE_LOCATIONS)),
+    str(_board_queries("himalayas", _hm_ww)),
+)
+try:
+    _hm.HimalayasProvider().search(SearchContext(job_title="מפתח תוכנה"))
+    _hm_hebrew = "no raise"
+except _LvNoRes as _e:
+    _hm_hebrew = str(_e)
+check(
+    "16j himalayas is an English board: a Hebrew title is 'nothing matched there', asked of nobody",
+    "in English" in _hm_hebrew,
+    _hm_hebrew,
+)
+
+
+class _HmLocal:
+    name = "fake_local16j"
+
+    def search(self, ctx):  # noqa: ANN001
+        return [JobHit(source=self.name, title="Engineer (Tel Aviv)", company="LocalCo", location="Tel Aviv, Israel",
+                       description="Python services and APIs for our platform team.", url="https://local.example/1")]
+
+    def fetch_description(self, hit):  # noqa: ANN001
+        return hit.description
+
+
+_hm_calls: list[str] = []
+# One of the fixture's worldwide postings, planted OPEN to Israel and Vietnam only:
+# kept, and never hidden as low-pay (its location is empty, not the list).
+_HM_SERVED = {**_HM_RAW, "jobs": _HM_RAW["jobs"] + [{**_HM_RAW["jobs"][3], "title": "Senior Full Stack Engineer II",
+    "guid": "https://himalayas.app/companies/spotlock/jobs/sfse-2", "locationRestrictions": ["Israel", "Vietnam"]}]}
+
+
+def _hm_get(url, timeout=15):  # noqa: ANN001
+    _hm_calls.append(url)
+    return _json.dumps(_HM_SERVED)
+
+
+_hm_real = _hm._http_get
+_hm._http_get = _hm_get
+_hm.FEEDS.clear()
+PROVIDERS["fake_local16j"] = _HmLocal()
+try:
+    _hm_events: list[dict] = []
+    _hm_on = _hm_js.search_jobs(resume, SearchContext(
+        job_title="Engineer", location="Tel Aviv, Israel", work_mode="remote", include_worldwide=True,
+        sources=["fake_local16j", "himalayas"], max_age_days=0, limit=10,
+    ), progress=_hm_events.append)
+    _hm_on_calls = list(_hm_calls)
+    _hm_calls.clear()
+    _hm_events_off: list[dict] = []
+    _hm_off = _hm_js.search_jobs(resume, SearchContext(
+        job_title="Engineer", location="Tel Aviv, Israel", work_mode="any",
+        sources=["fake_local16j", "himalayas"], max_age_days=0, limit=10,
+    ), progress=_hm_events_off.append)
+    _hm_off_calls = list(_hm_calls)
+    try:
+        _hm_js.search_jobs(resume, SearchContext(job_title="Engineer", sources=["himalayas"], max_age_days=0))
+        _hm_only = "no raise"
+    except _LvNoRes as _e:
+        _hm_only = str(_e)
+finally:
+    _hm._http_get = _hm_real
+    _hm.FEEDS.clear()
+    PROVIDERS.pop("fake_local16j", None)
+_hm_on_hm = [m for m in _hm_on.matches if m.source == "himalayas"]
+check(
+    "16j search end to end, pass ON: Himalayas asked once with country=IL and the English title, its postings "
+    "ranked beside the local board's (source himalayas, their Himalayas page, no place, read as remote), the one "
+    "open to Israel and Vietnam kept and never hidden as low-pay, the US-only one never shown",
+    len(_hm_on_calls) == 1 and "country=IL" in _hm_on_calls[0] and "q=Engineer" in _hm_on_calls[0]
+    and len(_hm_on_hm) >= 5
+    and all(_hm.himalayas_page(m.url) and m.location == "" and m.work_modes == ["remote"] for m in _hm_on_hm)
+    and "https://himalayas.app/companies/spotlock/jobs/sfse-2" in {m.url for m in _hm_on_hm}
+    and not any(f.reason == "market" for f in _hm_on.filtered)
+    and not any("ElitevoraSys" in m.company for m in _hm_on.matches)
+    and any(m.source == "fake_local16j" for m in _hm_on.matches),
+    f"{_hm_on_calls} {[(m.company, m.url) for m in _hm_on_hm]} {[(f.reason, f.url) for f in _hm_on.filtered]}",
+)
+check(
+    "16j search, pass OFF: Himalayas is not asked at all (no request, no board event, not an empty board), and "
+    "picking it alone without the pass says why instead of searching nothing",
+    _hm_off_calls == [] and {e["source"] for e in _hm_events_off if e["stage"] == "boards"} == {"fake_local16j"}
+    and "himalayas" not in _hm_off.source_empty and "himalayas" not in _hm_off.source_errors
+    and {e["source"] for e in _hm_events if e["stage"] == "boards"} == {"fake_local16j", "himalayas"}
+    and "worldwide" in _hm_only.lower(),
+    f"{_hm_off_calls} {_hm_events_off} {_hm_only}",
+)
+_hm_match = JobMatch(title="Remote Dev", company="EWOR GmbH", overall=88.0, source="himalayas",
+                     url="https://himalayas.app/companies/ewor-gmbh/jobs/dev")
+_hm_li = JobMatch(title="Dev", company="L", overall=88.0, source="linkedin", url="https://www.linkedin.com/jobs/view/1")
+_hm_text = build_alert_email([_hm_match, _hm_li], _AlertCtx(job_title="Dev"), app_url="https://app.example")[1]
+_hm_html = build_alert_email_html([_hm_match, _hm_li], _AlertCtx(job_title="Dev"), app_url="https://app.example")
+check(
+    "16j the alert email credits Himalayas beside a link to the posting's Himalayas page, in both bodies, even "
+    "though the job's own link opens the app; a LinkedIn job carries no such line",
+    "  via Himalayas: https://himalayas.app/companies/ewor-gmbh/jobs/dev" in _hm_text
+    and _hm_text.count("via ") == 1
+    and 'href="https://himalayas.app/companies/ewor-gmbh/jobs/dev"' in _hm_html
+    and ">via Himalayas</a>" in _hm_html and _hm_html.count(">via ") == 1,
+    _hm_text[-300:],
+)
+check(
+    "16j himalayas is registered and searched by default (by the worldwide pass only)",
+    "himalayas" in _LV_PROV and "himalayas" in _LV_DEFAULTS and _LV_PROV["himalayas"].name == "himalayas",
+)
+
 # 17. The CV scan (PLAN 6; an app feature since Phase 30 / A2): deterministic
 # keyword extraction, coverage via the scorer, Hebrew prefix rescue, and the
 # HTTP route behind the gate with its daily cap and its monthly use. Zero LLM

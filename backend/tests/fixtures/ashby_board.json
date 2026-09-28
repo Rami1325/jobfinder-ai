@@ -1,0 +1,190 @@
+{
+ "jobs": [
+  {
+   "id": "9a6153da-639d-413e-b9bf-68ebf5f8c269",
+   "title": "Senior Backend Engineer",
+   "department": "Tech Development",
+   "team": "Tech Development",
+   "employmentType": "FullTime",
+   "location": "TLV",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2025-02-04T08:47:42.681+00:00",
+   "isListed": true,
+   "isRemote": null,
+   "workplaceType": null,
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Israel",
+     "addressCountry": "Israel",
+     "addressLocality": "Tel Aviv"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/lemonade/9a6153da-639d-413e-b9bf-68ebf5f8c269",
+   "applyUrl": "https://jobs.ashbyhq.com/lemonade/9a6153da-639d-413e-b9bf-68ebf5f8c269/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\">We’re looking for a senior-level backend engineer to join our growing Engineering team in TLV.</p><p style=\"min-height:1.5em\">This role will require you to bring features to the finish line while collaborating closely with other developers, as well as with the Product, QA, Data, and Machine Learning  teams—all with the goal of delivering a seamless, joyful experience for our customers.</p><p style=\"min-height:1.5em\">We believe three things matter for every role at Lemonade: <em>drive</em> to push through challenges, <em>efficiency</em> that keeps standards high while moving fast, and <em>adaptability</em> that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work.</p><p style=\"min-height:1.5em\">Our AI-first approach isn't just a tagline either. We're building the future of insurance with AI at the center, and we need pe",
+   "descriptionPlain": "We’re looking for a senior-level backend engineer to join our growing Engineering team in TLV.\n\nThis role will require you to bring features to the finish line while collaborating closely with other developers, as well as with the Product, QA, Data, and Machine Learning  teams—all with the goal of delivering a seamless, joyful experience for our customers.\n\nWe believe three things matter for every role at Lemonade: drive to push through challenges, efficiency that keeps standards high while moving fast, and adaptability that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work.\n\nOur AI-first approach isn't just a tagline either. We're building the future of insurance with AI at the center, and we need people who are genuinely excited to learn and grow alongside these tools.\n\n\n\nIN THIS ROLE YOU’LL:\n\n - Help build our products using microservices w",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  },
+  {
+   "id": "281cd6fa-b2c5-4579-946d-6ef20755d438",
+   "title": "Senior Growth Product Manager",
+   "department": "Product",
+   "team": "Product",
+   "employmentType": "FullTime",
+   "location": "TLV",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2025-11-18T10:39:09.145+00:00",
+   "isListed": true,
+   "isRemote": null,
+   "workplaceType": null,
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Israel",
+     "addressCountry": "Israel",
+     "addressLocality": "Tel Aviv"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/lemonade/281cd6fa-b2c5-4579-946d-6ef20755d438",
+   "applyUrl": "https://jobs.ashbyhq.com/lemonade/281cd6fa-b2c5-4579-946d-6ef20755d438/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\">We’re looking for a Senior Growth Product Manager with a passion for experimentation, data-driven decision-making, and creating seamless user experiences. You’ll join one of our high-impact growth teams, helping drive user acquisition, engagement, retention, and cross-sell opportunities.</p><p style=\"min-height:1.5em\">This role has the potential to unlock massive revenue growth - scaling from millions to billions. You’ll define and implement strategies that drive measurable impact, using deep customer insights, A/B testing, and iterative experimentation to fuel sustainable growth.</p><p style=\"min-height:1.5em\">As a strategic leader, you’ll set the vision for where we need to go and craft the roadmap to get us there - balancing business goals with customer needs.</p><p style=\"min-height:1.5em\">We believe three things matter for every role at Lemonade: <em>driv",
+   "descriptionPlain": "We’re looking for a Senior Growth Product Manager with a passion for experimentation, data-driven decision-making, and creating seamless user experiences. You’ll join one of our high-impact growth teams, helping drive user acquisition, engagement, retention, and cross-sell opportunities.\n\nThis role has the potential to unlock massive revenue growth - scaling from millions to billions. You’ll define and implement strategies that drive measurable impact, using deep customer insights, A/B testing, and iterative experimentation to fuel sustainable growth.\n\nAs a strategic leader, you’ll set the vision for where we need to go and craft the roadmap to get us there - balancing business goals with customer needs.\n\nWe believe three things matter for every role at Lemonade: drive to push through challenges, efficiency that keeps standards high while moving fast, and adaptability that lets you pivot",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  },
+  {
+   "id": "7cdf4386-e378-42b6-8f52-58ef7ff99ba8",
+   "title": "Backend Engineer - ML Platform",
+   "department": "Tech Development",
+   "team": "Tech Development",
+   "employmentType": "FullTime",
+   "location": "TLV",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2026-08-13T07:15:06.028+00:00",
+   "isListed": true,
+   "isRemote": null,
+   "workplaceType": null,
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Israel",
+     "addressCountry": "Israel",
+     "addressLocality": "Tel Aviv"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/lemonade/7cdf4386-e378-42b6-8f52-58ef7ff99ba8",
+   "applyUrl": "https://jobs.ashbyhq.com/lemonade/7cdf4386-e378-42b6-8f52-58ef7ff99ba8/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\">We're looking for a Backend Engineer to help build and scale the Machine Learning Platform that powers how Lemonade uses AI across the business. You'll be part of the ML Platform team, designing the infrastructure that lets our data scientists move faster, ship smarter, and operate with confidence in production.</p><p style=\"min-height:1.5em\">We believe three things matter for every role at Lemonade: <em>drive</em> to push through challenges, <em>efficiency</em> that keeps standards high while moving fast, and <em>adaptability</em> that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work. Our AI-first approach isn't just a tagline either. We're building the future of insurance with AI at the center, and we need people who are genuinely excited to learn and grow alongside these tools.</p><p style=\"min-height:1.5em\"></p",
+   "descriptionPlain": "We're looking for a Backend Engineer to help build and scale the Machine Learning Platform that powers how Lemonade uses AI across the business. You'll be part of the ML Platform team, designing the infrastructure that lets our data scientists move faster, ship smarter, and operate with confidence in production.\n\nWe believe three things matter for every role at Lemonade: drive to push through challenges, efficiency that keeps standards high while moving fast, and adaptability that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work. Our AI-first approach isn't just a tagline either. We're building the future of insurance with AI at the center, and we need people who are genuinely excited to learn and grow alongside these tools.\n\n\n\n\nIN THIS ROLE YOU'LL\n\n - Design and build the foundational ML platform and AI agents to accelerate data science mode",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  },
+  {
+   "id": "997826c2-f2d5-4988-9ecf-ead1c39e8480",
+   "title": "CLX Property Advocate, Liability",
+   "department": "Claims Experience ",
+   "team": "Claims Experience ",
+   "employmentType": "FullTime",
+   "location": "Remote",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2026-09-21T13:56:27.196+00:00",
+   "isListed": true,
+   "isRemote": true,
+   "workplaceType": "Remote",
+   "address": {
+    "postalAddress": {
+     "addressCountry": "United States",
+     "addressLocality": "Remote"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/lemonade/997826c2-f2d5-4988-9ecf-ead1c39e8480",
+   "applyUrl": "https://jobs.ashbyhq.com/lemonade/997826c2-f2d5-4988-9ecf-ead1c39e8480/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\"><strong>What you're applying for</strong></p><p style=\"min-height:1.5em\">We're looking for a Property Claims Advocate, Liability to help us deliver fast, fair, and genuinely human claims experiences. You'll be the person our customers count on when things go wrong — investigating liability claims end to end, making smart coverage decisions, and explaining them clearly, without the jargon. This role sits within our Claims team, where ownership, empathy, and sharp judgment aren't nice-to-haves — they're the baseline.</p><p style=\"min-height:1.5em\">We believe three things matter for every role at Lemonade: <em>drive</em> to push through challenges, <em>efficiency</em> that keeps standards high while moving fast, and <em>adaptability</em> that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work.</p><p style=\"min-height:1.",
+   "descriptionPlain": "What you're applying for\n\nWe're looking for a Property Claims Advocate, Liability to help us deliver fast, fair, and genuinely human claims experiences. You'll be the person our customers count on when things go wrong — investigating liability claims end to end, making smart coverage decisions, and explaining them clearly, without the jargon. This role sits within our Claims team, where ownership, empathy, and sharp judgment aren't nice-to-haves — they're the baseline.\n\nWe believe three things matter for every role at Lemonade: drive to push through challenges, efficiency that keeps standards high while moving fast, and adaptability that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work.\n\nOur AI-first approach isn't just a tagline either. We're building the future of insurance with AI at the center, and we need people who are genuinely excited",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  },
+  {
+   "id": "486bead9-04c4-4bb3-81b6-17fabfc5f52a",
+   "title": "Associate General Counsel, Securities & Corporate Legal",
+   "department": "Legal",
+   "team": "Legal",
+   "employmentType": "FullTime",
+   "location": "NYC",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2026-09-17T20:53:29.724+00:00",
+   "isListed": true,
+   "isRemote": null,
+   "workplaceType": null,
+   "address": {
+    "postalAddress": {
+     "addressRegion": "New York",
+     "addressCountry": "United States",
+     "addressLocality": "New York"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/lemonade/486bead9-04c4-4bb3-81b6-17fabfc5f52a",
+   "applyUrl": "https://jobs.ashbyhq.com/lemonade/486bead9-04c4-4bb3-81b6-17fabfc5f52a/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\">We're looking for a senior corporate lawyer to help Lemonade navigate the legal complexities of being a public, high-growth company at the intersection of insurance and AI. Reporting into our CLO, this role sits at the center of Lemonade's Legal team, partnering directly with executive leadership and the Board on everything from capital markets and M&amp;A to corporate governance and commercial strategy.</p><p style=\"min-height:1.5em\">We believe three things matter for every role at Lemonade: <em>drive</em> to push through challenges, <em>efficiency</em> that keeps standards high while moving fast, and <em>adaptability</em> that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work.</p><p style=\"min-height:1.5em\">We’ve been AI-native since 2015. We're building the future of insurance with AI at its core, and we love peo",
+   "descriptionPlain": "We're looking for a senior corporate lawyer to help Lemonade navigate the legal complexities of being a public, high-growth company at the intersection of insurance and AI. Reporting into our CLO, this role sits at the center of Lemonade's Legal team, partnering directly with executive leadership and the Board on everything from capital markets and M&A to corporate governance and commercial strategy.\n\nWe believe three things matter for every role at Lemonade: drive to push through challenges, efficiency that keeps standards high while moving fast, and adaptability that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work.\n\nWe’ve been AI-native since 2015. We're building the future of insurance with AI at its core, and we love people who are genuinely excited to learn and grow alongside these tools.\n\n\n\nIN THIS ROLE YOU'LL\n\n - Lead legal support fo",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  },
+  {
+   "id": "fa5d18a4-f425-4e88-8d9c-340f3bb32a8f",
+   "title": "Senior Product Manager - Claims Experience",
+   "department": "Product",
+   "team": "Product",
+   "employmentType": "FullTime",
+   "location": "TLV",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2025-02-20T15:57:16.778+00:00",
+   "isListed": true,
+   "isRemote": true,
+   "workplaceType": "Hybrid",
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Israel",
+     "addressCountry": "Israel",
+     "addressLocality": "Tel Aviv"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/lemonade/fa5d18a4-f425-4e88-8d9c-340f3bb32a8f",
+   "applyUrl": "https://jobs.ashbyhq.com/lemonade/fa5d18a4-f425-4e88-8d9c-340f3bb32a8f/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\">We’re looking for a Senior Product Manager who’s experienced in planning, designing, and scaling world-class products. If you love tackling complex problems, cherish the power of automation and self-service, enjoy exploring the latest GenAI models, and are passionate about designing amazing customer experiences at scale, this one’s for you.</p><p style=\"min-height:1.5em\">We believe three things matter for every role at Lemonade: <em>drive</em> to push through challenges, <em>efficiency</em> that keeps standards high while moving fast, and <em>adaptability</em> that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work.</p><p style=\"min-height:1.5em\">Our AI-first approach isn't just a tagline either. We're building the future of insurance with AI at the center, and we need people who are genuinely excited to learn and gr",
+   "descriptionPlain": "We’re looking for a Senior Product Manager who’s experienced in planning, designing, and scaling world-class products. If you love tackling complex problems, cherish the power of automation and self-service, enjoy exploring the latest GenAI models, and are passionate about designing amazing customer experiences at scale, this one’s for you.\n\nWe believe three things matter for every role at Lemonade: drive to push through challenges, efficiency that keeps standards high while moving fast, and adaptability that lets you pivot with data and AI insights. These aren't buzzwords, they're how we actually work.\n\nOur AI-first approach isn't just a tagline either. We're building the future of insurance with AI at the center, and we need people who are genuinely excited to learn and grow alongside these tools.\n\n\nIN THIS ROLE YOU’LL:\n\nIn your day-to-day, you’ll be responsible to drive Lemonade’s aut",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  }
+ ],
+ "apiVersion": "1"
+}

@@ -53,7 +53,7 @@ const STATUS_TONE: Record<KitOut["status"], "neutral" | "mint" | "partial" | "da
  * Comeet send is on its job's page. */
 export default function KitReviewPage() {
   const { id } = useParams<{ id: string }>();
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
   const toast = useToast();
   const nav = useNavigate();
 
@@ -283,7 +283,7 @@ export default function KitReviewPage() {
                 className="inline-flex items-center gap-1 text-accent-soft hover:underline"
               >
                 <ExternalLink size={12} />{" "}
-                {t("card.openOn", { source: sourceLabel(kit.source) || "LinkedIn" })}
+                {t("card.openOn", { source: sourceLabel(kit.source, i18n.language) || "LinkedIn" })}
               </a>
             )}
           </div>

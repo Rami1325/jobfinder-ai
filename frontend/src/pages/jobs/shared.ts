@@ -50,11 +50,69 @@ export const MAX_AGE_OPTIONS = [1, 3, 7, 14, 30, 0] as const;
 // owns the value and clamps it; this is only which bars the picker offers.
 export const MIN_SCORE_OPTIONS = [0, 60, 65, 70, 75, 80, 85, 90] as const;
 
-// Selectable job boards (PROVIDERS registry ids). Empty/absent = all boards.
-// Keep in sync with the backend registry: a board missing here disappears
-// from any customized search the moment the user unchecks one box.
-// (Jooble retired 2026-07-05 — they discontinued their Israeli index.)
-export const SOURCE_IDS = ["linkedin", "drushim", "comeet", "jobmaster", "greenhouse"] as const;
+// Selectable job boards: the backend registry's ids (`app.core.providers.PROVIDERS`),
+// in its order. Empty/absent = all boards. check-mirrors 98 holds the two
+// together: a board missing here disappears from any customized search the
+// moment the user unchecks one box, and a board here the backend lacks is a box
+// that searches nothing. (Jooble retired 2026-07-05 — they discontinued their
+// Israeli index. The boards from Lever on joined 2026-09-28.)
+export const SOURCE_IDS = [
+  "linkedin",
+  "drushim",
+  "comeet",
+  "jobmaster",
+  "greenhouse",
+  "lever",
+  "smartrecruiters",
+  "ashby",
+  "himalayas",
+] as const;
+
+// The boards the worldwide-remote pass runs on (`job_search.WORLDWIDE_BOARDS`),
+// and the one it runs on ALONE (`WORLDWIDE_ONLY_BOARDS`): Himalayas lists remote
+// jobs and is asked only for jobs open to people in Israel, never with the
+// user's own location, so a search without the pass never asks it. check-mirrors
+// 100 holds both lists to the backend's.
+export const WORLDWIDE_SOURCES: readonly string[] = ["linkedin", "himalayas"];
+export const WORLDWIDE_ONLY_SOURCES: readonly string[] = ["himalayas"];
+
+/** Does this search run the worldwide pass? The twin of `job_search`'s
+ * `_remote_ok(ctx) and ctx.include_worldwide`. */
+export function runsWorldwide(ctx: SearchContext | null): boolean {
+  return !!ctx?.include_worldwide && allowsRemote(ctx?.work_mode);
+}
+
+/** The boards a search will actually ask: its chosen boards (all when none are
+ * chosen), without a worldwide-only board when the worldwide pass is off. The
+ * scan panel lists these, so it never shows a board scanning that the search
+ * does not ask (the backend's fan-out skips a board with no query). */
+export function searchedSources(ctx: SearchContext | null): string[] {
+  const chosen = ctx?.sources?.length ? [...ctx.sources] : [...SOURCE_IDS];
+  return runsWorldwide(ctx) ? chosen : chosen.filter((s) => !WORLDWIDE_ONLY_SOURCES.includes(s));
+}
+
+// Boards whose terms ask every surface showing one of their postings to NAME the
+// board beside a link back to the posting's page there (`providers.ATTRIBUTED`):
+// Himalayas' API is offered on that condition. A result from one of them shows
+// "via <board>" linking to its posting (`ViaBoard` in cards.tsx), keyed by the
+// posting's host where no source is stored (a tracked job's page). check-mirrors
+// 99 holds the ids to the backend's and the line to every result surface.
+export const ATTRIBUTED_SOURCES: Record<string, RegExp> = {
+  himalayas: /(^|\.)himalayas\.app$/,
+};
+
+/** The attributed board a result must credit: by its source when it has one,
+ * else by its URL's host; "" when none. */
+export function attributedSource(source: string | undefined, url: string | undefined): string {
+  const id = (source ?? "").toLowerCase();
+  if (id) return id in ATTRIBUTED_SOURCES ? id : "";
+  try {
+    const host = new URL(url ?? "").hostname.toLowerCase();
+    return Object.keys(ATTRIBUTED_SOURCES).find((k) => ATTRIBUTED_SOURCES[k].test(host)) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 // One-click Israeli locations (PLAN 2.3). English values work across all
 // boards: LinkedIn expects English; Drushim matches CityEnglish; Comeet
@@ -66,20 +124,32 @@ export const LOCATION_PRESETS = [
   { key: "israel", value: "Israel" },
 ] as const;
 
-// Provider id → display name for source badges ("linkedin" → "LinkedIn").
-// "jooble" stays for history rows saved before the board was retired.
-const SOURCE_LABELS: Record<string, string> = {
-  linkedin: "LinkedIn",
-  drushim: "Drushim",
-  comeet: "Comeet",
-  jobmaster: "JobMaster",
-  greenhouse: "Greenhouse",
-  jooble: "Jooble",
+// Each board's name in English and in Hebrew, for the board picker, the scan
+// panel, the source badges and every "Open on …" line. A brand keeps its Latin
+// name in Hebrew (the Hebrew copy already writes "ב־LinkedIn"), except Drushim,
+// whose own Hebrew name is the one Israelis know it by. "jooble" stays for
+// history rows saved before the board was retired. check-mirrors 98 requires an
+// entry with both names for every id in SOURCE_IDS.
+export const SOURCE_NAMES: Record<string, { en: string; he: string }> = {
+  linkedin: { en: "LinkedIn", he: "LinkedIn" },
+  drushim: { en: "Drushim", he: "דרושים" },
+  comeet: { en: "Comeet", he: "Comeet" },
+  jobmaster: { en: "JobMaster", he: "JobMaster" },
+  greenhouse: { en: "Greenhouse", he: "Greenhouse" },
+  lever: { en: "Lever", he: "Lever" },
+  smartrecruiters: { en: "SmartRecruiters", he: "SmartRecruiters" },
+  ashby: { en: "Ashby", he: "Ashby" },
+  himalayas: { en: "Himalayas", he: "Himalayas" },
+  jooble: { en: "Jooble", he: "Jooble" },
 };
 
-export function sourceLabel(source?: string): string {
+/** A board's name in the page's language ("linkedin" → "LinkedIn"); an id this
+ * build does not know is shown capitalised rather than dropped. */
+export function sourceLabel(source?: string, lang?: string): string {
   if (!source) return "";
-  return SOURCE_LABELS[source.toLowerCase()] ?? source.charAt(0).toUpperCase() + source.slice(1);
+  const names = SOURCE_NAMES[source.toLowerCase()];
+  if (!names) return source.charAt(0).toUpperCase() + source.slice(1);
+  return lang?.startsWith("he") ? names.he : names.en;
 }
 
 export function postedAgo(iso: string, t: TFunction<"jobs">): string {
@@ -124,7 +194,7 @@ export function applicantsText(a: Applicants | null | undefined, t: TFunction<"j
 // cards fall back to the lettered avatar unless the backend supplied a real
 // company logo_url (LinkedIn/Drushim/Comeet boards carry one when available).
 const BOARD_HOST_RE =
-  /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|greenhouse\.io|jooble\.org)$/;
+  /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|greenhouse\.io|lever\.co|smartrecruiters\.com|ashbyhq\.com|himalayas\.app|jooble\.org)$/;
 
 export function companyDomain(url: string): string | null {
   try {
@@ -253,9 +323,9 @@ export function readingUnderstood(r: SearchQueryReading | null | undefined): boo
  * line SAID replaces the form's; every field it did not say is left exactly as
  * it was (the result count, "posted within", the boards, and anything the line
  * was silent on). Asking for jobs abroad also puts LinkedIn back among the
- * boards when a customized set left it out, because the worldwide pass runs on
- * LinkedIn alone and the form shows the box it ticks. Pure, so check-mirrors 95
- * EXECUTES it; it never searches. */
+ * boards when a customized set left out every board the worldwide pass runs on
+ * (LinkedIn and, since 2026-09-28, Himalayas), and the form shows the box it
+ * ticks. Pure, so check-mirrors 95 and 100 EXECUTE it; it never searches. */
 export function applySearchReading(prev: SearchContext | null, r: SearchQueryReading): SearchContext {
   const next: SearchContext = { ...(prev ?? { job_title: "", location: "", work_mode: "any", limit: 10 }) };
   const titles = (r.job_titles ?? []).map((t) => t.trim()).filter(Boolean).slice(0, 5);
@@ -267,7 +337,10 @@ export function applySearchReading(prev: SearchContext | null, r: SearchQueryRea
   if (r.work_mode) next.work_mode = joinWorkModes(parseWorkModes(r.work_mode));
   if (r.include_worldwide) {
     next.include_worldwide = true;
-    if (next.sources?.length && !next.sources.includes("linkedin")) next.sources = [...next.sources, "linkedin"];
+    // The pass runs on the worldwide boards: a chosen set with none of them gets
+    // LinkedIn back; one that already holds Himalayas is left as it was.
+    if (next.sources?.length && !next.sources.some((s) => WORLDWIDE_SOURCES.includes(s)))
+      next.sources = [...next.sources, "linkedin"];
   }
   return next;
 }
