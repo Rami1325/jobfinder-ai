@@ -11,11 +11,14 @@ sent the filter. So a user who picked "Remote" got every job, and the worldwide
 pass, which asks LinkedIn for REMOTE jobs abroad through the same parameter, got
 on-site jobs in Seattle and Beavercreek that nobody in Israel can take.
 
-So the posting's own words decide, and one board's own field:
-  - Comeet states `workplace_type` ("Hybrid", "Remote", "On-site") per position.
-    It is the only board with a structured value, and it WINS over the text.
-    Its `location.is_remote` does NOT mean remote: Kaltura's hybrid Bnei Brak
-    office carries `is_remote: true` in the fixture, so it is never read.
+So the posting's own words decide, and a board's own field where it has one:
+  - Comeet states `workplace_type` ("Hybrid", "Remote", "On-site") per position,
+    and it WINS over the text. Its `location.is_remote` does NOT mean remote:
+    Kaltura's hybrid Bnei Brak office carries `is_remote: true` in the fixture,
+    so it is never read.
+  - The boards added 2026-09-28 hand theirs over the same way (`JobHit.work_mode`;
+    Lever's `workplaceType` "hybrid" / "onsite" / "remote"). A value this module
+    does not know ("unspecified") reads as nothing, and the words decide.
   - Everything else is read from the title, the card's location and the
     description, in English and Hebrew.
 

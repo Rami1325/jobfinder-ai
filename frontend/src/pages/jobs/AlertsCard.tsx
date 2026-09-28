@@ -48,7 +48,7 @@ export function CustomizeFields({
   setCtx: Dispatch<SetStateAction<SearchContext | null>>;
   prefilling: boolean;
 }) {
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
 
   // Multi-keyword search: the UI edits ctx.job_titles (one input per keyword);
   // job_title mirrors the first entry so older backends and the results
@@ -286,7 +286,7 @@ export function CustomizeFields({
                 onChange={() => toggleSource(id)}
                 className="h-4 w-4 accent-accent"
               />
-              {sourceLabel(id)}
+              {sourceLabel(id, i18n.language)}
             </label>
           );
         })}

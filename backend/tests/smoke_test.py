@@ -6565,6 +6565,230 @@ check(
     f"{[h.url for h in _gh16_found]} {len(_gh16_first_urls)} {_gh16_again_urls}",
 )
 
+# 16f. Lever (2026-09-28): the official postings API on BOTH hosts. The July probe
+# asked api.lever.co only and recorded "no Israeli tenant"; Mobileye is on
+# api.eu.lever.co. Pinned on trimmed real responses: Mobileye (EU host: two
+# Ramat Gan postings and one in Beijing) and WalkMe (the US host, "Tel Aviv" with
+# country IL).
+import app.core.providers.lever as _lv  # noqa: E402
+from app.core.ghost_signals import parse_board_date as _lv_parse_date  # noqa: E402
+from app.core.providers import DEFAULT_SOURCES as _LV_DEFAULTS, PROVIDERS as _LV_PROV  # noqa: E402
+from app.core.providers.base import NoResultsError as _LvNoRes  # noqa: E402
+from app.core.providers.lever_seed import SEED_COMPANIES as _LV_SEED  # noqa: E402
+from app.core.work_mode import read_work_mode as _lv_read_mode  # noqa: E402
+
+_LV_EU = _json.loads((Path(__file__).parent / "fixtures" / "lever_postings_eu.json").read_text(encoding="utf-8"))
+_LV_US = _json.loads((Path(__file__).parent / "fixtures" / "lever_postings_us.json").read_text(encoding="utf-8"))
+_lv_eu = _lv.parse_lever_postings(_LV_EU, company_name="Mobileye")
+_lv_us = _lv.parse_lever_postings(_LV_US, company_name="WalkMe")
+check(
+    "16f lever parser: every posting read with its title, the registry's company name, its location, the hosted "
+    "URL, the board's own work mode, and createdAt (epoch MILLISECONDS) as an ISO UTC date the one board-date "
+    "parser reads, within the 32-character column",
+    len(_lv_eu) == 3 and len(_lv_us) == 2
+    and [h.title for h in _lv_eu] == ["3D Algorithm Developer", "AI Algorithm Engineer", "AI Algorithm Engineer - Vision Localization Group"]
+    and all(h.source == "lever" and h.company == "Mobileye" for h in _lv_eu)
+    and _lv_eu[0].location == "Ramat Gan, Israel" and _lv_eu[1].location == "Beijing, China"
+    and _lv_eu[0].url == "https://jobs.eu.lever.co/mobileye/bb661a53-79b8-459d-a8df-5dd419d62596"
+    and _lv_eu[0].external_id == "bb661a53-79b8-459d-a8df-5dd419d62596"
+    and _lv_eu[0].posted_at == "2026-05-19T10:53:25+00:00" and len(_lv_eu[0].posted_at) <= 32
+    and _lv_parse_date(_lv_eu[0].posted_at) is not None
+    and [h.work_mode for h in _lv_eu] == ["hybrid", "onsite", "hybrid"]
+    and _lv_us[0].location == "Tel Aviv" and _lv_us[0].language == "en",
+    f"{[(h.title, h.location, h.posted_at, h.work_mode) for h in _lv_eu]}",
+)
+check(
+    "16f lever description is INLINE (no detail fetch): the plain description, each list section with its heading "
+    "(HTML stripped) and the closing paragraph; fetch_description returns it as it is",
+    "3D Algorithm Developer" in _lv_eu[0].description
+    and "What will your job look like:" in _lv_eu[0].description
+    and "Algorithm development in the areas of computer vision" in _lv_eu[0].description
+    and "<li>" not in _lv_eu[0].description
+    and "come to lead the revolution" in _lv_eu[0].description
+    and _lv.LeverProvider().fetch_description(_lv_eu[0]) == _lv_eu[0].description,
+    _lv_eu[0].description[:120],
+)
+check(
+    "16f lever parser: duplicates by id folded, a posting with no URL or not an object skipped, junk is []",
+    len(_lv.parse_lever_postings(_LV_EU * 2)) == 3
+    and _lv.parse_lever_postings([{"id": "x", "text": "No URL"}, "junk", None]) == []
+    and _lv.parse_lever_postings(None) == [] and _lv.parse_lever_postings({}) == [],
+)
+check(
+    "16f lever dates: epoch SECONDS, a bool, a string and a negative are unknown (\"\"), never a guessed date",
+    [_lv.epoch_ms_to_iso(v) for v in (1790437813, True, "1779188005917", -5, None)] == ["", "", "", "", ""]
+    and _lv.epoch_ms_to_iso(1779188005917) == "2026-05-19T10:53:25+00:00",
+)
+# The false-positive half: the Beijing posting's own words planted with Israel.
+_lv_bj = _lv.parse_lever_postings(
+    [{**_LV_EU[1], "descriptionPlain": "Mobileye is headquartered in Jerusalem, Israel; our Tel Aviv team leads this."}],
+    company_name="Mobileye",
+)[0]
+check(
+    "16f lever place: an Israel search keeps Mobileye's Ramat Gan postings and WalkMe's \"Tel Aviv\" (country IL), "
+    "and leaves out Mobileye's BEIJING posting, even with Israel and Tel Aviv planted in its description (a posting "
+    "is where it says it is, never where its company is); a Hebrew city reads as its English form; another city misses",
+    [_lv.location_matches(h, "Israel") for h in _lv_eu] == [True, False, True]
+    and _lv.location_matches(_lv_bj, "Israel") is False
+    and _lv.location_matches(_lv_bj, "Tel Aviv, Israel") is False
+    and _lv.location_matches(_lv_us[0], "Israel") and _lv.location_matches(_lv_us[0], "Tel Aviv, Israel")
+    and _lv.location_matches(_lv_eu[0], "רמת גן")
+    and not _lv.location_matches(_lv_us[0], "Haifa")
+    and _lv.location_matches(_lv_eu[1], "Beijing"),
+)
+check(
+    "16f lever title filter: every word of the title in the posting's title, team or description",
+    _lv.keyword_matches(_lv_eu[0], "Algorithm Developer")
+    and _lv.keyword_matches(_lv_eu[0], "python")
+    and not _lv.keyword_matches(_lv_eu[0], "Product Designer")
+    and _lv.keyword_matches(_lv_us[0], "Product Designer"),
+)
+check(
+    "16f lever work mode: the board's own field is read before the words (hybrid, onsite), and a value the reader "
+    "does not know (\"unspecified\") falls back to the posting's words",
+    _lv_read_mode(board_value="hybrid").modes == {"hybrid"}
+    and _lv_read_mode(board_value="onsite").modes == {"onsite"}
+    and _lv_read_mode(board_value="unspecified", text="This is a fully remote role.").modes == {"remote"},
+)
+try:
+    _lv.api_url("evil.example", "mobileye")
+    _lv_refused = False
+except ValueError:
+    _lv_refused = True
+check(
+    "16f lever asks only its two hosts: a registry row naming another host is refused before any request, and a "
+    "site name is quoted into the path",
+    _lv_refused
+    and _lv.api_url("api.eu.lever.co", "mobileye") == "https://api.eu.lever.co/v0/postings/mobileye?mode=json"
+    and _lv.api_url("api.lever.co", "a/b") == "https://api.lever.co/v0/postings/a%2Fb?mode=json",
+)
+check(
+    "16f lever is registered and searched by default; its seed is seven sites, Mobileye on the EU host and the "
+    "rest on api.lever.co",
+    "lever" in _LV_PROV and "lever" in _LV_DEFAULTS
+    and len(_LV_SEED) == 7
+    and {r["slug"]: r["host"] for r in _LV_SEED}["mobileye"] == "api.eu.lever.co"
+    and all(r["host"] == "api.lever.co" for r in _LV_SEED if r["slug"] != "mobileye"),
+)
+# The provider end to end over a fake network, patched where `_http_get` is BOUND.
+_lv_urls: list[str] = []
+
+
+def _lv_get(url, timeout=15):  # noqa: ANN001
+    _lv_urls.append(url)
+    if url == "https://api.eu.lever.co/v0/postings/mobileye?mode=json":
+        return _json.dumps(_LV_EU)
+    if url == "https://api.lever.co/v0/postings/walkme?mode=json":
+        return _json.dumps(_LV_US)
+    if "/houzz" in url:
+        raise OSError("timed out")
+    return "[]"
+
+
+_lv_real = _lv._http_get
+_lv._http_get = _lv_get
+_lv.FEEDS.clear()
+try:
+    _lv_found = _lv.LeverProvider().search(_Gh16Ctx(job_title="Algorithm", location="Israel", limit=25))
+    _lv_first = list(_lv_urls)
+    _lv_urls.clear()
+    _lv_again = _lv.LeverProvider().search(_Gh16Ctx(job_title="Algorithm", location="Israel", limit=25))
+    _lv_again_urls = list(_lv_urls)
+    try:
+        _lv.LeverProvider().search(_Gh16Ctx(job_title="Chef", location="Israel", limit=25))
+        _lv_none = "no raise"
+    except _LvNoRes:
+        _lv_none = "NoResultsError"
+finally:
+    _lv._http_get = _lv_real
+    _lv.FEEDS.clear()
+check(
+    "16f lever search: each registered site asked once on ITS host (Mobileye on the EU host), a site that fails "
+    "(Houzz) is left out while the rest answer, the Israel search keeps the two Ramat Gan algorithm postings and "
+    "not Beijing's, the next search asks nothing (cached, the failure remembered), and nothing matching is "
+    "NoResultsError (an empty board, never an outage)",
+    sorted(h.title for h in _lv_found) == ["3D Algorithm Developer", "AI Algorithm Engineer - Vision Localization Group"]
+    and "https://api.eu.lever.co/v0/postings/mobileye?mode=json" in _lv_first
+    and len(_lv_first) == 7 and any("/houzz" in u for u in _lv_first)
+    and _lv_again_urls == [] and len(_lv_again) == 2
+    and _lv_none == "NoResultsError",
+    f"{[h.title for h in _lv_found]} {_lv_first} {_lv_again_urls} {_lv_none}",
+)
+
+# 16g. A saved search's boards, once (2026-09-28). The Jobs page adopts the
+# context a search RESOLVED, which lists every board by name, so "all boards"
+# was stored as the five there were, and a board added later was never searched
+# for that person. Such a list is stored as "every board" ([]) once, a list that
+# left a board out stays, and both write doors store every-board as [] from now on.
+import app.db.registry_seed as _ws_mod  # noqa: E402
+from app.api.routes import update_search_prefs as _ws_put_prefs  # noqa: E402
+from app.core.providers import stored_sources as _ws_stored  # noqa: E402
+from app.db.models import JobAlert as _WsAlert, User as _WsUser  # noqa: E402
+from app.models import SearchContext as _WsCtx, SearchPrefs as _WsPrefs  # noqa: E402
+
+_WS_OLD = ["linkedin", "drushim", "comeet", "jobmaster", "greenhouse"]
+_ws_eng = _sd_engine("sqlite://")
+_SdBase.metadata.create_all(_ws_eng)
+_ws_db = _sd_sessionmaker(bind=_ws_eng)()
+_ws_cases = {
+    "every old board": _json.dumps({"job_title": "QA", "sources": _WS_OLD}),
+    "every old board and a retired one": _json.dumps({"job_title": "QA", "sources": _WS_OLD + ["jooble"]}),
+    "a board left out": _json.dumps({"job_title": "QA", "sources": _WS_OLD[:4]}),
+    "saved after the deploy": _json.dumps({"job_title": "QA", "sources": _WS_OLD + ["lever"]}),
+    "no list": _json.dumps({"job_title": "QA"}),
+    "not a context": "{not json",
+}
+for _ws_i, (_ws_label, _ws_raw) in enumerate(_ws_cases.items()):
+    _ws_db.add(_WsUser(id=900 + _ws_i, name=_ws_label, invite_code=f"ws16g-{_ws_i}", search_prefs_json=_ws_raw))
+_ws_db.add(_WsAlert(user_id=900, context_json=_json.dumps({"job_title": "QA", "sources": _WS_OLD, "limit": 7})))
+_ws_db.commit()
+_ws_n1 = _ws_mod.widen_saved_sources(_ws_db)
+_ws_after = {
+    label: _ws_db.get(_WsUser, 900 + i).search_prefs_json for i, label in enumerate(_ws_cases)
+}
+_ws_alert_after = _json.loads(_ws_db.execute(_sd_select(_WsAlert.context_json)).scalar_one())
+_ws_db.get(_WsUser, 900).search_prefs_json = _json.dumps({"job_title": "QA", "sources": _WS_OLD})  # saved again later
+_ws_db.commit()
+_ws_n2 = _ws_mod.widen_saved_sources(_ws_db)
+check(
+    "16g saved searches, once: a list naming every board there was before 2026-09-28 (with or without a retired "
+    "one) becomes \"every board\" ([]) in a user's saved search AND an alert, its other fields kept; a list that "
+    "left a board out, one saved after the deploy, one with no list and text that is not a context stay as they "
+    "were; and it runs ONCE (a list saved again later is not rewritten)",
+    _ws_n1 == 3
+    and _json.loads(_ws_after["every old board"])["sources"] == []
+    and _json.loads(_ws_after["every old board"])["job_title"] == "QA"
+    and _json.loads(_ws_after["every old board and a retired one"])["sources"] == []
+    and _ws_after["a board left out"] == _ws_cases["a board left out"]
+    and _ws_after["saved after the deploy"] == _ws_cases["saved after the deploy"]
+    and _ws_after["no list"] == _ws_cases["no list"]
+    and _ws_after["not a context"] == _ws_cases["not a context"]
+    and _ws_alert_after == {"job_title": "QA", "sources": [], "limit": 7}
+    and _ws_n2 == 0 and _json.loads(_ws_db.get(_WsUser, 900).search_prefs_json)["sources"] == _WS_OLD,
+    f"{_ws_n1} {_ws_after} {_ws_alert_after} {_ws_n2}",
+)
+_ws_db.close()
+_db = SessionLocal()
+_ws_admin = _db.get(_WsUser, _admin_id)
+_ws_prev_prefs = _ws_admin.search_prefs_json
+_ws_put_prefs(_WsPrefs(context=_WsCtx(job_title="QA", sources=list(_LV_PROV))), db=_db, user=_ws_admin)
+_ws_stored_all = _json.loads(_ws_admin.search_prefs_json)["sources"]
+_ws_put_prefs(_WsPrefs(context=_WsCtx(job_title="QA", sources=["drushim", "lever"])), db=_db, user=_ws_admin)
+_ws_stored_some = _json.loads(_ws_admin.search_prefs_json)["sources"]
+update_alert(_db, _admin_id, enabled=False, email="me@example.com", context=_WsCtx(job_title="QA", sources=list(_LV_PROV)))
+_ws_alert_all = _json.loads(get_alert(_db, _admin_id).context_json)["sources"]
+update_alert(_db, _admin_id, enabled=False, email="me@example.com", context=None, min_score=DEFAULT_MIN_SCORE)
+_ws_admin.search_prefs_json = _ws_prev_prefs
+_db.commit()
+_db.close()
+check(
+    "16g both write doors store \"every board\" as []: PUT /jobs/search-prefs and an alert's context, each handed "
+    "every registered board by name, store [] (so the next board joins them); a choice of boards is stored as chosen",
+    _ws_stored_all == [] and _ws_stored_some == ["drushim", "lever"] and _ws_alert_all == []
+    and _ws_stored(list(_LV_PROV) + ["jooble"]) == [] and _ws_stored(["linkedin"]) == ["linkedin"],
+    f"{_ws_stored_all} {_ws_stored_some} {_ws_alert_all}",
+)
+
 # 17. The CV scan (PLAN 6; an app feature since Phase 30 / A2): deterministic
 # keyword extraction, coverage via the scorer, Hebrew prefix rescue, and the
 # HTTP route behind the gate with its daily cap and its monthly use. Zero LLM

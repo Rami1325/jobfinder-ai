@@ -14733,6 +14733,118 @@ try {
   fail(`WhatsApp check (check 92) could not run: ${e.message}`);
 }
 
+// ---- 98. the board list is the backend's registry, and every board has its names //
+// 2026-09-28 (PLAN 32, More places to search). `SOURCE_IDS` in pages/jobs/shared.ts
+// is the list a search is customised from: a registered board missing from it
+// vanishes from a customised search the moment one box is unticked, and a board
+// the backend lacks is a box that searches nothing. (a) EXECUTES shared.ts:
+// SOURCE_IDS must equal the backend's `PROVIDERS` in its order (read out of
+// providers/__init__.py and each provider class's `name`, a degraded skip without
+// backend/), every board must have an English and a Hebrew name in SOURCE_NAMES,
+// and `sourceLabel` must answer the page's language (Hebrew for "he", English
+// otherwise, an unknown id capitalised, nothing for none). (b) Every call of
+// `sourceLabel(` under src/ outside shared.ts hands it the page's language, and
+// none maps over it bare: `.map(sourceLabel)` hands it the array INDEX as the
+// language (it nearly shipped with this change). (c) The alert email names every
+// registered board (alerts._EM_SOURCE_LABELS; "smartrecruiters".capitalize() is
+// "Smartrecruiters"). Planted twins are judged every run.
+try {
+  const judge98 = ({ ids, names, label, backend, callers, email }) => {
+    const out = [];
+    if (backend !== null) {
+      if (JSON.stringify(ids) !== JSON.stringify(backend))
+        out.push(`SOURCE_IDS is ${JSON.stringify(ids)}, the backend registry is ${JSON.stringify(backend)} (same boards, same order)`);
+    }
+    for (const id of ids) {
+      const n = names[id];
+      if (!n || typeof n.en !== "string" || !n.en.trim() || typeof n.he !== "string" || !n.he.trim())
+        out.push(`board "${id}" has no English and Hebrew name in SOURCE_NAMES`);
+      else {
+        if (label(id, "he") !== n.he) out.push(`sourceLabel("${id}", "he") is not its Hebrew name`);
+        if (label(id, "en") !== n.en || label(id) !== n.en) out.push(`sourceLabel("${id}") is not its English name`);
+      }
+    }
+    if (label("newboard", "he") !== "Newboard") out.push("an unknown board is not shown capitalised");
+    if (label("", "he") !== "" || label(undefined, "en") !== "") out.push("no board is not an empty name");
+    for (const [file, src] of callers) {
+      if (/\.map\(\s*sourceLabel\s*\)/.test(src)) out.push(`${file} maps over sourceLabel bare, which hands it the index as the language`);
+      for (const m of src.matchAll(/\bsourceLabel\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g))
+        if (!/,/.test(m[1])) out.push(`${file}: sourceLabel(${m[1]}) is not handed the page's language`);
+    }
+    if (email !== null && backend !== null)
+      for (const id of backend) if (!email.includes(`"${id}"`)) out.push(`the alert email has no name for board "${id}" (alerts._EM_SOURCE_LABELS)`);
+    return out;
+  };
+
+  const shared98 = runProbeBundle(
+    "sources",
+    'export { SOURCE_IDS, SOURCE_NAMES, sourceLabel } from "./pages/jobs/shared";\n',
+  );
+  for (const k of ["SOURCE_IDS", "SOURCE_NAMES", "sourceLabel"])
+    if (!(k in shared98)) throw new Error(`pages/jobs/shared.ts exports no ${k}`);
+
+  // The backend's registry, in order: the classes `PROVIDERS` is built from, each
+  // mapped to its `name` through the module it is imported from.
+  let backend98 = null;
+  const init98 = pySource("app/core/providers/__init__.py", "check 98");
+  if (init98 !== null) {
+    const src = init98.replace(/\r\n/g, "\n");
+    const block = /PROVIDERS: dict\[str, JobProvider\] = \{[\s\S]*?for provider in \(([\s\S]*?)\n    \)\n\}/.exec(src);
+    if (!block) throw new Error("providers/__init__.py: the PROVIDERS comprehension was not found");
+    const classes = [...block[1].matchAll(/^\s*(\w+Provider)\(\),?\s*$/gm)].map((m) => m[1]);
+    if (classes.length < 5) throw new Error(`read ${classes.length} provider classes out of PROVIDERS (expected at least 5)`);
+    backend98 = classes.map((cls) => {
+      const imp = new RegExp(`^from app\\.core\\.providers\\.(\\w+) import ${cls}$`, "m").exec(src);
+      if (!imp) throw new Error(`providers/__init__.py does not import ${cls} from a provider module`);
+      const mod = pySource(`app/core/providers/${imp[1]}.py`, "check 98").replace(/\r\n/g, "\n");
+      const body = new RegExp(`^class ${cls}\\b[\\s\\S]*?^    name = "([\\w-]+)"`, "m").exec(mod);
+      if (!body) throw new Error(`providers/${imp[1]}.py: class ${cls} has no \`name = "…"\``);
+      return body[1];
+    });
+  }
+  const alerts98 = pySource("app/core/alerts.py", "check 98");
+  const email98 = alerts98 === null ? null : (/_EM_SOURCE_LABELS = \{([\s\S]*?)\n\}/.exec(alerts98) || [])[1];
+  if (alerts98 !== null && email98 === undefined) throw new Error("app/core/alerts.py: _EM_SOURCE_LABELS not found");
+
+  const walk98 = (dir, rel = "") =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+      d.isDirectory()
+        ? d.name === "locales" ? [] : walk98(path.join(dir, d.name), `${rel}${d.name}/`)
+        : /\.(ts|tsx)$/.test(d.name) && `${rel}${d.name}` !== "pages/jobs/shared.ts"
+          ? [[`${rel}${d.name}`, decomment(fs.readFileSync(path.join(dir, d.name), "utf8"))]]
+          : [],
+    );
+  const callers98 = walk98(SRC).filter(([, s]) => /\bsourceLabel\b/.test(s));
+  const calls98 = callers98.reduce((n, [, s]) => n + (s.match(/\bsourceLabel\(/g) || []).length, 0);
+  if (calls98 < 10) throw new Error(`found ${calls98} sourceLabel( calls under src/ (expected at least 10)`);
+
+  const real = {
+    ids: [...shared98.SOURCE_IDS],
+    names: shared98.SOURCE_NAMES,
+    label: shared98.sourceLabel,
+    backend: backend98,
+    callers: callers98,
+    email: email98 ?? null,
+  };
+  for (const p of judge98(real)) fail(`check 98: ${p} (PLAN 32, More places to search)`);
+  const twins = [
+    ["a board missing from the list", { ...real, ids: real.ids.slice(0, -1) }],
+    ["the boards in another order", { ...real, ids: [...real.ids].reverse() }],
+    ["a board with no Hebrew name", { ...real, names: { ...real.names, [real.ids[1]]: { en: "X", he: "" } } }],
+    ["a label that ignores the language", { ...real, label: (s, _l) => real.label(s, "en") }],
+    ["a caller mapping over it bare", { ...real, callers: [...real.callers, ["x.tsx", "keys.map(sourceLabel).join()"]] }],
+    ["a caller with no language", { ...real, callers: [...real.callers, ["x.tsx", "{sourceLabel(job.source)}"]] }],
+  ];
+  for (const [label, planted] of twins) {
+    if (planted.backend === null && /missing|order/.test(label)) continue; // no backend to compare with
+    if (!judge98(planted).length) throw new Error(`the judge passes ${label}`);
+  }
+  if (real.email !== null && real.backend !== null && !judge98({ ...real, email: real.email.replace(`"${real.backend[1]}"`, '"x"') }).length)
+    throw new Error("the judge passes an alert email with a board unnamed");
+} catch (e) {
+  fail(`board list check (check 98) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

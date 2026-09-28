@@ -66,6 +66,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core import hidden_jobs, mailer, quota, webpush, whatsapp
 from app.core.job_search import resume_hash, search_jobs
+from app.core.providers import stored_sources
 from app.db.history import applied_kw, load_score_cache, record_search_hits
 from app.db.models import JobAlert, JobSearchHit, SavedResume, User
 from app.db.sightings import load_sightings, record_sightings
@@ -117,7 +118,11 @@ def update_alert(
     row = get_alert(db, user_id)
     row.enabled = enabled
     row.email = email.strip()
-    row.context_json = context.model_dump_json() if context else ""
+    # Every board ticked is stored as "every board" ([]), so a board added later
+    # joins the alert (`providers.stored_sources`, 2026-09-28).
+    row.context_json = (
+        context.model_copy(update={"sources": stored_sources(context.sources)}).model_dump_json() if context else ""
+    )
     row.nudge_emails = nudge_emails
     if min_score is not None:
         row.min_score = max(0, min(100, int(min_score)))
@@ -428,6 +433,11 @@ _EM_SOURCE_LABELS = {
     "drushim": "Drushim",
     "comeet": "Comeet",
     "jobmaster": "JobMaster",
+    "greenhouse": "Greenhouse",
+    "lever": "Lever",
+    "smartrecruiters": "SmartRecruiters",
+    "ashby": "Ashby",
+    "himalayas": "Himalayas",
     "jooble": "Jooble",
 }
 

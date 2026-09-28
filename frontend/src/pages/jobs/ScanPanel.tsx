@@ -63,7 +63,7 @@ function ScanTickerRow({
   count: number;
   errored: boolean;
 }) {
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
   return (
     <li className="flex items-center justify-between gap-3 rounded-lg border border-line/70 bg-bg-soft/60 px-3 py-1.5">
       <span className="inline-flex items-center gap-2 text-xs font-semibold text-ink">
@@ -71,7 +71,7 @@ function ScanTickerRow({
           aria-hidden
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${live ? "animate-pulse-glow bg-accent" : "bg-line"}`}
         />
-        {sourceLabel(source)}
+        {sourceLabel(source, i18n.language)}
       </span>
       <span className="inline-block min-w-[5.5rem] text-end" style={{ perspective: 400 }}>
         <AnimatePresence mode="wait" initial={false}>
@@ -128,7 +128,7 @@ export function SearchScanPanel({
   result: JobSearchResult | null;
   requestedSources: string[];
 }) {
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
   const reduce = useReducedMotion();
   const [phase, setPhase] = useState<"idle" | "scanning" | "resolving">("idle");
 
@@ -205,7 +205,7 @@ export function SearchScanPanel({
     stageLine = t("search.ticker.complete");
   } else if (progress?.stage === "boards") {
     stageLine = t("search.stages.board", {
-      source: sourceLabel(progress.source ?? "") || progress.source,
+      source: sourceLabel(progress.source ?? "", i18n.language) || progress.source,
       index: progress.index,
       total: progress.total,
     });

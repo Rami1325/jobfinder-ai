@@ -52,7 +52,7 @@ import {
  * one merged card, with each duplicate board linked so the user can apply
  * wherever they prefer. */
 function AlsoOnLinks({ links }: { links?: AlsoOn[] }) {
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
   if (!links?.length) return null;
   return (
     <span className="inline-flex shrink-0 items-center gap-1 text-xs text-ink-muted">
@@ -65,7 +65,7 @@ function AlsoOnLinks({ links }: { links?: AlsoOn[] }) {
           rel="noreferrer"
           className="text-accent-soft underline-offset-2 hover:underline"
         >
-          {sourceLabel(a.source)}
+          {sourceLabel(a.source, i18n.language)}
         </a>
       ))}
     </span>
@@ -434,7 +434,8 @@ function PostingNote({ geo, ghost }: { geo: boolean; ghost: boolean }) {
  * was filtered before analyze_and_score ever ran, so a ring at 0 or "—" would
  * read as a zero fit, which is a number we never computed. */
 export function RestrictedRow({ job }: { job: FilteredJob }) {
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
+  const lang = i18n.language;
   // One posting, one reason, each tested BY NAME. `reason` defaults to
   // "restriction" on the backend and is ABSENT on a pre-Phase-28 response, so a
   // restriction is `!reason || reason === "restriction"`: an old payload still
@@ -456,7 +457,7 @@ export function RestrictedRow({ job }: { job: FilteredJob }) {
             <p className="min-w-0 max-w-full truncate font-semibold text-ink">
               {job.title || t("card.untitled")}
             </p>
-            {job.source && <Badge className="shrink-0">{sourceLabel(job.source)}</Badge>}
+            {job.source && <Badge className="shrink-0">{sourceLabel(job.source, lang)}</Badge>}
             <Badge tone="neutral" className="shrink-0">
               {t("card.geoNotScored")}
             </Badge>
@@ -485,7 +486,7 @@ export function RestrictedRow({ job }: { job: FilteredJob }) {
               rel="noreferrer"
               className="mt-2 inline-flex items-center gap-1 text-xs text-accent-soft hover:underline"
             >
-              <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(job.source) || "LinkedIn" })}
+              <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(job.source, lang) || "LinkedIn" })}
             </a>
           )}
         </div>
@@ -560,7 +561,7 @@ export function MatchCard({
   onNotForMe?: () => void;
 }) {
   const nav = useNavigate();
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
   const { t: tCommon } = useTranslation("common");
   const toast = useToast();
   const { batching, kits } = useSyncExternalStore(subscribeKits, getKitsState);
@@ -667,7 +668,7 @@ export function MatchCard({
       ? [
           {
             key: "open",
-            label: t("card.viewOn", { source: sourceLabel(m.source) || "LinkedIn" }),
+            label: t("card.viewOn", { source: sourceLabel(m.source, i18n.language) || "LinkedIn" }),
             Icon: ExternalLink,
             href: m.url,
           },
@@ -833,7 +834,7 @@ export function HistoryRow({
   opened?: boolean;
 }) {
   const nav = useNavigate();
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
   // The backend hands the listing's own date back verbatim unless a board
   // stated an EARLIER one for the role, so a different string IS an earlier
   // date (the StaleBadge rule): no date comparison lives here. A relisted role
@@ -862,7 +863,7 @@ export function HistoryRow({
       ? [
           {
             key: "open",
-            label: t("card.openOn", { source: sourceLabel(hit.source) || "LinkedIn" }),
+            label: t("card.openOn", { source: sourceLabel(hit.source, i18n.language) || "LinkedIn" }),
             Icon: ExternalLink,
             href: hit.url,
           },

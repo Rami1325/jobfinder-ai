@@ -99,7 +99,7 @@ function AppliedCount({ count }: { count: number }) {
 }
 
 export default function JobsPage() {
-  const { t } = useTranslation("jobs");
+  const { t, i18n } = useTranslation("jobs");
   const { master, masters, loading, setMaster } = useMasterResume();
   const persistMaster = useSaveMasterResume();
   // No Kits tab since PLAN 31.4/5: a batch's drafts wait on their jobs in the
@@ -1049,13 +1049,15 @@ export default function JobsPage() {
                       <div className="min-w-0">
                         <p>
                           {t("search.sourceErrors", {
-                            sources: Object.keys(searchResult.source_errors).map(sourceLabel).join(", "),
+                            sources: Object.keys(searchResult.source_errors)
+                              .map((s) => sourceLabel(s, i18n.language))
+                              .join(", "),
                           })}
                         </p>
                         <ul className="mt-1 space-y-0.5 text-xs opacity-90">
                           {Object.entries(searchResult.source_errors).map(([s, msg]) => (
                             <li key={s} dir="auto">
-                              {sourceLabel(s)}: {msg}
+                              {sourceLabel(s, i18n.language)}: {msg}
                             </li>
                           ))}
                         </ul>
@@ -1072,7 +1074,9 @@ export default function JobsPage() {
                 {searchResult.source_empty && Object.keys(searchResult.source_empty).length > 0 && (
                   <p className="text-xs text-ink-muted">
                     {t("search.sourceEmpty", {
-                      sources: Object.keys(searchResult.source_empty).map(sourceLabel).join(", "),
+                      sources: Object.keys(searchResult.source_empty)
+                        .map((s) => sourceLabel(s, i18n.language))
+                        .join(", "),
                     })}
                   </p>
                 )}

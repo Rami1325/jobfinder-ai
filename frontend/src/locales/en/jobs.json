@@ -112,7 +112,7 @@
   },
   "search": {
     "cardTitle": "Find jobs that fit you",
-    "cardBody": "We read your resume, work out what role and location to search for, scan LinkedIn and Israeli job boards (Drushim, Comeet, JobMaster, Greenhouse), and rank every match by fit. Fully automatic — or customize the search below.",
+    "cardBody": "We read your resume, work out what role and location to search for, scan LinkedIn, Israeli job boards and the career sites of companies hiring in Israel, and rank every match by fit. Fully automatic — or customize the search below.",
     "customize": "Customize search",
     "jobTitle": "Job title / keywords",
     "jobTitlePlaceholder": "e.g. Backend Engineer",

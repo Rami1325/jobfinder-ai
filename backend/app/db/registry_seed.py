@@ -12,9 +12,13 @@ unique name, it rolls back and moves on, so a batch is never applied twice.
 registry, and never an error for the search that triggered it (bookkeeping may
 never turn a served request into a failure, the house rule `usage.record_tokens`
 follows): a sync that fails is rolled back and tried again on the next list.
+
+`widen_saved_sources` is the one other once-per-database batch recorded here:
+the day boards were added, saved searches that named every board there was.
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -115,3 +119,70 @@ def forget_synced() -> None:
     """Let the next `ensure_synced` run again (the smoke test's fresh databases)."""
     with _sync_lock:
         _synced.clear()
+
+
+# --- the saved searches' board lists, once (2026-09-28) ------------------------------
+
+SAVED_SOURCES_BATCH = "saved-sources:2026-09-28"
+
+
+def _widened(raw: str, before: frozenset[str], newer: frozenset[str]) -> str | None:
+    """A saved context whose board list names every board in `before` and none
+    in `newer`, with that list stored as [] ("every board"); None when it is left
+    as it is (another choice of boards, a list saved by code that knew a newer
+    board, no list, or text that is not a context)."""
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    sources = data.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return None
+    named = {s for s in sources if isinstance(s, str)}
+    if not before <= named or named & newer:
+        return None
+    data["sources"] = []
+    return json.dumps(data, ensure_ascii=False)
+
+
+def widen_saved_sources(db: Session) -> int:
+    """Once per database: a saved search whose board list names every board that
+    existed before 2026-09-28 is stored as "every board", so the boards added that
+    day (and after) join it. How rows are chosen, and why:
+
+      - A saved search is a user's search picks (`users.search_prefs_json`) or an
+        alert's context (`job_alerts.context_json`). The Jobs page adopts the
+        context a search RESOLVED, which lists every board by name, so "all
+        boards" was stored as the list of the five boards there were, and a board
+        added later was never searched for that person. Such a list is read as
+        what it meant. A list that left a board out was a choice, and stays.
+      - It runs once, recorded in `registry_seeds` under its own name (the claim
+        a concurrent cold start's copy fails on), so a list a person saves after
+        the deploy is never rewritten.
+      - From here on "every board" is stored as [] at both write doors
+        (`providers.stored_sources`), so the next board needs no migration.
+
+    Returns how many rows it rewrote."""
+    from app.core.providers import BOARDS_BEFORE_2026_09_28, PROVIDERS
+    from app.db.models import JobAlert, User
+
+    if db.execute(select(RegistrySeed.id).where(RegistrySeed.name == SAVED_SOURCES_BATCH)).first():
+        return 0
+    newer = frozenset(PROVIDERS) - BOARDS_BEFORE_2026_09_28
+    changed = 0
+    try:
+        db.add(RegistrySeed(name=SAVED_SOURCES_BATCH))
+        db.flush()
+        for model, column in ((User, "search_prefs_json"), (JobAlert, "context_json")):
+            for row in db.execute(select(model).where(getattr(model, column) != "")).scalars():
+                new = _widened(getattr(row, column) or "", BOARDS_BEFORE_2026_09_28, newer)
+                if new is not None:
+                    setattr(row, column, new)
+                    changed += 1
+        db.commit()
+    except IntegrityError:
+        db.rollback()  # another instance claimed it
+        return 0
+    return changed

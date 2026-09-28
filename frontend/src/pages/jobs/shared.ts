@@ -50,11 +50,13 @@ export const MAX_AGE_OPTIONS = [1, 3, 7, 14, 30, 0] as const;
 // owns the value and clamps it; this is only which bars the picker offers.
 export const MIN_SCORE_OPTIONS = [0, 60, 65, 70, 75, 80, 85, 90] as const;
 
-// Selectable job boards (PROVIDERS registry ids). Empty/absent = all boards.
-// Keep in sync with the backend registry: a board missing here disappears
-// from any customized search the moment the user unchecks one box.
-// (Jooble retired 2026-07-05 — they discontinued their Israeli index.)
-export const SOURCE_IDS = ["linkedin", "drushim", "comeet", "jobmaster", "greenhouse"] as const;
+// Selectable job boards: the backend registry's ids (`app.core.providers.PROVIDERS`),
+// in its order. Empty/absent = all boards. check-mirrors 98 holds the two
+// together: a board missing here disappears from any customized search the
+// moment the user unchecks one box, and a board here the backend lacks is a box
+// that searches nothing. (Jooble retired 2026-07-05 — they discontinued their
+// Israeli index. The boards from Lever on joined 2026-09-28.)
+export const SOURCE_IDS = ["linkedin", "drushim", "comeet", "jobmaster", "greenhouse", "lever"] as const;
 
 // One-click Israeli locations (PLAN 2.3). English values work across all
 // boards: LinkedIn expects English; Drushim matches CityEnglish; Comeet
@@ -66,20 +68,32 @@ export const LOCATION_PRESETS = [
   { key: "israel", value: "Israel" },
 ] as const;
 
-// Provider id → display name for source badges ("linkedin" → "LinkedIn").
-// "jooble" stays for history rows saved before the board was retired.
-const SOURCE_LABELS: Record<string, string> = {
-  linkedin: "LinkedIn",
-  drushim: "Drushim",
-  comeet: "Comeet",
-  jobmaster: "JobMaster",
-  greenhouse: "Greenhouse",
-  jooble: "Jooble",
+// Each board's name in English and in Hebrew, for the board picker, the scan
+// panel, the source badges and every "Open on …" line. A brand keeps its Latin
+// name in Hebrew (the Hebrew copy already writes "ב־LinkedIn"), except Drushim,
+// whose own Hebrew name is the one Israelis know it by. "jooble" stays for
+// history rows saved before the board was retired. check-mirrors 98 requires an
+// entry with both names for every id in SOURCE_IDS.
+export const SOURCE_NAMES: Record<string, { en: string; he: string }> = {
+  linkedin: { en: "LinkedIn", he: "LinkedIn" },
+  drushim: { en: "Drushim", he: "דרושים" },
+  comeet: { en: "Comeet", he: "Comeet" },
+  jobmaster: { en: "JobMaster", he: "JobMaster" },
+  greenhouse: { en: "Greenhouse", he: "Greenhouse" },
+  lever: { en: "Lever", he: "Lever" },
+  smartrecruiters: { en: "SmartRecruiters", he: "SmartRecruiters" },
+  ashby: { en: "Ashby", he: "Ashby" },
+  himalayas: { en: "Himalayas", he: "Himalayas" },
+  jooble: { en: "Jooble", he: "Jooble" },
 };
 
-export function sourceLabel(source?: string): string {
+/** A board's name in the page's language ("linkedin" → "LinkedIn"); an id this
+ * build does not know is shown capitalised rather than dropped. */
+export function sourceLabel(source?: string, lang?: string): string {
   if (!source) return "";
-  return SOURCE_LABELS[source.toLowerCase()] ?? source.charAt(0).toUpperCase() + source.slice(1);
+  const names = SOURCE_NAMES[source.toLowerCase()];
+  if (!names) return source.charAt(0).toUpperCase() + source.slice(1);
+  return lang?.startsWith("he") ? names.he : names.en;
 }
 
 export function postedAgo(iso: string, t: TFunction<"jobs">): string {
@@ -124,7 +138,7 @@ export function applicantsText(a: Applicants | null | undefined, t: TFunction<"j
 // cards fall back to the lettered avatar unless the backend supplied a real
 // company logo_url (LinkedIn/Drushim/Comeet boards carry one when available).
 const BOARD_HOST_RE =
-  /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|greenhouse\.io|jooble\.org)$/;
+  /(^|\.)(linkedin\.com|licdn\.com|drushim\.co\.il|comeet\.(co|com)|jobmaster\.co\.il|greenhouse\.io|lever\.co|smartrecruiters\.com|ashbyhq\.com|himalayas\.app|jooble\.org)$/;
 
 export function companyDomain(url: string): string | null {
   try {
