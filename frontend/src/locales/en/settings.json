@@ -35,10 +35,12 @@
     },
     "others": {
       "cta": "Sign out other devices",
-      "hint": "Ends every other session on this account. This device stays signed in.",
+      "hint": "Ends every other session on this account and stops notifications on your other devices. This device stays signed in.",
       "done": "Your other devices were signed out.",
       "error": "Couldn't sign out your other devices. Please try again.",
-      "doneKey": "Your other devices were signed out, and your extension key was replaced."
+      "doneKey": "Your other devices were signed out, and your extension key was replaced.",
+      "pushStopped": "Notifications stopped on them too.",
+      "pushStoppedAll": "Notifications stopped on every device. If this one had them on, turn them on again under Email alerts."
     }
   },
   "extension": {

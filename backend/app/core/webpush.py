@@ -418,6 +418,32 @@ def test_payload(lang: str) -> dict:
             "url": "/jobs", "tag": "jobfinder-test", "lang": "en", "dir": "ltr"}
 
 
+def forget_other_devices(db: Session, user_id: int, keep_endpoint: str = "") -> tuple[int, bool]:
+    """"Sign out of other devices" (the phone polish pass, 2026-09-28): delete every
+    push device of the account but the one whose endpoint the calling browser named,
+    its own subscription, in the caller's transaction (the caller commits).
+
+    Signing out used to stop nothing here: a session ended while its device kept
+    getting the morning's job titles until a push service answered 410. The browser
+    knows its own endpoint (`lib/push.ts` `currentSubscription`, read-only) and sends
+    it; the server cannot tell which row is the caller's any other way, since a row
+    names a browser, not a session. An endpoint that is not one of the account's
+    keeps nothing, and none named (an old tab, a browser with no subscription)
+    deletes every one. Returns (devices deleted, whether the named one was kept).
+    No network: the push services learn of it when a later push to them never comes.
+    """
+    keep = endpoint_key(keep_endpoint.strip()) if (keep_endpoint or "").strip() else ""
+    removed = 0
+    kept = False
+    for row in devices_of(db, user_id):
+        if keep and row.endpoint_key == keep:
+            kept = True
+            continue
+        db.delete(row)
+        removed += 1
+    return removed, kept
+
+
 def endpoint_key(endpoint: str) -> str:
     """How a device is found again: sha256 of its endpoint (the endpoint itself
     can be ~800 characters on Windows, too long to index everywhere)."""

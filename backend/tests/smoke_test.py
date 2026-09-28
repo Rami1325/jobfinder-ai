@@ -32568,6 +32568,64 @@ try:
             and _devices34(_k_uid34) == [],
             f"before={_before_wipe34} wipe={_wipe34.text[:160]} close={_close34.text[:120]}",
         )
+
+        # "Sign out of other devices" stops their notifications too (the phone polish pass, 2026-09-28): the browser
+        # names its own endpoint, which is kept; every other device of the account goes; nobody else's is touched.
+        _so_uid34, _SO34_H = _alert_user32(_c34, "Push SignOut 34", email="push.signout34@example.com")
+        _st_uid34, _ST34_H = _alert_user32(_c34, "Push SignOut Stranger 34", email="push.signout.st34@example.com")
+        _EP_SO_HERE34 = "https://fcm.googleapis.com/fcm/send/signout34-here"
+        _EP_SO_PHONE34 = "https://web.push.apple.com/signout34-lost-phone"
+        _EP_SO_LAPTOP34 = "https://updates.push.services.mozilla.com/wpush/v2/signout34-laptop"
+        _EP_SO_STRANGER34 = "https://fcm.googleapis.com/fcm/send/signout34-stranger"
+
+        def _put_device34(uid, endpoint):  # noqa: ANN001
+            """Add a device, replacing a row of that endpoint first: a sign-out that deleted nothing leaves it there,
+            and a second insert would abort the suite on the unique key rather than fail this check."""
+            d = SessionLocal()
+            try:
+                for row in d.execute(_sel32(_PS34).where(_PS34.endpoint_key == _wp34.endpoint_key(endpoint))).scalars():
+                    d.delete(row)
+                d.commit()
+            finally:
+                d.close()
+            _add_device34(uid, endpoint, _ua34()[2])
+
+        for _ep34 in (_EP_SO_HERE34, _EP_SO_PHONE34, _EP_SO_LAPTOP34):
+            _put_device34(_so_uid34, _ep34)
+        _put_device34(_st_uid34, _EP_SO_STRANGER34)
+        _so_keep34 = _c34.post("/auth/logout-others", json={"keep_push_endpoint": _EP_SO_HERE34}, headers=_SO34_H)
+        _so_after_keep34 = [e for e, _l, _f, _s in _devices34(_so_uid34)]
+        _so_old_tab34 = _c34.post("/auth/logout-others", headers=_SO34_H)
+        _so_after_old34 = _devices34(_so_uid34)
+        _put_device34(_so_uid34, _EP_SO_HERE34)
+        _so_theirs34 = _c34.post("/auth/logout-others", json={"keep_push_endpoint": _EP_SO_STRANGER34}, headers=_SO34_H)
+        _so_after_theirs34 = _devices34(_so_uid34)
+        _so_stranger_after34 = [e for e, _l, _f, _s in _devices34(_st_uid34)]
+        _put_device34(_so_uid34, _EP_SO_PHONE34)
+        _so_stray34 = _c34.post("/auth/logout-others", json={"keep_push_endpoint": _EP_SO_PHONE34, "all": True},
+                                headers=_SO34_H)
+        _so_long34 = _c34.post("/auth/logout-others", json={"keep_push_endpoint": "https://fcm.googleapis.com/" + "x" * 2040},
+                               headers=_SO34_H)
+        check(
+            "34c 'Sign out of other devices' stops notifications there too (the phone polish pass): naming this "
+            "browser's own endpoint keeps it and deletes the account's other two devices (push_removed 2, push_kept), "
+            "a tab from before the change sends no body and every device of the account goes (push_kept false), an "
+            "endpoint that is another account's keeps nothing of this one and never touches theirs, and a stray field "
+            "or an over-long endpoint is a 422 that deletes nothing — the stranger's device is there throughout",
+            _so_keep34.status_code == 200 and _j28(_so_keep34).get("push_removed") == 2
+            and _j28(_so_keep34).get("push_kept") is True and _so_after_keep34 == [_EP_SO_HERE34]
+            and _so_old_tab34.status_code == 200 and _j28(_so_old_tab34).get("push_removed") == 1
+            and _j28(_so_old_tab34).get("push_kept") is False and _so_after_old34 == []
+            and _so_theirs34.status_code == 200 and _j28(_so_theirs34).get("push_removed") == 1
+            and _j28(_so_theirs34).get("push_kept") is False and _so_after_theirs34 == []
+            and _so_stranger_after34 == [_EP_SO_STRANGER34]
+            and _so_stray34.status_code == 422 and _so_long34.status_code == 422
+            and [e for e, _l, _f, _s in _devices34(_so_uid34)] == [_EP_SO_PHONE34]
+            and [e for e, _l, _f, _s in _devices34(_st_uid34)] == [_EP_SO_STRANGER34],
+            f"keep={_so_keep34.text[:120]} after={_so_after_keep34} old={_so_old_tab34.text[:100]} {_so_after_old34} "
+            f"theirs={_so_theirs34.text[:100]} {_so_after_theirs34} stray={_so_stray34.status_code} "
+            f"long={_so_long34.status_code} left={_devices34(_so_uid34)} stranger={_devices34(_st_uid34)}",
+        )
         _restore29(_prev34b_env)
 finally:
     _wp34._transport = _real_push_transport34

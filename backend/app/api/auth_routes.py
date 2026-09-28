@@ -58,6 +58,7 @@ from app.models import (
     GoogleStartIn,
     GoogleStartOut,
     LoginIn,
+    LogoutOthersIn,
     LogoutOthersOut,
     OkOut,
     PasswordChangeIn,
@@ -194,10 +195,17 @@ def auth_password(
 
 @router.post("/auth/logout-others", response_model=LogoutOthersOut)
 def auth_logout_others(
-    request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)
+    request: Request,
+    body: LogoutOthersIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> LogoutOthersOut:
-    revoked, rotated = accounts.logout_others(db, request, user)
-    return LogoutOthersOut(revoked=revoked, extension_key_rotated=rotated)
+    # The body is optional: a tab loaded before the phone polish pass sends none,
+    # and then every device's notifications stop (none is named to keep).
+    revoked, rotated, removed, kept = accounts.logout_others(
+        db, request, user, keep_push_endpoint=body.keep_push_endpoint if body else ""
+    )
+    return LogoutOthersOut(revoked=revoked, extension_key_rotated=rotated, push_removed=removed, push_kept=kept)
 
 
 @router.get("/auth/extension-key", response_model=ExtensionKeyOut)

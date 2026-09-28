@@ -65,6 +65,7 @@ from app.core import auth_email
 from app.core import auth_throttle as throttle
 from app.core import google_oauth
 from app.core import quota
+from app.core import webpush
 from app.core.passwords import (
     MAX_BYTES,
     dummy_hash,
@@ -917,15 +918,22 @@ def change_password(db: Session, request: Request, user: User, *, current: str, 
     return rotated
 
 
-def logout_others(db: Session, request: Request, user: User) -> tuple[int, bool]:
+def logout_others(
+    db: Session, request: Request, user: User, keep_push_endpoint: str = ""
+) -> tuple[int, bool, int, bool]:
     """Sign out every session but this one, and replace the extension key — a
-    key someone read earlier is a device too (FIXB B1). Returns (sessions
-    ended, whether the key was replaced)."""
+    key someone read earlier is a device too (FIXB B1) — and stop the morning's
+    notifications on every other device (the phone polish pass, 2026-09-28): a
+    signed-out phone kept getting job titles on its lock screen. The browser names
+    its own push endpoint, which is kept (`webpush.forget_other_devices`), all in
+    one commit. Returns (sessions ended, whether the key was replaced, devices
+    whose notifications stopped, whether this browser's own was kept)."""
     user_id = user.id
     revoked = revoke_all(db, user_id, except_id=getattr(request.state, "session_id", None))
     rotated = _rotate_extension_key(db.get(User, user_id))
+    removed, kept = webpush.forget_other_devices(db, user_id, keep_push_endpoint)
     db.commit()
-    return revoked, rotated
+    return revoked, rotated, removed, kept
 
 
 def extension_key(db: Session, user: User) -> str:

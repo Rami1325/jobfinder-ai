@@ -14655,6 +14655,71 @@ try {
   fail(`web push check (check 91) could not run: ${e.message}`);
 }
 
+// ---- 91, continued (e): "Sign out other devices" stops their notifications and keeps this one's //
+// The phone polish pass (2026-09-28), item 6. A session ended while its device
+// kept getting the morning's job titles, until a push service answered 410. The
+// server now deletes every push device of the account but the one the calling
+// browser names (smoke 34c pins that half). This is the page's half: Settings reads
+// this browser's own subscription (read-only `currentSubscription`) and names its
+// endpoint; the client posts `{ keep_push_endpoint }`, the field the backend's
+// `LogoutOthersIn` declares, and mirrors `push_removed` / `push_kept`; the toast
+// says the notifications stopped (and, when this browser could name none while
+// notifications are allowed here, that they may have stopped here too); and the
+// hint says it before the tap, in both locales. Planted twins every run.
+try {
+  const read91e = ({ settings, client, models, en, he }) => {
+    const out = [];
+    const fn = fnSource(settings, "function OtherDevices(");
+    if (!/const mine = await currentSubscription\(\);\s*const result = await logoutOtherDevices\(mine\?\.endpoint \?\? ""\);/.test(fn))
+      out.push("Settings' Sign out other devices does not name this browser's own push endpoint, so its notifications would stop too");
+    if (!/t\("account\.others\.pushStopped"\)/.test(fn) || !/t\("account\.others\.pushStoppedAll"\)/.test(fn) || !/result\.push_removed/.test(fn))
+      out.push("the sign-out toast does not say the notifications stopped");
+    const wrapper = fnSource(client, "export async function logoutOtherDevices(");
+    if (!/api\.post<LogoutOthersResult>\("\/auth\/logout-others", \{ keep_push_endpoint: keepPushEndpoint \}\)/.test(wrapper))
+      out.push("logoutOtherDevices does not post { keep_push_endpoint } to /auth/logout-others");
+    const mirror = blockAfter(client, "export interface LogoutOthersResult extends KeyRotationFields", "api/client.ts LogoutOthersResult");
+    if (!/\bpush_removed\?: number;/.test(mirror) || !/\bpush_kept\?: boolean;/.test(mirror))
+      out.push("api/client.ts LogoutOthersResult does not mirror push_removed and push_kept");
+    if (models !== null) {
+      const body = /\nclass LogoutOthersIn\(BaseModel\):([\s\S]*?)\n(?=\S)/.exec(models);
+      const answer = /\nclass LogoutOthersOut\(BaseModel\):([\s\S]*?)\n(?=\S)/.exec(models);
+      if (!body || !answer) throw new Error("app/models: LogoutOthersIn or LogoutOthersOut not found");
+      if (!/^    keep_push_endpoint: str = /m.test(body[1])) out.push("the backend's LogoutOthersIn declares no keep_push_endpoint, the field the page sends");
+      if (!/"extra": "forbid"/.test(body[1])) out.push("the backend's LogoutOthersIn takes fields it does not know");
+      if (!/^    push_removed: int = 0$/m.test(answer[1]) || !/^    push_kept: bool = False$/m.test(answer[1]))
+        out.push("the backend's LogoutOthersOut has no push_removed / push_kept");
+    }
+    for (const [loc, b, word] of [["en", en, /notification/i], ["he", he, /התראות/]]) {
+      const o = b.account?.others ?? {};
+      if (!word.test(o.hint ?? "")) out.push(`locales/${loc}/settings.json account.others.hint does not say the other devices' notifications stop`);
+      for (const k of ["pushStopped", "pushStoppedAll"])
+        if (typeof o[k] !== "string" || !word.test(o[k])) out.push(`locales/${loc}/settings.json account.others.${k} is missing or says nothing of notifications`);
+    }
+    return out;
+  };
+  const models91e = pySource("app/models/__init__.py", "check 91 (e)");
+  const r91e = {
+    settings: decomment(read("pages/SettingsPage.tsx")),
+    client: decomment(read("api/client.ts")),
+    models: models91e === null ? null : models91e.replace(/\r\n/g, "\n"),
+    en: JSON.parse(read("locales/en/settings.json")),
+    he: JSON.parse(read("locales/he/settings.json")),
+  };
+  for (const p of read91e(r91e)) fail(`check 91 (e): ${p} (the phone polish pass)`);
+  const plant91e = (key, from, to, label) => {
+    if (r91e[key] === null) return;
+    if (!r91e[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read91e({ ...r91e, [key]: r91e[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant91e("settings", 'logoutOtherDevices(mine?.endpoint ?? "")', 'logoutOtherDevices("")', "a sign-out that names no device to keep");
+  plant91e("client", "{ keep_push_endpoint: keepPushEndpoint }", "{}", "a client that sends nothing to keep");
+  plant91e("models", "    keep_push_endpoint: str = ", "    keep_endpoint: str = ", "a backend field under another name");
+  if (!read91e({ ...r91e, en: { ...r91e.en, account: { ...r91e.en.account, others: { ...r91e.en.account.others, hint: "Ends every other session on this account. This device stays signed in." } } } }).length)
+    throw new Error("the reader passes a hint that does not say the notifications stop");
+} catch (e) {
+  fail(`sign-out notifications check (check 91 e) could not run: ${e.message}`);
+}
+
 // ---- 92. WhatsApp alerts: opt-in first, every refusal said (PLAN 32, part 2) -- //
 // Every WhatsApp message is billed to the owner, and Meta requires an explicit
 // opt-in that names the business. What `tsc` cannot see:
