@@ -597,8 +597,12 @@ export function AlertsCard({
       <p className="mt-1 text-sm text-ink-muted">{t("alerts.body")}</p>
       {alertUses.limited && <p className="mt-1 text-xs text-ink-faint">{tCommon("uses.alertMornings")}</p>}
 
+      {/* The card lives in Settings (PLAN 31.5/3), and its controls are 44 px
+          boxes like the page's (the second tap-target pass): the two checkbox
+          lines were 20 and 40 px, Run now and Save 34. Boxes, not layers: they
+          wrap on a phone 12 px apart, beside the address box. */}
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-ink">
           <input
             type="checkbox"
             checked={enabled}
@@ -608,7 +612,7 @@ export function AlertsCard({
           />
           {t("alerts.enable")}
         </label>
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-ink">
           <input
             type="checkbox"
             checked={nudges}
@@ -632,11 +636,12 @@ export function AlertsCard({
           loading={running}
           disabled={saving || limitInvalid || searchUses.out}
           onClick={runNow}
+          className="min-h-11"
         >
           {t("alerts.runNow")}
         </Button>
         {unsaved && (
-          <Button size="sm" loading={saving} disabled={limitInvalid} onClick={() => save(enabled)}>
+          <Button size="sm" loading={saving} disabled={limitInvalid} onClick={() => save(enabled)} className="min-h-11">
             {t("common:actions.save")}
           </Button>
         )}
@@ -691,7 +696,9 @@ export function AlertsCard({
         <p className="mt-1 text-xs text-ink-faint">{t("alerts.minScoreHint")}</p>
       </div>
 
-      <label className="mt-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-ink">
+      {/* A 44 px box, its words where they were: 4 px of margin and 12 of the
+          box, the search card's own Customize line (it was a 20 px line). */}
+      <label className="mt-1 flex min-h-11 w-fit cursor-pointer items-center gap-2 text-sm text-ink">
         <input
           type="checkbox"
           checked={customOpen}

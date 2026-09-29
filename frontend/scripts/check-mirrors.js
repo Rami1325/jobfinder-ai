@@ -16814,6 +16814,62 @@ try {
   fail(`Jobs tabs check (check 116) could not run: ${e.message}`);
 }
 
+// ---- 117. every button on Settings is a 44 px target ------------------------- //
+// Settings drew its buttons `size="sm"`, 34 px (Change password, Sign out other
+// devices, Sign out, the extension key's Show, Copy and Replace with its two
+// armed answers, the danger zone's two actions and theirs, the add-a-password
+// link), and the theme and language switches 32 px. The buttons are 44 px BOXES:
+// pairs wrap on a phone 8 px apart, and Show and Copy sit 8 px under the key's
+// text, so a layer would lie over a neighbour. The two switches wear `tap-44`,
+// inside their row's 12 px padding. The alert form Settings mounts (AlertsCard)
+// follows the page: its checkbox lines (20 and 40 px) and Run now and Save (34)
+// are 44 px boxes. Every <Button>, <button> and <Link> on the page is read, over
+// a floor, so a new one under 44 px is red.
+try {
+  const read117 = (settings, alerts) => {
+    const out = [];
+    const controls = [...T2.tags(settings, "Button"), ...T2.tags(settings, "button"), ...T2.tags(settings, "Link")];
+    if (controls.length < 14) throw new Error(`pages/SettingsPage.tsx: read ${controls.length} buttons and links (expected at least 14)`);
+    for (const b of controls) if (!T2.target44(T2.cls(b))) out.push(`a control on Settings is under 44 px: ${T2.brief(b)}`);
+    for (const name of ["ThemeToggle", "LanguageSwitch"]) {
+      const mounts = T2.tags(settings, name);
+      if (!mounts.length) throw new Error(`pages/SettingsPage.tsx: <${name}> not found`);
+      for (const m of mounts) if (!T2.target44(T2.cls(m))) out.push(`Settings mounts ${name} at its 32 px size with no tap-44`);
+    }
+    const card = fnSource(alerts, "export function AlertsCard(");
+    const buttons = T2.tags(card, "Button");
+    if (buttons.length < 2) throw new Error("pages/jobs/AlertsCard.tsx AlertsCard: read fewer than two <Button>");
+    for (const b of buttons) if (!T2.target44(T2.cls(b))) out.push(`a button of the alert form is under 44 px: ${T2.brief(b)}`);
+    let lines = 0;
+    for (const m of card.matchAll(/<label\b/g)) {
+      const body = card.slice(m.index, card.indexOf("</label>", m.index));
+      if (!/type="checkbox"/.test(body)) continue;
+      lines += 1;
+      const tag = T2.tagFrom(card, m.index, "a checkbox line");
+      if (!T2.box44(T2.cls(tag))) out.push(`a checkbox line of the alert form is under 44 px: ${T2.brief(tag)}`);
+    }
+    if (lines < 3) throw new Error(`pages/jobs/AlertsCard.tsx AlertsCard: read ${lines} checkbox lines (expected at least 3)`);
+    return out;
+  };
+  const settings117 = decomment(read("pages/SettingsPage.tsx"));
+  const alerts117 = decomment(read("pages/jobs/AlertsCard.tsx"));
+  for (const p of read117(settings117, alerts117)) fail(`check 117: ${p} (the second tap-target pass)`);
+  const plant117 = (key, from, to, label) => {
+    const src = key === "s" ? settings117 : alerts117;
+    if (!src.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    const [s, a] = key === "s" ? [src.replace(from, to), alerts117] : [settings117, src.replace(from, to)];
+    if (!read117(s, a).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant117("s", 'icon={<Copy size={14} />} className="min-h-11">', "icon={<Copy size={14} />}>", "a 34 px Copy");
+  plant117("s", '<ThemeToggle className="tap-44" />', "<ThemeToggle />", "a 32 px theme switch");
+  plant117("s", "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border", "inline-flex min-h-[32px] items-center justify-center gap-1.5 rounded-lg border", "the old 32 px add-a-password link");
+  plant117("s", 'onClick={go} loading={running} className="min-h-11">', "onClick={go} loading={running}>", "a 34 px armed danger button");
+  plant117("a", '<label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-ink">\n          <input\n            type="checkbox"\n            checked={enabled}', '<label className="flex cursor-pointer items-center gap-2 text-sm text-ink">\n          <input\n            type="checkbox"\n            checked={enabled}', "a 20 px Email me line");
+  plant117("a", "onClick={runNow}\n          className=\"min-h-11\"", "onClick={runNow}", "a 34 px Run now");
+} catch (e) {
+  fail(`Settings tap targets check (check 117) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

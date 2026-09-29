@@ -56,6 +56,14 @@ import type { AuthMe, UsageOut } from "../types";
  * underneath instead; on wider screens both still sit side by side. */
 const ACTION_HINT = "min-w-[12rem] flex-1 text-xs leading-relaxed text-ink-muted";
 
+// Every button on this page is a 44 px BOX, `min-h-11` (the second tap-target
+// pass, 2026-09-29; `size="sm"` drew them 34 px, the extension key's Show and
+// Copy among them). A box, not a layer: pairs wrap on a phone 8 px apart, and
+// Show and Copy sit 8 px under the key's own text, so a layer would lie over
+// its neighbour, and this page has no rows-a-screen budget to spend. The theme
+// and language switches in Appearance are the exception: they take `tap-44`,
+// whose layer stays inside their row's 12 px padding.
+
 /** One labelled setting: name + hint on the start side, control on the end.
  * `flex-wrap`, not a two-column grid — at 390px the Hebrew hints run to two
  * lines and a fixed grid crushes the control to nothing rather than letting it
@@ -132,7 +140,7 @@ function DangerAction({
   if (disabledReason) {
     return (
       <div className="space-y-2">
-        <Button size="sm" variant="danger" disabled icon={<Trash2 size={14} />}>
+        <Button size="sm" variant="danger" disabled icon={<Trash2 size={14} />} className="min-h-11">
           {cta}
         </Button>
         <p className="text-xs leading-relaxed text-ink-muted">{disabledReason}</p>
@@ -157,13 +165,13 @@ function DangerAction({
           variant="ghost"
           onClick={() => setConfirming(true)}
           icon={<Trash2 size={14} />}
-          className="hover:border-danger/50 hover:text-danger"
+          className="min-h-11 hover:border-danger/50 hover:text-danger"
         >
           {cta}
         </Button>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="danger" onClick={go} loading={running}>
+          <Button size="sm" variant="danger" onClick={go} loading={running} className="min-h-11">
             {confirmLabel}
           </Button>
           <Button
@@ -171,6 +179,7 @@ function DangerAction({
             variant="secondary"
             onClick={() => setConfirming(false)}
             disabled={running}
+            className="min-h-11"
           >
             {cancelLabel}
           </Button>
@@ -257,6 +266,7 @@ function PasswordChange({
             variant="secondary"
             onClick={() => setOpen(true)}
             icon={<KeyRound size={14} />}
+            className="min-h-11"
           >
             {t("account.password.cta")}
           </Button>
@@ -299,10 +309,10 @@ function PasswordChange({
           </div>
           <FormError message={error} />
           <div className="flex flex-wrap gap-2 pt-1">
-            <Button type="submit" size="sm" loading={busy}>
+            <Button type="submit" size="sm" loading={busy} className="min-h-11">
               {t("account.password.save")}
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={close} disabled={busy}>
+            <Button type="button" size="sm" variant="ghost" onClick={close} disabled={busy} className="min-h-11">
               {tCommon("actions.cancel")}
             </Button>
           </div>
@@ -361,6 +371,7 @@ function OtherDevices({ method, onKeyRotated }: { method: AuthMe["method"]; onKe
         loading={busy}
         onClick={go}
         icon={<MonitorSmartphone size={14} />}
+        className="min-h-11"
       >
         {t("account.others.cta")}
       </Button>
@@ -388,7 +399,7 @@ function AddPassword({ email }: { email: string }) {
       <Link
         to={withNext("/forgot", "/settings")}
         state={{ email }}
-        className="inline-flex min-h-[32px] items-center justify-center gap-1.5 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-[13px] font-semibold text-ink transition-colors hover:border-accent/60 hover:bg-panel-2/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+        className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-[13px] font-semibold text-ink transition-colors hover:border-accent/60 hover:bg-panel-2/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
       >
         <KeyRound size={14} aria-hidden />
         {t("account.addPassword.cta")}
@@ -528,10 +539,11 @@ function ExtensionKeyCard({
           onClick={toggle}
           loading={loading && !shown}
           icon={shown ? <EyeOff size={14} /> : <Eye size={14} />}
+          className="min-h-11"
         >
           {shown ? t("extension.hide") : t("extension.reveal")}
         </Button>
-        <Button size="sm" variant="secondary" onClick={copy} icon={<Copy size={14} />}>
+        <Button size="sm" variant="secondary" onClick={copy} icon={<Copy size={14} />} className="min-h-11">
           {tCommon("actions.copy")}
         </Button>
       </div>
@@ -547,12 +559,13 @@ function ExtensionKeyCard({
                 variant="ghost"
                 onClick={() => setArming(true)}
                 icon={<RefreshCw size={14} />}
+                className="min-h-11"
               >
                 {t("extension.rotate")}
               </Button>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
-                <Button size="sm" variant="danger" onClick={replace} loading={replacing}>
+                <Button size="sm" variant="danger" onClick={replace} loading={replacing} className="min-h-11">
                   {t("extension.rotateConfirm")}
                 </Button>
                 <Button
@@ -560,6 +573,7 @@ function ExtensionKeyCard({
                   variant="secondary"
                   onClick={() => setArming(false)}
                   disabled={replacing}
+                  className="min-h-11"
                 >
                   {t("extension.rotateCancel")}
                 </Button>
@@ -913,11 +927,14 @@ export default function SettingsPage() {
             they own the theme/language state, and a second implementation would
             be a second source of truth for it. */}
         <div className="mt-1 divide-y divide-line">
+          {/* 44 px targets at their 32 px size (`tap-44`): the layer adds 6 px
+              round each, inside the row's 12 px padding. The header mounts the
+              same two at their own size, from lg only. */}
           <Row label={t("appearance.theme")} hint={t("appearance.themeHint")}>
-            <ThemeToggle />
+            <ThemeToggle className="tap-44" />
           </Row>
           <Row label={t("appearance.language")} hint={t("appearance.languageHint")}>
-            <LanguageSwitch />
+            <LanguageSwitch className="tap-44" />
           </Row>
           {/* PLAN 31.2/11: installed from here, JobFinder opens on /app (the
               manifest's start_url; it opened on the landing). Phones only, and
@@ -984,6 +1001,7 @@ export default function SettingsPage() {
             // The door glyph points out to the right; in RTL "out" is the other
             // way, so it mirrors with the reading direction.
             icon={<LogOut size={14} className="rtl:-scale-x-100" />}
+            className="min-h-11"
           >
             {t("account.signOut")}
           </Button>
