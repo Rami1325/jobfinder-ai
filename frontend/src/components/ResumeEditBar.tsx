@@ -74,6 +74,10 @@ export default function ResumeEditBar({ save, conflict, error, canUndo }: Props)
             <span className="sr-only sm:not-sr-only">{status.text}</span>
           </span>
         )}
+        {/* A 44 px target at its 40 x 28 size (`tap-44`, the second
+            tap-target pass): 8 px above and below, inside the toolbar's
+            padding, 2 px at each side, where the status is words and Tailor
+            is 8 px away. */}
         {canUndo && (
           <Button
             size="sm"
@@ -82,12 +86,15 @@ export default function ResumeEditBar({ save, conflict, error, canUndo }: Props)
             onClick={undoBlockEdit}
             aria-label={t("edit.undo")}
             title={t("edit.undo")}
+            className="tap-44"
           />
         )}
       </span>
 
       {(save === "failed" || save === "conflict") && (
-        // `order-last` so it breaks onto its own line under the row.
+        // `order-last` so it breaks onto its own line under the row. Its
+        // controls are 44 px BOXES (the second tap-target pass): this line is
+        // one the row grows by on purpose, so growing costs nothing at rest.
         <div role="alert" className="order-last w-full">
           {save === "failed" && (
             <div className="flex flex-wrap items-center gap-2 text-sm text-danger">
@@ -96,7 +103,7 @@ export default function ResumeEditBar({ save, conflict, error, canUndo }: Props)
               <button
                 type="button"
                 onClick={() => void retryMasterSave()}
-                className="font-medium underline underline-offset-2"
+                className="min-h-11 font-medium underline underline-offset-2"
               >
                 {t("edit.retry")}
               </button>
@@ -108,10 +115,10 @@ export default function ResumeEditBar({ save, conflict, error, canUndo }: Props)
               <p className="text-sm font-semibold text-ink">{t("edit.staleTitle")}</p>
               <p className="mt-0.5 text-xs text-ink-muted">{t("edit.staleBody")}</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" variant="secondary" disabled={busy} onClick={() => answer("load")}>
+                <Button size="sm" variant="secondary" disabled={busy} onClick={() => answer("load")} className="min-h-11">
                   {t("edit.staleLoad")}
                 </Button>
-                <Button size="sm" disabled={busy} onClick={() => answer("keep")}>
+                <Button size="sm" disabled={busy} onClick={() => answer("keep")} className="min-h-11">
                   {t("edit.staleKeep")}
                 </Button>
               </div>
@@ -124,11 +131,11 @@ export default function ResumeEditBar({ save, conflict, error, canUndo }: Props)
               <p className="mt-0.5 text-xs text-ink-muted">{t("edit.langWarnAuto", { lang: langName })}</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {canUndo && (
-                  <Button size="sm" variant="secondary" icon={<Undo2 size={14} />} disabled={busy} onClick={undoBlockEdit}>
+                  <Button size="sm" variant="secondary" icon={<Undo2 size={14} />} disabled={busy} onClick={undoBlockEdit} className="min-h-11">
                     {t("edit.undo")}
                   </Button>
                 )}
-                <Button size="sm" variant="danger" disabled={busy} onClick={() => answer("switch")}>
+                <Button size="sm" variant="danger" disabled={busy} onClick={() => answer("switch")} className="min-h-11">
                   {t("edit.langWarnSwitch", { lang: langName })}
                 </Button>
               </div>

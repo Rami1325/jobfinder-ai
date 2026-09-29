@@ -1589,6 +1589,9 @@ export default function TailorPage() {
             // `editable` is `!result`, and nothing set `result` back to null.
             // With hand-edits on the draft it deletes every sentence typed on
             // it, so it arms first; the consequence is in the notes below.
+            // Two 44 px BOXES (the second tap-target pass): armed, the row may
+            // grow, and on a phone they wrap over the title and the changes
+            // chip, where a layer of theirs would lie over the chip's.
             <>
               <Button
                 size="sm"
@@ -1598,10 +1601,11 @@ export default function TailorPage() {
                   setDiscardArmed(false);
                   discardTailorResult();
                 }}
+                className="min-h-11"
               >
                 {t("discard.confirm", { count: overrideCount })}
               </Button>
-              <Button size="sm" variant="secondary" onClick={() => setDiscardArmed(false)}>
+              <Button size="sm" variant="secondary" onClick={() => setDiscardArmed(false)} className="min-h-11">
                 {t("discard.keep")}
               </Button>
             </>
@@ -1622,7 +1626,9 @@ export default function TailorPage() {
               // Only on the harmless branch, and only because it is a
               // DESCRIPTION there rather than a warning.
               title={unsavedLines ? undefined : t("discard.title")}
-              className={cn("shrink-0", unsavedLines && "text-warn")}
+              // A 44 px target at its 29 px size (`tap-44`, the second
+              // tap-target pass; see the toolbar's own note).
+              className={cn("tap-44 shrink-0", unsavedLines && "text-warn")}
             >
               <span className="sr-only sm:not-sr-only">{t("discard.cta")}</span>
             </Button>
@@ -1654,7 +1660,10 @@ export default function TailorPage() {
                 // The changes live in the document's drawer (PLAN 31.3/3).
                 onClick={() => setPane("changes")}
                 aria-expanded={pane === "changes"}
-                className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-ink transition-colors hover:bg-accent/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                // A 44 px target at its 26 px size (`tap-44`): 9 px above and
+                // below, inside the toolbar's 8 px padding and the half pixel
+                // the back button's height leaves (the draft row stays 46 px).
+                className="tap-44 shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-ink transition-colors hover:bg-accent/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
               >
                 {t("toolbar.changes", { count: edits.length })}
               </button>
@@ -1716,7 +1725,9 @@ export default function TailorPage() {
               icon={<Wand2 size={15} />}
               disabled={!canRun}
               onClick={() => setTailorState({ overlayOpen: true })}
-              className={cn("shrink-0", result && "hidden lg:inline-flex")}
+              // A 44 px target at its 34 px size (`tap-44`, the second
+              // tap-target pass): the row stays 51 px.
+              className={cn("tap-44 shrink-0", result && "hidden lg:inline-flex")}
             >
               {result ? (
                 t("overlay.openDifferent")

@@ -10456,7 +10456,9 @@ try {
     if (!def || !/^\s*\.\.\.tools\.filter\(\s*\(?(\w+)\)?\s*=>\s*\1\.key\s*===\s*"review"\s*\)/.test(def[1]))
       fail(`components/DocumentPanel.tsx: ${list} must START with the review tool (…tools.filter((x) => x.key === "review"), then the rest)`);
   }
-  const pill = /labelled\s*\?\s*"([^"]*)"\s*:\s*"h-10 w-10"/.exec(panel);
+  // The rail's square may carry more classes (`tap-44` since the second
+  // tap-target pass, which check 119 pins); its `h-10 w-10` is the anchor.
+  const pill = /labelled\s*\?\s*"([^"]*)"\s*:\s*"[^"]*\bh-10 w-10\b[^"]*"/.exec(panel);
   if (!pill) throw new Error("could not find ToolButton's labelled class string");
   if (!/\bmin-h-(?:8|9|10|11|12)\b/.test(pill[1]))
     fail(`components/DocumentPanel.tsx: a labelled tool pill ("${pill[1]}") has no min-h-8 — it measured 30 px at 390, under the 32 px floor`);
@@ -11136,7 +11138,9 @@ try {
     if (/t\("edit\.hint"\)/.test(toolbar[0])) out.push("the \"tap to edit\" hint is back inside the toolbar, a row on every visit");
     if (!/!hintSeen\s*&&[\s\S]{0,400}?t\("edit\.hint"\)/.test(page)) out.push("the \"tap to edit\" hint is no longer shown once per device (`!hintSeen`)");
     if (!/if \(save === "idle" && !canUndo\) return null;/.test(editBar)) out.push("ResumeEditBar renders something at rest, which costs the toolbar a row");
-    if (/className=\{cn\("shrink-0", result && "hidden lg:inline-flex"\)\}/.test(toolbar[0])) {
+    // The button's own classes may carry more (`tap-44` since the second
+    // tap-target pass); what matters is `result && "hidden lg:inline-flex"`.
+    if (/className=\{cn\("[^"]*\bshrink-0\b[^"]*", result && "hidden lg:inline-flex"\)\}/.test(toolbar[0])) {
       // On the SAME condition that hides the button (`result`), so a ⋯ entry
       // gated on anything else, or switched off, is no way back to it.
       const more = /moreItems=\{\s*result\b[^?]*\?[\s\S]*?t\("overlay\.openDifferent"\)[\s\S]*?setTailorState\(\{ overlayOpen: true \}\)/.test(page);
@@ -16909,6 +16913,96 @@ try {
   plant118('<div className="mb-4 flex items-start justify-between gap-4">', '<div className="mb-1 flex items-start justify-between gap-4">', "content 4 px under the row");
 } catch (e) {
   fail(`dialog close check (check 118) could not run: ${e.message}`);
+}
+
+// ---- 119. the document's tools are 44 px targets, and nothing clips their layers //
+// /app's tools (the second tap-target pass). The phone tool row's pills were 32 px
+// and the rail's squares 40; both wear `tap-44` (ToolButton), and the phone row,
+// an `overflow-x-auto` scroller that would clip a layer at its edge, holds the
+// pills' layer in its own padding, computed here from the pill's height. The
+// rail keeps the gap a square's layer and the review's count pip (which rises
+// above its square) need together. The views' segments (32 px) wear the layer and
+// keep `truncate` off the button (on the button its overflow clipped the layer).
+// Every control TailorPage puts on the toolbar row, and every one ResumeEditBar
+// adds, is a 44 px target; DocumentToolbar's padding and its wrapped rows' gap
+// hold the widest layer on the row (the changes chip's, computed from its face).
+try {
+  const read119 = (panel, page, editBar, bar) => {
+    const out = [];
+    const tb = /labelled\s*\?\s*"([^"]*)"\s*:\s*"([^"]*)"/.exec(panel);
+    if (!tb) throw new Error("components/DocumentPanel.tsx: ToolButton's two class strings not found");
+    if (!T2.target44(tb[1])) out.push("a phone tool pill is a 32 px target (no tap-44)");
+    if (!T2.target44(tb[2])) out.push("a rail square is a 40 px target (no tap-44)");
+    const pillFace = T2.utility(tb[1], ["min-h", "h"]);
+    if (!pillFace) throw new Error("ToolButton: cannot read the pill's height");
+    const scroller = T2.tags(panel, "div").find((d) => /role="group"/.test(d) && /(?<![\w:-])overflow-x-auto/.test(T2.cls(d)));
+    if (!scroller) throw new Error("components/DocumentPanel.tsx: the phone tool row's scroller (role=\"group\", overflow-x-auto) not found");
+    if (T2.TAP.test(tb[1]) && !T2.box44(tb[1])) {
+      const reach = (44 - pillFace) / 2;
+      const sc = T2.cls(scroller);
+      const top = T2.utility(sc, ["pt", "py", "p"]), bottom = T2.utility(sc, ["pb", "py", "p"]);
+      if (top < reach || bottom < reach) out.push(`the phone tool row's scroller clips the pills' layers: ${top} px above and ${bottom} below, where a ${pillFace} px pill's layer reaches ${reach}`);
+    }
+    const rail = T2.tags(panel, "div").find((d) => /(?<![\w:-])sticky(?![\w-])/.test(T2.cls(d)) && /(?<![\w:-])top-32(?![\w-])/.test(T2.cls(d)));
+    if (!rail) throw new Error("components/DocumentPanel.tsx: the rail (sticky top-32) not found");
+    const pip = /absolute -top-(\d+(?:\.\d+)?) -end-/.exec(panel);
+    if (!pip) throw new Error("components/DocumentPanel.tsx: the rail's count pip (absolute -top-n -end-n) not found");
+    if (T2.TAP.test(tb[2]) && !T2.box44(tb[2])) {
+      const need = (44 - T2.utility(tb[2], ["h"])) / 2 + Number(pip[1]) * 4;
+      const gap = T2.utility(T2.cls(rail), ["gap-y", "gap"]);
+      if (gap < need) out.push(`the rail's squares are ${gap} px apart, where a square's layer and the pip above the next need ${need}`);
+    }
+    const seg = /<button\b[^>]*?onClick=\{\(\) => onView\(v\)\}[\s\S]*?>/.exec(panel);
+    if (!seg) throw new Error("components/DocumentPanel.tsx: a view segment (onClick={() => onView(v)}) not found");
+    const segTag = T2.tagFrom(panel, seg.index, "a view segment");
+    if (!T2.target44(T2.cls(segTag))) out.push("a view segment is a 32 px target (no tap-44)");
+    if (T2.CLIP.test(T2.cls(segTag))) out.push("a view segment clips its own layer (truncate on the button)");
+    const toolbar = /<DocumentToolbar\b[\s\S]*?\n {6}\/>/.exec(page);
+    if (!toolbar) throw new Error("pages/TailorPage.tsx: <DocumentToolbar … /> not found");
+    const rowControls = [...T2.tags(toolbar[0], "Button"), ...T2.tags(toolbar[0], "button")];
+    if (rowControls.length < 5) throw new Error(`pages/TailorPage.tsx: read ${rowControls.length} toolbar controls (expected at least 5)`);
+    for (const b of rowControls) if (!T2.target44(T2.cls(b))) out.push(`a control on the document toolbar is under 44 px: ${T2.brief(b)}`);
+    const editControls = [...T2.tags(editBar, "Button"), ...T2.tags(editBar, "button")];
+    if (editControls.length < 5) throw new Error(`components/ResumeEditBar.tsx: read ${editControls.length} controls (expected at least 5)`);
+    for (const b of editControls) if (!T2.target44(T2.cls(b))) out.push(`a control ResumeEditBar puts on the toolbar is under 44 px: ${T2.brief(b)}`);
+    const chip = rowControls.find((b) => /setPane\("changes"\)/.test(b));
+    if (!chip) throw new Error('pages/TailorPage.tsx: the changes chip (setPane("changes")) not found');
+    const cc = T2.cls(chip);
+    if (T2.TAP.test(cc) && !T2.box44(cc)) {
+      const reach = (44 - (16 + 2 * T2.utility(cc, ["py", "p"]) + 2)) / 2;
+      const outer = /<div className="(sticky top-14[^"]*)"/.exec(bar);
+      const inner = /<div className="(flex flex-wrap[^"]*)"/.exec(bar);
+      if (!outer || !inner) throw new Error("components/DocumentToolbar.tsx: the bar's two boxes not found");
+      if (T2.utility(outer[1], ["pt", "py", "p"]) < reach - 1.5 || T2.utility(outer[1], ["pb", "py", "p"]) < reach - 1.5)
+        out.push(`the toolbar's padding cannot hold the changes chip's ${reach} px layer, so the row would grow`);
+      if (T2.utility(inner[1], ["gap-y", "gap"]) < reach)
+        out.push(`a wrapped toolbar row sits ${T2.utility(inner[1], ["gap-y", "gap"])} px under the one above, inside the changes chip's ${reach} px layer`);
+    }
+    return out;
+  };
+  const r119 = {
+    panel: decomment(read("components/DocumentPanel.tsx")),
+    page: decomment(read("pages/TailorPage.tsx")),
+    editBar: decomment(read("components/ResumeEditBar.tsx")),
+    bar: decomment(read("components/DocumentToolbar.tsx")),
+  };
+  const run119 = (r) => read119(r.panel, r.page, r.editBar, r.bar);
+  for (const p of run119(r119)) fail(`check 119: ${p} (the second tap-target pass)`);
+  const plant119 = (key, from, to, label) => {
+    if (!r119[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!run119({ ...r119, [key]: r119[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant119("panel", '"tap-44 min-h-8 snap-start px-3 py-1.5"', '"min-h-8 snap-start px-3 py-1.5"', "a 32 px pill");
+  plant119("panel", "overflow-x-auto py-1.5 ps-1", "overflow-x-auto pb-1 ps-1", "a scroller that clips the pills' layers");
+  plant119("panel", '"tap-44 h-10 w-10"', '"h-10 w-10"', "a 40 px rail square");
+  plant119("panel", "sticky top-32 hidden shrink-0 flex-col gap-2", "sticky top-32 hidden shrink-0 flex-col gap-1.5", "a rail whose layers lie over the pip");
+  plant119("panel", '"tap-44 min-h-8 min-w-0 flex-auto rounded-md', '"tap-44 min-h-8 min-w-0 flex-auto truncate rounded-md', "a segment that clips its layer");
+  plant119("page", 'className={cn("tap-44 shrink-0", result && "hidden lg:inline-flex")}', 'className={cn("shrink-0", result && "hidden lg:inline-flex")}', "a 34 px Tailor");
+  plant119("page", 'className="tap-44 shrink-0 rounded-full border border-accent/40', 'className="shrink-0 rounded-full border border-accent/40', "a 26 px changes chip");
+  plant119("editBar", 'title={t("edit.undo")}\n            className="tap-44"', 'title={t("edit.undo")}', "a 28 px Undo");
+  plant119("bar", "gap-x-2 gap-y-2.5 sm:gap-x-3", "gap-x-2 gap-y-2 sm:gap-x-3", "wrapped toolbar rows inside the chip's layer");
+} catch (e) {
+  fail(`document tools check (check 119) could not run: ${e.message}`);
 }
 
 // ---- report --------------------------------------------------------------- //

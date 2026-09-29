@@ -117,9 +117,14 @@ function ToolButton({ tool, labelled }: { tool: Tool; labelled?: boolean }) {
       className={cn(
         "relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border text-xs font-medium transition",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
-        // min-h-8: 32 px, the floor every other tap target here keeps. The pill
-        // measured 30 px at 390 (the 2026-09-21 pass).
-        labelled ? "min-h-8 snap-start px-3 py-1.5" : "h-10 w-10",
+        // min-h-8: 32 px, the face (it measured 30 px at 390 in the 2026-09-21
+        // pass). `tap-44` makes it a 44 px target at that size (the second
+        // tap-target pass, 2026-09-29): the pill's layer adds 6 px above and
+        // below, which the phone row's scroller holds in its own padding
+        // (`py-1.5`), since a scroller clips what overflows it. The rail's
+        // 40 px squares take the same layer, 2 px each way inside their 6 px
+        // gaps. Every pill is wider than 44 px, so no layer grows sideways.
+        labelled ? "tap-44 min-h-8 snap-start px-3 py-1.5" : "tap-44 h-10 w-10",
         tool.active
           ? "border-accent bg-accent text-white"
           : "border-line bg-panel text-ink-muted hover:border-accent/40 hover:text-ink",
@@ -508,12 +513,17 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
             width has to own its own scroller, and a long Hebrew label can), but
             "⋯" sits OUTSIDE that scroller: an absolutely placed list inside an
             `overflow-x-auto` box is clipped by it. Hidden from `lg`, where the
-            same list stands up as the rail. */}
-        <div className="flex items-start gap-1.5 lg:hidden">
+            same list stands up as the rail.
+            The scroller's 6 px above and below (`py-1.5`, it was `pb-1`) are
+            the pills' 44 px layers, which an `overflow-x-auto` box would
+            otherwise clip to its edge (the second tap-target pass): the row is
+            44 px, 8 more than it was. `items-center` keeps "⋯" (a 32 px face
+            with its own layer) level with the pills. */}
+        <div className="flex items-center gap-1.5 lg:hidden">
           <div
             role="group"
             aria-label={t("doc.toolsLabel")}
-            className="-ms-1 flex min-w-0 flex-1 snap-x gap-1.5 overflow-x-auto pb-1 ps-1 lg:hidden"
+            className="-ms-1 flex min-w-0 flex-1 snap-x gap-1.5 overflow-x-auto py-1.5 ps-1 lg:hidden"
           >
             {phoneTools.map((tool) => (
               <ToolButton key={tool.key} tool={tool} labelled />
@@ -539,12 +549,17 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
               className={cn(
                 // `flex-auto`, not `flex-1`: each segment starts from its own
                 // text, so "What the ATS reads" is not cut to a third of the row.
-                "min-h-8 min-w-0 flex-auto truncate rounded-md px-2 text-xs font-medium transition-colors",
+                // A 44 px target at its 32 px size (`tap-44`, the second
+                // tap-target pass): the layer adds 6 px above and below, 3 px
+                // past the control's frame, into the 12 px either side of it.
+                // The ellipsis moved onto the words (`truncate` on the span):
+                // on the button, its `overflow: hidden` clipped the layer.
+                "tap-44 min-h-8 min-w-0 flex-auto rounded-md px-2 text-xs font-medium transition-colors",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
                 view === v ? "bg-panel text-ink shadow-sm" : "text-ink-muted hover:text-ink",
               )}
             >
-              {t(`doc.views.${v}`)}
+              <span className="block truncate">{t(`doc.views.${v}`)}</span>
             </button>
           ))}
         </div>
@@ -865,11 +880,15 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
           once the 240px desktop nav, the scrollbar and `lg:px-8` are out, so the
           40px squares plus the 12px gap put the sheet at 657px — it narrows
           rather than overflowing (nothing scrolls sideways), and it reaches its
-          full 736px from ~1100px up. */}
+          full 736px from ~1100px up.
+          The squares keep 8 px between them (`gap-2`, it was 6, the second
+          tap-target pass): a square's 44 px layer reaches 2 px past it, and the
+          review's count pip rises 6 px above its own square, so at 6 px the
+          layer above lay over the pip. */}
       <div
         role="group"
         aria-label={t("doc.toolsLabel")}
-        className="sticky top-32 hidden shrink-0 flex-col gap-1.5 lg:flex"
+        className="sticky top-32 hidden shrink-0 flex-col gap-2 lg:flex"
       >
         {tools.map((tool) => (
           <ToolButton key={tool.key} tool={tool} />

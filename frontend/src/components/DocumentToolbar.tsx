@@ -45,11 +45,19 @@ interface Props {
  * the header's own padding, so the title lines up under the logo and the last
  * action under the account button. The document below it is centred by
  * `.app-col`; this bar deliberately does not wear it.
+ *
+ * Every control on the row is a 44 px target at its own size (the second
+ * tap-target pass, 2026-09-29): Tailor, the draft's way back, "N changes" and
+ * Undo carry `tap-44`, whose layer (at most 9 px above and below, the 26 px
+ * chip's) stays inside the bar's 8 px padding, so the row is still 51 px on the
+ * master and 46 on a draft. What only a failure or the armed exit puts here
+ * are 44 px boxes. A wrapped row keeps 10 px between lines (`gap-y-2.5`, it was
+ * 8): a layer that reaches 9 px past its line never meets the line under it.
  */
 export default function DocumentToolbar({ lead, title, badges, actions, notes }: Props) {
   return (
     <div className="sticky top-14 z-20 border-b border-line/70 bg-bg/85 px-4 py-2 backdrop-blur-xl lg:px-8">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 sm:gap-x-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2.5 sm:gap-x-3">
         {lead}
         {/* `min-w-0` so a long name ellipsizes instead of shouldering the
             badges onto a line of their own.
