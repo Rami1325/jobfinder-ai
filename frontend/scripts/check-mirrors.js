@@ -16870,6 +16870,47 @@ try {
   fail(`Settings tap targets check (check 117) could not run: ${e.message}`);
 }
 
+// ---- 118. every dialog's close button is a 44 px target, and its row does not move //
+// `Modal`'s close (components/ui/Modal.tsx, every dialog in the app) was 30 x 30.
+// It wears `tap-44`, 7 px of layer each way, computed here from its padding and
+// its icon: the title beside it, the content under the row and the panel's own
+// edge must each be at least that far, or the layer lies over the title or past
+// the panel. It may NOT become a 44 px box: the title row would grow from 30 to
+// 44 px and move every dialog's content 14 px down.
+try {
+  const read118 = (modal) => {
+    const out = [];
+    const close = T2.tags(modal, "button").find((b) => /onClick=\{onClose\}/.test(b));
+    if (!close) throw new Error("components/ui/Modal.tsx: the close <button onClick={onClose}> not found");
+    const c = T2.cls(close);
+    const icon = /<X size=\{(\d+)\}/.exec(modal);
+    if (!icon) throw new Error("components/ui/Modal.tsx: the close icon (<X size={n}>) not found");
+    const face = Number(icon[1]) + 2 * T2.utility(c, ["p"]);
+    const reach = (44 - face) / 2;
+    if (!T2.TAP.test(c)) out.push(`the dialogs' close button is a ${face} px target (no tap-44)`);
+    if (T2.box44(c)) out.push("the close button is a 44 px box, which grows every dialog's title row and moves its content");
+    const row = T2.cls(T2.enclosing(modal, modal.indexOf(close), "div", "the close button"));
+    if (T2.utility(row, ["gap-x", "gap"]) < reach) out.push(`the title is ${T2.utility(row, ["gap-x", "gap"])} px from the close button, inside its ${reach} px layer`);
+    if (T2.utility(row, ["mb"]) < reach) out.push(`the content is ${T2.utility(row, ["mb"])} px under the title row, inside the close button's ${reach} px layer`);
+    const panel = /ref=\{dialogRef\}[\s\S]*?"(w-full rounded-xl2[^"]*)"/.exec(modal);
+    if (!panel) throw new Error("components/ui/Modal.tsx: the dialog panel's classes not found");
+    if (T2.utility(panel[1], ["pt", "py", "p"]) < reach) out.push("the panel's padding is narrower than the close button's layer");
+    return out;
+  };
+  const modal118 = decomment(read("components/ui/Modal.tsx"));
+  for (const p of read118(modal118)) fail(`check 118: ${p} (the second tap-target pass)`);
+  const plant118 = (from, to, label) => {
+    if (!modal118.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read118(modal118.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant118('className="tap-44 rounded-lg p-1.5', 'className="rounded-lg p-1.5', "a 30 px close");
+  plant118('className="tap-44 rounded-lg p-1.5', 'className="tap-44 grid h-11 w-11 place-items-center rounded-lg p-1.5', "a close grown to a 44 px box");
+  plant118('<div className="mb-4 flex items-start justify-between gap-4">', '<div className="mb-4 flex items-start justify-between gap-1">', "a title 4 px from the close");
+  plant118('<div className="mb-4 flex items-start justify-between gap-4">', '<div className="mb-1 flex items-start justify-between gap-4">', "content 4 px under the row");
+} catch (e) {
+  fail(`dialog close check (check 118) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

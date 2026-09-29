@@ -62,12 +62,19 @@ export default function Modal({ open, onClose, title, children, maxWidth = "max-
               maxWidth,
             )}
           >
+            {/* The close button is a 44 px target at its 30 px size (`tap-44`,
+                the second tap-target pass, 2026-09-29; every dialog in the app
+                shares it). Its layer adds 7 px each way: into the panel's 24 px
+                padding above and at the side, the 16 px under the row, and the
+                16 px between it and the title, so it lies over no control and the
+                title row stays 30 px. A 44 px box would have made the row 44 px
+                and moved every dialog's content 14 px down. */}
             <div className="mb-4 flex items-start justify-between gap-4">
               <div className="text-lg font-semibold text-ink">{title}</div>
               <button
                 onClick={onClose}
                 aria-label={t("actions.close")}
-                className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-panel-2 hover:text-ink"
+                className="tap-44 rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-panel-2 hover:text-ink"
               >
                 <X size={18} />
               </button>
