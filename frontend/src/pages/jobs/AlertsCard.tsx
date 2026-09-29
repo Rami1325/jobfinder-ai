@@ -149,25 +149,35 @@ export function CustomizeFields({
                 }
                 className={`${inputCls} min-w-0 flex-1`}
               />
+              {/* A 44 x 44 box (the second tap-target pass; it was 22 x 22).
+                  Not a layer: 6 px from the keyword box, a layer would have
+                  taken the box's last 5 px, so the row grows to 44 px instead
+                  (the 38 px box centred in it), and only while there are two
+                  keywords or more. */}
               {keywords.length > 1 && (
                 <button
                   type="button"
                   disabled={prefilling}
                   onClick={() => setKeywords(keywords.filter((_, j) => j !== i))}
                   title={t("search.removeKeyword")}
-                  className="shrink-0 rounded p-1 text-ink-muted transition-colors hover:text-danger"
+                  aria-label={t("search.removeKeyword")}
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:text-danger"
                 >
-                  <X size={14} />
+                  <X size={16} aria-hidden />
                 </button>
               )}
             </div>
           ))}
+          {/* A 44 px box (the second tap-target pass; it was a 16 px line),
+              its words centred in it. A layer would have covered 10 px of the
+              keyword box 4 px above it, so the column grows by 28 px on a
+              phone; from lg the work-mode column beside it is taller anyway. */}
           {keywords.length < MAX_KEYWORDS && (
             <button
               type="button"
               disabled={prefilling}
               onClick={() => setKeywords([...keywords, ""])}
-              className="w-fit text-xs font-semibold text-accent-soft hover:underline disabled:opacity-50"
+              className="flex min-h-11 w-fit items-center text-xs font-semibold text-accent-soft hover:underline disabled:opacity-50"
             >
               + {t("search.addKeyword")}
             </button>

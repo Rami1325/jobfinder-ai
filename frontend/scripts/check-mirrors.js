@@ -16749,6 +16749,41 @@ try {
   fail(`work-mode chips check (check 114) could not run: ${e.message}`);
 }
 
+// ---- 115. the keyword controls are 44 px boxes ------------------------------- //
+// Each keyword's remove button was 22 x 22 and "+ Add another keyword" a 16 px
+// line. Neither can take a layer: the remove button sits 6 px from the keyword
+// box (its layer would take the box's last 5 px) and the add line 4 px under it
+// (its layer would cover 10 px of the box). So both are 44 px BOXES: the remove
+// button 44 x 44 (a keyword row is 44 px while there are two keywords), the add
+// line 44 px tall. A layer alone on either is refused here.
+try {
+  const read115 = (alerts) => {
+    const out = [];
+    const f = fnSource(alerts, "export function CustomizeFields");
+    const rm = T2.tags(f, "button").find((b) => /title=\{t\("search\.removeKeyword"\)\}/.test(b));
+    if (!rm) throw new Error('CustomizeFields: the remove button (title={t("search.removeKeyword")}) not found');
+    const rc = T2.cls(rm);
+    if (!T2.box44(rc) || !T2.W44.test(rc)) out.push(`a keyword's remove button is not a 44 x 44 box (${rc})`);
+    const addAt = f.indexOf('{t("search.addKeyword")}');
+    if (addAt === -1) throw new Error('CustomizeFields: {t("search.addKeyword")} not found');
+    const ac = T2.cls(T2.tagFrom(f, f.lastIndexOf("<button", addAt), "the add button"));
+    if (!T2.box44(ac)) out.push(`"+ Add another keyword" is not a 44 px box${T2.TAP.test(ac) ? " (a layer would cover the keyword box 4 px above it)" : ""}`);
+    return out;
+  };
+  const alerts115 = decomment(read("pages/jobs/AlertsCard.tsx"));
+  for (const p of read115(alerts115)) fail(`check 115: ${p} (the second tap-target pass)`);
+  const plant115 = (from, to, label) => {
+    if (!alerts115.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read115(alerts115.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant115('className="grid h-11 w-11 shrink-0 place-items-center rounded-lg', 'className="shrink-0 rounded p-1', "the old 22 px remove button");
+  plant115('className="grid h-11 w-11 shrink-0 place-items-center rounded-lg', 'className="grid h-11 w-6 shrink-0 place-items-center rounded-lg', "a remove button 24 px wide");
+  plant115('className="flex min-h-11 w-fit items-center text-xs', 'className="w-fit text-xs', "the old 16 px add line");
+  plant115('className="flex min-h-11 w-fit items-center text-xs', 'className="tap-44 w-fit text-xs', "an add line with a layer over the keyword box");
+} catch (e) {
+  fail(`keyword controls check (check 115) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");
