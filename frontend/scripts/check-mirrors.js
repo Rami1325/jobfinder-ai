@@ -16514,6 +16514,162 @@ try {
   fail(`box direction check (check 111) could not run: ${e.message}`);
 }
 
+// ---- 112-119. the second tap-target pass (2026-09-29): shared readers ------- //
+// The phone polish pass (check 108) left eight kinds of control under the
+// owner's 44 px floor and recorded them; this pass fixed them with 108's two
+// tools: `tap-44` (a transparent layer centred on a control that keeps its size,
+// styles.css, pinned by 108) or a 44 px BOX. A layer reaches (44 - face) / 2 past
+// its face on each side, so a neighbour nearer than that shares a tap, and
+// anything that clips (`truncate`, an `overflow-*` scroller) cuts the layer off.
+// Where a check can read both the face and the gap from the source, it computes
+// the gap the layer needs instead of restating a number.
+const T2 = (() => {
+  const MIN44 = /(?<![\w-])min-h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?![\w-])/;
+  const H44 = /(?<![\w:-])h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?![\w-])/;
+  const W44 = /(?<![\w:-])(?:min-)?w-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?![\w-])/;
+  const TAP = /(?<![\w-])tap-44(?![\w-])/;
+  const CLIP = /(?<![\w:-])(?:truncate|overflow-(?:hidden|clip|auto|scroll|x-auto|y-auto|x-hidden|y-hidden|x-scroll|y-scroll))(?![\w-])/;
+  // From `<Tag` to the end of its opening tag, reading braces, so an arrow's
+  // `=>` inside a prop is not the tag's end.
+  const tagFrom = (src, at, what) => {
+    let depth = 0;
+    for (let i = at; i < src.length; i++) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (depth === 0 && c === ">") return src.slice(at, i + 1);
+    }
+    throw new Error(`an unterminated tag in ${what}`);
+  };
+  const tags = (src, name) => [...src.matchAll(new RegExp(`<${name}\\b`, "g"))].map((m) => tagFrom(src, m.index, name));
+  // The value of the TAG'S OWN className: a "…" literal, or a {…} expression read
+  // by brace depth (its string literals are what the readers test). Only an
+  // attribute at brace depth 0 counts: `icon={<X className="…" />}` is the
+  // icon's, not the button's.
+  const cls = (tag) => {
+    let depth = 0;
+    for (let k = 0; k < tag.length; k++) {
+      const ch = tag[k];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      else if (depth === 0 && tag.startsWith("className=", k) && /\s/.test(tag[k - 1] ?? "")) {
+        const i = k + "className=".length;
+        if (tag[i] === '"') return tag.slice(i + 1, tag.indexOf('"', i + 1));
+        if (tag[i] !== "{") return "";
+        let d = 0;
+        for (let j = i; j < tag.length; j++) {
+          if (tag[j] === "{") d++;
+          else if (tag[j] === "}" && --d === 0) return tag.slice(i + 1, j);
+        }
+        throw new Error("an unterminated className={…}");
+      }
+    }
+    return "";
+  };
+  // The opening tag of the <name> that encloses `at`, read backwards by depth
+  // (a sibling that opened and closed before `at` is skipped).
+  const enclosing = (src, at, name, what) => {
+    const marks = [...src.slice(0, at).matchAll(new RegExp(`<${name}\\b|</${name}>`, "g"))].reverse();
+    let depth = 0;
+    for (const m of marks) {
+      if (m[0].startsWith("</")) depth++;
+      else {
+        const tag = tagFrom(src, m.index, what);
+        if (tag.endsWith("/>")) continue;
+        if (depth === 0) return tag;
+        depth--;
+      }
+    }
+    throw new Error(`the <${name}> around ${what} not found`);
+  };
+  // A base (unprefixed) spacing or size utility's px, the first of `names` that
+  // is present: gap-2 → 8, gap-y-[18px] → 18, py-1.5 → 6, min-h-[36px] → 36.
+  // Absent is 0, which reads as "no room".
+  const utility = (classes, names) => {
+    for (const n of names) {
+      const m = new RegExp(`(?<![\\w:-])${n}-(\\[(\\d+(?:\\.\\d+)?)px\\]|(\\d+(?:\\.\\d+)?))(?![\\w-])`).exec(classes);
+      if (m) return m[2] !== undefined ? Number(m[2]) : Number(m[3]) * 4;
+    }
+    return 0;
+  };
+  const box44 = (c) => MIN44.test(c) || H44.test(c);
+  // A control is a 44 px target when it is a 44 px box or wears the layer.
+  const target44 = (c) => box44(c) || TAP.test(c);
+  const brief = (tag) => tag.replace(/\s+/g, " ").slice(0, 80);
+  return { MIN44, H44, W44, TAP, CLIP, tagFrom, tags, cls, enclosing, utility, box44, target44, brief };
+})();
+// The readers' own two directions, every run.
+{
+  const u = T2.utility;
+  if (u("gap-x-1.5 gap-y-[18px]", ["gap-y", "gap"]) !== 18 || u("flex gap-2", ["gap-y", "gap"]) !== 8 || u("gap-x-2", ["gap-y", "gap"]) !== 0 ||
+    u("lg:py-3 py-1.5", ["pt", "py", "p"]) !== 6 || u("min-h-[36px]", ["min-h", "h"]) !== 36 || u("min-h-8", ["h"]) !== 0 || u("h-10 w-10", ["h"]) !== 40)
+    fail("the second tap pass's utility reader misreads a gap, a padding or a height");
+  if (!T2.TAP.test("tap-44 shrink-0") || T2.TAP.test("tap-440") || !T2.CLIP.test("min-w-0 truncate") || T2.CLIP.test("sm:truncate") || !T2.box44("min-h-11") || T2.box44("min-h-10") || !T2.H44.test("h-11 w-11") || T2.H44.test("min-h-8"))
+    fail("the second tap pass's class readers misread tap-44, truncate or a 44 px box");
+  if (T2.cls('<button className="a b" x>') !== "a b" || !T2.cls('<B className={cn("a", c && "d")} />').includes('"d"') ||
+    T2.cls('<Button icon={<X className="icon" />} className="own">') !== "own" || T2.cls('<Button icon={<X className="icon" />}>') !== "")
+    fail("the second tap pass's className reader misreads a literal, an expression or an icon's class");
+  const probe = '<div className="row"><div className="title">t</div><button /></div>';
+  if (!/className="row"/.test(T2.enclosing(probe, probe.indexOf("<button"), "div", "a probe")))
+    fail("the second tap pass's enclosing-tag reader stops at a closed sibling");
+}
+
+// ---- 113. the location presets are 44 px targets, and their layers never meet a neighbour //
+// The search card's (and the alert form's) "Quick locations" chips were 26 px
+// targets in one wrapping row WITH their label: two rows at 390, the second 8 px
+// under the first. They keep their 26 px face and wear `tap-44` (9 px of layer
+// above and below), their label now sits OVER them (so the chips are one row at
+// 390 and 360, and the "Why?" layer above lies over the label's words), and a
+// wrapped second row keeps the gap two layers need, computed from the chip's own
+// face (a 16 px line, its padding, a 1 px border each side). The row may not clip.
+try {
+  const read113 = (alerts) => {
+    const out = [];
+    const f = fnSource(alerts, "export function CustomizeFields");
+    const at = f.indexOf("LOCATION_PRESETS.map(");
+    if (at === -1) throw new Error("pages/jobs/AlertsCard.tsx CustomizeFields: LOCATION_PRESETS.map( not found");
+    const labelAt = f.indexOf('{t("search.presetsLabel")}');
+    if (labelAt === -1) throw new Error('CustomizeFields: {t("search.presetsLabel")} not found');
+    const rowAt = f.lastIndexOf("<div", at);
+    if (rowAt === -1) throw new Error("CustomizeFields: the presets' row not found");
+    if (labelAt > at || rowAt < labelAt) out.push("the presets' label is inside their row again, so the chips wrap under it and meet the \"Why?\" layer above");
+    const row = T2.cls(T2.tagFrom(f, rowAt, "the presets' row"));
+    if (T2.CLIP.test(row)) out.push("the presets' row clips their layers (truncate or an overflow)");
+    const chip = T2.tags(f.slice(at), "button")[0];
+    if (!chip) throw new Error("CustomizeFields: a preset's <button> not found");
+    const c = T2.cls(chip);
+    if (!T2.target44(c)) out.push("a location preset is a 26 px target (no tap-44, no 44 px box)");
+    else if (!T2.box44(c) && !out.length) {
+      // The face: the text-xs line the presets' block sets, the chip's padding
+      // and its 1 px border (read only while the block has its shape above).
+      if (!/(?<![\w-])text-xs(?![\w-])/.test(f.slice(f.lastIndexOf("<div", labelAt), at)) || !/(?<![\w-])border(?![\w-])/.test(c))
+        throw new Error("CustomizeFields: cannot read a preset's face (a text-xs line inside a 1 px border)");
+      const face = 16 + 2 * T2.utility(c, ["py", "p"]) + 2;
+      const need = 44 - face;
+      const gapY = T2.utility(row, ["gap-y", "gap"]);
+      if (gapY < need) out.push(`a wrapped second row of presets sits ${gapY} px under the first, where two ${face} px chips' layers need ${need}`);
+    }
+    return out;
+  };
+  const alerts113 = decomment(read("pages/jobs/AlertsCard.tsx"));
+  for (const p of read113(alerts113)) fail(`check 113: ${p} (the second tap-target pass)`);
+  const plant113 = (from, to, label) => {
+    if (!alerts113.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read113(alerts113.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant113('className={`tap-44 rounded-full border px-2.5 py-1', 'className={`rounded-full border px-2.5 py-1', "a 26 px preset");
+  plant113("gap-x-1.5 gap-y-[18px]", "gap-x-1.5 gap-y-2", "wrapped rows whose layers overlap");
+  plant113("gap-x-1.5 gap-y-[18px]", "gap-2", "the old 8 px row gap");
+  plant113(
+    '<span className="font-semibold">{t("search.presetsLabel")}</span>\n        <div className="flex flex-wrap gap-x-1.5 gap-y-[18px]">',
+    '<div className="flex flex-wrap gap-x-1.5 gap-y-[18px]">\n        <span className="font-semibold">{t("search.presetsLabel")}</span>',
+    "the label back in the chips' row",
+  );
+  plant113("gap-x-1.5 gap-y-[18px]", "gap-x-1.5 gap-y-[18px] overflow-x-auto", "a row that clips the layers");
+} catch (e) {
+  fail(`location presets check (check 113) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

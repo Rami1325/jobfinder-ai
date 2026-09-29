@@ -302,25 +302,35 @@ export function CustomizeFields({
         <WhyNote className="ms-6" line={t("search.worldwideLine")} why={t("search.worldwideWhy")} />
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+      {/* The location presets: each chip a 44 px target at its 26 px size
+          (`tap-44`, the second tap-target pass, 2026-09-29; they were 26 px
+          targets). The label sits OVER the chips, as the work-mode field's does,
+          so the chips are one row at 390 and 360 (they wrapped under the label
+          to two rows, 60 px; now 46) and the "Why?" layer above lies over the
+          label's words, never a chip. A chip's layer adds 9 px above and below,
+          so a wrapped second row keeps 18 px of gap (the layers meet, never
+          cross); the boards line keeps its 12 px under them. */}
+      <div className="mt-3 flex flex-col gap-1 text-xs text-ink-muted">
         <span className="font-semibold">{t("search.presetsLabel")}</span>
-        {LOCATION_PRESETS.map((p) => (
-          <button
-            key={p.key}
-            type="button"
-            disabled={prefilling}
-            onClick={() =>
-              setCtx((prev) => ({ ...(prev as SearchContext), location: p.value }))
-            }
-            className={`rounded-full border px-2.5 py-1 transition-colors ${
-              ctx?.location === p.value
-                ? "border-accent/60 bg-accent/10 text-ink"
-                : "border-line hover:text-ink"
-            }`}
-          >
-            {t(`search.presets.${p.key}`)}
-          </button>
-        ))}
+        <div className="flex flex-wrap gap-x-1.5 gap-y-[18px]">
+          {LOCATION_PRESETS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              disabled={prefilling}
+              onClick={() =>
+                setCtx((prev) => ({ ...(prev as SearchContext), location: p.value }))
+              }
+              className={`tap-44 rounded-full border px-2.5 py-1 transition-colors ${
+                ctx?.location === p.value
+                  ? "border-accent/60 bg-accent/10 text-ink"
+                  : "border-line hover:text-ink"
+              }`}
+            >
+              {t(`search.presets.${p.key}`)}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* The boards. From lg, the list itself: two rows at 1440. Below lg it
