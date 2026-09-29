@@ -20,6 +20,16 @@ interface Props {
  * `Disclosure`'s reason): it mounts with the house `fade-up`, which touches only
  * opacity and transform. A plain `<button>`, not the `Button` component, whose
  * spark burst is wrong for a word inside a sentence.
+ *
+ * "Why?" is a 44 px target at its old size (the second tap-target pass,
+ * 2026-09-29): the word stays a word in the sentence, and `tap-44` (styles.css)
+ * lays a transparent 44 x 44 layer over it, which reaches about 12 px above and
+ * below its 20 px line and 7 px each side. It was a 30 x 20 target; a box would
+ * have grown every line that ends in "Why?" to 44 px. Nothing here may clip the
+ * layer (no `truncate`, no overflow), and where the note sits the layer must lie
+ * over words or a gap, never a control: measured under the paper and under the
+ * search card's worldwide line, whose presets keep their label first for this
+ * (check-mirrors 112, 113).
  */
 export default function WhyNote({ line, why, className }: Props) {
   const { t } = useTranslation("common");
@@ -34,7 +44,7 @@ export default function WhyNote({ line, why, className }: Props) {
           aria-expanded={open}
           aria-controls={id}
           onClick={() => setOpen((o) => !o)}
-          className="font-medium text-accent-soft underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+          className="tap-44 font-medium text-accent-soft underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
         >
           {open ? t("why.hide") : t("why.show")}
         </button>

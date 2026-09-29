@@ -16614,6 +16614,45 @@ const T2 = (() => {
     fail("the second tap pass's enclosing-tag reader stops at a closed sibling");
 }
 
+// ---- 112. "Why?" is a 44 px target, at its size ------------------------------ //
+// `WhyNote`'s "Why?" (components/ui/WhyNote.tsx, used under the paper on /app and
+// under the search card's worldwide line) was a 30 x 20 px target, a word inside
+// a 12 px sentence. It keeps its size and place and wears `tap-44`, whose layer
+// reaches about 12 px above and below the line; a box would have grown every line
+// that ends in "Why?" to 44 px. The layer is cut off by anything that clips, so
+// neither the button, its line nor the note's box may `truncate` or set an
+// overflow. It stays a plain <button>, never the Button component (PLAN 31.7).
+// Where its layer lands: over the note's own words or the gap under it, never a
+// control (the presets under the search card's note keep their label first, 113).
+try {
+  const read112 = (why) => {
+    const out = [];
+    const fn = fnSource(why, "export default function WhyNote(");
+    if (/<Button\b/.test(fn)) out.push('"Why?" is the Button component, a spark burst on a word in a sentence');
+    const btns = T2.tags(fn, "button");
+    if (btns.length !== 1) throw new Error(`components/ui/WhyNote.tsx: read ${btns.length} <button>, expected the one "Why?"`);
+    const c = T2.cls(btns[0]);
+    if (!T2.TAP.test(c)) out.push('"Why?" is a 30 x 20 px target (no tap-44)');
+    if (T2.CLIP.test(c)) out.push('"Why?" clips its own 44 px layer (truncate or an overflow)');
+    const boxes = [...T2.tags(fn, "div"), ...T2.tags(fn, "p")];
+    if (boxes.length < 2) throw new Error("components/ui/WhyNote.tsx: could not read the note's box and its line");
+    for (const b of boxes.slice(0, 2)) if (T2.CLIP.test(T2.cls(b))) out.push('the note\'s box or its line clips the "Why?" layer (truncate or an overflow)');
+    return out;
+  };
+  const why112 = decomment(read("components/ui/WhyNote.tsx"));
+  for (const p of read112(why112)) fail(`check 112: ${p} (the second tap-target pass)`);
+  const plant112 = (from, to, label) => {
+    if (!why112.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read112(why112.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant112('className="tap-44 font-medium', 'className="font-medium', 'a 30 x 20 px "Why?"');
+  plant112('className="tap-44 font-medium', 'className="tap-44 truncate font-medium', "a Why? that clips its layer");
+  plant112("      <p>\n", '      <p className="truncate">\n', "a line that clips the layer");
+  plant112('"text-xs leading-relaxed text-ink-faint"', '"overflow-hidden text-xs leading-relaxed text-ink-faint"', "a note box that clips the layer");
+} catch (e) {
+  fail(`"Why?" tap target check (check 112) could not run: ${e.message}`);
+}
+
 // ---- 113. the location presets are 44 px targets, and their layers never meet a neighbour //
 // The search card's (and the alert form's) "Quick locations" chips were 26 px
 // targets in one wrapping row WITH their label: two rows at 390, the second 8 px
