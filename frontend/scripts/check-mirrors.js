@@ -16784,6 +16784,36 @@ try {
   fail(`keyword controls check (check 115) could not run: ${e.message}`);
 }
 
+// ---- 116. the Jobs page's tabs are 44 px targets ----------------------------- //
+// "Your matches" and "Paste / URL" were 38 px. They wear `tap-44` (3 px of layer
+// above and below, inside the page's 24 px spacing; both are wider than 44 px,
+// so the 8 px between them is untouched): growing them would have moved the first
+// saved job 6 px down. Their row may not clip the layers.
+try {
+  const read116 = (page) => {
+    const out = [];
+    const at = page.indexOf("onClick={() => setMode(tab.key)}");
+    if (at === -1) throw new Error("pages/JobsPage.tsx: the tab button (onClick={() => setMode(tab.key)}) not found");
+    const c = T2.cls(T2.tagFrom(page, page.lastIndexOf("<button", at), "a tab"));
+    if (!T2.target44(c)) out.push("the Jobs page's tabs are 38 px targets (no tap-44)");
+    if (T2.CLIP.test(c)) out.push("a Jobs tab clips its own layer");
+    const rowAt = page.lastIndexOf("<div", page.indexOf('{ key: "matches", label: t("tabs.matches") }'));
+    if (rowAt === -1) throw new Error("pages/JobsPage.tsx: the tabs' row not found");
+    if (T2.CLIP.test(T2.cls(T2.tagFrom(page, rowAt, "the tabs' row")))) out.push("the tabs' row clips their layers");
+    return out;
+  };
+  const page116 = decomment(read("pages/JobsPage.tsx"));
+  for (const p of read116(page116)) fail(`check 116: ${p} (the second tap-target pass)`);
+  const plant116 = (from, to, label) => {
+    if (!page116.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read116(page116.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant116("className={`tap-44 whitespace-nowrap rounded-lg", "className={`whitespace-nowrap rounded-lg", "38 px tabs");
+  plant116('<div className="flex flex-wrap gap-2">\n        {(\n          [\n            { key: "matches"', '<div className="flex gap-2 overflow-x-auto">\n        {(\n          [\n            { key: "matches"', "a tabs row that scrolls, clipping the layers");
+} catch (e) {
+  fail(`Jobs tabs check (check 116) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

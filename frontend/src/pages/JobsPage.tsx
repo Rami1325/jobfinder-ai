@@ -867,6 +867,11 @@ export default function JobsPage() {
         </div>
       )}
 
+      {/* Each tab a 44 px target at its 38 px size (`tap-44`, the second
+          tap-target pass): its layer adds 3 px above and below, inside the
+          page's 24 px spacing, and every tab is wider than 44 px, so the 8 px
+          between the two is untouched. Growing them would have moved the first
+          saved job down 6 px. */}
       <div className="flex flex-wrap gap-2">
         {(
           [
@@ -877,7 +882,7 @@ export default function JobsPage() {
           <button
             key={tab.key}
             onClick={() => setMode(tab.key)}
-            className={`whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition-colors sm:px-4 ${
+            className={`tap-44 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition-colors sm:px-4 ${
               mode === tab.key
                 ? "border-accent/60 bg-bg-soft text-ink"
                 : "border-line text-ink-muted hover:text-ink"
