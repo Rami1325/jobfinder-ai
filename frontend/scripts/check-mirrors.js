@@ -16709,6 +16709,46 @@ try {
   fail(`location presets check (check 113) could not run: ${e.message}`);
 }
 
+// ---- 114. the work-mode chips are 44 px targets, and wrapped rows never share a tap //
+// Any / Remote / Hybrid / On-site were 36 px targets. They keep their face and
+// wear `tap-44` (4 px of layer above and below); from lg the four wrap to two
+// rows in their quarter of the card, so the rows keep the gap two layers need,
+// computed from the chip's own height (it was 6 px, now 8). Every chip is wider
+// than 44 px, so the gap between chips in a row does not matter.
+try {
+  const read114 = (alerts) => {
+    const out = [];
+    const f = fnSource(alerts, "export function CustomizeFields");
+    const at = f.indexOf('(["any", ...WORK_MODES] as const).map(');
+    if (at === -1) throw new Error('CustomizeFields: (["any", ...WORK_MODES] as const).map( not found');
+    const row = T2.cls(T2.tagFrom(f, f.lastIndexOf("<div", at), "the work-mode row"));
+    if (T2.CLIP.test(row)) out.push("the work-mode row clips the chips' layers");
+    const chip = T2.tags(f.slice(at), "button")[0];
+    if (!chip) throw new Error("CustomizeFields: a work-mode <button> not found");
+    const c = T2.cls(chip);
+    if (!T2.target44(c)) out.push("a work-mode chip is a 36 px target (no tap-44, no 44 px box)");
+    else if (!T2.box44(c)) {
+      const face = T2.utility(c, ["min-h", "h"]);
+      if (!face) throw new Error("CustomizeFields: cannot read a work-mode chip's height");
+      const need = 44 - face;
+      const gapY = T2.utility(row, ["gap-y", "gap"]);
+      if (gapY < need) out.push(`wrapped work-mode rows sit ${gapY} px apart, where two ${face} px chips' layers need ${need}`);
+    }
+    return out;
+  };
+  const alerts114 = decomment(read("pages/jobs/AlertsCard.tsx"));
+  for (const p of read114(alerts114)) fail(`check 114: ${p} (the second tap-target pass)`);
+  const plant114 = (from, to, label) => {
+    if (!alerts114.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read114(alerts114.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant114("className={`tap-44 min-h-[36px] rounded-full", "className={`min-h-[36px] rounded-full", "a 36 px chip");
+  plant114('<div className="flex flex-wrap gap-x-1.5 gap-y-2">', '<div className="flex flex-wrap gap-1.5">', "the old 6 px row gap");
+  plant114("className={`tap-44 min-h-[36px] rounded-full", "className={`tap-44 min-h-[28px] rounded-full", "28 px chips over the same 8 px gap");
+} catch (e) {
+  fail(`work-mode chips check (check 114) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

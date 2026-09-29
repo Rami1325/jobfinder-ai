@@ -197,7 +197,13 @@ export function CustomizeFields({
           className="flex flex-col gap-1 text-xs font-semibold text-ink-muted"
         >
           <span id={workModeLabelId}>{t("search.workMode")}</span>
-          <div className="flex flex-wrap gap-1.5">
+          {/* Each chip a 44 px target at its 36 px size (`tap-44`, the second
+              tap-target pass): its layer adds 4 px above and below. From lg the
+              four chips wrap to two rows in their quarter of the card, so the
+              rows keep 8 px between them (`gap-y-2`, it was 6): the layers meet,
+              never cross. Every chip is wider than 44 px, so the 6 px between
+              chips in a row is enough. */}
+          <div className="flex flex-wrap gap-x-1.5 gap-y-2">
             {(["any", ...WORK_MODES] as const).map((w) => {
               const on = w === "any" ? pickedModes.length === 0 : pickedModes.includes(w);
               return (
@@ -207,7 +213,7 @@ export function CustomizeFields({
                   aria-pressed={on}
                   disabled={prefilling}
                   onClick={() => toggleWorkMode(w)}
-                  className={`min-h-[36px] rounded-full border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+                  className={`tap-44 min-h-[36px] rounded-full border px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
                     on ? "border-accent/60 bg-accent/10 text-ink" : "border-line text-ink-muted hover:text-ink"
                   }`}
                 >
