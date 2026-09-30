@@ -51,6 +51,41 @@ from app.render.templates import DEFAULT_TEMPLATE
 TAILOR_STAGES = ("plan", "rewrite", "facts", "voice", "rescore")
 
 
+# THE CHANGELOG SPEAKS THE RESUME'S LANGUAGE, EVERY LINE OF IT. The model writes
+# its own entries in the resume's language (a Hebrew resume's TAILOR call carries
+# `with_resume_language`'s write-in-Hebrew note), and every entry this module
+# adds was English, so a Hebrew resume's changes panel read half in each: "Wrote
+# 2 numbers as digits" and "Grouped your skills under the headings from your
+# master resume" among Hebrew lines (seen 2026-09-29, recording the ad). Every
+# `ChangeLogEntry` built here words its `change` and `reason` through `_say`,
+# with the same `lang` the TAILOR call is given, and smoke pins that through the
+# AST. The `section` stays a key: the page names it in its own language.
+def _say(lang: str, en: str, he: str) -> str:
+    return he if lang == "he" else en
+
+
+# The sections the notes name, in Hebrew, as "in the X" (Hebrew glues the
+# preposition on, and joins with a glued ו: "בניסיון התעסוקתי ובתקציר").
+# `keyword_guard._where` answers with ResumeModel field names, and
+# `arabic_omit.mentioned_sections` with its own labels ("military service").
+_HE_IN_SECTION = {
+    "headline": "בכותרת",
+    "summary": "בתקציר",
+    "skills": "בכישורים",
+    "experience": "בניסיון התעסוקתי",
+    "projects": "בפרויקטים",
+    "military_service": "בשירות הצבאי",
+    "military service": "בשירות הצבאי",
+    "education": "בהשכלה",
+    "certifications": "בהסמכות",
+    "languages": "בשפות",
+}
+
+
+def _he_in(sections: list[str]) -> str:
+    return " ו".join(_HE_IN_SECTION.get(s, s) for s in sections)
+
+
 def tailor_resume(
     resume: ResumeModel,
     jd: JDModel,
@@ -113,10 +148,13 @@ def tailor_resume(
         plan = _plan.result()
 
     _stage("rewrite")
+    # One reading of the resume's language, for the TAILOR call and for every
+    # changelog entry this module writes (`_say`), so the two cannot disagree.
+    lang = resume_language(resume)
     client = get_llm_client()
     data = client.complete_json(
         # Hebrew resume => tailor in Hebrew (note appended AFTER the Task tag).
-        prompts.with_resume_language(prompts.TAILOR_SYSTEM, resume_language(resume)),
+        prompts.with_resume_language(prompts.TAILOR_SYSTEM, lang),
         prompts.tailor_user(
             resume.model_dump_json(),
             jd.model_dump_json(),
@@ -167,7 +205,11 @@ def tailor_resume(
         changelog.append(
             ChangeLogEntry(
                 section="experience",
-                change="Removed " + ", ".join(invented_roles) + " from Experience",
+                change=_say(
+                    lang,
+                    "Removed " + ", ".join(invented_roles) + " from Experience",
+                    "הסרנו מהניסיון התעסוקתי: " + ", ".join(invented_roles),
+                ),
                 # This used to close by asserting the row had been kept in
                 # Projects — a preservation the code does not perform.
                 # `drop_invented_roles` filters `tailored.experience` and appends
@@ -182,9 +224,14 @@ def tailor_resume(
                 # and move it to the section the fabrication guard checks least
                 # (projects contribute numbers only), which is the opposite of
                 # what this repair exists to do.
-                reason="Not employers in your resume — they were projects promoted into "
-                "job entries. If this was a project, it is in Projects only if the "
-                "rewrite kept it there.",
+                reason=_say(
+                    lang,
+                    "Not employers in your resume — they were projects promoted into "
+                    "job entries. If this was a project, it is in Projects only if the "
+                    "rewrite kept it there.",
+                    "אלה לא מעסיקים מקורות החיים שלכם — אלה פרויקטים שהוצגו כמשרות. "
+                    "אם זה היה פרויקט, הוא מופיע בפרויקטים רק אם השכתוב השאיר אותו שם.",
+                ),
             )
         )
 
@@ -329,16 +376,20 @@ def tailor_resume(
         changelog.append(
             ChangeLogEntry(
                 section="skills",
-                change=(
+                change=_say(
+                    lang,
                     f"Cut the skills list from {n_before} to {len(tailored.skills)}, "
-                    "ranked by how well each matches this posting"
+                    "ranked by how well each matches this posting",
+                    f"קיצרנו את רשימת הכישורים מ־{n_before} ל־{len(tailored.skills)}, "
+                    "לפי מידת ההתאמה של כל אחד למשרה הזו",
                 ),
-                reason=(
-                    # NO SECOND COUNT HERE. `change` above states the pre-cut
-                    # number, which is the honest one; attributing it to what
-                    # "the draft came back with" was wrong by up to MAX_RESTORED,
-                    # since `fit_to_pages` removes skills and `preserve_keywords`
-                    # adds them between the response and this line.
+                # NO SECOND COUNT HERE. `change` above states the pre-cut
+                # number, which is the honest one; attributing it to what
+                # "the draft came back with" was wrong by up to MAX_RESTORED,
+                # since `fit_to_pages` removes skills and `preserve_keywords`
+                # adds them between the response and this line.
+                reason=_say(
+                    lang,
                     "A CV for one job is a "
                     "shortlist a recruiter reads in about three seconds. Nothing this "
                     "posting names outright was dropped."
@@ -348,7 +399,16 @@ def tailor_resume(
                         + " stay in your master resume."
                         if sample
                         else ""
-                    )
+                    ),
+                    "קורות חיים למשרה אחת הם רשימה קצרה שמגייס קורא בערך בשלוש שניות. "
+                    "שום דבר שהמשרה הזו מזכירה במפורש לא הוסר."
+                    + (
+                        f" {sample}"
+                        + (" ועוד" if len(recoverable) > 6 else "")
+                        + " נשארים בקורות החיים הראשיים שלכם."
+                        if sample
+                        else ""
+                    ),
                 ),
             )
         )
@@ -493,11 +553,21 @@ def tailor_resume(
         changelog.append(
             ChangeLogEntry(
                 section="skills",
-                change="Grouped your skills under the headings from your master resume",
-                reason="Same skills, same words — only the arrangement. Your own "
-                "headings go back on, in your own order, and anything the tailoring "
-                "introduced that your master resume does not list sits after them, "
-                "unlabelled, where you can see it.",
+                change=_say(
+                    lang,
+                    "Grouped your skills under the headings from your master resume",
+                    "קיבצנו את הכישורים תחת הכותרות מקורות החיים הראשיים שלכם",
+                ),
+                reason=_say(
+                    lang,
+                    "Same skills, same words — only the arrangement. Your own "
+                    "headings go back on, in your own order, and anything the tailoring "
+                    "introduced that your master resume does not list sits after them, "
+                    "unlabelled, where you can see it.",
+                    "אותם כישורים, אותן מילים — רק הסידור השתנה. הכותרות שלכם חוזרות, "
+                    "בסדר שלכם, וכל מה שההתאמה הוסיפה ולא מופיע בקורות החיים הראשיים "
+                    "שלכם בא אחריהן, בלי כותרת, במקום שבו תראו אותו.",
+                ),
             )
         )
     else:
@@ -518,12 +588,23 @@ def tailor_resume(
         changelog.append(
             ChangeLogEntry(
                 section="skills",
-                change="Put your own wording first and the job ad's phrasing after it",
-                reason="Nothing was added or removed — only the order. The job's own "
-                "phrases score as relevant because they came from the posting, so they "
-                "were crowding out the tools you actually named. A reader sees your "
-                "stack first; the posting's wording is still there, further down, where "
-                "keyword matching reads it just the same.",
+                change=_say(
+                    lang,
+                    "Put your own wording first and the job ad's phrasing after it",
+                    "הצבנו קודם את הניסוח שלכם, ואחריו את הניסוח של המודעה",
+                ),
+                reason=_say(
+                    lang,
+                    "Nothing was added or removed — only the order. The job's own "
+                    "phrases score as relevant because they came from the posting, so they "
+                    "were crowding out the tools you actually named. A reader sees your "
+                    "stack first; the posting's wording is still there, further down, where "
+                    "keyword matching reads it just the same.",
+                    "שום דבר לא נוסף ולא הוסר — רק הסדר השתנה. הביטויים של המשרה נחשבים "
+                    "רלוונטיים כי הם לקוחים מהמודעה, ולכן דחקו הצידה את הכלים שאתם עצמכם "
+                    "ציינתם. קורא רואה קודם את הכלים שלכם; הניסוח של המודעה עדיין שם, "
+                    "בהמשך, והתאמת מילות המפתח קוראת אותו בדיוק כמו קודם.",
+                ),
             )
         )
 
@@ -541,10 +622,19 @@ def tailor_resume(
                 # APIs" named the JD's phrase, which can appear nowhere in the
                 # shipped CV even when the restore worked perfectly — the entries
                 # behind it were ['REST', 'APIs'].
-                change="Put back: " + ", ".join(restored_entries()),
-                reason="This job asks for " + ", ".join(restored)
-                + ". Those entries are your own wording, from your own resume, and "
-                "the rewrite had dropped them.",
+                change=_say(
+                    lang,
+                    "Put back: " + ", ".join(restored_entries()),
+                    "החזרנו: " + ", ".join(restored_entries()),
+                ),
+                reason=_say(
+                    lang,
+                    "This job asks for " + ", ".join(restored)
+                    + ". Those entries are your own wording, from your own resume, and "
+                    "the rewrite had dropped them.",
+                    "המשרה הזו מבקשת " + ", ".join(restored)
+                    + ". הפריטים האלה הם הניסוח שלכם, מקורות החיים שלכם, והשכתוב השמיט אותם.",
+                ),
             )
         )
 
@@ -565,48 +655,78 @@ def tailor_resume(
     capped_losses = [k for k in kept_back if k.reason == "cap"]
     trimmed_losses = [k for k in kept_back if k.reason == "trimmed"]
     if prose_losses:
-        where = ", ".join(dict.fromkeys(k.where for k in prose_losses if k.where))
+        where_at = list(dict.fromkeys(k.where for k in prose_losses if k.where))
+        where = ", ".join(where_at)
+        lost = ", ".join(k.keyword for k in prose_losses)
         changelog.append(
             ChangeLogEntry(
                 section="keywords",
-                change="Not carried over: " + ", ".join(k.keyword for k in prose_losses),
-                reason="Your resume shows these only inside wording that was rewritten or "
-                + (f"trimmed ({where}). " if where else "trimmed. ")
-                + "We did not put them back: re-writing a sentence you did not write is "
-                "how a CV grows a claim you cannot defend.",
+                change=_say(lang, "Not carried over: " + lost, "לא הועברו: " + lost),
+                reason=_say(
+                    lang,
+                    "Your resume shows these only inside wording that was rewritten or "
+                    + (f"trimmed ({where}). " if where else "trimmed. ")
+                    + "We did not put them back: re-writing a sentence you did not write is "
+                    "how a CV grows a claim you cannot defend.",
+                    "בקורות החיים שלכם הם מופיעים רק בתוך ניסוח ששוכתב או "
+                    + (f"קוצר ({', '.join(_HE_IN_SECTION.get(s, s) for s in where_at)}). " if where else "קוצר. ")
+                    + "לא החזרנו אותם: לשכתב משפט שלא אתם כתבתם זו הדרך שבה קורות חיים "
+                    "צוברים טענה שאי אפשר לעמוד מאחוריה.",
+                ),
             )
         )
     if partial_losses:
+        lost = ", ".join(k.keyword for k in partial_losses)
         changelog.append(
             ChangeLogEntry(
                 section="keywords",
-                change="Partly carried over: " + ", ".join(k.keyword for k in partial_losses),
+                change=_say(lang, "Partly carried over: " + lost, "הועברו חלקית: " + lost),
                 # This class used to be reported as "prose", which contradicted
                 # itself: the carriers are sitting in the skills list, so the
                 # sentence above ("only inside wording") was false about them.
-                reason="Your skills list holds part of each of these, and those entries are "
-                "on the CV — but not the phrase this job uses. Writing the phrase itself "
-                "would be putting wording in your resume that you never used.",
+                reason=_say(
+                    lang,
+                    "Your skills list holds part of each of these, and those entries are "
+                    "on the CV — but not the phrase this job uses. Writing the phrase itself "
+                    "would be putting wording in your resume that you never used.",
+                    "ברשימת הכישורים שלכם יש חלק מכל אחד מאלה, והפריטים האלה מופיעים "
+                    "בקורות החיים — אבל לא הביטוי שהמשרה הזו משתמשת בו. לכתוב את הביטוי "
+                    "עצמו פירושו להכניס לקורות החיים שלכם ניסוח שמעולם לא השתמשתם בו.",
+                ),
             )
         )
     if capped_losses:
+        lost = ", ".join(k.keyword for k in capped_losses)
         changelog.append(
             ChangeLogEntry(
                 section="keywords",
-                change="Not carried over: " + ", ".join(k.keyword for k in capped_losses),
-                reason=f"The skills list was already at its limit of {MAX_RESTORED} put-back "
-                "entries. Past that the space comes out of your projects and bullets, "
-                "which costs more than it buys.",
+                change=_say(lang, "Not carried over: " + lost, "לא הועברו: " + lost),
+                reason=_say(
+                    lang,
+                    f"The skills list was already at its limit of {MAX_RESTORED} put-back "
+                    "entries. Past that the space comes out of your projects and bullets, "
+                    "which costs more than it buys.",
+                    f"רשימת הכישורים כבר הגיעה למגבלה של {MAX_RESTORED} פריטים שהוחזרו. "
+                    "מעבר לזה המקום בא על חשבון הפרויקטים והתבליטים שלכם, וזה עולה יותר "
+                    "ממה שזה מרוויח.",
+                ),
             )
         )
     if trimmed_losses:
+        lost = ", ".join(k.keyword for k in trimmed_losses)
         changelog.append(
             ChangeLogEntry(
                 section="keywords",
-                change="Not carried over: " + ", ".join(k.keyword for k in trimmed_losses),
-                reason="Putting your skills back cost more room than the page budget had, "
-                f"and the trim that followed removed these to hold {hard_max_pages} pages. "
-                "Your master resume still has them.",
+                change=_say(lang, "Not carried over: " + lost, "לא הועברו: " + lost),
+                reason=_say(
+                    lang,
+                    "Putting your skills back cost more room than the page budget had, "
+                    f"and the trim that followed removed these to hold {hard_max_pages} pages. "
+                    "Your master resume still has them.",
+                    "החזרת הכישורים דרשה יותר מקום ממה שמגבלת העמודים הרשתה, והקיצור "
+                    f"שבא אחריה הסיר את אלה כדי לא לעבור {hard_max_pages} עמודים. "
+                    "הם עדיין מופיעים בקורות החיים הראשיים שלכם.",
+                ),
             )
         )
 
@@ -631,9 +751,14 @@ def tailor_resume(
                 changelog.append(
                     ChangeLogEntry(
                         section="languages",
-                        change="Left Arabic off",
-                        reason="You chose to leave Arabic off resumes for jobs in Israel "
-                        "(Settings). Your master resume still lists it.",
+                        change=_say(lang, "Left Arabic off", "השמטנו את הערבית"),
+                        reason=_say(
+                            lang,
+                            "You chose to leave Arabic off resumes for jobs in Israel "
+                            "(Settings). Your master resume still lists it.",
+                            "בחרתם לא לציין ערבית בקורות חיים למשרות בישראל (בהגדרות). "
+                            "היא עדיין מופיעה בקורות החיים הראשיים שלכם.",
+                        ),
                     )
                 )
             if _arabic_left:
@@ -642,11 +767,20 @@ def tailor_resume(
                 changelog.append(
                     ChangeLogEntry(
                         section="languages",
-                        change="Arabic is still mentioned in your "
-                        + " and ".join(_arabic_left)
-                        + "; edit it before sending",
-                        reason="It is part of a sentence, not a list, and we do not rewrite "
-                        "your sentences. Everything else was left off as you chose.",
+                        change=_say(
+                            lang,
+                            "Arabic is still mentioned in your "
+                            + " and ".join(_arabic_left)
+                            + "; edit it before sending",
+                            "ערבית עדיין מוזכרת " + _he_in(_arabic_left) + "; ערכו לפני השליחה",
+                        ),
+                        reason=_say(
+                            lang,
+                            "It is part of a sentence, not a list, and we do not rewrite "
+                            "your sentences. Everything else was left off as you chose.",
+                            "היא חלק ממשפט, לא מרשימה, ואנחנו לא משכתבים את המשפטים שלכם. "
+                            "כל השאר הושמט כפי שבחרתם.",
+                        ),
                     )
                 )
         elif resume_mentions_arabic(tailored):
@@ -657,20 +791,38 @@ def tailor_resume(
                 changelog.append(
                     ChangeLogEntry(
                         section="languages",
-                        change="Arabic kept: this job asks for it",
-                        reason="You chose to leave Arabic off resumes for jobs in Israel, "
-                        "but this posting names Arabic, so leaving it off would hide a "
-                        "skill the job wants.",
+                        change=_say(
+                            lang,
+                            "Arabic kept: this job asks for it",
+                            "הערבית נשארה: המשרה הזו מבקשת אותה",
+                        ),
+                        reason=_say(
+                            lang,
+                            "You chose to leave Arabic off resumes for jobs in Israel, "
+                            "but this posting names Arabic, so leaving it off would hide a "
+                            "skill the job wants.",
+                            "בחרתם לא לציין ערבית בקורות חיים למשרות בישראל, אבל המודעה "
+                            "הזו מזכירה ערבית, ולהשמיט אותה היה מסתיר כישור שהמשרה מחפשת.",
+                        ),
                     )
                 )
             elif jd.market != MARKET_OTHER:
                 changelog.append(
                     ChangeLogEntry(
                         section="languages",
-                        change="Arabic kept: we couldn't tell this job is in Israel",
-                        reason="You chose to leave Arabic off resumes for jobs in Israel. "
-                        "This posting does not say where the job is — if it is in Israel, "
-                        "remove Arabic before sending.",
+                        change=_say(
+                            lang,
+                            "Arabic kept: we couldn't tell this job is in Israel",
+                            "הערבית נשארה: לא הצלחנו לדעת אם המשרה בישראל",
+                        ),
+                        reason=_say(
+                            lang,
+                            "You chose to leave Arabic off resumes for jobs in Israel. "
+                            "This posting does not say where the job is — if it is in Israel, "
+                            "remove Arabic before sending.",
+                            "בחרתם לא לציין ערבית בקורות חיים למשרות בישראל. המודעה הזו "
+                            "לא אומרת איפה המשרה — אם היא בישראל, הסירו את הערבית לפני השליחה.",
+                        ),
                     )
                 )
 
@@ -692,8 +844,16 @@ def tailor_resume(
         changelog.append(
             ChangeLogEntry(
                 section=_digits_section or "summary",
-                change=f"Wrote {_digits} number{'s' if _digits != 1 else ''} as digits",
-                reason="Recruiters skim for numbers; '5 years' reads faster than 'five years'.",
+                change=_say(
+                    lang,
+                    f"Wrote {_digits} number{'s' if _digits != 1 else ''} as digits",
+                    "כתבנו מספר אחד בספרות" if _digits == 1 else f"כתבנו {_digits} מספרים בספרות",
+                ),
+                reason=_say(
+                    lang,
+                    "Recruiters skim for numbers; '5 years' reads faster than 'five years'.",
+                    "מגייסים סורקים בחיפוש אחר מספרים; '5 שנים' נקרא מהר יותר מ'חמש שנים'.",
+                ),
             )
         )
 

@@ -757,10 +757,12 @@ check(
     _he.tailored_resume.skills == ["בפייתון", "מתקדם"],
     str(_he.tailored_resume.skills),
 )
+# NO SKILLS ENTRY AT ALL, not "no English reorder sentence": this resume is
+# Hebrew, so its changelog is written in Hebrew (`tailor._say`), and a check for
+# the English wording would pass for ever while the Hebrew reorder note shipped.
 check(
     "tailor: …and the refusal is silent — no reorder is claimed in the changelog",
-    not any(c.section == "skills" and "Put your own wording first" in c.change
-            for c in _he.changelog),
+    not any(c.section == "skills" for c in _he.changelog),
     str([c.change for c in _he.changelog if c.section == "skills"]),
 )
 
@@ -34384,6 +34386,117 @@ check(
     and f'href="{_WW_SANCTUARY}"' in _ww_html and ">via We Work Remotely</a>" in _ww_html
     and _ww_html.count(">via ") == 1,
     _ww_text[-300:],
+)
+
+# --- The changelog speaks the resume's language (2026-09-30) ------------------------------
+# A Hebrew resume's changes panel read half in English: the model writes its own
+# entries in the resume's language, and every entry `tailor_resume` adds was English
+# ("Wrote 2 numbers as digits", "Grouped your skills under the headings…"; seen while
+# recording the ad on 2026-09-29). Each is worded through `tailor._say` now.
+import ast as _cl_ast  # noqa: E402
+import re as _cl_re  # noqa: E402
+
+
+def _cl_offenders(src: str) -> tuple[int, list[str]]:
+    """(ChangeLogEntry calls read, each change/reason not worded through `_say`)."""
+    calls, out = 0, []
+    for node in _cl_ast.walk(_cl_ast.parse(src)):
+        if isinstance(node, _cl_ast.Call) and isinstance(node.func, _cl_ast.Name) and node.func.id == "ChangeLogEntry":
+            calls += 1
+            kw = {k.arg: k.value for k in node.keywords}
+            for field in ("change", "reason"):
+                v = kw.get(field)
+                if not (isinstance(v, _cl_ast.Call) and isinstance(v.func, _cl_ast.Name) and v.func.id == "_say"):
+                    out.append(f"line {node.lineno}: {field}")
+    return calls, out
+
+
+_cl_src = open(_t31.__file__, encoding="utf-8").read()
+_cl_calls, _cl_bad = _cl_offenders(_cl_src)
+_cl_plant = _cl_src.replace('change=_say(lang, "Left Arabic off", "השמטנו את הערבית")', 'change="Left Arabic off"', 1)
+check(
+    "changelog language: every ChangeLogEntry core/tailor.py builds words its change AND reason through _say "
+    "(14 at least), and the reader goes red on an entry written in one language",
+    _cl_calls >= 14 and not _cl_bad
+    and _cl_plant != _cl_src and _cl_offenders(_cl_plant)[1] != [],
+    f"calls={_cl_calls} offenders={_cl_bad}",
+)
+_cl_lang = _cl_re.search(r"\n    (\w+) = resume_language\(resume\)\n", _cl_src)
+_cl_says = [
+    n.args[0].id if n.args and isinstance(n.args[0], _cl_ast.Name) else _cl_ast.dump(n.args[0]) if n.args else ""
+    for n in _cl_ast.walk(_cl_ast.parse(_cl_src))
+    if isinstance(n, _cl_ast.Call) and isinstance(n.func, _cl_ast.Name) and n.func.id == "_say"
+]
+check(
+    "changelog language: _say picks by the resume's language, and every call is handed the SAME reading the TAILOR "
+    "call is given (the model writes its own entries in that language), so the changelog's two halves agree",
+    _t31._say("he", "a", "b") == "b" and _t31._say("en", "a", "b") == "a" and _t31._say("", "a", "b") == "a"
+    and _cl_lang is not None
+    and f"with_resume_language(prompts.TAILOR_SYSTEM, {_cl_lang.group(1)})" in _cl_src
+    and len(_cl_says) >= 28 and set(_cl_says) == {_cl_lang.group(1)},
+    f"lang={_cl_lang and _cl_lang.group(1)} says={sorted(set(_cl_says))} n={len(_cl_says)}",
+)
+
+_M_he = ResumeModel.model_validate({
+    "contact": {"name": "Samar Haddad", "email": "samar@example.com", "location": "חיפה"},
+    "headline": "מהנדסת בקאנד",
+    "summary": "מהנדסת בקאנד עם ניסיון בבניית שירותים.",
+    "skills": ["Python", "SQL", "ערבית"],
+    "experience": [{
+        "company": "Acme", "title": "מהנדסת", "start_date": "2019", "end_date": "Present",
+        "bullets": [
+            "בניתי שירותי Python שמשמשים חמישה צוותים.",
+            "הובלתי שלושה מפתחים בפרויקט המעבר.",
+            "תרגמתי חוזי API בין ערבית לעברית עבור שותפים.",
+        ],
+    }],
+    "languages": [{"language": "עברית", "level": "שפת אם"}, {"language": "ערבית", "level": "שפת אם"}],
+})
+
+
+class _EchoHe:
+    """TAILOR echoes the Hebrew master with an EMPTY changelog, so every entry is the pipeline's own."""
+
+    def __init__(self, inner):  # noqa: ANN001
+        self._inner = inner
+
+    def complete_json(self, system: str, user: str):
+        if not system.startswith("Task: TAILOR."):
+            return self._inner.complete_json(system, user)
+        return {"tailored_resume": _M_he.model_dump(), "changelog": [], "covered_keywords": []}
+
+    def complete_text(self, system: str, user: str):
+        return self._inner.complete_text(system, user)
+
+
+_cl_real = _t31.get_llm_client
+_t31.get_llm_client = lambda: _EchoHe(_cl_real())
+try:
+    _cl_he = _t31.tailor_resume(_M_he, _JD31(**_JD31_BASE, market="IL"), hide_arabic_in_israel=True)
+finally:
+    _t31.get_llm_client = _cl_real
+_cl_he_changes = [c.change for c in _cl_he.changelog]
+# An English sentence is three Latin words in a row; a keyword list ("Python, SQL") is not one.
+_cl_english = [
+    t for c in _cl_he.changelog for t in (c.change, c.reason)
+    if _cl_re.search(r"[A-Za-z]+(?: [A-Za-z']+){2,}", t) or not _cl_re.search(r"[א-ת]", t)
+]
+check(
+    "changelog language, driven: a Hebrew resume's Arabic and numerals notes come back in Hebrew — Arabic left off, "
+    "still mentioned 'בניסיון התעסוקתי', two numbers as digits — and no entry the pipeline wrote is English",
+    "השמטנו את הערבית" in _cl_he_changes
+    and "ערבית עדיין מוזכרת בניסיון התעסוקתי; ערכו לפני השליחה" in _cl_he_changes
+    and "כתבנו 2 מספרים בספרות" in _cl_he_changes
+    and len(_cl_he.changelog) >= 3 and not _cl_english
+    and "5 צוותים" in " ".join(_cl_he.tailored_resume.experience[0].bullets),
+    f"changes={_cl_he_changes} english={_cl_english}",
+)
+check(
+    "changelog language, the other half: the same pipeline over the ENGLISH resume still writes English "
+    "(the R1/R2 checks above pin each sentence byte for byte)",
+    "Left Arabic off" in [c.change for c in _r31_on.changelog]
+    and not any(_cl_re.search(r"[א-ת]", c.change + c.reason) for c in _r31_on.changelog),
+    str([c.change for c in _r31_on.changelog]),
 )
 
 _reached_end = True
