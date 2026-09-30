@@ -17087,6 +17087,92 @@ try {
   fail(`board count check (check 120) could not run: ${e.message}`);
 }
 
+// ---- 121. a changelog note reads as one sentence, in the reader's language (EXECUTED) //
+// Two things the Hebrew changes panel showed on 2026-09-29. The drawer prints a
+// section's reasons as "{{change}}. Why: {{reason}}", and a change the model ended
+// with a full stop printed "Senior Product Manager.. Why:". And a note with no
+// section of its own printed its raw key, so the pipeline's keyword notes were
+// labelled "keywords" on the Hebrew page (the notes' SENTENCES are the backend's:
+// `core/tailor.py` writes them in the resume's language, smoke-pinned). It bundles
+// `lib/changeNotes.ts` and runs `changeLead` and `noteSectionKey`; every section
+// the backend writes (tailor.py's `section="…"` and the numerals pass's) must name
+// a key, resolved in both tailor.json; and ChangeLog must print through both.
+try {
+  const mod121 = runProbeBundle("changeNotes", 'export * from "./lib/changeNotes";');
+  const judge121 = (m) => {
+    const out = [];
+    for (const [input, want] of [
+      ["Rewrote the headline to Senior Product Manager.", "Rewrote the headline to Senior Product Manager"],
+      ["Rewrote the headline to Senior Product Manager..", "Rewrote the headline to Senior Product Manager"],
+      ["Cut the summary to 3 lines. ", "Cut the summary to 3 lines"],
+      ["שכתבנו את הכותרת.", "שכתבנו את הכותרת"],
+      ["Upgraded to v2.0 wording", "Upgraded to v2.0 wording"],
+      ["Grouped your skills under the headings from your master resume", "Grouped your skills under the headings from your master resume"],
+    ])
+      if (m.changeLead(input) !== want) out.push(`changeLead(${JSON.stringify(input)}) is ${JSON.stringify(m.changeLead(input))}, not ${JSON.stringify(want)}`);
+    for (const [input, want] of [
+      ["skills", "sections.skills"],
+      ["Keywords", "report.title"],
+      [" keywords ", "report.title"],
+      ["Work experience", "sections.experience"],
+      ["military_service", "sections.militaryService"],
+      ["languages", "sections.languages"],
+      ["כישורים", null],
+      ["Tone", null],
+    ])
+      if (m.noteSectionKey(input) !== want) out.push(`noteSectionKey(${JSON.stringify(input)}) is ${JSON.stringify(m.noteSectionKey(input))}, not ${JSON.stringify(want)}`);
+    return out;
+  };
+  for (const p of judge121(mod121)) fail(`check 121: lib/changeNotes.ts: ${p}`);
+  for (const [label, twin] of [
+    ["a change printed as it came", { ...mod121, changeLead: (c) => c }],
+    ["every full stop dropped", { ...mod121, changeLead: (c) => c.replace(/\./g, "").trim() }],
+    ["the raw key back", { ...mod121, noteSectionKey: () => null }],
+    ["keywords left unnamed", { ...mod121, noteSectionKey: (s) => (/keyword/i.test(s) ? null : mod121.noteSectionKey(s)) }],
+  ])
+    if (!judge121(twin).length) throw new Error(`the judge passes "${label}", so it cannot be trusted`);
+
+  const tailorPy = pySource("app/core/tailor.py", "check 121");
+  const numeralsPy = pySource("app/core/numerals.py", "check 121");
+  const sections121 = new Set(["keywords", "skills", "experience", "languages", "summary", "headline", "projects", "military_service"]);
+  if (tailorPy !== null && numeralsPy !== null) {
+    sections121.clear();
+    for (const m of tailorPy.matchAll(/\bsection="(\w+)"/g)) sections121.add(m[1]);
+    for (const m of tailorPy.matchAll(/\bsection=_digits_section or "(\w+)"/g)) sections121.add(m[1]);
+    for (const m of numeralsPy.matchAll(/^\s*yield "(\w+)",/gm)) sections121.add(m[1]);
+    if (sections121.size < 7) throw new Error(`read only ${sections121.size} changelog sections out of core/tailor.py and core/numerals.py (expected at least 7)`);
+  }
+  for (const loc of ["en", "he"]) {
+    const bundle = JSON.parse(read(`locales/${loc}/tailor.json`));
+    for (const s of sections121) {
+      const key = mod121.noteSectionKey(s);
+      if (key === null) fail(`check 121: the backend writes changelog notes under "${s}", which names no section, so the ${loc} page prints the raw key`);
+      else if (!resolvesIn(bundle, key)) fail(`check 121: locales/${loc}/tailor.json is missing "${key}", the name of the backend's "${s}" notes`);
+    }
+  }
+
+  const read121 = (src) => {
+    const out = [];
+    const whys = [...src.matchAll(/\bt\(\s*"review\.sectionWhy"\s*,\s*\{([^}]*)\}/g)];
+    if (!whys.length) throw new Error('components/ChangeLog.tsx: t("review.sectionWhy", …) not found');
+    for (const w of whys) if (!/\bchange:\s*changeLead\(/.test(w[1])) out.push(`"review.sectionWhy" is handed the change without changeLead: {${w[1].trim()}}`);
+    if (/>\{\s*c\.section\s*\}</.test(src)) out.push("a note prints its raw section ({c.section})");
+    if (!/>\{\s*noteSection\(\s*c\.section\s*\)\s*\}</.test(src)) out.push("the notes do not name their section through noteSection");
+    if (!/noteSectionKey\(/.test(src)) out.push("ChangeLog does not read noteSectionKey");
+    return out;
+  };
+  const log121 = decomment(read("components/ChangeLog.tsx"));
+  for (const p of read121(log121)) fail(`check 121: components/ChangeLog.tsx: ${p}`);
+  const plant121 = (from, to, label) => {
+    if (!log121.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read121(log121.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant121("change: changeLead(c.change)", "change: c.change", "the change printed with its own full stop");
+  plant121("{noteSection(c.section)}", "{c.section}", "the raw section key back");
+} catch (e) {
+  fail(`changelog note check (check 121) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

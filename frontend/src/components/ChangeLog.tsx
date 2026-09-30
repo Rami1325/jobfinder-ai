@@ -5,6 +5,7 @@ import type { ChangeLogEntry, CVPlan, FabricationFlag, LengthReport, ResumeModel
 import type { ResumeTemplate } from "../api/client";
 import type { DiffSeg, EditSection, ResumeEdit } from "../lib/resumeDiff";
 import { editContainsValue, editValueOnDocument, flagStates, keywordsServed, wordDiff } from "../lib/resumeDiff";
+import { changeLead, noteSectionKey, reasonSection } from "../lib/changeNotes";
 import {
   CURATION_KEY,
   curationCause,
@@ -85,29 +86,6 @@ interface Props {
   /** Drawer only: what sits between the claims and the change groups (the lines
    * the user typed, which belong beside the changes they outrank). */
   beforeGroups?: ReactNode;
-}
-
-/** A changelog entry's free-text section, as the review's `EditSection`. The
- * model writes these ("summary", "Professional summary", "Work experience"), and
- * the pipeline adds its own ("skills", "keywords", "languages"); one without a
- * section of its own stays in the notes, never dropped. */
-const REASON_SECTION: [RegExp, EditSection][] = [
-  [/headline|title line/, "headline"],
-  [/summary|profile|about/, "summary"],
-  [/skill/, "skills"],
-  [/military|service/, "militaryService"],
-  [/experience|role|work|position|employment/, "experience"],
-  [/project/, "projects"],
-  [/education|degree/, "education"],
-  [/certif/, "certifications"],
-  [/language/, "languages"],
-  [/contact/, "contact"],
-];
-
-export function reasonSection(section: string): EditSection | null {
-  const s = section.trim().toLowerCase();
-  for (const [re, key] of REASON_SECTION) if (re.test(s)) return key;
-  return null;
 }
 
 const CURATION_SECTION_ORDER: EditSection[] = [
@@ -658,7 +636,7 @@ export default function ChangeLog({
             </h4>
             {why.map((c, i) => (
               <p key={i} dir="auto" className="mt-0.5 text-xs leading-relaxed text-ink-faint">
-                {c.reason ? t("review.sectionWhy", { change: c.change, reason: c.reason }) : c.change}
+                {c.reason ? t("review.sectionWhy", { change: changeLead(c.change), reason: c.reason }) : c.change}
               </p>
             ))}
           </div>,
@@ -670,6 +648,12 @@ export default function ChangeLog({
   };
 
   const notes = drawer ? reasons.loose : changelog;
+  // A note's section in the reader's language; a section the model wrote in its
+  // own words, as written.
+  const noteSection = (section: string) => {
+    const key = noteSectionKey(section);
+    return key ? t(key) : section;
+  };
 
   const body = (
     <>
@@ -820,7 +804,7 @@ export default function ChangeLog({
             {notes.map((c, i) => (
               <div key={i} className="rounded-lg border-s-2 border-accent bg-panel-2/60 px-3 py-2">
                 <div className="text-sm">
-                  <span className="font-semibold capitalize text-accent-soft">{c.section}</span>
+                  <span className="font-semibold capitalize text-accent-soft">{noteSection(c.section)}</span>
                   <span className="text-ink"> — {c.change}</span>
                 </div>
                 {c.reason && (
