@@ -29,7 +29,7 @@
     "ask": "What first?",
     "jobs": {
       "title": "Find jobs that fit",
-      "desc": "Five job boards, ranked by fit to this resume"
+      "desc": "{{n}} job boards, ranked by fit to this resume"
     },
     "tailor": {
       "title": "Tailor it for a job you have",

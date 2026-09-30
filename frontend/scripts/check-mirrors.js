@@ -17005,6 +17005,88 @@ try {
   fail(`document tools check (check 119) could not run: ${e.message}`);
 }
 
+// ---- 120. no sentence counts the job boards by hand ------------------------ //
+// The first-run sheet said "Five job boards" ("חמישה לוחות משרות") while the
+// search its tap starts asked eight: the registry grew from five boards to eleven
+// and a count written into a sentence never moved (seen 2026-09-29, recording the
+// ad). (a) No string in any bundle of either locale states a number of boards, in
+// digits or in words; a count is interpolated. (b) The sheet hands
+// `firstRun.jobs.desc` the length of `searchedSources(null)`, the boards a search
+// with no context asks (the one the tap starts), and both locales print it.
+try {
+  const EN120 = /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:job\s+)?boards?\b/i;
+  const HE120 = /(?<![\u05d0-\u05ea])(?:\d+|אחד|שניים|שני|שלושה|ארבעה|חמישה|שישה|שבעה|שמונה|תשעה|עשרה)\s+לוחות/;
+  const counts120 = (value) => EN120.test(value) || HE120.test(value);
+  for (const [value, want] of [
+    ["Five job boards, ranked by fit to this resume", true],
+    ["חמישה לוחות משרות, מדורגים לפי ההתאמה", true],
+    ["8 job boards, ranked by fit", true],
+    ["Search 11 boards at once", true],
+    ["{{n}} job boards, ranked by fit to this resume", false],
+    ["{{n}} לוחות משרות, מדורגים לפי ההתאמה", false],
+    ["כל {{count}} הלוחות", false],
+    ["שני הלוחות", false],
+    ["All {{count}} boards", false],
+    ["Job boards", false],
+  ])
+    if (counts120(value) !== want)
+      throw new Error(`the detector reads ${JSON.stringify(value)} as ${want ? "no count" : "a count"}, so it cannot be trusted`);
+  const walk120 = (node, keyPath, out) => {
+    if (typeof node === "string") out.push([keyPath, node]);
+    else if (node && typeof node === "object") for (const [k, v] of Object.entries(node)) walk120(v, keyPath ? `${keyPath}.${k}` : k, out);
+    return out;
+  };
+  let swept120 = 0;
+  for (const loc of ["en", "he"]) {
+    const dir = path.join(SRC, "locales", loc);
+    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".json")))
+      for (const [keyPath, value] of walk120(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")), "", [])) {
+        swept120 += 1;
+        if (counts120(value))
+          fail(`check 120: locales/${loc}/${file} "${keyPath}" counts the job boards by hand ("${value}"); interpolate the count, or say it without one`);
+      }
+  }
+  if (swept120 < 1000) throw new Error(`swept only ${swept120} strings across both locales (expected over 1000)`);
+
+  const read120 = (sheet) => {
+    const out = [];
+    if (!/import\s*\{[^}]*\bsearchedSources\b[^}]*\}\s*from\s*"\.\.\/pages\/jobs\/shared"/.test(sheet))
+      out.push("the sheet does not import searchedSources from pages/jobs/shared");
+    const at = sheet.search(/\bt\(\s*"firstRun\.jobs\.desc"/);
+    if (at === -1) throw new Error('components/FirstRunSheet.tsx: t("firstRun.jobs.desc" …) not found');
+    let depth = 0;
+    let end = -1;
+    for (let i = sheet.indexOf("(", at); i < sheet.length; i++) {
+      if (sheet[i] === "(") depth += 1;
+      else if (sheet[i] === ")" && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    if (end === -1) throw new Error('components/FirstRunSheet.tsx: t("firstRun.jobs.desc" …) never closes');
+    const call = sheet.slice(at, end + 1);
+    if (!/^t\(\s*"firstRun\.jobs\.desc"\s*,\s*\{\s*n:\s*searchedSources\(\s*null\s*\)\.length\s*,?\s*\}\s*\)$/.test(call))
+      out.push(`the board count is not searchedSources(null).length: ${call}`);
+    return out;
+  };
+  const sheet120 = decomment(read("components/FirstRunSheet.tsx"));
+  for (const p of read120(sheet120)) fail(`check 120: components/FirstRunSheet.tsx: ${p}`);
+  for (const loc of ["en", "he"]) {
+    const desc = JSON.parse(read(`locales/${loc}/tailor.json`)).firstRun?.jobs?.desc;
+    if (typeof desc !== "string") fail(`check 120: locales/${loc}/tailor.json has no firstRun.jobs.desc`);
+    else if (!desc.includes("{{n}}")) fail(`check 120: locales/${loc}/tailor.json firstRun.jobs.desc does not print the board count {{n}}: "${desc}"`);
+  }
+  const plant120 = (from, to, label) => {
+    if (!sheet120.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read120(sheet120.replace(from, to)).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant120("{ n: searchedSources(null).length }", "{ n: 8 }", "a count typed in");
+  plant120("{ n: searchedSources(null).length }", "{ n: SOURCE_IDS.length }", "every board, the worldwide-only ones too");
+  plant120('t("firstRun.jobs.desc", { n: searchedSources(null).length })', 't("firstRun.jobs.desc")', "no count handed over");
+} catch (e) {
+  fail(`board count check (check 120) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

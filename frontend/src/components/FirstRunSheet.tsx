@@ -4,6 +4,7 @@ import { Briefcase, ChevronRight, FileText, MessageSquareText, type LucideIcon }
 import { Modal } from "./ui";
 import { cn } from "../lib/cn";
 import { useUses, useUsesState, usesFor } from "../lib/usesStore";
+import { searchedSources } from "../pages/jobs/shared";
 
 /** What a first choice opens. The page decides how: a search, the tailor
  * dialog, the interview page. */
@@ -53,7 +54,16 @@ export default function FirstRunSheet({ open, pages, review, onChoose, onClose }
   // whose one use covers the tailor after it.
   const steps: { id: FirstStep; icon: LucideIcon; feature: string; title: string; desc: string }[] = [
     // The search is the one choice the server can serve free: the pool's first search (PLAN 31.5).
-    { id: "jobs", icon: Briefcase, feature: "search", title: t("firstRun.jobs.title"), desc: t("firstRun.jobs.desc") },
+    // The board count is the one this tap's search asks (no context, so no
+    // worldwide pass), read off the registry's mirror: the sentence said "Five"
+    // while the search asked eight (check-mirrors 120).
+    {
+      id: "jobs",
+      icon: Briefcase,
+      feature: "search",
+      title: t("firstRun.jobs.title"),
+      desc: t("firstRun.jobs.desc", { n: searchedSources(null).length }),
+    },
     {
       id: "tailor",
       icon: FileText,
