@@ -227,7 +227,7 @@ export default function BlockEditSheet({
                 type="button"
                 onClick={onClose}
                 aria-label={t("edit.cancel")}
-                className="rounded-lg p-1.5 text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+                className="tap-44 rounded-lg p-1.5 text-ink-muted transition hover:bg-panel-2 hover:text-ink"
               >
                 <X size={18} />
               </button>
@@ -300,7 +300,7 @@ export default function BlockEditSheet({
                 <button
                   type="button"
                   onClick={remove}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-danger/40 px-2.5 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10"
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-danger/40 px-2.5 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10"
                 >
                   <Trash2 size={13} /> {t("edit.remove")}
                 </button>

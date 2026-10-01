@@ -122,7 +122,7 @@ export function VersionHistoryModal({
           <button
             type="button"
             onClick={() => setPicked(null)}
-            className="mb-3 inline-flex items-center gap-1 text-sm font-medium text-accent-soft hover:underline"
+            className="tap-44 mb-3 inline-flex items-center gap-1 text-sm font-medium text-accent-soft hover:underline"
           >
             <ArrowLeft size={15} className="rtl:-scale-x-100" /> {t("versions.back")}
           </button>
@@ -142,6 +142,7 @@ export function VersionHistoryModal({
               loading={restoring}
               disabled={!shown}
               onClick={() => restore(picked.id)}
+              className="min-h-11"
             >
               {t("versions.restoreThis")}
             </Button>
@@ -178,7 +179,7 @@ export function VersionHistoryModal({
                 <button
                   type="button"
                   onClick={() => setPicked(v)}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-bg-soft/60 px-3 py-2.5 text-start transition-colors hover:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                  className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-line bg-bg-soft/60 px-3 py-2.5 text-start transition-colors hover:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
                 >
                   <span className="min-w-0">
                     <span className="flex items-center gap-2">

@@ -117,7 +117,7 @@ export default function TemplatePicker({ value, onChange, label, className }: Te
               onFocus={() => setPreview(id)}
               onBlur={() => setPreview((p) => (p === id ? null : p))}
               className={cn(
-                "relative w-[116px] shrink-0 snap-start rounded-xl border p-2 text-start sm:w-auto",
+                "relative min-h-11 w-[116px] shrink-0 snap-start rounded-xl border p-2 text-start sm:w-auto",
                 // Transition duration is neutralised by the global
                 // prefers-reduced-motion rule in styles.css.
                 "transition duration-200 ease-out-quint",

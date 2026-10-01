@@ -73,7 +73,7 @@ export default function DraftSummary({
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-panel px-3 py-2 text-start text-xs text-ink-muted shadow-sm transition-colors hover:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+      className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-panel px-3 py-2 text-start text-xs text-ink-muted shadow-sm transition-colors hover:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
     >
       {keywords && (
         <span className={cn("inline-flex items-center gap-1 tabular-nums text-ink", stale && "opacity-60")}>

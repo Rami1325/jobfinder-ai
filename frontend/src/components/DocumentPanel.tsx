@@ -670,11 +670,14 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
                         aria-pressed={pane === p}
                         onClick={() => setPane(p)}
                         className={cn(
-                          "min-h-8 truncate rounded-md px-2.5 text-xs font-semibold transition-colors",
+                          // `tap-44` at 32 px (the third tap-target pass): 6 px of
+                          // layer, inside the header's padding; `truncate` is on
+                          // the label, since on the button it would clip the layer.
+                          "tap-44 min-h-8 min-w-0 rounded-md px-2.5 text-xs font-semibold transition-colors",
                           pane === p ? "bg-panel text-ink shadow-sm" : "text-ink-muted hover:text-ink",
                         )}
                       >
-                        {p === "changes" ? t("doc.changes.title") : t("doc.review.title")}
+                        <span className="block truncate">{p === "changes" ? t("doc.changes.title") : t("doc.review.title")}</span>
                       </button>
                     ))}
                   </div>
@@ -689,7 +692,7 @@ const DocumentPanel = forwardRef<HTMLDivElement, Props>(function DocumentPanel(
                   // this X is the primary way out of it, so it may not be the
                   // smallest target in the panel it dismisses -- measured at
                   // 28x28 against 32x32 rows in a real 390px pass.
-                  className="grid h-8 w-8 place-items-center rounded-lg border border-line text-ink-muted"
+                  className="tap-44 grid h-8 w-8 place-items-center rounded-lg border border-line text-ink-muted"
                 >
                   <X size={14} />
                 </button>

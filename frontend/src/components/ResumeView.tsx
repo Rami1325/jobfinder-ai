@@ -534,7 +534,9 @@ function ChipInput({
         discarded.current = false;
         onClose();
       }}
-      className="w-28 max-w-full rounded-full border border-accent/60 bg-transparent px-2.5 py-0.5 text-xs font-medium text-ink outline-none placeholder:text-ink-faint focus:border-accent"
+      // As tall as the chip it replaces: 44 px below `lg`, so the line does not
+      // jump when the chip becomes a field (the third tap-target pass).
+      className="w-28 max-w-full rounded-full border border-accent/60 bg-transparent px-2.5 py-0.5 text-xs font-medium text-ink outline-none placeholder:text-ink-faint focus:border-accent max-lg:min-h-11"
     />
   );
 }
@@ -583,7 +585,7 @@ function AddToResume({
           setOpen((v) => !v);
         }}
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-semibold text-accent-soft transition-colors hover:bg-accent/[0.07] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+        className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-semibold text-accent-soft transition-colors hover:bg-accent/[0.07] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
       >
         <Plus size={15} /> {t("edit.addTitle")}
       </button>
@@ -618,7 +620,7 @@ function AddToResume({
                   setOpen(false);
                   onAdd(kind);
                 }}
-                className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:border-accent/50 hover:bg-accent/[0.07] hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+                className="min-h-11 rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:border-accent/50 hover:bg-accent/[0.07] hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
               >
                 {t(`edit.add.${kind}`)}
               </button>
@@ -630,7 +632,10 @@ function AddToResume({
 }
 
 /**
- * The last chip in a skills row: a dashed outline that becomes a field.
+ * The last chip in a skills row: a dashed outline that becomes a field. It is a
+ * 44 px box below `lg` (the third tap-target pass; 22 px), where it is drawn only
+ * while a skill is being edited (31.6/4); from `lg`, where every group draws
+ * one, it keeps its 22 px. "+ Add a line" follows the same rule.
  *
  * The dashed outline is a button; the field it becomes is `ChipInput`, which is
  * shared with the foot control's three keyed rows and carries every rule this
@@ -661,7 +666,7 @@ function AddSkillChip({
         type="button"
         onClick={() => setOpen(true)}
         aria-label={t("edit.addSkillIn", { group: label })}
-        className="inline-flex items-center gap-1 rounded-full border border-dashed border-accent/45 px-2.5 py-0.5 text-xs font-medium text-accent-soft/90 transition-colors hover:border-accent/70 hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+        className="inline-flex items-center gap-1 rounded-full border border-dashed border-accent/45 px-2.5 py-0.5 text-xs font-medium max-lg:min-h-11 text-accent-soft/90 transition-colors hover:border-accent/70 hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
       >
         <Plus size={12} /> {t("edit.addSkill")}
       </button>
@@ -1442,7 +1447,7 @@ export default function ResumeView({
                     <button
                       type="button"
                       onClick={() => onAddBullet(`@exp.${i}`)}
-                      className="-ms-5 rounded px-1 py-0.5 text-xs font-medium text-accent-soft/80 transition-colors hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+                      className="-ms-5 rounded px-1 py-0.5 text-xs font-medium text-accent-soft/80 transition-colors max-lg:inline-flex max-lg:min-h-11 max-lg:items-center hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
                     >
                       + {t("edit.addBullet")}
                     </button>
@@ -1493,7 +1498,7 @@ export default function ResumeView({
                     <button
                       type="button"
                       onClick={() => onAddBullet(`@proj.${i}`)}
-                      className="-ms-5 rounded px-1 py-0.5 text-xs font-medium text-accent-soft/80 transition-colors hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+                      className="-ms-5 rounded px-1 py-0.5 text-xs font-medium text-accent-soft/80 transition-colors max-lg:inline-flex max-lg:min-h-11 max-lg:items-center hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
                     >
                       + {t("edit.addBullet")}
                     </button>
@@ -1582,7 +1587,7 @@ export default function ResumeView({
                     <button
                       type="button"
                       onClick={() => onAddBullet(`@mil.${i}`)}
-                      className="-ms-5 rounded px-1 py-0.5 text-xs font-medium text-accent-soft/80 transition-colors hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
+                      className="-ms-5 rounded px-1 py-0.5 text-xs font-medium text-accent-soft/80 transition-colors max-lg:inline-flex max-lg:min-h-11 max-lg:items-center hover:bg-accent/[0.07] hover:text-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent/70"
                     >
                       + {t("edit.addBullet")}
                     </button>

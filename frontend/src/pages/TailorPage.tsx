@@ -1303,14 +1303,14 @@ export default function TailorPage() {
                 type="button"
                 aria-expanded={yoursOpen}
                 onClick={() => setYoursOpen((o) => !o)}
-                className="font-medium text-mint hover:underline"
+                className="inline-flex min-h-11 items-center font-medium text-mint hover:underline"
               >
                 {t("edit.yours", { count: overrideCount })}
               </button>
               <button
                 type="button"
                 onClick={clearAllBlockOverrides}
-                className="font-medium text-accent-soft hover:underline"
+                className="inline-flex min-h-11 items-center font-medium text-accent-soft hover:underline"
               >
                 {t("edit.yoursClear")}
               </button>
@@ -1322,7 +1322,7 @@ export default function TailorPage() {
               as the thing it undoes. Restoring MERGES, so anything typed since
               the clear survives it. */}
           {clearedCount > 0 && (
-            <button type="button" onClick={restoreClearedOverrides} className="font-medium text-mint hover:underline">
+            <button type="button" onClick={restoreClearedOverrides} className="inline-flex min-h-11 items-center font-medium text-mint hover:underline">
               {t("edit.yoursRestoreCleared", { count: clearedCount })}
             </button>
           )}
@@ -1353,7 +1353,7 @@ export default function TailorPage() {
                     <button
                       type="button"
                       onClick={() => clearBlockOverride(e.anchor)}
-                      className="shrink-0 rounded-md border border-line px-2 py-0.5 font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+                      className="min-h-11 shrink-0 rounded-md border border-line px-2 py-0.5 font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
                     >
                       {e.state === "removed" ? t("edit.yoursPutBack") : t("edit.yoursUndoOne")}
                     </button>
@@ -1461,7 +1461,7 @@ export default function TailorPage() {
                   <p className="mt-2 text-sm text-ink-muted">{t("review.letterOnJob")}</p>
                   <Link
                     to={`/applications/${savedAppId}`}
-                    className="mt-2 inline-flex min-h-9 items-center gap-1 text-sm font-medium text-accent hover:underline"
+                    className="mt-2 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-accent hover:underline"
                   >
                     {t("review.openJobPage")}
                   </Link>
@@ -1478,10 +1478,10 @@ export default function TailorPage() {
         <div className="animate-fade-up">
           <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
             <span className="text-sm text-ink">{t("applyPrompt.question")}</span>
-            <Button size="sm" onClick={markApplied}>
+            <Button size="sm" onClick={markApplied} className="min-h-11">
               {t("applyPrompt.yes")}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setTailorState({ applyClicked: false })}>
+            <Button size="sm" variant="ghost" onClick={() => setTailorState({ applyClicked: false })} className="min-h-11">
               {t("applyPrompt.notYet")}
             </Button>
           </div>
@@ -1503,7 +1503,7 @@ export default function TailorPage() {
               goes back to that job's page, not the job list (PLAN 31.4/4). */}
           <Link
             to={savedAppId !== null ? `/applications/${savedAppId}` : "/jobs"}
-            className="inline-flex items-center gap-1 text-accent-soft hover:underline"
+            className="tap-44 inline-flex items-center gap-1 text-accent-soft hover:underline"
           >
             <ArrowLeft size={14} className="rtl:-scale-x-100" />{" "}
             {savedAppId !== null ? t("breadcrumb.backToJob") : t("breadcrumb.back")}
@@ -1539,7 +1539,7 @@ export default function TailorPage() {
                 target="_blank"
                 rel="noreferrer"
                 onClick={() => setTailorState({ applyClicked: true })}
-                className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
+                className="tap-44 inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
               >
                 {t("target.open")} <ExternalLink size={13} />
               </a>
@@ -1780,7 +1780,9 @@ export default function TailorPage() {
             <button
               type="button"
               onClick={dismissHint}
-              className="shrink-0 rounded-md px-2 py-1 font-medium text-accent-soft hover:bg-accent/10"
+              // `tap-44` at its 24 px (the third tap-target pass): 10 px of layer
+              // into the 24 px above and below the hint.
+              className="tap-44 shrink-0 rounded-md px-2 py-1 font-medium text-accent-soft hover:bg-accent/10"
             >
               {t("edit.hintDismiss")}
             </button>
@@ -1799,7 +1801,7 @@ export default function TailorPage() {
           <button
             type="button"
             onClick={() => setTailorState({ overlayOpen: true })}
-            className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-panel px-3 py-2 text-start text-xs text-ink-muted shadow-sm transition-colors hover:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-panel px-3 py-2 text-start text-xs text-ink-muted shadow-sm transition-colors hover:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
           >
             <span className={cn("inline-flex items-center gap-1 tabular-nums text-ink", coverage.stale && "opacity-60")}>
               <Target size={13} aria-hidden className="shrink-0 text-accent-soft" />
@@ -1967,7 +1969,7 @@ export default function TailorPage() {
             <button
               type="button"
               onClick={startFromScratch}
-              className="mt-3 inline-block text-sm text-accent-soft hover:underline"
+              className="mt-1 inline-flex min-h-11 items-center text-sm text-accent-soft hover:underline"
             >
               {t("upload.buildLink")}
             </button>
@@ -1994,14 +1996,14 @@ export default function TailorPage() {
                   {draftSave === "failed" ? (
                     <>
                       <span className="text-danger">{t("jobDraft.failed")}</span>
-                      <button type="button" onClick={retrySave} className="font-medium text-accent-soft hover:underline">
+                      <button type="button" onClick={retrySave} className="tap-44 font-medium text-accent-soft hover:underline">
                         {t("jobDraft.retry")}
                       </button>
                     </>
                   ) : draftSave === "saved" ? (
                     <>
                       <span className="text-mint">✓ {t("jobDraft.saved")}</span>
-                      <Link to={savedAppId ? `/applications/${savedAppId}` : "/tracker"} className="font-medium text-accent-soft hover:underline">
+                      <Link to={savedAppId ? `/applications/${savedAppId}` : "/tracker"} className="tap-44 font-medium text-accent-soft hover:underline">
                         {tCommon("actions.view")}
                       </Link>
                     </>
@@ -2031,7 +2033,7 @@ export default function TailorPage() {
                       target="_blank"
                       rel="noreferrer"
                       onClick={() => setTailorState({ applyClicked: true })}
-                      className="inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
+                      className="tap-44 inline-flex items-center gap-1 text-sm text-accent-soft hover:underline"
                     >
                       <ExternalLink size={14} /> {t("target.open")}
                     </a>

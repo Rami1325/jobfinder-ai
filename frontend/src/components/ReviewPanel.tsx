@@ -207,14 +207,15 @@ function Row({
             panel's whole purpose reachable only through a 20px crosshair at the
             far inline-end of the row. `title` keeps a truncated label readable
             (the two longest English labels exceed the width a counted row
-            leaves); the negative margin buys a 32px hit box without changing
-            the row's height. */}
+            leaves); the negative margin buys a 44px hit box (32 until the
+            third tap-target pass) without changing the row's height: it
+            reaches 6 px into the row's 8 px padding. */}
         {anchored ? (
           <button
             type="button"
             onClick={() => onJump?.(live[0])}
             title={t(`doc.review.checks.${row.id}.label`)}
-            className="-my-1.5 min-w-0 flex-1 truncate py-1.5 text-start text-sm text-ink"
+            className="-my-3 min-h-11 min-w-0 flex-1 truncate py-3 text-start text-sm text-ink"
           >
             {t(`doc.review.checks.${row.id}.label`)}
           </button>
@@ -242,10 +243,11 @@ function Row({
           aria-label={t("doc.review.why")}
           onClick={() => setWhy((w) => !w)}
           className={cn(
-            // h-8, the floor this app already keeps (ThemeToggle, the account
-            // avatar, this drawer's own close). At 20px these were the smallest
-            // controls in the product, on the viewport most of its users are on.
-            "grid h-8 w-8 shrink-0 place-items-center rounded-full border text-ink-faint",
+            // A 32 px circle wearing `tap-44` (the third tap-target pass): 6 px
+            // of layer, inside the row's 8 px padding, and 12 px from the
+            // crosshair (its `ms-1` plus the row's gap), so the two never share
+            // a tap. At 20px these were the smallest controls in the product.
+            "tap-44 grid h-8 w-8 shrink-0 place-items-center rounded-full border text-ink-faint",
             why ? "border-accent/50 text-accent-soft" : "border-line",
           )}
         >
@@ -256,7 +258,7 @@ function Row({
             type="button"
             aria-label={t("doc.review.showInDoc")}
             onClick={() => onJump?.(live[0])}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line text-ink-faint"
+            className="tap-44 ms-1 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line text-ink-faint"
           >
             <Crosshair size={13} />
           </button>
@@ -271,7 +273,9 @@ function Row({
           one, so on a row whose earlier block had been edited away the quote and
           the jump described two different lines. */}
       {evidence && (
-        <p className="mt-1 truncate text-xs text-ink-muted">
+        // 6 px under the row, not 4: the label's 44 px hit box reaches 6 px
+        // below the row, and the line painted over its last 2 px.
+        <p className="mt-1.5 truncate text-xs text-ink-muted">
           <bdi dir="auto">{evidence}</bdi>
         </p>
       )}
@@ -452,6 +456,7 @@ export default function ReviewPanel({
             loading={rewritesBusy}
             disabled={rewritesBusy || rewriteUses.out}
             onClick={onSuggestRewrites}
+            className="tap-44"
           >
             {t("doc.review.rewrites")}
           </Button>
@@ -490,7 +495,7 @@ export default function ReviewPanel({
               <p className="text-xs text-ink">
                 <bdi dir="auto">{r.after}</bdi>
               </p>
-              <Button size="sm" variant="ghost" onClick={() => onUseRewrite?.(r.path, r.after)}>
+              <Button size="sm" variant="ghost" onClick={() => onUseRewrite?.(r.path, r.after)} className="tap-44">
                 {t("doc.review.useThis")}
               </Button>
             </div>

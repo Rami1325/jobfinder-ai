@@ -40,10 +40,10 @@ export default function DraftRestoreBar({ savedAt, onKeep, onDiscard }: Props) {
           <p className="mt-0.5 text-xs text-ink-muted">{t("draft.body", { when })}</p>
         </div>
         <span className="ms-auto flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="ghost" icon={<X size={14} />} onClick={onDiscard}>
+          <Button size="sm" variant="ghost" icon={<X size={14} />} onClick={onDiscard} className="min-h-11">
             {t("draft.discard")}
           </Button>
-          <Button size="sm" icon={<History size={14} />} onClick={onKeep}>
+          <Button size="sm" icon={<History size={14} />} onClick={onKeep} className="min-h-11">
             {t("draft.keep")}
           </Button>
         </span>

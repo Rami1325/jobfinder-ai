@@ -141,7 +141,7 @@ function Choice({
       onClick={onClick}
       disabled={uses.out}
       className={cn(
-        "flex w-full items-center gap-3 rounded-xl border border-line p-3 text-start transition-colors",
+        "flex min-h-11 w-full items-center gap-3 rounded-xl border border-line p-3 text-start transition-colors",
         "hover:border-accent/50 hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
         "disabled:cursor-not-allowed disabled:opacity-50",
       )}
