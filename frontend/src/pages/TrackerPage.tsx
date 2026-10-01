@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "framer-motion";
 import { Trans, useTranslation } from "react-i18next";
@@ -652,11 +652,17 @@ export default function TrackerPage() {
       ) : (
         apps.length > 0 && (
           <p className="text-sm text-ink-muted">
+            {/* The separator sits OUTSIDE each counter's no-wrap span: inside
+                it, the line had no place to break, and at 360 px in English the
+                last counter ran 27 px past the screen's edge, cut off by body's
+                overflow clip (found by the third tap-target pass). */}
             {tiles.map((tile, i) => (
-              <span key={tile.label} className="whitespace-nowrap">
+              <Fragment key={tile.label}>
                 {i > 0 && " · "}
-                <span className="font-semibold tabular-nums text-ink">{tile.value}</span> {tile.label}
-              </span>
+                <span className="whitespace-nowrap">
+                  <span className="font-semibold tabular-nums text-ink">{tile.value}</span> {tile.label}
+                </span>
+              </Fragment>
             ))}
           </p>
         )
