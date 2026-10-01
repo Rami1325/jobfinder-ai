@@ -139,6 +139,12 @@ and known-open list are in `cost-and-quota.md`.)*
 - **`signup.sub` is now "It's free." in both locales.** "We'll email you a code to confirm the address" described the email door only, and it now sat directly above a Google button that sends no code. `/verify` still says where the code went.
 - Pinned by smoke `31.5/1` (a blank name signs up and verifies, the first save names the account, the second does not rename it; probed red with the adoption removed and with "always adopt"). The placement is pinned by check-mirrors 32(l), rewritten for it: the page detector reads `missing`, `below`, `gated`, `unfed` and `known`, the slot detector reads `collapses`, `no placeholder`, `in-app note arrives late`, `button off the slot` and `divider arrives late`, and a separate pin checks that the note hides itself while pending. Each is probed both ways on synthetic twins every run, and eight plants in the real files were each seen red.
 
+### The sign-in pages' tap targets (the third tap-target pass, 2026-10-01)
+
+- **The language and theme switches measured 32 × 32, though `AuthLayout` handed them `h-11` / `w-11`.** The components draw `h-8 w-8` themselves and `cn` JOINS classes rather than merging them, so which size wins is the stylesheet's order, and `h-8` won. They wear `tap-44` now (the layer cannot lose to a size class), 6 px each way inside the header's 8 px padding, 12 px apart. check-mirrors 122 requires every mount of either switch to hand it `tap-44`, and its plant is this very defect.
+- **`authLinkCls` was 44 px tall and as narrow as its word**: "Log in" 40.7 px, "פרטיות" 36. It is at least 44 wide now (`min-w-11`, centred). The show-password button lies inside its field's end on purpose (the field's own pattern), 44 × 44.
+- Measured with Playwright at 390 × 664 and 360 × 664 in en and he on /login, /signup, /verify, /forgot and /reset: no control under 44 px ("פרטיות" reads 43 × 44 through Chromium's half-pixel snap).
+
 ### `/auth/forgot` answers at one pace (P29-FORGOT-TIMING, 2026-09-21)
 
 - **The body was always `{ok}`, but the time was not.** A known address ran about ten DB statements and a whole Gmail SMTP session (banner, EHLO, STARTTLS, AUTH, DATA, QUIT) inline before the answer. An unknown one ran one SELECT after the throttles. So ONE timed request per address was enough, with no statistics needed. It was also the one probe that costs the prober nothing at an address with no account (no mail goes anywhere), at 20 an hour per network. And a DB error on the known path was a 500 that only a known address could reach.
