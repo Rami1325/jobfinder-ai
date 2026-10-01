@@ -333,7 +333,7 @@ export default function CoverLetter({
           onBlur={leaveBox}
           aria-label={proposal ? t("proposal.textLabel") : t("proposal.letterLabel")}
           rows={6}
-          className="mt-3 w-full resize-none overflow-hidden whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-base leading-relaxed text-ink focus:border-accent/60 focus:outline-none sm:text-sm"
+          className="mt-3 min-h-11 w-full resize-none overflow-hidden whitespace-pre-wrap break-words rounded-xl border border-line bg-bg-soft p-4 text-base leading-relaxed text-ink focus:border-accent/60 focus:outline-none sm:text-sm"
         />
       )}
       {proposal && toFill.length > 0 && (

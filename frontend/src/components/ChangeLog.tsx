@@ -807,7 +807,7 @@ export default function ChangeLog({
 
       {notes.length > 0 && (
         <details className="mt-4">
-          <summary className="cursor-pointer py-3.5 text-xs font-medium text-ink-muted hover:text-ink">
+          <summary className="min-h-11 cursor-pointer py-3.5 text-xs font-medium text-ink-muted hover:text-ink">
             {drawer ? t("review.otherNotes") : t("review.aiNotes")}
           </summary>
           <div className="mt-2 space-y-2">

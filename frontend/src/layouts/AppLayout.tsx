@@ -629,7 +629,7 @@ function MobileTabBar({
   const { pathname } = useLocation();
   const tabCls = (active: boolean) =>
     cn(
-      "relative flex min-w-0 flex-1 flex-col items-center gap-1 pb-1.5 pt-2 text-xs font-semibold transition-colors",
+      "relative flex min-h-11 min-w-0 flex-1 flex-col items-center gap-1 pb-1.5 pt-2 text-xs font-semibold transition-colors",
       active ? "text-accent-soft" : "text-ink-muted",
     );
   // An entry is lit on its own route and on the pages it names in `also`.

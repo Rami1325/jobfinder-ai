@@ -17174,6 +17174,317 @@ try {
   fail(`changelog note check (check 121) could not run: ${e.message}`);
 }
 
+// ---- 122. every control in the app is a 44 px target (the third tap-target pass) //
+// 2026-10-01. The first two passes fixed controls by name (108, 112-119) and each
+// recorded what it left; pages nobody had swept (the tracker, a job's page, a
+// draft's page, Interview, the tools, the sign-in pages) still held 16-36 px
+// controls. This pass swept every app page, and this check holds every control in
+// the app, so the next one added under 44 px is red rather than recorded. It walks
+// every .tsx under src/ except the landing's department (components/landing,
+// components/marketing, pages/Landing.tsx, MarketingLayout and /privacy, which
+// it shells: landing.md) and reads each <Button>, <button>, <Link>, <a href>,
+// <select>, free-text <input>, <textarea>, <summary> and checkbox/radio <label>.
+// A control is a 44 px target when its OWN className says so:
+//   * a 44 px min-h or h, or one below a breakpoint (`max-lg:min-h-11`: the rule
+//     is the phone's), or `tap-44`, or a padded line of at least 44 px (py-3
+//     around a 20 px text-sm line);
+//   * or a class constant it names does (inputCls, authLinkCls, a file's `chip`,
+//     `row`, `item`, `tap`, `tabCls`), read where the constant is defined;
+//   * or it is a <Button> of the default size or lg (Button.tsx's md says
+//     min-h-11, which this check reads), or a link wrapped round one;
+//   * or it is a stretched card link (`after:absolute after:inset-0`: the card
+//     is the target), a full-bleed backdrop (`fixed inset-0`), or a native
+//     select laid transparent over a face (`absolute opacity-0` at 44 px or the
+//     face's full size, RatingSelect's and CompactSelect's pattern).
+// LanguageSwitch and ThemeToggle draw a 32 px face and are sized by whoever
+// mounts them, so every mount must hand them `tap-44`: AuthLayout handed them
+// `h-11 w-11`, which never applied (cn joins classes; the components' own h-8
+// came later in the stylesheet) and the sign-in pages' switches measured 32.
+// Planted twins every run, and the readers are probed both ways.
+try {
+  const OUT122 = /^(?:components\/landing\/|components\/marketing\/|pages\/Landing\.tsx$|layouts\/MarketingLayout\.tsx$|pages\/PrivacyPage\.tsx$)/;
+  const walk122 = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk122(path.join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [path.join(dir, e.name)] : [],
+    );
+  const all122 = Object.fromEntries(
+    walk122(SRC).map((f) => [path.relative(SRC, f).split(path.sep).join("/"), decomment(fs.readFileSync(f, "utf8").replace(/\r\n/g, "\n"))]),
+  );
+  // T2's MIN44 lets a breakpoint prefix through (`lg:min-h-11` reads as 44), which
+  // is a desktop-only box; this reader takes a base class or a phone-side one.
+  const BASE44 = /(?<![\w:-])min-h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?![\w-])/;
+  const PHONE44 = /(?<![\w-])max-(?:sm|md|lg|xl|2xl):(?:min-)?h-(?:1[1-9]|[2-9]\d|\[(?:4[4-9]|[5-9]\d|\d{3,})px\])(?![\w-])/;
+  const REM44 = /(?<![\w:-])(?:min-)?h-\[(\d+(?:\.\d+)?)rem\]/;
+  const LINE = [[/(?<![\w:-])text-base(?![\w-])/, 24], [/(?<![\w:-])text-sm(?![\w-])/, 20], [/(?<![\w:-])text-xs(?![\w-])/, 16]];
+  // The 44 px rules on one class string (a literal, or an expression's text).
+  const says44 = (c) => {
+    if (BASE44.test(c) || T2.H44.test(c) || T2.TAP.test(c) || PHONE44.test(c)) return true;
+    const rem = REM44.exec(c);
+    if (rem && Number(rem[1]) * 16 >= 44) return true;
+    const py = T2.utility(c, ["py"]);
+    const line = (LINE.find(([re]) => re.test(c)) || [])[1];
+    return !!line && 2 * py + line >= 44;
+  };
+  // A constant's text: from `const NAME =` (or `function NAME(`) to its end.
+  const constText = (src, name) => {
+    const m = new RegExp(`(?:const|let)\\s+${name}\\s*=|function\\s+${name}\\s*\\(`).exec(src);
+    if (!m) return null;
+    const semi = src.indexOf(";", m.index);
+    return src.slice(m.index, semi === -1 ? m.index + 600 : Math.min(semi, m.index + 600));
+  };
+  const SHARED122 = ["pages/jobs/shared.ts", "pages/auth/shared.tsx"];
+  const read122 = (files, button) => {
+    const out = [];
+    const md = /md:\s*"([^"]*)"/.exec(button);
+    const lg = /lg:\s*"([^"]*)"/.exec(button);
+    if (!md || !lg) throw new Error("components/ui/Button.tsx: the md and lg size strings not found");
+    const mdOk = BASE44.test(md[1]) || T2.H44.test(md[1]);
+    const lgOk = says44(lg[1]) || T2.utility(lg[1], ["py"]) >= 12;
+    let n = 0;
+    for (const [file, src] of Object.entries(files)) {
+      if (!file.endsWith(".tsx") || OUT122.test(file)) continue;
+      // Judged where they are used: the two switches at each mount, Button's own
+      // <button> through its size table at each <Button>.
+      if (["components/LanguageSwitch.tsx", "components/ThemeToggle.tsx", "components/ui/Button.tsx"].includes(file)) continue;
+      for (const m of src.matchAll(/<(Button|button|Link|a|select|input|textarea|summary|label)\b/g)) {
+        const name = m[1];
+        const tag = T2.tagFrom(src, m.index, file);
+        if (name === "a" && !/\bhref=/.test(tag)) continue;
+        if (name === "input") {
+          const type = (/\btype="([\w-]+)"/.exec(tag) || [])[1] || "text";
+          if (["checkbox", "radio", "hidden", "file"].includes(type)) continue;
+        }
+        if (name === "label" && !/type="(?:checkbox|radio)"/.test(src.slice(m.index, src.indexOf("</label>", m.index)))) continue;
+        const c = T2.cls(tag);
+        if (/^\s*hidden\s*$/.test(c)) continue; // never drawn
+        n += 1;
+        let ok = says44(c);
+        // The constants the class expression names, read where they live.
+        if (!ok)
+          for (const id of new Set(c.match(/\b[A-Za-z_]\w*\b/g) || [])) {
+            if (["cn", "true", "false", "null", "undefined"].includes(id)) continue;
+            const text = constText(src, id) ?? SHARED122.map((f) => files[f] && constText(files[f], id)).find(Boolean);
+            if (text && says44(text)) { ok = true; break; }
+          }
+        if (!ok && name === "Button") {
+          const flat = tag.replace(/\{[^{}]*\{[^{}]*\}[^{}]*\}|\{[^{}]*\}/g, "{}");
+          const size = (/\ssize="(\w+)"/.exec(flat) || [])[1] ?? "md";
+          ok = (size === "md" && mdOk) || (size === "lg" && lgOk);
+        }
+        if (!ok && (name === "Link" || name === "a")) {
+          const next = /^\s*<Button\b([^>]*)>/.exec(src.slice(m.index + tag.length));
+          if (next && !/size="sm"/.test(next[1])) ok = (/size="lg"/.test(next[1]) ? lgOk : mdOk);
+        }
+        if (!ok && /(?<![\w:-])after:absolute(?![\w-])/.test(c) && /(?<![\w:-])after:inset-0(?![\w-])/.test(c)) ok = true;
+        if (!ok && /(?<![\w:-])fixed(?![\w-])/.test(c) && /(?<![\w:-])inset-0(?![\w-])/.test(c)) ok = true;
+        if (!ok && /(?<![\w:-])absolute(?![\w-])/.test(c) && /(?<![\w:-])opacity-0(?![\w-])/.test(c) && /(?<![\w:-])(?:inset-0|h-full)(?![\w-])/.test(c)) ok = true;
+        // A button spanning its 44 px field's height at the field's end (the
+        // password field's show button): absolute, inset-y-0, 44 px wide.
+        if (!ok && /(?<![w:-])absolute(?![w-])/.test(c) && /(?<![w:-])inset-y-0(?![w-])/.test(c) && T2.W44.test(c)) ok = true;
+        if (!ok && name === "textarea" && Number((/\brows=\{(\d+)\}/.exec(tag) || [])[1] || 0) >= 2) ok = true;
+        if (!ok) out.push(`${file}:${src.slice(0, m.index).split("\n").length}: a <${name}> under 44 px to tap: ${T2.brief(tag)}`);
+      }
+      // The two switches are sized by their mounts, and only tap-44 reaches them.
+      for (const sw of ["LanguageSwitch", "ThemeToggle"])
+        for (const mount of T2.tags(src, sw))
+          if (!T2.TAP.test(T2.cls(mount))) out.push(`${file}: <${sw}> mounted at its 32 px face (it needs className="tap-44"; a size class loses to its own h-8)`);
+    }
+    if (n < 380) throw new Error(`read ${n} controls under src/ (expected at least 380)`);
+    if (!mdOk) out.push("components/ui/Button.tsx: the default (md) size is not a 44 px box (min-h-11), so every default button is 42 px");
+    return out;
+  };
+  const button122 = decomment(read("components/ui/Button.tsx"));
+  for (const p of read122(all122, button122)) fail(`check 122: ${p} (the third tap-target pass)`);
+  // A plant must be red WHERE IT LANDS (its own file, or the file that uses a
+  // planted constant): a reader that is red elsewhere would pass every plant.
+  const plant122 = (file, from, to, label, files = all122, where = file) => {
+    if (!files[file]?.includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    const next = { ...files, [file]: files[file].replace(from, to) };
+    if (!read122(next, button122).some((p) => p.startsWith(where))) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  const page122 = (body) => ({ ...all122, "pages/NewPage.tsx": `export default () => (<div>${body}</div>);\n` });
+  const quiet122 = (body, label) => {
+    if (read122(page122(body), button122).some((p) => p.startsWith("pages/NewPage.tsx"))) throw new Error(`the reader refuses ${label}, a 44 px target`);
+  };
+  plant122("pages/NewPage.tsx", "X", '<button className="text-xs">x</button>', "a new 16 px button", page122("X"));
+  plant122("pages/NewPage.tsx", "X", '<Button size="sm">x</Button>', "a new 34 px small Button", page122("X"));
+  plant122("pages/NewPage.tsx", "X", '<Link to="/x"><Button size="sm">x</Button></Link>', "a link round a 34 px Button", page122("X"));
+  plant122("pages/NewPage.tsx", "X", '<button className="lg:min-h-11">x</button>', "a 44 px box on desktop only", page122("X"));
+  plant122("pages/NewPage.tsx", "X", '<label className="flex py-2 text-sm"><input type="checkbox" />x</label>', "a 36 px checkbox line", page122("X"));
+  quiet122('<Button size="sm" className="tap-44">x</Button><button className="max-lg:min-h-11">x</button><Button>x</Button>', "a layered small Button, a phone box or a default Button");
+  quiet122('<label className="flex py-3 text-sm"><input type="checkbox" />x</label><Link to="/x"><Button>x</Button></Link>', "a padded 44 px line or a link round a default Button");
+  if (!BASE44.test("min-h-11 lg:min-h-0") || BASE44.test("lg:min-h-11") || BASE44.test("min-h-10") || !PHONE44.test("max-lg:min-h-11") || PHONE44.test("lg:min-h-11"))
+    throw new Error("the base / phone 44 px readers misread min-h-11 lg:min-h-0, lg:min-h-11, min-h-10 or max-lg:min-h-11");
+  if (!read122(page122("<Button>x</Button>"), button122.replace("min-h-11 px-4 py-2.5", "px-4 py-2.5")).some((p) => p.startsWith("pages/NewPage.tsx")))
+    throw new Error("the reader passes a 42 px default Button, so it cannot be trusted");
+  plant122("pages/jobs/shared.ts", '"min-h-11 rounded-lg border border-line bg-bg-soft px-3 py-2', '"rounded-lg border border-line bg-bg-soft px-3 py-2', "a 38 px shared text box", all122, "pages/jobs/AlertsCard.tsx");
+  plant122("pages/JobsPage.tsx", 'onClick={runSearch}\n                  className="tap-44"', "onClick={runSearch}", "a 34 px Search again");
+  plant122("components/ui/CompactSelect.tsx", "absolute inset-x-0 top-1/2 h-11 w-full", "absolute inset-x-0 top-1/2 h-8 w-full", "a 32 px sort select");
+  plant122("layouts/AuthLayout.tsx", '<LanguageSwitch className="tap-44" />', '<LanguageSwitch className="h-11 min-w-11" />', "the sign-in switch's size class that never applied");
+  plant122("components/ResumeView.tsx", "max-lg:inline-flex max-lg:min-h-11 max-lg:items-center", "max-lg:inline-flex max-lg:items-center", "a 20 px \"+ Add a line\" on a phone");
+  plant122("pages/TrackerPage.tsx", '"relative inline-flex min-h-11 shrink-0 items-center gap-1.5 overflow-hidden', '"relative inline-flex min-h-9 shrink-0 items-center gap-1.5 overflow-hidden', "36 px status tabs");
+} catch (e) {
+  fail(`app-wide tap targets check (check 122) could not run: ${e.message}`);
+}
+
+// ---- 123. the third pass's layers keep their room ---------------------------- //
+// Check 122 holds that every control is a 44 px target; where this pass used
+// `tap-44` (a control keeps its face, a transparent layer takes the taps around
+// it) the layer is only safe while nothing it reaches is another control and
+// nothing clips it. Each rule below reads the face and the room from the source
+// and computes the reach, (44 - face) / 2, instead of restating a number, so a
+// smaller face over the same room is red too (113-119's method):
+//   (a) Accept / Decline (24 px faces) in a change's card: the control may not
+//       clip its halves, and the card's padding holds their 10 px;
+//   (b) a group's "Accept these" pair (a 16 px line) sits a reach under the
+//       group's header button;
+//   (c) the skills editor's and the keyword report's chips (26 px faces) wrap
+//       twice their reach apart (the editor's reach is its remove button's,
+//       14 px beyond a 16 px face, 9 past the chip);
+//   (d) the folded search card's Search again / Edit (34 px) clear the 44 px
+//       rows over and under them by the row's padding plus the card's spacing;
+//   (e) the review drawer's two 32 px circles sit two reaches apart, and the
+//       label's 44 px box (-my-3 py-3 over a 20 px line in a 32 px row) clears
+//       the evidence line under it;
+//   (f) Interview's modes and JDPaste's buttons (34 px) wrap twice their reach
+//       apart, and the sign-in switches (32 px) sit twice theirs apart;
+//   (g) CompactSelect's select lies over its face: absolute, transparent, 44 px,
+//       centred; the tracker's status tabs, which clip their own flash, are
+//       boxes, never layers.
+try {
+  const near = (src, marker, tag, what) => {
+    const at = src.indexOf(marker);
+    if (at === -1) throw new Error(`${what}: ${marker} not found`);
+    return T2.cls(T2.enclosing(src, at, tag, what));
+  };
+  const reach = (face) => (44 - face) / 2;
+  const read123 = (r) => {
+    const out = [];
+    // (a)
+    const decide = fnSource(r.log, "function Decide(");
+    const ctl = T2.cls(T2.tags(decide, "span")[0] ?? "");
+    if (!ctl) throw new Error("ChangeLog Decide: its control's <span> not found");
+    if (T2.CLIP.test(ctl)) out.push("Decide's control clips its halves (overflow-hidden), cutting their 44 px layers off");
+    const halves = T2.tags(decide, "button").map(T2.cls);
+    if (halves.length !== 2) throw new Error(`ChangeLog Decide: read ${halves.length} halves`);
+    const halfFace = 16 + 2 * T2.utility(halves[0], ["py", "p"]);
+    const card = /data-edit-id=\{edit\.id\}\s*className=\{cn\("([^"]*)"/.exec(r.log);
+    if (!card) throw new Error("ChangeLog EditRow: the card's classes not found");
+    for (const h of halves) {
+      if (!T2.target44(h)) out.push("a half of Accept / Decline is under 44 px");
+      else if (!T2.box44(h) && T2.utility(card[1], ["py", "p"]) < reach(halfFace))
+        out.push(`a change's card pads ${T2.utility(card[1], ["py", "p"])} px, where Accept / Decline's layer reaches ${reach(halfFace)}`);
+    }
+    // (b)
+    const pair = near(r.log, "onClick={() => setManyRejected(groupIds, false)}", "div", "the group's accept pair");
+    if (T2.utility(pair, ["pt", "py", "p"]) < reach(16)) out.push(`a group's "Accept these" pair sits ${T2.utility(pair, ["pt", "py", "p"])} px under the group's header button, inside its ${reach(16)} px layer`);
+    // (c)
+    const skills = /<div className="([^"]*\bflex-wrap[^"]*)">\s*\{draft\.map\(/.exec(r.skills);
+    if (!skills) throw new Error("SkillsEditor: the skills row not found");
+    const rmFace = 12 + 2 * 2; // a 12 px icon in p-0.5
+    const chipFace = 16 + 2 * 4 + 2; // text-xs, py-1, a 1 px border
+    if (!/className="tap-44 rounded p-0\.5/.test(r.skills)) throw new Error("SkillsEditor: the remove button's tap-44 p-0.5 face not found");
+    if (T2.utility(skills[1], ["gap-y", "gap"]) < 2 * (reach(rmFace) - (chipFace - rmFace) / 2))
+      out.push(`the skills editor's chips wrap ${T2.utility(skills[1], ["gap-y", "gap"])} px apart, where two remove buttons' layers need ${2 * (reach(rmFace) - (chipFace - rmFace) / 2)}`);
+    const report = /<div className="([^"]*\bflex-wrap[^"]*)">\s*\{group\.map\(/.exec(r.report);
+    if (!report) throw new Error("MatchReport: the chips' row not found");
+    if (!/"tap-44 inline-flex items-center gap-1\.5 rounded-full border px-2\.5 py-1 text-xs/.test(r.report)) throw new Error("MatchReport: a chip's tap-44 face not found");
+    if (T2.utility(report[1], ["gap-y", "gap"]) < 2 * reach(chipFace)) out.push(`the keyword chips wrap ${T2.utility(report[1], ["gap-y", "gap"])} px apart, where two ${chipFace} px chips' layers need ${2 * reach(chipFace)}`);
+    // (d)
+    const again = near(r.jobs, "{t(\"search.again\")}", "div", "Search again's row");
+    const foldedCard = /<Card className="(space-y-[\d.]+ py-3)">/.exec(r.jobs);
+    if (!foldedCard) throw new Error("JobsPage: the folded card (space-y-n py-3) not found");
+    const room = T2.utility(again, ["py", "p"]) + T2.utility(foldedCard[1], ["space-y"]);
+    if (room < reach(33.5)) out.push(`Search again / Edit clear the rows over and under them by ${room} px, where their layer reaches ${reach(33.5)}`);
+    // (e)
+    const circles = /className="tap-44 (ms-[\d.]+ )?grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line text-ink-faint"/.exec(r.review);
+    if (!circles) throw new Error("ReviewPanel: the crosshair circle's classes not found");
+    const rowGap = T2.utility(near(r.review, "aria-label={t(\"doc.review.why\")}", "div", "a review row"), ["gap-x", "gap"]);
+    const between = rowGap + (circles[1] ? T2.utility(circles[1], ["ms"]) : 0);
+    if (between < 2 * reach(32)) out.push(`the review row's two circles sit ${between} px apart, where their layers need ${2 * reach(32)}`);
+    if (!/"-my-3 min-h-11 min-w-0 flex-1 truncate py-3/.test(r.review)) out.push("the review row's label is not a 44 px box that keeps the row's height (-my-3 py-3)");
+    const evidence = /<p className="(mt-[\d.]+) truncate text-xs text-ink-muted">/.exec(r.review);
+    if (!evidence) throw new Error("ReviewPanel: the evidence line not found");
+    if (T2.utility(evidence[1], ["mt"]) < reach(20) - (32 - 20) / 2) out.push(`the evidence line sits ${T2.utility(evidence[1], ["mt"])} px under the row and paints over the label's 44 px box`);
+    // (f)
+    const modes = near(r.interview, "([\"questions\", \"recruiter\", \"mock\"] as const).map(", "div", "Interview's modes");
+    if (T2.utility(modes, ["gap-y", "gap"]) < 2 * reach(34)) out.push(`Interview's modes wrap ${T2.utility(modes, ["gap-y", "gap"])} px apart, where their layers need ${2 * reach(34)}`);
+    const pasteRow = /<div className="(mt-2 flex flex-wrap[^"]*)">\s*\{isLink && \(/.exec(r.paste);
+    if (!pasteRow) throw new Error("JDPaste: the buttons' row not found");
+    if (T2.utility(pasteRow[1], ["gap-y", "gap"]) < 2 * reach(33.5)) out.push(`JDPaste's buttons wrap ${T2.utility(pasteRow[1], ["gap-y", "gap"])} px apart, where their layers need ${2 * reach(33.5)}`);
+    const sw = /<div className="(flex items-center gap-[\d.]+)">\s*<LanguageSwitch/.exec(r.auth);
+    if (!sw) throw new Error("AuthLayout: the switches' row not found");
+    if (T2.utility(sw[1], ["gap-x", "gap"]) < 2 * reach(32)) out.push(`the sign-in switches sit ${T2.utility(sw[1], ["gap-x", "gap"])} px apart, where their layers need ${2 * reach(32)}`);
+    // (g)
+    const sel = T2.cls(T2.tags(r.compact, "select")[0] ?? "");
+    for (const [need, why] of [[/(?<![\w:-])absolute(?![\w-])/, "absolute"], [/(?<![\w:-])opacity-0(?![\w-])/, "transparent"], [/(?<![\w:-])h-11(?![\w-])/, "44 px tall"], [/top-1\/2/, "centred (top-1/2)"], [/-translate-y-1\/2/, "centred (-translate-y-1/2)"]])
+      if (!need.test(sel)) out.push(`CompactSelect's select is not ${why} over its face`);
+    for (const tab of r.tracker.match(/"[^"]*\boverflow-hidden rounded-full border px-3 text-xs font-semibold transition-colors"/g) ?? [])
+      if (!T2.box44(tab)) out.push("a tracker status tab, which clips its own flash, is not a 44 px box");
+    if ((r.tracker.match(/overflow-hidden rounded-full border px-3 text-xs font-semibold transition-colors"/g) ?? []).length < 2)
+      throw new Error("TrackerPage: the status tabs' classes not found");
+    return out;
+  };
+  const r123 = {
+    log: decomment(read("components/ChangeLog.tsx")),
+    skills: decomment(read("pages/jobs/SkillsEditor.tsx")),
+    report: decomment(read("components/MatchReport.tsx")),
+    jobs: decomment(read("pages/JobsPage.tsx")),
+    review: decomment(read("components/ReviewPanel.tsx")),
+    interview: decomment(read("pages/InterviewPage.tsx")),
+    paste: decomment(read("components/JDPaste.tsx")),
+    auth: decomment(read("layouts/AuthLayout.tsx")),
+    compact: decomment(read("components/ui/CompactSelect.tsx")),
+    tracker: decomment(read("pages/TrackerPage.tsx")),
+  };
+  for (const p of read123(r123)) fail(`check 123: ${p} (the third tap-target pass)`);
+  const plant123 = (key, from, to, label) => {
+    if (!r123[key].includes(from)) throw new Error(`the probe could not plant "${label}"`);
+    if (!read123({ ...r123, [key]: r123[key].replace(from, to) }).length) throw new Error(`the reader passes "${label}", so it cannot be trusted`);
+  };
+  plant123("log", "ms-auto inline-flex shrink-0 rounded-lg border border-line", "ms-auto inline-flex shrink-0 overflow-hidden rounded-lg border border-line", "Decide clipping its halves again");
+  plant123("log", '"rounded-lg border border-line bg-panel-2/60 px-3 py-2.5"', '"rounded-lg border border-line bg-panel-2/60 px-3 py-1.5"', "a change's card too tight for the layers");
+  plant123("log", '"flex gap-3 pt-3.5 text-xs"', '"flex gap-3 text-xs"', "the group pair under the header button");
+  plant123("skills", "flex flex-wrap gap-x-1.5 gap-y-[18px]", "flex flex-wrap gap-1.5", "skills wrapping 6 px apart");
+  plant123("report", "flex flex-wrap gap-x-2 gap-y-[18px]", "flex flex-wrap gap-2", "keyword chips wrapping 8 px apart");
+  plant123("jobs", '"flex items-center gap-2 py-0.5"', '"flex items-center gap-2"', "Search again's row without its padding");
+  plant123("review", "tap-44 ms-1 grid h-8 w-8", "tap-44 grid h-8 w-8", "the circles 8 px apart");
+  plant123("review", '<p className="mt-1.5 truncate text-xs text-ink-muted">', '<p className="mt-1 truncate text-xs text-ink-muted">', "the evidence over the label's box");
+  plant123("interview", "flex flex-wrap items-center gap-x-2 gap-y-2.5", "flex flex-wrap items-center gap-2", "Interview's modes 8 px apart");
+  plant123("paste", '"mt-2 flex flex-wrap items-center gap-x-2 gap-y-3"', '"mt-2 flex flex-wrap items-center gap-2"', "JDPaste's buttons 8 px apart");
+  plant123("auth", '<div className="flex items-center gap-3">\n          <LanguageSwitch', '<div className="flex items-center gap-2">\n          <LanguageSwitch', "the sign-in switches 8 px apart");
+  plant123("compact", "top-1/2 h-11 w-full -translate-y-1/2", "top-1/2 h-8 w-full -translate-y-1/2", "a 32 px sort select");
+  plant123("tracker", '"relative inline-flex min-h-11 shrink-0 items-center gap-1.5 overflow-hidden', '"tap-44 relative inline-flex min-h-9 shrink-0 items-center gap-1.5 overflow-hidden', "a status tab that clips its own layer");
+} catch (e) {
+  fail(`third tap pass layers check (check 123) could not run: ${e.message}`);
+}
+
+// ---- 124. a no-wrap run never holds the separator before it ----------------- //
+// The tracker's counters ("3 Total · 1 Applied · …") are one whitespace-nowrap
+// span each, and each span held the " · " before it, so the line had no place to
+// break: at 360 px in English the last counter ran 27 px past the screen's edge,
+// cut off by body's overflow clip (found by the third tap-target pass's overflow
+// sweep, and there before it). The separator sits between the spans now.
+try {
+  const read124 = (src) => {
+    const at = src.indexOf("tiles.map(");
+    if (at === -1) throw new Error("pages/TrackerPage.tsx: tiles.map( not found");
+    const block = src.slice(at, src.indexOf("))}", at));
+    const out = [];
+    if (/className="whitespace-nowrap">\s*\{i > 0 && " · "\}/.test(block)) out.push("the counters' separator is inside a no-wrap span again, so the line cannot break on a narrow phone");
+    if (!/\{i > 0 && " · "\}\s*<span className="whitespace-nowrap">/.test(block)) out.push("the counters no longer put their separator before a no-wrap span (cannot verify the line can break)");
+    return out;
+  };
+  const tracker124 = decomment(read("pages/TrackerPage.tsx"));
+  for (const p of read124(tracker124)) fail(`check 124: ${p}`);
+  const old124 = '<Fragment key={tile.label}>\n                {i > 0 && " · "}\n                <span className="whitespace-nowrap">';
+  if (!tracker124.includes(old124)) throw new Error("the probe could not plant the old counters");
+  if (!read124(tracker124.replace(old124, '<span key={tile.label} className="whitespace-nowrap">\n                {i > 0 && " · "}')).length)
+    throw new Error("the reader passes the separator inside the no-wrap span, so it cannot be trusted");
+} catch (e) {
+  fail(`tracker counters check (check 124) could not run: ${e.message}`);
+}
+
 // ---- report --------------------------------------------------------------- //
 if (problems.length) {
   console.error("\nMirror checks FAILED:\n");

@@ -176,9 +176,9 @@ export default function JDPaste({ value, onChange, folded }: Props) {
         className="min-h-[240px] w-full resize-y rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
       />
       {/* Both buttons wear `tap-44` at their 34 px (the third tap-target pass):
-          5 px of layer, clear of the box 8 px above, and wrapped rows 10 px
+          5.25 px of layer, clear of the box 8 px above, and wrapped rows 12 px
           apart. */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-2.5">
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-3">
         {isLink && (
           <>
             <Button size="sm" variant="secondary" loading={loading} icon={<Link2 size={14} />} onClick={fetchFromLink} className="tap-44">
