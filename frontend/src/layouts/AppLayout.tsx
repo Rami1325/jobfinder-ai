@@ -1004,12 +1004,14 @@ export default function AppLayout() {
             />
           )}
 
-          <div className="ms-auto flex shrink-0 items-center gap-2">
+          {/* From lg the switches and the avatar each wear `tap-44` at 32 px, so
+              they sit 12 px apart: two 6 px layers. */}
+          <div className="ms-auto flex shrink-0 items-center gap-2 lg:gap-3">
             <UsesLeft />
             {/* Below lg these two are rows in the account menu. */}
-            <div className="hidden items-center gap-2 lg:flex">
-              <LanguageSwitch />
-              <ThemeToggle />
+            <div className="hidden items-center gap-3 lg:flex">
+              <LanguageSwitch className="tap-44" />
+              <ThemeToggle className="tap-44" />
             </div>
             <AccountMenu
               me={me}

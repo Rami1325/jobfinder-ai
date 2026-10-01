@@ -41,9 +41,14 @@ export default function AuthLayout() {
         >
           <Logo size={28} />
         </Link>
-        <div className="flex items-center gap-2">
-          <LanguageSwitch className="h-11 min-w-11" />
-          <ThemeToggle className="h-11 w-11" />
+        {/* `tap-44` (the third tap-target pass). The 44 px sizes these were
+            handed never applied: the components' own h-8 came later in the
+            stylesheet (cn joins classes, it does not merge them), so both
+            measured 32 x 32. The layers reach 6 px, inside the header's 8 px
+            padding, and the two sit 12 px apart so they never share a tap. */}
+        <div className="flex items-center gap-3">
+          <LanguageSwitch className="tap-44" />
+          <ThemeToggle className="tap-44" />
         </div>
       </header>
 

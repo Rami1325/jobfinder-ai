@@ -11053,8 +11053,9 @@ try {
       if (!/useDialogFocus\(\s*sheet\s*,/.test(panel)) out.push("the More sheet does not take and hand back focus");
       if (!/e\.key === "Escape"\) setMoreOpen\(false\)/.test(shell)) out.push("Escape does not close the More sheet");
     }
-    const toggles = /<div className="([^"]*)">\s*<LanguageSwitch \/>\s*<ThemeToggle \/>\s*<\/div>/.exec(shell);
-    const bare = /(?:<UsesLeft \/>|gap-2">)\s*<LanguageSwitch \/>/.test(shell);
+    // The switches may carry a className (tap-44 since the third tap-target pass).
+    const toggles = /<div className="([^"]*)">\s*<LanguageSwitch(?: className="[^"]*")? \/>\s*<ThemeToggle(?: className="[^"]*")? \/>\s*<\/div>/.exec(shell);
+    const bare = /(?:<UsesLeft \/>|gap-2">)\s*<LanguageSwitch(?: className="[^"]*")? \/>/.test(shell);
     if (!toggles && !bare) throw new Error("could not find the header's LanguageSwitch and ThemeToggle");
     const togglesHidden = !!toggles && lgOnly(toggles[1]);
     if (togglesHidden) {

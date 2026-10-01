@@ -29,7 +29,7 @@ export const authInputCls =
 
 /** A text link with a 44px tap target and no 44px look. */
 export const authLinkCls =
-  "inline-flex min-h-[44px] items-center rounded font-medium text-accent-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70";
+  "inline-flex min-h-[44px] min-w-11 items-center justify-center rounded font-medium text-accent-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70";
 
 /** A link that is the page's main way on, drawn like the primary Button. A
  * link, not a Button inside a Link: that nests a button in an anchor, which is

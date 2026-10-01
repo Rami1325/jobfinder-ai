@@ -53,7 +53,7 @@ export default function FeedbackButton({
         // Named even though its label now always shows: below `sm` it used to be
         // an icon with no name, announced as "button" (PLAN 31.1/9, check 50).
         aria-label={t("feedback.button")}
-        className="fixed bottom-4 end-4 z-40 hidden items-center gap-1.5 rounded-full border border-line bg-panel px-3.5 py-2.5 text-sm font-medium text-ink-muted shadow-panel transition-colors hover:border-accent/50 hover:text-ink lg:flex"
+        className="fixed bottom-4 end-4 z-40 hidden min-h-11 items-center gap-1.5 rounded-full border border-line bg-panel px-3.5 py-2.5 text-sm font-medium text-ink-muted shadow-panel transition-colors hover:border-accent/50 hover:text-ink lg:flex"
       >
         <MessageSquarePlus size={16} />
         <span>{t("feedback.button")}</span>
