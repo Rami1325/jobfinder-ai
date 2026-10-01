@@ -162,6 +162,7 @@ export default function MockInterview({
                 icon={<Send size={14} />}
                 disabled={!draft.trim() || sending || ending || full}
                 onClick={submit}
+                className="tap-44"
               >
                 {t("mock.send")}
               </Button>
@@ -175,12 +176,13 @@ export default function MockInterview({
                 loading={ending}
                 disabled={!answered || sending}
                 onClick={endMockInterview}
+                className="tap-44"
               >
                 {t("mock.end")}
               </Button>
               <button
                 onClick={resetMockInterview}
-                className="inline-flex items-center gap-1.5 text-xs text-ink-faint transition-colors hover:text-ink"
+                className="inline-flex min-h-11 items-center gap-1.5 text-xs text-ink-faint transition-colors hover:text-ink"
               >
                 <RotateCcw size={12} /> {t("mock.restart")}
               </button>
@@ -235,7 +237,7 @@ export default function MockInterview({
               </div>
             </Card>
           )}
-          <Button size="sm" variant="secondary" icon={<RotateCcw size={14} />} onClick={resetMockInterview}>
+          <Button size="sm" variant="secondary" icon={<RotateCcw size={14} />} onClick={resetMockInterview} className="min-h-11">
             {t("mock.restart")}
           </Button>
         </motion.div>

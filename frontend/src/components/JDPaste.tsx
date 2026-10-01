@@ -129,7 +129,7 @@ export default function JDPaste({ value, onChange, folded }: Props) {
           type="button"
           disabled={pickBusy}
           onClick={() => pick(a.id)}
-          className="block w-full border-b border-line/60 px-3 py-2.5 text-start transition-colors last:border-b-0 hover:bg-panel-2/70 focus-visible:bg-panel-2/70 focus-visible:outline-none disabled:opacity-60"
+          className="block min-h-11 w-full border-b border-line/60 px-3 py-2.5 text-start transition-colors last:border-b-0 hover:bg-panel-2/70 focus-visible:bg-panel-2/70 focus-visible:outline-none disabled:opacity-60"
         >
           {/* Two lines, each with its own direction. "Title at Company" on
               one line wraps unpredictably when a Latin title sits beside a
@@ -155,7 +155,7 @@ export default function JDPaste({ value, onChange, folded }: Props) {
           {folded.title || t("jdPaste.thisJob")}
           {folded.company ? ` · ${folded.company}` : ""}
         </p>
-        <Button size="sm" variant="ghost" onClick={() => setUnfolded(true)}>
+        <Button size="sm" variant="ghost" onClick={() => setUnfolded(true)} className="tap-44">
           {t("jdPaste.edit")}
         </Button>
       </div>
@@ -175,10 +175,13 @@ export default function JDPaste({ value, onChange, folded }: Props) {
         placeholder={t("jdPaste.placeholder")}
         className="min-h-[240px] w-full resize-y rounded-xl border border-line bg-bg-soft p-4 text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
       />
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      {/* Both buttons wear `tap-44` at their 34 px (the third tap-target pass):
+          5 px of layer, clear of the box 8 px above, and wrapped rows 10 px
+          apart. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-2.5">
         {isLink && (
           <>
-            <Button size="sm" variant="secondary" loading={loading} icon={<Link2 size={14} />} onClick={fetchFromLink}>
+            <Button size="sm" variant="secondary" loading={loading} icon={<Link2 size={14} />} onClick={fetchFromLink} className="tap-44">
               {t("jdPaste.fetchCta")}
             </Button>
             <span className="text-xs text-ink-muted">{t("jdPaste.detected")}</span>
@@ -190,6 +193,7 @@ export default function JDPaste({ value, onChange, folded }: Props) {
           icon={<Bookmark size={14} />}
           onClick={openPicker}
           aria-expanded={picking}
+          className="tap-44"
         >
           {t("jdPaste.savedCta")}
         </Button>

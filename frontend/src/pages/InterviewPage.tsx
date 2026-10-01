@@ -117,7 +117,7 @@ function QuestionCard({
       )}
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" loading={loadingA} icon={<Lightbulb size={14} />} onClick={getAnswer}>
+        <Button size="sm" variant="secondary" loading={loadingA} icon={<Lightbulb size={14} />} onClick={getAnswer} className="tap-44">
           {answer ? t("regenerateAnswer") : t("modelAnswer")}
         </Button>
       </div>
@@ -160,6 +160,7 @@ function QuestionCard({
             disabled={practice.trim().length < 10}
             icon={<ClipboardCheck size={14} />}
             onClick={getFeedback}
+            className="tap-44"
           >
             {t("practice.cta")}
           </Button>
@@ -283,7 +284,7 @@ export default function InterviewPage() {
         {ctx && (
           <Link
             to={ctx.backTo}
-            className="mb-3 inline-flex min-h-9 items-center gap-1 text-xs text-ink-muted hover:text-ink"
+            className="tap-44 mb-3 inline-flex min-h-9 items-center gap-1 text-xs text-ink-muted hover:text-ink"
           >
             <ArrowLeft size={13} className="rtl:-scale-x-100" /> {tTools("backToJob")}
           </Link>
@@ -294,13 +295,15 @@ export default function InterviewPage() {
         <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("sub")}</p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      {/* The modes and Company brief wear `tap-44` at their 34 px (the third
+          tap-target pass): 5 px of layer, and wrapped rows 10 px apart. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2.5">
         {(["questions", "recruiter", "mock"] as const).map((m) => (
           <button
             key={m}
             onClick={() => setMode(m)}
             className={cn(
-              "rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
+              "tap-44 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
               mode === m
                 ? "border-accent/60 bg-accent/10 text-ink"
                 : "border-line text-ink-muted hover:text-ink",
@@ -321,7 +324,7 @@ export default function InterviewPage() {
               },
             })
           }
-          className="ms-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
+          className="tap-44 ms-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
         >
           <Building2 size={14} /> {t("companyBrief")}
         </button>
