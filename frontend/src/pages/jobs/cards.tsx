@@ -66,7 +66,10 @@ function AlsoOnLinks({ links }: { links?: AlsoOn[] }) {
           href={a.url}
           target="_blank"
           rel="noreferrer"
-          className="text-accent-soft underline-offset-2 hover:underline"
+          // `tap-44`, ViaBoard's 44 px in the badge row without its height (the
+          // third tap-target pass); each board name is about as wide as the
+          // layer, so two of them 4 px apart do not share a tap.
+          className="tap-44 text-accent-soft underline-offset-2 hover:underline"
         >
           {sourceLabel(a.source, i18n.language)}
         </a>
@@ -510,7 +513,7 @@ export function RestrictedRow({ job }: { job: FilteredJob }) {
               href={job.url}
               target="_blank"
               rel="noreferrer"
-              className="mt-2 inline-flex items-center gap-1 text-xs text-accent-soft hover:underline"
+              className="tap-44 mt-2 inline-flex items-center gap-1 text-xs text-accent-soft hover:underline"
             >
               <ExternalLink size={12} /> {t("card.openOn", { source: sourceLabel(job.source, lang) || "LinkedIn" })}
             </a>

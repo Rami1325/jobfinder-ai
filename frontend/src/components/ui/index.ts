@@ -19,3 +19,4 @@ export { default as WhyNote } from "./WhyNote";
 export { default as Spinner } from "./Spinner";
 export { ToastProvider, useToast } from "./Toast";
 export { default as MoreMenu, type MoreItem } from "./MoreMenu";
+export { default as CompactSelect } from "./CompactSelect";

@@ -832,7 +832,11 @@ export function AlertSwitch() {
             />
             {t("alerts.enable")}
           </label>
-          <Link to="/settings#alerts" className="text-xs text-ink-muted hover:text-ink hover:underline">
+          {/* A 44 px box, the height of the checkbox line beside it, so it costs
+              nothing while the two share a line (the third tap-target pass). A
+              layer would not do: where the line wraps (360 px in Hebrew) it sits
+              4 px under the checkbox line, which its layer would cover. */}
+          <Link to="/settings#alerts" className="inline-flex min-h-11 items-center text-xs text-ink-muted hover:text-ink hover:underline">
             {t("alerts.settingsLink")}
           </Link>
         </>

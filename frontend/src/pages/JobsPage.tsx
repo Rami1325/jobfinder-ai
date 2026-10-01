@@ -46,7 +46,7 @@ import { resumeLanguage } from "../lib/lang";
 import { openTarget, postingLink } from "../lib/openJob";
 import { useUses } from "../lib/usesStore";
 import { masterResumeLabel, useSaveMasterResume } from "../hooks/useSaveMasterResume";
-import { Button, Card, CardTitle, Skeleton, useToast } from "../components/ui";
+import { Button, Card, CardTitle, CompactSelect, Skeleton, useToast } from "../components/ui";
 import UsesNote from "../components/UsesNote";
 import type {
   ApplicationOut,
@@ -699,7 +699,7 @@ export default function JobsPage() {
                     href={postingLink(openMissing) ?? undefined}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-medium text-accent hover:underline"
+                    className="tap-44 font-medium text-accent hover:underline"
                   >
                     {t("history.openPosting")}
                   </a>
@@ -717,7 +717,7 @@ export default function JobsPage() {
           {!historyLoading && historyError && (
             <Card className="flex flex-wrap items-center gap-3">
               <span className="text-sm text-danger">{historyError}</span>
-              <Button size="sm" variant="secondary" onClick={loadHistory}>
+              <Button size="sm" variant="secondary" onClick={loadHistory} className="min-h-11">
                 {t("history.retry")}
               </Button>
             </Card>
@@ -750,25 +750,30 @@ export default function JobsPage() {
                     />
                   )}
                 </p>
+                {/* Every control here is a 44 px target that keeps the row's
+                    height (the third tap-target pass): the sort is a small face
+                    under a 44 px native select, Clear all and its two answers
+                    wear `tap-44`. As 44 px boxes the row would have pushed the
+                    first saved job 14 px down. */}
                 <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-ink-muted">
                   <span className="sr-only sm:not-sr-only">{t("sort.label")}</span>
-                  <select
+                  <CompactSelect
                     value={historySort}
-                    onChange={(e) => setHistorySort(e.target.value as "searched" | "fit" | "date")}
-                    className="rounded-lg border border-line bg-bg-soft px-2 py-1.5 text-xs text-ink focus:border-accent/60 focus:outline-none"
-                  >
-                    <option value="searched">{t("sort.searched")}</option>
-                    <option value="fit">{t("sort.fit")}</option>
-                    <option value="date">{t("sort.date")}</option>
-                  </select>
+                    onChange={setHistorySort}
+                    options={[
+                      { value: "searched", label: t("sort.searched") },
+                      { value: "fit", label: t("sort.fit") },
+                      { value: "date", label: t("sort.date") },
+                    ]}
+                  />
                 </label>
                 {confirmClear ? (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-ink-muted">{t("history.deleteAll", { count: history?.length ?? 0 })}</span>
-                    <Button size="sm" variant="danger" loading={clearing} onClick={clearAll}>
+                    <Button size="sm" variant="danger" loading={clearing} onClick={clearAll} className="tap-44">
                       {t("history.confirmClear")}
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setConfirmClear(false)}>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirmClear(false)} className="tap-44">
                       {t("common:actions.cancel")}
                     </Button>
                   </div>
@@ -778,7 +783,7 @@ export default function JobsPage() {
                     variant="ghost"
                     icon={<Trash2 size={14} />}
                     onClick={() => setConfirmClear(true)}
-                    className="shrink-0"
+                    className="tap-44 shrink-0"
                   >
                     <span className="sr-only sm:not-sr-only">{t("history.clearAll")}</span>
                   </Button>
@@ -814,7 +819,12 @@ export default function JobsPage() {
         <p className="mt-1 hidden text-sm text-ink-muted sm:block">
           {t("sub")}
         </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        {/* Replace and "Add skills" are 16 px words that wear `tap-44` (the third
+            tap-target pass): their layer reaches 14 px above and below, over the
+            title's words and the gap under the row, and a wrapped line keeps
+            12 px (`gap-y-3`) so a layer on one line never reaches a word on the
+            next. As 44 px boxes the row would have grown 18 px. */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-3">
           {masters.map((m) => (
             <span
               key={m.language ?? "en"}
@@ -829,14 +839,14 @@ export default function JobsPage() {
           ))}
           <button
             onClick={() => setShowReplace((v) => !v)}
-            className="text-xs font-semibold text-accent-soft hover:underline"
+            className="tap-44 text-xs font-semibold text-accent-soft hover:underline"
           >
             {showReplace ? t("common:actions.cancel") : t("common:actions.replace")}
           </button>
           {masters.length > 0 && (
             <button
               onClick={() => setShowSkills(true)}
-              className="text-xs font-semibold text-accent-soft hover:underline"
+              className="tap-44 text-xs font-semibold text-accent-soft hover:underline"
             >
               {t("skillsEditor.open")}
             </button>
@@ -916,16 +926,22 @@ export default function JobsPage() {
                   into the fields below, which open for the user to check. */}
               <PlainSearch state={plain} onRead={onPlainRead} disabled={prefilling} />
               <SearchModeSwitch mode={searchMode} onChange={setSearchMode} disabled={searching} hint={false} />
-              <div className="flex items-center gap-2">
+              {/* Both wear `tap-44` at their 34 px size (the third tap-target
+                  pass): 5 px of layer above and below, held clear of the 44 px
+                  rows over and under them (the mode switch, the alert switch)
+                  by the row's 2 px padding and the card's 4 px spacing. As
+                  boxes they would have moved the first saved job 10 px. */}
+              <div className="flex items-center gap-2 py-0.5">
                 <Button
                   size="sm"
                   icon={<Search size={14} />}
                   disabled={prefilling || limitInvalid || searchUses.out}
                   onClick={runSearch}
+                  className="tap-44"
                 >
                   {t("search.again")}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => setEditSearch(true)}>
+                <Button size="sm" variant="ghost" onClick={() => setEditSearch(true)} className="tap-44">
                   {t("search.edit")}
                 </Button>
               </div>
@@ -975,7 +991,7 @@ export default function JobsPage() {
                 {t("search.cta")}
               </Button>
               {searching && (
-                <Button size="sm" variant="secondary" onClick={cancelJobSearch}>
+                <Button size="sm" variant="secondary" onClick={cancelJobSearch} className="tap-44">
                   {t("search.cancel")}
                 </Button>
               )}
@@ -1092,7 +1108,7 @@ export default function JobsPage() {
                       <button
                         onClick={() => setSourceErrorsDismissed(true)}
                         title={t("search.dismiss")}
-                        className="shrink-0 rounded p-0.5 transition-opacity hover:opacity-70"
+                        className="tap-44 shrink-0 rounded p-0.5 transition-opacity hover:opacity-70"
                       >
                         <X size={14} />
                       </button>
@@ -1200,7 +1216,7 @@ export default function JobsPage() {
                         <button
                           type="button"
                           onClick={() => setShowRestricted((v) => !v)}
-                          className="font-semibold underline underline-offset-2"
+                          className="tap-44 font-semibold underline underline-offset-2"
                         >
                           {t(showRestricted ? "search.geoHide" : "search.geoShow")}
                         </button>
@@ -1264,7 +1280,7 @@ export default function JobsPage() {
                 placeholder={t("manual.pastePlaceholder")}
                 className="mt-3 min-h-[140px] w-full resize-y rounded-xl border border-line bg-bg-soft p-3 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
               />
-              <Button size="sm" className="mt-2" variant="secondary" icon={<Plus size={14} />} disabled={draft.trim().length < 20 || listings.length >= MAX_MATCH_LISTINGS} onClick={addDraft}>
+              <Button size="sm" className="tap-44 mt-2" variant="secondary" icon={<Plus size={14} />} disabled={draft.trim().length < 20 || listings.length >= MAX_MATCH_LISTINGS} onClick={addDraft}>
                 {t("manual.addListing")}
               </Button>
             </Card>
@@ -1287,6 +1303,7 @@ export default function JobsPage() {
                   icon={<Link2 size={14} />}
                   disabled={listings.length >= MAX_MATCH_LISTINGS}
                   onClick={addUrl}
+                  className="min-h-11"
                 >
                   {t("manual.fetch")}
                 </Button>
@@ -1299,9 +1316,13 @@ export default function JobsPage() {
                   </p>
                   <div className="space-y-1.5">
                     {listings.map((l, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2 rounded-lg border border-line bg-bg-soft px-3 py-1.5 text-xs text-ink-muted">
+                      <div key={i} className="flex min-h-11 items-center justify-between gap-2 rounded-lg border border-line bg-bg-soft ps-3 text-xs text-ink-muted">
                         <span className="truncate">{l.slice(0, 70)}…</span>
-                        <button onClick={() => setListings((p) => p.filter((_, j) => j !== i))} className="shrink-0 hover:text-danger">
+                        <button
+                          onClick={() => setListings((p) => p.filter((_, j) => j !== i))}
+                          aria-label={t("common:actions.delete")}
+                          className="grid h-11 w-11 shrink-0 place-items-center hover:text-danger"
+                        >
                           <X size={13} />
                         </button>
                       </div>

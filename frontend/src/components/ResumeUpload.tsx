@@ -105,7 +105,9 @@ export default function ResumeUpload({ onParsed, savedLabel }: Props) {
       <button
         type="button"
         onClick={() => setLiOpen((v) => !v)}
-        className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-accent-soft hover:underline"
+        // A 44 px box (the third tap-target pass); it was a 16 px line 12 px
+        // under the drop zone, and the box's own space replaces that margin.
+        className="mt-1 inline-flex min-h-11 items-center gap-1.5 text-xs font-semibold text-accent-soft hover:underline"
       >
         <Import size={13} />
         {t("resumeUpload.linkedin.toggle")}
@@ -119,7 +121,7 @@ export default function ResumeUpload({ onParsed, savedLabel }: Props) {
               href="https://www.linkedin.com/in/me"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-0.5 text-accent-soft hover:underline"
+              className="tap-44 inline-flex items-center gap-0.5 text-accent-soft hover:underline"
             >
               {t("resumeUpload.linkedin.step1Link")} <ExternalLink size={11} />
             </a>

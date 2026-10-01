@@ -173,7 +173,7 @@ export function BatchTailorCard({
           {/* The drafts wait in the tracker's To review (PLAN 31.4/5). */}
           <button
             onClick={() => nav("/tracker", { state: { show: "review" } })}
-            className="font-semibold text-accent-soft hover:underline"
+            className="tap-44 font-semibold text-accent-soft hover:underline"
           >
             {t("batch.viewKits")}
           </button>

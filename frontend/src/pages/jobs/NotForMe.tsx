@@ -59,23 +59,27 @@ export function NotForMeNotice({
   const { t } = useTranslation("jobs");
   const { t: tCommon } = useTranslation("common");
   const words = titleWords(notice.title).filter((w) => !notice.word_keys.includes(w.toLocaleLowerCase()));
+  // Every control on the notice is a 44 px BOX (the third tap-target pass):
+  // Undo and the close sit 8 px apart and the chips wrap 6 px apart, so a layer
+  // on any of them would lie over its neighbour. The notice is passing, so the
+  // height it gains costs no list its place.
   const chip =
-    "inline-flex min-h-[32px] items-center rounded-full border border-line px-3 text-xs font-medium text-ink transition-colors hover:border-accent/50 hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70";
+    "inline-flex min-h-11 items-center rounded-full border border-line px-3 text-xs font-medium text-ink transition-colors hover:border-accent/50 hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70";
   return (
-    <div role="status" className="rounded-xl border border-line bg-panel-2/40 px-3 py-2.5 text-sm text-ink-muted">
-      <div className="flex items-start gap-2">
-        <EyeOff size={15} aria-hidden className="mt-0.5 shrink-0" />
-        <p className="min-w-0 flex-1" dir="auto">
+    <div role="status" className="rounded-xl border border-line bg-panel-2/40 py-1 pe-1 ps-3 text-sm text-ink-muted">
+      <div className="flex items-start gap-1">
+        <EyeOff size={15} aria-hidden className="mt-3.5 shrink-0" />
+        <p className="ms-1 min-w-0 flex-1 py-3" dir="auto">
           {t("hide.done", { title: notice.title })}
         </p>
-        <button type="button" onClick={onUndo} className="shrink-0 text-xs font-semibold text-accent-soft hover:underline">
+        <button type="button" onClick={onUndo} className="inline-flex min-h-11 shrink-0 items-center px-2 text-xs font-semibold text-accent-soft hover:underline">
           {t("hide.undo")}
         </button>
         <button
           type="button"
           onClick={onDismiss}
           aria-label={tCommon("actions.close")}
-          className="shrink-0 rounded p-0.5 text-ink-faint hover:text-ink"
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-ink-faint hover:text-ink"
         >
           <X size={14} aria-hidden />
         </button>
@@ -107,7 +111,8 @@ export function HiddenCount({ count, onManage }: { count: number; onManage: () =
     <p className="flex flex-wrap items-center gap-x-2 text-xs text-ink-muted">
       <EyeOff size={13} aria-hidden />
       {t("hide.count", { count })}
-      <button type="button" onClick={onManage} className="font-semibold text-accent-soft hover:underline">
+      {/* `tap-44`: the line is text, and the lists' rows start 16-24 px away. */}
+      <button type="button" onClick={onManage} className="tap-44 font-semibold text-accent-soft hover:underline">
         {t("hide.manage")}
       </button>
     </p>
@@ -131,7 +136,7 @@ export function HiddenManager({
   const h = hidden ?? { urls: [], companies: [], title_words: [] };
   const empty = !h.urls.length && !h.companies.length && !h.title_words.length;
   const row = (value: string, remove: () => void) => (
-    <li key={value} className="flex items-center justify-between gap-2 rounded-lg border border-line px-3 py-1.5">
+    <li key={value} className="flex min-h-11 items-center justify-between gap-2 rounded-lg border border-line ps-3">
       <span className="min-w-0 truncate text-sm text-ink" dir="auto">
         {value}
       </span>
@@ -139,7 +144,7 @@ export function HiddenManager({
         type="button"
         onClick={remove}
         aria-label={t("hide.unhide", { value })}
-        className="shrink-0 rounded p-1 text-ink-muted hover:bg-panel-2 hover:text-ink"
+        className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-ink-muted hover:bg-panel-2 hover:text-ink"
       >
         <X size={14} aria-hidden />
       </button>
@@ -170,7 +175,7 @@ export function HiddenManager({
           {h.urls.length > 0 && (
             <section className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm text-ink">{t("hide.postings", { count: h.urls.length })}</span>
-              <Button size="sm" variant="secondary" onClick={() => onChange({ ...h, urls: [] })}>
+              <Button size="sm" variant="secondary" onClick={() => onChange({ ...h, urls: [] })} className="min-h-11">
                 {t("hide.showPostings")}
               </Button>
             </section>

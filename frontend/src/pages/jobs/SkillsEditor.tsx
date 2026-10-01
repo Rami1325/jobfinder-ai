@@ -92,8 +92,14 @@ export function SkillsEditorModal({
       <p className="text-sm text-ink-muted">{t("skillsEditor.body")}</p>
       <p className="mt-1 text-xs font-medium text-warn">{t("skillsEditor.honesty")}</p>
 
+      {/* The third tap-target pass: each control here is a 44 px target. The
+          language chips (26 px) and a skill's remove button (16 px) wear
+          `tap-44`; the chips sit 12 px apart, since a short one's layer reaches
+          4 px sideways, and the skills wrap 18 px apart, the room two remove
+          buttons' layers need (each reaches 9 px past its chip). A layer lies
+          over its own chip's words, never another control. */}
       {masters.length > 1 && (
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex gap-3">
           {masters.map((m) => {
             const l = m.language ?? "en";
             const active = l === (target.language ?? "en");
@@ -102,7 +108,7 @@ export function SkillsEditorModal({
                 key={l}
                 type="button"
                 onClick={() => setLang(l)}
-                className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                className={`tap-44 rounded-full border px-2.5 py-1 text-xs transition-colors ${
                   active
                     ? "border-accent/60 bg-accent/10 text-ink"
                     : "border-line text-ink-muted hover:text-ink"
@@ -115,7 +121,7 @@ export function SkillsEditorModal({
         </div>
       )}
 
-      <div className="mt-4 flex flex-wrap gap-1.5">
+      <div className="mt-4 flex flex-wrap gap-x-1.5 gap-y-[18px]">
         {draft.map((s) => (
           <span
             key={s}
@@ -131,7 +137,7 @@ export function SkillsEditorModal({
               type="button"
               onClick={() => setDraft((prev) => prev.filter((x) => x !== s))}
               title={t("skillsEditor.remove")}
-              className="rounded p-0.5 text-ink-muted transition-colors hover:text-danger"
+              className="tap-44 rounded p-0.5 text-ink-muted transition-colors hover:text-danger"
             >
               <X size={12} />
             </button>
@@ -156,16 +162,16 @@ export function SkillsEditorModal({
           placeholder={t("skillsEditor.placeholder")}
           className={`${inputCls} min-w-0 flex-1`}
         />
-        <Button variant="secondary" size="sm" disabled={!input.trim()} onClick={addFromInput}>
+        <Button variant="secondary" size="sm" disabled={!input.trim()} onClick={addFromInput} className="min-h-11">
           {t("skillsEditor.add")}
         </Button>
       </div>
 
       <div className="mt-5 flex items-center justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={onClose}>
+        <Button variant="ghost" size="sm" onClick={onClose} className="min-h-11">
           {t("common:actions.cancel")}
         </Button>
-        <Button size="sm" loading={saving} disabled={!dirty} onClick={save}>
+        <Button size="sm" loading={saving} disabled={!dirty} onClick={save} className="min-h-11">
           {t("skillsEditor.save")}
         </Button>
       </div>
