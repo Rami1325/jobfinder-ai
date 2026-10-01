@@ -24,7 +24,7 @@ export default function ToolShell({
       <div>
         <Link
           to={back ?? "/tools"}
-          className="mb-3 inline-flex min-h-9 items-center gap-1 text-xs text-ink-muted hover:text-ink"
+          className="tap-44 mb-3 inline-flex min-h-9 items-center gap-1 text-xs text-ink-muted hover:text-ink"
         >
           <ArrowLeft size={13} className="rtl:-scale-x-100" /> {back ? t("backToJob") : t("back")}
         </Link>

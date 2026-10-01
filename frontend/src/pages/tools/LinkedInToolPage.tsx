@@ -65,7 +65,7 @@ export default function LinkedInToolPage() {
           <Card>
             <div className="flex items-center justify-between">
               <CardTitle>{t("linkedin.headline")}</CardTitle>
-              <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={() => copy(result.headline)}>
+              <Button size="sm" variant="ghost" icon={<Copy size={13} />} className="tap-44" onClick={() => copy(result.headline)}>
                 {t("common:actions.copy")}
               </Button>
             </div>
@@ -75,7 +75,7 @@ export default function LinkedInToolPage() {
           <Card>
             <div className="flex items-center justify-between">
               <CardTitle>{t("linkedin.about")}</CardTitle>
-              <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={() => copy(result.about)}>
+              <Button size="sm" variant="ghost" icon={<Copy size={13} />} className="tap-44" onClick={() => copy(result.about)}>
                 {t("common:actions.copy")}
               </Button>
             </div>
@@ -86,7 +86,7 @@ export default function LinkedInToolPage() {
             <Card>
               <div className="flex items-center justify-between">
                 <CardTitle>{t("linkedin.bullets")}</CardTitle>
-                <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={() => copy(result.experience_bullets.join("\n"))}>
+                <Button size="sm" variant="ghost" icon={<Copy size={13} />} className="tap-44" onClick={() => copy(result.experience_bullets.join("\n"))}>
                   {t("linkedin.copyAll")}
                 </Button>
               </div>

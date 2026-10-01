@@ -119,6 +119,7 @@ export default function FollowUpToolPage() {
               size="sm"
               variant="ghost"
               icon={<Copy size={13} />}
+              className="tap-44"
               onClick={() => {
                 navigator.clipboard.writeText(`${t("followup.subject", { subject: result.subject })}\n\n${result.body}`);
                 toast("success", t("followup.copied"));

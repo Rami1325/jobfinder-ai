@@ -40,7 +40,7 @@ export default function ToolsPage() {
           <Link
             key={tool.to}
             to={tool.to}
-            className="block rounded-xl2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+            className="block min-h-11 rounded-xl2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
           >
             {/* Phones get a compact tappable row (icon · title and one line
                 of what the tool does · arrow; PLAN 31.7: a name alone did not

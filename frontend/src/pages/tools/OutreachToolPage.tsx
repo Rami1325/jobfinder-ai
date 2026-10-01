@@ -145,7 +145,7 @@ export default function OutreachToolPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                icon={<Copy size={13} />}
+                icon={<Copy size={13} />} className="tap-44"
                 onClick={() => copy(`${result.inmail_subject}\n\n${result.inmail_body}`)}
               >
                 {t("common:actions.copy")}
@@ -195,7 +195,7 @@ function TextCard({
     <Card>
       <div className="flex items-center justify-between gap-2">
         <CardTitle className="flex min-w-0 items-center gap-2">{icon} {title}</CardTitle>
-        <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={onCopy}>
+        <Button size="sm" variant="ghost" icon={<Copy size={13} />} className="tap-44" onClick={onCopy}>
           {copyLabel}
         </Button>
       </div>

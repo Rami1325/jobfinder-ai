@@ -222,7 +222,7 @@ export default function CompanyBriefToolPage() {
                           href={p.linkedin_search}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
+                          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
                         >
                           <UserSearch size={12} /> {t("brief.searchOnLinkedin")}
                           <ExternalLink size={11} className="rtl:-scale-x-100" />
@@ -231,7 +231,7 @@ export default function CompanyBriefToolPage() {
                       {p.email && (
                         <a
                           href={`mailto:${p.email}`}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-mint/40 bg-mint/10 px-2.5 py-1 text-xs font-semibold text-mint"
+                          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-mint/40 bg-mint/10 px-2.5 py-1 text-xs font-semibold text-mint"
                           title={t("brief.emailOnPage")}
                         >
                           <Mail size={12} /> {p.email}
@@ -249,7 +249,7 @@ export default function CompanyBriefToolPage() {
                     href={linkedinSearch(`${result.company || company} recruiter`)}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
                   >
                     <UserSearch size={12} />{" "}
                     {t("brief.findRecruiters", { company: result.company || company })}
@@ -271,7 +271,7 @@ export default function CompanyBriefToolPage() {
                       href={tg.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
+                      className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-ink-muted transition-colors hover:border-accent/50 hover:text-accent-soft"
                     >
                       <UserSearch size={12} /> {tg.title}
                       <ExternalLink size={11} className="rtl:-scale-x-100" />
@@ -282,7 +282,7 @@ export default function CompanyBriefToolPage() {
                       href={result.company_people_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent-soft transition-colors hover:border-accent"
+                      className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent-soft transition-colors hover:border-accent"
                     >
                       <Users size={12} /> {t("brief.allEmployees")}
                       <ExternalLink size={11} className="rtl:-scale-x-100" />
@@ -298,7 +298,7 @@ export default function CompanyBriefToolPage() {
                   <a
                     key={e}
                     href={`mailto:${e}`}
-                    className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-0.5 font-mono text-xs text-ink transition-colors hover:border-accent/50"
+                    className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-line px-2 py-0.5 font-mono text-xs text-ink transition-colors hover:border-accent/50"
                   >
                     <Mail size={11} /> {e}
                   </a>
@@ -315,6 +315,7 @@ export default function CompanyBriefToolPage() {
                   size="sm"
                   variant="ghost"
                   icon={<Copy size={13} />}
+                  className="tap-44"
                   onClick={() =>
                     copy(
                       result.outreach_subject

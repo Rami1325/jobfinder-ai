@@ -58,7 +58,7 @@ export default function XrayToolPage() {
               onClick={() => setTemplate(id)}
               aria-pressed={template === id}
               className={cn(
-                "w-[104px] shrink-0 snap-start rounded-xl border p-2 text-start transition sm:w-auto",
+                "min-h-11 w-[104px] shrink-0 snap-start rounded-xl border p-2 text-start transition sm:w-auto",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
                 template === id
                   ? "border-accent bg-accent/10"
@@ -82,7 +82,9 @@ export default function XrayToolPage() {
                 onClick={() => setFmt(f)}
                 aria-pressed={fmt === f}
                 className={cn(
-                  "px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition",
+                  // 44 px boxes (the third tap-target pass; 28): the row is
+                  // already 44 px for "Read it back", and the group clips layers.
+                  "min-h-11 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition",
                   fmt === f ? "bg-accent text-white" : "bg-panel text-ink-muted hover:text-ink",
                 )}
               >

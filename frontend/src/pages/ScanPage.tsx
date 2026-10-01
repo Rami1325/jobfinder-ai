@@ -151,7 +151,7 @@ export default function ScanPage() {
                 setFile(null);
                 if (inputRef.current) inputRef.current.value = "";
               }}
-              className="mt-2 text-xs font-semibold text-accent-soft hover:underline"
+              className="mt-1 inline-flex min-h-11 items-center text-xs font-semibold text-accent-soft hover:underline"
             >
               {t("saved.back")}
             </button>

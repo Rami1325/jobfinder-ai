@@ -113,6 +113,7 @@ export default function ScreeningToolPage() {
               size="sm"
               variant="ghost"
               icon={<Copy size={13} />}
+              className="tap-44"
               onClick={() => {
                 navigator.clipboard.writeText(result.answer);
                 toast("success", t("screening.copied"));
