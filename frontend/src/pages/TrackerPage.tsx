@@ -24,7 +24,7 @@ import TrackerAnalytics from "../components/TrackerAnalytics";
 import InboxBar from "../components/inbox/InboxBar";
 import RatingSelect from "../components/RatingSelect";
 import { CardDate, CardEmailBadge } from "../components/inbox/shared";
-import { Badge, Button, Card, CardTitle, CountUp, Skeleton, useToast } from "../components/ui";
+import { Badge, Button, Card, CardTitle, CompactSelect, CountUp, Skeleton, useToast } from "../components/ui";
 import { cn } from "../lib/cn";
 import { kitsToReview } from "../lib/kitsReview";
 import { scheduleUndoable, UNDO_MS } from "../lib/undoableDelete";
@@ -348,7 +348,7 @@ function ReviewList({ kits, grid }: { kits: KitOut[]; grid?: boolean }) {
       ) : (
         <>
           {queued > 0 && (
-            <Button size="sm" variant="secondary" icon={<Wand2 size={14} />} onClick={() => void resumeKitQueue()}>
+            <Button size="sm" variant="secondary" icon={<Wand2 size={14} />} onClick={() => void resumeKitQueue()} className="min-h-11">
               {t("review.continue", { count: queued })}
             </Button>
           )}
@@ -571,7 +571,10 @@ export default function TrackerPage() {
           <h1 className="text-2xl font-bold text-ink">{t("title")}</h1>
           <p className="mt-1 hidden text-sm text-ink-muted sm:block">{t("sub", { count: apps.length })}</p>
         </div>
-        {/* Board / Analytics switch (PLAN 6: search analytics dashboard) */}
+        {/* Board / Analytics switch (PLAN 6: search analytics dashboard). Each
+            half wears `tap-44` at its 28 px size (the third tap-target pass): 8 px
+            of layer above and below, inside the page's 24 px spacing; both are
+            wider than 44 px, so the two never share a tap side by side. */}
         <div className="inline-flex rounded-lg border border-line bg-panel-2 p-0.5" role="tablist">
           {(
             [
@@ -586,7 +589,7 @@ export default function TrackerPage() {
               aria-selected={tab === v.key}
               onClick={() => setTab(v.key)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+                "tap-44 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
                 tab === v.key ? "bg-accent text-white" : "text-ink-muted hover:text-ink",
               )}
             >
@@ -609,6 +612,8 @@ export default function TrackerPage() {
           <div className="min-w-0 flex-1">
             <CardTitle>{t("nudges.title")}</CardTitle>
             <p className="mt-1 text-xs text-ink-muted">{t("nudges.body", { count: nudges.length })}</p>
+            {/* 44 px rows (the third tap-target pass; they were 30): stacked
+                6 px apart, a layer on each would have lain over the next. */}
             <div className="mt-2 space-y-1.5">
               {nudges.slice(0, 3).map((n) => (
                 <button
@@ -624,7 +629,7 @@ export default function TrackerPage() {
                       },
                     })
                   }
-                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-start text-xs transition-colors hover:border-accent/50"
+                  className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-start text-xs transition-colors hover:border-accent/50"
                 >
                   <span className="min-w-0 flex-1 truncate text-ink" dir="auto">
                     {n.job_title || n.company || "—"}
@@ -683,9 +688,9 @@ export default function TrackerPage() {
               i18nKey="empty.body"
               components={[
                 <span key="0" />,
-                <Link key="1" to="/jobs" className="font-medium text-accent hover:underline" />,
+                <Link key="1" to="/jobs" className="tap-44 font-medium text-accent hover:underline" />,
                 <span key="2" />,
-                <Link key="3" to="/app" className="font-medium text-accent hover:underline" />,
+                <Link key="3" to="/app" className="tap-44 font-medium text-accent hover:underline" />,
               ]}
             />
           </p>
@@ -779,6 +784,9 @@ export default function TrackerPage() {
           // status tabs with their counts over one vertical list, and a sort
           // that includes the date applied.
           <div className="space-y-3">
+            {/* The tabs are 44 px BOXES (the third tap-target pass; they were
+                36): each clips its own flash (`overflow-hidden`) and the row is
+                a scroller, and either would cut a layer off. */}
             <div role="tablist" aria-label={t("statusLabel")} className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1">
               {/* To review, first while a draft waits (PLAN 31.4/5). */}
               {toReview.length > 0 && (
@@ -788,7 +796,7 @@ export default function TrackerPage() {
                   aria-selected={shownStatus === "review"}
                   onClick={() => setListStatus("review")}
                   className={cn(
-                    "relative inline-flex min-h-9 shrink-0 items-center gap-1.5 overflow-hidden rounded-full border px-3 text-xs font-semibold transition-colors",
+                    "relative inline-flex min-h-11 shrink-0 items-center gap-1.5 overflow-hidden rounded-full border px-3 text-xs font-semibold transition-colors",
                     shownStatus === "review"
                       ? "border-accent bg-accent text-white"
                       : "border-accent/50 bg-accent/10 text-accent-soft hover:text-ink",
@@ -806,7 +814,7 @@ export default function TrackerPage() {
                   aria-selected={shownStatus === col.key}
                   onClick={() => setListStatus(col.key)}
                   className={cn(
-                    "relative inline-flex min-h-9 shrink-0 items-center gap-1.5 overflow-hidden rounded-full border px-3 text-xs font-semibold transition-colors",
+                    "relative inline-flex min-h-11 shrink-0 items-center gap-1.5 overflow-hidden rounded-full border px-3 text-xs font-semibold transition-colors",
                     shownStatus === col.key
                       ? "border-accent bg-accent text-white"
                       : "border-line bg-panel text-ink-muted hover:text-ink",
@@ -833,17 +841,20 @@ export default function TrackerPage() {
               <ReviewList kits={toReview} />
             ) : (
             <>
+            {/* A 44 px select over a 26 px face (CompactSelect, the third
+                tap-target pass): it overhangs the face by 9 px into the list's
+                12 px spacing, so the first card does not move. */}
             <label className="flex items-center justify-end gap-2 text-xs font-semibold text-ink-muted">
               {t("listSort.label")}
-              <select
+              <CompactSelect
                 value={listSort}
-                onChange={(e) => setListSort(e.target.value as ListSort)}
-                className="cursor-pointer rounded-lg border border-line bg-bg-soft px-2 py-1 text-xs text-ink focus:border-accent/60 focus:outline-none"
-              >
-                <option value="newest">{t("listSort.newest")}</option>
-                <option value="applied">{t("listSort.applied")}</option>
-                <option value="match">{t("listSort.match")}</option>
-              </select>
+                onChange={setListSort}
+                options={[
+                  { value: "newest", label: t("listSort.newest") },
+                  { value: "applied", label: t("listSort.applied") },
+                  { value: "match", label: t("listSort.match") },
+                ]}
+              />
             </label>
             {listed.length === 0 ? (
               <p className="rounded-xl border border-dashed border-line/70 px-3 py-6 text-center text-xs text-ink-faint">
