@@ -15,8 +15,11 @@ import type {
 // House ease curve — shared by the scan ticker flips and JobsPage's tab/card motion.
 export const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
+// A 44 px box (the owner's tap-target floor; it was 38), and 16 px text below
+// `sm`, because iOS zooms the page into a focused field whose text is smaller
+// (PlainSearch's box, the letter's and the proposal's fields already did both).
 export const inputCls =
-  "rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50";
+  "min-h-11 rounded-lg border border-line bg-bg-soft px-3 py-2 text-base text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none disabled:opacity-50 sm:text-sm";
 
 // The work modes a search can pick, in the ONE order the backend writes a stored
 // value in (`app.models.WORK_MODES`): "remote,hybrid", never "hybrid,remote".

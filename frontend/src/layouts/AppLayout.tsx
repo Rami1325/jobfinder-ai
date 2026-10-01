@@ -168,7 +168,8 @@ function NavItem({
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          // A 44 px row (the third tap-target pass; 36 before, stacked 2 px apart).
+          "relative flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
           lit(isActive)
             ? "font-semibold text-ink"
             : "text-ink-muted hover:bg-panel-2/60 hover:text-ink",
@@ -311,7 +312,8 @@ function MenuPanel({
               onClick={onNavigate}
               className={({ isActive }) =>
                 cn(
-                  "relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
+                  // 44 px, as every nav row is (the third tap-target pass; 31.5).
+                  "relative flex min-h-11 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
                   isActive
                     ? "font-semibold text-ink"
                     : "text-ink-muted hover:bg-panel-2/60 hover:text-ink",
@@ -471,7 +473,7 @@ function AccountMenu({
   const uses = usesFor("", undefined, usesState);
 
   const item =
-    "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-start text-sm font-medium transition-colors";
+    "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-start text-sm font-medium transition-colors";
 
   return (
     <div ref={ref} className="relative">
@@ -486,7 +488,9 @@ function AccountMenu({
         // this reads false.
         aria-controls={open ? "app-account-panel" : undefined}
         aria-label={t("nav.account")}
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line bg-panel-2/60 text-xs font-bold text-ink-muted transition-colors hover:bg-panel-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+        // `tap-44`: the 32 px avatar keeps its face, and its layer reaches 6 px
+        // past it, inside the header and the 8 px gap to the uses chip.
+        className="tap-44 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line bg-panel-2/60 text-xs font-bold text-ink-muted transition-colors hover:bg-panel-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
       >
         {initial ?? <User size={15} />}
       </button>
@@ -945,7 +949,9 @@ export default function AppLayout() {
             site's top bar. The px is the SAME 4/8 the document toolbar uses on
             /app, so the two bars' contents line up on both edges. */}
         <div className="flex h-full items-center gap-2 px-4 lg:px-8">
-          <Link to="/app" aria-label={t("appName")} onClick={closeAll} className="shrink-0">
+          {/* A 44 px box (the third tap-target pass; the mark alone was 27 px
+              tall): free here, centred in the 56 px header. */}
+          <Link to="/app" aria-label={t("appName")} onClick={closeAll} className="flex min-h-11 shrink-0 items-center">
             <Logo size={26} />
           </Link>
 
@@ -960,7 +966,7 @@ export default function AppLayout() {
               // Only while the panel exists — see the account trigger's note.
               aria-controls={menuOpen ? "app-menu-panel" : undefined}
               className={cn(
-                "flex items-center gap-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm font-semibold transition-colors",
+                "flex min-h-11 items-center gap-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm font-semibold transition-colors",
                 menuOpen ? "bg-panel-2 text-ink" : "text-ink-muted hover:bg-panel-2/60 hover:text-ink",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
               )}

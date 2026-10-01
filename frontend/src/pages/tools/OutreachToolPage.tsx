@@ -20,7 +20,7 @@ const ROLES = ["recruiter", "hiring manager", "connection"] as const;
 type NavState = { jdText?: string; company?: string; jobTitle?: string } | null;
 
 const input =
-  "w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none";
+  "min-h-11 w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-base text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none sm:text-sm";
 
 export default function OutreachToolPage() {
   const { t } = useTranslation("tools");

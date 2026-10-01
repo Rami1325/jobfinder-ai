@@ -258,7 +258,7 @@ export default function BlockEditSheet({
                   ) : (
                     <input
                       type="text"
-                      className="w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-ink outline-none transition focus:border-accent/60"
+                      className="min-h-11 w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-ink outline-none transition focus:border-accent/60"
                       dir={paperDir}
                       autoFocus={i === 0}
                       value={values[field.key] ?? ""}

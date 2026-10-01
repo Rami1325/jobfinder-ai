@@ -23,9 +23,13 @@ const variants: Record<Variant, string> = {
   danger: "bg-danger/15 text-danger border border-danger/40 hover:bg-danger/25",
 };
 
+// `md` is a 44 px box (the owner's tap-target floor; its padding and a 20 px
+// line made 42). `sm` stays 34 px: where one sits on a phone, its page makes it
+// a 44 px target, a box or `tap-44`, whichever its neighbours leave room for
+// (docs/handbook/document-editor.md, *The third tap-target pass*).
 const sizes: Record<Size, string> = {
   sm: "px-3 py-1.5 text-[13px] rounded-lg gap-1.5",
-  md: "px-4 py-2.5 text-sm rounded-lg gap-2",
+  md: "min-h-11 px-4 py-2.5 text-sm rounded-lg gap-2",
   lg: "px-6 py-3 text-[15px] rounded-xl gap-2",
 };
 

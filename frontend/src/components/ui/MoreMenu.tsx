@@ -16,8 +16,9 @@ export interface MoreItem {
   disabled?: boolean;
 }
 
-/** An entry is ~40 px; the list's own padding and border add ~14. */
-const ITEM_PX = 40;
+/** An entry is a 44 px row (the third tap-target pass; it was 36, stacked with
+ * no gap, so a layer was never an option); the list's padding and border add ~14. */
+const ITEM_PX = 44;
 const LIST_PAD_PX = 14;
 /** What the list must clear at the bottom of a phone screen: the tab bar. */
 const BOTTOM_CLEAR_PX = 64;
@@ -83,7 +84,7 @@ export default function MoreMenu({ items, label, className }: { items: MoreItem[
 
   if (items.length === 0) return null;
   const row =
-    "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-start text-sm font-medium text-ink-muted transition-colors hover:bg-panel-2/60 hover:text-ink";
+    "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-start text-sm font-medium text-ink-muted transition-colors hover:bg-panel-2/60 hover:text-ink";
   return (
     <div ref={ref} className={cn("relative shrink-0", className)}>
       <button

@@ -38,7 +38,7 @@ export default function GoogleNotice({ email }: { email: string }) {
         <Link
           to={withNext("/forgot", "/settings")}
           state={{ email }}
-          className="inline-flex min-h-[32px] items-center font-medium text-accent-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+          className="inline-flex min-h-11 items-center font-medium text-accent-soft hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
         >
           {t("google.setPassword")}
         </Link>
@@ -48,7 +48,7 @@ export default function GoogleNotice({ email }: { email: string }) {
         onClick={() => setOpen(false)}
         aria-label={tCommon("actions.close")}
         title={tCommon("actions.close")}
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+        className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
       >
         <X size={16} aria-hidden />
       </button>

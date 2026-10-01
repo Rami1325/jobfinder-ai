@@ -26,7 +26,7 @@ import type { CompanyBriefResult } from "../../types";
 type NavState = { jdText?: string; company?: string; jobTitle?: string; url?: string } | null;
 
 const input =
-  "w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none";
+  "min-h-11 w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-base text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none sm:text-sm";
 
 /** Deterministic LinkedIn people-search deep link (mirrors the backend helper). */
 function linkedinSearch(query: string) {
