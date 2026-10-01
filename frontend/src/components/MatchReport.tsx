@@ -106,7 +106,10 @@ export default function MatchReport({ gaps, jdText, bare = false }: Props) {
               <SectionLabel className="mb-2">
                 {t(groupMeta[status].labelKey, { count: group.length })}
               </SectionLabel>
-              <div className="flex flex-wrap gap-2">
+              {/* Each chip wears `tap-44` at its 26 px (the third tap-target
+                  pass): 9 px of layer above and below, so wrapped rows keep the
+                  18 px two layers need. */}
+              <div className="flex flex-wrap gap-x-2 gap-y-[18px]">
                 {group.map((r) => {
                   const isSelected = selected === r.keyword;
                   return (
@@ -117,7 +120,7 @@ export default function MatchReport({ gaps, jdText, bare = false }: Props) {
                       title={r.suggestion || undefined}
                       onClick={() => setSelected(isSelected ? null : r.keyword)}
                       className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition",
+                        "tap-44 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition",
                         chipTone[r.status],
                         isSelected ? "ring-2 ring-accent/60" : "hover:brightness-110",
                       )}
@@ -152,7 +155,7 @@ export default function MatchReport({ gaps, jdText, bare = false }: Props) {
                 <button
                   type="button"
                   onClick={() => setSelected(null)}
-                  className="ms-auto text-xs text-accent-soft hover:underline"
+                  className="tap-44 ms-auto text-xs text-accent-soft hover:underline"
                 >
                   {t("report.close")}
                 </button>

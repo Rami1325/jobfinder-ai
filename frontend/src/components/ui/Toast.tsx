@@ -95,7 +95,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                     t.action?.onClick();
                     dismiss(t.id);
                   }}
-                  className="ms-2 min-h-8 shrink-0 rounded-md px-2 text-sm font-semibold text-accent transition-colors hover:bg-accent/10"
+                  // `tap-44` (the third tap-target pass): its 6 px of layer stay
+                  // inside the toast's own 12 px padding, so stacked toasts never share it.
+                  className="tap-44 ms-2 min-h-8 shrink-0 rounded-md px-2 text-sm font-semibold text-accent transition-colors hover:bg-accent/10"
                 >
                   {t.action.label}
                 </button>

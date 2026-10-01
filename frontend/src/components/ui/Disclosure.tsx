@@ -65,7 +65,8 @@ export default function Disclosure({
         className={cn(
           "flex w-full items-center justify-between gap-3 text-start transition",
           "hover:bg-panel-2/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/70",
-          density === "tight" ? "px-3 py-2.5" : "px-5 py-4",
+          // 44 px at least (the third tap-target pass): a tight one is ~41.
+          density === "tight" ? "min-h-11 px-3 py-2.5" : "px-5 py-4",
         )}
       >
         <span className="min-w-0 flex-1">{summary}</span>

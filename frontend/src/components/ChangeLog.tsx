@@ -147,7 +147,12 @@ function DiffText({
   );
 }
 
-/** Accept / reject, as one segmented control. */
+/** Accept / reject, as one segmented control. Each half is a 44 px target at
+ * its 24 px face (the third tap-target pass): it wears `tap-44`, whose 10 px of
+ * layer above and below stay inside the edit's card (its `py-2.5`), so a row
+ * keeps its height. The halves round their own outer corners; the control used
+ * to clip them with `overflow-hidden`, which would cut the layers off. Each
+ * half is wider than 44 px, so the two never share a tap. */
 function Decide({
   isRejected,
   onDecide,
@@ -160,13 +165,13 @@ function Decide({
   rejectLabel: string;
 }) {
   return (
-    <span className="ms-auto inline-flex shrink-0 overflow-hidden rounded-lg border border-line">
+    <span className="ms-auto inline-flex shrink-0 rounded-lg border border-line">
       <button
         type="button"
         aria-pressed={!isRejected}
         onClick={() => onDecide(false)}
         className={cn(
-          "inline-flex items-center gap-1 px-2 py-1 text-xs font-medium transition",
+          "tap-44 inline-flex items-center gap-1 rounded-s-[7px] px-2 py-1 text-xs font-medium transition",
           !isRejected ? "bg-mint/20 text-mint" : "text-ink-muted hover:bg-panel-2 hover:text-ink",
         )}
       >
@@ -177,7 +182,7 @@ function Decide({
         aria-pressed={isRejected}
         onClick={() => onDecide(true)}
         className={cn(
-          "inline-flex items-center gap-1 border-s border-line px-2 py-1 text-xs font-medium transition",
+          "tap-44 inline-flex items-center gap-1 rounded-e-[7px] border-s border-line px-2 py-1 text-xs font-medium transition",
           isRejected ? "bg-danger/15 text-danger" : "text-ink-muted hover:bg-panel-2 hover:text-ink",
         )}
       >
@@ -271,7 +276,9 @@ function EditRow({
               onClick={onShowInDoc}
               aria-label={t("review.showInDoc")}
               title={t("review.showInDoc")}
-              className="shrink-0 text-ink-faint transition hover:text-accent-soft"
+              // 44 px wide and Decide's 24 px tall, wearing `tap-44` for the
+              // height: a 13 px icon's layer would have reached Decide, 8 px away.
+              className="tap-44 grid h-6 w-11 shrink-0 place-items-center text-ink-faint transition hover:text-accent-soft"
             >
               <Crosshair size={13} />
             </button>
@@ -321,7 +328,7 @@ function EditRow({
             <button
               type="button"
               onClick={onRestoreMine}
-              className="rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+              className="min-h-11 rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
             >
               {t("review.yoursRestore")}
             </button>
@@ -336,14 +343,14 @@ function EditRow({
                 <button
                   type="button"
                   onClick={onUseAi}
-                  className="rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+                  className="min-h-11 rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
                 >
                   {t("review.useAi")}
                 </button>
                 <button
                   type="button"
                   onClick={onUseOriginal}
-                  className="rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
+                  className="min-h-11 rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-panel-2 hover:text-ink"
                 >
                   {edit.kind === "added" ? t("review.dontAdd") : t("review.useOriginal")}
                 </button>
@@ -560,12 +567,15 @@ export default function ChangeLog({
       >
         <div className="space-y-2 px-3 pb-3">
           {g.edits.length > 1 && (
-            <div className="flex gap-3 text-xs">
+            // Both wear `tap-44` (14 px of layer each way): the row's 14 px of
+            // top padding keeps the layers off the group's header button, and
+            // under them are 8 px of spacing and the first card's padding.
+            <div className="flex gap-3 pt-3.5 text-xs">
               <button
                 type="button"
                 onClick={() => setManyRejected(groupIds, false)}
                 disabled={rejectedHere === 0}
-                className="text-mint hover:underline disabled:cursor-default disabled:opacity-40"
+                className="tap-44 text-mint hover:underline disabled:cursor-default disabled:opacity-40"
               >
                 {t("groups.acceptGroup")}
               </button>
@@ -573,7 +583,7 @@ export default function ChangeLog({
                 type="button"
                 onClick={() => setManyRejected(groupIds, true)}
                 disabled={rejectedHere === groupIds.length}
-                className="text-danger hover:underline disabled:cursor-default disabled:opacity-40"
+                className="tap-44 text-danger hover:underline disabled:cursor-default disabled:opacity-40"
               >
                 {t("groups.rejectGroup")}
               </button>
@@ -749,7 +759,7 @@ export default function ChangeLog({
                 type="button"
                 onClick={() => onSetRejected([])}
                 disabled={acceptedCount === edits.length}
-                className="text-mint hover:underline disabled:cursor-default disabled:opacity-40"
+                className="tap-44 text-mint hover:underline disabled:cursor-default disabled:opacity-40"
               >
                 {t("review.acceptAll")}
               </button>
@@ -757,7 +767,7 @@ export default function ChangeLog({
                 type="button"
                 onClick={() => onSetRejected(edits.map((e) => e.id))}
                 disabled={acceptedCount === 0}
-                className="text-danger hover:underline disabled:cursor-default disabled:opacity-40"
+                className="tap-44 text-danger hover:underline disabled:cursor-default disabled:opacity-40"
               >
                 {t("review.rejectAll")}
               </button>
@@ -797,7 +807,7 @@ export default function ChangeLog({
 
       {notes.length > 0 && (
         <details className="mt-4">
-          <summary className="cursor-pointer text-xs font-medium text-ink-muted hover:text-ink">
+          <summary className="cursor-pointer py-3.5 text-xs font-medium text-ink-muted hover:text-ink">
             {drawer ? t("review.otherNotes") : t("review.aiNotes")}
           </summary>
           <div className="mt-2 space-y-2">
@@ -971,7 +981,7 @@ function CurationCard({
           <button
             type="button"
             onClick={() => onRestoreAll(ids)}
-            className="text-xs font-medium text-accent-soft hover:underline"
+            className="inline-flex min-h-11 items-center text-xs font-medium text-accent-soft hover:underline"
           >
             {t("curation.restoreAll")}
           </button>
@@ -1021,7 +1031,7 @@ function CurationCard({
                       aria-pressed={isRestored}
                       onClick={() => onRestore(e.id, !isRestored)}
                       className={cn(
-                        "shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-medium transition",
+                        "min-h-11 shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-medium transition",
                         isRestored
                           ? "border-mint/40 bg-mint/15 text-mint"
                           : "border-line text-ink-muted hover:bg-panel-2 hover:text-ink",

@@ -190,7 +190,7 @@ export default function KitReviewPage() {
     <Link
       to="/tracker"
       state={{ show: "review" }}
-      className="inline-flex items-center gap-1.5 text-sm font-semibold text-accent-soft hover:underline"
+      className="tap-44 inline-flex items-center gap-1.5 text-sm font-semibold text-accent-soft hover:underline"
     >
       <ArrowLeft size={15} className="rtl:-scale-x-100" /> {t("kitReview.back")}
     </Link>
@@ -280,7 +280,7 @@ export default function KitReviewPage() {
                 href={kit.url}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-accent-soft hover:underline"
+                className="tap-44 inline-flex items-center gap-1 text-accent-soft hover:underline"
               >
                 <ExternalLink size={12} />{" "}
                 {t("card.openOn", { source: sourceLabel(kit.source, i18n.language) || "LinkedIn" })}
@@ -309,7 +309,7 @@ export default function KitReviewPage() {
             <Button
               variant="secondary"
               size="sm"
-              className="flex-1"
+              className="min-h-11 flex-1"
               icon={<Download size={13} />}
               loading={downloading === "docx"}
               disabled={!effectiveResume}
@@ -320,7 +320,7 @@ export default function KitReviewPage() {
             <Button
               variant="secondary"
               size="sm"
-              className="flex-1"
+              className="min-h-11 flex-1"
               icon={<Download size={13} />}
               loading={downloading === "pdf"}
               disabled={!effectiveResume}
@@ -343,7 +343,7 @@ export default function KitReviewPage() {
       {kit.status === "approved" && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-mint/40 bg-mint/10 px-3 py-2 text-sm text-mint">
           <span>{t("kitReview.approvedBanner")}</span>
-          <Link to={jobHref} className="font-semibold underline">
+          <Link to={jobHref} className="tap-44 font-semibold underline">
             {t("kitReview.openJob")}
           </Link>
         </div>
@@ -352,11 +352,11 @@ export default function KitReviewPage() {
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-mint/40 bg-mint/10 px-3 py-2 text-sm text-mint">
           <span>{t("kitReview.submittedBanner")}</span>
           {kit.submit_note && (
-            <a href={kit.submit_note} target="_blank" rel="noreferrer" className="font-semibold underline">
+            <a href={kit.submit_note} target="_blank" rel="noreferrer" className="tap-44 font-semibold underline">
               {t("kits.questionnaireLink")}
             </a>
           )}
-          <Link to={jobHref} className="font-semibold underline">
+          <Link to={jobHref} className="tap-44 font-semibold underline">
             {t("kitReview.openJob")}
           </Link>
         </div>
@@ -393,10 +393,10 @@ export default function KitReviewPage() {
             className="mt-3 min-h-[70px] w-full resize-y rounded-xl border border-line bg-bg-soft p-3 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
           />
           <div className="mt-3 flex items-center gap-2">
-            <Button variant="danger" size="sm" loading={rejecting} onClick={onReject}>
+            <Button variant="danger" size="sm" loading={rejecting} onClick={onReject} className="min-h-11">
               {t("kitReview.confirmReject")}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setRejectOpen(false)}>
+            <Button variant="ghost" size="sm" onClick={() => setRejectOpen(false)} className="min-h-11">
               {t("common:actions.cancel")}
             </Button>
           </div>
@@ -448,7 +448,7 @@ export default function KitReviewPage() {
           variant="ghost"
           size="sm"
           icon={<Trash2 size={15} />}
-          className="text-ink-muted hover:text-danger"
+          className="min-h-11 text-ink-muted hover:text-danger"
           disabled={approving || rejecting}
           onClick={onDelete}
         >

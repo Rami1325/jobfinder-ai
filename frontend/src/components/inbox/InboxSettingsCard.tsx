@@ -250,7 +250,7 @@ export default function InboxSettingsCard() {
             href={GOOGLE_PERMISSIONS_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-medium underline"
+            className="inline-flex min-h-11 items-center font-medium underline"
           >
             {t("inbox.revokeLink")}
           </a>
@@ -379,7 +379,7 @@ export default function InboxSettingsCard() {
             </div>
           )}
 
-          <label className="mt-4 flex cursor-pointer items-start gap-3 border-t border-line pt-3">
+          <label className="mt-4 flex min-h-11 cursor-pointer items-start gap-3 border-t border-line pt-3">
             <input
               type="checkbox"
               checked={status.auto_sync}

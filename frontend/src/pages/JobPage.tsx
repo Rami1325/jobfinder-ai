@@ -126,11 +126,11 @@ export default function JobPage() {
         <p className="text-sm text-ink">{state === "missing" ? t("job.notFound") : t("job.loadError")}</p>
         <div className="mt-4 flex justify-center gap-2">
           {state === "failed" && (
-            <Button size="sm" onClick={() => void load()}>
+            <Button size="sm" onClick={() => void load()} className="min-h-11">
               {t("job.retry")}
             </Button>
           )}
-          <Link to="/tracker" className="inline-flex min-h-9 items-center rounded-lg px-3 text-sm font-medium text-accent hover:underline">
+          <Link to="/tracker" className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-medium text-accent hover:underline">
             {t("job.back")}
           </Link>
         </div>
@@ -143,9 +143,11 @@ export default function JobPage() {
           fetches it, and never has two copies of the job list on the page. */}
       {wide && <JobList currentId={id} />}
       <div className="min-w-0">
+        {/* `tap-44` at its 36 px (the third tap-target pass): 4 px of layer
+            into the page's top padding and the 12 px under it. */}
         <Link
           to="/tracker"
-          className="mb-3 inline-flex min-h-9 items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink lg:hidden"
+          className="tap-44 mb-3 inline-flex min-h-9 items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink lg:hidden"
         >
           <ArrowLeft size={16} className="rtl:-scale-x-100" />
           {t("job.back")}
@@ -173,7 +175,7 @@ function JobList({ currentId }: { currentId: number }) {
   }, [currentId]);
   return (
     <nav aria-label={t("job.list")} className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-line/60 bg-panel/40 p-2">
-      <Link to="/tracker" className="flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-ink-muted hover:text-ink">
+      <Link to="/tracker" className="flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-ink-muted hover:text-ink">
         <ArrowLeft size={14} className="rtl:-scale-x-100" />
         {t("job.back")}
       </Link>
@@ -352,7 +354,7 @@ function JobBody({
           variant="ghost"
           size="sm"
           icon={<Trash2 size={15} />}
-          className="text-ink-muted hover:text-danger"
+          className="min-h-11 text-ink-muted hover:text-danger"
           onClick={() => nav("/tracker", { state: { remove: detail.id } })}
         >
           {t("job.delete")}
@@ -420,7 +422,7 @@ function AsksSection({ detail }: { detail: ApplicationDetail }) {
             type="button"
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
-            className="mt-3 inline-flex min-h-9 items-center gap-1 text-sm font-medium text-accent hover:underline"
+            className="mt-3 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-accent hover:underline"
           >
             {open ? t("job.asks.hidePosting") : t("job.asks.showPosting")}
             <ChevronDown size={14} className={cn("transition-transform", open && "rotate-180")} aria-hidden />
@@ -523,7 +525,7 @@ function ResumeSection({ detail }: { detail: ApplicationDetail }) {
       {kit?.status === "done" && (
         <p className="mt-2 text-sm text-ink">
           {t("job.resume.kitDone")}{" "}
-          <Link to={`/kits/${kit.id}`} className="font-medium text-accent hover:underline">
+          <Link to={`/kits/${kit.id}`} className="inline-flex min-h-11 items-center font-medium text-accent hover:underline">
             {t("job.resume.kitReview")}
           </Link>
         </p>
@@ -549,6 +551,7 @@ function ResumeSection({ detail }: { detail: ApplicationDetail }) {
               icon={<Download size={15} />}
               aria-label={t("job.resume.downloadWord")}
               onClick={() => void downloadResume(resume, "docx", filename, template)}
+              className="min-h-11"
             >
               {t("job.resume.word")}
             </Button>
@@ -558,16 +561,17 @@ function ResumeSection({ detail }: { detail: ApplicationDetail }) {
               icon={<Download size={15} />}
               aria-label={t("job.resume.downloadPdf")}
               onClick={() => void downloadResume(resume, "pdf", filename, template)}
+              className="min-h-11"
             >
               {t("job.resume.pdf")}
             </Button>
           </div>
           {openHref ? (
-            <Button size="sm" variant="ghost" icon={<FileText size={15} />} onClick={() => nav(openHref)}>
+            <Button size="sm" variant="ghost" icon={<FileText size={15} />} onClick={() => nav(openHref)} className="min-h-11">
               {t("job.resume.open")}
             </Button>
           ) : (
-            <Button size="sm" variant="ghost" icon={<FileText size={15} />} onClick={() => nav(tailorHref)}>
+            <Button size="sm" variant="ghost" icon={<FileText size={15} />} onClick={() => nav(tailorHref)} className="min-h-11">
               {t("job.resume.retailor")}
             </Button>
           )}
@@ -649,13 +653,13 @@ function LetterSection({
       {detail.cover_letter && <SavedLetter text={detail.cover_letter} />}
       {!resume ? (
         <p className="mt-2 text-sm text-ink-muted">
-          <Link to="/app" className="font-medium text-accent hover:underline">
+          <Link to="/app" className="inline-flex min-h-11 items-center font-medium text-accent hover:underline">
             {t("job.letter.needsResume")}
           </Link>
         </p>
       ) : detail.jd_text ? (
         <div className="mt-3">
-          <Button size="sm" variant="secondary" loading={reading} icon={<Mail size={15} />} onClick={() => void read()}>
+          <Button size="sm" variant="secondary" loading={reading} icon={<Mail size={15} />} onClick={() => void read()} className="min-h-11">
             {reading ? t("job.letter.reading") : t("job.letter.write")}
           </Button>
           {error && <p className="mt-2 text-sm text-danger">{error}</p>}
@@ -680,7 +684,7 @@ function SavedLetter({ text }: { text: string }) {
         {text}
       </div>
       <Button
-        className="mt-2"
+        className="mt-2 min-h-11"
         size="sm"
         variant="ghost"
         icon={<Copy size={14} />}
@@ -752,10 +756,10 @@ function SendSection({ detail, reload }: { detail: ApplicationDetail; reload: ()
           <p className="text-sm text-ink-muted">{t("job.send.confirmBody", { company })}</p>
           <p className="text-xs text-ink-faint">{t("job.send.note")}</p>
           <div className="flex items-center justify-end gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setAsking(false)} disabled={sending}>
+            <Button variant="secondary" size="sm" onClick={() => setAsking(false)} disabled={sending} className="min-h-11">
               {tCommon("actions.cancel")}
             </Button>
-            <Button size="sm" loading={sending} icon={<Send size={14} className="rtl:-scale-x-100" />} onClick={() => void send()}>
+            <Button size="sm" loading={sending} icon={<Send size={14} className="rtl:-scale-x-100" />} onClick={() => void send()} className="min-h-11">
               {t("job.send.confirm")}
             </Button>
           </div>
@@ -898,7 +902,7 @@ function NotesSection({ detail, onSaved }: { detail: ApplicationDetail; onSaved:
         className="mt-2 w-full resize-y rounded-xl border border-line bg-bg-soft p-3 text-sm leading-relaxed text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
       />
       <div className="mt-2 flex justify-end">
-        <Button size="sm" variant="secondary" loading={saving} disabled={draft === detail.notes} onClick={() => void save()}>
+        <Button size="sm" variant="secondary" loading={saving} disabled={draft === detail.notes} onClick={() => void save()} className="min-h-11">
           {t("notes.save")}
         </Button>
       </div>
